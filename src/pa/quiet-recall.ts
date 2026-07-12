@@ -3,6 +3,7 @@ import {
     validateSourceRefPathShape,
     type PersistedSourceRef,
 } from "./contracts";
+import { pageletT, type PageletLocale } from "../locales/pagelet";
 import { normalizeVaultPath, cloneSourceRef, stableHash } from "./helpers";
 import type { ReviewQueueCreateInput } from "./review-queue-store";
 import type { SavedInsight, SavedInsightResult } from "./saved-insight-store";
@@ -69,6 +70,7 @@ export interface QuietRecallBubbleNudge {
 
 export interface QuietRecallBuildInput {
     now?: Date | (() => Date);
+    locale?: PageletLocale;
     currentNote?: QuietRecallCurrentNote | null;
     relatedNotes?: readonly QuietRecallRelatedNote[];
     vaultNotes?: readonly QuietRecallVaultNote[];
@@ -99,6 +101,7 @@ const RELATED_RELEVANCE_BASE = 48;
 const FAR_ASSOCIATION_CAP = 35;
 const MAX_VAULT_NOTE_SCORE = 72;
 const NEUTRAL_USER_FEEDBACK = 0.5;
+export const QUIET_RECALL_BUBBLE_MIN_SCORE = 65;
 const DEFAULT_RECALL_SCORE_WEIGHTS: Required<RecallScoreWeights> = Object.freeze({
     semanticRelevance: 0.72,
     timeFreshness: 0.08,
@@ -175,34 +178,42 @@ function relationForInsight(
     insight: SavedInsight,
     currentPath: string | null,
     relatedScores: Map<string, number>,
-): { relation: QuietRecallRelation; score: number; whyNow: string[] } | null {
+    locale: PageletLocale,
+): { relation: QuietRecallRelation; score: number; whyNow: string[]; matchedPath?: string } | null {
     const normalizedRefs = insight.sourceRefs.map((ref) => normalizeVaultPath(ref.path));
     const reasons: string[] = [];
 
     if (currentPath && normalizedRefs.includes(currentPath)) {
-        reasons.push("Source matches the note you are looking at.");
+        reasons.push(pageletT("pagelet.recall.generated.why.current", locale));
         return {
             relation: "current",
             score: CURRENT_RELEVANCE_BASE + evidenceWeight(insight.sourceRefs),
             whyNow: reasons,
+            matchedPath: currentPath,
         };
     }
 
     let bestRelatedScore = 0;
+    let matchedPath: string | undefined;
     for (const path of normalizedRefs) {
-        bestRelatedScore = Math.max(bestRelatedScore, relatedScores.get(path) ?? 0);
+        const relatedScore = relatedScores.get(path) ?? 0;
+        if (relatedScore > bestRelatedScore) {
+            bestRelatedScore = relatedScore;
+            matchedPath = path;
+        }
     }
     if (bestRelatedScore > 0) {
-        reasons.push("Source appears near the current note in Memory search.");
+        reasons.push(pageletT("pagelet.recall.generated.why.related", locale));
         return {
             relation: "related",
             score: RELATED_RELEVANCE_BASE + Math.min(12, Math.round(bestRelatedScore * 12)) + evidenceWeight(insight.sourceRefs),
             whyNow: reasons,
+            matchedPath,
         };
     }
 
     if (isWeakOnly(insight.sourceRefs)) return null;
-    reasons.push("Older saved insight may be worth revisiting.");
+    reasons.push(pageletT("pagelet.recall.generated.why.far", locale));
     return {
         relation: "far",
         score: Math.min(FAR_ASSOCIATION_CAP, 20 + evidenceWeight(insight.sourceRefs)),
@@ -210,16 +221,26 @@ function relationForInsight(
     };
 }
 
-function titleForInsight(insight: SavedInsight): string {
-    const source = insight.sourceRefs[0]?.path;
+function titleForInsight(sourceRefs: readonly PersistedSourceRef[], locale: PageletLocale): string {
+    const source = sourceRefs[0]?.path;
     const stem = source ? fileStem(source) : "saved insight";
-    return `Recall: ${stem}`;
+    return pageletT("pagelet.recall.generated.title", locale, { title: stem });
 }
 
-function nextActionForRelation(relation: QuietRecallRelation): string {
-    if (relation === "current") return "Compare this saved insight with the current note.";
-    if (relation === "related") return "Open the source note and decide whether the connection still matters.";
-    return "Keep it in mind only if it still feels useful.";
+function nextActionForRelation(relation: QuietRecallRelation, locale: PageletLocale): string {
+    return pageletT(`pagelet.recall.generated.next.${relation}`, locale);
+}
+
+function reorderSourceRefs(
+    sourceRefs: readonly PersistedSourceRef[],
+    matchedPath: string | undefined,
+): PersistedSourceRef[] {
+    const cloned = sourceRefs.map(cloneSourceRef);
+    if (!matchedPath) return cloned;
+    const matchedIndex = cloned.findIndex((ref) => normalizeVaultPath(ref.path) === matchedPath);
+    if (matchedIndex <= 0) return cloned;
+    const [matched] = cloned.splice(matchedIndex, 1);
+    return matched ? [matched, ...cloned] : cloned;
 }
 
 function daysBetween(now: Date, isoDate: string | undefined): number | null {
@@ -278,41 +299,44 @@ function relationForVaultNote(signals: RecallScoreSignals): QuietRecallRelation 
     return "far";
 }
 
-function titleForVaultNote(note: QuietRecallVaultNote): string {
+function titleForVaultNote(note: QuietRecallVaultNote, locale: PageletLocale): string {
     const title = note.title?.trim() || fileStem(note.path);
-    return `Recall: ${title}`;
+    return pageletT("pagelet.recall.generated.title", locale, { title });
 }
 
-function summaryForVaultNote(note: QuietRecallVaultNote): string {
+function summaryForVaultNote(note: QuietRecallVaultNote, locale: PageletLocale): string {
     const title = note.title?.trim() || fileStem(note.path);
     const tags = (note.tags ?? [])
         .map((tag) => tag.trim())
         .filter(Boolean)
         .slice(0, 3);
     if (tags.length > 0) {
-        return `${title} may be useful again for the current context. Tags: ${tags.join(", ")}.`;
+        return pageletT("pagelet.recall.generated.summaryWithTags", locale, {
+            title,
+            tags: tags.join(locale === "zh" ? "、" : ", "),
+        });
     }
-    return `${title} may be useful again for the current context.`;
+    return pageletT("pagelet.recall.generated.summary", locale, { title });
 }
 
-function whyNowForVaultNote(signals: RecallScoreSignals): string[] {
+function whyNowForVaultNote(signals: RecallScoreSignals, locale: PageletLocale): string[] {
     const reasons: string[] = [];
     if (signals.semanticRelevance >= 0.75) {
-        reasons.push("This note appears strongly related to the note you are viewing.");
+        reasons.push(pageletT("pagelet.recall.generated.why.strongRelation", locale));
     } else if (signals.semanticRelevance >= 0.35) {
-        reasons.push("This note appears related to the note you are viewing.");
+        reasons.push(pageletT("pagelet.recall.generated.why.relatedRelation", locale));
     }
     if (signals.timeFreshness >= 0.75) {
-        reasons.push("It was updated recently.");
+        reasons.push(pageletT("pagelet.recall.generated.why.recent", locale));
     }
     if (signals.connectionDensity >= 0.5) {
-        reasons.push("It is connected to several other notes.");
+        reasons.push(pageletT("pagelet.recall.generated.why.connected", locale));
     }
     if (signals.noteRichness >= 0.6) {
-        reasons.push("It has enough detail to be worth revisiting.");
+        reasons.push(pageletT("pagelet.recall.generated.why.rich", locale));
     }
     if (reasons.length === 0) {
-        reasons.push("It has structural overlap with the current context.");
+        reasons.push(pageletT("pagelet.recall.generated.why.structural", locale));
     }
     return reasons;
 }
@@ -326,7 +350,7 @@ function sourceRefForVaultNote(
     return {
         path: normalizeVaultPath(note.path),
         generatedAt,
-        evidenceStrength: score >= 65 ? "medium" : "weak",
+        evidenceStrength: score >= QUIET_RECALL_BUBBLE_MIN_SCORE ? "medium" : "weak",
         whyShown: whyShown.slice(0, 3),
     };
 }
@@ -339,6 +363,7 @@ function vaultNoteCandidate(
         currentPath: string | null;
         relatedScores: Map<string, number>;
         isPathAllowed: (path: string) => boolean;
+        locale: PageletLocale;
     },
 ): QuietRecallCandidate | null {
     const path = normalizeVaultPath(note.path);
@@ -350,14 +375,14 @@ function vaultNoteCandidate(
     if (signals.semanticRelevance <= 0) return null;
     const score = Math.min(MAX_VAULT_NOTE_SCORE, computeRecallScore(signals));
     if (score <= 0) return null;
-    const whyNow = whyNowForVaultNote(signals);
+    const whyNow = whyNowForVaultNote(signals, options.locale);
     return {
         id: `qr-vault-${stableHash(path)}`,
-        title: titleForVaultNote({ ...note, path }),
-        summary: summaryForVaultNote({ ...note, path }),
+        title: titleForVaultNote({ ...note, path }, options.locale),
+        summary: summaryForVaultNote({ ...note, path }, options.locale),
         sourceRefs: [sourceRefForVaultNote({ ...note, path }, options.generatedAt, score, whyNow)],
         whyNow,
-        nextAction: "Open this note and decide whether the connection still matters.",
+        nextAction: nextActionForRelation("related", options.locale),
         relation: relationForVaultNote(signals),
         score,
         generatedAt: options.generatedAt,
@@ -367,6 +392,7 @@ function vaultNoteCandidate(
 
 export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): QuietRecallRunResult {
     const now = nowDate(input.now);
+    const locale = input.locale ?? "en";
     const generatedAt = now.toISOString();
     const currentPath = input.currentNote?.path ? normalizeVaultPath(input.currentNote.path) : null;
     const maxCandidates = input.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
@@ -386,16 +412,17 @@ export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): Q
         if (!sourceRefsAreValid(insight.sourceRefs)) continue;
         if (insightIsStale(insight, now, staleAfterDays)) continue;
         if (insight.sourceRefs.some((ref) => !isPathAllowed(ref.path))) continue;
-        const relation = relationForInsight(insight, currentPath, relatedScores);
+        const relation = relationForInsight(insight, currentPath, relatedScores, locale);
         if (!relation) continue;
+        const sourceRefs = reorderSourceRefs(insight.sourceRefs, relation.matchedPath);
         candidates.push({
             id: `qr-${insight.id}`,
-            title: titleForInsight(insight),
+            title: titleForInsight(sourceRefs, locale),
             summary: insight.text,
             sourceInsightId: insight.id,
-            sourceRefs: insight.sourceRefs.map(cloneSourceRef),
+            sourceRefs,
             whyNow: [...relation.whyNow, ...insight.whyShown.slice(0, 2)],
-            nextAction: nextActionForRelation(relation.relation),
+            nextAction: nextActionForRelation(relation.relation, locale),
             relation: relation.relation,
             score: relation.score,
             generatedAt,
@@ -412,6 +439,7 @@ export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): Q
             currentPath,
             relatedScores,
             isPathAllowed,
+            locale,
         });
         if (candidate) candidates.push(candidate);
     }
@@ -435,6 +463,19 @@ export function quietRecallGovernedClaimId(candidate: QuietRecallCandidate): str
     return claimId && claimId === claimId.trim() ? claimId : null;
 }
 
+export function quietRecallLinkTargetPath(
+    candidate: { sourceRefs: readonly { path: string }[] } | null | undefined,
+    currentPath: string | null | undefined,
+): string | null {
+    const normalizedCurrentPath = normalizeVaultPath(currentPath ?? "");
+    if (!candidate || !normalizedCurrentPath) return null;
+    for (const ref of candidate.sourceRefs) {
+        const normalizedPath = normalizeVaultPath(ref.path);
+        if (normalizedPath && normalizedPath !== normalizedCurrentPath) return normalizedPath;
+    }
+    return null;
+}
+
 export function quietRecallCandidateToSavedInsightInput(candidate: QuietRecallCandidate): {
     type: "observation";
     text: string;
@@ -449,10 +490,7 @@ export function quietRecallCandidateToSavedInsightInput(candidate: QuietRecallCa
         text: candidate.summary,
         origin: "pa-recommended",
         sourceRefs: candidate.sourceRefs.map(cloneSourceRef),
-        whyShown: [
-            ...candidate.whyNow,
-            `Quiet Recall relation: ${candidate.relation}`,
-        ],
+        whyShown: [...candidate.whyNow],
         dataBoundarySnapshotId: candidate.sourceRefs[0]?.sourceId ?? "data_boundary:allowed_by_policy",
         replayRef: candidate.id,
     };

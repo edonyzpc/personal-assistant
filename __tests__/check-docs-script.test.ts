@@ -288,7 +288,7 @@ describe("scripts/check-docs.mjs", () => {
             "docs/archive/2026/sample-product-spec.md",
         ]) {
             const target = join(repo, file);
-            writeFileSync(target, readFileSync(target, "utf8").replaceAll("Cancelled", "Superseded"), "utf8");
+            writeFileSync(target, readFileSync(target, "utf8").split("Cancelled").join("Superseded"), "utf8");
         }
         const decision = join(repo, "docs/archive/2026/dec-099-cancel-sample.md");
         writeFileSync(decision, readFileSync(decision, "utf8").replace("Status: Rejected", "Status: Superseded"), "utf8");

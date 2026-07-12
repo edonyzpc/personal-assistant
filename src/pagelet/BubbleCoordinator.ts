@@ -23,7 +23,13 @@ import type { PreloadFinding } from "./preload/types";
 import type { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetView } from "./pet/PetView";
 import type { PageletHost } from "./PageletHost";
-import type { PatternDetectionResult, QuietRecallBubbleNudge, QuietRecallCandidate } from "../pa";
+import {
+    QUIET_RECALL_BUBBLE_MIN_SCORE,
+    quietRecallLinkTargetPath,
+    type PatternDetectionResult,
+    type QuietRecallBubbleNudge,
+    type QuietRecallCandidate,
+} from "../pa";
 
 // ---------------------------------------------------------------------------
 // Callbacks the coordinator fires back at the orchestrator
@@ -229,15 +235,21 @@ export class BubbleCoordinator {
             && !this.proactiveHints.quietHoursActive
         ) {
             const deliveryCandidate = quietRecallCandidateToDeliveryCandidate(quietRecallCandidate);
+            const linkTargetPath = quietRecallLinkTargetPath(
+                quietRecallCandidate,
+                quietRecallNudge.currentPath,
+            );
             const quietRecallContent = buildRecallDeliveryContent(deliveryCandidate, {
                 onOpen: () => {
                     bubbleView.close();
                     this.callbacks.onQuietRecallView(quietRecallNudge);
                 },
-                onLinkToCurrent: () => {
-                    bubbleView.close();
-                    this.callbacks.onQuietRecallLink(quietRecallNudge);
-                },
+                ...(linkTargetPath ? {
+                    onLinkToCurrent: () => {
+                        bubbleView.close();
+                        this.callbacks.onQuietRecallLink(quietRecallNudge);
+                    },
+                } : {}),
                 onLater: () => {
                     bubbleView.close();
                     this.callbacks.onQuietRecallLater(quietRecallNudge);
@@ -265,10 +277,12 @@ export class BubbleCoordinator {
                 bubbleView.close();
                 this.callbacks.onQuietRecallView(candidate);
             },
-            onLink: (candidate) => {
-                bubbleView.close();
-                this.callbacks.onQuietRecallLink(candidate);
-            },
+            ...(quietRecallLinkTargetPath(quietRecallCandidate, quietRecallNudge?.currentPath) ? {
+                onLink: (candidate: QuietRecallBubbleNudge) => {
+                    bubbleView.close();
+                    this.callbacks.onQuietRecallLink(candidate);
+                },
+            } : {}),
             onDismiss: (candidate) => {
                 bubbleView.close();
                 this.callbacks.onQuietRecallDismiss(candidate);
@@ -445,7 +459,10 @@ export class BubbleCoordinator {
                 return;
             }
             const candidates = recall.candidates
-                .filter((candidate) => candidate.score >= 65 && candidate.sourceRefs.length > 0)
+                .filter((candidate) => (
+                    candidate.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
+                    && candidate.sourceRefs.length > 0
+                ))
                 .slice(0, 3)
                 .map(quietRecallCandidateToDeliveryCandidate);
             if (candidates.length === 0) {
@@ -468,14 +485,17 @@ export class BubbleCoordinator {
                 },
                 onLinkToCurrent: (candidate) => {
                     const currentPath = expectedPath;
-                    const sourcePath = candidate.sourceRefs[0]?.path;
-                    bubbleView.close();
-                    if (currentPath && sourcePath) {
-                        void this.host.linkRecallCandidate(currentPath, sourcePath).catch((error) => {
+                    const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
+                    if (currentPath && linkTargetPath) {
+                        bubbleView.close();
+                        void this.host.linkRecallCandidate(currentPath, linkTargetPath).catch((error) => {
                             this.host.log("Pagelet Bubble recall link failed", error);
                         });
                     }
                 },
+                canLinkToCurrent: (candidate) => (
+                    quietRecallLinkTargetPath(candidate, expectedPath) !== null
+                ),
                 onLater: () => {
                     bubbleView.close();
                 },

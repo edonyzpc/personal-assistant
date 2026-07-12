@@ -221,6 +221,7 @@ import {
     buildMemoryDataBoundaryFingerprint,
     createMemoryGovernanceOpaqueVaultKey,
 } from '../src/plugin';
+import { confirmUserAction } from '../src/confirm';
 import { PageletDetailView } from '../src/pagelet/tab';
 import type {
     ConfirmedMemoryRecord,
@@ -4277,6 +4278,129 @@ describe('Quiet Recall user-safe feedback', () => {
             message: 'One of these notes is no longer available. Open the notes and try again.',
         });
         expect(result.message).not.toContain('file-not-found');
+    });
+
+    it('previews both note paths and writes nothing when linking is cancelled', async () => {
+        const MockTFile = TFile as unknown as new (path: string) => TFile;
+        const currentFile = new MockTFile('notes/current.md');
+        const relatedFile = new MockTFile('notes/related.md');
+        const processFrontMatter = jest.fn();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            vault: {
+                getAbstractFileByPath: jest.fn((path: string) => (
+                    path === currentFile.path ? currentFile : path === relatedFile.path ? relatedFile : null
+                )),
+            },
+            fileManager: { processFrontMatter },
+        };
+        plugin.getPageletLocale = jest.fn(() => 'en');
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+        jest.mocked(confirmUserAction).mockClear();
+
+        const result = await plugin.linkRecallCandidate(currentFile.path, relatedFile.path);
+
+        expect(result).toEqual({ ok: false, message: 'No links were added.' });
+        expect(processFrontMatter).not.toHaveBeenCalled();
+        expect(confirmUserAction).toHaveBeenCalledWith(plugin.app, expect.objectContaining({
+            title: 'Link these two notes?',
+            confirmText: 'Link notes',
+            message: expect.stringMatching(/notes\/current\.md[\s\S]*notes\/related\.md[\s\S]*Properties[\s\S]*bodies will stay unchanged/),
+        }));
+    });
+
+    it('rejects a normalized self-link before confirmation or frontmatter writes', async () => {
+        const getAbstractFileByPath = jest.fn();
+        const processFrontMatter = jest.fn();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            vault: { getAbstractFileByPath },
+            fileManager: { processFrontMatter },
+        };
+        plugin.getPageletLocale = jest.fn(() => 'zh');
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+        jest.mocked(confirmUserAction).mockClear();
+
+        const result = await plugin.linkRecallCandidate('notes/current.md', './notes/current.md');
+
+        expect(result).toEqual({
+            ok: false,
+            message: '这条回忆暂时没有另一篇可关联的笔记。',
+        });
+        expect(getAbstractFileByPath).not.toHaveBeenCalled();
+        expect(confirmUserAction).not.toHaveBeenCalled();
+        expect(processFrontMatter).not.toHaveBeenCalled();
+    });
+
+    it('uses calm Chinese property copy while keeping the exact pa-related key', async () => {
+        const MockTFile = TFile as unknown as new (path: string) => TFile;
+        const currentFile = new MockTFile('notes/current.md');
+        const relatedFile = new MockTFile('notes/related.md');
+        const processFrontMatter = jest.fn();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            vault: {
+                getAbstractFileByPath: jest.fn((path: string) => (
+                    path === currentFile.path ? currentFile : path === relatedFile.path ? relatedFile : null
+                )),
+            },
+            fileManager: { processFrontMatter },
+        };
+        plugin.getPageletLocale = jest.fn(() => 'zh');
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+        jest.mocked(confirmUserAction).mockClear();
+
+        await plugin.linkRecallCandidate(currentFile.path, relatedFile.path);
+
+        const options = jest.mocked(confirmUserAction).mock.calls[0]?.[1];
+        expect(options?.message).toContain('两篇笔记的属性');
+        expect(options?.message).toContain('pa-related');
+        expect(options?.message).not.toContain('Properties');
+        expect(processFrontMatter).not.toHaveBeenCalled();
+    });
+
+    it('adds bidirectional Properties only after link confirmation', async () => {
+        const globalObj = globalThis as typeof globalThis & { __paConfirmDecision?: boolean };
+        globalObj.__paConfirmDecision = true;
+        try {
+            const MockTFile = TFile as unknown as new (path: string) => TFile;
+            const currentFile = new MockTFile('notes/current.md');
+            const relatedFile = new MockTFile('notes/related.md');
+            const frontmatters = new Map<string, Record<string, unknown>>();
+            const processFrontMatter = jest.fn(async (
+                file: TFile,
+                update: (frontmatter: Record<string, unknown>) => void,
+            ) => {
+                const frontmatter = frontmatters.get(file.path) ?? {};
+                update(frontmatter);
+                frontmatters.set(file.path, frontmatter);
+            });
+            const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+            plugin.app = {
+                vault: {
+                    getAbstractFileByPath: jest.fn((path: string) => (
+                        path === currentFile.path ? currentFile : path === relatedFile.path ? relatedFile : null
+                    )),
+                },
+                fileManager: { processFrontMatter },
+            };
+            plugin.getPageletLocale = jest.fn(() => 'en');
+            plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+            plugin.recordQuietRecallFeedback = jest.fn(async () => undefined);
+
+            const result = await plugin.linkRecallCandidate(currentFile.path, relatedFile.path);
+
+            expect(result).toEqual({ ok: true, message: 'Linked' });
+            expect(processFrontMatter).toHaveBeenCalledTimes(2);
+            expect(frontmatters.get(currentFile.path)).toEqual({
+                'pa-related': ['[[notes/related.md]]'],
+            });
+            expect(frontmatters.get(relatedFile.path)).toEqual({
+                'pa-related': ['[[notes/current.md]]'],
+            });
+        } finally {
+            delete globalObj.__paConfirmDecision;
+        }
     });
 
     it('does not expose Saved Insight persistence reasons', async () => {

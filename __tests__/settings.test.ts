@@ -848,15 +848,47 @@ describe('PA Agent telemetry settings', () => {
         expect(policyModel?.desc).toContain('Blank uses local fallback rules');
     });
 
-    it('keeps settings text inputs right-aligned with consistent width', () => {
+    it('uses container-aware navigation and top-aligned setting rows', () => {
         const css = readFileSync('src/custom.pcss', 'utf8');
 
         expect(css).not.toContain(':has(');
-        expect(css).toContain('.pa-settings-tab .setting-item.pa-setting-has-form-control');
-        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s*{[\s\S]*?align-items:\s*center;[\s\S]*?gap:\s*clamp\(20px,\s*4vw,\s*64px\);/);
-        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s*{[\s\S]*?flex:\s*0 0 clamp\(280px,\s*44%,\s*560px\);[\s\S]*?justify-content:\s*flex-end;[\s\S]*?min-width:\s*240px;/);
-        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s+input,[\s\S]*?\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s+select\s*{[\s\S]*?width:\s*100%;/);
-        expect(css).toMatch(/@media\s+\(max-width:\s*700px\)\s*{[\s\S]*?\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control[\s\S]*?flex-direction:\s*column;[\s\S]*?\.setting-item-control[\s\S]*?width:\s*100%;/);
+        expect(css).toContain('container-name: pa-settings-tab');
+        expect(css).toContain('container-type: inline-size');
+        expect(css).toMatch(/\.modal\.mod-settings\s+\.vertical-tab-content\.pa-settings-tab\s*{[\s\S]*?padding-inline:\s*clamp\(16px,\s*2vw,\s*24px\);/);
+        expect(css).toMatch(/\.pa-settings-shell\s*{[\s\S]*?margin-inline:\s*auto;[\s\S]*?max-width:\s*1180px;[\s\S]*?width:\s*100%;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.modal\.mod-settings\s+\.vertical-tab-content\.pa-settings-tab\s*{[\s\S]*?safe-area-inset-left[\s\S]*?safe-area-inset-right/);
+        expect(css).toContain('.pa-settings-layout');
+        expect(css).toContain('.pa-settings-toc');
+        expect(css).toContain('.pa-settings-toc-item__tick');
+        expect(css).toContain('.pa-settings-toc-item__label');
+        expect(css).toMatch(/\.pa-settings-toc-item\s*{[\s\S]*?justify-content:\s*start;[\s\S]*?justify-items:\s*start;/);
+        expect(css).toContain('.pa-settings-jump');
+        expect(css).toContain('.pa-settings-jump-count');
+        expect(css).toContain('.pa-settings-jump-progress__segment');
+        expect(css).toMatch(/\.pa-settings-jump-select\s*{[\s\S]*?max-width:\s*360px;[\s\S]*?width:\s*100%;/);
+        expect(css).toContain('.pa-settings-group__body');
+        expect(css).toMatch(/\.pa-settings-group-summary\s*{[\s\S]*?scroll-margin-block-start:\s*12px;/);
+        expect(css).toContain('@container pa-settings-tab (min-width: 1040px)');
+        expect(css).toContain('@container pa-settings-tab (max-width: 720px)');
+        expect(css).toMatch(/@container pa-settings-tab \(min-width: 1040px\)\s*{[\s\S]*?grid-template-areas:\s*"toc content";[\s\S]*?grid-template-columns:\s*184px minmax\(0, 1fr\);/);
+        expect(css).toContain('@media (hover: hover) and (pointer: fine)');
+        expect(css).toMatch(/\.pa-settings-toc\s*{[\s\S]*?inline-size:\s*40px;/);
+        expect(css).toMatch(/\.pa-settings-toc:hover,[\s\S]*?\.pa-settings-toc:focus-within\s*{[\s\S]*?inline-size:\s*100%;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-jump\s*{[\s\S]*?position:\s*sticky;[\s\S]*?top:\s*8px;/);
+        expect(css).toContain('--pa-settings-mobile-nav-offset: 72px');
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-group-summary\s*{[\s\S]*?scroll-margin-block-start:\s*var\(--pa-settings-mobile-nav-offset,\s*72px\);/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-jump-select\s*{[\s\S]*?grid-column:\s*1 \/ -1;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-jump-count\s*{[\s\S]*?pointer-events:\s*none;[\s\S]*?position:\s*absolute;/);
+        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-layout\s*{[\s\S]*?align-items:\s*start;[\s\S]*?display:\s*grid;/);
+        expect(css).toContain('.pa-setting-layout--field');
+        expect(css).toContain('.pa-setting-layout--compact');
+        expect(css).toContain('.pa-setting-layout--cluster');
+        expect(css).toContain('.pa-setting-layout--stacked');
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-tab\s+\.setting-item\.pa-setting-layout\s+\.setting-item-control\s+button,[\s\S]*?min-height:\s*44px;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-settings-tab\s+\.setting-item\.pa-setting-layout--compact\s+\.setting-item-control\s*{[^}]*min-height:\s*44px;/);
+        expect(css).not.toMatch(/\.setting-item-control\s+\.checkbox-container\s*{[^}]*min-(?:height|width):\s*44px;/);
+        expect(css).not.toContain('.pa-settings-group > :not(summary)');
+        expect(css).not.toContain('.pa-settings-nav');
     });
 });
 
@@ -879,8 +911,8 @@ describe('Operations Agent disabled rollout', () => {
     });
 });
 
-describe('settings form-control styling hooks', () => {
-    it('reapplies form-control classes after dynamic settings rebuilds', () => {
+describe('settings row-layout styling hooks', () => {
+    it('classifies every interactive row and reapplies layout classes after dynamic rebuilds', () => {
         const source = readFileSync('src/settings.ts', 'utf8');
         const methodBody = (name: string) => {
             const start = source.indexOf(`    private ${name}(`);
@@ -891,13 +923,27 @@ describe('settings form-control styling hooks', () => {
 
         for (const name of [
             'rebuildProviderConfig',
+            'rebuildQwenOptions',
+            'rebuildSkillToggles',
             'rebuildGraphColors',
             'rebuildMetadataList',
+            'rebuildMemorySubSettings',
             'rebuildMemoryAdvanced',
             'rebuildFeaturedImage',
         ]) {
             expect(methodBody(name)).toContain('this.markFormControlSettings(container);');
         }
+        expect(methodBody('renderMemoryControlCenterOverview')).toContain('this.markFormControlSettings(body);');
+        const classifier = methodBody('markFormControlSettings');
+        expect(classifier).toContain('input, select, textarea, button');
+        expect(classifier).toContain('!control.classList.contains("is-measuring")');
+        expect(classifier).toContain('.clickable-icon, .checkbox-container, .pa-settings-skill-picker');
+        expect(classifier).toContain('primaryFields.forEach((control) => control.classList.add("pa-setting-form-input"));');
+        expect(classifier).not.toContain('input[type=\'color\']');
+        expect(classifier).toContain('pa-setting-layout--field');
+        expect(classifier).toContain('pa-setting-layout--compact');
+        expect(classifier).toContain('pa-setting-layout--cluster');
+        expect(classifier).toContain('pa-setting-layout--stacked');
     });
 });
 
@@ -1487,16 +1533,428 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'pa-settings-group-appearance',
             'pa-settings-group-system',
         ]);
-        expect(containerEl.findAll('.pa-settings-nav-item').map((node) => node.textContent)).toEqual([
+        const tocItems = containerEl.findAll('.pa-settings-toc-item');
+        const groupLabels = [
             'AI & Provider',
             'Memory & Personalization',
             'Data & Privacy',
             'Features',
             'Appearance',
             'System',
-        ]);
+        ];
+        expect(tocItems.map((node) => node.attrs['aria-label'])).toEqual(groupLabels);
+        expect(containerEl.findAll('.pa-settings-toc-item__label').map((node) => node.textContent))
+            .toEqual(groupLabels);
+        expect(containerEl.findAll('.pa-settings-toc-item__tick')).toHaveLength(6);
+        expect(containerEl.findAll('.pa-settings-toc-item__tick')
+            .every((node) => node.attrs['aria-hidden'] === 'true')).toBe(true);
+        expect(containerEl.findAll('.pa-settings-group').every((group) => (
+            group.children[0]?.tagName === 'summary'
+            && group.children[1]?.classes.includes('pa-settings-group__body')
+        ))).toBe(true);
+        const layout = containerEl.findAll('.pa-settings-layout')[0];
+        expect(containerEl.findAll('.pa-settings-shell')).toHaveLength(1);
+        expect(containerEl.findAll('.pa-settings-shell')[0]?.findAll('.pa-settings-layout')).toHaveLength(1);
+        expect(layout.children[0]?.classes).toContain('pa-settings-toc');
+        expect(layout.children[1]?.classes).toContain('pa-settings-content');
+        const jump = containerEl.findAll('.pa-settings-jump-select')[0];
+        expect(jump.classes).toEqual(expect.arrayContaining(['pa-settings-jump-select', 'dropdown']));
+        expect(jump.attrs['aria-label']).toBeUndefined();
+        expect(jump.findAll('option').map((option) => option.textContent)).toEqual(groupLabels);
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/6');
+        expect(containerEl.findAll('.pa-settings-jump-progress__segment')).toHaveLength(6);
         expect(containerEl.findAll('.pa-memory-control-center')).toHaveLength(1);
         expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps desktop TOC and compact jump navigation in sync', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+
+        const groups = containerEl.findAll('.pa-settings-group');
+        const summaries = containerEl.findAll('.pa-settings-group-summary');
+        const tocItems = containerEl.findAll('.pa-settings-toc-item');
+        const jump = containerEl.findAll('.pa-settings-jump-select')[0];
+        expect(tocItems.map((item) => item.attrs['aria-controls'])).toEqual(
+            groups.map((group) => group.attrs.id),
+        );
+        expect(tocItems[0]?.attrs['aria-current']).toBe('location');
+        expect(tocItems.slice(1).every((item) => item.attrs['aria-current'] === 'false')).toBe(true);
+        expect(jump.value).toBe('ai-provider');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/6');
+        expect(containerEl.findAll('.pa-settings-jump-progress__segment')[0]?.attrs['data-current'])
+            .toBe('true');
+
+        groups[1].open = true;
+        groups[1].dispatchEvent('toggle');
+        expect(tocItems[0]?.attrs['aria-current']).toBe('location');
+        expect(jump.value).toBe('ai-provider');
+
+        groups[3].open = false;
+        groups[3].dispatchEvent('toggle');
+        expect(tocItems[3]?.attrs['aria-expanded']).toBe('false');
+        tocItems[3].dispatchEvent('click');
+
+        expect(groups[3].open).toBe(true);
+        expect(tocItems[3]?.attrs).toMatchObject({
+            'aria-current': 'location',
+            'aria-expanded': 'true',
+        });
+        expect(jump.value).toBe('features');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('4/6');
+        expect(containerEl.findAll('.pa-settings-jump-progress__segment')[3]?.attrs['data-current'])
+            .toBe('true');
+        expect(summaries[3]?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+        expect(summaries[3]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+
+        jump.value = 'appearance';
+        jump.dispatchEvent('change');
+        expect(groups[4].open).toBe(true);
+        expect(tocItems[4]?.attrs['aria-current']).toBe('location');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('5/6');
+        expect(summaries[4]?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+        expect(summaries[4]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+    });
+
+    it('positions a mobile target below the measured sticky selector', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        const scrollTo = jest.fn();
+        const scrollRoot = {
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+            getBoundingClientRect: jest.fn(() => ({ top: 10 } as DOMRect)),
+            scrollTo,
+            scrollTop: 100,
+            clientHeight: 400,
+            scrollHeight: 1000,
+            ownerDocument: {
+                body: {
+                    classList: { contains: (className: string) => className === 'is-mobile' },
+                },
+                defaultView: {
+                    getComputedStyle: (element: unknown) => (
+                        element === scrollRoot
+                            ? { paddingBlockStart: '48px', paddingTop: '48px' }
+                            : { top: '8px' }
+                    ),
+                },
+            },
+        };
+        Object.assign(containerEl, { closest: () => scrollRoot });
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+
+        const jump = containerEl.findAll('.pa-settings-jump')[0];
+        Object.assign(jump, { getBoundingClientRect: () => ({ height: 66 } as DOMRect) });
+        const summaries = containerEl.findAll('.pa-settings-group-summary');
+        Object.assign(summaries[3], {
+            getBoundingClientRect: () => ({ top: 510 } as DOMRect),
+        });
+        const select = containerEl.findAll('.pa-settings-jump-select')[0];
+        select.value = 'features';
+        select.dispatchEvent('change');
+
+        expect(scrollTo).toHaveBeenCalledWith({ top: 466, behavior: 'smooth' });
+        expect(summaries[3]?.scrollIntoView).not.toHaveBeenCalled();
+        expect(summaries[3]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+    });
+
+    it('respects reduced motion and keeps navigation usable when matchMedia throws', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const scrollBehavior = () => (
+            tab as unknown as { settingsScrollBehavior: () => ScrollBehavior }
+        ).settingsScrollBehavior();
+        const documentMock = globalThis.document as unknown as {
+            defaultView?: { matchMedia: (query: string) => { matches: boolean } };
+        };
+
+        documentMock.defaultView = {
+            matchMedia: jest.fn(() => ({ matches: true })),
+        };
+        expect(scrollBehavior()).toBe('auto');
+
+        documentMock.defaultView = {
+            matchMedia: jest.fn(() => { throw new Error('unsupported'); }),
+        };
+        expect(scrollBehavior()).toBe('smooth');
+    });
+
+    it('updates the active group while scrolling and selects System at the bottom', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        const scrollRoot = {
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
+            scrollTop: 0,
+            clientHeight: 400,
+            scrollHeight: 1000,
+        };
+        Object.assign(containerEl, { closest: () => scrollRoot });
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+
+        const summaries = containerEl.findAll('.pa-settings-group-summary');
+        [-120, -20, 180, 400, 620, 800].forEach((top, index) => {
+            Object.assign(summaries[index], {
+                getBoundingClientRect: () => ({ top } as DOMRect),
+            });
+        });
+        const sync = () => (
+            tab as unknown as { syncActiveSettingsGroupFromScroll: (ids: string[]) => void }
+        ).syncActiveSettingsGroupFromScroll([
+            'ai-provider',
+            'memory-personalization',
+            'data-privacy',
+            'features',
+            'appearance',
+            'system',
+        ]);
+
+        sync();
+        let tocItems = containerEl.findAll('.pa-settings-toc-item');
+        expect(tocItems[1]?.attrs['aria-current']).toBe('location');
+        expect(containerEl.findAll('.pa-settings-jump-select')[0]?.value).toBe('memory-personalization');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/6');
+
+        scrollRoot.scrollTop = 600;
+        sync();
+        tocItems = containerEl.findAll('.pa-settings-toc-item');
+        expect(tocItems[5]?.attrs['aria-current']).toBe('location');
+        expect(containerEl.findAll('.pa-settings-jump-select')[0]?.value).toBe('system');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('6/6');
+    });
+
+    it('accounts for the sticky selector height when tracking the active mobile group', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        const scrollRoot = {
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
+            scrollTop: 0,
+            clientHeight: 400,
+            scrollHeight: 1000,
+            ownerDocument: {
+                body: {
+                    classList: { contains: (className: string) => className === 'is-mobile' },
+                },
+            },
+        };
+        Object.assign(containerEl, { closest: () => scrollRoot });
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+
+        const jump = containerEl.findAll('.pa-settings-jump')[0];
+        Object.assign(jump, { getBoundingClientRect: () => ({ height: 80 } as DOMRect) });
+        (
+            tab as unknown as { refreshSettingsNavigationMobileOffset: (root: HTMLElement) => number }
+        ).refreshSettingsNavigationMobileOffset(scrollRoot as unknown as HTMLElement);
+        const summaries = containerEl.findAll('.pa-settings-group-summary');
+        [-120, 93, 180, 400, 620, 800].forEach((top, index) => {
+            Object.assign(summaries[index], {
+                getBoundingClientRect: () => ({ top } as DOMRect),
+            });
+        });
+
+        (
+            tab as unknown as { syncActiveSettingsGroupFromScroll: (ids: string[]) => void }
+        ).syncActiveSettingsGroupFromScroll([
+            'ai-provider',
+            'memory-personalization',
+            'data-privacy',
+            'features',
+            'appearance',
+            'system',
+        ]);
+
+        expect(containerEl.findAll('.pa-settings-toc-item')[1]?.attrs['aria-current'])
+            .toBe('location');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/6');
+    });
+
+    it('shares the measured mobile selector offset with CSS and cleans up its observer', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        const setProperty = jest.fn();
+        const removeProperty = jest.fn();
+        const mobileOwnerDocument = {
+            body: {
+                classList: { contains: (className: string) => className === 'is-mobile' },
+            },
+        };
+        Object.assign(containerEl, {
+            ownerDocument: mobileOwnerDocument,
+            style: { setProperty, removeProperty },
+        });
+        tab.containerEl = containerEl as never;
+
+        const observe = jest.fn();
+        const disconnect = jest.fn();
+        class ResizeObserverMock {
+            constructor(_callback: ResizeObserverCallback) { }
+            observe = observe;
+            unobserve = jest.fn();
+            disconnect = disconnect;
+        }
+        const getBoundingClientRect = jest.fn(() => ({ height: 84 } as DOMRect));
+        const jump = {
+            ownerDocument: {
+                defaultView: { ResizeObserver: ResizeObserverMock },
+            },
+            getBoundingClientRect,
+        } as unknown as HTMLElement;
+
+        (
+            tab as unknown as { startSettingsNavigationOffsetTracking: (el: HTMLElement) => void }
+        ).startSettingsNavigationOffsetTracking(jump);
+
+        expect(observe).toHaveBeenCalledWith(jump);
+        expect(setProperty).toHaveBeenCalledWith('--pa-settings-mobile-nav-offset', '96px');
+
+        const activationOffset = (
+            tab as unknown as { settingsNavigationActivationOffset: (root: HTMLElement) => number }
+        ).settingsNavigationActivationOffset({
+            ownerDocument: mobileOwnerDocument,
+        } as unknown as HTMLElement);
+        expect(activationOffset).toBe(96);
+        expect(getBoundingClientRect).toHaveBeenCalledTimes(1);
+        expect(setProperty).toHaveBeenCalledTimes(1);
+
+        (
+            tab as unknown as { stopSettingsNavigation: () => void }
+        ).stopSettingsNavigation();
+        expect(disconnect).toHaveBeenCalledTimes(1);
+        expect(removeProperty).toHaveBeenCalledWith('--pa-settings-mobile-nav-offset');
+    });
+
+    it('resyncs the active mobile group when the sticky selector height changes', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        const setProperty = jest.fn();
+        let jumpHeight = 84;
+        let resizeCallback: ResizeObserverCallback = jest.fn();
+        const mobileOwnerDocument = {
+            body: {
+                classList: { contains: (className: string) => className === 'is-mobile' },
+            },
+            defaultView: {
+                getComputedStyle: (element: unknown) => (
+                    element === scrollRoot
+                        ? { paddingBlockStart: '48px', paddingTop: '48px' }
+                        : { top: '8px' }
+                ),
+            },
+        };
+        const scrollRoot = {
+            ownerDocument: mobileOwnerDocument,
+        };
+        Object.assign(containerEl, {
+            ownerDocument: mobileOwnerDocument,
+            style: { setProperty, removeProperty: jest.fn() },
+        });
+        tab.containerEl = containerEl as never;
+
+        class ResizeObserverMock {
+            constructor(callback: ResizeObserverCallback) {
+                resizeCallback = callback;
+            }
+            observe = jest.fn();
+            unobserve = jest.fn();
+            disconnect = jest.fn();
+        }
+        const jump = {
+            ownerDocument: {
+                ...mobileOwnerDocument,
+                defaultView: {
+                    ...mobileOwnerDocument.defaultView,
+                    ResizeObserver: ResizeObserverMock,
+                },
+            },
+            getBoundingClientRect: () => ({ height: jumpHeight } as DOMRect),
+        } as unknown as HTMLElement;
+        const sync = jest.fn();
+        const privateTab = tab as unknown as {
+            settingsScrollRoot: HTMLElement;
+            settingsScrollHandler: () => void;
+            startSettingsNavigationOffsetTracking: (el: HTMLElement) => void;
+        };
+        privateTab.settingsScrollRoot = scrollRoot as unknown as HTMLElement;
+        privateTab.settingsScrollHandler = sync;
+
+        privateTab.startSettingsNavigationOffsetTracking(jump);
+        expect(sync).toHaveBeenCalledTimes(1);
+        expect(setProperty).toHaveBeenLastCalledWith(
+            '--pa-settings-mobile-nav-offset',
+            '152px',
+        );
+
+        jumpHeight = 104;
+        resizeCallback([] as ResizeObserverEntry[], {} as ResizeObserver);
+        expect(sync).toHaveBeenCalledTimes(2);
+        expect(setProperty).toHaveBeenLastCalledWith(
+            '--pa-settings-mobile-nav-offset',
+            '172px',
+        );
+
+        resizeCallback([] as ResizeObserverEntry[], {} as ResizeObserver);
+        expect(sync).toHaveBeenCalledTimes(2);
+    });
+
+    it('removes the scroll listener before redisplay and on hide', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        const scrollRoot = {
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
+            scrollTop: 0,
+            clientHeight: 400,
+            scrollHeight: 1000,
+        };
+        const hiddenOuter = {
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+            getBoundingClientRect: jest.fn(() => ({ top: 0 } as DOMRect)),
+            scrollTop: 0,
+            clientHeight: 400,
+            scrollHeight: 400,
+            ownerDocument: {
+                defaultView: {
+                    getComputedStyle: () => ({ overflowY: 'hidden' }),
+                },
+            },
+        };
+        Object.assign(containerEl, {
+            closest: (selector: string) => (
+                selector === '.vertical-tab-content' ? scrollRoot : hiddenOuter
+            ),
+        });
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        expect(scrollRoot.addEventListener).toHaveBeenCalledTimes(1);
+        expect(hiddenOuter.addEventListener).not.toHaveBeenCalled();
+        tab.display();
+        expect(scrollRoot.removeEventListener).toHaveBeenCalledTimes(1);
+        expect(scrollRoot.addEventListener).toHaveBeenCalledTimes(2);
+        tab.hide();
+        expect(scrollRoot.removeEventListener).toHaveBeenCalledTimes(2);
     });
 
     it('renders the canonical overview by default without Debug or preview-only copy', async () => {
@@ -1516,7 +1974,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 updatedAt: '2026-07-10T08:00:00.000Z',
                 itemCount: 1,
             },
-            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            durable: { activeCount: 2, pausedCount: 1, staleCount: 1 },
             boundary: {
                 vaultScoped: true,
                 deviceLocalProven: false,
@@ -1610,6 +2068,8 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(renderedText).toContain('Representative note: notes/example.md');
         expect(renderedText).toContain('2 notes within the allowed boundary');
         expect(renderedText).toContain('Some saved understanding could not be read');
+        expect(renderedText).toContain('2 in use');
+        expect(renderedText).toContain('Paused: 1 · Needs refresh: 1');
         expect(renderedText).toContain('Forgotten marker');
         expect(renderedText).toContain('does not yet claim that every item is device-only');
         expect(renderedText).not.toContain('Development preview');
@@ -1625,6 +2085,120 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(renderedText).not.toMatch(/\b(VSS|RAG|OPFS|SQLite|Type A|Type C|embedding|vector)\b/i);
         expect(overview.findAll('button')).toHaveLength(0);
         expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('keeps snapshot load failures contained and offers an accessible retry', async () => {
+        const plugin = makePlugin({ debug: false });
+        plugin.getMemoryControlCenterSnapshot.mockRejectedValueOnce(new Error('snapshot unavailable'));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const body = containerEl.findAll('.pa-memory-control-center__body')[0];
+        const liveStatus = containerEl.findAll('.pa-memory-control-center__live-status')[0];
+        expect(body.attrs['aria-busy']).toBe('false');
+        expect(body.attrs['aria-live']).toBeUndefined();
+        expect(liveStatus.classes).toContain('pa-sr-only');
+        expect(liveStatus.attrs).toMatchObject({
+            role: 'status',
+            'aria-live': 'polite',
+            'aria-atomic': 'true',
+            tabindex: '-1',
+        });
+        expect(body.findAll('.pa-memory-control-center__error')[0]?.textContent)
+            .toContain('Memory and personalization could not be loaded');
+
+        const retry = body.findAll('button').find((button) => button.textContent === 'Retry');
+        expect(retry).toBeDefined();
+        expect(liveStatus.focus).not.toHaveBeenCalled();
+        retry?.dispatchEvent('click');
+        expect(liveStatus.focus).toHaveBeenCalledWith({ preventScroll: true });
+        for (let index = 0; index < 4; index += 1) await Promise.resolve();
+
+        expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(2);
+        expect(body.attrs['aria-busy']).toBe('false');
+        expect(body.findAll('.pa-memory-control-center__card')).toHaveLength(4);
+        expect(liveStatus.textContent).toContain('Memory and personalization loaded');
+    });
+
+    it('keeps a failed correction editable and validates Save as the user types', async () => {
+        const plugin = makePlugin({ debug: false });
+        plugin.runMemoryControlCenterAction.mockResolvedValue({
+            ok: false,
+            message: 'Correction was not saved.',
+        });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: true, status: 'ready', itemCount: 1 },
+            durable: { activeCount: 1, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: true,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.deviceLocal',
+            },
+            governanceMode: 'effect_based',
+            items: [{
+                id: 'claim-correction',
+                claimId: 'claim-correction',
+                label: 'Keep answers concise.',
+                origin: 'user_profile',
+                authority: 'explicit_user',
+                scopeLabel: 'Test vault',
+                effect: 'future_answers',
+                lifecycle: 'active',
+                provenance: [{ kind: 'conversation', conversationId: 'conversation-correction' }],
+                supportedActions: ['correct'],
+            }],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        const displaySpy = jest.spyOn(tab, 'display');
+        displaySpy.mockClear();
+
+        containerEl.findAll('button')
+            .find((button) => button.textContent === 'Correct')
+            ?.dispatchEvent('click');
+        const editor = containerEl.findAll('.pa-memory-control-center__correction')[0];
+        const input = editor.findAll('textarea')[0];
+        const save = editor.findAll('button')
+            .find((button) => button.textContent === 'Save correction');
+        expect(save?.disabled).toBe(true);
+
+        input.value = 'Keep answers concise.';
+        input.dispatchEvent('input');
+        expect(save?.disabled).toBe(true);
+        input.value = '   ';
+        input.dispatchEvent('input');
+        expect(save?.disabled).toBe(true);
+        input.value = 'Keep answers concise and source-backed.';
+        input.dispatchEvent('input');
+        expect(save?.disabled).toBe(false);
+
+        save?.dispatchEvent('click');
+        for (let index = 0; index < 4; index += 1) await Promise.resolve();
+
+        expect(plugin.runMemoryControlCenterAction).toHaveBeenCalledWith(
+            'correct',
+            'claim-correction',
+            'Keep answers concise and source-backed.',
+        );
+        expect(displaySpy).not.toHaveBeenCalled();
+        expect(containerEl.findAll('.pa-memory-control-center__correction')).toContain(editor);
+        expect(input.value).toBe('Keep answers concise and source-backed.');
+        expect(save?.disabled).toBe(false);
+        expect(input.focus).toHaveBeenLastCalledWith({ preventScroll: true });
     });
 
     it('round-trips a legacy Pagelet record ID to the exact Settings item', async () => {
@@ -1808,6 +2382,11 @@ describe('Phase 3 IA reorder + provider UX', () => {
             node.textContent,
             ...node.children.map(collectTargetText),
         ].join(' ');
+        const recentChange = containerEl.findAll('.pa-memory-control-center__item')
+            .find((item) => item.dataset.paMemoryTargetId === 'event-exact-456');
+        expect(recentChange).toBeDefined();
+        expect(collectTargetText(recentChange!)).toContain('Understanding corrected');
+        expect(collectTargetText(recentChange!)).toContain('Use concise source-backed answers.');
         expect(collectTargetText(containerEl)).toContain('Source note: notes/preference.md');
         expect(collectTargetText(containerEl)).toContain('The saved content and source details are already unavailable');
         pause?.dispatchEvent('click');
@@ -1902,7 +2481,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             compatibilityFinalization: {
                 phase: 'compatibility',
                 eligible: false,
-                legacyRecordCount: 1,
+                legacyRecordCount: 0,
                 legacyMemoryQueueCount: 0,
                 warningCode: 'other_devices_may_still_depend_on_legacy_data',
                 blockedReason: 'finalization_pending_operations',
@@ -1920,6 +2499,147 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(blockedText).not.toContain('finalization_pending_operations');
         expect(blockedContainer.findAll('.pa-memory-control-center__finalization')[0]?.open).toBe(true);
         expect(blockedContainer.findAll('p').some((node) => node.attrs.role === 'status')).toBe(true);
+    });
+
+    it.each([
+        'governed_cutover_incomplete',
+        'finalization_not_available',
+        'finalization_confirmation_stale',
+        'finalization_state_changed',
+    ])('keeps an inactive empty finalization collapsed for %s', async (blockedReason) => {
+        const plugin = makePlugin({ debug: false });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            compatibilityFinalization: {
+                phase: 'compatibility',
+                eligible: false,
+                legacyRecordCount: 0,
+                legacyMemoryQueueCount: 0,
+                warningCode: 'other_devices_may_still_depend_on_legacy_data',
+                blockedReason,
+            },
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const finalization = containerEl.findAll('.pa-memory-control-center__finalization')[0];
+        expect(finalization.open).toBe(false);
+        expect(finalization.findAll('.pa-memory-control-center__warning')).toHaveLength(0);
+        expect(plugin.getMemoryFinalizationStatusMessage).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        'legacy_source_reconciliation_required',
+        'legacy_source_verification_failed',
+    ])('expands an empty finalization when %s requires attention', async (blockedReason) => {
+        const plugin = makePlugin({ debug: false });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            compatibilityFinalization: {
+                phase: 'compatibility',
+                eligible: false,
+                legacyRecordCount: 0,
+                legacyMemoryQueueCount: 0,
+                warningCode: 'other_devices_may_still_depend_on_legacy_data',
+                blockedReason,
+            },
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const finalization = containerEl.findAll('.pa-memory-control-center__finalization')[0];
+        expect(finalization.open).toBe(true);
+        expect(finalization.findAll('.pa-memory-control-center__warning')).toHaveLength(1);
+        expect(plugin.getMemoryFinalizationStatusMessage).toHaveBeenCalledWith(blockedReason);
+    });
+
+    it('places Data and recovery after Recent changes and expands only active recovery work', async () => {
+        const plugin = makePlugin({ debug: false });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const body = containerEl.findAll('.pa-memory-control-center__body')[0];
+        const recent = body.findAll('.pa-memory-control-center__recent')[0];
+        const recovery = body.findAll('.pa-memory-control-center__recovery')[0];
+        expect(recovery.tagName).toBe('details');
+        expect(recovery.open).toBe(false);
+        expect(body.children.indexOf(recent)).toBeLessThan(body.children.indexOf(recovery));
+
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            compatibilityRollback: {
+                phase: 'rolling_back',
+                eligible: true,
+                legacyRecordCount: 1,
+                legacyMemoryQueueCount: 0,
+            },
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(containerEl.findAll('.pa-memory-control-center__recovery')[0]?.open).toBe(true);
+    });
+
+    it('keeps the Data and recovery summary at a 44px touch target on mobile and narrow layouts', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+
+        expect(css).toMatch(/body\.is-mobile \.pa-memory-control-center__recovery > summary\s*{[^}]*min-height:\s*44px;/);
+        expect(css).toMatch(/@container\s+pa-settings-tab\s+\(max-width:\s*720px\)\s*{[\s\S]*?\.pa-memory-control-center__recovery > summary\s*{[^}]*min-height:\s*44px;/);
     });
 
     it('does not rerender Settings when a Memory action finishes after close', async () => {
@@ -2514,6 +3234,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const target = containerEl.findAll('.pa-memory-control-center__item')
             .find((item) => item.dataset.paMemoryTargetId === 'memory-data-recovery');
         expect(target).toBeDefined();
+        expect(target?.open).toBe(true);
         expect(target?.focus).toHaveBeenCalledWith({ preventScroll: true });
         expect(target?.classes).toContain('pa-memory-control-center__item--targeted');
     });

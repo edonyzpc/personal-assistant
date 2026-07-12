@@ -8,6 +8,7 @@
  * state via `setState()`.
  */
 
+import { Platform } from "obsidian";
 import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState, PetTaskKind } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import {
@@ -29,11 +30,46 @@ export function getPetAriaLabel(locale: PageletLocale, state?: PetState, taskKin
     return state ? `${base}: ${pageletT(`pagelet.pet.${state}`, locale)}` : base;
 }
 
-function shouldMountPetInMobileChromeLayer(): boolean {
-    const doc = getPlatformDocument();
-    const win = getOptionalPlatformWindow();
+export type PetMountTarget = {
+    mountEl: HTMLElement;
+    insertAfterEl: HTMLElement | null;
+    mobileToolbar: boolean;
+};
+
+export function resolvePetMountTarget(containerEl: HTMLElement): PetMountTarget {
+    const doc = containerEl.ownerDocument ?? getPlatformDocument();
+    const win = doc.defaultView ?? getOptionalPlatformWindow();
     const viewportWidth = win?.innerWidth ?? doc.documentElement.clientWidth;
-    return doc.body.classList.contains("is-mobile") && viewportWidth <= 600;
+    const viewportHeight = win?.innerHeight ?? doc.documentElement.clientHeight;
+    const shortEdge = Math.min(
+        viewportWidth > 0 ? viewportWidth : Number.POSITIVE_INFINITY,
+        viewportHeight > 0 ? viewportHeight : Number.POSITIVE_INFINITY,
+    );
+    const isDesktopPhoneSimulation = Platform.isDesktop
+        && doc.body.classList.contains("is-mobile")
+        && shortEdge <= 600;
+    const isPhoneLayout = Platform.isPhone || isDesktopPhoneSimulation;
+    if (!isPhoneLayout) {
+        return { mountEl: containerEl, insertAfterEl: null, mobileToolbar: false };
+    }
+
+    // Scope the host lookup to the current Markdown leaf. A global query can
+    // select chrome from another split leaf and recreate the same detached
+    // overlay problem this path is meant to avoid.
+    const leafContent = containerEl.closest<HTMLElement>(".workspace-leaf-content");
+    const toolbarLeft = leafContent?.querySelector<HTMLElement>(".view-header-left") ?? null;
+    if (!toolbarLeft) {
+        return { mountEl: containerEl, insertAfterEl: null, mobileToolbar: false };
+    }
+
+    const sidebarToggle = toolbarLeft.querySelector<HTMLElement>(
+        ".sidebar-toggle-button.mod-left",
+    );
+    return {
+        mountEl: toolbarLeft,
+        insertAfterEl: sidebarToggle?.parentElement === toolbarLeft ? sidebarToggle : null,
+        mobileToolbar: true,
+    };
 }
 
 const QUICK_CAPTURE_HOLD_MS = 520;
@@ -128,12 +164,13 @@ export class PetView implements PetRenderer {
         };
     }
 
-    /** Mount the Pet into a container element (the markdown view's content area). */
+    /** Mount the Pet into the active Markdown leaf or its phone toolbar. */
     mount(containerEl: HTMLElement): void {
         if (this._destroyed) return;
         if (this._rootEl) return; // already mounted
 
-        const mountEl = shouldMountPetInMobileChromeLayer() ? getPlatformDocument().body : containerEl;
+        const mountTarget = resolvePetMountTarget(containerEl);
+        const mountEl = mountTarget.mountEl;
         this._containerEl = mountEl;
 
         // Build DOM structure
@@ -146,6 +183,9 @@ export class PetView implements PetRenderer {
         root.setAttribute("role", "button");
         root.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state, this._taskKind));
         root.setAttribute("aria-live", "polite");
+        if (mountTarget.mobileToolbar) {
+            root.classList.add("pa-pagelet-pet--mobile-toolbar");
+        }
 
         const wrapper = createHtmlElement("div");
         wrapper.className = "pa-pagelet-pet-wrapper";
@@ -176,7 +216,11 @@ export class PetView implements PetRenderer {
         root.addEventListener("touchstart", this._handleTouchstart, { passive: true });
         root.addEventListener("touchend", this._handleTouchend, { passive: false });
 
-        mountEl.appendChild(root);
+        if (mountTarget.insertAfterEl) {
+            mountEl.insertBefore(root, mountTarget.insertAfterEl.nextSibling);
+        } else {
+            mountEl.appendChild(root);
+        }
 
         this._rootEl = root;
         this._svgWrapEl = svgWrap;

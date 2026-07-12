@@ -2,6 +2,7 @@
 
 import {
     quietRecallGovernedClaimId,
+    quietRecallLinkTargetPath,
     type QuietRecallCandidate,
     type QuietRecallSaveResult,
 } from "../../../pa";
@@ -43,7 +44,7 @@ export class QuietRecallSection implements TabSectionRenderer {
     }
 
     hasContent(): boolean {
-        return this.data.candidates.length > 0;
+        return true;
     }
 
     render(container: HTMLElement): void {
@@ -224,9 +225,11 @@ export class QuietRecallSection implements TabSectionRenderer {
         if (!this.callbacks.onSave && !this.callbacks.onLink) return;
         const candidateSaveState = this.saveState.get(candidate.id);
         const candidateLinkState = this.linkState.get(candidate.id);
+        const currentPath = this.data.currentPath ?? this.sourcePath;
+        const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
         const actionRow = el("div", "pa-pagelet-tab-recall-actions");
 
-        if (this.callbacks.onLink) {
+        if (this.callbacks.onLink && linkTargetPath) {
             const linkBtn = el(
                 "button",
                 "pa-pagelet-tab-recall-link",
@@ -284,6 +287,8 @@ export class QuietRecallSection implements TabSectionRenderer {
 
     private async linkCandidate(candidate: QuietRecallCandidate): Promise<void> {
         if (!this.callbacks.onLink) return;
+        const currentPath = this.data.currentPath ?? this.sourcePath;
+        if (!quietRecallLinkTargetPath(candidate, currentPath)) return;
         this.linkState.set(candidate.id, {
             status: "linking",
             message: pageletT("pagelet.tab.recall.linking", this.locale),
@@ -295,7 +300,6 @@ export class QuietRecallSection implements TabSectionRenderer {
         ];
         this.requestRerenderWithFocus(...focusKeys);
         try {
-            const currentPath = this.data.currentPath ?? this.sourcePath;
             const result = await this.callbacks.onLink(candidate, currentPath);
             if (!this.canCommitLinkState()) return;
             this.linkState.set(candidate.id, {

@@ -37,7 +37,7 @@ Pagelet is a **note-review feature** inside an existing Obsidian plugin called *
 | --- | --- |
 | D032 | Background preparation engine introduction — timed polling + change detection + AI + cache |
 | D033 | Pet states: 4 states (resting, idle, working, nudge) |
-| D034 | Pet fixed corner position (configurable, no drag) |
+| D034 | Pet position: configurable desktop/iPad corner; active-note toolbar on iPhone |
 | D035 | Periodic summary simplified flow (one-click generate) |
 | D036 | Separate background preparation/foreground cost control pools |
 | D037 | Progressive disclosure: Pet → Bubble → Panel → Tab |
@@ -62,7 +62,9 @@ Implementation milestones (alpha releases):
 
 ### 3.1 Pet
 
-**What it is**: A 48×56px floating SVG element fixed to a corner of the active markdown leaf.
+**What it is**: A 48×56px floating SVG element scoped to the active markdown
+leaf: fixed to a configurable corner on desktop/iPad and attached to the active
+note toolbar on iPhone.
 
 **Mounting rules (D029/R1)**:
 - ONLY mount on views where `view.getViewType() === 'markdown'`.
@@ -71,6 +73,8 @@ Implementation milestones (alpha releases):
 **Position**:
 - Fixed to one of 4 corners: `bottom-right` (default), `bottom-left`, `top-right`, `top-left`.
 - Persisted per vault in `settings.pagelet.petCorner`.
+- On iPhone, rendered beside the active note's left toolbar controls; the saved
+  corner remains the desktop/iPad preference.
 - Avoids overlapping scrollbars, the status bar, and Obsidian workspace chrome.
 - NOT draggable. No pin, no double-click reposition.
 
@@ -592,7 +596,9 @@ State-specific light-theme glow:
 
 ### Pet on Mobile
 
-- Fixed to configurable corner (same model as desktop).
+- iPhone: follows the active note toolbar and therefore moves with the note leaf
+  when a workspace drawer opens.
+- iPad: keeps the configurable-corner model used on desktop.
 - Scale: 80% (`transform: scale(0.8)`).
 - Minimum touch target: 44×44px (iOS HIG / WCAG 2.5.5).
 - Tap = show Bubble. Single gesture only.
@@ -600,7 +606,7 @@ State-specific light-theme glow:
 
 ### Bubble on Mobile
 
-- **Full-width bottom sheet** (NOT positioned relative to Pet).
+- **Adaptive bottom sheet** (NOT positioned relative to Pet): portrait and compact widths remain near-full-width; shallow iPhone landscape viewports are centered and capped at 480px.
 - Slides up from bottom edge (`animation: bubble-slide-up 0.25s ease-out`).
 - Tail hidden.
 - Larger text and touch targets (`padding: 10px 12px`, `font-size: 14px`).
@@ -611,6 +617,21 @@ body.mobile-mode .bubble {
   left: 8px; right: 8px; bottom: 80px;
   width: auto; max-width: none;
   border-radius: 16px 16px 12px 12px;
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  body.mobile-mode .bubble {
+    --landscape-left: max(16px, env(safe-area-inset-left, 0px));
+    --landscape-right: max(16px, env(safe-area-inset-right, 0px));
+    left: var(--landscape-left);
+    right: var(--landscape-right);
+    width: min(
+      480px,
+      calc(100vw - var(--landscape-left) - var(--landscape-right))
+    );
+    max-width: 480px;
+    margin-inline: auto;
+  }
 }
 ```
 
@@ -644,7 +665,7 @@ All commands registered with `Pagelet:` prefix (D029).
 | `Pagelet: Generate periodic summary` | Trigger Scenario 4 |
 | `Pagelet: Toggle proactive hints` | Toggle 主动提示 on/off |
 | `Pagelet: Show background preparation status` | Show background preparation engine diagnostics |
-| `Pagelet: Move Pet to corner` | Switch Pet corner position |
+| `Pagelet: Move Pet to corner` | Switch the saved desktop/iPad corner preference |
 | `Pagelet: Toggle Pet visibility` | Show/hide Pet |
 
 **Preserved historical design commands**:
@@ -794,7 +815,7 @@ Voice: warm, specific, careful, research-assistant-like. No exaggeration.
 
 ### Pet & Bubble
 - [ ] Pet correctly renders all 4 states with correct colors, animations, and SVG features.
-- [ ] Pet is fixed to configurable corner; persists corner choice across sessions.
+- [ ] Pet persists its desktop/iPad corner choice and follows the active note toolbar on iPhone.
 - [ ] Bubble opens in <200ms when cached results exist.
 - [ ] Click-outside closes Bubble; Click Pet reopens it.
 - [ ] Escape / × closes Bubble.

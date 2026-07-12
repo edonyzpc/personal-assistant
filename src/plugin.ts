@@ -159,6 +159,7 @@ import {
     graphDiscoveryItemToReviewQueueInput,
     maintenanceProposalToReviewQueueInput,
     memoryCandidateFromQueueItem,
+    quietRecallLinkTargetPath,
     quietRecallCandidateToSavedInsightInput,
     scanMaintenanceReview,
     undoMaintenanceMoveAction,
@@ -3045,16 +3046,17 @@ export class PluginManager extends Plugin {
     }
 
     private async runQuietRecall(): Promise<QuietRecallRunResult> {
+        const locale = this.getPageletLocale();
         if (!this.settings.quietRecall.enabled) {
-            return buildQuietRecallCandidates({ now: new Date() });
+            return buildQuietRecallCandidates({ now: new Date(), locale });
         }
 
         const activeFile = this.app.workspace.getActiveFile();
         if (!(activeFile instanceof TFile) || activeFile.extension !== "md") {
-            return buildQuietRecallCandidates({ now: new Date() });
+            return buildQuietRecallCandidates({ now: new Date(), locale });
         }
         if (!this.isDataBoundaryAllowedFile(activeFile)) {
-            return buildQuietRecallCandidates({ now: new Date() });
+            return buildQuietRecallCandidates({ now: new Date(), locale });
         }
 
         const content = await this.app.vault.cachedRead(activeFile);
@@ -3069,6 +3071,7 @@ export class PluginManager extends Plugin {
 
         const recall = buildQuietRecallCandidates({
             now: new Date(),
+            locale,
             currentNote: {
                 path: activeFile.path,
                 title: activeFile.basename,
@@ -3129,11 +3132,11 @@ export class PluginManager extends Plugin {
                 message: pageletT("pagelet.tab.recall.linkNoActiveNote", this.getPageletLocale()),
             };
         }
-        const candidatePath = candidate.sourceRefs[0]?.path;
+        const candidatePath = quietRecallLinkTargetPath(candidate, resolvedSourcePath);
         if (!candidatePath) {
             return {
                 ok: false,
-                message: pageletT("pagelet.tab.recall.linkNoCandidate", this.getPageletLocale()),
+                message: pageletT("pagelet.tab.recall.linkNoDistinctSource", this.getPageletLocale()),
             };
         }
         return this.linkRecallCandidate(resolvedSourcePath, candidatePath);
@@ -3141,8 +3144,16 @@ export class PluginManager extends Plugin {
 
     private async linkRecallCandidate(currentPath: string, candidatePath: string): Promise<{ ok: boolean; message: string }> {
         const locale = this.getPageletLocale();
-        const currentFile = this.app.vault.getAbstractFileByPath(normalizePath(currentPath).replace(/^\.\//, ""));
-        const candidateFile = this.app.vault.getAbstractFileByPath(normalizePath(candidatePath).replace(/^\.\//, ""));
+        const normalizedCurrentPath = normalizePath(currentPath).replace(/^\.\//, "");
+        const normalizedCandidatePath = normalizePath(candidatePath).replace(/^\.\//, "");
+        if (!normalizedCurrentPath || normalizedCurrentPath === normalizedCandidatePath) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.recall.linkNoDistinctSource", locale),
+            };
+        }
+        const currentFile = this.app.vault.getAbstractFileByPath(normalizedCurrentPath);
+        const candidateFile = this.app.vault.getAbstractFileByPath(normalizedCandidatePath);
         if (
             !(currentFile instanceof TFile)
             || currentFile.extension !== "md"
@@ -3158,6 +3169,21 @@ export class PluginManager extends Plugin {
             return {
                 ok: false,
                 message: pageletT("pagelet.tab.recall.linkBlocked", locale),
+            };
+        }
+
+        const confirmed = await confirmUserAction(this.app, {
+            title: pageletT("pagelet.tab.recall.linkConfirmTitle", locale),
+            message: pageletT("pagelet.tab.recall.linkConfirmMessage", locale, {
+                currentPath: currentFile.path,
+                candidatePath: candidateFile.path,
+            }),
+            confirmText: pageletT("pagelet.tab.recall.linkConfirm", locale),
+        });
+        if (!confirmed) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.recall.linkCancelled", locale),
             };
         }
 

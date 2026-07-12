@@ -62,6 +62,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
     }
 
     hasContent(): boolean {
+        if (this.data.contextual === true) return this.data.records.length > 0;
         return (this.data.candidates?.length ?? 0) > 0
             || this.data.records.length > 0
             || (this.data.routedItems?.length ?? 0) > 0
@@ -137,6 +138,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
         if (!this.containerEl) return;
         const candidates = this.data.candidates ?? [];
         const { records } = this.data;
+        const contextual = this.data.contextual === true;
         const usesLegacyTrust = this.data.governanceMode === undefined
             || this.data.governanceMode === "legacy_threshold";
         const trustLevel = usesLegacyTrust
@@ -144,12 +146,15 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
             : 0;
         const showDurableGovernance = this.data.governanceMode !== "unavailable"
             && (this.data.governanceMode !== "effect_based" || this.data.contextual === true);
-        const showRecentChanges = showDurableGovernance && this.data.contextual !== true;
+        const showRecentChanges = showDurableGovernance && !contextual;
 
         const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-memory-governance");
         const sectionHeader = el("div", "pa-pagelet-tab-memory-section-header");
-        sectionHeader.appendChild(el("h2", undefined, pageletT("pagelet.tab.memory.title", this.locale)));
-        if (this.callbacks.onOpenMemorySettings && this.data.contextual !== true) {
+        sectionHeader.appendChild(el("h2", undefined, pageletT(
+            contextual ? "pagelet.tab.memory.contextualTitle" : "pagelet.tab.memory.title",
+            this.locale,
+        )));
+        if (this.callbacks.onOpenMemorySettings && !contextual) {
             const settingsButton = el(
                 "button",
                 "pa-pagelet-tab-memory-settings",
@@ -164,65 +169,70 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
         }
         section.appendChild(sectionHeader);
         section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.memory.summary", this.locale)));
+            pageletT(
+                contextual ? "pagelet.tab.memory.contextualSummary" : "pagelet.tab.memory.summary",
+                this.locale,
+            )));
 
-        const pendingCandidates = candidates.filter((item) => item.type === "memory_candidate");
-        const autoAcceptedCandidates = pendingCandidates.filter((item) => this.isAutoAcceptedCandidate(item, trustLevel));
+        if (!contextual) {
+            const pendingCandidates = candidates.filter((item) => item.type === "memory_candidate");
+            const autoAcceptedCandidates = pendingCandidates.filter((item) => this.isAutoAcceptedCandidate(item, trustLevel));
 
-        // Level 1 batch digest card: show when trust level = 1 and 3+ pending candidates
-        if (usesLegacyTrust && trustLevel === 1
-            && pendingCandidates.length >= 3 && this.callbacks.isDigestDeferred?.() !== true) {
-            const digestCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-digest");
-            digestCard.appendChild(el("p", undefined,
-                pageletT("pagelet.tab.memory.trustDigest", this.locale, { count: pendingCandidates.length })));
-            const digestActions = el("div", "pa-pagelet-tab-memory-candidate-actions");
+            // Level 1 batch digest card: show when trust level = 1 and 3+ pending candidates
+            if (usesLegacyTrust && trustLevel === 1
+                && pendingCandidates.length >= 3 && this.callbacks.isDigestDeferred?.() !== true) {
+                const digestCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-digest");
+                digestCard.appendChild(el("p", undefined,
+                    pageletT("pagelet.tab.memory.trustDigest", this.locale, { count: pendingCandidates.length })));
+                const digestActions = el("div", "pa-pagelet-tab-memory-candidate-actions");
 
-            const acceptAllBtn = el("button", "pa-pagelet-tab-memory-confirm",
-                pageletT("pagelet.tab.memory.trustDigestAcceptAll", this.locale));
-            acceptAllBtn.setAttribute("type", "button");
-            acceptAllBtn.addEventListener("click", () => { void this.confirmAll(pendingCandidates); });
-            digestActions.appendChild(acceptAllBtn);
+                const acceptAllBtn = el("button", "pa-pagelet-tab-memory-confirm",
+                    pageletT("pagelet.tab.memory.trustDigestAcceptAll", this.locale));
+                acceptAllBtn.setAttribute("type", "button");
+                acceptAllBtn.addEventListener("click", () => { void this.confirmAll(pendingCandidates); });
+                digestActions.appendChild(acceptAllBtn);
 
-            const laterBtn = el("button", "pa-pagelet-tab-memory-dismiss",
-                pageletT("pagelet.tab.memory.trustDigestLater", this.locale));
-            laterBtn.setAttribute("type", "button");
-            laterBtn.addEventListener("click", () => {
-                this.callbacks.onDeferDigest?.();
-                this.section.requestRerender();
-            });
-            digestActions.appendChild(laterBtn);
-
-            digestCard.appendChild(digestActions);
-            section.appendChild(digestCard);
-        }
-
-        if (candidates.length > 0) {
-            const candidateGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-candidates");
-            const headerRow = el("div", "pa-pagelet-tab-memory-candidates-header");
-            headerRow.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.candidatesTitle", this.locale)));
-            // Level 2 hides batch confirm; candidates that still need action keep per-item controls.
-            if (usesLegacyTrust && trustLevel < 2 && pendingCandidates.length > 1 && this.callbacks.onConfirm) {
-                const confirmAllButton = el("button", "pa-pagelet-tab-memory-confirm-all",
-                    pageletT("pagelet.tab.memory.confirmAll", this.locale, { count: pendingCandidates.length }));
-                confirmAllButton.setAttribute("type", "button");
-                confirmAllButton.addEventListener("click", (event) => {
-                    event.preventDefault();
-                    void this.confirmAll(pendingCandidates);
+                const laterBtn = el("button", "pa-pagelet-tab-memory-dismiss",
+                    pageletT("pagelet.tab.memory.trustDigestLater", this.locale));
+                laterBtn.setAttribute("type", "button");
+                laterBtn.addEventListener("click", () => {
+                    this.callbacks.onDeferDigest?.();
+                    this.section.requestRerender();
                 });
-                headerRow.appendChild(confirmAllButton);
+                digestActions.appendChild(laterBtn);
+
+                digestCard.appendChild(digestActions);
+                section.appendChild(digestCard);
             }
-            candidateGroup.appendChild(headerRow);
-            candidateGroup.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-                usesLegacyTrust && trustLevel === 2 && autoAcceptedCandidates.length > 0
-                    ? pageletT("pagelet.tab.memory.level2Summary", this.locale, { count: autoAcceptedCandidates.length })
-                    : pageletT("pagelet.tab.memory.candidatesSummary", this.locale, { count: candidates.length })));
-            for (const item of candidates) {
-                candidateGroup.appendChild(this.renderCandidateItem(item, trustLevel));
+
+            if (candidates.length > 0) {
+                const candidateGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-candidates");
+                const headerRow = el("div", "pa-pagelet-tab-memory-candidates-header");
+                headerRow.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.candidatesTitle", this.locale)));
+                // Level 2 hides batch confirm; candidates that still need action keep per-item controls.
+                if (usesLegacyTrust && trustLevel < 2 && pendingCandidates.length > 1 && this.callbacks.onConfirm) {
+                    const confirmAllButton = el("button", "pa-pagelet-tab-memory-confirm-all",
+                        pageletT("pagelet.tab.memory.confirmAll", this.locale, { count: pendingCandidates.length }));
+                    confirmAllButton.setAttribute("type", "button");
+                    confirmAllButton.addEventListener("click", (event) => {
+                        event.preventDefault();
+                        void this.confirmAll(pendingCandidates);
+                    });
+                    headerRow.appendChild(confirmAllButton);
+                }
+                candidateGroup.appendChild(headerRow);
+                candidateGroup.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
+                    usesLegacyTrust && trustLevel === 2 && autoAcceptedCandidates.length > 0
+                        ? pageletT("pagelet.tab.memory.level2Summary", this.locale, { count: autoAcceptedCandidates.length })
+                        : pageletT("pagelet.tab.memory.candidatesSummary", this.locale, { count: candidates.length })));
+                for (const item of candidates) {
+                    candidateGroup.appendChild(this.renderCandidateItem(item, trustLevel));
+                }
+                section.appendChild(candidateGroup);
+            } else {
+                section.appendChild(renderEmptyCard(
+                    "pa-pagelet-tab-memory-candidates-empty", "pagelet.tab.memory.noCandidates", undefined, this.locale));
             }
-            section.appendChild(candidateGroup);
-        } else {
-            section.appendChild(renderEmptyCard(
-                "pa-pagelet-tab-memory-candidates-empty", "pagelet.tab.memory.noCandidates", undefined, this.locale));
         }
 
         if (showDurableGovernance && records.length > 0) {
@@ -239,7 +249,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
         }
 
         const routedItems = this.data.routedItems ?? [];
-        if (routedItems.length > 0) {
+        if (!contextual && routedItems.length > 0) {
             const suggestionsGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-suggestions");
             suggestionsGroup.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.suggestionsTitle", this.locale)));
             for (const item of routedItems) {
@@ -277,7 +287,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
             this.appendMemoryMetaRow(
                 cardEl,
                 "pagelet.tab.memory.timeLabel",
-                formatMemoryTime(record.forgottenAt ?? record.updatedAt),
+                formatMemoryTime(record.forgottenAt ?? record.updatedAt, this.locale),
             );
             const settingsButton = this.createMemorySettingsButton(record.id, "record");
             if (settingsButton) {
@@ -314,7 +324,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
         this.appendMemoryMetaRow(
             cardEl,
             "pagelet.tab.memory.timeLabel",
-            formatMemoryTime(record.updatedAt),
+            formatMemoryTime(record.updatedAt, this.locale),
         );
 
         if (this.editingRecordIds.has(record.id)
@@ -646,7 +656,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
         this.appendMemoryMetaRow(
             card,
             "pagelet.tab.memory.timeLabel",
-            formatMemoryTime(change.occurredAt),
+            formatMemoryTime(change.occurredAt, this.locale),
         );
         const stateKey = `recent:${change.id}`;
         const state = this.recordActionState.get(stateKey);
@@ -1098,12 +1108,14 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
     }
 }
 
-function formatMemoryTime(value: string | undefined): string {
+function formatMemoryTime(value: string | undefined, locale: PageletLocale): string {
     if (!value) return "";
     const timestamp = Date.parse(value);
     if (!Number.isFinite(timestamp)) return value;
-    const iso = new Date(timestamp).toISOString();
-    return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+    return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en", {
+        dateStyle: "medium",
+        timeStyle: "short",
+    }).format(new Date(timestamp));
 }
 
 function candidateSourceMessageKey(value: unknown): string | null {

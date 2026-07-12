@@ -719,6 +719,13 @@ describe("normalizeReviewsFolder (settings-layer validator)", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderPageletSection", () => {
+    it("explains that the corner preference is desktop/iPad-only", () => {
+        expect(makePageletTranslator("en")("pagelet.settings.petCorner.desc"))
+            .toContain("On iPhone, it follows the active note toolbar.");
+        expect(makePageletTranslator("zh")("pagelet.settings.petCorner.desc"))
+            .toContain("iPhone 上会跟随当前笔记工具栏");
+    });
+
     it("renders all settings exactly once", () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();

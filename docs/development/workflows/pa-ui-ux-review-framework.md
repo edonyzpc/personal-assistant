@@ -1,6 +1,6 @@
 # PA UI/UX Review Framework
 
-Updated: 2026-07-03
+Updated: 2026-07-11
 
 ## Status
 
@@ -11,6 +11,7 @@ Updated: 2026-07-03
 | Role | Defines evaluation dimensions, scoring criteria, and review process for UI/UX design audits |
 | Related north star | [PA Product North Star](../../product/pa-product-north-star.md) |
 | Related doctrine | [Low-Burden Review Product Principles](../../product/pa-low-burden-review-product-principles.md) |
+| Current amendment | Effect/risk-based Memory governance; low-risk reversible understanding may update quietly only when inspectable, correctable, and recoverable |
 | Methodology source | [Anthropic Harness Design: Evaluator Architecture](https://www.anthropic.com/engineering/harness-design-long-running-apps) |
 
 ## Purpose
@@ -101,16 +102,17 @@ Derived from the PA North Star ("随手记下，需要时自然浮现"), design 
 
 #### B2. Trustworthiness (可信度)
 
-> Does AI output show source evidence? Are durable actions gated by preview,
-> confirmation, and undo?
+> Does AI output show source evidence? Does disclosure and user control match
+> the effect, sensitivity, scope, provenance, reversibility, and authority of
+> the change?
 
 | Score | Description |
 | --- | --- |
-| 5 | Every AI claim links to source notes; durable actions have preview + confirm + undo; user always knows what will change |
-| 4 | Most claims are source-backed; durable actions are gated; minor gaps in undo paths |
-| 3 | Evidence is present but sometimes vague; some actions lack clear preview |
-| 2 | AI output frequently lacks source links; confirmation gates are inconsistent |
-| 1 | Black-box outputs with no evidence; actions happen without adequate warning |
+| 5 | Claims are source-backed; low-risk current-vault understanding is inspectable, correctable, and recoverable; conflicts, sensitive inference, scope widening, vault mutation, and external action receive proportionate prior disclosure or authorization |
+| 4 | Control generally matches consequence, with minor gaps in evidence wording, recovery visibility, or boundary explanation |
+| 3 | Evidence exists but effect/scope is sometimes vague, or controls are either too weak for risk or unnecessarily interruptive for low-risk reversible changes |
+| 2 | Claims frequently lack usable provenance; consequential changes have inconsistent control, or routine low-risk changes create repeated confirmation chores |
+| 1 | Black-box outputs or broad actions occur without adequate disclosure, correction, recovery, or authority boundaries |
 
 #### B3. Capture Friction (捕获摩擦)
 
@@ -176,12 +178,12 @@ Derived from the PA North Star ("随手记下，需要时自然浮现"), design 
 | S4 | Tab | Pagelet L4 | Workspace leaf | `pagelet/tab/TabView.ts` |
 | S5 | Chat | Independent view | Workspace leaf | `chat/chat-view.ts` |
 | S6 | Statistics | Independent view | Workspace leaf | `components/Statistics.tsx` |
-| S7 | Settings | Plugin settings | Settings tab | `settings.ts` |
+| S7 | Settings + Memory control center | Plugin settings | Settings summary/detail/recovery | `settings.ts`, `pa/memory-control-center.ts`, `pa/memory-governance-view.ts` |
 | S8 | Quick Capture + Modals | Modal dialogs | Overlay | `quick-capture.ts`, `modal.ts`, `confirm.ts` |
 
 ### 2.2 Cross-Surface Checks
 
-In addition to per-surface scoring, evaluate these four cross-cutting
+In addition to per-surface scoring, evaluate these five cross-cutting
 dimensions:
 
 | Check | What to look for |
@@ -190,6 +192,7 @@ dimensions:
 | Interaction pattern consistency | Close/dismiss, expand/collapse, confirm/cancel gestures and controls |
 | Mobile experience parity | Touch targets (≥44px), bottom-sheet patterns, keyboard handling, viewport adaptation |
 | Terminology consistency | No RAG/VSS/embedding/agent/memory jargon in user-facing copy; consistent use of PA product terms |
+| Consequence/control consistency | Equivalent effects receive equivalent disclosure, correction, recovery, and authorization across Settings, Pagelet, Chat, and Recall |
 
 ---
 
@@ -261,8 +264,8 @@ Low-Burden Review doctrine:
 | AP2 | Knowledge manager burden | User must classify, tag, or organize AI output |
 | AP3 | AI content drowning | AI-generated text visually competes with or outweighs user's original notes |
 | AP4 | Smart interruption | Proactive hints feel frequent, urgent, or attention-demanding |
-| AP5 | Premature automation | Actions happen without adequate trust scaffolding |
-| AP6 | Clickworker safety | Human-in-the-loop controls create repetitive confirmation chores |
+| AP5 | Premature automation | Automation outruns earned trust, provenance, scope, reversibility, or the action-authority boundary |
+| AP6 | Clickworker safety | Low-risk reversible understanding creates repetitive confirmation chores instead of quiet, inspectable recovery |
 | AP7 | Queue/badge creep | Counts, badges, or "unresolved" states grow without user intent |
 | AP8 | Jargon leakage | RAG, VSS, embedding, agent, memory, GraphRAG appear in user-facing copy |
 | AP9 | Obligation language | "Needs review", "Pending", "Action required" in non-durable contexts |

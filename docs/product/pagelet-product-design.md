@@ -213,7 +213,7 @@ The Pet is Pagelet's always-present, context-aware companion:
 - It makes Pagelet visible and memorable. **[PRESERVED from historical design mascot]**
 - It communicates current state (resting, idle, working, nudge). **[CHANGED — 4 states replace historical design's 4, refined]**
 - It opens progressive disclosure layers (Bubble -> Panel -> Tab). **[NEW]**
-- It is fixed to a configurable corner of the active markdown leaf (default bottom-right). **[NEW]**
+- On desktop and iPad, it is fixed to a configurable corner of the active markdown leaf; on iPhone, it follows the active note toolbar. **[UPDATED]**
 - It auto-senses the current note context. **[NEW]**
 
 It is NOT a full pet-care product, complex notification system, or autonomous agent surface.
@@ -264,15 +264,18 @@ Proposed decision: **D033** — Pet states: 4 states (resting, idle, working, nu
 
 > **State transitions are automatic.** Pet states are driven by system events (note activity detection, background preparation scheduling, analysis results). Users do not manually control Pet state. The only user-controlled mode is the **proactive hints (主动提示) toggle**, which controls whether the Pet enters `nudge` state when insights are ready. State cycling is NOT exposed as a setting.
 
-### Corner Position — [NEW]
+### Desktop and iPad Corner Position — [UPDATED]
 
 - The Pet is fixed to a configurable corner of the active markdown leaf. No drag, no pin, no double-click.
 - Position is one of four corners: `bottom-right` (default), `bottom-left`, `top-right`, `top-left`.
 - Switchable via Settings (dropdown) or Command Palette (`Pagelet: Move Pet to corner`).
 - Position is persisted per vault in `settings.pagelet.petCorner`.
 - The Pet avoids overlapping scrollbars, the status bar, and Obsidian workspace chrome.
+- On iPhone, the Pet ignores the visual corner while it is rendered beside the
+  active note's left toolbar controls. The saved corner remains the preference
+  used on desktop and iPad.
 
-Proposed decision: **D034** — Pet fixed corner position (replaces drag/pin/position memory).
+Proposed decision: **D034** — Desktop/iPad corner preference with an iPhone active-note-toolbar exception (replaces drag/pin/position memory).
 
 ### Proactive Hints (主动提示) — [NEW]
 
@@ -624,7 +627,9 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 
 ### Pet on Mobile
 
-- Fixed to configurable corner (default bottom-right), NOT draggable. Same corner position model as desktop.
+- On iPhone, mounted beside the active note's left toolbar controls so it
+  follows the note leaf when Obsidian opens or closes a workspace drawer.
+- On iPad, retains the configurable-corner model used on desktop.
 - Slightly smaller than desktop (~80% scale).
 - Minimum touch target: 44x44px (iOS HIG / WCAG 2.5.5).
 - Tap = show Bubble. Single gesture only — no long-press context menu.
@@ -633,7 +638,8 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 
 ### Bubble on Mobile
 
-- Full-width bottom sheet (slides up from bottom edge), NOT positioned relative to Pet (unlike desktop's speech bubble).
+- Portrait and compact-width layouts use a near-full-width bottom sheet that slides up from the bottom edge; it is NOT positioned relative to Pet like the desktop speech bubble.
+- On shallow iPhone landscape viewports (`orientation: landscape` and height ≤500px), the bottom sheet is centered, respects both horizontal safe areas, and is capped at 480px so the L2 surface stays visually lighter than Panel.
 - Larger text and touch targets for readability.
 - Swipe down to dismiss (or tap outside).
 - Quick action buttons displayed as full-width rows (not inline).
@@ -1040,7 +1046,7 @@ Pagelet considered successful if:
 
 **Pet and Bubble (new)**:
 - Pet correctly reflects all 4 states (resting, idle, working, nudge).
-- Pet is fixed to a configurable corner and persists corner choice across sessions.
+- Pet persists its desktop/iPad corner choice; on iPhone it follows the active note toolbar.
 - Bubble opens in under 200ms when cached results exist.
 - Bubble closes on click-outside, X, and Escape.
 - Proactive hints correctly toggle and respect cooldown.
@@ -1166,7 +1172,7 @@ Pagelet considered successful if:
 | --- | --- | --- |
 | **D032** | Background preparation engine | Introduce timed polling + change detection + AI background preparation + result caching. Uses `runKind="background"` with `allowWrite=false`. Supersedes historical design Principle #2 ("no background analysis"). Background preparation is a performance optimization, not proactive analysis. |
 | **D033** | Pet states (4 states) | 4 states: resting (#d0d0d0 gray), idle (#e8e8e8 gray), working (#7c9eff blue), nudge (#5dd39e green). Replaces earlier 6-state proposal. |
-| **D034** | Pet fixed corner position | Pet is fixed to a configurable corner (default bottom-right). Switchable via Settings or Command Palette. No drag, no pin, no double-click. |
+| **D034** | Pet position | Desktop/iPad use a configurable corner (default bottom-right); iPhone follows the active note toolbar. The corner remains switchable via Settings or Command Palette. No drag, no pin, no double-click. |
 | **D035** | Periodic summary simplified flow | One-click generate replaces collect-then-write pipeline for periodic summary. Supersedes historical design Principle #4 for this scenario. |
 | **D036** | Background preparation engine cost control | Separate rate limits and token budgets for background preparation vs foreground AI calls. When enabled, background preparation defaults to 4K+1K tokens, 2/hour, 20/day. |
 | **D037** | Progressive disclosure layers | Four-layer interaction model: Pet -> Bubble -> Panel -> Tab. Each layer is self-contained. Bubble closes on click-outside, X, and Escape. |
@@ -1181,7 +1187,7 @@ These proposed decisions should be carried forward from `docs/archive/review-ass
 
 ### Phase 2 candidates (Pagelet scope — this document):
 
-- Pet fixed corner position. (D034)
+- Pet position: configurable desktop/iPad corner and iPhone active-note toolbar. (D034)
 - 4-state Pet with transitions and animations.
 - Bubble design and implementation (including click-outside close behavior).
 - Background preparation engine. (D032)

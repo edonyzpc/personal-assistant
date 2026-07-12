@@ -901,6 +901,16 @@ export class SettingTab extends PluginSettingTab {
     private secretPickerDocument: Document | null = null;
     private memoryControlCenterGeneration = 0;
     private pendingMemoryControlCenterTargetId: string | null = null;
+    private settingsNavigationButtons = new Map<string, HTMLButtonElement>();
+    private settingsNavigationSelect: HTMLSelectElement | null = null;
+    private settingsNavigationCount: HTMLElement | null = null;
+    private settingsNavigationProgressSegments: HTMLElement[] = [];
+    private settingsNavigationGroupIds: string[] = [];
+    private settingsNavigationResizeObserver: ResizeObserver | null = null;
+    private settingsNavigationMobileOffset = 72;
+    private settingsGroupSummaries = new Map<string, HTMLElement>();
+    private settingsScrollRoot: HTMLElement | null = null;
+    private settingsScrollHandler: (() => void) | null = null;
 
     // Set by rebuildQwenOptions(); invoked by Base URL onChange.
     private refreshQwenResponseOptionAvailability: (() => void) | null = null;
@@ -943,7 +953,18 @@ export class SettingTab extends PluginSettingTab {
         (details as HTMLDetailsElement).open = true;
         this.persistGroupCollapseState(normalizedId, false);
         const summary = details.querySelector("summary");
-        summary?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        this.setActiveSettingsGroup(normalizedId);
+        this.refreshSettingsNavigationMobileOffset(this.settingsScrollRoot ?? undefined);
+        if (summary) {
+            this.scrollSettingsSummaryIntoView(
+                summary as HTMLElement,
+                this.settingsScrollBehavior(),
+            );
+        }
+        if (!normalizedTargetId) {
+            (summary as HTMLElement | null)?.focus?.({ preventScroll: true });
+        }
+        this.settingsNavigationButtons.get(normalizedId)?.setAttr("aria-expanded", "true");
         this.focusPendingMemoryControlCenterTarget(false);
     }
 
@@ -956,6 +977,7 @@ export class SettingTab extends PluginSettingTab {
         const doc = getPlatformDocument();
         this.memoryControlCenterGeneration += 1;
 
+        this.stopSettingsNavigation();
         containerEl.empty();
         (containerEl as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-settings-tab");
         (containerEl as HTMLElement & { classList?: DOMTokenList }).classList?.add("pa-settings-tab");
@@ -972,7 +994,8 @@ export class SettingTab extends PluginSettingTab {
         this.featuredImageContainer = null;
         this.refreshQwenResponseOptionAvailability = null;
 
-        this.renderHeader(containerEl);
+        const shell = containerEl.createDiv({ cls: "pa-settings-shell" });
+        this.renderHeader(shell);
 
         const groups: Array<{ id: string; labelKey: string; sections: Array<(parent: HTMLElement) => void> }> = [
             { id: "ai-provider", labelKey: "plugin.settings.group.aiProvider", sections: [
@@ -1005,45 +1028,108 @@ export class SettingTab extends PluginSettingTab {
             ] },
         ];
 
-        const nav = containerEl.createDiv({ cls: "pa-settings-nav",
-            attr: { role: "navigation", "aria-label": this.t("plugin.settings.nav.ariaLabel") },
+        const layout = shell.createDiv({ cls: "pa-settings-layout" });
+        const nav = layout.createEl("nav", {
+            cls: "pa-settings-toc",
+            attr: { "aria-label": this.t("plugin.settings.nav.ariaLabel") },
         });
+        const content = layout.createDiv({ cls: "pa-settings-content" });
+        const jump = content.createDiv({ cls: "pa-settings-jump" });
+        const jumpLabel = jump.createEl("label", {
+            cls: "pa-settings-jump-label",
+            text: this.t("plugin.settings.nav.jumpLabel"),
+            attr: { for: "pa-settings-jump-select" },
+        });
+        const jumpControl = jump.createDiv({ cls: "pa-settings-jump-control" });
+        const jumpSelect = jumpControl.createEl("select", {
+            cls: ["pa-settings-jump-select", "dropdown"],
+            attr: {
+                id: "pa-settings-jump-select",
+            },
+        });
+        const jumpCount = jumpControl.createSpan({
+            cls: "pa-settings-jump-count",
+            text: `1/${groups.length}`,
+            attr: { "aria-hidden": "true" },
+        });
+        const jumpProgress = jump.createDiv({
+            cls: "pa-settings-jump-progress",
+            attr: { "aria-hidden": "true" },
+        });
+        this.settingsNavigationSelect = jumpSelect;
+        this.settingsNavigationCount = jumpCount;
+        this.settingsNavigationGroupIds = groups.map((group) => group.id);
+        jumpLabel.setAttr("for", "pa-settings-jump-select");
 
         for (const group of groups) {
-            const details = containerEl.createEl("details", {
+            const detailsId = `pa-settings-group-${group.id}`;
+            const summaryId = `pa-settings-nav-target-${group.id}`;
+            const details = content.createEl("details", {
                 cls: "pa-settings-group",
-                attr: { id: `pa-settings-group-${group.id}` },
+                attr: { id: detailsId, "aria-labelledby": summaryId },
             });
             (details as HTMLDetailsElement).open = !this.isGroupCollapsed(group.id);
             const summary = details.createEl("summary", {
                 cls: "pa-settings-group-summary",
                 text: this.t(group.labelKey as never),
-                attr: { id: `pa-settings-nav-target-${group.id}` },
+                attr: { id: summaryId },
             });
+            this.settingsGroupSummaries.set(group.id, summary);
             details.addEventListener("toggle", () => {
                 this.persistGroupCollapseState(group.id, !details.open);
+                this.settingsNavigationButtons.get(group.id)?.setAttr(
+                    "aria-expanded",
+                    String(details.open),
+                );
             });
+            const body = details.createDiv({ cls: "pa-settings-group__body" });
             for (const renderSection of group.sections) {
-                renderSection(details);
+                renderSection(body);
             }
 
+            const groupLabel = this.t(group.labelKey as never);
             const navItem = nav.createEl("button", {
-                cls: "pa-settings-nav-item",
-                text: this.t(group.labelKey as never),
+                cls: "pa-settings-toc-item",
+                attr: {
+                    type: "button",
+                    "aria-label": groupLabel,
+                    "aria-controls": detailsId,
+                    "aria-current": "false",
+                    "aria-expanded": String(details.open),
+                },
             });
-            navItem.setAttr("type", "button");
-            navItem.addEventListener("click", () => {
-                (details as HTMLDetailsElement).open = true;
-                this.persistGroupCollapseState(group.id, false);
-                (summary as HTMLElement).scrollIntoView?.({ behavior: "smooth", block: "start" });
+            navItem.createSpan({
+                cls: "pa-settings-toc-item__tick",
+                attr: { "aria-hidden": "true" },
             });
+            navItem.createSpan({
+                cls: "pa-settings-toc-item__label",
+                text: groupLabel,
+            });
+            this.settingsNavigationButtons.set(group.id, navItem);
+            navItem.addEventListener("click", () => this.openGroup(group.id));
+
+            jumpSelect.createEl("option", {
+                text: groupLabel,
+                attr: { value: group.id },
+            });
+            const progressSegment = jumpProgress.createSpan({
+                cls: "pa-settings-jump-progress__segment",
+                attr: { "data-current": "false" },
+            });
+            this.settingsNavigationProgressSegments.push(progressSegment);
         }
+        jumpSelect.addEventListener("change", () => this.openGroup(jumpSelect.value));
+        this.setActiveSettingsGroup(groups[0]?.id ?? "");
+        this.startSettingsNavigation(groups.map((group) => group.id));
+        this.startSettingsNavigationOffsetTracking(jump);
         this.markFormControlSettings(containerEl);
         this.startSecretPickerObserver();
     }
 
     hide(): void {
         // Obsidian invokes hide() when the user closes the settings tab.
+        this.stopSettingsNavigation();
         this.stopSecretPickerObserver();
         this.memoryControlCenterGeneration += 1;
         getPlatformDocument().body?.classList.remove("pa-settings-tab-open");
@@ -1084,6 +1170,211 @@ export class SettingTab extends PluginSettingTab {
             }
             localStorage.setItem("pa-settings-collapsed", JSON.stringify(state));
         } catch { /* localStorage unavailable — graceful degradation */ }
+    }
+
+    private setActiveSettingsGroup(groupId: string): void {
+        if (!groupId) return;
+        this.settingsNavigationButtons.forEach((button, id) => {
+            button.setAttr("aria-current", id === groupId ? "location" : "false");
+        });
+        if (this.settingsNavigationSelect) {
+            this.settingsNavigationSelect.value = groupId;
+        }
+        const activeIndex = this.settingsNavigationGroupIds.indexOf(groupId);
+        if (activeIndex >= 0) {
+            this.settingsNavigationCount?.setText(
+                `${activeIndex + 1}/${this.settingsNavigationGroupIds.length}`,
+            );
+            this.settingsNavigationProgressSegments.forEach((segment, index) => {
+                segment.setAttr("data-current", String(index === activeIndex));
+            });
+        }
+    }
+
+    private settingsScrollBehavior(): ScrollBehavior {
+        try {
+            const win = getPlatformDocument().defaultView;
+            return win?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+        } catch {
+            return "smooth";
+        }
+    }
+
+    private scrollSettingsSummaryIntoView(
+        summary: HTMLElement,
+        behavior: ScrollBehavior,
+    ): void {
+        const root = this.settingsScrollRoot;
+        const isMobile = root?.ownerDocument?.body?.classList.contains("is-mobile") === true;
+        if (
+            !isMobile
+            || !root
+            || typeof root.scrollTo !== "function"
+            || typeof root.getBoundingClientRect !== "function"
+            || typeof summary.getBoundingClientRect !== "function"
+        ) {
+            summary.scrollIntoView?.({ behavior, block: "start" });
+            return;
+        }
+        const rootRect = root.getBoundingClientRect();
+        const summaryRect = summary.getBoundingClientRect();
+        const top = root.scrollTop
+            + summaryRect.top
+            - rootRect.top
+            - this.settingsNavigationMobileOffset;
+        root.scrollTo({ top: Math.max(0, top), behavior });
+    }
+
+    private findSettingsScrollRoot(): HTMLElement {
+        const { containerEl } = this;
+        const verticalTabContent = typeof containerEl.closest === "function"
+            ? containerEl.closest<HTMLElement>(".vertical-tab-content")
+            : null;
+        const verticalTabContainer = typeof containerEl.closest === "function"
+            ? containerEl.closest<HTMLElement>(".vertical-tab-content-container")
+            : null;
+        const candidates = [...new Set([
+            verticalTabContent,
+            verticalTabContainer,
+            containerEl,
+        ].filter((candidate): candidate is HTMLElement => Boolean(candidate)))];
+        const scrollable = candidates.find((candidate) => {
+            if (candidate.scrollHeight > candidate.clientHeight + 1) return true;
+            try {
+                const overflowY = candidate.ownerDocument.defaultView
+                    ?.getComputedStyle(candidate).overflowY;
+                return overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay";
+            } catch {
+                return false;
+            }
+        });
+        return scrollable ?? verticalTabContent ?? containerEl;
+    }
+
+    private startSettingsNavigation(groupIds: string[]): void {
+        const scrollRoot = this.findSettingsScrollRoot();
+        if (
+            typeof scrollRoot.addEventListener !== "function"
+            || typeof scrollRoot.removeEventListener !== "function"
+            || typeof scrollRoot.getBoundingClientRect !== "function"
+        ) {
+            return;
+        }
+
+        this.settingsScrollRoot = scrollRoot;
+        this.settingsScrollHandler = () => this.syncActiveSettingsGroupFromScroll(groupIds);
+        scrollRoot.addEventListener("scroll", this.settingsScrollHandler, { passive: true });
+        this.syncActiveSettingsGroupFromScroll(groupIds);
+    }
+
+    private syncActiveSettingsGroupFromScroll(groupIds: string[]): void {
+        const root = this.settingsScrollRoot;
+        if (!root || typeof root.getBoundingClientRect !== "function") return;
+        const rootRect = root.getBoundingClientRect();
+        const activationLine = rootRect.top
+            + this.settingsNavigationActivationOffset(root)
+            + 2;
+        let activeId = groupIds[0];
+
+        for (const groupId of groupIds) {
+            const summary = this.settingsGroupSummaries.get(groupId);
+            if (!summary || typeof summary.getBoundingClientRect !== "function") continue;
+            if (summary.getBoundingClientRect().top <= activationLine) {
+                activeId = groupId;
+            } else {
+                break;
+            }
+        }
+
+        const isAtBottom = root.scrollHeight > root.clientHeight + 8
+            && root.scrollTop + root.clientHeight >= root.scrollHeight - 8;
+        if (isAtBottom && groupIds.length > 0) {
+            activeId = groupIds[groupIds.length - 1];
+        }
+        if (activeId) this.setActiveSettingsGroup(activeId);
+    }
+
+    private settingsNavigationActivationOffset(root: HTMLElement): number {
+        if (!root.ownerDocument?.body?.classList.contains("is-mobile")) {
+            return 24;
+        }
+        return this.settingsNavigationMobileOffset;
+    }
+
+    private refreshSettingsNavigationMobileOffset(
+        root?: HTMLElement,
+        jumpOverride?: HTMLElement,
+    ): number {
+        const jump = jumpOverride
+            ?? this.containerEl.querySelector<HTMLElement>(".pa-settings-jump");
+        let nextOffset = this.settingsNavigationMobileOffset;
+        if (jump && typeof jump.getBoundingClientRect === "function") {
+            const height = jump.getBoundingClientRect().height;
+            if (Number.isFinite(height) && height > 0) {
+                const doc = root?.ownerDocument ?? jump.ownerDocument;
+                const win = doc?.defaultView;
+                let stickyInset = 0;
+                if (root && win && typeof win.getComputedStyle === "function") {
+                    const rootStyle = win.getComputedStyle(root);
+                    const jumpStyle = win.getComputedStyle(jump);
+                    const paddingStart = Number.parseFloat(
+                        rootStyle.paddingBlockStart || rootStyle.paddingTop,
+                    );
+                    const stickyTop = Number.parseFloat(jumpStyle.top);
+                    stickyInset = (Number.isFinite(paddingStart) ? paddingStart : 0)
+                        + (Number.isFinite(stickyTop) ? stickyTop : 0);
+                }
+                nextOffset = Math.max(72, Math.ceil(stickyInset + height + 12));
+            }
+        }
+        const offsetChanged = nextOffset !== this.settingsNavigationMobileOffset;
+        this.settingsNavigationMobileOffset = nextOffset;
+        const doc = root?.ownerDocument ?? this.containerEl.ownerDocument;
+        if (offsetChanged && doc?.body?.classList.contains("is-mobile")) {
+            this.containerEl.style?.setProperty(
+                "--pa-settings-mobile-nav-offset",
+                `${this.settingsNavigationMobileOffset}px`,
+            );
+        }
+        return this.settingsNavigationMobileOffset;
+    }
+
+    private startSettingsNavigationOffsetTracking(jump: HTMLElement): void {
+        this.settingsNavigationResizeObserver?.disconnect();
+        this.settingsNavigationResizeObserver = null;
+        const refreshAndSync = () => {
+            const previousOffset = this.settingsNavigationMobileOffset;
+            this.refreshSettingsNavigationMobileOffset(
+                this.settingsScrollRoot ?? undefined,
+                jump,
+            );
+            if (this.settingsNavigationMobileOffset !== previousOffset) {
+                this.settingsScrollHandler?.();
+            }
+        };
+        refreshAndSync();
+        const ResizeObserverCtor = jump.ownerDocument?.defaultView?.ResizeObserver;
+        if (typeof ResizeObserverCtor !== "function") return;
+        this.settingsNavigationResizeObserver = new ResizeObserverCtor(refreshAndSync);
+        this.settingsNavigationResizeObserver.observe(jump);
+    }
+
+    private stopSettingsNavigation(): void {
+        this.settingsNavigationResizeObserver?.disconnect();
+        this.settingsNavigationResizeObserver = null;
+        if (this.settingsScrollRoot && this.settingsScrollHandler) {
+            this.settingsScrollRoot.removeEventListener("scroll", this.settingsScrollHandler);
+        }
+        this.settingsScrollRoot = null;
+        this.settingsScrollHandler = null;
+        this.settingsNavigationButtons.clear();
+        this.settingsGroupSummaries.clear();
+        this.settingsNavigationSelect = null;
+        this.settingsNavigationCount = null;
+        this.settingsNavigationProgressSegments = [];
+        this.settingsNavigationGroupIds = [];
+        this.settingsNavigationMobileOffset = 72;
+        this.containerEl.style?.removeProperty("--pa-settings-mobile-nav-offset");
     }
 
     private startSecretPickerObserver(): void {
@@ -1191,16 +1482,44 @@ export class SettingTab extends PluginSettingTab {
             if (!controlEl) {
                 return;
             }
-            const controls = controlEl.findAll(
-                "input[type='text'], input[type='number'], input:not([type]), select",
+            const controls = controlEl.findAll("input, select, textarea, button")
+                .filter((control) => (
+                    !control.classList.contains("is-measuring")
+                    && control.getAttribute("aria-hidden") !== "true"
+                ));
+            const customControls = controlEl.findAll(
+                ".clickable-icon, .checkbox-container, .pa-settings-skill-picker",
             );
-            if (!controls.length) {
+            const skillPicker = controlEl.querySelector<HTMLElement>(".pa-settings-skill-picker");
+            if (!controls.length && !customControls.length) {
                 return;
             }
-            settingEl.classList.add("pa-setting-has-form-control");
+            const modifierClasses = [
+                "pa-setting-layout--field",
+                "pa-setting-layout--compact",
+                "pa-setting-layout--cluster",
+                "pa-setting-layout--stacked",
+            ];
+            settingEl.classList.remove("pa-setting-has-form-control", ...modifierClasses);
+            settingEl.classList.add("pa-setting-layout");
             settingEl.querySelector<HTMLElement>(".setting-item-info")?.classList.add("pa-setting-form-info");
             controlEl.classList.add("pa-setting-form-control");
-            controls.forEach((control) => control.classList.add("pa-setting-form-input"));
+            const primaryFields = controls.filter((control) => (
+                control.matches(
+                    "select, textarea, input:not([type]), input[type='text'], input[type='number'], "
+                    + "input[type='password'], input[type='url'], input[type='email'], input[type='search']",
+                )
+            ));
+            primaryFields.forEach((control) => control.classList.add("pa-setting-form-input"));
+            let layoutClass = "pa-setting-layout--compact";
+            if (skillPicker || controls.some((control) => control.matches("textarea"))) {
+                layoutClass = "pa-setting-layout--stacked";
+            } else if (controls.length > 1 || primaryFields.length > 1) {
+                layoutClass = "pa-setting-layout--cluster";
+            } else if (primaryFields.length === 1) {
+                layoutClass = "pa-setting-layout--field";
+            }
+            settingEl.classList.add(layoutClass);
         });
     }
 
@@ -2389,6 +2708,7 @@ export class SettingTab extends PluginSettingTab {
             });
 
         this.refreshQwenResponseOptionAvailability();
+        this.markFormControlSettings(container);
     }
 
     private renderAdvancedSection(parentEl: HTMLElement): void {
@@ -2618,6 +2938,7 @@ export class SettingTab extends PluginSettingTab {
                 text: skill.description,
             });
         }
+        this.markFormControlSettings(container);
         focusTarget?.focus();
     }
 
@@ -2674,30 +2995,64 @@ export class SettingTab extends PluginSettingTab {
             text: this.t("plugin.settings.memoryControlCenter.desc"),
             cls: "pa-settings-section-desc-md",
         });
+        const liveStatus = section.createEl("p", {
+            cls: ["pa-sr-only", "pa-memory-control-center__live-status"],
+            attr: {
+                role: "status",
+                "aria-live": "polite",
+                "aria-atomic": "true",
+                tabindex: "-1",
+            },
+        });
         const body = section.createDiv({
             cls: "pa-memory-control-center__body",
-            attr: { "aria-live": "polite" },
-        });
-        body.createEl("p", {
-            text: this.t("plugin.settings.memoryControlCenter.loading"),
-            cls: "pa-memory-control-center__loading",
+            attr: { "aria-busy": "true" },
         });
 
-        void this.plugin.getMemoryControlCenterSnapshot()
-            .then((snapshot) => {
-                if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
-                body.empty();
-                this.renderMemoryControlCenterSnapshot(body, snapshot);
-            })
-            .catch((error) => {
-                if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
-                this.log("Failed to render Memory control center overview", error);
-                body.empty();
-                body.createEl("p", {
-                    text: this.t("plugin.settings.memoryControlCenter.loadError"),
-                    cls: "pa-memory-control-center__error",
-                });
+        const loadSnapshot = (focusStatus = false): void => {
+            body.empty();
+            body.setAttr("aria-busy", "true");
+            liveStatus.setText(this.t("plugin.settings.memoryControlCenter.loading"));
+            body.createEl("p", {
+                text: this.t("plugin.settings.memoryControlCenter.loading"),
+                cls: "pa-memory-control-center__loading",
             });
+            if (focusStatus && liveStatus.isConnected !== false) {
+                liveStatus.focus({ preventScroll: true });
+            }
+
+            void this.plugin.getMemoryControlCenterSnapshot()
+                .then((snapshot) => {
+                    if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
+                    body.empty();
+                    body.setAttr("aria-busy", "false");
+                    this.renderMemoryControlCenterSnapshot(body, snapshot);
+                    this.markFormControlSettings(body);
+                    liveStatus.setText(this.t("plugin.settings.memoryControlCenter.loaded", {
+                        count: snapshot.items.length,
+                    }));
+                })
+                .catch((error) => {
+                    if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
+                    this.log("Failed to render Memory control center overview", error);
+                    body.empty();
+                    body.setAttr("aria-busy", "false");
+                    const message = this.t("plugin.settings.memoryControlCenter.loadError");
+                    liveStatus.setText(message);
+                    body.createEl("p", {
+                        text: message,
+                        cls: "pa-memory-control-center__error",
+                    });
+                    const actions = body.createDiv({ cls: "pa-memory-control-center__actions" });
+                    const retry = actions.createEl("button", {
+                        text: this.t("plugin.settings.memoryControlCenter.retry"),
+                        attr: { type: "button" },
+                    });
+                    retry.addEventListener("click", () => loadSnapshot(true));
+                });
+        };
+
+        loadSnapshot();
     }
 
     private renderMemoryControlCenterSnapshot(
@@ -2732,10 +3087,12 @@ export class SettingTab extends PluginSettingTab {
         this.renderMemoryControlCenterCard(
             cards,
             this.t("plugin.settings.memoryControlCenter.durable.title"),
-            this.t("plugin.settings.memoryControlCenter.count", {
-                count: snapshot.durable.activeCount
-                    + snapshot.durable.pausedCount
-                    + snapshot.durable.staleCount,
+            this.t("plugin.settings.memoryControlCenter.durable.activeCount", {
+                count: snapshot.durable.activeCount,
+            }),
+            this.t("plugin.settings.memoryControlCenter.durable.detail", {
+                paused: snapshot.durable.pausedCount,
+                stale: snapshot.durable.staleCount,
             }),
         );
 
@@ -2779,8 +3136,8 @@ export class SettingTab extends PluginSettingTab {
                 this.renderMemoryControlCenterItem(list, item);
             }
         }
-        this.renderMemoryControlCenterDataRecovery(parentEl, snapshot);
         this.renderMemoryControlCenterRecentChanges(parentEl, snapshot);
+        this.renderMemoryControlCenterDataRecovery(parentEl, snapshot);
         this.focusPendingMemoryControlCenterTarget(true);
     }
 
@@ -2788,12 +3145,17 @@ export class SettingTab extends PluginSettingTab {
         parentEl: HTMLElement,
         snapshot: MemoryControlCenterSnapshot,
     ): void {
-        const section = parentEl.createDiv({
+        const section = parentEl.createEl("details", {
             cls: ["pa-memory-control-center__item", "pa-memory-control-center__recovery"],
         });
         section.dataset.paMemoryTargetId = "memory-data-recovery";
-        section.createEl("h3", { text: this.t("plugin.settings.memoryControlCenter.dataRecovery.title") });
-        section.createEl("p", {
+        section.open = snapshot.compatibilityRollback?.phase === "rolling_back"
+            || this.pendingMemoryControlCenterTargetId === "memory-data-recovery";
+        section.createEl("summary", {
+            text: this.t("plugin.settings.memoryControlCenter.dataRecovery.title"),
+        });
+        const content = section.createDiv({ cls: "pa-memory-control-center__recovery-body" });
+        content.createEl("p", {
             text: this.t("plugin.settings.memoryControlCenter.dataRecovery.desc"),
             cls: "pa-settings-section-desc-md",
         });
@@ -2805,7 +3167,7 @@ export class SettingTab extends PluginSettingTab {
                     queue: rollback.legacyMemoryQueueCount,
                 })
                 : this.plugin.getMemoryRollbackStatusMessage(rollback.blockedReason);
-            new Setting(section)
+            new Setting(content)
                 .setName(this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.name"))
                 .setDesc(rollbackDescription)
                 .addButton((button) => button
@@ -2848,7 +3210,7 @@ export class SettingTab extends PluginSettingTab {
                     }));
         }
         const markerCount = this.plugin.getMemorySuppressionMarkerCount();
-        new Setting(section)
+        new Setting(content)
             .setName(this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.name"))
             .setDesc(this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.desc", {
                 count: markerCount,
@@ -2901,7 +3263,12 @@ export class SettingTab extends PluginSettingTab {
         const section = parentEl.createEl("details", {
             cls: "pa-memory-control-center__finalization",
         });
-        if (finalization.phase === "finalizing" || (!finalization.eligible && finalization.blockedReason)) {
+        const hasLegacyData = finalization.legacyRecordCount > 0
+            || finalization.legacyMemoryQueueCount > 0;
+        const needsAttention = finalization.phase === "finalizing"
+            || hasLegacyData
+            || this.isMemoryFinalizationAttentionReason(finalization.blockedReason);
+        if (needsAttention) {
             section.open = true;
         }
         section.createEl("summary", {
@@ -2917,19 +3284,23 @@ export class SettingTab extends PluginSettingTab {
                 cls: "pa-settings-section-desc-md",
             });
         }
-        section.createEl("p", {
-            text: this.t("plugin.settings.memoryControlCenter.finalization.warning", {
-                records: finalization.legacyRecordCount,
-                queue: finalization.legacyMemoryQueueCount,
-            }),
-            cls: "pa-memory-control-center__warning",
-        });
-        if (!finalization.eligible || !finalization.confirmationToken) {
+        if (finalization.legacyRecordCount > 0 || finalization.legacyMemoryQueueCount > 0) {
             section.createEl("p", {
-                text: this.plugin.getMemoryFinalizationStatusMessage(finalization.blockedReason),
+                text: this.t("plugin.settings.memoryControlCenter.finalization.warning", {
+                    records: finalization.legacyRecordCount,
+                    queue: finalization.legacyMemoryQueueCount,
+                }),
                 cls: "pa-memory-control-center__warning",
-                attr: { role: "status" },
             });
+        }
+        if (!finalization.eligible || !finalization.confirmationToken) {
+            if (needsAttention) {
+                section.createEl("p", {
+                    text: this.plugin.getMemoryFinalizationStatusMessage(finalization.blockedReason),
+                    cls: "pa-memory-control-center__warning",
+                    attr: { role: "status" },
+                });
+            }
             return;
         }
         const button = section.createEl("button", {
@@ -2959,6 +3330,14 @@ export class SettingTab extends PluginSettingTab {
                 new Notice(this.t("plugin.settings.memoryControlCenter.finalization.unavailable"), 5000);
             });
         });
+    }
+
+    private isMemoryFinalizationAttentionReason(reason: string | undefined): boolean {
+        if (!reason) return false;
+        return reason !== "finalization_not_available"
+            && reason !== "governed_cutover_incomplete"
+            && reason !== "finalization_confirmation_stale"
+            && reason !== "finalization_state_changed";
     }
 
     private renderMemoryControlCenterItem(parentEl: HTMLElement, item: MemoryControlCenterItem): void {
@@ -3108,10 +3487,16 @@ export class SettingTab extends PluginSettingTab {
             text: this.t("plugin.settings.memoryControlCenter.action.cancel"),
             attr: { type: "button" },
         });
+        const updateSaveAvailability = (): void => {
+            const summary = input.value.trim();
+            save.disabled = !summary || summary === item.label.trim();
+        };
+        input.addEventListener("input", updateSaveAvailability);
+        updateSaveAvailability();
         save.addEventListener("click", () => {
             const summary = input.value.trim();
             if (!summary || summary === item.label.trim()) return;
-            void this.runMemoryControlCenterAction(save, "correct", item.claimId!, summary);
+            void this.runMemoryControlCenterAction(save, "correct", item.claimId!, summary, input);
         });
         cancel.addEventListener("click", () => editor.remove());
         actions.querySelectorAll("button").forEach((button) => { (button as HTMLButtonElement).disabled = true; });
@@ -3144,12 +3529,16 @@ export class SettingTab extends PluginSettingTab {
             const article = list.createEl("article", { cls: "pa-memory-control-center__item" });
             article.dataset.paMemoryTargetId = change.id;
             article.createEl("h4", {
-                text: change.redacted
-                    ? this.t("plugin.settings.memoryControlCenter.recent.forgotten")
-                    : change.label ?? this.t(
-                        `plugin.settings.memoryControlCenter.recent.kind.${change.kind}` as PluginMessageKey,
-                    ),
+                text: this.t(
+                    `plugin.settings.memoryControlCenter.recent.kind.${change.kind}` as PluginMessageKey,
+                ),
             });
+            if (!change.redacted && change.label) {
+                article.createEl("p", {
+                    text: change.label,
+                    cls: "pa-memory-control-center__change-label",
+                });
+            }
             const metadata = article.createEl("dl", { cls: "pa-memory-control-center__metadata" });
             this.renderMemoryControlCenterMetadataRow(
                 metadata,
@@ -3207,19 +3596,30 @@ export class SettingTab extends PluginSettingTab {
             | "limit_to_current_vault" | "forget" | "retry_forget" | "undo_recent_change",
         targetId: string,
         summary?: string,
+        failureFocusEl?: HTMLElement,
     ): Promise<void> {
         const generation = this.memoryControlCenterGeneration;
         button.disabled = true;
         try {
             const result = await this.plugin.runMemoryControlCenterAction(action, targetId, summary);
             new Notice(result.message, result.ok ? 3000 : 5000);
+            if (!result.ok) {
+                if (generation === this.memoryControlCenterGeneration) {
+                    button.disabled = false;
+                    (failureFocusEl ?? button).focus?.({ preventScroll: true });
+                }
+                return;
+            }
             if (generation !== this.memoryControlCenterGeneration) return;
             this.display();
             this.openGroup("memory-personalization", targetId);
         } catch (error) {
             this.log("Memory control-center action failed", error);
             new Notice(this.t("plugin.settings.memoryControlCenter.action.failed"), 5000);
-            if (generation === this.memoryControlCenterGeneration) button.disabled = false;
+            if (generation === this.memoryControlCenterGeneration) {
+                button.disabled = false;
+                (failureFocusEl ?? button).focus?.({ preventScroll: true });
+            }
         }
     }
 
@@ -3241,6 +3641,9 @@ export class SettingTab extends PluginSettingTab {
         const details = this.containerEl.querySelector(".pa-memory-control-center__details");
         if (details && details.tagName.toLowerCase() === "details") {
             (details as HTMLDetailsElement).open = true;
+        }
+        if (target.tagName.toLowerCase() === "details") {
+            (target as HTMLDetailsElement).open = true;
         }
         target.setAttr("tabindex", "-1");
         (target as HTMLElement & { addClass?: (cls: string) => void })
@@ -3497,6 +3900,7 @@ export class SettingTab extends PluginSettingTab {
 
         this.memoryAdvancedContainer = container.createDiv({ cls: "pa-settings-nested pa-settings-nested--level-2" });
         this.rebuildMemoryAdvanced();
+        this.markFormControlSettings(container);
     }
 
     private rebuildMemoryAdvanced(): void {

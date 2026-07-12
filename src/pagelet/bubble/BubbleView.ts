@@ -846,8 +846,9 @@ export class BubbleView {
         if (!this.rootEl) return;
 
         this.rootEl.classList.add("pa-pagelet-bubble--mobile");
-        // Mobile: full-width bottom sheet. CSS handles positioning via
-        // the --mobile modifier class. Clear any desktop inline styles.
+        // Mobile: bottom-sheet surface. Portrait stays near-full-width while
+        // shallow landscape viewports are centered and bounded by CSS. Clear
+        // any desktop inline styles so rotation can reflow without residue.
         this.rootEl.setCssStyles({
             top: "",
             left: "",

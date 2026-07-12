@@ -21,7 +21,7 @@
 | PA Agent 完整开发记录 | [Product spec tracker](./pa-agent-product-spec-development-tracker.md), [runtime/control records](./pa-agent-control-policy-development-tracker.md) |
 | PA Product Redesign / Pagelet | [Redesign tracker](./pa-product-redesign-development-tracker.md), [Tab tracker](./pagelet-tab-restructure-tracker.md), [Bubble SDD](./pagelet-bubble-readiness-and-recall-sdd.md) |
 | Memory Control Center | [Product intake](./pa-memory-control-center-optimization-plan.md), [SDD](./pa-memory-control-center-sdd.md), [tracker](./pa-memory-control-center-development-tracker.md) |
-| UI/UX audit 与优化 | [Audit](./pa-ui-ux-audit-report.md), [plan](./pa-ui-ux-optimization-plan.md), [tracker](./pa-ui-ux-optimization-tracker.md) |
+| UI/UX audit 与优化 | [Baseline audit](./pa-ui-ux-audit-report.md), [targeted audit](./pa-ui-ux-audit-report-2026-07-11.md), [plan](./pa-ui-ux-optimization-plan.md), [tracker](./pa-ui-ux-optimization-tracker.md), [Settings plan](./settings-layout-optimization-plan.md), [SDD](./settings-layout-optimization-sdd.md), [tracker](./settings-layout-optimization-development-tracker.md) |
 | Repo-wide optimization | [2026-07-10 final report](./repo-wide-optimization-2026-07-10-final-report.md) |
 | v2.x 版本与 release 历史 | [v2 post-release tracker](./v2-post-release-spec-driven-development.md), [v2.7 roadmap](./development-roadmap-v2.7.md), [2.8.0 migration](./license-migration-2.8.0.md) |
 | Memory/VSS/SQLite 历史 | [VSS implementation plan](./vss-sqlite-wasm-implementation-plan.md), [local-state tracker](./vss-local-state-development-tracker.md), [spike report](./sqlite-wasm-spike-report.md) |
@@ -79,6 +79,7 @@
 - [pa-product-north-star-zh.md](./pa-product-north-star-zh.md)
 - [pa-product-redesign-development-plan.md](./pa-product-redesign-development-plan.md)
 - [pa-product-redesign-development-tracker.md](./pa-product-redesign-development-tracker.md)
+- [pa-ui-ux-audit-report-2026-07-11.md](./pa-ui-ux-audit-report-2026-07-11.md)
 - [pa-ui-ux-audit-report.md](./pa-ui-ux-audit-report.md)
 - [pa-ui-ux-optimization-plan.md](./pa-ui-ux-optimization-plan.md)
 - [pa-ui-ux-optimization-tracker.md](./pa-ui-ux-optimization-tracker.md)
@@ -123,6 +124,9 @@
 - [sdd-trivial-cleanups.md](./sdd-trivial-cleanups.md)
 - [sdd-type-a-llm-extraction.md](./sdd-type-a-llm-extraction.md)
 - [sdd-wasm-lazy-load.md](./sdd-wasm-lazy-load.md)
+- [settings-layout-optimization-development-tracker.md](./settings-layout-optimization-development-tracker.md)
+- [settings-layout-optimization-plan.md](./settings-layout-optimization-plan.md)
+- [settings-layout-optimization-sdd.md](./settings-layout-optimization-sdd.md)
 - [settings-ui-review.md](./settings-ui-review.md)
 - [settings-ui-sdd.md](./settings-ui-sdd.md)
 - [sqlite-wasm-spike-report.md](./sqlite-wasm-spike-report.md)
