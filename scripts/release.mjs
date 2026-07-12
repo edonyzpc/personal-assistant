@@ -30,6 +30,7 @@ function run(command, args, options = {}) {
   }
   return execFileSync(command, args, {
     encoding: options.capture ? "utf8" : undefined,
+    env: options.env ? { ...process.env, ...options.env } : undefined,
     stdio: options.capture ? "pipe" : "inherit",
   })?.toString().trim() ?? "";
 }
@@ -134,9 +135,10 @@ function validateVersion(targetVersion, currentVersion) {
   }
 }
 
-function runChecks() {
+function runChecks(previousReleaseTag) {
   run("git", ["diff", "--check"]);
   run("npm", ["run", "check:third-party-notices"]);
+  run("npm", ["run", "docs:check"], { env: { DOCS_CHECK_BASE: previousReleaseTag } });
   run("npm", ["test", "--", "--runInBand", "--coverage"]);
   run("npm", ["run", "lint"]);
   run("npm", ["run", "build"]);
@@ -217,7 +219,7 @@ async function main() {
   }
 
   if (!options.skipChecks) {
-    runChecks();
+    runChecks(currentVersion);
   }
 
   upsertChangelogSection("CHANGELOG.md", targetVersion, releaseSection);

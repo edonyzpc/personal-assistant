@@ -13,6 +13,7 @@
     "tailwind:build": "BROWSERSLIST_IGNORE_OLD_DATA=1 tailwindcss -i ./src/custom.pcss -o ./styles.css --minify",
     "build": "tsc -noEmit -skipLibCheck && BROWSERSLIST_IGNORE_OLD_DATA=1 tailwindcss -i ./src/custom.pcss -o ./styles.css --minify && node --no-warnings=ExperimentalWarning esbuild.config.mjs production",
     "changelog": "node scripts/changelog.mjs",
+    "docs:check": "node scripts/check-docs.mjs",
     "version": "node version-bump.mjs && git add manifest-beta.json manifest.json versions.json CHANGELOG.md",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"__mocks__/**/*.ts\"",
     "eval:pa:fast": "jest --runTestsByPath __tests__/pa-eval.test.ts --runInBand",

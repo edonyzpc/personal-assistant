@@ -16,6 +16,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Use Node.js
         uses: actions/setup-node@v6
         with:
@@ -25,6 +27,21 @@ jobs:
         run: npm ci
       - name: Check third-party notices
         run: npm run check:third-party-notices
+      - name: Resolve documentation diff base
+        id: docs-base
+        shell: bash
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [[ -n "${previous_tag}" ]]; then
+            base="${previous_tag}"
+          else
+            base="$(git rev-list --max-parents=0 "${GITHUB_SHA}" | tail -n 1)"
+          fi
+          echo "base=${base}" >> "${GITHUB_OUTPUT}"
+      - name: Check documentation workflow
+        env:
+          DOCS_CHECK_BASE: ${{ steps.docs-base.outputs.base }}
+        run: npm run docs:check
       - name: Test
         run: npm test -- --runInBand --coverage
       - name: Lint

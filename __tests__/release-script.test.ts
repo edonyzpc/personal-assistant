@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -48,6 +48,15 @@ describe("scripts/release.mjs", () => {
 
         expect(output).toContain("Target version:  2.9.0-beta.1");
         expect(output).toContain("Changelog range: 2.8.4..HEAD");
+    });
+
+    it("checks tagged releases against the previous reachable tag with full history", () => {
+        const workflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
+
+        expect(workflow).toContain("fetch-depth: 0");
+        expect(workflow).toContain('git describe --tags --abbrev=0 "${GITHUB_SHA}^"');
+        expect(workflow).toContain('git rev-list --max-parents=0 "${GITHUB_SHA}"');
+        expect(workflow).toContain("DOCS_CHECK_BASE: ${{ steps.docs-base.outputs.base }}");
     });
 });
 
