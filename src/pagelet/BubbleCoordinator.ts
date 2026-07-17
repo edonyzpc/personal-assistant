@@ -13,7 +13,7 @@
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
-import type { BubbleContent, BubbleContextAction, BubbleFinding, BubbleStateCallbacks, DeliveryCandidate, InlineContextHint } from "./bubble/types";
+import type { BubbleContent, BubbleFinding, BubbleStateCallbacks, DeliveryCandidate, InlineContextHint } from "./bubble/types";
 import type { BubbleView } from "./bubble/BubbleView";
 import { buildContextLimitedContent, buildEmptyContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildQuietRecallNudgeContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent, buildReadyEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
 import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";

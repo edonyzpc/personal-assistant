@@ -153,7 +153,6 @@ import {
     buildQuietRecallWithLlm,
     buildRecallRelevancePrompt,
     buildRecapInsightsPrompt,
-    buildScopeRecap,
     buildScopeRecapWithLlm,
     detectLanguageMismatch,
     parseRecallRelevanceResponse,
