@@ -2,11 +2,16 @@ import { describe, expect, it } from "@jest/globals";
 
 import {
     buildQuietRecallCandidates,
+    buildQuietRecallWithLlm,
     computeRecallScore,
+    extractRecallDigest,
+    evaluateRecallWithLlm,
     quietRecallGovernedClaimId,
     quietRecallCandidateToBubbleNudge,
     quietRecallCandidateToSavedInsightInput,
     quietRecallLinkTargetPath,
+    type RecallRelevanceEvaluator,
+    type RecallRelevanceResult,
     type SavedInsight,
 } from "../src/pa";
 
@@ -410,5 +415,246 @@ describe("buildQuietRecallCandidates", () => {
         });
         expect(JSON.stringify(nudge)).not.toContain("Projects/Alpha.md");
         expect(JSON.stringify(nudge)).not.toContain("Small weekly rituals");
+    });
+});
+
+describe("extractRecallDigest", () => {
+    it("extracts title from path basename when no title provided", () => {
+        const digest = extractRecallDigest({
+            path: "Projects/My-Note.md",
+            content: "Some content here.",
+        });
+        expect(digest.title).toBe("My-Note");
+    });
+
+    it("prefers explicit title over path-derived name", () => {
+        const digest = extractRecallDigest({
+            path: "Projects/My-Note.md",
+            title: "My Custom Title",
+            content: "Some content here.",
+        });
+        expect(digest.title).toBe("My Custom Title");
+    });
+
+    it("extracts ## headings from content", () => {
+        const digest = extractRecallDigest({
+            path: "note.md",
+            content: "# Top heading\n\n## First section\n\nParagraph.\n\n## Second section\n\nMore text.\n\n### Sub-heading\n",
+        });
+        expect(digest.headings).toEqual(["First section", "Second section"]);
+    });
+
+    it("extracts the first non-empty paragraph skipping headings", () => {
+        const digest = extractRecallDigest({
+            path: "note.md",
+            content: "# Title\n\n## Intro\n\nThis is the first real paragraph content.\nIt continues on the next line.\n\nSecond paragraph ignored.",
+        });
+        expect(digest.firstParagraph).toBe(
+            "This is the first real paragraph content. It continues on the next line.",
+        );
+    });
+
+    it("handles empty content gracefully", () => {
+        const digest = extractRecallDigest({
+            path: "empty.md",
+        });
+        expect(digest.title).toBe("empty");
+        expect(digest.headings).toEqual([]);
+        expect(digest.firstParagraph).toBe("");
+    });
+
+    it("handles content with only headings and no paragraphs", () => {
+        const digest = extractRecallDigest({
+            path: "headings-only.md",
+            content: "# Title\n\n## Section A\n\n## Section B\n",
+        });
+        expect(digest.headings).toEqual(["Section A", "Section B"]);
+        expect(digest.firstParagraph).toBe("");
+    });
+});
+
+describe("evaluateRecallWithLlm", () => {
+    it("returns the evaluator result on success", async () => {
+        const mockEvaluator: RecallRelevanceEvaluator = async () => ({
+            isConvincing: true,
+            whyNow: "Your current note discusses caching; this old note has Redis benchmarks.",
+        });
+
+        const result = await evaluateRecallWithLlm(
+            { title: "Current", headings: ["Caching"], firstParagraph: "Evaluating cache strategies." },
+            { title: "Redis Perf", headings: ["Benchmarks"], firstParagraph: "Redis benchmark data." },
+            "3 months",
+            mockEvaluator,
+        );
+
+        expect(result.isConvincing).toBe(true);
+        expect(result.whyNow).toBe("Your current note discusses caching; this old note has Redis benchmarks.");
+    });
+
+    it("returns silence on evaluator failure", async () => {
+        const failingEvaluator: RecallRelevanceEvaluator = async () => {
+            throw new Error("LLM timeout");
+        };
+
+        const result = await evaluateRecallWithLlm(
+            { title: "A", headings: [], firstParagraph: "" },
+            { title: "B", headings: [], firstParagraph: "" },
+            "1 weeks",
+            failingEvaluator,
+        );
+
+        expect(result.isConvincing).toBe(false);
+        expect(result.whyNow).toBeNull();
+    });
+});
+
+describe("buildQuietRecallWithLlm", () => {
+    it("filters out candidates the LLM deems unconvincing", async () => {
+        const evaluator: RecallRelevanceEvaluator = async ({ candidateDigest }) => {
+            if (candidateDigest.title.includes("Beta")) {
+                return { isConvincing: true, whyNow: "Beta is directly relevant to your current caching discussion." };
+            }
+            return { isConvincing: false, whyNow: null };
+        };
+
+        const result = await buildQuietRecallWithLlm({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md", content: "# Alpha\n\nEvaluating cache strategies." },
+            relatedNotes: [
+                { path: "Projects/Beta.md", score: 0.86 },
+                { path: "Projects/Gamma.md", score: 0.80 },
+            ],
+            vaultNotes: [
+                {
+                    path: "Projects/Beta.md",
+                    title: "Beta plan",
+                    content: "# Beta\n\n## Cache Design\n\nRedis benchmark data here.",
+                    modifiedAt: "2026-06-20T12:00:00.000Z",
+                },
+                {
+                    path: "Projects/Gamma.md",
+                    title: "Gamma notes",
+                    content: "# Gamma\n\nUnrelated meeting notes.",
+                    modifiedAt: "2026-06-25T12:00:00.000Z",
+                },
+            ],
+            savedInsights: [],
+            evaluateRelevance: evaluator,
+        });
+
+        expect(result.candidates).toHaveLength(1);
+        expect(result.candidates[0].whyNow).toEqual([
+            "Beta is directly relevant to your current caching discussion.",
+        ]);
+    });
+
+    it("replaces template whyNow with LLM reasoning", async () => {
+        const evaluator: RecallRelevanceEvaluator = async () => ({
+            isConvincing: true,
+            whyNow: "LLM-generated specific reason.",
+        });
+
+        const result = await buildQuietRecallWithLlm({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md", content: "# Alpha\n\nSome content." },
+            relatedNotes: [{ path: "Projects/Beta.md", score: 0.9 }],
+            vaultNotes: [{
+                path: "Projects/Beta.md",
+                title: "Beta",
+                content: "# Beta\n\nRelated content.",
+                modifiedAt: "2026-06-28T12:00:00.000Z",
+            }],
+            savedInsights: [],
+            evaluateRelevance: evaluator,
+        });
+
+        expect(result.candidates[0].whyNow).toEqual(["LLM-generated specific reason."]);
+    });
+
+    it("skips LLM evaluation when no current note provided", async () => {
+        let evaluatorCalled = false;
+        const evaluator: RecallRelevanceEvaluator = async () => {
+            evaluatorCalled = true;
+            return { isConvincing: true, whyNow: "Should not be called." };
+        };
+
+        const result = await buildQuietRecallWithLlm({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            relatedNotes: [{ path: "Projects/Beta.md", score: 0.9 }],
+            vaultNotes: [{
+                path: "Projects/Beta.md",
+                title: "Beta",
+                content: "Content.",
+                modifiedAt: "2026-06-28T12:00:00.000Z",
+            }],
+            savedInsights: [],
+            evaluateRelevance: evaluator,
+        });
+
+        // Without a current note, LLM evaluation is skipped; base result returned as-is
+        expect(evaluatorCalled).toBe(false);
+        expect(result.candidates).toHaveLength(1);
+    });
+
+    it("gracefully handles LLM failure for individual candidates", async () => {
+        let callCount = 0;
+        const evaluator: RecallRelevanceEvaluator = async () => {
+            callCount++;
+            if (callCount === 1) throw new Error("Network error");
+            return { isConvincing: true, whyNow: "Valid reason." };
+        };
+
+        const result = await buildQuietRecallWithLlm({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md", content: "# Alpha\n\nContent." },
+            relatedNotes: [
+                { path: "Projects/Beta.md", score: 0.88 },
+                { path: "Projects/Gamma.md", score: 0.85 },
+            ],
+            vaultNotes: [
+                {
+                    path: "Projects/Beta.md",
+                    title: "Beta",
+                    content: "# Beta\n\nFirst candidate.",
+                    modifiedAt: "2026-06-27T12:00:00.000Z",
+                },
+                {
+                    path: "Projects/Gamma.md",
+                    title: "Gamma",
+                    content: "# Gamma\n\nSecond candidate.",
+                    modifiedAt: "2026-06-26T12:00:00.000Z",
+                },
+            ],
+            savedInsights: [],
+            evaluateRelevance: evaluator,
+        });
+
+        // First candidate fails (filtered out), second succeeds
+        expect(result.candidates).toHaveLength(1);
+        expect(result.candidates[0].whyNow).toEqual(["Valid reason."]);
+    });
+
+    it("passes candidate age to the evaluator", async () => {
+        let receivedAge = "";
+        const evaluator: RecallRelevanceEvaluator = async ({ candidateAge }) => {
+            receivedAge = candidateAge;
+            return { isConvincing: true, whyNow: "Reason." };
+        };
+
+        await buildQuietRecallWithLlm({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md", content: "# Alpha\n\nContent." },
+            relatedNotes: [{ path: "Projects/Beta.md", score: 0.9 }],
+            vaultNotes: [{
+                path: "Projects/Beta.md",
+                title: "Beta",
+                content: "# Beta\n\nContent.",
+                modifiedAt: "2026-06-01T12:00:00.000Z",
+            }],
+            savedInsights: [],
+            evaluateRelevance: evaluator,
+        });
+
+        expect(receivedAge).toBe("4 weeks");
     });
 });

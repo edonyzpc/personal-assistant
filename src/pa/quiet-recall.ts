@@ -94,6 +94,23 @@ export type QuietRecallSaveResult =
     | { ok: true; value: SavedInsight; message: string }
     | { ok: false; reason: string; message: string };
 
+export interface RecallNoteDigest {
+    title: string;
+    headings: string[];
+    firstParagraph: string;
+}
+
+export interface RecallRelevanceResult {
+    isConvincing: boolean;
+    whyNow: string | null;
+}
+
+export type RecallRelevanceEvaluator = (input: {
+    currentDigest: RecallNoteDigest;
+    candidateDigest: RecallNoteDigest;
+    candidateAge: string;
+}) => Promise<RecallRelevanceResult>;
+
 const DEFAULT_MAX_CANDIDATES = 5;
 const DEFAULT_STALE_AFTER_DAYS = 180;
 const CURRENT_RELEVANCE_BASE = 80;
@@ -550,5 +567,144 @@ export function coerceQuietRecallSaveResult(result: SavedInsightResult<SavedInsi
         ok: false,
         reason: result.reason,
         message: `Could not save recall insight: ${result.reason}`,
+    };
+}
+
+export function extractRecallDigest(
+    note: QuietRecallVaultNote | QuietRecallCurrentNote,
+): RecallNoteDigest {
+    const path = note.path ?? "";
+    const title = note.title?.trim() || fileStem(path);
+    const content = note.content ?? "";
+    const lines = content.split("\n");
+
+    const headings: string[] = [];
+    for (const line of lines) {
+        const match = line.match(/^##\s+(.+)/);
+        if (match && match[1]) {
+            headings.push(match[1].trim());
+        }
+    }
+
+    let firstParagraph = "";
+    let inParagraph = false;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            if (inParagraph) break;
+            continue;
+        }
+        if (trimmed.startsWith("#")) {
+            if (inParagraph) break;
+            continue;
+        }
+        inParagraph = true;
+        firstParagraph += (firstParagraph ? " " : "") + trimmed;
+    }
+
+    return { title, headings, firstParagraph };
+}
+
+function formatCandidateAge(note: QuietRecallVaultNote, now: Date): string {
+    const dateStr = note.modifiedAt ?? note.createdAt;
+    const ageDays = daysBetween(now, dateStr);
+    if (ageDays === null) return "unknown";
+    if (ageDays < 1) return "today";
+    if (ageDays < 7) return `${Math.round(ageDays)} days`;
+    if (ageDays < 30) return `${Math.round(ageDays / 7)} weeks`;
+    if (ageDays < 365) return `${Math.round(ageDays / 30)} months`;
+    return `${Math.round(ageDays / 365)} years`;
+}
+
+export async function evaluateRecallWithLlm(
+    currentDigest: RecallNoteDigest,
+    candidateDigest: RecallNoteDigest,
+    candidateAge: string,
+    evaluateRelevance: RecallRelevanceEvaluator,
+): Promise<RecallRelevanceResult> {
+    try {
+        return await evaluateRelevance({
+            currentDigest,
+            candidateDigest,
+            candidateAge,
+        });
+    } catch {
+        return { isConvincing: false, whyNow: null };
+    }
+}
+
+export interface QuietRecallWithLlmInput extends QuietRecallBuildInput {
+    evaluateRelevance: RecallRelevanceEvaluator;
+    scoreThreshold?: number;
+}
+
+export async function buildQuietRecallWithLlm(
+    input: QuietRecallWithLlmInput,
+): Promise<QuietRecallRunResult> {
+    const baseResult = buildQuietRecallCandidates(input);
+    const scoreThreshold = input.scoreThreshold ?? 0;
+    const now = nowDate(input.now);
+
+    const currentNote = input.currentNote;
+    if (!currentNote) return baseResult;
+
+    const currentDigest = extractRecallDigest(currentNote);
+
+    const filteredCandidates: QuietRecallCandidate[] = [];
+
+    for (const candidate of baseResult.candidates) {
+        if (candidate.score < scoreThreshold) {
+            filteredCandidates.push(candidate);
+            continue;
+        }
+
+        const matchedVaultNote = findMatchingVaultNote(candidate, input.vaultNotes ?? []);
+        const candidateDigest = matchedVaultNote
+            ? extractRecallDigest(matchedVaultNote)
+            : digestFromCandidate(candidate);
+        const candidateAge = matchedVaultNote
+            ? formatCandidateAge(matchedVaultNote, now)
+            : "unknown";
+
+        const result = await evaluateRecallWithLlm(
+            currentDigest,
+            candidateDigest,
+            candidateAge,
+            input.evaluateRelevance,
+        );
+
+        if (result.isConvincing && result.whyNow) {
+            filteredCandidates.push({
+                ...candidate,
+                whyNow: [result.whyNow],
+            });
+        }
+    }
+
+    return {
+        ...baseResult,
+        totalCount: filteredCandidates.length,
+        candidates: filteredCandidates,
+    };
+}
+
+function findMatchingVaultNote(
+    candidate: QuietRecallCandidate,
+    vaultNotes: readonly QuietRecallVaultNote[],
+): QuietRecallVaultNote | null {
+    const candidatePaths = new Set(
+        candidate.sourceRefs.map((ref) => normalizeVaultPath(ref.path)),
+    );
+    for (const note of vaultNotes) {
+        if (candidatePaths.has(normalizeVaultPath(note.path))) return note;
+    }
+    return null;
+}
+
+function digestFromCandidate(candidate: QuietRecallCandidate): RecallNoteDigest {
+    return {
+        title: candidate.title.replace(/^(Recall:|回忆：)\s*/, ""),
+        headings: [],
+        firstParagraph: candidate.summary,
     };
 }
