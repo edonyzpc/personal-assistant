@@ -150,7 +150,17 @@ import {
     applyMaintenanceMoveProposal,
     applyRetrievalHabitProfileToRecallCandidates,
     buildQuietRecallCandidates,
+    buildQuietRecallWithLlm,
+    buildRecallRelevancePrompt,
+    buildRecapInsightsPrompt,
     buildScopeRecap,
+    buildScopeRecapWithLlm,
+    detectLanguageMismatch,
+    parseRecallRelevanceResponse,
+    parseRecapInsightsResponse,
+    type GenerateRecapInsightsCallback,
+    type RecallRelevanceEvaluator,
+    QUIET_RECALL_BUBBLE_MIN_SCORE,
     canAutoConfirmMemoryCandidate,
     coerceQuietRecallSaveResult,
     detectCrossNotePatterns,
@@ -2499,14 +2509,39 @@ export class PluginManager extends Plugin {
     private async runScopeRecap(): Promise<ScopeRecapRunResult> {
         const notes = await this.collectScopeRecapSourceNotes();
         const activeFile = this.app.workspace.getActiveFile();
-        return buildScopeRecap(notes, {
+        const options = {
             now: new Date(),
-            isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
+            isPathAllowed: (path: string) => this.isDataBoundaryAllowedPath(path),
             scope: activeFile instanceof TFile && activeFile.extension === "md"
-                ? { kind: "folder", label: parentFolder(activeFile.path) || activeFile.basename, paths: notes.map((note) => note.path) }
-                : { kind: "selected_notes", paths: notes.map((note) => note.path) },
+                ? { kind: "folder" as const, label: parentFolder(activeFile.path) || activeFile.basename, paths: notes.map((note) => note.path) }
+                : { kind: "selected_notes" as const, paths: notes.map((note) => note.path) },
             dataBoundarySnapshotId: "data_boundary:scope_recap",
-        });
+        };
+
+        const generateInsights: GenerateRecapInsightsCallback = async (input) => {
+            const model = await this.createChatModel(
+                this.settings.pagelet.temperature,
+                { maxTokens: this.settings.pagelet.maxOutputTokens },
+            );
+            if (!model) return null;
+            const prompt = buildRecapInsightsPrompt(input);
+            try {
+                const result = await model.invoke(prompt);
+                const text = coerceModelResultToString(result);
+                this.pageletCostTracker.record({
+                    inputTokens: estimateTokens(prompt),
+                    outputTokens: estimateTokens(text),
+                    provider: this.settings.aiProvider,
+                    model: this.settings.chatModelName,
+                });
+                return parseRecapInsightsResponse(text);
+            } catch (error) {
+                this.log("Scope Recap LLM insights failed", error);
+                return null;
+            }
+        };
+
+        return buildScopeRecapWithLlm(notes, generateInsights, options);
     }
 
     private async collectScopeRecapSourceNotes(): Promise<ScopeRecapSourceNote[]> {
@@ -3045,6 +3080,9 @@ export class PluginManager extends Plugin {
         return result;
     }
 
+    private _lastRecallLlmEvalAt = 0;
+    private static readonly RECALL_LLM_COOLDOWN_MS = 60_000;
+
     private async runQuietRecall(): Promise<QuietRecallRunResult> {
         const locale = this.getPageletLocale();
         if (!this.settings.quietRecall.enabled) {
@@ -3069,7 +3107,10 @@ export class PluginManager extends Plugin {
         const vaultNotes = collectedVaultNotes.vaultNotes
             .filter((note) => this.isDataBoundaryAllowedPath(note.path));
 
-        const recall = buildQuietRecallCandidates({
+        const now = Date.now();
+        const useLlm = now - this._lastRecallLlmEvalAt >= PluginManager.RECALL_LLM_COOLDOWN_MS;
+
+        const baseInput = {
             now: new Date(),
             locale,
             currentNote: {
@@ -3080,7 +3121,55 @@ export class PluginManager extends Plugin {
             relatedNotes,
             vaultNotes,
             savedInsights: this.listDataBoundaryAllowedSavedInsights(),
-        });
+        };
+
+        let recall: QuietRecallRunResult;
+        if (useLlm) {
+            const evaluateRelevance: RecallRelevanceEvaluator = async (input) => {
+                const model = await this.createChatModel(
+                    this.settings.pagelet.temperature,
+                    { maxTokens: 300 },
+                );
+                if (!model) return { isConvincing: false, whyNow: null };
+                const prompt = buildRecallRelevancePrompt(input);
+                try {
+                    const result = await model.invoke(prompt);
+                    const text = coerceModelResultToString(result);
+                    this.pageletCostTracker.record({
+                        inputTokens: estimateTokens(prompt),
+                        outputTokens: estimateTokens(text),
+                        provider: this.settings.aiProvider,
+                        model: this.settings.chatModelName,
+                    });
+                    const parsed = parseRecallRelevanceResponse(text);
+                    if (parsed.isConvincing && parsed.whyNow && detectLanguageMismatch(parsed.whyNow, content)) {
+                        const retryResult = await model.invoke(prompt + "\n\nIMPORTANT: Your previous response was in the wrong language. Respond in the same language as the notes above.");
+                        const retryText = coerceModelResultToString(retryResult);
+                        this.pageletCostTracker.record({
+                            inputTokens: estimateTokens(prompt),
+                            outputTokens: estimateTokens(retryText),
+                            provider: this.settings.aiProvider,
+                            model: this.settings.chatModelName,
+                        });
+                        return parseRecallRelevanceResponse(retryText);
+                    }
+                    return parsed;
+                } catch (error) {
+                    this.log("Quiet Recall LLM evaluation failed", error);
+                    return { isConvincing: false, whyNow: null };
+                }
+            };
+
+            this._lastRecallLlmEvalAt = now;
+            recall = await buildQuietRecallWithLlm({
+                ...baseInput,
+                evaluateRelevance,
+                scoreThreshold: QUIET_RECALL_BUBBLE_MIN_SCORE,
+            });
+        } else {
+            recall = buildQuietRecallCandidates(baseInput);
+        }
+
         const candidates = applyRetrievalHabitProfileToRecallCandidates(
             recall.candidates,
             this.settings.retrievalHabitProfile,

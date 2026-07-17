@@ -27,5 +27,6 @@ export * from "./quiet-recall";
 export * from "./retrieval-habit-profile";
 export * from "./review-artifact-lifecycle";
 export * from "./review-queue-store";
+export * from "./pagelet-prompts";
 export * from "./saved-insight-store";
 export * from "./scope-recap";
