@@ -14,6 +14,7 @@
 ## 验证
 
 - [Pagelet Manual Smoke Checklist](./validation/pagelet-smoke-checklist.md)
+- [Pagelet v2.9 LLM Validation Handoff](./handoff-pagelet-v29-validation.md) — LLM 集成端到端验证清单（Codex 执行）
 
 ## Discovery 与 Decision
 

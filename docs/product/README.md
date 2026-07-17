@@ -30,6 +30,7 @@
 
 - [Bubble Readiness and Recall](./specs/pagelet-bubble-readiness-and-recall-product-spec.md)
 - [Delivery Preparation Consolidation](./specs/pagelet-delivery-preparation-consolidation-product-note.md)
+- [Pagelet v2.9 Dogfooding Analysis](./pagelet-v29-dogfooding-analysis.md) — v2.9.0-beta.1 问题诊断与 LLM 内容质量行动方案
 
 ## Shared Product Infrastructure
 
