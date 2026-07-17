@@ -774,7 +774,7 @@ describe('plugin startup view registration', () => {
 });
 
 describe('Memory governance plugin bootstrap', () => {
-    const createdAt = '2026-07-10T08:00:00.000Z';
+    const createdAt = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();
     const bootstrapPlugins = new Set<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
     afterEach(async () => {
