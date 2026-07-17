@@ -134,6 +134,7 @@ export class PageletOrchestrator {
     private lastQuietRecallCtrlKeydownAt = 0;
     private readonly quietRecallDismissedCandidateIds = new Set<string>();
     private readonly quietRecallSnoozedCandidateIds = new Map<string, number>();
+    private unconvincingRecallCount = 0;
     private foregroundRouteToken = 0;
     private readonly activeForegroundTimers = new Set<ReturnType<typeof setTimeout>>();
     private destroyed = false;
@@ -226,6 +227,7 @@ export class PageletOrchestrator {
             getPreparedRecapCandidate: () => this.currentPreparedRecapCandidate(),
             onPreparedRecapView: () => { void this.openPreparedRecapDelivery(); },
             onPreparedRecapLater: () => this.clearPreparedRecapDelivery(),
+            getUnconvincingRecallCount: () => this.unconvincingRecallCount,
         });
 
         this.researchManager = new ResearchManager(host.app, {

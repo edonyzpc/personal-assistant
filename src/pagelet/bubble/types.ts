@@ -68,6 +68,12 @@ export interface InlineContextHint {
     icon?: string;
 }
 
+export interface BubbleContextAction {
+    label: string;
+    action: "discover" | "review";
+    callback: () => void;
+}
+
 export interface BubbleCard {
     id: string;
     findings: BubbleFinding[];
@@ -89,6 +95,7 @@ export interface BubbleContent {
     actions: BubbleAction[];
     inlineHint?: InlineContextHint;
     cards?: BubbleCard[];
+    contextAction?: BubbleContextAction;
 }
 
 /** Quick action button in the Bubble */

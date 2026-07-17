@@ -535,6 +535,33 @@ export class BubbleView {
                 actionsEl.appendChild(btn);
             }
         }
+
+        this.renderContextAction(content.contextAction);
+    }
+
+    private renderContextAction(contextAction: BubbleContent["contextAction"]): void {
+        if (!this.rootEl) return;
+        let zone = this.rootEl.querySelector(".pa-pagelet-bubble-context-action");
+        if (!contextAction) {
+            if (zone) zone.remove();
+            return;
+        }
+        if (!zone) {
+            zone = createHtmlElement("div");
+            zone.className = "pa-pagelet-bubble-context-action";
+            this.rootEl.querySelector(".pa-pagelet-bubble-body")?.appendChild(zone);
+        }
+        clearChildren(zone);
+        const label = createHtmlElement("span");
+        label.className = "pa-pagelet-bubble-context-action-label";
+        label.textContent = contextAction.label;
+        zone.appendChild(label);
+        const btn = createHtmlElement("button");
+        btn.className = "pa-pagelet-bubble-context-action-btn";
+        btn.setAttribute("type", "button");
+        btn.textContent = contextAction.action === "discover" ? "Discover" : "Review";
+        this.attachActionActivation(btn, contextAction.callback);
+        zone.appendChild(btn);
     }
 
     private getRenderableContent(content: BubbleContent): RenderableBubbleContent {

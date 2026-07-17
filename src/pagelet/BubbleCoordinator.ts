@@ -13,7 +13,7 @@
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
-import type { BubbleContent, BubbleFinding, BubbleStateCallbacks, DeliveryCandidate, InlineContextHint } from "./bubble/types";
+import type { BubbleContent, BubbleContextAction, BubbleFinding, BubbleStateCallbacks, DeliveryCandidate, InlineContextHint } from "./bubble/types";
 import type { BubbleView } from "./bubble/BubbleView";
 import { buildContextLimitedContent, buildEmptyContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildQuietRecallNudgeContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent, buildReadyEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
 import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";
@@ -68,6 +68,8 @@ export interface BubbleCoordinatorCallbacks {
     getPreparedRecapCandidate(): (DeliveryCandidate & { kind: "recap" }) | null;
     onPreparedRecapView(candidate: DeliveryCandidate & { kind: "recap" }): void;
     onPreparedRecapLater(candidate: DeliveryCandidate & { kind: "recap" }): void;
+    /** Return count of recall candidates that were evaluated but judged unconvincing by LLM. */
+    getUnconvincingRecallCount(): number;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +201,7 @@ export class BubbleCoordinator {
             content = this.buildRegularBubbleContent(bubbleView, stateCallbacks, locale);
         }
         this.applyInlineHint(content, locale);
+        this.applyContextAction(content, bubbleView);
 
         bubbleView.show(content, anchorEl, options);
         this.acknowledgeIntentionallyQuietIfNeeded(content);
@@ -392,6 +395,19 @@ export class BubbleCoordinator {
         return {
             text: pageletT("pagelet.bubble.inlineHint.preparing", locale),
             icon: "info",
+        };
+    }
+
+    private applyContextAction(content: BubbleContent, bubbleView: BubbleView): void {
+        const unconvincingCount = this.callbacks.getUnconvincingRecallCount();
+        if (unconvincingCount <= 0) return;
+        content.contextAction = {
+            label: `${unconvincingCount} related note${unconvincingCount === 1 ? "" : "s"} found`,
+            action: "discover",
+            callback: () => {
+                bubbleView.close();
+                this.callbacks.onDiscoverConnections();
+            },
         };
     }
 

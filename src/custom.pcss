@@ -4304,6 +4304,40 @@ body.is-mobile .pa-pagelet-bubble-stack-dot {
 	overflow-wrap: anywhere;
 }
 
+.pa-pagelet-bubble-context-action {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding-top: 12px;
+	margin-top: 10px;
+}
+
+.pa-pagelet-bubble-context-action-label {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted,#999);
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-bubble-context-action-btn {
+	flex-shrink: 0;
+	padding: 4px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border,#3a3a3a);
+	background: transparent;
+	color: var(--text-accent,#7c9eff);
+	font-size: var(--font-ui-small);
+	font-weight: 500;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.pa-pagelet-bubble-context-action-btn:hover {
+	border-color: var(--text-accent,#7c9eff);
+	background: color-mix(in srgb,var(--text-accent,#7c9eff) 8%,transparent);
+}
+
 .pa-pagelet-bubble.pa-pagelet-bubble--mobile {
 	left: 8px;
 	right: 8px;

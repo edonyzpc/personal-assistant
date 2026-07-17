@@ -103,6 +103,7 @@ function makeCoordinator(
             getPreparedRecapCandidate: () => null,
             onPreparedRecapView: jest.fn(),
             onPreparedRecapLater: jest.fn(),
+            getUnconvincingRecallCount: () => 0,
             ...overrides,
         },
     );
