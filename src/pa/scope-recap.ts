@@ -454,3 +454,178 @@ export function scopeRecapCanAnswerAsFact(_recap: ScopeRecapRunResult): false {
 export function scopeRecapToConfirmedMemory(): { ok: false; reason: "recap_not_source_truth" } {
     return { ok: false, reason: "recap_not_source_truth" };
 }
+
+// ---------------------------------------------------------------------------
+// LLM-backed Scope Recap
+// ---------------------------------------------------------------------------
+
+export interface RecapLlmInsight {
+    title: string;
+    summary: string;
+    sourceNoteTitles: string[];
+    section: "theme" | "tension" | "open_question";
+}
+
+export type GenerateRecapInsightsCallback = (input: {
+    scope: ReviewQueueScope;
+    noteDigests: Array<{ title: string; digest: string; tags: string[] }>;
+}) => Promise<RecapLlmInsight[] | null>;
+
+/**
+ * Extract a compact digest from a source note for LLM consumption.
+ * Produces: Title + Headings (## lines) + First paragraph of content.
+ */
+export function extractNoteDigest(note: ScopeRecapSourceNote): string {
+    const title = noteTitle(note);
+    const content = note.content ?? "";
+    const lines = content.split(/\r?\n/);
+
+    const headings: string[] = [];
+    let firstParagraph = "";
+    let inFirstParagraph = false;
+    const paragraphLines: string[] = [];
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (/^#{2,}\s+/.test(trimmed)) {
+            headings.push(trimmed);
+        }
+        if (!firstParagraph) {
+            if (!inFirstParagraph && trimmed.length > 0 && !trimmed.startsWith("#")) {
+                inFirstParagraph = true;
+                paragraphLines.push(trimmed);
+            } else if (inFirstParagraph) {
+                if (trimmed.length === 0) {
+                    firstParagraph = paragraphLines.join(" ");
+                } else {
+                    paragraphLines.push(trimmed);
+                }
+            }
+        }
+    }
+    if (!firstParagraph && paragraphLines.length > 0) {
+        firstParagraph = paragraphLines.join(" ");
+    }
+
+    const parts: string[] = [`Title: ${title}`];
+    if (headings.length > 0) {
+        parts.push(`Headings: ${headings.join(" | ")}`);
+    }
+    if (firstParagraph) {
+        parts.push(`First paragraph: ${firstParagraph}`);
+    }
+    return parts.join("\n");
+}
+
+/**
+ * Build a scope recap using LLM-generated insights instead of rule-based heuristics.
+ *
+ * Falls back to SILENCE (empty arrays) if the LLM returns null or throws.
+ * The existing `buildScopeRecap()` is unchanged; this is a parallel async variant.
+ */
+export async function buildScopeRecapWithLlm(
+    sourceNotes: readonly ScopeRecapSourceNote[],
+    generateInsights: GenerateRecapInsightsCallback,
+    options: BuildScopeRecapOptions = {},
+): Promise<ScopeRecapRunResult> {
+    const generatedAt = nowDate(options.now).toISOString();
+    const { included, skippedSources } = normalizeSources(sourceNotes, options);
+    const sourceRefs = included.map((note) => sourceRefForNote(note, generatedAt, "Included in scope recap."));
+    const coverage: ScopeRecapCoverage = {
+        totalSourceCount: sourceNotes.length,
+        includedSourceCount: included.length,
+        skippedSourceCount: skippedSources.reduce((sum, entry) => sum + entry.count, 0),
+        coverageRatio: sourceNotes.length > 0 ? included.length / sourceNotes.length : 0,
+    };
+    const scope = makeScope(included, options.scope);
+    const changed = new Set((options.changedSourcePaths ?? []).map(normalizeVaultPath));
+    const staleStatus: ScopeRecapStaleStatus = changed.size > 0
+        ? "stale"
+        : skippedSources.some((entry) => entry.reason === "data_boundary")
+            ? "boundary-changed"
+            : included.length < 2
+                ? "low-coverage"
+                : "fresh";
+    const summary = makeItem({
+        section: "summary",
+        title: "Scope summary",
+        summary: included.length === 0
+            ? "No source-backed recap is available for this scope."
+            : `This scope is based on ${included.length} source note${included.length === 1 ? "" : "s"} and should be treated as a derived review map.`,
+        sourceRefs: sourceRefs.slice(0, Math.max(1, Math.min(3, sourceRefs.length))),
+        generatedAt,
+        idParts: ["summary", scope.kind, ...(scope.paths ?? [])],
+    });
+
+    // Call LLM for insights
+    let insights: RecapLlmInsight[] = [];
+    if (included.length >= 2) {
+        try {
+            const noteDigests = included.map((note) => ({
+                title: noteTitle(note),
+                digest: extractNoteDigest(note),
+                tags: [...(note.tags ?? [])],
+            }));
+            const result = await generateInsights({ scope, noteDigests });
+            if (Array.isArray(result)) {
+                insights = result;
+            }
+        } catch {
+            // Fallback to silence — do not surface errors to user
+            insights = [];
+        }
+    }
+
+    // Map LLM insights back to ScopeRecapItem[]
+    const titleToNote = new Map<string, ScopeRecapSourceNote>();
+    for (const note of included) {
+        titleToNote.set(noteTitle(note).toLowerCase(), note);
+    }
+
+    const themes: ScopeRecapItem[] = [];
+    const tensions: ScopeRecapItem[] = [];
+    const openQuestions: ScopeRecapItem[] = [];
+
+    for (const insight of insights) {
+        const matchedRefs = insight.sourceNoteTitles
+            .map((t) => titleToNote.get(t.toLowerCase()))
+            .filter((n): n is ScopeRecapSourceNote => n != null)
+            .map((note) => sourceRefForNote(note, generatedAt, `LLM insight source: ${insight.title}`));
+
+        if (matchedRefs.length === 0) continue;
+
+        const item = makeItem({
+            section: insight.section,
+            title: insight.title,
+            summary: insight.summary,
+            sourceRefs: matchedRefs,
+            generatedAt,
+            idParts: [insight.section, "llm", insight.title],
+        });
+
+        switch (insight.section) {
+            case "theme": themes.push(item); break;
+            case "tension": tensions.push(item); break;
+            case "open_question": openQuestions.push(item); break;
+        }
+    }
+
+    const recap: ScopeRecapRunResult = {
+        id: `recap-${stableHash(`${scope.kind}:${(scope.paths ?? []).join("|")}:${generatedAt}`)}`,
+        scope,
+        generatedAt,
+        ttlDays: options.ttlDays ?? DEFAULT_TTL_DAYS,
+        staleStatus,
+        sourceCoverage: coverage,
+        skippedSources,
+        summary,
+        themes,
+        tensions,
+        openQuestions: openQuestions,
+        nextReviewActions: buildActionItems(included, generatedAt),
+        sourceRefs,
+        dataBoundarySnapshotId: options.dataBoundarySnapshotId ?? "data_boundary:scope_recap",
+        providerInfo: { provider: "llm", model: "scope-recap-insights" },
+    };
+    return recap;
+}

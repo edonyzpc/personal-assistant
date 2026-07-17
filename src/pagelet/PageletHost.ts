@@ -29,10 +29,12 @@ import type {
     QuietRecallSaveResult,
     RetrievalHabitFeedbackKind,
     RetrievalHabitProfileRecordResult,
+    RecapLlmInsight,
     ReviewQueueCreateInput,
     ReviewQueueItem,
     ReviewQueueListFilter,
     ReviewQueueResult,
+    ReviewQueueScope,
     SavedInsight,
     ScopeRecapRunResult,
 } from "../pa";
@@ -185,6 +187,12 @@ export interface PageletHost {
 
     /** Build an on-demand source-backed recap for the current Pagelet scope. */
     runScopeRecap(): Promise<ScopeRecapRunResult>;
+
+    /** Generate LLM-backed insights for scope recap note digests. */
+    generateRecapInsights?(input: {
+        scope: ReviewQueueScope;
+        noteDigests: Array<{ title: string; digest: string; tags: string[] }>;
+    }): Promise<RecapLlmInsight[] | null>;
 
     /** Generate quiet recall candidates for the active note. */
     runQuietRecall(): Promise<QuietRecallRunResult>;
