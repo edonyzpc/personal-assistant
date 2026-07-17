@@ -6188,6 +6188,66 @@ body.is-mobile .pa-pagelet-tab-show-more {
 	border-radius: 8px;
 	padding: 16px;
 	margin-bottom: 12px;
+	transition: box-shadow .15s ease, border-color .15s ease;
+}
+
+.pa-pagelet-tab-insight-card:hover {
+	box-shadow: 0 2px 8px rgba(0,0,0,.12);
+	border-color: color-mix(in srgb,var(--background-modifier-border,#3a3a3a) 70%,var(--text-muted,#999));
+}
+
+.pa-pagelet-tab-card--insight {
+	border-left: 3px solid var(--interactive-accent,#7c9eff);
+}
+
+.pa-pagelet-tab-card--action {
+	border-left: 3px solid var(--text-success,#14936b);
+}
+
+.pa-pagelet-tab-card-action-btn {
+	margin-top: 12px;
+	padding: 6px 14px;
+	border-radius: 6px;
+	border: 1px solid var(--interactive-accent,#7c9eff);
+	background: transparent;
+	color: var(--interactive-accent,#7c9eff);
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.pa-pagelet-tab-card-action-btn:hover {
+	background: color-mix(in srgb,var(--interactive-accent,#7c9eff) 10%,transparent);
+}
+
+.pa-pagelet-tab-card--comparison {
+	border-left: 3px solid var(--text-warning,#c77700);
+}
+
+.pa-pagelet-tab-card--quote {
+	padding: 20px 24px;
+	margin-bottom: 12px;
+}
+
+.pa-pagelet-tab-card-quote-text {
+	font-size: calc(var(--font-text-size, 16px) * 1.05);
+	font-weight: 500;
+	font-style: italic;
+	color: var(--text-normal,#dcddde);
+	line-height: 1.6;
+	margin: 0;
+}
+
+.pa-pagelet-tab-card-quote-attr {
+	display: block;
+	margin-top: 8px;
+	font-size: var(--font-ui-small);
+	color: var(--text-faint,#666);
+}
+
+.pa-pagelet-tab-card--source-list {
+	padding: 12px 16px;
+	margin-bottom: 12px;
 }
 
 .pa-pagelet-tab-review-queue-card--ai-callout {

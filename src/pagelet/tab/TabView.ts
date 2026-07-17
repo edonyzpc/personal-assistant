@@ -21,7 +21,7 @@ import { confirmUserAction } from "../../confirm";
 
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import type { PanelFinding, PanelMemoryRecentChange } from "../panel/types";
-import type { PageletDetailPayload, TabEntryReason, TabSection } from "./types";
+import type { PageletDetailPayload, TabCard, TabEntryReason, TabSection } from "./types";
 import {
     type ConfirmedMemoryRecord,
     type ContextPagerState,
@@ -775,31 +775,117 @@ export class TabView {
             sectionEl.appendChild(el("h2", undefined, section.title));
 
             for (const card of section.cards) {
-                const cardEl = el("div", "pa-pagelet-tab-insight-card");
-
-                if (card.title) {
-                    cardEl.appendChild(el("h4", undefined, card.title));
-                }
-
-                const bodyP = el("p");
-                bodyP.textContent = card.body;
-                cardEl.appendChild(bodyP);
-
-                if (card.tags && card.tags.length > 0) {
-                    const tagRow = el("div", "pa-pagelet-tab-tag-row");
-                    for (const tag of card.tags) {
-                        tagRow.appendChild(
-                            el("span", "pa-pagelet-tab-tag-chip", tag),
-                        );
-                    }
-                    cardEl.appendChild(tagRow);
-                }
-
-                sectionEl.appendChild(cardEl);
+                sectionEl.appendChild(this.renderStyledCard(card));
             }
 
             this.bodyEl.appendChild(sectionEl);
         }
+    }
+
+    private renderStyledCard(card: TabCard): HTMLElement {
+        const style = card.cardStyle ?? "default";
+        switch (style) {
+            case "insight": return this.renderInsightStyleCard(card);
+            case "action": return this.renderActionStyleCard(card);
+            case "quote": return this.renderQuoteStyleCard(card);
+            case "comparison": return this.renderComparisonStyleCard(card);
+            case "source-list": return this.renderSourceListStyleCard(card);
+            default: return this.renderDefaultStyleCard(card);
+        }
+    }
+
+    private renderDefaultStyleCard(card: TabCard): HTMLElement {
+        const cardEl = el("div", "pa-pagelet-tab-insight-card");
+        if (card.title) cardEl.appendChild(el("h4", undefined, card.title));
+        const bodyP = el("p");
+        bodyP.textContent = card.body;
+        cardEl.appendChild(bodyP);
+        this.appendCardTags(cardEl, card);
+        this.appendCardSources(cardEl, card);
+        return cardEl;
+    }
+
+    private renderInsightStyleCard(card: TabCard): HTMLElement {
+        const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-card--insight");
+        if (card.title) cardEl.appendChild(el("h4", undefined, card.title));
+        const bodyP = el("p");
+        bodyP.textContent = card.body;
+        cardEl.appendChild(bodyP);
+        this.appendCardTags(cardEl, card);
+        this.appendCardSources(cardEl, card);
+        return cardEl;
+    }
+
+    private renderActionStyleCard(card: TabCard): HTMLElement {
+        const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-card--action");
+        if (card.title) cardEl.appendChild(el("h4", undefined, card.title));
+        const bodyP = el("p");
+        bodyP.textContent = card.body;
+        cardEl.appendChild(bodyP);
+        if (card.actionLabel && card.actionCallback) {
+            const btn = el("button", "pa-pagelet-tab-card-action-btn");
+            btn.setAttribute("type", "button");
+            btn.textContent = card.actionLabel;
+            btn.addEventListener("click", card.actionCallback);
+            cardEl.appendChild(btn);
+        }
+        this.appendCardTags(cardEl, card);
+        return cardEl;
+    }
+
+    private renderQuoteStyleCard(card: TabCard): HTMLElement {
+        const cardEl = el("div", "pa-pagelet-tab-card--quote");
+        const quoteP = el("p", "pa-pagelet-tab-card-quote-text");
+        quoteP.textContent = card.body;
+        cardEl.appendChild(quoteP);
+        if (card.title) {
+            const attr = el("span", "pa-pagelet-tab-card-quote-attr");
+            attr.textContent = card.title;
+            cardEl.appendChild(attr);
+        }
+        return cardEl;
+    }
+
+    private renderComparisonStyleCard(card: TabCard): HTMLElement {
+        const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-card--comparison");
+        if (card.title) cardEl.appendChild(el("h4", undefined, card.title));
+        const bodyP = el("p");
+        bodyP.textContent = card.body;
+        cardEl.appendChild(bodyP);
+        this.appendCardSources(cardEl, card);
+        this.appendCardTags(cardEl, card);
+        return cardEl;
+    }
+
+    private renderSourceListStyleCard(card: TabCard): HTMLElement {
+        const cardEl = el("div", "pa-pagelet-tab-card--source-list");
+        if (card.title) cardEl.appendChild(el("h4", undefined, card.title));
+        this.appendCardSources(cardEl, card);
+        return cardEl;
+    }
+
+    private appendCardTags(cardEl: HTMLElement, card: TabCard): void {
+        if (!card.tags || card.tags.length === 0) return;
+        const tagRow = el("div", "pa-pagelet-tab-tag-row");
+        for (const tag of card.tags) {
+            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", tag));
+        }
+        cardEl.appendChild(tagRow);
+    }
+
+    private appendCardSources(cardEl: HTMLElement, card: TabCard): void {
+        if (!card.sourceLinks || card.sourceLinks.length === 0) return;
+        const sourceRow = el("div", "pa-pagelet-tab-tag-row");
+        for (const src of card.sourceLinks) {
+            const link = el("button", "pa-pagelet-tab-tag-chip pa-pagelet-tab-tag-chip--link");
+            link.setAttribute("type", "button");
+            link.textContent = src.title ?? src.path.split("/").pop() ?? src.path;
+            link.addEventListener("click", () => {
+                this.options.onSourcePathClick?.(src.path);
+            });
+            sourceRow.appendChild(link);
+        }
+        cardEl.appendChild(sourceRow);
     }
 
     /**

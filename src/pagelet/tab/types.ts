@@ -28,11 +28,17 @@ export interface TabSection {
     cards: TabCard[];
 }
 
+export type TabCardStyle = "default" | "insight" | "comparison" | "action" | "quote" | "source-list";
+
 /** A card within a Tab section */
 export interface TabCard {
     title?: string;
     body: string;
     tags?: string[];
+    cardStyle?: TabCardStyle;
+    sourceLinks?: Array<{ path: string; title?: string }>;
+    actionLabel?: string;
+    actionCallback?: () => void;
 }
 
 export type PageletDetailContent = PanelFinding[] | TabSection[];
