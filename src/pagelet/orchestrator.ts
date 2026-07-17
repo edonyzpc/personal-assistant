@@ -994,6 +994,8 @@ export class PageletOrchestrator {
                 callbacks: {
                     onToggleBubble: () => this.handlePetClick(),
                     onQuickCaptureOpen: () => this.host.openQuickCapture(),
+                    onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
+                    onDiscoverConnections: () => { void this.discoverConnections(); },
                 },
             });
             // Sync proactive-hints flag into state machine

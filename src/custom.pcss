@@ -5959,6 +5959,45 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	min-height: 44px;
 }
 
+.pa-pagelet-pet-hold-menu {
+	position: absolute;
+	bottom: calc(100% + 8px);
+	right: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 4px;
+	background: var(--background-primary,#1e1e1e);
+	border: 1px solid var(--background-modifier-border,#3a3a3a);
+	border-radius: 8px;
+	box-shadow: 0 4px 12px rgba(0,0,0,.25);
+	z-index: 1001;
+	animation: pa-pet-hold-menu-in .12s ease-out;
+}
+
+@keyframes pa-pet-hold-menu-in {
+	from { opacity: 0; transform: translateY(4px) scale(.96); }
+	to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.pa-pagelet-pet-hold-menu-item {
+	padding: 6px 14px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-normal,#dcddde);
+	font-size: var(--font-ui-small);
+	font-weight: 500;
+	text-align: left;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.pa-pagelet-pet-hold-menu-item:hover {
+	background: var(--background-modifier-hover,rgba(0,0,0,.08));
+	color: var(--text-accent,#7c9eff);
+}
+
 /* ──────────────────────────────────────────────────────────────────────
  * Pagelet Tab — zero-style anchor classes.
  *

@@ -91,6 +91,8 @@ export class PetView implements PetRenderer {
     private _touchSuppressTimer: PlatformTimeoutHandle | null = null;
     private _errorTimer: PlatformTimeoutHandle | null = null;
     private _quickCaptureHoldTimer: PlatformTimeoutHandle | null = null;
+    private _holdMenuEl: HTMLElement | null = null;
+    private _holdMenuDismissTimer: PlatformTimeoutHandle | null = null;
     private _themeObserver: MutationObserver | null = null;
     private readonly _getLocale: () => PageletLocale;
 
@@ -387,8 +389,62 @@ export class PetView implements PetRenderer {
             if (this._destroyed) return;
             this._quickCaptureHoldTriggered = true;
             this._rootEl?.removeAttribute("data-capture-hold");
-            this.openQuickCapture();
+            this.showHoldMenu();
         }, QUICK_CAPTURE_HOLD_MS);
+    }
+
+    private showHoldMenu(): void {
+        this.dismissHoldMenu();
+        if (!this._rootEl || this._destroyed) return;
+        const doc = getPlatformDocument();
+        const menu = doc.createElement("div");
+        menu.className = "pa-pagelet-pet-hold-menu";
+
+        const items: Array<{ label: string; callback: (() => void) | undefined }> = [
+            { label: "Capture", callback: this._callbacks.onQuickCaptureOpen },
+            { label: "Review", callback: this._callbacks.onReviewCurrentNote },
+            { label: "Discover", callback: this._callbacks.onDiscoverConnections },
+        ];
+
+        for (const item of items) {
+            if (!item.callback) continue;
+            const btn = doc.createElement("button");
+            btn.className = "pa-pagelet-pet-hold-menu-item";
+            btn.setAttribute("type", "button");
+            btn.textContent = item.label;
+            const cb = item.callback;
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.dismissHoldMenu();
+                cb();
+            });
+            menu.appendChild(btn);
+        }
+
+        this._rootEl.appendChild(menu);
+        this._holdMenuEl = menu;
+        this._holdMenuDismissTimer = setPlatformTimeout(() => {
+            this.dismissHoldMenu();
+        }, 3000);
+
+        const dismissOnOutside = (e: Event) => {
+            if (!menu.contains(e.target as Node)) {
+                this.dismissHoldMenu();
+                doc.removeEventListener("pointerdown", dismissOnOutside, true);
+            }
+        };
+        doc.addEventListener("pointerdown", dismissOnOutside, true);
+    }
+
+    private dismissHoldMenu(): void {
+        if (this._holdMenuDismissTimer !== null) {
+            clearPlatformTimeout(this._holdMenuDismissTimer);
+            this._holdMenuDismissTimer = null;
+        }
+        if (this._holdMenuEl) {
+            this._holdMenuEl.remove();
+            this._holdMenuEl = null;
+        }
     }
 
     private consumeQuickCaptureHold(): boolean {

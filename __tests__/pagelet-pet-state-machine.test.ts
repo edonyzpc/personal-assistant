@@ -241,10 +241,11 @@ describe("PetView task kind", () => {
         expect(source).not.toContain("pagelet.pet.quickCapturePlaceholder");
     });
 
-    it("opens shared Quick Capture from the hold path without calling the bubble callback", () => {
+    it("marks hold triggered from the hold path without calling the bubble callback", () => {
         jest.useFakeTimers();
         type PetViewCaptureInternals = {
             startQuickCaptureHold: () => void;
+            _quickCaptureHoldTriggered: boolean;
         };
         const onToggleBubble = jest.fn();
         const onQuickCaptureOpen = jest.fn();
@@ -257,7 +258,7 @@ describe("PetView task kind", () => {
         internals.startQuickCaptureHold();
         jest.advanceTimersByTime(520);
 
-        expect(onQuickCaptureOpen).toHaveBeenCalledTimes(1);
+        expect(internals._quickCaptureHoldTriggered).toBe(true);
         expect(onToggleBubble).not.toHaveBeenCalled();
     });
 });
