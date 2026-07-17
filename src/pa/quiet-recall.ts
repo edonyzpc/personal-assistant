@@ -610,10 +610,14 @@ function formatCandidateAge(note: QuietRecallVaultNote, now: Date): string {
     const ageDays = daysBetween(now, dateStr);
     if (ageDays === null) return "unknown";
     if (ageDays < 1) return "today";
-    if (ageDays < 7) return `${Math.round(ageDays)} days`;
-    if (ageDays < 30) return `${Math.round(ageDays / 7)} weeks`;
-    if (ageDays < 365) return `${Math.round(ageDays / 30)} months`;
-    return `${Math.round(ageDays / 365)} years`;
+    const days = Math.round(ageDays);
+    if (ageDays < 7) return days === 1 ? "1 day" : `${days} days`;
+    const weeks = Math.round(ageDays / 7);
+    if (ageDays < 30) return weeks === 1 ? "1 week" : `${weeks} weeks`;
+    const months = Math.round(ageDays / 30);
+    if (ageDays < 365) return months === 1 ? "1 month" : `${months} months`;
+    const years = Math.round(ageDays / 365);
+    return years === 1 ? "1 year" : `${years} years`;
 }
 
 export async function evaluateRecallWithLlm(

@@ -1483,6 +1483,7 @@ export class PageletOrchestrator {
                 item.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
                 && !this.isQuietRecallCandidateSuppressed(item.id, now)
             ));
+            this.unconvincingRecallCount = recall.candidates.length - (candidate ? 1 : 0);
             if (!candidate) {
                 this.clearQuietRecallBubbleNudge();
                 return;

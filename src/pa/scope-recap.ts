@@ -495,7 +495,7 @@ export function extractNoteDigest(note: ScopeRecapSourceNote): string {
                 inFirstParagraph = true;
                 paragraphLines.push(trimmed);
             } else if (inFirstParagraph) {
-                if (trimmed.length === 0) {
+                if (trimmed.length === 0 || trimmed.startsWith("#")) {
                     firstParagraph = paragraphLines.join(" ");
                 } else {
                     paragraphLines.push(trimmed);

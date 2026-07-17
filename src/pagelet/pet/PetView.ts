@@ -93,6 +93,7 @@ export class PetView implements PetRenderer {
     private _quickCaptureHoldTimer: PlatformTimeoutHandle | null = null;
     private _holdMenuEl: HTMLElement | null = null;
     private _holdMenuDismissTimer: PlatformTimeoutHandle | null = null;
+    private _holdMenuOutsideListener: ((e: Event) => void) | null = null;
     private _themeObserver: MutationObserver | null = null;
     private readonly _getLocale: () => PageletLocale;
 
@@ -342,6 +343,7 @@ export class PetView implements PetRenderer {
         }
         this.clearTouchSuppression();
         this.clearQuickCaptureHoldTimer();
+        this.dismissHoldMenu();
         this._quickCaptureHoldTriggered = false;
         this._recentTouch = false;
         this.unmount();
@@ -430,9 +432,9 @@ export class PetView implements PetRenderer {
         const dismissOnOutside = (e: Event) => {
             if (!menu.contains(e.target as Node)) {
                 this.dismissHoldMenu();
-                doc.removeEventListener("pointerdown", dismissOnOutside, true);
             }
         };
+        this._holdMenuOutsideListener = dismissOnOutside;
         doc.addEventListener("pointerdown", dismissOnOutside, true);
     }
 
@@ -440,6 +442,10 @@ export class PetView implements PetRenderer {
         if (this._holdMenuDismissTimer !== null) {
             clearPlatformTimeout(this._holdMenuDismissTimer);
             this._holdMenuDismissTimer = null;
+        }
+        if (this._holdMenuOutsideListener) {
+            getPlatformDocument().removeEventListener("pointerdown", this._holdMenuOutsideListener, true);
+            this._holdMenuOutsideListener = null;
         }
         if (this._holdMenuEl) {
             this._holdMenuEl.remove();
