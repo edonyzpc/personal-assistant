@@ -1,8 +1,11 @@
 /* Copyright 2023 edonyzpc */
 
-import type { ScopeRecapRunResult } from "../../pa";
+import {
+    buildScopeRecapInsightFingerprint,
+    selectStrongestConcreteScopeRecapInsight,
+    type ScopeRecapRunResult,
+} from "../../pa";
 import type { DeliveryCandidate } from "./types";
-import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
 
 function sourceTitle(path: string): string {
     const name = path.split("/").pop() ?? path;
@@ -13,21 +16,18 @@ export function scopeRecapToDeliveryCandidate(
     recap: ScopeRecapRunResult,
 ): (DeliveryCandidate & { kind: "recap" }) | null {
     if (recap.staleStatus !== "fresh") return null;
-    if (recap.sourceCoverage.coverageRatio <= 0 || recap.sourceRefs.length === 0) return null;
+    const insight = selectStrongestConcreteScopeRecapInsight(recap, 1);
+    if (!insight) return null;
     return {
-        id: recap.id,
+        id: buildScopeRecapInsightFingerprint(recap.scope, insight),
         kind: "recap",
-        title: recap.scope.label ?? pageletT("pagelet.bubble.recapDelivery.fallbackTitle", getPageletUiLanguage()),
-        body: recap.summary.summary,
-        sourceRefs: recap.sourceRefs.map((ref) => ({
+        title: insight.title,
+        body: insight.summary,
+        sourceRefs: insight.sourceRefs.map((ref) => ({
             path: ref.path,
             title: sourceTitle(ref.path),
         })),
-        whyNow: [
-            pageletT("pagelet.bubble.recapDelivery.coverage", getPageletUiLanguage(), {
-                included: recap.sourceCoverage.includedSourceCount,
-            }),
-        ],
+        whyNow: [insight.whyItMatters ?? insight.summary],
         preparedAt: recap.generatedAt,
         staleStatus: recap.staleStatus,
         route: {

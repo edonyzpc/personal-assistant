@@ -549,7 +549,7 @@ export class BubbleView {
         if (!zone) {
             zone = createHtmlElement("div");
             zone.className = "pa-pagelet-bubble-context-action";
-            this.rootEl.querySelector(".pa-pagelet-bubble-body")?.appendChild(zone);
+            this.rootEl.appendChild(zone);
         }
         clearChildren(zone);
         const label = createHtmlElement("span");
@@ -559,7 +559,12 @@ export class BubbleView {
         const btn = createHtmlElement("button");
         btn.className = "pa-pagelet-bubble-context-action-btn";
         btn.setAttribute("type", "button");
-        btn.textContent = contextAction.action === "discover" ? "Discover" : "Review";
+        btn.textContent = pageletT(
+            contextAction.action === "discover"
+                ? "pagelet.bubble.contextAction.discover"
+                : "pagelet.bubble.contextAction.review",
+            this.getLocale(),
+        );
         this.attachActionActivation(btn, contextAction.callback);
         zone.appendChild(btn);
     }

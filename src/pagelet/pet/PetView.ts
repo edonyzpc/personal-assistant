@@ -30,6 +30,18 @@ export function getPetAriaLabel(locale: PageletLocale, state?: PetState, taskKin
     return state ? `${base}: ${pageletT(`pagelet.pet.${state}`, locale)}` : base;
 }
 
+export function getPetHoldMenuLabels(locale: PageletLocale): {
+    capture: string;
+    review: string;
+    discover: string;
+} {
+    return {
+        capture: pageletT("pagelet.pet.hold.capture", locale),
+        review: pageletT("pagelet.pet.hold.review", locale),
+        discover: pageletT("pagelet.pet.hold.discover", locale),
+    };
+}
+
 export type PetMountTarget = {
     mountEl: HTMLElement;
     insertAfterEl: HTMLElement | null;
@@ -105,6 +117,7 @@ export class PetView implements PetRenderer {
     private readonly _handleMouseLeave: () => void;
     private readonly _handleTouchstart: (e: TouchEvent) => void;
     private readonly _handleTouchend: (e: TouchEvent) => void;
+    private readonly _handleTouchcancel: () => void;
 
     constructor(options: PetRendererOptions) {
         this._state = options.initialState ?? "idle";
@@ -165,6 +178,10 @@ export class PetView implements PetRenderer {
             if (holdTriggered) return;
             this._callbacks.onToggleBubble();
         };
+        this._handleTouchcancel = () => {
+            this.clearQuickCaptureHoldTimer();
+            this._quickCaptureHoldTriggered = false;
+        };
     }
 
     /** Mount the Pet into the active Markdown leaf or its phone toolbar. */
@@ -218,6 +235,7 @@ export class PetView implements PetRenderer {
         root.addEventListener("mouseleave", this._handleMouseLeave);
         root.addEventListener("touchstart", this._handleTouchstart, { passive: true });
         root.addEventListener("touchend", this._handleTouchend, { passive: false });
+        root.addEventListener("touchcancel", this._handleTouchcancel);
 
         if (mountTarget.insertAfterEl) {
             mountEl.insertBefore(root, mountTarget.insertAfterEl.nextSibling);
@@ -244,13 +262,16 @@ export class PetView implements PetRenderer {
 
     /** Unmount from current container. */
     unmount(): void {
-        if (!this._rootEl) return;
-
         this.clearTouchSuppression();
+        this.clearQuickCaptureHoldTimer();
+        this.dismissHoldMenu();
+        this._quickCaptureHoldTriggered = false;
         this._recentTouch = false;
 
         this._themeObserver?.disconnect();
         this._themeObserver = null;
+
+        if (!this._rootEl) return;
 
         this._rootEl.removeEventListener("click", this._handleClick);
         this._rootEl.removeEventListener("keydown", this._handleKeydown);
@@ -259,6 +280,7 @@ export class PetView implements PetRenderer {
         this._rootEl.removeEventListener("mouseleave", this._handleMouseLeave);
         this._rootEl.removeEventListener("touchstart", this._handleTouchstart);
         this._rootEl.removeEventListener("touchend", this._handleTouchend);
+        this._rootEl.removeEventListener("touchcancel", this._handleTouchcancel);
         this._rootEl.remove();
         this._rootEl = null;
         this._svgWrapEl = null;
@@ -401,11 +423,12 @@ export class PetView implements PetRenderer {
         const doc = getPlatformDocument();
         const menu = doc.createElement("div");
         menu.className = "pa-pagelet-pet-hold-menu";
+        const labels = getPetHoldMenuLabels(this._getLocale());
 
         const items: Array<{ label: string; callback: (() => void) | undefined }> = [
-            { label: "Capture", callback: this._callbacks.onQuickCaptureOpen },
-            { label: "Review", callback: this._callbacks.onReviewCurrentNote },
-            { label: "Discover", callback: this._callbacks.onDiscoverConnections },
+            { label: labels.capture, callback: this._callbacks.onQuickCaptureOpen },
+            { label: labels.review, callback: this._callbacks.onReviewCurrentNote },
+            { label: labels.discover, callback: this._callbacks.onDiscoverConnections },
         ];
 
         for (const item of items) {

@@ -18,6 +18,10 @@ export interface ScopeRecapSourceNote {
     modifiedAt?: string;
     isGenerated?: boolean;
     sourceRefs?: readonly PersistedSourceRef[];
+    /** Local adapter classification for candidates intentionally not transferred. */
+    skipReason?: ScopeRecapSkippedSource["reason"];
+    /** Non-sensitive aggregate label shown with the skipped count. */
+    skipLabel?: string;
 }
 
 export interface ScopeRecapSkippedSource {
@@ -38,6 +42,8 @@ export interface ScopeRecapItem {
     section: ScopeRecapSectionType;
     title: string;
     summary: string;
+    /** Concrete reason this cross-note relationship is worth attention now. */
+    whyItMatters?: string;
     sourceRefs: PersistedSourceRef[];
     generatedAt: string;
     generatedHelper: true;
@@ -47,6 +53,8 @@ export interface ScopeRecapItem {
 export interface ScopeRecapRunResult {
     id: string;
     scope: ReviewQueueScope;
+    /** Stable snapshot of the normalized scope and every candidate source. Optional only for legacy in-memory fixtures. */
+    sourceSnapshotId?: string;
     generatedAt: string;
     ttlDays: number;
     staleStatus: ScopeRecapStaleStatus;
@@ -62,6 +70,103 @@ export interface ScopeRecapRunResult {
     providerInfo?: { provider: string; model: string };
 }
 
+export type ScopeRecapAttemptOutcome =
+    | "success"
+    | "insufficient_sources"
+    | "provider_unavailable"
+    | "provider_error"
+    | "budget_blocked"
+    | "timeout"
+    | "empty"
+    | "malformed"
+    | "quality_rejected";
+
+export interface ScopeRecapAttemptCost {
+    inputTokens?: number;
+    outputTokens?: number;
+    estimatedCost?: number;
+    currency?: "USD";
+    pricingKnown?: boolean;
+}
+
+/** Diagnostics-only metadata. It never substitutes for a valid artifact. */
+export interface ScopeRecapAttemptStatus {
+    attemptedAt: string;
+    outcome: ScopeRecapAttemptOutcome;
+    scope: Pick<ReviewQueueScope, "kind">;
+    sourceSnapshotId: string;
+    dataBoundarySnapshotId: string;
+    providerCallMade: boolean;
+    includedSourceCount: number;
+    cost?: ScopeRecapAttemptCost;
+}
+
+export interface ScopeRecapLocalOverviewSource {
+    path: string;
+    title: string;
+    modifiedAt?: string;
+    changed: boolean;
+}
+
+/**
+ * Synchronous, explanation-only facts for an explicit Recap open.
+ * This object deliberately has no theme, tension, inference, or action fields.
+ */
+export interface ScopeRecapLocalOverview {
+    kind: "local_scope_overview";
+    generatedAt: string;
+    scope: ReviewQueueScope;
+    sourceSnapshotId: string;
+    dataBoundarySnapshotId: string;
+    sourceCoverage: ScopeRecapCoverage;
+    includedSources: ScopeRecapLocalOverviewSource[];
+    skippedSources: ScopeRecapSkippedSource[];
+}
+
+export type ScopeRecapPreparationResult =
+    | {
+        status: "ready";
+        artifact: ScopeRecapRunResult;
+        attempt: ScopeRecapAttemptStatus & { outcome: "success" };
+        localOverview: ScopeRecapLocalOverview;
+    }
+    | {
+        status: "no_reliable_insight";
+        artifact: null;
+        attempt: ScopeRecapAttemptStatus & {
+            outcome: Exclude<ScopeRecapAttemptOutcome, "success">;
+        };
+        localOverview: ScopeRecapLocalOverview;
+    };
+
+export type ScopeRecapArtifactInvalidReason =
+    | "not_fresh"
+    | "scope_mismatch"
+    | "source_snapshot_mismatch"
+    | "data_boundary_mismatch"
+    | "expired"
+    | "invalid_generated_at";
+
+export type ScopeRecapArtifactCurrentness =
+    | { current: true }
+    | { current: false; reason: ScopeRecapArtifactInvalidReason };
+
+export interface ScopeRecapArtifactCurrentnessInput {
+    scope: ReviewQueueScope;
+    sourceSnapshotId: string;
+    dataBoundarySnapshotId: string;
+    now?: Date | (() => Date);
+}
+
+export type ScopeRecapProactiveQualityFailureReason =
+    | "not_fresh"
+    | "no_concrete_insight"
+    | "insufficient_distinct_sources";
+
+export type ScopeRecapProactiveQualityResult =
+    | { eligible: true; insight: ScopeRecapItem; fingerprint: string }
+    | { eligible: false; reason: ScopeRecapProactiveQualityFailureReason };
+
 export interface BuildScopeRecapOptions {
     now?: Date | (() => Date);
     scope?: ReviewQueueScope;
@@ -70,6 +175,8 @@ export interface BuildScopeRecapOptions {
     isPathAllowed?: (path: string) => boolean;
     includeGeneratedSources?: boolean;
     changedSourcePaths?: readonly string[];
+    /** Explicit invalidation signal; ordinary boundary exclusions are not a change. */
+    dataBoundaryChanged?: boolean;
 }
 
 export type ScopeRecapGeneratedNoteResult =
@@ -100,6 +207,50 @@ function uniqueStrings(values: readonly string[]): string[] {
     return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function normalizedScopeValue(scope: ReviewQueueScope): {
+    kind: ReviewQueueScope["kind"];
+    label: string;
+    paths: string[];
+    tags: string[];
+} {
+    return {
+        kind: scope.kind,
+        label: scope.label?.trim() ?? "",
+        paths: uniqueStrings((scope.paths ?? []).map(normalizeVaultPath)).sort(),
+        tags: uniqueStrings((scope.tags ?? []).map(normalizeTag)).sort(),
+    };
+}
+
+function scopesMatch(left: ReviewQueueScope, right: ReviewQueueScope): boolean {
+    return JSON.stringify(normalizedScopeValue(left)) === JSON.stringify(normalizedScopeValue(right));
+}
+
+/**
+ * Hash the complete source snapshot without generation time or cache identity.
+ * Content and mtime are both included so same-length edits cannot remain fresh.
+ */
+export function buildScopeRecapSourceSnapshotId(
+    scope: ReviewQueueScope,
+    sourceNotes: readonly ScopeRecapSourceNote[],
+): string {
+    const sources = sourceNotes
+        .map((note) => ({
+            path: normalizeVaultPath(note.path),
+            content: note.content ?? "",
+            modifiedAt: note.modifiedAt?.trim() ?? "",
+            skipReason: note.skipReason ?? "",
+        }))
+        .sort((left, right) => (
+            left.path.localeCompare(right.path)
+            || left.modifiedAt.localeCompare(right.modifiedAt)
+            || left.content.localeCompare(right.content)
+        ));
+    return `recap-snapshot-${stableHash(JSON.stringify({
+        scope: normalizedScopeValue(scope),
+        sources,
+    }))}`;
+}
+
 function sourceRefsAreValid(refs: readonly PersistedSourceRef[]): boolean {
     return refs.length > 0
         && refs.every((ref) => validateSourceRefPathShape(ref).ok)
@@ -118,7 +269,7 @@ function sourceRefForNote(note: ScopeRecapSourceNote, generatedAt: string, whySh
     return {
         path,
         generatedAt,
-        contentHash: stableHash(`${path}:${note.content?.length ?? 0}`),
+        contentHash: stableHash(note.content ?? ""),
         evidenceStrength: "medium",
         whyShown: [whyShown],
     };
@@ -154,6 +305,11 @@ function normalizeSources(
     for (const note of sourceNotes) {
         const path = normalizeVaultPath(note.path);
         if (!path || seen.has(path)) continue;
+        seen.add(path);
+        if (note.skipReason) {
+            addSkip(note.skipReason, note.skipLabel ?? "Source skipped");
+            continue;
+        }
         if (options.isPathAllowed && !options.isPathAllowed(path)) {
             addSkip("data_boundary", "Skipped by Data Boundary");
             continue;
@@ -171,7 +327,6 @@ function normalizeSources(
                 ? note.sourceRefs?.map(cloneSourceRef)
                 : undefined,
         });
-        seen.add(path);
     }
     return { included, skippedSources: [...skipped.values()] };
 }
@@ -193,7 +348,7 @@ export function buildScopeRecap(
     const changed = new Set((options.changedSourcePaths ?? []).map(normalizeVaultPath));
     const staleStatus: ScopeRecapStaleStatus = changed.size > 0
         ? "stale"
-        : skippedSources.some((entry) => entry.reason === "data_boundary")
+        : options.dataBoundaryChanged
             ? "boundary-changed"
             : included.length < 2
                 ? "low-coverage"
@@ -211,6 +366,7 @@ export function buildScopeRecap(
     const recap: ScopeRecapRunResult = {
         id: `recap-${stableHash(`${scope.kind}:${(scope.paths ?? []).join("|")}:${generatedAt}`)}`,
         scope,
+        sourceSnapshotId: buildScopeRecapSourceSnapshotId(scope, sourceNotes),
         generatedAt,
         ttlDays: options.ttlDays ?? DEFAULT_TTL_DAYS,
         staleStatus,
@@ -231,6 +387,7 @@ function makeItem(input: {
     section: ScopeRecapSectionType;
     title: string;
     summary: string;
+    whyItMatters?: string;
     sourceRefs: PersistedSourceRef[];
     generatedAt: string;
     idParts: readonly string[];
@@ -240,6 +397,7 @@ function makeItem(input: {
         section: input.section,
         title: input.title,
         summary: input.summary,
+        ...(input.whyItMatters ? { whyItMatters: input.whyItMatters } : {}),
         sourceRefs: input.sourceRefs.map(cloneSourceRef),
         generatedAt: input.generatedAt,
         generatedHelper: true,
@@ -364,6 +522,204 @@ function allRecapItems(recap: ScopeRecapRunResult): ScopeRecapItem[] {
     ];
 }
 
+function concreteRecapItems(recap: ScopeRecapRunResult): ScopeRecapItem[] {
+    return [
+        ...recap.tensions,
+        ...recap.openQuestions,
+        ...recap.themes,
+    ];
+}
+
+function distinctValidSourcePaths(item: ScopeRecapItem): string[] {
+    return uniqueStrings(item.sourceRefs
+        .filter((ref) => validateSourceRefPathShape(ref).ok)
+        .map((ref) => normalizeVaultPath(ref.path)))
+        .sort();
+}
+
+const GENERIC_WHY_IT_MATTERS_TEXT = new Set([
+    "important",
+    "veryimportant",
+    "thisisimportant",
+    "itisimportant",
+    "itmatters",
+    "thismatters",
+    "relevant",
+    "thisisrelevant",
+    "notable",
+    "significant",
+    "meaningful",
+    "worthattention",
+    "worthnoting",
+    "thisisworthnoting",
+    "needsattention",
+    "thisneedsattention",
+    "重要",
+    "很重要",
+    "非常重要",
+    "这很重要",
+    "值得关注",
+    "值得注意",
+    "需要注意",
+    "需要注意这一点",
+    "这一点需要注意",
+    "有意义",
+    "很有意义",
+    "具有重要意义",
+    "关键",
+    "很关键",
+]);
+
+const CONCRETE_WHY_IT_MATTERS_SIGNAL = /(?:\b(?:because|therefore|thus|otherwise|before|until|affect(?:s|ed|ing)?|impact(?:s|ed|ing)?|consequence(?:s)?|risk(?:s|ed|ing)?|conflict(?:s|ed|ing)?|contradict(?:s|ed|ing|ion|ory)?|depend(?:s|ed|ing)?|require(?:s|d)?|requiring|need(?:s|ed|ing)?|prevent(?:s|ed|ing)?|enable(?:s|d)?|enabling|block(?:s|ed|ing)?|change(?:s|d)?|changing|decid(?:e|es|ed|ing)|determin(?:e|es|ed|ing)|govern(?:s|ed|ing)?|mak(?:e|es|ing)|lead(?:s|ing)?|led|result(?:s|ed|ing)?|resolv(?:e|es|ed|ing)|unresolved|mean(?:s|ing)?|impl(?:y|ies|ied|ying)|trade-?off(?:s)?)\b|因为|所以|因此|意味着|影响|后果|风险|冲突|矛盾|取决于|依赖|需要|阻碍|促进|决定了|决定着|导致|造成|带来|关系到|关乎|违背|抵触|不一致|相互(?:支持|冲突|矛盾|依赖|强化)|必须先|应当先|应该先|之前|直到|否则|无法|不能)/iu;
+
+const GENERIC_WHY_IT_MATTERS_PATTERN = /^(?:(?:this|it)\s+)?(?:needs?\s+(?:more\s+)?attention|makes?\s+(?:it\s+)?(?:important|relevant|significant|meaningful))(?:\s+(?:before\s+(?:acting|proceeding)|now|here))?[\p{P}\p{S}\s]*$|^(?:这|这一点)?(?:需要更多关注|值得更多关注|使(?:它|其)?(?:很)?重要)(?:再行动)?[\p{P}\p{S}\s]*$/iu;
+
+function normalizeScopeRecapQualityText(value: string): string {
+    return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeComparableScopeRecapQualityText(value: string): string {
+    return normalizeScopeRecapQualityText(value)
+        .replace(/^(?:(?:summary|why\s+it\s+matters|why|reason)|(?:摘要|为什么重要|意义|原因))\s*[:：-]\s*/iu, "")
+        .replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
+function isNearRepeatScopeRecapQualityText(left: string, right: string): boolean {
+    if (left === right) return true;
+    const [longer, shorter] = left.length >= right.length ? [left, right] : [right, left];
+    return shorter.length >= 8
+        && longer.includes(shorter)
+        && longer.length - shorter.length <= 16;
+}
+
+function hasConcreteWhyItMatters(item: ScopeRecapItem): boolean {
+    const whyItMatters = item.whyItMatters?.trim();
+    if (!whyItMatters) return false;
+
+    const normalizedWhy = normalizeScopeRecapQualityText(whyItMatters);
+    const comparableWhy = normalizeComparableScopeRecapQualityText(whyItMatters);
+    if (comparableWhy.length < 8 || GENERIC_WHY_IT_MATTERS_TEXT.has(comparableWhy)) return false;
+    if (GENERIC_WHY_IT_MATTERS_PATTERN.test(normalizedWhy)) return false;
+    if (isNearRepeatScopeRecapQualityText(
+        comparableWhy,
+        normalizeComparableScopeRecapQualityText(item.summary),
+    )) return false;
+
+    return CONCRETE_WHY_IT_MATTERS_SIGNAL.test(normalizedWhy);
+}
+
+/** Select a structured, source-backed observation; summaries and actions never qualify. */
+export function selectStrongestConcreteScopeRecapInsight(
+    recap: ScopeRecapRunResult,
+    minimumDistinctSources = 2,
+): ScopeRecapItem | null {
+    const sectionWeight: Readonly<Record<ScopeRecapSectionType, number>> = {
+        summary: 0,
+        theme: 1,
+        open_question: 2,
+        tension: 3,
+        next_review_action: 0,
+    };
+    const eligible = concreteRecapItems(recap).filter((item) => (
+        item.title.trim().length > 0
+        && item.summary.trim().length > 0
+        && hasConcreteWhyItMatters(item)
+        && distinctValidSourcePaths(item).length >= minimumDistinctSources
+    ));
+    eligible.sort((left, right) => (
+        sectionWeight[right.section] - sectionWeight[left.section]
+        || distinctValidSourcePaths(right).length - distinctValidSourcePaths(left).length
+        || left.id.localeCompare(right.id)
+    ));
+    return eligible[0] ?? null;
+}
+
+/** Stable across regeneration of the same substantive insight. */
+export function buildScopeRecapInsightFingerprint(
+    scope: ReviewQueueScope,
+    insight: ScopeRecapItem,
+): string {
+    const normalizeText = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+    return `recap-insight-${stableHash(JSON.stringify({
+        scope: normalizedScopeValue(scope),
+        section: insight.section,
+        title: normalizeText(insight.title),
+        summary: normalizeText(insight.summary),
+        whyItMatters: normalizeText(insight.whyItMatters ?? ""),
+        sourcePaths: distinctValidSourcePaths(insight),
+    }))}`;
+}
+
+export function evaluateScopeRecapProactiveQuality(
+    recap: ScopeRecapRunResult,
+): ScopeRecapProactiveQualityResult {
+    if (recap.staleStatus !== "fresh") return { eligible: false, reason: "not_fresh" };
+    const concreteItems = concreteRecapItems(recap).filter((item) => (
+        item.title.trim().length > 0 && item.summary.trim().length > 0
+    ));
+    if (concreteItems.length === 0) return { eligible: false, reason: "no_concrete_insight" };
+    const insight = selectStrongestConcreteScopeRecapInsight(recap, 2);
+    if (!insight) return { eligible: false, reason: "insufficient_distinct_sources" };
+    return {
+        eligible: true,
+        insight,
+        fingerprint: buildScopeRecapInsightFingerprint(recap.scope, insight),
+    };
+}
+
+export function evaluateScopeRecapArtifactCurrentness(
+    artifact: ScopeRecapRunResult,
+    input: ScopeRecapArtifactCurrentnessInput,
+): ScopeRecapArtifactCurrentness {
+    if (artifact.staleStatus !== "fresh") return { current: false, reason: "not_fresh" };
+    if (!scopesMatch(artifact.scope, input.scope)) return { current: false, reason: "scope_mismatch" };
+    if (artifact.sourceSnapshotId !== input.sourceSnapshotId) {
+        return { current: false, reason: "source_snapshot_mismatch" };
+    }
+    if (artifact.dataBoundarySnapshotId !== input.dataBoundarySnapshotId) {
+        return { current: false, reason: "data_boundary_mismatch" };
+    }
+    const generatedAt = Date.parse(artifact.generatedAt);
+    if (!Number.isFinite(generatedAt)) return { current: false, reason: "invalid_generated_at" };
+    const ttlMs = artifact.ttlDays * 24 * 60 * 60 * 1000;
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0 || nowDate(input.now).getTime() >= generatedAt + ttlMs) {
+        return { current: false, reason: "expired" };
+    }
+    return { current: true };
+}
+
+export function buildScopeRecapLocalOverview(
+    sourceNotes: readonly ScopeRecapSourceNote[],
+    options: BuildScopeRecapOptions & { maxSources?: number } = {},
+): ScopeRecapLocalOverview {
+    const generatedAt = nowDate(options.now).toISOString();
+    const { included, skippedSources } = normalizeSources(sourceNotes, options);
+    const scope = makeScope(included, options.scope);
+    const changed = new Set((options.changedSourcePaths ?? []).map(normalizeVaultPath));
+    const maxSources = Math.max(1, Math.min(20, Math.floor(options.maxSources ?? 5)));
+    const skippedSourceCount = skippedSources.reduce((sum, entry) => sum + entry.count, 0);
+    return {
+        kind: "local_scope_overview",
+        generatedAt,
+        scope,
+        sourceSnapshotId: buildScopeRecapSourceSnapshotId(scope, sourceNotes),
+        dataBoundarySnapshotId: options.dataBoundarySnapshotId ?? "data_boundary:scope_recap",
+        sourceCoverage: {
+            totalSourceCount: sourceNotes.length,
+            includedSourceCount: included.length,
+            skippedSourceCount,
+            coverageRatio: sourceNotes.length > 0 ? included.length / sourceNotes.length : 0,
+        },
+        includedSources: included.slice(0, maxSources).map((note) => ({
+            path: note.path,
+            title: noteTitle(note),
+            ...(note.modifiedAt ? { modifiedAt: note.modifiedAt } : {}),
+            changed: changed.has(note.path),
+        })),
+        skippedSources,
+    };
+}
+
 export function buildScopeRecapMarkdown(recap: ScopeRecapRunResult, acceptedItemIds: readonly string[]): string {
     const accepted = new Set(acceptedItemIds);
     const acceptedItems = allRecapItems(recap).filter((item) => accepted.has(item.id));
@@ -462,6 +818,7 @@ export function scopeRecapToConfirmedMemory(): { ok: false; reason: "recap_not_s
 export interface RecapLlmInsight {
     title: string;
     summary: string;
+    whyItMatters: string;
     sourceNoteTitles: string[];
     section: "theme" | "tension" | "open_question";
 }
@@ -469,7 +826,7 @@ export interface RecapLlmInsight {
 export type GenerateRecapInsightsCallback = (input: {
     scope: ReviewQueueScope;
     noteDigests: Array<{ title: string; digest: string; tags: string[] }>;
-}) => Promise<RecapLlmInsight[] | null>;
+}) => Promise<unknown>;
 
 /**
  * Extract a compact digest from a source note for LLM consumption.
@@ -517,17 +874,33 @@ export function extractNoteDigest(note: ScopeRecapSourceNote): string {
     return parts.join("\n");
 }
 
+function isStrictRecapLlmInsight(value: unknown): value is RecapLlmInsight {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const candidate = value as Record<string, unknown>;
+    return typeof candidate.title === "string"
+        && candidate.title.trim().length > 0
+        && typeof candidate.summary === "string"
+        && candidate.summary.trim().length > 0
+        && typeof candidate.whyItMatters === "string"
+        && candidate.whyItMatters.trim().length > 0
+        && Array.isArray(candidate.sourceNoteTitles)
+        && candidate.sourceNoteTitles.length > 0
+        && candidate.sourceNoteTitles.every((title) => typeof title === "string" && title.trim().length > 0)
+        && (candidate.section === "theme" || candidate.section === "tension" || candidate.section === "open_question");
+}
+
+type ScopeRecapFailedAttemptOutcome = Exclude<ScopeRecapAttemptOutcome, "success">;
+
 /**
- * Build a scope recap using LLM-generated insights instead of rule-based heuristics.
- *
- * Falls back to SILENCE (empty arrays) if the LLM returns null or throws.
- * The existing `buildScopeRecap()` is unchanged; this is a parallel async variant.
+ * Strict preparation boundary. A fresh artifact needs at least one concrete
+ * insight backed by an unambiguous source note. The separate proactive gate
+ * still requires two distinct source notes before it may interrupt the user.
  */
-export async function buildScopeRecapWithLlm(
+export async function prepareScopeRecapWithLlm(
     sourceNotes: readonly ScopeRecapSourceNote[],
     generateInsights: GenerateRecapInsightsCallback,
     options: BuildScopeRecapOptions = {},
-): Promise<ScopeRecapRunResult> {
+): Promise<ScopeRecapPreparationResult> {
     const generatedAt = nowDate(options.now).toISOString();
     const { included, skippedSources } = normalizeSources(sourceNotes, options);
     const sourceRefs = included.map((note) => sourceRefForNote(note, generatedAt, "Included in scope recap."));
@@ -538,12 +911,14 @@ export async function buildScopeRecapWithLlm(
         coverageRatio: sourceNotes.length > 0 ? included.length / sourceNotes.length : 0,
     };
     const scope = makeScope(included, options.scope);
+    const sourceSnapshotId = buildScopeRecapSourceSnapshotId(scope, sourceNotes);
+    const dataBoundarySnapshotId = options.dataBoundarySnapshotId ?? "data_boundary:scope_recap";
     const changed = new Set((options.changedSourcePaths ?? []).map(normalizeVaultPath));
     const staleStatus: ScopeRecapStaleStatus = changed.size > 0
         ? "stale"
-        : skippedSources.some((entry) => entry.reason === "data_boundary")
+        : options.dataBoundaryChanged
             ? "boundary-changed"
-            : included.length < 2
+            : included.length < 1
                 ? "low-coverage"
                 : "fresh";
     const summary = makeItem({
@@ -556,48 +931,73 @@ export async function buildScopeRecapWithLlm(
         generatedAt,
         idParts: ["summary", scope.kind, ...(scope.paths ?? [])],
     });
+    const localOverview = buildScopeRecapLocalOverview(sourceNotes, {
+        ...options,
+        now: new Date(generatedAt),
+    });
+    const attemptBase = {
+        attemptedAt: generatedAt,
+        // Diagnostics retain only the scope class. Paths, tags, labels, and
+        // note titles belong to the local overview/artifact, not attempt state.
+        scope: { kind: scope.kind },
+        sourceSnapshotId,
+        dataBoundarySnapshotId,
+        includedSourceCount: included.length,
+    };
+    const fail = (
+        outcome: ScopeRecapFailedAttemptOutcome,
+        providerCallMade: boolean,
+    ): ScopeRecapPreparationResult => ({
+        status: "no_reliable_insight",
+        artifact: null,
+        attempt: { ...attemptBase, outcome, providerCallMade },
+        localOverview,
+    });
 
-    // Call LLM for insights
-    let insights: RecapLlmInsight[] = [];
-    if (included.length >= 2) {
-        try {
-            const noteDigests = included.map((note) => ({
-                title: noteTitle(note),
-                digest: extractNoteDigest(note),
-                tags: [...(note.tags ?? [])],
-            }));
-            const result = await generateInsights({ scope, noteDigests });
-            if (Array.isArray(result)) {
-                insights = result;
-            }
-        } catch {
-            // Fallback to silence — do not surface errors to user
-            insights = [];
-        }
+    if (included.length < 1) return fail("insufficient_sources", false);
+    if (staleStatus !== "fresh") return fail("quality_rejected", false);
+
+    const noteDigests = included.map((note) => ({
+        title: noteTitle(note),
+        digest: extractNoteDigest(note),
+        tags: [...(note.tags ?? [])],
+    }));
+    let rawInsights: unknown;
+    try {
+        rawInsights = await generateInsights({ scope, noteDigests });
+    } catch {
+        return fail("provider_error", true);
     }
+    if (rawInsights == null) return fail("provider_unavailable", true);
+    if (!Array.isArray(rawInsights)) return fail("malformed", true);
+    if (rawInsights.length === 0) return fail("empty", true);
+    if (!rawInsights.every(isStrictRecapLlmInsight)) return fail("malformed", true);
 
-    // Map LLM insights back to ScopeRecapItem[]
-    const titleToNote = new Map<string, ScopeRecapSourceNote>();
+    const titleToNotes = new Map<string, ScopeRecapSourceNote[]>();
     for (const note of included) {
-        titleToNote.set(noteTitle(note).toLowerCase(), note);
+        const key = noteTitle(note).trim().toLowerCase();
+        titleToNotes.set(key, [...(titleToNotes.get(key) ?? []), note]);
     }
 
     const themes: ScopeRecapItem[] = [];
     const tensions: ScopeRecapItem[] = [];
     const openQuestions: ScopeRecapItem[] = [];
 
-    for (const insight of insights) {
-        const matchedRefs = insight.sourceNoteTitles
-            .map((t) => titleToNote.get(t.toLowerCase()))
-            .filter((n): n is ScopeRecapSourceNote => n != null)
+    for (const insight of rawInsights) {
+        const matchedNotes = insight.sourceNoteTitles
+            .map((title) => titleToNotes.get(title.trim().toLowerCase()))
+            .filter((matches): matches is ScopeRecapSourceNote[] => matches?.length === 1)
+            .map((matches) => matches[0]);
+        const uniqueMatchedNotes = [...new Map(matchedNotes.map((note) => [normalizeVaultPath(note.path), note])).values()];
+        if (uniqueMatchedNotes.length < 1) continue;
+        const matchedRefs = uniqueMatchedNotes
             .map((note) => sourceRefForNote(note, generatedAt, `LLM insight source: ${insight.title}`));
-
-        if (matchedRefs.length === 0) continue;
 
         const item = makeItem({
             section: insight.section,
             title: insight.title,
             summary: insight.summary,
+            whyItMatters: insight.whyItMatters,
             sourceRefs: matchedRefs,
             generatedAt,
             idParts: [insight.section, "llm", insight.title],
@@ -610,9 +1010,14 @@ export async function buildScopeRecapWithLlm(
         }
     }
 
+    if (themes.length + tensions.length + openQuestions.length === 0) {
+        return fail("quality_rejected", true);
+    }
+
     const recap: ScopeRecapRunResult = {
         id: `recap-${stableHash(`${scope.kind}:${(scope.paths ?? []).join("|")}:${generatedAt}`)}`,
         scope,
+        sourceSnapshotId,
         generatedAt,
         ttlDays: options.ttlDays ?? DEFAULT_TTL_DAYS,
         staleStatus,
@@ -621,11 +1026,44 @@ export async function buildScopeRecapWithLlm(
         summary,
         themes,
         tensions,
-        openQuestions: openQuestions,
-        nextReviewActions: buildActionItems(included, generatedAt),
+        openQuestions,
+        nextReviewActions: [],
         sourceRefs,
-        dataBoundarySnapshotId: options.dataBoundarySnapshotId ?? "data_boundary:scope_recap",
+        dataBoundarySnapshotId,
         providerInfo: { provider: "llm", model: "scope-recap-insights" },
     };
-    return recap;
+    if (!selectStrongestConcreteScopeRecapInsight(recap, 1)) {
+        return fail("quality_rejected", true);
+    }
+    return {
+        status: "ready",
+        artifact: recap,
+        attempt: { ...attemptBase, outcome: "success", providerCallMade: true },
+        localOverview,
+    };
+}
+
+/**
+ * Compatibility adapter for existing callers. Failed attempts return a
+ * non-deliverable shell; delivery gates must require a concrete insight.
+ */
+export async function buildScopeRecapWithLlm(
+    sourceNotes: readonly ScopeRecapSourceNote[],
+    generateInsights: GenerateRecapInsightsCallback,
+    options: BuildScopeRecapOptions = {},
+): Promise<ScopeRecapRunResult> {
+    const preparation = await prepareScopeRecapWithLlm(sourceNotes, generateInsights, options);
+    if (preparation.status === "ready") return preparation.artifact;
+    const shell = buildScopeRecap(sourceNotes, {
+        ...options,
+        now: new Date(preparation.attempt.attemptedAt),
+    });
+    return {
+        ...shell,
+        themes: [],
+        tensions: [],
+        openQuestions: [],
+        nextReviewActions: [],
+        providerInfo: { provider: "llm", model: "scope-recap-insights" },
+    };
 }

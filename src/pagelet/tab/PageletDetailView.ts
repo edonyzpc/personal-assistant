@@ -54,6 +54,15 @@ export function clearPageletDetailSessionCache(): void {
     pageletDetailSessionCounter = 0;
 }
 
+/** Clear only cached Scope Recap detail payloads, preserving other Pagelet sessions. */
+export function clearScopeRecapPageletDetailSessionCache(): void {
+    for (const [sessionId, payload] of pageletDetailSessionCache) {
+        if (payload.entryReason === "scope-recap") {
+            pageletDetailSessionCache.delete(sessionId);
+        }
+    }
+}
+
 function createPageletDetailSessionId(): string {
     const cryptoProvider = getPlatformCrypto();
     if (typeof cryptoProvider?.randomUUID === "function") {
@@ -308,19 +317,31 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
             };
         }
         if (payload.extra.quietRecall) {
+            const cloneRecallCandidate = (candidate: typeof payload.extra.quietRecall.candidates[number]) => ({
+                ...candidate,
+                ...(candidate.context ? { context: { ...candidate.context } } : {}),
+                sourceRefs: candidate.sourceRefs.map((ref) => ({
+                    ...ref,
+                    whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                })),
+                whyNow: [...candidate.whyNow],
+            });
             copy.extra.quietRecall = {
                 generatedAt: payload.extra.quietRecall.generatedAt,
                 currentPath: payload.extra.quietRecall.currentPath,
                 totalCount: payload.extra.quietRecall.totalCount,
-                candidates: payload.extra.quietRecall.candidates.map((candidate) => ({
-                    ...candidate,
-                    ...(candidate.context ? { context: { ...candidate.context } } : {}),
-                    sourceRefs: candidate.sourceRefs.map((ref) => ({
-                        ...ref,
-                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-                    })),
-                    whyNow: [...candidate.whyNow],
-                })),
+                candidates: payload.extra.quietRecall.candidates.map(cloneRecallCandidate),
+                ...(payload.extra.quietRecall.discoverCandidates ? {
+                    discoverCandidates: payload.extra.quietRecall.discoverCandidates.map(cloneRecallCandidate),
+                } : {}),
+                ...(payload.extra.quietRecall.evaluationDiagnostics ? {
+                    evaluationDiagnostics: {
+                        ...payload.extra.quietRecall.evaluationDiagnostics,
+                        attempts: payload.extra.quietRecall.evaluationDiagnostics.attempts.map((attempt) => ({
+                            ...attempt,
+                        })),
+                    },
+                } : {}),
             };
         }
     }

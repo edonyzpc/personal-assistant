@@ -47,9 +47,13 @@ export class ProactiveHints {
         if (config.quietHours !== undefined) this._config.quietHours = config.quietHours;
     }
 
-    /** Called when background preparation engine produces new insights */
-    onInsightsReady(): boolean {
-        if (!this._config.enabled) return false;
+    /**
+     * Called when a feature produces a new insight. A narrowly-scoped feature
+     * may supply its own persisted enablement while still sharing the global
+     * quiet-hours and cooldown clock.
+     */
+    onInsightsReady(options: { enabled?: boolean } = {}): boolean {
+        if (!(options.enabled ?? this._config.enabled)) return false;
         if (!this._isCooldownElapsed()) return false;
         if (this._isInQuietHours()) return false;
 

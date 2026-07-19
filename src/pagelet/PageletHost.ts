@@ -25,6 +25,7 @@ import type {
     MaintenanceReviewRunResult,
     PatternDetectionResult,
     QuietRecallCandidate,
+    QuietRecallEvaluationDiagnostics,
     QuietRecallRunResult,
     QuietRecallSaveResult,
     RetrievalHabitFeedbackKind,
@@ -36,8 +37,27 @@ import type {
     ReviewQueueResult,
     ReviewQueueScope,
     SavedInsight,
-    ScopeRecapRunResult,
+    ScopeRecapLocalOverview,
+    ScopeRecapAttemptStatus,
+    ScopeRecapPreparationResult,
 } from "../pa";
+
+export type ScopeRecapAuthorizationChoice = "run" | "adjust" | "cancel";
+
+export interface PageletFeatureRateLimitUsage {
+    hourlyUsed: number;
+    hourlyCap: number;
+    hourlyRemaining: number;
+    dailyUsed: number;
+    dailyCap: number;
+    dailyRemaining: number;
+    dailyResetAt: number;
+}
+
+export interface PageletFeatureRateLimitStatus {
+    scopeRecap: PageletFeatureRateLimitUsage;
+    quietRecall: PageletFeatureRateLimitUsage;
+}
 
 /**
  * Narrow host interface -- what the Pagelet orchestrator needs from the plugin.
@@ -65,6 +85,18 @@ export interface PageletHost {
             preloadPerHourCap: number;
             preloadPerDayCap: number;
             preloadTokenBudget: { input: number; output: number };
+            scopeRecapPreparationEnabled: boolean;
+            scopeRecapBackgroundAuthorization: "pending" | "authorized-v1" | "declined-v1";
+            scopeRecapAuthorizationContextId: string | null;
+            scopeRecapHighValueHints: boolean;
+            scopeRecapNudgeSuppressions: Array<{
+                fingerprint: string;
+                shownAt: number;
+                snoozedUntil?: number;
+            }>;
+            scopeRecapLastAttempt: ScopeRecapAttemptStatus | null;
+            quietRecallLastDiagnostics: QuietRecallEvaluationDiagnostics | null;
+            quietRecallLastAcceptedCount: number;
             outputLanguage: "auto" | "zh" | "en";
             temperature: number;
             foregroundPerHourCap: number;
@@ -139,11 +171,17 @@ export interface PageletHost {
     /** Open PA settings from a trust/boundary explanation. */
     openPageletSettings(): void;
 
+    /** Re-render the visible PA settings tab after an external state transition. */
+    refreshPageletSettings?(): void;
+
     /** Open the shared Quick Capture modal. */
     openQuickCapture(): void;
 
     /** Open Pagelet detail results in a native Obsidian workspace leaf. */
     openPageletDetailView(payload: PageletDetailPayload): Promise<void> | void;
+
+    /** Evict only Scope Recap-derived payloads from the in-memory detail cache. */
+    clearScopeRecapDetailSessionCache?(): void;
 
     /** Find semantically related notes via VSS hybrid search. */
     findRelatedNotes(
@@ -185,8 +223,36 @@ export interface PageletHost {
     /** Run local structure-based cross-note pattern detection. */
     detectCrossNotePatterns(): Promise<PatternDetectionResult | null>;
 
-    /** Build an on-demand source-backed recap for the current Pagelet scope. */
-    runScopeRecap(): Promise<ScopeRecapRunResult>;
+    /** Build local, explanation-only scope facts without a provider call. */
+    buildScopeRecapLocalOverview(): Promise<ScopeRecapLocalOverview>;
+
+    /** Whether the configured provider can currently run Scope Recap. */
+    isScopeRecapProviderConfigured(): boolean;
+
+    /** Current provider/model labels for the first-run disclosure. */
+    getScopeRecapProviderInfo(): { provider: string; model: string; endpoint: string };
+
+    /** Hashed provider/model/policy envelope covered by Recap authorization. */
+    getScopeRecapAuthorizationContextId(): string;
+
+    /** Content-free usage diagnostics for the independent Recap/Recall call guards. */
+    getPageletFeatureRateLimitStatus?(): Promise<PageletFeatureRateLimitStatus>;
+
+    /** Current Data Boundary fingerprint used to invalidate derived Recaps. */
+    getScopeRecapDataBoundarySnapshotId(): string;
+
+    /** Ask for first-run provider-backed background-read authorization. */
+    requestScopeRecapBackgroundAuthorization(
+        overview: ScopeRecapLocalOverview,
+    ): Promise<ScopeRecapAuthorizationChoice>;
+
+    /** Run one bounded Scope Recap provider attempt. */
+    runScopeRecap(options: {
+        mode: "background" | "foreground-retry";
+        expectedSourceSnapshotId?: string;
+        expectedDataBoundarySnapshotId?: string;
+        expectedAuthorizationContextId?: string;
+    }): Promise<ScopeRecapPreparationResult>;
 
     /** Generate LLM-backed insights for scope recap note digests. */
     generateRecapInsights?(input: {
@@ -196,6 +262,12 @@ export interface PageletHost {
 
     /** Generate quiet recall candidates for the active note. */
     runQuietRecall(): Promise<QuietRecallRunResult>;
+
+    /** Revalidate source, Data Boundary, and evaluation-policy identity before delivery. */
+    isQuietRecallRunCurrent?(result: QuietRecallRunResult): boolean;
+
+    /** Current provider/model/locale/policy identity for nudge invalidation. */
+    getQuietRecallEvaluationPolicySnapshotId?(): string;
 
     /** Save a quiet recall candidate into the Saved Insight ledger. */
     saveQuietRecallAsInsight(candidate: QuietRecallCandidate): Promise<QuietRecallSaveResult>;

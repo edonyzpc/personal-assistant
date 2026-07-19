@@ -7,6 +7,7 @@ import { pageletT, type PageletLocale } from "../locales/pagelet";
 import { normalizeVaultPath, cloneSourceRef, stableHash } from "./helpers";
 import type { ReviewQueueCreateInput } from "./review-queue-store";
 import type { SavedInsight, SavedInsightResult } from "./saved-insight-store";
+import type { QuietRecallEvaluationDiagnostics } from "./quiet-recall-evaluation";
 
 export type QuietRecallRelation = "current" | "related" | "far";
 
@@ -50,13 +51,27 @@ export interface QuietRecallCandidate {
     generatedAt: string;
     /** Exact participation trace. Missing legacy values never imply a Memory target. */
     context?: QuietRecallContext;
+    /** Missing legacy values are treated as local-only by delivery gates. */
+    evaluationProvenance?: "local" | "ai";
+    /** Hash of the exact context-candidate evaluation input for AI-approved results. */
+    evaluationFingerprint?: string;
 }
 
 export interface QuietRecallRunResult {
     generatedAt: string;
     currentPath?: string;
+    /** Stable identity of the normalized source file stats used for this run. */
+    sourceSnapshotId?: string;
+    /** Data Boundary identity used while collecting and evaluating sources. */
+    dataBoundarySnapshotId?: string;
+    /** Provider/model/locale/policy identity captured for this evaluation round. */
+    evaluationPolicySnapshotId?: string;
     totalCount: number;
     candidates: QuietRecallCandidate[];
+    /** Local retrieval candidates that may be shown only through explicit Discover. */
+    discoverCandidates?: QuietRecallCandidate[];
+    /** Session diagnostics for independent candidate evaluation. */
+    evaluationDiagnostics?: QuietRecallEvaluationDiagnostics;
 }
 
 export interface QuietRecallBubbleNudge {
@@ -105,6 +120,12 @@ export interface RecallRelevanceResult {
     whyNow: string | null;
 }
 
+export interface QuietRecallSourceSnapshotSource {
+    path: string;
+    mtime?: number;
+    size?: number;
+}
+
 export type RecallRelevanceEvaluator = (input: {
     currentDigest: RecallNoteDigest;
     candidateDigest: RecallNoteDigest;
@@ -126,6 +147,34 @@ const DEFAULT_RECALL_SCORE_WEIGHTS: Required<RecallScoreWeights> = Object.freeze
     noteRichness: 0.08,
     userFeedback: 0.04,
 });
+
+/**
+ * Hash normalized source file identity without depending on collection order.
+ * File stats are intentionally content-free so the identifier is safe to keep
+ * with in-memory run metadata and cheap to recompute before delivery.
+ */
+export function buildQuietRecallSourceSnapshotId(
+    sourceFiles: readonly QuietRecallSourceSnapshotSource[],
+): string {
+    const normalized = sourceFiles
+        .map((source) => ({
+            path: normalizeVaultPath(source.path),
+            mtime: normalizeSourceSnapshotStat(source.mtime),
+            size: normalizeSourceSnapshotStat(source.size),
+        }))
+        .sort((left, right) => (
+            left.path.localeCompare(right.path)
+            || left.mtime - right.mtime
+            || left.size - right.size
+        ));
+    return `quiet-recall-source-snapshot-${stableHash(JSON.stringify(normalized))}`;
+}
+
+function normalizeSourceSnapshotStat(value: number | undefined): number {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+        ? Math.floor(value)
+        : 0;
+}
 
 function nowDate(now: QuietRecallBuildInput["now"]): Date {
     const value = typeof now === "function" ? now() : now;
@@ -404,6 +453,7 @@ function vaultNoteCandidate(
         score,
         generatedAt: options.generatedAt,
         context: { kind: "note_retrieval" },
+        evaluationProvenance: "local",
     };
 }
 
@@ -412,7 +462,14 @@ export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): Q
     const locale = input.locale ?? "en";
     const generatedAt = now.toISOString();
     const currentPath = input.currentNote?.path ? normalizeVaultPath(input.currentNote.path) : null;
-    const maxCandidates = input.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
+    const requestedMaxCandidates = input.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
+    const finiteMaxCandidates = Number.isFinite(requestedMaxCandidates)
+        ? requestedMaxCandidates
+        : DEFAULT_MAX_CANDIDATES;
+    const maxCandidates = Math.max(
+        0,
+        Math.min(DEFAULT_MAX_CANDIDATES, Math.floor(finiteMaxCandidates)),
+    );
     const staleAfterDays = input.staleAfterDays ?? DEFAULT_STALE_AFTER_DAYS;
     const relatedScores = new Map<string, number>();
     for (const related of input.relatedNotes ?? []) {
@@ -444,6 +501,7 @@ export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): Q
             score: relation.score,
             generatedAt,
             context: { kind: "note_retrieval" },
+            evaluationProvenance: "local",
         });
     }
     for (const note of input.vaultNotes ?? []) {
@@ -650,7 +708,14 @@ export async function buildQuietRecallWithLlm(
     const now = nowDate(input.now);
 
     const currentNote = input.currentNote;
-    if (!currentNote) return baseResult;
+    if (!currentNote) {
+        return {
+            ...baseResult,
+            totalCount: 0,
+            candidates: [],
+            discoverCandidates: baseResult.candidates,
+        };
+    }
 
     const currentDigest = extractRecallDigest(currentNote);
 
@@ -658,7 +723,6 @@ export async function buildQuietRecallWithLlm(
 
     for (const candidate of baseResult.candidates) {
         if (candidate.score < scoreThreshold) {
-            filteredCandidates.push(candidate);
             continue;
         }
 
@@ -681,6 +745,15 @@ export async function buildQuietRecallWithLlm(
             filteredCandidates.push({
                 ...candidate,
                 whyNow: [result.whyNow],
+                evaluationProvenance: "ai",
+                evaluationFingerprint: stableHash(JSON.stringify({
+                    currentDigest,
+                    candidateDigest,
+                    candidateAge,
+                    candidateId: candidate.id,
+                    candidateTitle: candidate.title,
+                    candidateSummary: candidate.summary,
+                })),
             });
         }
     }
@@ -689,6 +762,7 @@ export async function buildQuietRecallWithLlm(
         ...baseResult,
         totalCount: filteredCandidates.length,
         candidates: filteredCandidates,
+        discoverCandidates: baseResult.candidates,
     };
 }
 

@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import type { PatternDetectionResult, QuietRecallBubbleNudge } from "../../pa";
+import type { LocalDiscoveryCandidate } from "./recall-card";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -250,6 +251,13 @@ export interface DeliveryCandidateCallbacks {
     onLater(candidate: DeliveryCandidate): void;
 }
 
+export interface LocalDiscoveryCandidateCallbacks {
+    onOpen(candidate: LocalDiscoveryCandidate): void;
+    onLinkToCurrent?(candidate: LocalDiscoveryCandidate): void;
+    canLinkToCurrent?(candidate: LocalDiscoveryCandidate): boolean;
+    onLater(candidate: LocalDiscoveryCandidate): void;
+}
+
 function deliveryCandidateFinding(candidate: DeliveryCandidate): BubbleFinding {
     const firstSource = candidate.sourceRefs[0];
     return {
@@ -281,6 +289,44 @@ export function buildRecallDeliveryContent(
             ...(callbacks.onLinkToCurrent && callbacks.canLinkToCurrent?.(candidate) !== false ? [{
                 label: pageletT("pagelet.bubble.quietRecall.link", locale),
                 description: pageletT("pagelet.bubble.quietRecall.linkDescription", locale),
+                icon: "link",
+                callback: () => callbacks.onLinkToCurrent?.(candidate),
+            }] satisfies BubbleAction[] : []),
+            {
+                label: pageletT("pagelet.bubble.later", locale),
+                variant: "compact",
+                callback: () => callbacks.onLater(candidate),
+            },
+        ],
+    };
+}
+
+/** Explicit local Discover is provenance-labeled and never rendered as Recall Delivery. */
+export function buildLocalDiscoveryClueContent(
+    candidate: LocalDiscoveryCandidate,
+    callbacks: LocalDiscoveryCandidateCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    const firstSource = candidate.sourceRefs[0];
+    return {
+        type: "discovery",
+        findings: [
+            { text: pageletT("pagelet.recall.localClue", locale) },
+            {
+                text: pageletT(`pagelet.recall.localRelation.${candidate.relation}`, locale),
+                sourceLink: firstSource?.path,
+                sourceTitle: firstSource?.title ?? firstSource?.path,
+            },
+        ],
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.delivery.openSource", locale),
+                icon: "file-text",
+                primary: true,
+                callback: () => callbacks.onOpen(candidate),
+            },
+            ...(callbacks.onLinkToCurrent && callbacks.canLinkToCurrent?.(candidate) !== false ? [{
+                label: pageletT("pagelet.bubble.quietRecall.link", locale),
                 icon: "link",
                 callback: () => callbacks.onLinkToCurrent?.(candidate),
             }] satisfies BubbleAction[] : []),

@@ -19,6 +19,21 @@ export interface QuietRecallCallbacks {
     onOpenMemorySettings?: (targetId?: string) => void;
 }
 
+function isAiEvaluatedCandidate(candidate: QuietRecallCandidate): boolean {
+    return candidate.evaluationProvenance === "ai"
+        && Boolean(candidate.evaluationFingerprint?.trim());
+}
+
+function hasValidSourceRefs(candidate: QuietRecallCandidate): boolean {
+    return candidate.sourceRefs.length > 0
+        && candidate.sourceRefs.every((ref) => Boolean(ref.path.trim()));
+}
+
+function sourceTitle(path: string): string {
+    const name = path.split("/").pop() ?? path;
+    return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
+}
+
 export class QuietRecallSection implements TabSectionRenderer {
     private readonly saveState: Map<string, QuietRecallSaveState>;
     private readonly linkState: Map<string, QuietRecallLinkState>;
@@ -106,12 +121,19 @@ export class QuietRecallSection implements TabSectionRenderer {
 
     private renderInto(): void {
         if (!this.containerEl) return;
-        const { candidates } = this.data;
+        const candidates = this.visibleCandidates().filter(hasValidSourceRefs);
+        const recallCandidates = candidates.filter(isAiEvaluatedCandidate);
+        const localCandidates = candidates.filter((candidate) => !isAiEvaluatedCandidate(candidate));
 
         const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-quiet-recall");
-        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.recall.title", this.locale)));
-        section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.recall.summary", this.locale, { count: candidates.length })));
+        section.appendChild(el("h2", undefined, pageletT(
+            recallCandidates.length > 0
+                ? "pagelet.tab.recall.title"
+                : localCandidates.length > 0
+                    ? "pagelet.recall.localClue"
+                    : "pagelet.tab.recall.title",
+            this.locale,
+        )));
 
         if (candidates.length === 0) {
             section.appendChild(renderEmptyCard(
@@ -120,71 +142,141 @@ export class QuietRecallSection implements TabSectionRenderer {
             return;
         }
 
-        for (const candidate of candidates) {
-            const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-recall-card");
-            cardEl.tabIndex = -1;
-            this.setFocusKey(cardEl, this.candidateFocusKey(candidate.id, "card"));
-            cardEl.appendChild(el("h4", undefined, candidate.title));
-            cardEl.appendChild(el("p", undefined, candidate.summary));
-
-            const tagRow = el("div", "pa-pagelet-tab-tag-row");
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT(`pagelet.tab.recall.relation.${candidate.relation}`, this.locale)));
-            cardEl.appendChild(tagRow);
-
-            const metadata = el("div", "pa-pagelet-tab-recall-meta");
-            const source = candidate.sourceRefs[0]?.path;
-            if (source) {
-                this.appendMetadataRow(
-                    metadata,
-                    "pagelet.tab.recall.sourceLabel",
-                    source,
-                    this.callbacks.onOpenSource
-                        ? () => this.callbacks.onOpenSource?.(source)
-                        : undefined,
-                );
+        if (recallCandidates.length > 0) {
+            section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
+                pageletT("pagelet.tab.recall.summary", this.locale, { count: recallCandidates.length })));
+            for (const candidate of recallCandidates) {
+                section.appendChild(this.renderRecallCard(candidate));
             }
-            this.appendMetadataRow(
-                metadata,
-                "pagelet.tab.recall.scopeLabel",
-                pageletT("pagelet.tab.recall.scope.currentVault", this.locale),
-            );
-            this.appendMetadataRow(
-                metadata,
-                "pagelet.tab.recall.effectLabel",
-                pageletT("pagelet.tab.recall.effect.retrievalOnly", this.locale),
-            );
-            cardEl.appendChild(metadata);
+        }
 
-            cardEl.appendChild(el("p", "pa-pagelet-tab-muted",
-                pageletT("pagelet.tab.recall.whyNow", this.locale, {
-                    reason: candidate.whyNow.slice(0, 2).join("; "),
-                })));
-            cardEl.appendChild(el("p", "pa-pagelet-tab-muted",
-                pageletT("pagelet.tab.recall.nextAction", this.locale, {
-                    action: candidate.nextAction,
-                })));
-
-            const memoryClaimId = quietRecallGovernedClaimId(candidate);
-            if (memoryClaimId && this.callbacks.onOpenMemorySettings) {
-                const memoryTarget = el(
-                    "button",
-                    "pa-pagelet-tab-recall-memory-target pa-pagelet-tab-memory-settings",
-                    pageletT("pagelet.tab.memory.openSettings", this.locale),
-                );
-                memoryTarget.setAttribute("type", "button");
-                memoryTarget.addEventListener("click", (event) => {
-                    event.preventDefault();
-                    this.callbacks.onOpenMemorySettings?.(memoryClaimId);
-                });
-                cardEl.appendChild(memoryTarget);
+        if (localCandidates.length > 0) {
+            const localGroup = el("div", "pa-pagelet-tab-local-clue-group");
+            if (recallCandidates.length > 0) {
+                localGroup.appendChild(el(
+                    "h3",
+                    undefined,
+                    pageletT("pagelet.recall.localClue", this.locale),
+                ));
             }
-
-            this.renderActions(cardEl, candidate);
-            section.appendChild(cardEl);
+            for (const candidate of localCandidates) {
+                localGroup.appendChild(this.renderLocalClueCard(candidate));
+            }
+            section.appendChild(localGroup);
         }
 
         this.containerEl.appendChild(section);
+    }
+
+    private visibleCandidates(): QuietRecallCandidate[] {
+        const byId = new Map<string, QuietRecallCandidate>();
+        for (const candidate of this.data.discoverCandidates ?? []) {
+            byId.set(candidate.id, candidate);
+        }
+        for (const candidate of this.data.candidates) {
+            const existing = byId.get(candidate.id);
+            if (!existing || isAiEvaluatedCandidate(candidate) || !isAiEvaluatedCandidate(existing)) {
+                byId.set(candidate.id, candidate);
+            }
+        }
+        return [...byId.values()];
+    }
+
+    private renderRecallCard(candidate: QuietRecallCandidate): HTMLElement {
+        const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-recall-card");
+        cardEl.tabIndex = -1;
+        this.setFocusKey(cardEl, this.candidateFocusKey(candidate.id, "card"));
+        cardEl.appendChild(el("h4", undefined, candidate.title));
+        cardEl.appendChild(el("p", undefined, candidate.summary));
+
+        const tagRow = el("div", "pa-pagelet-tab-tag-row");
+        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+            pageletT(`pagelet.tab.recall.relation.${candidate.relation}`, this.locale)));
+        cardEl.appendChild(tagRow);
+
+        this.appendCandidateMetadata(cardEl, candidate);
+
+        cardEl.appendChild(el("p", "pa-pagelet-tab-muted",
+            pageletT("pagelet.tab.recall.whyNow", this.locale, {
+                reason: candidate.whyNow.slice(0, 2).join("; "),
+            })));
+        cardEl.appendChild(el("p", "pa-pagelet-tab-muted",
+            pageletT("pagelet.tab.recall.nextAction", this.locale, {
+                action: candidate.nextAction,
+            })));
+
+        const memoryClaimId = quietRecallGovernedClaimId(candidate);
+        if (memoryClaimId && this.callbacks.onOpenMemorySettings) {
+            const memoryTarget = el(
+                "button",
+                "pa-pagelet-tab-recall-memory-target pa-pagelet-tab-memory-settings",
+                pageletT("pagelet.tab.memory.openSettings", this.locale),
+            );
+            memoryTarget.setAttribute("type", "button");
+            memoryTarget.addEventListener("click", (event) => {
+                event.preventDefault();
+                this.callbacks.onOpenMemorySettings?.(memoryClaimId);
+            });
+            cardEl.appendChild(memoryTarget);
+        }
+
+        this.renderActions(cardEl, candidate);
+        return cardEl;
+    }
+
+    private renderLocalClueCard(candidate: QuietRecallCandidate): HTMLElement {
+        const cardEl = el(
+            "div",
+            "pa-pagelet-tab-insight-card pa-pagelet-tab-card--source-list pa-pagelet-tab-local-clue-card",
+        );
+        cardEl.tabIndex = -1;
+        this.setFocusKey(cardEl, this.candidateFocusKey(candidate.id, "card"));
+
+        const source = candidate.sourceRefs[0]?.path;
+        cardEl.appendChild(el(
+            "span",
+            "pa-pagelet-tab-tag-chip pa-pagelet-tab-local-clue-label",
+            pageletT("pagelet.recall.localClue", this.locale),
+        ));
+        if (source) cardEl.appendChild(el("h4", undefined, sourceTitle(source)));
+
+        const tagRow = el("div", "pa-pagelet-tab-tag-row");
+        tagRow.appendChild(el(
+            "span",
+            "pa-pagelet-tab-tag-chip",
+            pageletT(`pagelet.recall.localRelation.${candidate.relation}`, this.locale),
+        ));
+        cardEl.appendChild(tagRow);
+
+        this.appendCandidateMetadata(cardEl, candidate);
+        this.renderActions(cardEl, candidate, { allowSave: false });
+        return cardEl;
+    }
+
+    private appendCandidateMetadata(cardEl: HTMLElement, candidate: QuietRecallCandidate): void {
+        const metadata = el("div", "pa-pagelet-tab-recall-meta");
+        const source = candidate.sourceRefs[0]?.path;
+        if (source) {
+            this.appendMetadataRow(
+                metadata,
+                "pagelet.tab.recall.sourceLabel",
+                source,
+                this.callbacks.onOpenSource
+                    ? () => this.callbacks.onOpenSource?.(source)
+                    : undefined,
+            );
+        }
+        this.appendMetadataRow(
+            metadata,
+            "pagelet.tab.recall.scopeLabel",
+            pageletT("pagelet.tab.recall.scope.currentVault", this.locale),
+        );
+        this.appendMetadataRow(
+            metadata,
+            "pagelet.tab.recall.effectLabel",
+            pageletT("pagelet.tab.recall.effect.retrievalOnly", this.locale),
+        );
+        cardEl.appendChild(metadata);
     }
 
     private appendMetadataRow(
@@ -221,12 +313,18 @@ export class QuietRecallSection implements TabSectionRenderer {
         container.appendChild(row);
     }
 
-    private renderActions(cardEl: HTMLElement, candidate: QuietRecallCandidate): void {
-        if (!this.callbacks.onSave && !this.callbacks.onLink) return;
+    private renderActions(
+        cardEl: HTMLElement,
+        candidate: QuietRecallCandidate,
+        options: { allowSave?: boolean } = {},
+    ): void {
         const candidateSaveState = this.saveState.get(candidate.id);
         const candidateLinkState = this.linkState.get(candidate.id);
         const currentPath = this.data.currentPath ?? this.sourcePath;
         const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
+        const canLink = Boolean(this.callbacks.onLink && linkTargetPath);
+        const canSave = options.allowSave !== false && Boolean(this.callbacks.onSave);
+        if (!canLink && !canSave) return;
         const actionRow = el("div", "pa-pagelet-tab-recall-actions");
 
         if (this.callbacks.onLink && linkTargetPath) {
@@ -252,7 +350,7 @@ export class QuietRecallSection implements TabSectionRenderer {
             actionRow.appendChild(linkBtn);
         }
 
-        if (this.callbacks.onSave) {
+        if (canSave) {
             const saveBtn = el(
                 "button",
                 "pa-pagelet-tab-recall-save",

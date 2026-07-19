@@ -24,14 +24,16 @@ Produce 2-4 insights about this set of notes. Each insight must:
 1. Reference specific notes by their title (for source attribution)
 2. Explain WHY this insight is worth the user's attention — not just WHAT it observes
 3. Be something the user likely hasn't explicitly written down
+4. Put the observation in summary and the concrete consequence or unresolved choice in whyItMatters
 
 ## Quality gate
 - If the notes have no meaningful relationship beyond sharing a tag, return an empty array.
 - "These notes all discuss X" is NOT an insight. "Note A and Note B take opposite stances on X, which may indicate an unresolved decision" IS an insight.
 - Prefer tensions, contradictions, implicit questions, and unfinished threads over summaries.
+- A specific single-note insight is allowed for explicit click-to-view; only cross-note insights can trigger a proactive hint.
 
 ## Output format (JSON array only, no markdown fences)
-[{"title":"short headline under 15 words","summary":"2-3 sentences explaining the insight and why it matters","sourceNoteTitles":["Note A title","Note B title"],"section":"theme"|"tension"|"open_question"}]
+[{"title":"short headline under 15 words","summary":"specific cross-note observation","whyItMatters":"one concrete consequence, decision, or unresolved question","sourceNoteTitles":["Note A title","Note B title"],"section":"theme"|"tension"|"open_question"}]
 
 Return [] if nothing genuinely insightful can be said.`;
 }
@@ -41,14 +43,22 @@ export function parseRecapInsightsResponse(text: string): RecapLlmInsight[] | nu
         const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
         const parsed = JSON.parse(cleaned);
         if (!Array.isArray(parsed)) return null;
-        return parsed.filter((item: unknown): item is RecapLlmInsight => {
+        const isInsight = (item: unknown): item is RecapLlmInsight => {
             if (!item || typeof item !== "object") return false;
             const obj = item as Record<string, unknown>;
-            return typeof obj.title === "string"
-                && typeof obj.summary === "string"
+            return typeof obj.title === "string" && obj.title.trim().length > 0
+                && typeof obj.summary === "string" && obj.summary.trim().length > 0
+                && typeof obj.whyItMatters === "string" && obj.whyItMatters.trim().length > 0
                 && Array.isArray(obj.sourceNoteTitles)
+                && obj.sourceNoteTitles.length >= 1
+                && obj.sourceNoteTitles.every((title) => typeof title === "string" && title.trim().length > 0)
                 && (obj.section === "theme" || obj.section === "tension" || obj.section === "open_question");
-        });
+        };
+        // Mixed-validity output is malformed as a whole. Silently dropping
+        // invalid elements would let a partial provider schema pass the strict
+        // Recap delivery gate.
+        if (!parsed.every(isInsight)) return null;
+        return parsed;
     } catch {
         return null;
     }
@@ -78,7 +88,7 @@ First paragraph: "${input.candidateDigest.firstParagraph}"
 ## Task
 Is there a SPECIFIC, CONCRETE reason this old note matters RIGHT NOW given what the user is currently looking at?
 
-Respond in the same language as the notes.
+Respond in the same language as the current note. If the two notes use different languages, the current note wins.
 
 ## Quality standard
 - "Both notes mention topic X" is NOT sufficient. That's a search result, not a recall.

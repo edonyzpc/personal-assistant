@@ -15,8 +15,8 @@ import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
 import type { BubbleContent, BubbleFinding, BubbleStateCallbacks, DeliveryCandidate, InlineContextHint } from "./bubble/types";
 import type { BubbleView } from "./bubble/BubbleView";
-import { buildContextLimitedContent, buildEmptyContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildQuietRecallNudgeContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent, buildReadyEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
-import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";
+import { buildContextLimitedContent, buildEmptyContent, buildIntentionallyQuietContent, buildLocalDiscoveryClueContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildQuietRecallNudgeContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent, buildReadyEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
+import { quietRecallCandidateToDeliveryCandidate, quietRecallCandidateToDiscoveryCandidate } from "./bubble/recall-card";
 import { resolveBubbleExplanationState } from "./bubble/state-resolver";
 import type { PreloadCache } from "./preload/PreloadCache";
 import type { PreloadFinding } from "./preload/types";
@@ -46,6 +46,8 @@ export interface BubbleCoordinatorCallbacks {
     onReviewCurrentNote(): void;
     /** Trigger note-connection discovery. */
     onDiscoverConnections(): void;
+    /** Open the exact local candidates behind the Discover-only Recall affordance. */
+    onQuietRecallDiscoverOnly(): void;
     /** Return a one-time onboarding bridge nudge, if pending. */
     getOnboardingNudge(): OnboardingNudge | null;
     /** Dismiss a one-time onboarding bridge nudge. */
@@ -66,6 +68,8 @@ export interface BubbleCoordinatorCallbacks {
     onPatternDetectionView(result: PatternDetectionResult): void;
     onPatternDetectionDismiss(result: PatternDetectionResult): void;
     getPreparedRecapCandidate(): (DeliveryCandidate & { kind: "recap" }) | null;
+    /** Return a prepared Recap only when this specific high-value nudge is pending. */
+    getPreparedRecapNudgeCandidate(): (DeliveryCandidate & { kind: "recap" }) | null;
     onPreparedRecapView(candidate: DeliveryCandidate & { kind: "recap" }): void;
     onPreparedRecapLater(candidate: DeliveryCandidate & { kind: "recap" }): void;
     /** Return count of recall candidates that were evaluated but judged unconvincing by LLM. */
@@ -201,7 +205,7 @@ export class BubbleCoordinator {
             content = this.buildRegularBubbleContent(bubbleView, stateCallbacks, locale);
         }
         this.applyInlineHint(content, locale);
-        this.applyContextAction(content, bubbleView);
+        this.applyContextAction(content, bubbleView, locale);
 
         bubbleView.show(content, anchorEl, options);
         this.acknowledgeIntentionallyQuietIfNeeded(content);
@@ -228,37 +232,42 @@ export class BubbleCoordinator {
 
         const quietRecallCandidate = this.callbacks.getQuietRecallCandidate();
         const quietRecallNudge = this.callbacks.getQuietRecallNudge();
+        const quietRecallDeliveryCandidate = quietRecallCandidate
+            ? quietRecallCandidateToDeliveryCandidate(quietRecallCandidate)
+            : null;
+        const eligibleQuietRecallNudge = quietRecallDeliveryCandidate
+            ? quietRecallNudge
+            : null;
         if (
-            quietRecallCandidate
-            && quietRecallNudge
+            quietRecallDeliveryCandidate
+            && eligibleQuietRecallNudge
             && this.host.settings.pagelet.enabled
             && this.host.settings.quietRecall.enabled
             && this.host.settings.quietRecall.bubbleNudgesEnabled
             && this.host.settings.pagelet.proactiveHints
             && !this.proactiveHints.quietHoursActive
         ) {
-            const deliveryCandidate = quietRecallCandidateToDeliveryCandidate(quietRecallCandidate);
             const linkTargetPath = quietRecallLinkTargetPath(
                 quietRecallCandidate,
-                quietRecallNudge.currentPath,
+                eligibleQuietRecallNudge.currentPath,
             );
-            const quietRecallContent = buildRecallDeliveryContent(deliveryCandidate, {
+            const quietRecallContent = buildRecallDeliveryContent(quietRecallDeliveryCandidate, {
                 onOpen: () => {
                     bubbleView.close();
-                    this.callbacks.onQuietRecallView(quietRecallNudge);
+                    this.callbacks.onQuietRecallView(eligibleQuietRecallNudge);
                 },
                 ...(linkTargetPath ? {
                     onLinkToCurrent: () => {
                         bubbleView.close();
-                        this.callbacks.onQuietRecallLink(quietRecallNudge);
+                        this.callbacks.onQuietRecallLink(eligibleQuietRecallNudge);
                     },
                 } : {}),
                 onLater: () => {
                     bubbleView.close();
-                    this.callbacks.onQuietRecallLater(quietRecallNudge);
+                    this.callbacks.onQuietRecallLater(eligibleQuietRecallNudge);
                 },
             }, locale);
-            if (quietRecallNudge.onboardingExplanation) {
+            if (eligibleQuietRecallNudge.onboardingExplanation) {
                 quietRecallContent.inlineHint = {
                     text: quietRecallContent.inlineHint?.text
                         ?? pageletT("pagelet.onboarding.quietRecall", locale),
@@ -274,7 +283,7 @@ export class BubbleCoordinator {
             bubbleNudgesEnabled: this.host.settings.quietRecall.bubbleNudgesEnabled,
             proactiveHints: this.host.settings.pagelet.proactiveHints,
             quietHoursActive: this.proactiveHints.quietHoursActive,
-            candidate: quietRecallNudge,
+            candidate: eligibleQuietRecallNudge,
         }, {
             onView: (candidate) => {
                 bubbleView.close();
@@ -398,15 +407,25 @@ export class BubbleCoordinator {
         };
     }
 
-    private applyContextAction(content: BubbleContent, bubbleView: BubbleView): void {
+    private applyContextAction(
+        content: BubbleContent,
+        bubbleView: BubbleView,
+        locale: ReturnType<typeof getPageletUiLanguage>,
+    ): void {
         const unconvincingCount = this.callbacks.getUnconvincingRecallCount();
         if (unconvincingCount <= 0) return;
         content.contextAction = {
-            label: `${unconvincingCount} related note${unconvincingCount === 1 ? "" : "s"} found`,
+            label: pageletT(
+                unconvincingCount === 1
+                    ? "pagelet.bubble.contextAction.relatedNote"
+                    : "pagelet.bubble.contextAction.relatedNotes",
+                locale,
+                { count: unconvincingCount },
+            ),
             action: "discover",
             callback: () => {
                 bubbleView.close();
-                this.callbacks.onDiscoverConnections();
+                this.callbacks.onQuietRecallDiscoverOnly();
             },
         };
     }
@@ -470,18 +489,26 @@ export class BubbleCoordinator {
 
         try {
             const recall = await this.host.runQuietRecall();
-            if (!canPublish()) {
+            if (!canPublish() || this.host.isQuietRecallRunCurrent?.(recall) === false) {
                 closeIfStale();
                 return;
             }
-            const candidates = recall.candidates
-                .filter((candidate) => (
-                    candidate.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
-                    && candidate.sourceRefs.length > 0
-                ))
-                .slice(0, 3)
-                .map(quietRecallCandidateToDeliveryCandidate);
-            if (candidates.length === 0) {
+            const aiCandidates = recall.candidates
+                .flatMap((candidate) => {
+                    const delivery = quietRecallCandidateToDeliveryCandidate(candidate);
+                    return delivery ? [delivery] : [];
+                })
+                .slice(0, 3);
+            const localCandidate = aiCandidates.length === 0
+                ? (recall.discoverCandidates ?? recall.candidates)
+                    .filter((candidate) => (
+                        candidate.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
+                        && candidate.sourceRefs.length > 0
+                    ))
+                    .map((candidate) => quietRecallCandidateToDiscoveryCandidate(candidate))
+                    .find((candidate) => candidate !== null) ?? null
+                : null;
+            if (aiCandidates.length === 0 && !localCandidate) {
                 if (!canPublish()) {
                     closeIfStale();
                     return;
@@ -493,29 +520,53 @@ export class BubbleCoordinator {
                 }, anchorEl);
                 return;
             }
-            const content = buildRecallDeliveryStackContent(candidates, {
-                onOpen: (candidate) => {
-                    const sourcePath = candidate.sourceRefs[0]?.path;
-                    bubbleView.close();
-                    if (sourcePath) this.callbacks.onSourceClick(sourcePath);
-                },
-                onLinkToCurrent: (candidate) => {
-                    const currentPath = expectedPath;
-                    const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
-                    if (currentPath && linkTargetPath) {
+            const content = localCandidate
+                ? buildLocalDiscoveryClueContent(localCandidate, {
+                    onOpen: (candidate) => {
+                        const sourcePath = candidate.sourceRefs[0]?.path;
                         bubbleView.close();
-                        void this.host.linkRecallCandidate(currentPath, linkTargetPath).catch((error) => {
-                            this.host.log("Pagelet Bubble recall link failed", error);
-                        });
-                    }
-                },
-                canLinkToCurrent: (candidate) => (
-                    quietRecallLinkTargetPath(candidate, expectedPath) !== null
-                ),
-                onLater: () => {
-                    bubbleView.close();
-                },
-            }, locale);
+                        if (sourcePath) this.callbacks.onSourceClick(sourcePath);
+                    },
+                    onLinkToCurrent: (candidate) => {
+                        const currentPath = expectedPath;
+                        const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
+                        if (currentPath && linkTargetPath) {
+                            bubbleView.close();
+                            void this.host.linkRecallCandidate(currentPath, linkTargetPath).catch((error) => {
+                                this.host.log("Pagelet Bubble local clue link failed", error);
+                            });
+                        }
+                    },
+                    canLinkToCurrent: (candidate) => (
+                        quietRecallLinkTargetPath(candidate, expectedPath) !== null
+                    ),
+                    onLater: () => {
+                        bubbleView.close();
+                    },
+                }, locale)
+                : buildRecallDeliveryStackContent(aiCandidates, {
+                    onOpen: (candidate) => {
+                        const sourcePath = candidate.sourceRefs[0]?.path;
+                        bubbleView.close();
+                        if (sourcePath) this.callbacks.onSourceClick(sourcePath);
+                    },
+                    onLinkToCurrent: (candidate) => {
+                        const currentPath = expectedPath;
+                        const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
+                        if (currentPath && linkTargetPath) {
+                            bubbleView.close();
+                            void this.host.linkRecallCandidate(currentPath, linkTargetPath).catch((error) => {
+                                this.host.log("Pagelet Bubble recall link failed", error);
+                            });
+                        }
+                    },
+                    canLinkToCurrent: (candidate) => (
+                        quietRecallLinkTargetPath(candidate, expectedPath) !== null
+                    ),
+                    onLater: () => {
+                        bubbleView.close();
+                    },
+                }, locale);
             this.applyInlineHint(content, locale);
             if (!canPublish()) {
                 closeIfStale();
@@ -565,7 +616,19 @@ export class BubbleCoordinator {
         const locale = getPageletUiLanguage();
         const stateCallbacks = this.buildStateCallbacks(bubbleView);
         this.refreshMemoryReadinessSnapshot(bubbleView, petView);
-        const content = this.buildRegularBubbleContent(bubbleView, stateCallbacks, locale);
+        const preparedRecap = this.callbacks.getPreparedRecapNudgeCandidate();
+        const content = preparedRecap
+            ? buildPreparedRecapDeliveryContent(preparedRecap, {
+                onViewRecap: (candidate) => {
+                    bubbleView.close();
+                    this.callbacks.onPreparedRecapView(candidate);
+                },
+                onLater: (candidate) => {
+                    bubbleView.close();
+                    this.callbacks.onPreparedRecapLater(candidate);
+                },
+            }, locale)
+            : this.buildRegularBubbleContent(bubbleView, stateCallbacks, locale);
         this.applyInlineHint(content, locale);
 
         bubbleView.show(content, anchorEl);

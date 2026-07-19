@@ -353,6 +353,12 @@ export interface PageletCostEntry {
     pricingKnown: boolean;
     provider?: string;
     model?: string;
+    /** Product path responsible for the provider call. */
+    feature?: "foreground-review" | "background-review" | "scope-recap" | "quiet-recall";
+    /** Per-call phase for features that may retry. */
+    attemptKind?: "single" | "initial" | "language-retry";
+    /** Content-free terminal classification for this actual provider call. */
+    outcome?: "success" | "accepted" | "rejected" | "empty" | "malformed" | "quality-rejected" | "timeout" | "provider-error";
     /** Recorded via the injected `now()` clock so tests are deterministic. */
     at: number;
 }
@@ -377,6 +383,9 @@ export interface PageletCostRecordInput {
     outputTokens: number;
     provider?: string;
     model?: string;
+    feature?: PageletCostEntry["feature"];
+    attemptKind?: PageletCostEntry["attemptKind"];
+    outcome?: PageletCostEntry["outcome"];
 }
 
 export interface PageletCostTrackerOptions {
@@ -429,6 +438,9 @@ export class PageletCostTracker {
             pricingKnown,
             provider: usage.provider,
             model: usage.model,
+            ...(usage.feature ? { feature: usage.feature } : {}),
+            ...(usage.attemptKind ? { attemptKind: usage.attemptKind } : {}),
+            ...(usage.outcome ? { outcome: usage.outcome } : {}),
             at: this.now(),
         };
         this._entries.push(entry);

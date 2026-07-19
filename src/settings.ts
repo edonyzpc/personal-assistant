@@ -968,13 +968,21 @@ export class SettingTab extends PluginSettingTab {
         this.focusPendingMemoryControlCenterTarget(false);
     }
 
+    refreshPageletSettingsIfVisible(): boolean {
+        const ownerDocument = (this.containerEl as HTMLElement).ownerDocument;
+        if (!ownerDocument?.body?.classList.contains("pa-settings-tab-open")) return false;
+        this.display();
+        this.openGroup("features");
+        return true;
+    }
+
     private t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
         return pluginT(key, getPluginUiLanguage(), params, fallback);
     }
 
     display(): void {
         const { containerEl } = this;
-        const doc = getPlatformDocument();
+        const doc = (containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
         this.memoryControlCenterGeneration += 1;
 
         this.stopSettingsNavigation();
@@ -1132,7 +1140,8 @@ export class SettingTab extends PluginSettingTab {
         this.stopSettingsNavigation();
         this.stopSecretPickerObserver();
         this.memoryControlCenterGeneration += 1;
-        getPlatformDocument().body?.classList.remove("pa-settings-tab-open");
+        const doc = (this.containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
+        doc.body?.classList.remove("pa-settings-tab-open");
         this.debouncedSaveRunner.cancel();
         if (this.hasPendingSettingsSave) {
             this.hasPendingSettingsSave = false;

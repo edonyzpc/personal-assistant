@@ -58,7 +58,7 @@ import { BubbleCoordinator } from "./BubbleCoordinator";
 import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
 import { resolveRelatedMarkdownNote } from "./related-note";
-import type { PageletDetailPayload } from "./tab/types";
+import type { PageletDetailPayload, TabSection } from "./tab/types";
 import { splitReviewQueueForSections } from "./tab/review-queue-routing";
 import {
     QUIET_RECALL_BUBBLE_MIN_SCORE,
@@ -66,16 +66,23 @@ import {
     quietRecallCandidateToBubbleNudge,
     quietRecallLinkTargetPath,
     reviewQueueItemHasUserIntentOrDurableConsequence,
-    buildScopeRecapMarkdown,
+    evaluateScopeRecapProactiveQuality,
+    evaluateScopeRecapArtifactCurrentness,
     toReplaySourceRef,
     type ContextDropReason,
     type PersistedSourceRef,
     type PatternDetectionResult,
     type QuietRecallBubbleNudge,
     type QuietRecallCandidate,
+    type QuietRecallEvaluationDiagnostics,
+    type QuietRecallRunResult,
     type RetrievalHabitFeedbackKind,
     type RetrievalOutcome,
     type ScopeRecapRunResult,
+    type ScopeRecapAttemptStatus,
+    type ScopeRecapLocalOverview,
+    type ScopeRecapItem,
+    type ScopeRecapPreparationResult,
 } from "../pa";
 
 // Re-export so existing `import { PageletHost } from "./orchestrator"` keeps working.
@@ -121,20 +128,39 @@ export class PageletOrchestrator {
     private preparedRecapPayload: PageletDetailPayload | null = null;
     private preparedRecapArtifact: ScopeRecapRunResult | null = null;
     private preparedRecapScopeKey: string | null = null;
+    private lastRecapAttempt: ScopeRecapAttemptStatus | null = null;
+    private lastRecapLocalOverview: ScopeRecapLocalOverview | null = null;
+    private preparedRecapNudgeFingerprint: string | null = null;
+    private readonly shownRecapNudgeFingerprints = new Map<string, number>();
+    private readonly snoozedRecapNudgeFingerprints = new Map<string, number>();
+    private recapAuthorizationPromptedThisSession = false;
+    private observedRecapAuthorization: PageletHost["settings"]["pagelet"]["scopeRecapBackgroundAuthorization"];
+    private recapAuthorizationAwaitingAdjustment = false;
     private recapPreparationTimer: PlatformTimeoutHandle | null = null;
     private recapPreparationInFlight = false;
+    private recapPreparationPendingReason: "pagelet-open" | "note-activity" | "idle" | null = null;
+    private recapPreparationPromise: Promise<ScopeRecapPreparationResult> | null = null;
+    private recapPreparationPromiseScopeKey: string | null = null;
     private lastRecapPreparationAttemptAt = 0;
     private lastRecapPreparationScopeKey: string | null = null;
+    private recapBackgroundFailureCount = 0;
+    private recapBackgroundRetryAt = 0;
+    private recapScopeRevision = 0;
+    private recapRuntimeGateIdentity: string;
     private onboardingNudge: OnboardingNudge | null = null;
     get hasActiveOnboardingNudge(): boolean { return this.onboardingNudge !== null; }
     private patternDetectionNudge: PatternDetectionResult | null = null;
     private quietRecallNudgeRunId = 0;
+    private quietRecallRuntimePolicyIdentity: string | null;
     private quietRecallNudgeInFlight = false;
     private quietRecallNudgePending = false;
     private lastQuietRecallCtrlKeydownAt = 0;
     private readonly quietRecallDismissedCandidateIds = new Set<string>();
     private readonly quietRecallSnoozedCandidateIds = new Map<string, number>();
     private unconvincingRecallCount = 0;
+    private quietRecallDiscoverFallback: QuietRecallRunResult | null = null;
+    private lastQuietRecallDiagnostics: QuietRecallEvaluationDiagnostics | null = null;
+    private lastQuietRecallAcceptedCount = 0;
     private foregroundRouteToken = 0;
     private readonly activeForegroundTimers = new Set<ReturnType<typeof setTimeout>>();
     private destroyed = false;
@@ -154,9 +180,24 @@ export class PageletOrchestrator {
     private static readonly PREPARED_RECAP_LEAF_CHANGE_DEBOUNCE_MS = 1_500;
     private static readonly PREPARED_RECAP_NOTE_ACTIVITY_DEBOUNCE_MS = 5_000;
     private static readonly PREPARED_RECAP_MIN_INTERVAL_MS = 5 * 60 * 1000;
+    private static readonly PREPARED_RECAP_LATER_SNOOZE_MS = 24 * 60 * 60 * 1000;
+    private static readonly PREPARED_RECAP_FIRST_RETRY_MS = 5 * 60 * 1000;
+    private static readonly PREPARED_RECAP_LATER_RETRY_MS = 30 * 60 * 1000;
 
     constructor(private readonly host: PageletHost) {
         const s = host.settings.pagelet;
+        this.lastRecapAttempt = s.scopeRecapLastAttempt;
+        this.lastQuietRecallDiagnostics = s.quietRecallLastDiagnostics;
+        this.lastQuietRecallAcceptedCount = s.quietRecallLastAcceptedCount;
+        this.observedRecapAuthorization = s.scopeRecapBackgroundAuthorization;
+        this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
+        this.quietRecallRuntimePolicyIdentity = host.getQuietRecallEvaluationPolicySnapshotId?.() ?? null;
+        for (const entry of s.scopeRecapNudgeSuppressions) {
+            this.shownRecapNudgeFingerprints.set(entry.fingerprint, entry.shownAt);
+            if (entry.snoozedUntil !== undefined) {
+                this.snoozedRecapNudgeFingerprints.set(entry.fingerprint, entry.snoozedUntil);
+            }
+        }
 
         // Scope infrastructure
         this.preloadCache = new PreloadCache();
@@ -213,6 +254,7 @@ export class PageletOrchestrator {
             onDismiss: () => this.handleBubbleDismiss(),
             onReviewCurrentNote: () => { void this.reviewCurrentNote({ preferPanel: true }); },
             onDiscoverConnections: () => { void this.discoverConnections(); },
+            onQuietRecallDiscoverOnly: () => { void this.openQuietRecallDiscoverFallback(); },
             getOnboardingNudge: () => this.onboardingNudge,
             onOnboardingNudgeDismiss: (nudge) => this.handleOnboardingNudgeDismiss(nudge),
             getQuietRecallNudge: () => this.quietRecallBubbleNudge,
@@ -225,8 +267,9 @@ export class PageletOrchestrator {
             onPatternDetectionView: (result) => { void this.handlePatternDetectionBubbleView(result); },
             onPatternDetectionDismiss: (result) => this.handlePatternDetectionBubbleDismiss(result),
             getPreparedRecapCandidate: () => this.currentPreparedRecapCandidate(),
+            getPreparedRecapNudgeCandidate: () => this.currentPreparedRecapNudgeCandidate(),
             onPreparedRecapView: () => { void this.openPreparedRecapDelivery(); },
-            onPreparedRecapLater: () => this.clearPreparedRecapDelivery(),
+            onPreparedRecapLater: () => this.snoozePreparedRecapNudge(),
             getUnconvincingRecallCount: () => this.unconvincingRecallCount,
         });
 
@@ -264,6 +307,12 @@ export class PageletOrchestrator {
 
     private t(key: string, params?: Readonly<Record<string, string | number>>): string {
         return pageletT(key, getPageletUiLanguage(), params);
+    }
+
+    /** Prefer the focused leaf; Pagelet detail can remain the "most recent" leaf after navigation. */
+    private getCurrentWorkspaceLeaf(): WorkspaceLeaf | null {
+        return this.host.app.workspace.activeLeaf
+            ?? this.host.app.workspace.getMostRecentLeaf();
     }
 
     // ======================================================================
@@ -344,8 +393,11 @@ export class PageletOrchestrator {
             this.host.app.vault.on("modify", (file) => {
                 if (file.path.endsWith(".md")) {
                     this.sessionManager.invalidateScopePlan();
-                    if (this.host.app.workspace.getActiveFile?.()?.path === file.path) {
-                        this.clearPreparedRecapDelivery();
+                    if (this.pathTouchesCurrentRecapScope(file.path)) {
+                        this.invalidatePreparedRecapScope();
+                    }
+                    if (this.pathTouchesCurrentQuietRecall(file.path)) {
+                        this.invalidateQuietRecallBubbleNudge();
                     }
                     this.handleNoteActivity(file.path);
                 }
@@ -355,7 +407,8 @@ export class PageletOrchestrator {
             this.host.app.vault.on("create", (file) => {
                 if (file.path.endsWith(".md")) {
                     this.sessionManager.invalidateScopePlan();
-                    this.clearPreparedRecapDelivery();
+                    this.invalidatePreparedRecapScope();
+                    this.invalidateQuietRecallBubbleNudge();
                 }
             }),
         );
@@ -363,7 +416,8 @@ export class PageletOrchestrator {
             this.host.app.vault.on("delete", (file) => {
                 if (file.path.endsWith(".md")) {
                     this.sessionManager.invalidateScopePlan();
-                    this.clearPreparedRecapDelivery();
+                    this.invalidatePreparedRecapScope();
+                    this.invalidateQuietRecallBubbleNudge();
                 }
             }),
         );
@@ -371,7 +425,8 @@ export class PageletOrchestrator {
             this.host.app.vault.on("rename", (file, oldPath) => {
                 if (file.path.endsWith(".md") || oldPath.endsWith(".md")) {
                     this.sessionManager.invalidateScopePlan();
-                    this.clearPreparedRecapDelivery();
+                    this.invalidatePreparedRecapScope();
+                    this.invalidateQuietRecallBubbleNudge();
                 }
             }),
         );
@@ -382,7 +437,7 @@ export class PageletOrchestrator {
         }
 
         // 5. Mount Pet on whatever leaf is currently active
-        const initialLeaf = this.host.app.workspace.getMostRecentLeaf();
+        const initialLeaf = this.getCurrentWorkspaceLeaf();
         if (initialLeaf) {
             this.handleLeafChange(initialLeaf);
         }
@@ -402,6 +457,7 @@ export class PageletOrchestrator {
         this.clearIdleTimer();
         this.clearActivityDebounce();
         this.clearRecapPreparationTimer();
+        this.recapPreparationPendingReason = null;
         for (const timer of this.activeForegroundTimers) clearTimeout(timer);
         this.activeForegroundTimers.clear();
         if (this.quietRecallLeafChangeTimer !== null) {
@@ -428,6 +484,44 @@ export class PageletOrchestrator {
     syncSettings(): void {
         if (this.destroyed) return;
         const s = this.host.settings.pagelet;
+        let recapAuthorization = s.scopeRecapBackgroundAuthorization;
+        let recapPreparationEnabled = s.scopeRecapPreparationEnabled;
+        if (
+            this.observedRecapAuthorization === "declined-v1"
+            && recapAuthorization === "pending"
+            && recapPreparationEnabled
+        ) {
+            this.recapAuthorizationPromptedThisSession = false;
+        }
+        const currentAuthorizationContextId = this.host.getScopeRecapAuthorizationContextId();
+        if (
+            recapAuthorization === "authorized-v1"
+            && s.scopeRecapAuthorizationContextId !== currentAuthorizationContextId
+        ) {
+            recapAuthorization = "pending";
+            recapPreparationEnabled = false;
+            this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "pending");
+            this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
+            this.host.updatePageletSetting("scopeRecapAuthorizationContextId", null);
+            this.recapAuthorizationPromptedThisSession = false;
+            this.clearPreparedRecapDelivery();
+        }
+        if (recapAuthorization === "pending" && this.recapAuthorizationAwaitingAdjustment) {
+            this.recapAuthorizationAwaitingAdjustment = false;
+            this.recapAuthorizationPromptedThisSession = false;
+        }
+        this.observedRecapAuthorization = recapAuthorization;
+        const recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
+        if (recapRuntimeGateIdentity !== this.recapRuntimeGateIdentity) {
+            this.recapRuntimeGateIdentity = recapRuntimeGateIdentity;
+            this.clearRecapPreparationTimer();
+            this.invalidatePreparedRecapScope();
+        }
+        const quietRecallPolicyIdentity = this.host.getQuietRecallEvaluationPolicySnapshotId?.() ?? null;
+        if (quietRecallPolicyIdentity !== this.quietRecallRuntimePolicyIdentity) {
+            this.quietRecallRuntimePolicyIdentity = quietRecallPolicyIdentity;
+            this.invalidateQuietRecallBubbleNudge();
+        }
 
         this.preloadBudget.updateLimits(s.preloadPerHourCap, s.preloadPerDayCap);
         this.sessionManager.syncBudget();
@@ -444,6 +538,33 @@ export class PageletOrchestrator {
             cooldownMinutes: s.proactiveHintsCooldown,
             quietHours: s.proactiveHintsQuietHours,
         });
+        if (
+            this.preparedRecapArtifact
+            && this.preparedRecapArtifact.dataBoundarySnapshotId
+                !== this.host.getScopeRecapDataBoundarySnapshotId()
+        ) {
+            this.clearPreparedRecapDelivery();
+        }
+        if (!s.scopeRecapHighValueHints) {
+            const hadRecapNudge = this.preparedRecapNudgeFingerprint !== null;
+            this.preparedRecapNudgeFingerprint = null;
+            if (
+                hadRecapNudge
+                && this.petView?.stateMachine.state === "nudge"
+                && !this.onboardingNudge
+                && !this.patternDetectionNudge
+                && !this.quietRecallBubbleNudge
+            ) {
+                this.petView.stateMachine.forceState("idle");
+            }
+        }
+        if (
+            recapAuthorization === "pending"
+            || (recapAuthorization === "authorized-v1"
+                && recapPreparationEnabled)
+        ) {
+            this.schedulePreparedRecap("pagelet-open", 0);
+        }
         if (!this.canPrepareQuietRecallBubbleNudge()) {
             this.clearQuietRecallBubbleNudge();
         }
@@ -472,9 +593,10 @@ export class PageletOrchestrator {
             onQuietRecall: () => this.runQuietRecall(),
             onGraphDiscovery: () => this.runGraphDiscovery(),
             onScopeRecap: () => this.runScopeRecap(),
+            onClearScopeRecapCache: () => this.clearScopeRecapCache(),
             onToggleProactiveHints: () => this.toggleProactiveHints(),
             onShowBackgroundPreparationStatus: () => {
-                this.showBackgroundPreparationStatusNotice();
+                void this.showBackgroundPreparationStatusNotice();
             },
             onMovePetCorner: () => {
                 this.cyclePetCorner();
@@ -495,6 +617,14 @@ export class PageletOrchestrator {
             return;
         }
         this.openPanel();
+    }
+
+    clearScopeRecapCache(): void {
+        this.invalidatePreparedRecapScope({ resetOperationalState: true });
+        this.lastRecapPreparationAttemptAt = Date.now();
+        this.lastRecapPreparationScopeKey = this.currentRecapScopeKey();
+        this.host.updatePageletSetting("scopeRecapNudgeSuppressions", []);
+        new Notice(this.t("pagelet.recap.cacheCleared"), 4000);
     }
 
     async reviewCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
@@ -534,19 +664,57 @@ export class PageletOrchestrator {
     }
 
     async runQuietRecall(): Promise<void> {
-        const routeToken = this.beginForegroundRoute("current", "review");
+        const expectedContextKey = this.currentActiveNoteSnapshotKey();
+        const routeToken = this.beginForegroundRoute("current", "review", {
+            reserveGenericBudget: false,
+        });
         if (routeToken === null) return;
         try {
             const quietRecall = await this.withForegroundTimeout(this.host.runQuietRecall());
+            this.recordQuietRecallDiagnostics(quietRecall);
             if (!this.isCurrentForegroundRoute(routeToken)) return;
+            if (expectedContextKey !== this.currentActiveNoteSnapshotKey()) {
+                this.host.log("Discarded stale Quiet Recall foreground result", {
+                    expectedContextKey,
+                    currentContextKey: this.currentActiveNoteSnapshotKey(),
+                });
+                return;
+            }
+            if (!this.quietRecallRunIsCurrent(quietRecall)) {
+                this.host.log("Discarded stale Quiet Recall foreground result", {
+                    reason: "source_or_policy_changed",
+                });
+                return;
+            }
             this.transitionPet("analysis-done");
             const locale = getPageletUiLanguage();
+            const aiCandidates = quietRecall.candidates.filter(
+                (candidate) => (
+                    candidate.evaluationProvenance === "ai"
+                    && Boolean(candidate.evaluationFingerprint?.trim())
+                ),
+            );
+            const discoverCandidates = quietRecall.discoverCandidates ?? quietRecall.candidates;
+            const aiCandidatesById = new Map(aiCandidates.map((candidate) => [candidate.id, candidate]));
+            const visibleCandidates = discoverCandidates.map(
+                (candidate) => aiCandidatesById.get(candidate.id) ?? candidate,
+            );
+            const visibleCandidateIds = new Set(visibleCandidates.map((candidate) => candidate.id));
+            for (const candidate of aiCandidates) {
+                if (!visibleCandidateIds.has(candidate.id)) visibleCandidates.push(candidate);
+            }
+            const deliveryRecall = {
+                ...quietRecall,
+                totalCount: visibleCandidates.length,
+                candidates: visibleCandidates,
+                discoverCandidates,
+            };
             const payload: PageletDetailPayload = {
                 title: pageletT("pagelet.tab.recall.title", locale),
                 content: [],
                 locale,
                 layoutType: "current",
-                extra: { quietRecall },
+                extra: { quietRecall: deliveryRecall },
                 entryReason: "quiet-recall",
             };
             if (quietRecall.currentPath) payload.sourcePath = quietRecall.currentPath;
@@ -617,21 +785,73 @@ export class PageletOrchestrator {
     }
 
     async runScopeRecap(): Promise<void> {
-        const routeToken = this.beginForegroundRoute("summary", "review");
-        if (routeToken === null) return;
-        const scopeKey = this.currentRecapScopeKey();
         try {
-            const recap = await this.withForegroundTimeout(this.host.runScopeRecap());
+            if (this.preparedRecapIsCurrent() && this.preparedRecapPayload) {
+                this.preparedRecapNudgeFingerprint = null;
+                await Promise.resolve(this.host.openPageletDetailView(this.preparedRecapPayload));
+                return;
+            }
+            this.clearPreparedRecapDelivery();
+            const overview = await this.host.buildScopeRecapLocalOverview();
+            this.lastRecapLocalOverview = overview;
+            await Promise.resolve(this.host.openPageletDetailView(
+                this.buildScopeRecapExplanationPayload(overview),
+            ));
+        } catch (error) {
+            this.host.log("Pagelet local Scope Recap overview failed", error);
+            new Notice(this.t("pagelet.panel.status.error"), 4000);
+        }
+    }
+
+    private async retryScopeRecap(overview: ScopeRecapLocalOverview): Promise<void> {
+        if (!this.host.isScopeRecapProviderConfigured()) {
+            this.host.openPageletSettings();
+            new Notice(this.t("pagelet.recap.providerSetupRequired"), 5000);
+            return;
+        }
+        const routeToken = this.beginForegroundRoute("summary", "review", {
+            reserveGenericBudget: false,
+        });
+        if (routeToken === null) return;
+        try {
+            const requestOverview = await this.host.buildScopeRecapLocalOverview();
             if (!this.isCurrentForegroundRoute(routeToken)) return;
+            const scopeKey = this.currentRecapScopeKey();
+            const result = await this.withForegroundTimeout(this.runScopeRecapPreparation(
+                scopeKey,
+                "foreground-retry",
+                requestOverview,
+            ));
+            this.recordScopeRecapAttempt(result.attempt);
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            if (!await this.scopeRecapPreparationIsCurrent(result, scopeKey)) {
+                const currentOverview = await this.host.buildScopeRecapLocalOverview();
+                if (!this.isCurrentForegroundRoute(routeToken)) return;
+                await Promise.resolve(this.host.openPageletDetailView(
+                    this.buildScopeRecapExplanationPayload(currentOverview),
+                ));
+                return;
+            }
             this.transitionPet("analysis-done");
-            const payload = this.storePreparedRecap(recap, { keepPayloadWhenNoCandidate: true }, scopeKey);
-            await Promise.resolve(this.host.openPageletDetailView(payload));
+            const payload = this.acceptScopeRecapPreparation(result, scopeKey, false);
+            if (result.status === "ready" && payload) {
+                await Promise.resolve(this.host.openPageletDetailView(payload));
+                return;
+            }
+            const fallback = result.localOverview ?? overview;
+            await Promise.resolve(this.host.openPageletDetailView(
+                this.buildScopeRecapExplanationPayload(fallback),
+            ));
+            new Notice(this.t("pagelet.recap.retryFailed"), 5000);
         } catch (error) {
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.transitionPet("analysis-done");
             this.petView?.flashError();
-            this.host.log("Pagelet scope recap failed", error);
-            new Notice(this.t("pagelet.panel.status.error"), 4000);
+            this.host.log("Pagelet Scope Recap retry failed", error);
+            await Promise.resolve(this.host.openPageletDetailView(
+                this.buildScopeRecapExplanationPayload(overview),
+            ));
+            new Notice(this.t("pagelet.recap.retryFailed"), 5000);
         } finally {
             this.sessionManager.finishForegroundReviewRun();
         }
@@ -640,8 +860,10 @@ export class PageletOrchestrator {
     private async openPreparedRecapDelivery(): Promise<void> {
         if (!this.preparedRecapIsCurrent()) {
             this.clearPreparedRecapDelivery();
+            await this.runScopeRecap();
             return;
         }
+        this.preparedRecapNudgeFingerprint = null;
         const payload = this.preparedRecapPayload;
         if (!payload) return;
         await Promise.resolve(this.host.openPageletDetailView(payload));
@@ -649,16 +871,74 @@ export class PageletOrchestrator {
 
     private storePreparedRecap(
         recap: ScopeRecapRunResult,
-        options: { keepPayloadWhenNoCandidate?: boolean } = {},
+        overview: ScopeRecapLocalOverview,
+        options: { allowNudge?: boolean } = {},
         scopeKey = this.currentRecapScopeKey(),
     ): PageletDetailPayload {
         const payload = this.buildPreparedRecapPayload(recap);
         const candidate = scopeRecapToDeliveryCandidate(recap);
+        if (!candidate) {
+            throw new Error("Scope Recap ready result did not pass the delivery quality gate");
+        }
         this.preparedRecapArtifact = recap;
         this.preparedRecapCandidate = candidate;
-        this.preparedRecapPayload = candidate || options.keepPayloadWhenNoCandidate ? payload : null;
+        this.preparedRecapPayload = payload;
         this.preparedRecapScopeKey = scopeKey;
+        this.lastRecapLocalOverview = overview;
+        if (options.allowNudge) this.maybeSurfacePreparedRecapNudge(recap);
         return payload;
+    }
+
+    private acceptScopeRecapPreparation(
+        result: ScopeRecapPreparationResult,
+        scopeKey: string | null,
+        allowNudge: boolean,
+    ): PageletDetailPayload | null {
+        this.lastRecapLocalOverview = result.localOverview;
+        if (result.status !== "ready") return null;
+        return this.storePreparedRecap(result.artifact, result.localOverview, { allowNudge }, scopeKey);
+    }
+
+    private maybeSurfacePreparedRecapNudge(recap: ScopeRecapRunResult): void {
+        if (
+            this.host.settings.focusMode
+            || !this.host.settings.pagelet.petVisible
+            || !this.petView
+            || !this.host.settings.pagelet.scopeRecapHighValueHints
+        ) return;
+        const quality = evaluateScopeRecapProactiveQuality(recap);
+        if (!quality.eligible) return;
+        const now = Date.now();
+        const snoozedUntil = this.snoozedRecapNudgeFingerprints.get(quality.fingerprint);
+        if (snoozedUntil !== undefined && snoozedUntil <= now) {
+            this.snoozedRecapNudgeFingerprints.delete(quality.fingerprint);
+        }
+        if (
+            this.shownRecapNudgeFingerprints.has(quality.fingerprint)
+            || (snoozedUntil !== undefined && snoozedUntil > now)
+        ) return;
+        if (!this.proactiveHints.onInsightsReady({ enabled: true })) return;
+        this.shownRecapNudgeFingerprints.set(quality.fingerprint, now);
+        this.preparedRecapNudgeFingerprint = quality.fingerprint;
+        this.persistScopeRecapNudgeSuppressions();
+        this.petView.stateMachine.forceState("nudge");
+    }
+
+    private snoozePreparedRecapNudge(): void {
+        const fingerprint = this.preparedRecapNudgeFingerprint
+            ?? this.preparedRecapCandidate?.id;
+        if (fingerprint) {
+            const now = Date.now();
+            if (!this.shownRecapNudgeFingerprints.has(fingerprint)) {
+                this.shownRecapNudgeFingerprints.set(fingerprint, now);
+            }
+            this.snoozedRecapNudgeFingerprints.set(
+                fingerprint,
+                now + PageletOrchestrator.PREPARED_RECAP_LATER_SNOOZE_MS,
+            );
+            this.persistScopeRecapNudgeSuppressions();
+        }
+        this.preparedRecapNudgeFingerprint = null;
     }
 
     private currentPreparedRecapCandidate(): (DeliveryCandidate & { kind: "recap" }) | null {
@@ -666,7 +946,23 @@ export class PageletOrchestrator {
             this.clearPreparedRecapDelivery();
             return null;
         }
-        return this.preparedRecapCandidate;
+        const candidate = this.preparedRecapCandidate;
+        const snoozedUntil = candidate
+            ? this.snoozedRecapNudgeFingerprints.get(candidate.id)
+            : undefined;
+        if (snoozedUntil !== undefined && snoozedUntil > Date.now()) return null;
+        if (candidate && snoozedUntil !== undefined) {
+            this.snoozedRecapNudgeFingerprints.delete(candidate.id);
+            this.persistScopeRecapNudgeSuppressions();
+        }
+        return candidate;
+    }
+
+    private currentPreparedRecapNudgeCandidate(): (DeliveryCandidate & { kind: "recap" }) | null {
+        const candidate = this.currentPreparedRecapCandidate();
+        return candidate && candidate.id === this.preparedRecapNudgeFingerprint
+            ? candidate
+            : null;
     }
 
     private preparedRecapIsCurrent(): boolean {
@@ -675,20 +971,149 @@ export class PageletOrchestrator {
             && this.preparedRecapCandidate
             && this.preparedRecapPayload
             && this.preparedRecapScopeKey
-            && this.preparedRecapScopeKey === this.currentRecapScopeKey(),
+            && this.preparedRecapScopeKey === this.currentRecapScopeKey()
+            && this.preparedRecapArtifact.dataBoundarySnapshotId
+                === this.host.getScopeRecapDataBoundarySnapshotId()
+            && this.scopeRecapArtifactWithinTtl(this.preparedRecapArtifact)
         );
     }
 
+    private scopeRecapArtifactWithinTtl(recap: ScopeRecapRunResult): boolean {
+        const generatedAt = Date.parse(recap.generatedAt);
+        const ttlMs = recap.ttlDays * 24 * 60 * 60 * 1000;
+        return Number.isFinite(generatedAt)
+            && Number.isFinite(ttlMs)
+            && ttlMs > 0
+            && Date.now() < generatedAt + ttlMs;
+    }
+
     private buildPreparedRecapPayload(recap: ScopeRecapRunResult): PageletDetailPayload {
-        const markdown = buildScopeRecapMarkdown(recap, [recap.summary.id]);
         const locale = getPageletUiLanguage();
+        const items = this.orderedScopeRecapItems(recap);
+        const content: TabSection[] = [
+            {
+                title: pageletT("pagelet.recap.detail.observations", locale),
+                cards: items.map((item) => ({
+                    title: item.title,
+                    body: item.whyItMatters
+                        ? `${item.summary}\n\n${item.whyItMatters}`
+                        : item.summary,
+                    cardStyle: item.section === "tension" ? "comparison" : "insight",
+                    sourceLinks: item.sourceRefs.map((ref) => ({ path: ref.path })),
+                })),
+            },
+            {
+                title: pageletT("pagelet.recap.detail.sources", locale),
+                cards: [{
+                    body: "",
+                    cardStyle: "source-list",
+                    sourceLinks: recap.sourceRefs.map((ref) => ({ path: ref.path })),
+                }],
+            },
+            {
+                title: pageletT("pagelet.recap.detail.coverageTitle", locale),
+                cards: [{
+                    body: pageletT("pagelet.recap.detail.coverage", locale, {
+                        included: recap.sourceCoverage.includedSourceCount,
+                        total: recap.sourceCoverage.totalSourceCount,
+                        skipped: recap.sourceCoverage.skippedSourceCount,
+                    }),
+                }],
+            },
+        ];
         return {
             title: pageletT("pagelet.tab.scopeRecap.title", locale),
-            content: [],
+            content,
             locale,
-            layoutType: "summary",
-            extra: { markdown, scopeRecap: recap },
+            layoutType: "review",
+            extra: { scopeRecap: recap },
             sourcePath: recap.scope.paths?.[0],
+            entryReason: "scope-recap",
+        };
+    }
+
+    private orderedScopeRecapItems(recap: ScopeRecapRunResult): ScopeRecapItem[] {
+        return [
+            ...recap.tensions,
+            ...recap.openQuestions,
+            ...recap.themes,
+        ];
+    }
+
+    private buildScopeRecapExplanationPayload(overview: ScopeRecapLocalOverview): PageletDetailPayload {
+        const locale = getPageletUiLanguage();
+        const firstSource = overview.includedSources[0];
+        const changedSources = overview.includedSources.filter((source) => source.changed);
+        const content: TabSection[] = [{
+            title: pageletT("pagelet.recap.explanation.title", locale),
+            cards: [{
+                body: pageletT("pagelet.recap.explanation.body", locale, {
+                    scope: overview.scope.label ?? overview.scope.kind,
+                    included: overview.sourceCoverage.includedSourceCount,
+                    skipped: overview.sourceCoverage.skippedSourceCount,
+                }),
+            }, {
+                title: pageletT("pagelet.recap.explanation.retryTitle", locale),
+                body: pageletT("pagelet.recap.explanation.retryBody", locale),
+                cardStyle: "action",
+                actionLabel: pageletT("pagelet.recap.explanation.retry", locale),
+                actionCallback: () => { void this.retryScopeRecap(overview); },
+            }],
+        }];
+        if (changedSources.length > 0) {
+            const changedTimes = changedSources
+                .map((source) => source.modifiedAt ? Date.parse(source.modifiedAt) : Number.NaN)
+                .filter(Number.isFinite)
+                .sort((left, right) => left - right);
+            const dateFormatter = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en", {
+                dateStyle: "medium",
+            });
+            const range = changedTimes.length > 0
+                ? pageletT("pagelet.recap.explanation.recentChangesRange", locale, {
+                    from: dateFormatter.format(changedTimes[0]),
+                    to: dateFormatter.format(changedTimes[changedTimes.length - 1]),
+                })
+                : pageletT("pagelet.recap.explanation.recentChangesNoRange", locale);
+            content.push({
+                title: pageletT("pagelet.recap.explanation.recentChangesTitle", locale),
+                cards: [{
+                    body: pageletT("pagelet.recap.explanation.recentChangesBody", locale, {
+                        count: changedSources.length,
+                        range,
+                    }),
+                    cardStyle: "source-list",
+                    sourceLinks: changedSources.map((source) => ({
+                        path: source.path,
+                        title: source.title,
+                    })),
+                }],
+            });
+        }
+        if (overview.includedSources.length > 0) {
+            content.push({
+                title: pageletT("pagelet.recap.detail.sources", locale),
+                cards: [{
+                    body: "",
+                    cardStyle: "source-list",
+                    sourceLinks: overview.includedSources.map((source) => ({
+                        path: source.path,
+                        title: source.title,
+                    })),
+                }, ...(firstSource ? [{
+                    title: pageletT("pagelet.recap.explanation.viewSourcesTitle", locale),
+                    body: pageletT("pagelet.recap.explanation.viewSourcesBody", locale),
+                    cardStyle: "action" as const,
+                    actionLabel: pageletT("pagelet.recap.explanation.viewSources", locale),
+                    actionCallback: () => this.handleSourceClick(firstSource.path),
+                }] : [])],
+            });
+        }
+        return {
+            title: pageletT("pagelet.tab.scopeRecap.title", locale),
+            content,
+            locale,
+            layoutType: "review",
+            sourcePath: firstSource?.path,
             entryReason: "scope-recap",
         };
     }
@@ -699,6 +1124,12 @@ export class PageletOrchestrator {
     ): void {
         if (this.destroyed) return;
         if (!this.host.settings.pagelet.enabled) return;
+        const settings = this.host.settings.pagelet;
+        if (settings.scopeRecapBackgroundAuthorization === "declined-v1") return;
+        if (
+            settings.scopeRecapBackgroundAuthorization === "authorized-v1"
+            && !settings.scopeRecapPreparationEnabled
+        ) return;
         this.clearRecapPreparationTimer();
         this.recapPreparationTimer = setPlatformTimeout(() => {
             this.recapPreparationTimer = null;
@@ -707,29 +1138,129 @@ export class PageletOrchestrator {
     }
 
     private async prepareRecapDelivery(reason: "pagelet-open" | "note-activity" | "idle"): Promise<void> {
-        if (this.destroyed || this.recapPreparationInFlight) return;
-        const scopeKey = this.currentRecapScopeKey();
-        if (!scopeKey) return;
-        const now = Date.now();
-        if (
-            reason !== "note-activity"
-            && this.lastRecapPreparationScopeKey === scopeKey
-            && now - this.lastRecapPreparationAttemptAt < PageletOrchestrator.PREPARED_RECAP_MIN_INTERVAL_MS
-        ) {
+        if (this.destroyed) return;
+        if (this.recapPreparationInFlight || this.recapPreparationPromise) {
+            this.recapPreparationPendingReason = reason;
             return;
         }
+        const authorizedOverview = await this.ensureScopeRecapBackgroundAuthorization();
+        if (!authorizedOverview) return;
+        if (!this.host.settings.pagelet.scopeRecapPreparationEnabled) return;
+        const scopeKey = this.currentRecapScopeKey();
+        if (!scopeKey) return;
+        if (this.preparedRecapMatchesOverview(authorizedOverview, scopeKey)) {
+            this.lastRecapLocalOverview = authorizedOverview;
+            return;
+        }
+        const now = Date.now();
+        if (now < this.recapBackgroundRetryAt) return;
+        if (this.lastRecapPreparationScopeKey === scopeKey
+            && now - this.lastRecapPreparationAttemptAt < PageletOrchestrator.PREPARED_RECAP_MIN_INTERVAL_MS) return;
         this.lastRecapPreparationAttemptAt = now;
         this.lastRecapPreparationScopeKey = scopeKey;
         this.recapPreparationInFlight = true;
         try {
-            const recap = await this.host.runScopeRecap();
-            if (this.destroyed || this.currentRecapScopeKey() !== scopeKey) return;
-            this.storePreparedRecap(recap, {}, scopeKey);
+            const result = await this.runScopeRecapPreparation(scopeKey, "background", authorizedOverview);
+            this.recordScopeRecapAttempt(result.attempt);
+            if (!await this.scopeRecapPreparationIsCurrent(result, scopeKey)) return;
+            this.acceptScopeRecapPreparation(result, scopeKey, result.status === "ready");
+            if (result.status === "ready") {
+                this.recapBackgroundFailureCount = 0;
+                this.recapBackgroundRetryAt = 0;
+            } else {
+                this.recordScopeRecapBackgroundFailure();
+            }
         } catch (error) {
             this.host.log(`Pagelet prepared recap skipped (${reason})`, error);
+            this.recordScopeRecapBackgroundFailure();
         } finally {
             this.recapPreparationInFlight = false;
+            const pendingReason = this.recapPreparationPendingReason;
+            this.recapPreparationPendingReason = null;
+            if (pendingReason && !this.destroyed) {
+                this.schedulePreparedRecap(pendingReason, 0);
+            }
         }
+    }
+
+    private async ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null> {
+        const settings = this.host.settings.pagelet;
+        if (!this.host.isScopeRecapProviderConfigured()) return null;
+        if (settings.scopeRecapBackgroundAuthorization === "authorized-v1") {
+            if (
+                settings.scopeRecapAuthorizationContextId
+                === this.host.getScopeRecapAuthorizationContextId()
+            ) {
+                if (!settings.scopeRecapPreparationEnabled) return null;
+                const overview = await this.host.buildScopeRecapLocalOverview();
+                return overview.sourceCoverage.includedSourceCount >= 2 ? overview : null;
+            }
+            this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "pending");
+            this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
+            this.host.updatePageletSetting("scopeRecapAuthorizationContextId", null);
+            this.recapAuthorizationPromptedThisSession = false;
+        }
+        if (
+            settings.scopeRecapBackgroundAuthorization === "declined-v1"
+            || this.recapAuthorizationPromptedThisSession
+        ) return null;
+
+        const overview = await this.host.buildScopeRecapLocalOverview();
+        this.lastRecapLocalOverview = overview;
+        if (overview.sourceCoverage.includedSourceCount < 2) return null;
+        const disclosedScopeKey = this.currentRecapScopeKey();
+        const disclosedAuthorizationContextId = this.host.getScopeRecapAuthorizationContextId();
+        this.recapAuthorizationPromptedThisSession = true;
+        const choice = await this.host.requestScopeRecapBackgroundAuthorization(overview);
+        if (choice === "run") {
+            const currentOverview = await this.host.buildScopeRecapLocalOverview();
+            if (
+                disclosedScopeKey !== this.currentRecapScopeKey()
+                || disclosedAuthorizationContextId !== this.host.getScopeRecapAuthorizationContextId()
+                || overview.sourceSnapshotId !== currentOverview.sourceSnapshotId
+                || overview.dataBoundarySnapshotId !== currentOverview.dataBoundarySnapshotId
+            ) {
+                this.recapAuthorizationPromptedThisSession = false;
+                this.schedulePreparedRecap("pagelet-open", 0);
+                return null;
+            }
+            this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "authorized-v1");
+            this.host.updatePageletSetting("scopeRecapPreparationEnabled", true);
+            this.host.updatePageletSetting(
+                "scopeRecapAuthorizationContextId",
+                this.host.getScopeRecapAuthorizationContextId(),
+            );
+            this.observedRecapAuthorization = "authorized-v1";
+            this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
+            await Promise.resolve(this.host.saveSettings());
+            return currentOverview;
+        }
+        if (choice === "adjust") {
+            this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
+            this.observedRecapAuthorization = "pending";
+            this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
+            await Promise.resolve(this.host.saveSettings());
+            this.recapAuthorizationAwaitingAdjustment = true;
+            this.host.openPageletSettings();
+            this.host.refreshPageletSettings?.();
+            return null;
+        }
+        this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "declined-v1");
+        this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
+        this.host.updatePageletSetting("scopeRecapAuthorizationContextId", null);
+        this.observedRecapAuthorization = "declined-v1";
+        this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
+        await Promise.resolve(this.host.saveSettings());
+        this.host.refreshPageletSettings?.();
+        return null;
+    }
+
+    private recordScopeRecapBackgroundFailure(): void {
+        this.recapBackgroundFailureCount += 1;
+        const delay = this.recapBackgroundFailureCount === 1
+            ? PageletOrchestrator.PREPARED_RECAP_FIRST_RETRY_MS
+            : PageletOrchestrator.PREPARED_RECAP_LATER_RETRY_MS;
+        this.recapBackgroundRetryAt = Date.now() + delay;
     }
 
     private currentRecapScopeKey(): string | null {
@@ -737,7 +1268,18 @@ export class PageletOrchestrator {
         if (!activeFile || !activeFile.path.endsWith(".md")) return null;
         const mtime = typeof activeFile.stat?.mtime === "number" ? activeFile.stat.mtime : 0;
         const size = typeof activeFile.stat?.size === "number" ? activeFile.stat.size : 0;
-        return `${activeFile.path}:${mtime}:${size}`;
+        return `${activeFile.path}:${mtime}:${size}:${this.recapScopeRevision}:${this.host.getScopeRecapAuthorizationContextId()}`;
+    }
+
+    private currentRecapRuntimeGateIdentity(): string {
+        const settings = this.host.settings.pagelet;
+        return JSON.stringify({
+            pageletEnabled: settings.enabled,
+            authorization: settings.scopeRecapBackgroundAuthorization,
+            authorizationContextId: settings.scopeRecapAuthorizationContextId,
+            currentAuthorizationContextId: this.host.getScopeRecapAuthorizationContextId(),
+            preparationEnabled: settings.scopeRecapPreparationEnabled,
+        });
     }
 
     private clearRecapPreparationTimer(): void {
@@ -747,24 +1289,142 @@ export class PageletOrchestrator {
         }
     }
 
-    private clearPreparedRecapDelivery(): void {
+    private clearPreparedRecapDelivery(options: { resetOperationalState?: boolean } = {}): void {
         this.preparedRecapArtifact = null;
         this.preparedRecapCandidate = null;
         this.preparedRecapPayload = null;
         this.preparedRecapScopeKey = null;
+        this.preparedRecapNudgeFingerprint = null;
         this.lastRecapPreparationScopeKey = null;
+        if (options.resetOperationalState) {
+            this.lastRecapAttempt = null;
+            this.host.updatePageletSetting("scopeRecapLastAttempt", null);
+            this.lastRecapLocalOverview = null;
+            this.shownRecapNudgeFingerprints.clear();
+            this.snoozedRecapNudgeFingerprints.clear();
+            this.recapBackgroundFailureCount = 0;
+            this.recapBackgroundRetryAt = 0;
+        }
+    }
+
+    private invalidatePreparedRecapScope(options: { resetOperationalState?: boolean } = {}): void {
+        this.recapScopeRevision += 1;
+        this.clearPreparedRecapDelivery(options);
+        this.host.clearScopeRecapDetailSessionCache?.();
+    }
+
+    private runScopeRecapPreparation(
+        scopeKey: string | null,
+        mode: "background" | "foreground-retry",
+        overview: ScopeRecapLocalOverview,
+    ): Promise<ScopeRecapPreparationResult> {
+        if (
+            this.recapPreparationPromise
+            && this.recapPreparationPromiseScopeKey === scopeKey
+        ) return this.recapPreparationPromise;
+        if (this.recapPreparationPromise) {
+            const previous = this.recapPreparationPromise;
+            return previous.catch(() => undefined).then(() => {
+                if (this.destroyed || scopeKey !== this.currentRecapScopeKey()) {
+                    throw new Error("Scope Recap request became stale before it started");
+                }
+                return this.runScopeRecapPreparation(scopeKey, mode, overview);
+            });
+        }
+        const promise = this.host.runScopeRecap({
+            mode,
+            expectedSourceSnapshotId: overview.sourceSnapshotId,
+            expectedDataBoundarySnapshotId: overview.dataBoundarySnapshotId,
+            expectedAuthorizationContextId: this.host.getScopeRecapAuthorizationContextId(),
+        });
+        this.recapPreparationPromise = promise;
+        this.recapPreparationPromiseScopeKey = scopeKey;
+        promise.then(
+            () => {
+                if (this.recapPreparationPromise === promise) {
+                    this.recapPreparationPromise = null;
+                    this.recapPreparationPromiseScopeKey = null;
+                }
+            },
+            () => {
+                if (this.recapPreparationPromise === promise) {
+                    this.recapPreparationPromise = null;
+                    this.recapPreparationPromiseScopeKey = null;
+                }
+            },
+        );
+        return promise;
+    }
+
+    private async scopeRecapPreparationIsCurrent(
+        result: ScopeRecapPreparationResult,
+        scopeKey: string | null,
+    ): Promise<boolean> {
+        if (this.destroyed || !scopeKey || scopeKey !== this.currentRecapScopeKey()) return false;
+        const currentOverview = await this.host.buildScopeRecapLocalOverview();
+        if (this.destroyed || scopeKey !== this.currentRecapScopeKey()) return false;
+        if (
+            result.localOverview.sourceSnapshotId !== currentOverview.sourceSnapshotId
+            || result.localOverview.dataBoundarySnapshotId !== currentOverview.dataBoundarySnapshotId
+        ) return false;
+        if (result.status !== "ready") return true;
+        return evaluateScopeRecapArtifactCurrentness(result.artifact, {
+            scope: currentOverview.scope,
+            sourceSnapshotId: currentOverview.sourceSnapshotId,
+            dataBoundarySnapshotId: currentOverview.dataBoundarySnapshotId,
+        }).current;
+    }
+
+    private preparedRecapMatchesOverview(
+        overview: ScopeRecapLocalOverview,
+        scopeKey: string,
+    ): boolean {
+        if (
+            !this.preparedRecapArtifact
+            || !this.preparedRecapCandidate
+            || !this.preparedRecapPayload
+            || this.preparedRecapScopeKey !== scopeKey
+        ) return false;
+        return evaluateScopeRecapArtifactCurrentness(this.preparedRecapArtifact, {
+            scope: overview.scope,
+            sourceSnapshotId: overview.sourceSnapshotId,
+            dataBoundarySnapshotId: overview.dataBoundarySnapshotId,
+        }).current;
+    }
+
+    private recordScopeRecapAttempt(attempt: ScopeRecapAttemptStatus): void {
+        this.lastRecapAttempt = attempt;
+        this.host.updatePageletSetting("scopeRecapLastAttempt", attempt);
+    }
+
+    private persistScopeRecapNudgeSuppressions(): void {
+        const suppressions = [...this.shownRecapNudgeFingerprints.entries()]
+            .map(([fingerprint, shownAt]) => ({
+                fingerprint,
+                shownAt,
+                ...(this.snoozedRecapNudgeFingerprints.has(fingerprint)
+                    ? { snoozedUntil: this.snoozedRecapNudgeFingerprints.get(fingerprint) }
+                    : {}),
+            }))
+            .sort((left, right) => left.shownAt - right.shownAt)
+            .slice(-200);
+        this.host.updatePageletSetting("scopeRecapNudgeSuppressions", suppressions);
     }
 
     private setPetTaskKind(taskKind: PetTaskKind): void {
         this.petView?.setTaskKind?.(taskKind);
     }
 
-    private beginForegroundRoute(layout: "summary" | "discover" | "current" | "review", taskKind: PetTaskKind): number | null {
+    private beginForegroundRoute(
+        layout: "summary" | "discover" | "current" | "review",
+        taskKind: PetTaskKind,
+        options: { reserveGenericBudget?: boolean } = {},
+    ): number | null {
         if (this.sessionManager.isForegroundRunInProgress) {
             new Notice(this.t("pagelet.notice.alreadyReviewing"), 4000);
             return null;
         }
-        if (!this.sessionManager.reserveForegroundCall()) return null;
+        if (options.reserveGenericBudget !== false && !this.sessionManager.reserveForegroundCall()) return null;
         this.sessionManager.beginForegroundRouteRun();
         const routeToken = ++this.foregroundRouteToken;
         this.currentPanelLayout = layout;
@@ -1015,7 +1675,7 @@ export class PageletOrchestrator {
     }
 
     private handleFileOpen(): void {
-        const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
+        const activeLeaf = this.getCurrentWorkspaceLeaf();
         this.handleLeafChange(activeLeaf ?? null);
     }
 
@@ -1289,7 +1949,7 @@ export class PageletOrchestrator {
             return;
         }
 
-        const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
+        const activeLeaf = this.getCurrentWorkspaceLeaf();
         if (activeLeaf) {
             this.handleLeafChange(activeLeaf);
         }
@@ -1307,7 +1967,8 @@ export class PageletOrchestrator {
             this.petView?.stateMachine.transition("note-activity");
             this.backgroundPrep.noteActivity();
             void this.prepareQuietRecallBubbleNudge();
-            if (!modifiedPath || this.host.app.workspace.getActiveFile()?.path === modifiedPath) {
+            if (!modifiedPath || this.pathTouchesCurrentRecapScope(modifiedPath)) {
+                if (this.preparedRecapArtifact) this.invalidatePreparedRecapScope();
                 this.schedulePreparedRecap(
                     "note-activity",
                     PageletOrchestrator.PREPARED_RECAP_NOTE_ACTIVITY_DEBOUNCE_MS,
@@ -1315,6 +1976,34 @@ export class PageletOrchestrator {
             }
             this.resetIdleTimer();
         }, PageletOrchestrator.ACTIVITY_DEBOUNCE_MS);
+    }
+
+    private pathTouchesCurrentRecapScope(path: string): boolean {
+        const activePath = this.host.app.workspace.getActiveFile?.()?.path;
+        if (!activePath || !activePath.endsWith(".md")) return false;
+        const folder = (value: string): string => {
+            const normalized = normalizePath(value);
+            const slash = normalized.lastIndexOf("/");
+            return slash >= 0 ? normalized.slice(0, slash) : "";
+        };
+        return folder(path) === folder(activePath);
+    }
+
+    private pathTouchesCurrentQuietRecall(path: string): boolean {
+        const normalized = normalizePath(path);
+        const activePath = this.host.app.workspace.getActiveFile?.()?.path;
+        if (activePath && normalizePath(activePath) === normalized) return true;
+        return this.quietRecallNudgeCandidate?.sourceRefs.some(
+            (ref) => normalizePath(ref.path) === normalized,
+        ) ?? false;
+    }
+
+    private currentActiveNoteSnapshotKey(): string | null {
+        const activeFile = this.host.app.workspace.getActiveFile?.();
+        if (!activeFile || !activeFile.path.endsWith(".md")) return null;
+        const mtime = typeof activeFile.stat?.mtime === "number" ? activeFile.stat.mtime : 0;
+        const size = typeof activeFile.stat?.size === "number" ? activeFile.stat.size : 0;
+        return `${activeFile.path}:${mtime}:${size}`;
     }
 
     /** (Re)start the idle timer. When it fires, Pet enters resting. */
@@ -1379,7 +2068,7 @@ export class PageletOrchestrator {
             this.host.updatePageletSetting("petVisible", false);
         } else {
             this.host.updatePageletSetting("petVisible", true);
-            const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
+            const activeLeaf = this.getCurrentWorkspaceLeaf();
             if (activeLeaf) {
                 this.handleLeafChange(activeLeaf);
             }
@@ -1387,23 +2076,91 @@ export class PageletOrchestrator {
     }
 
     /** Show a Notice with background preparation diagnostics. */
-    private showBackgroundPreparationStatusNotice(): void {
+    private async showBackgroundPreparationStatusNotice(): Promise<void> {
         const status = this.backgroundPrep.status();
-        if (!status) {
-            new Notice(this.t("pagelet.preload.status.notRunning"), 4000);
-            return;
+        const reviewLine = status
+            ? this.t("pagelet.preload.status.notice", {
+                state: this.t(status.running ? "pagelet.preload.status.running" : "pagelet.preload.status.stopped"),
+                last: status.lastCycleAt
+                    ? new Date(status.lastCycleAt).toLocaleTimeString()
+                    : this.t("pagelet.preload.status.never"),
+                hourly: status.budgetRemaining.hourly,
+                daily: status.budgetRemaining.daily,
+                cache: this.t(status.cacheHasResults ? "pagelet.preload.status.cacheYes" : "pagelet.preload.status.cacheNo"),
+                findings: status.cachedFindingCount,
+            })
+            : this.t("pagelet.preload.status.notRunning");
+        const recapState = this.preparedRecapIsCurrent()
+            ? this.t("pagelet.recap.status.ready")
+            : this.lastRecapAttempt
+                ? this.t("pagelet.recap.status.notReady")
+                : this.t("pagelet.recap.status.never");
+        const recapOperationallyEnabled = this.host.settings.pagelet.scopeRecapBackgroundAuthorization === "authorized-v1"
+            && this.host.settings.pagelet.scopeRecapPreparationEnabled
+            && this.host.settings.pagelet.scopeRecapAuthorizationContextId
+                === this.host.getScopeRecapAuthorizationContextId()
+            && this.host.isScopeRecapProviderConfigured();
+        const recapCost = this.lastRecapAttempt?.cost;
+        const recapLine = this.t("pagelet.recap.status.notice", {
+            enabled: this.t(recapOperationallyEnabled
+                ? "pagelet.preload.status.running"
+                : "pagelet.preload.status.stopped"),
+            state: recapState,
+            included: this.lastRecapAttempt?.includedSourceCount ?? 0,
+            tokens: (this.lastRecapAttempt?.cost?.inputTokens ?? 0)
+                + (this.lastRecapAttempt?.cost?.outputTokens ?? 0),
+            outcome: this.lastRecapAttempt?.outcome ?? this.t("pagelet.status.none"),
+            attemptedAt: this.lastRecapAttempt
+                ? new Date(this.lastRecapAttempt.attemptedAt).toLocaleTimeString()
+                : this.t("pagelet.status.none"),
+            scope: this.lastRecapAttempt?.scope.kind ?? this.t("pagelet.status.none"),
+            callMade: this.lastRecapAttempt
+                ? this.t(this.lastRecapAttempt.providerCallMade ? "pagelet.status.yes" : "pagelet.status.no")
+                : this.t("pagelet.status.none"),
+            cost: recapCost
+                ? recapCost.pricingKnown === false
+                    ? this.t("pagelet.status.unknown")
+                    : `$${(recapCost.estimatedCost ?? 0).toFixed(6)}`
+                : this.t("pagelet.status.none"),
+        });
+        const recallDiagnostics = this.lastQuietRecallDiagnostics;
+        const recallLine = this.t("pagelet.recall.status.notice", {
+            round: recallDiagnostics?.roundId.slice(0, 8) ?? this.t("pagelet.status.none"),
+            startedAt: recallDiagnostics
+                ? new Date(recallDiagnostics.startedAt).toLocaleTimeString()
+                : this.t("pagelet.status.none"),
+            calls: recallDiagnostics?.providerCalls ?? 0,
+            accepted: this.lastQuietRecallAcceptedCount,
+            outcome: recallDiagnostics?.blockedReason ?? this.t("pagelet.status.none"),
+            cost: recallDiagnostics
+                ? recallDiagnostics.pricingKnown
+                    ? `$${recallDiagnostics.estimatedCost.toFixed(6)}`
+                    : this.t("pagelet.status.unknown")
+                : this.t("pagelet.status.none"),
+            hourlyRemaining: recallDiagnostics?.limiterUsage?.hourlyRemaining
+                ?? this.t("pagelet.status.none"),
+            dailyRemaining: recallDiagnostics?.limiterUsage?.dailyRemaining
+                ?? this.t("pagelet.status.none"),
+        });
+        let limitsLine = this.t("pagelet.featureLimits.status.unavailable");
+        if (this.host.getPageletFeatureRateLimitStatus) {
+            try {
+                const limits = await this.host.getPageletFeatureRateLimitStatus();
+                limitsLine = this.t("pagelet.featureLimits.status.notice", {
+                    recapHourUsed: limits.scopeRecap.hourlyUsed,
+                    recapHourCap: limits.scopeRecap.hourlyCap,
+                    recapDayUsed: limits.scopeRecap.dailyUsed,
+                    recapDayCap: limits.scopeRecap.dailyCap,
+                    recallHourUsed: limits.quietRecall.hourlyUsed,
+                    recallHourCap: limits.quietRecall.hourlyCap,
+                    recallDayUsed: limits.quietRecall.dailyUsed,
+                    recallDayCap: limits.quietRecall.dailyCap,
+                });
+            } catch (error) {
+                this.host.log("Pagelet feature usage status unavailable", error);
+            }
         }
-        const lastTime = status.lastCycleAt
-            ? new Date(status.lastCycleAt).toLocaleTimeString()
-            : this.t("pagelet.preload.status.never");
-        new Notice(this.t("pagelet.preload.status.notice", {
-            state: this.t(status.running ? "pagelet.preload.status.running" : "pagelet.preload.status.stopped"),
-            last: lastTime,
-            hourly: status.budgetRemaining.hourly,
-            daily: status.budgetRemaining.daily,
-            cache: this.t(status.cacheHasResults ? "pagelet.preload.status.cacheYes" : "pagelet.preload.status.cacheNo"),
-            findings: status.cachedFindingCount,
-        }), 8000);
+        new Notice(`${reviewLine}\n${recapLine}\n${recallLine}\n${limitsLine}`, 12_000);
     }
 
     // ======================================================================
@@ -1440,9 +2197,15 @@ export class PageletOrchestrator {
         }, delayMs);
     }
 
-    private clearQuietRecallBubbleNudge(): void {
+    private clearQuietRecallBubbleNudge(
+        options: { preserveDiscoverFallback?: boolean } = {},
+    ): void {
         this.quietRecallNudgeCandidate = null;
         this.quietRecallBubbleNudge = null;
+        if (!options.preserveDiscoverFallback) {
+            this.quietRecallDiscoverFallback = null;
+            this.unconvincingRecallCount = 0;
+        }
     }
 
     private invalidateQuietRecallBubbleNudge(): void {
@@ -1477,15 +2240,39 @@ export class PageletOrchestrator {
         this.quietRecallNudgeInFlight = true;
         try {
             const recall = await this.host.runQuietRecall();
+            this.recordQuietRecallDiagnostics(recall);
             if (runId !== this.quietRecallNudgeRunId || this.destroyed) return;
+            if (!this.canPrepareQuietRecallBubbleNudge() || !this.quietRecallRunIsCurrent(recall)) {
+                this.clearQuietRecallBubbleNudge();
+                return;
+            }
             const now = Date.now();
             const candidate = recall.candidates.find((item) => (
-                item.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
+                item.evaluationProvenance === "ai"
+                && Boolean(item.evaluationFingerprint?.trim())
+                && item.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
                 && !this.isQuietRecallCandidateSuppressed(item.id, now)
             ));
-            this.unconvincingRecallCount = recall.candidates.length - (candidate ? 1 : 0);
+            const acceptedCandidates = recall.candidates.filter(
+                (item) => (
+                    item.evaluationProvenance === "ai"
+                    && Boolean(item.evaluationFingerprint?.trim())
+                ),
+            );
+            const acceptedIds = new Set(acceptedCandidates.map((item) => item.id));
+            const discoverOnlyCandidates = (recall.discoverCandidates ?? recall.candidates)
+                .filter((item) => !acceptedIds.has(item.id));
+            this.unconvincingRecallCount = discoverOnlyCandidates.length;
+            this.quietRecallDiscoverFallback = discoverOnlyCandidates.length > 0
+                ? {
+                    ...recall,
+                    totalCount: discoverOnlyCandidates.length,
+                    candidates: discoverOnlyCandidates,
+                    discoverCandidates: discoverOnlyCandidates,
+                }
+                : null;
             if (!candidate) {
-                this.clearQuietRecallBubbleNudge();
+                this.clearQuietRecallBubbleNudge({ preserveDiscoverFallback: true });
                 return;
             }
             this.quietRecallNudgeCandidate = candidate;
@@ -1514,9 +2301,56 @@ export class PageletOrchestrator {
         }
     }
 
+    private async openQuietRecallDiscoverFallback(): Promise<void> {
+        const recall = this.quietRecallDiscoverFallback;
+        if (!recall || !this.quietRecallRunIsCurrent(recall)) {
+            this.clearQuietRecallBubbleNudge();
+            return;
+        }
+        const activePath = this.host.app.workspace.getActiveFile?.()?.path;
+        if (recall.currentPath && activePath !== recall.currentPath) {
+            this.clearQuietRecallBubbleNudge();
+            return;
+        }
+        const locale = getPageletUiLanguage();
+        await Promise.resolve(this.host.openPageletDetailView({
+            title: pageletT("pagelet.tab.recall.title", locale),
+            content: [],
+            locale,
+            layoutType: "current",
+            ...(recall.currentPath ? { sourcePath: recall.currentPath } : {}),
+            extra: { quietRecall: recall },
+            entryReason: "quiet-recall",
+        }));
+    }
+
     private quietRecallCandidateForNudge(nudge: QuietRecallBubbleNudge): QuietRecallCandidate | null {
         const candidate = this.quietRecallNudgeCandidate;
         return candidate && candidate.id === nudge.candidateId ? candidate : null;
+    }
+
+    private recordQuietRecallDiagnostics(result: QuietRecallRunResult): void {
+        this.lastQuietRecallDiagnostics = result.evaluationDiagnostics ?? null;
+        this.lastQuietRecallAcceptedCount = result.candidates.filter((candidate) => (
+            candidate.evaluationProvenance === "ai"
+            && Boolean(candidate.evaluationFingerprint?.trim())
+        )).length;
+        this.host.updatePageletSetting(
+            "quietRecallLastDiagnostics",
+            this.lastQuietRecallDiagnostics,
+        );
+        this.host.updatePageletSetting(
+            "quietRecallLastAcceptedCount",
+            this.lastQuietRecallAcceptedCount,
+        );
+    }
+
+    private quietRecallRunIsCurrent(result: QuietRecallRunResult): boolean {
+        if (
+            result.dataBoundarySnapshotId
+            && result.dataBoundarySnapshotId !== this.host.getScopeRecapDataBoundarySnapshotId()
+        ) return false;
+        return this.host.isQuietRecallRunCurrent?.(result) ?? true;
     }
 
     private recordQuietRecallFeedback(

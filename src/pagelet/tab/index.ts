@@ -6,6 +6,7 @@ export {
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
     clearPageletDetailSessionCache,
+    clearScopeRecapPageletDetailSessionCache,
     registerPageletDetailIcon,
 } from "./PageletDetailView";
 

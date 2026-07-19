@@ -40,6 +40,8 @@ import {
     isVaultPathInConfigDir,
     normalizeVaultConfigDir,
 } from "../../obsidian-paths";
+import type { QuietRecallEvaluationDiagnostics } from "../../pa/quiet-recall-evaluation";
+import type { ScopeRecapAttemptStatus } from "../../pa/scope-recap";
 import type { PetCorner } from "../../pagelet/pet/types";
 import {
     makePageletTranslator,
@@ -58,6 +60,15 @@ import {
 
 /** Output language preference, mirrors D015 (Auto = follow detection). */
 export type PageletOutputLanguageSetting = "auto" | "zh" | "en";
+
+/** Versioned consent state for provider-backed Scope Recap preparation. */
+export type ScopeRecapBackgroundAuthorization = "pending" | "authorized-v1" | "declined-v1";
+
+export interface ScopeRecapNudgeSuppression {
+    fingerprint: string;
+    shownAt: number;
+    snoozedUntil?: number;
+}
 
 /** Legacy Pagelet ribbon setting value kept for data.json compatibility. */
 type LegacyRibbonSettingValue = "default" | "hidden";
@@ -108,6 +119,24 @@ export interface PageletSettings {
     preloadPerDayCap: number;
     /** Background preparation per-call token budget. */
     preloadTokenBudget: { input: number; output: number };
+
+    // ── Scope Recap preparation ───────────────────────────────────
+    /** Prepare current/high-intent Scope Recaps after affirmative disclosure. */
+    scopeRecapPreparationEnabled: boolean;
+    /** Persisted, versioned first-run provider-read authorization. */
+    scopeRecapBackgroundAuthorization: ScopeRecapBackgroundAuthorization;
+    /** Hashed provider/model/policy envelope covered by the current authorization. */
+    scopeRecapAuthorizationContextId: string | null;
+    /** Allow high-value Recap nudges without enabling unrelated hint families. */
+    scopeRecapHighValueHints: boolean;
+    /** Content-free, bounded ledger preventing repeated Recap nudges across reloads. */
+    scopeRecapNudgeSuppressions: ScopeRecapNudgeSuppression[];
+    /** Last content-free Scope Recap preparation attempt, for status after reload. */
+    scopeRecapLastAttempt: ScopeRecapAttemptStatus | null;
+    /** Last content-free Quiet Recall evaluation diagnostics, for status after reload. */
+    quietRecallLastDiagnostics: QuietRecallEvaluationDiagnostics | null;
+    /** Accepted Recall count paired with the last persisted diagnostics. */
+    quietRecallLastAcceptedCount: number;
 
     // ── Reviews ────────────────────────────────────────────────────
     /** Excluded folders for scope resolution. */
@@ -169,6 +198,15 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     preloadPerHourCap: 2,
     preloadPerDayCap: 20,
     preloadTokenBudget: Object.freeze({ input: 4000, output: 1000 }),
+    // Scope Recap preparation becomes active only after affirmative authorization.
+    scopeRecapPreparationEnabled: false,
+    scopeRecapBackgroundAuthorization: "pending",
+    scopeRecapAuthorizationContextId: null,
+    scopeRecapHighValueHints: true,
+    scopeRecapNudgeSuppressions: Object.freeze([]) as readonly ScopeRecapNudgeSuppression[] as ScopeRecapNudgeSuppression[],
+    scopeRecapLastAttempt: null,
+    quietRecallLastDiagnostics: null,
+    quietRecallLastAcceptedCount: 0,
     // Reviews
     excludedFolders: Object.freeze([]) as readonly string[] as string[],
     excludedTags: Object.freeze([]) as readonly string[] as string[],
@@ -293,6 +331,23 @@ export interface NormalizeReviewsFolderOptions {
  */
 export function mergePageletSettings(loaded: unknown): PageletSettings {
     const raw = isRecord(loaded) ? loaded : {};
+    const requestedScopeRecapAuthorization = normalizeScopeRecapAuthorization(
+        raw.scopeRecapBackgroundAuthorization,
+    );
+    const requestedScopeRecapAuthorizationContextId = normalizeScopeRecapAuthorizationContextId(
+        raw.scopeRecapAuthorizationContextId,
+    );
+    const scopeRecapBackgroundAuthorization = requestedScopeRecapAuthorization === "authorized-v1"
+        ? requestedScopeRecapAuthorizationContextId
+            ? "authorized-v1"
+            : "pending"
+        : requestedScopeRecapAuthorization;
+    const scopeRecapAuthorizationContextId = scopeRecapBackgroundAuthorization === "authorized-v1"
+        ? requestedScopeRecapAuthorizationContextId
+        : null;
+    const scopeRecapPreparationEnabled = scopeRecapBackgroundAuthorization === "authorized-v1"
+        && scopeRecapAuthorizationContextId !== null
+        && raw.scopeRecapPreparationEnabled === true;
     return {
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : PAGELET_DEFAULTS.enabled,
         petVisible: typeof raw.petVisible === "boolean" ? raw.petVisible : PAGELET_DEFAULTS.petVisible,
@@ -327,6 +382,21 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         preloadPerHourCap: normalizeBoundedInt(raw.preloadPerHourCap, PAGELET_DEFAULTS.preloadPerHourCap, PAGELET_BOUNDS.preloadPerHourCap.min, PAGELET_BOUNDS.preloadPerHourCap.max),
         preloadPerDayCap: normalizeBoundedInt(raw.preloadPerDayCap, PAGELET_DEFAULTS.preloadPerDayCap, PAGELET_BOUNDS.preloadPerDayCap.min, PAGELET_BOUNDS.preloadPerDayCap.max),
         preloadTokenBudget: normalizeTokenBudget(raw.preloadTokenBudget, PAGELET_DEFAULTS.preloadTokenBudget),
+        // Scope Recap preparation. Legacy installs start pending and make no
+        // provider-backed background call until the v1 disclosure is accepted.
+        scopeRecapPreparationEnabled,
+        scopeRecapBackgroundAuthorization,
+        scopeRecapAuthorizationContextId,
+        scopeRecapHighValueHints: typeof raw.scopeRecapHighValueHints === "boolean"
+            ? raw.scopeRecapHighValueHints
+            : PAGELET_DEFAULTS.scopeRecapHighValueHints,
+        scopeRecapNudgeSuppressions: normalizeScopeRecapNudgeSuppressions(raw.scopeRecapNudgeSuppressions),
+        scopeRecapLastAttempt: normalizeScopeRecapLastAttempt(raw.scopeRecapLastAttempt),
+        quietRecallLastDiagnostics: normalizeQuietRecallLastDiagnostics(raw.quietRecallLastDiagnostics),
+        quietRecallLastAcceptedCount: normalizeDiagnosticInteger(
+            raw.quietRecallLastAcceptedCount,
+            PAGELET_DEFAULTS.quietRecallLastAcceptedCount,
+        ),
         // Reviews
         excludedFolders: normalizeStringArray(raw.excludedFolders),
         excludedTags: normalizeStringArray(raw.excludedTags),
@@ -484,6 +554,348 @@ export function normalizeReviewsFolder(
 function normalizeOutputLanguage(value: unknown): PageletOutputLanguageSetting {
     if (value === "auto" || value === "zh" || value === "en") return value;
     return PAGELET_DEFAULTS.outputLanguage;
+}
+
+function normalizeScopeRecapAuthorization(value: unknown): ScopeRecapBackgroundAuthorization {
+    return value === "authorized-v1" || value === "declined-v1"
+        ? value
+        : "pending";
+}
+
+function normalizeScopeRecapAuthorizationContextId(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim();
+    return normalized.length > 0 && normalized.length <= 160 ? normalized : null;
+}
+
+function normalizeScopeRecapNudgeSuppressions(value: unknown): ScopeRecapNudgeSuppression[] {
+    if (!Array.isArray(value)) return [];
+    const byFingerprint = new Map<string, ScopeRecapNudgeSuppression>();
+    for (const entry of value) {
+        if (!isRecord(entry)) continue;
+        const fingerprint = typeof entry.fingerprint === "string" ? entry.fingerprint.trim() : "";
+        const shownAt = typeof entry.shownAt === "number" && Number.isFinite(entry.shownAt)
+            ? Math.max(0, Math.floor(entry.shownAt))
+            : NaN;
+        if (!fingerprint || fingerprint.length > 160 || !Number.isFinite(shownAt)) continue;
+        const snoozedUntil = typeof entry.snoozedUntil === "number" && Number.isFinite(entry.snoozedUntil)
+            ? Math.max(0, Math.floor(entry.snoozedUntil))
+            : undefined;
+        byFingerprint.delete(fingerprint);
+        byFingerprint.set(fingerprint, {
+            fingerprint,
+            shownAt,
+            ...(snoozedUntil !== undefined ? { snoozedUntil } : {}),
+        });
+    }
+    return [...byFingerprint.values()].slice(-200);
+}
+
+// Diagnostics are persisted only so status remains useful after reload. Keep
+// this boundary deliberately narrower than the runtime result types: every
+// object is rebuilt from an explicit allowlist, strings/numbers are bounded,
+// and generated note/card text can never hitch a ride in data.json.
+const MAX_DIAGNOSTIC_ID_LENGTH = 160;
+const MAX_DIAGNOSTIC_DATE_LENGTH = 64;
+const MAX_DIAGNOSTIC_COUNT = 1_000_000;
+const MAX_DIAGNOSTIC_TOKENS = 100_000_000;
+const MAX_DIAGNOSTIC_ESTIMATED_COST = 1_000_000;
+const MAX_QUIET_RECALL_DIAGNOSTIC_ATTEMPTS = 20;
+
+const SCOPE_RECAP_ATTEMPT_OUTCOMES = [
+    "success",
+    "insufficient_sources",
+    "provider_unavailable",
+    "provider_error",
+    "budget_blocked",
+    "timeout",
+    "empty",
+    "malformed",
+    "quality_rejected",
+] as const;
+
+const SCOPE_RECAP_SCOPE_KINDS = [
+    "current_note",
+    "folder",
+    "tag",
+    "selected_notes",
+    "whole_vault",
+    "custom",
+] as const;
+
+const QUIET_RECALL_ATTEMPT_KINDS = ["initial", "language_retry"] as const;
+const QUIET_RECALL_ATTEMPT_OUTCOMES = [
+    "accepted",
+    "rejected",
+    "language_mismatch",
+    "blocked",
+    "failed",
+] as const;
+const QUIET_RECALL_BLOCK_REASONS = [
+    "provider_unavailable",
+    "budget",
+    "cooldown",
+    "round_call_cap",
+    "reserve_error",
+    "invalid_context",
+] as const;
+const QUIET_RECALL_REJECTION_REASONS = [
+    "not_convincing",
+    "malformed",
+    "language_mismatch",
+    "provider_unavailable",
+    "provider_error",
+    "timeout",
+    "cancelled",
+] as const;
+
+type ScopeRecapAttemptCost = NonNullable<ScopeRecapAttemptStatus["cost"]>;
+type QuietRecallAttemptDiagnostic = QuietRecallEvaluationDiagnostics["attempts"][number];
+type QuietRecallAttemptCost = NonNullable<QuietRecallAttemptDiagnostic["cost"]>;
+type QuietRecallLimiterUsage = NonNullable<QuietRecallEvaluationDiagnostics["limiterUsage"]>;
+
+function normalizeScopeRecapLastAttempt(value: unknown): ScopeRecapAttemptStatus | null {
+    if (!isRecord(value)) return null;
+    const attemptedAt = normalizeDiagnosticDate(value.attemptedAt);
+    const sourceSnapshotId = normalizeDiagnosticString(value.sourceSnapshotId);
+    const dataBoundarySnapshotId = normalizeDiagnosticString(value.dataBoundarySnapshotId);
+    const includedSourceCount = normalizeDiagnosticInteger(value.includedSourceCount, null);
+    const outcome = includesLiteral(SCOPE_RECAP_ATTEMPT_OUTCOMES, value.outcome)
+        ? value.outcome
+        : null;
+    const scopeKind = isRecord(value.scope)
+        && includesLiteral(SCOPE_RECAP_SCOPE_KINDS, value.scope.kind)
+        ? value.scope.kind
+        : null;
+    if (
+        attemptedAt === null
+        || sourceSnapshotId === null
+        || dataBoundarySnapshotId === null
+        || includedSourceCount === null
+        || outcome === null
+        || scopeKind === null
+        || typeof value.providerCallMade !== "boolean"
+    ) {
+        return null;
+    }
+    const cost = normalizeScopeRecapAttemptCost(value.cost);
+    return {
+        attemptedAt,
+        outcome,
+        scope: { kind: scopeKind },
+        sourceSnapshotId,
+        dataBoundarySnapshotId,
+        providerCallMade: value.providerCallMade,
+        includedSourceCount,
+        ...(cost ? { cost } : {}),
+    };
+}
+
+function normalizeScopeRecapAttemptCost(value: unknown): ScopeRecapAttemptCost | undefined {
+    if (!isRecord(value)) return undefined;
+    const cost: ScopeRecapAttemptCost = {};
+    const inputTokens = normalizeDiagnosticInteger(value.inputTokens, null, MAX_DIAGNOSTIC_TOKENS);
+    const outputTokens = normalizeDiagnosticInteger(value.outputTokens, null, MAX_DIAGNOSTIC_TOKENS);
+    const estimatedCost = normalizeDiagnosticNumber(
+        value.estimatedCost,
+        MAX_DIAGNOSTIC_ESTIMATED_COST,
+    );
+    if (inputTokens !== null) cost.inputTokens = inputTokens;
+    if (outputTokens !== null) cost.outputTokens = outputTokens;
+    if (estimatedCost !== null) cost.estimatedCost = estimatedCost;
+    if (value.currency === "USD") cost.currency = "USD";
+    if (typeof value.pricingKnown === "boolean") cost.pricingKnown = value.pricingKnown;
+    return Object.keys(cost).length > 0 ? cost : undefined;
+}
+
+function normalizeQuietRecallLastDiagnostics(
+    value: unknown,
+): QuietRecallEvaluationDiagnostics | null {
+    if (!isRecord(value)) return null;
+    const roundId = normalizeDiagnosticString(value.roundId);
+    const contextFingerprint = normalizeDiagnosticString(value.contextFingerprint);
+    const startedAt = normalizeDiagnosticInteger(value.startedAt, null, Number.MAX_SAFE_INTEGER);
+    const candidateCount = normalizeDiagnosticInteger(value.candidateCount, null);
+    const evaluatedCandidateCount = normalizeDiagnosticInteger(value.evaluatedCandidateCount, null);
+    const providerCalls = normalizeDiagnosticInteger(value.providerCalls, null);
+    const initialCalls = normalizeDiagnosticInteger(value.initialCalls, null);
+    const languageRetryCalls = normalizeDiagnosticInteger(value.languageRetryCalls, null);
+    const cacheHits = normalizeDiagnosticInteger(value.cacheHits, null);
+    const inFlightHits = normalizeDiagnosticInteger(value.inFlightHits, null);
+    const estimatedCost = normalizeDiagnosticNumber(
+        value.estimatedCost,
+        MAX_DIAGNOSTIC_ESTIMATED_COST,
+    );
+    if (
+        roundId === null
+        || contextFingerprint === null
+        || startedAt === null
+        || candidateCount === null
+        || evaluatedCandidateCount === null
+        || providerCalls === null
+        || initialCalls === null
+        || languageRetryCalls === null
+        || cacheHits === null
+        || inFlightHits === null
+        || estimatedCost === null
+        || typeof value.pricingKnown !== "boolean"
+    ) {
+        return null;
+    }
+    const limiterUsage = normalizeQuietRecallLimiterUsage(value.limiterUsage);
+    const blockedReason = includesLiteral(QUIET_RECALL_BLOCK_REASONS, value.blockedReason)
+        ? value.blockedReason
+        : undefined;
+    return {
+        roundId,
+        startedAt,
+        contextFingerprint,
+        candidateCount,
+        evaluatedCandidateCount,
+        providerCalls,
+        initialCalls,
+        languageRetryCalls,
+        cacheHits,
+        inFlightHits,
+        estimatedCost,
+        pricingKnown: value.pricingKnown,
+        ...(limiterUsage ? { limiterUsage } : {}),
+        ...(blockedReason ? { blockedReason } : {}),
+        attempts: normalizeQuietRecallAttempts(value.attempts),
+    };
+}
+
+function normalizeQuietRecallAttempts(value: unknown): QuietRecallAttemptDiagnostic[] {
+    if (!Array.isArray(value)) return [];
+    const attempts: QuietRecallAttemptDiagnostic[] = [];
+    for (const rawAttempt of value) {
+        if (attempts.length >= MAX_QUIET_RECALL_DIAGNOSTIC_ATTEMPTS) break;
+        const attempt = normalizeQuietRecallAttempt(rawAttempt);
+        if (attempt) attempts.push(attempt);
+    }
+    return attempts;
+}
+
+function normalizeQuietRecallAttempt(value: unknown): QuietRecallAttemptDiagnostic | null {
+    if (!isRecord(value)) return null;
+    const candidateId = normalizeDiagnosticString(value.candidateId);
+    const candidateIndex = normalizeDiagnosticInteger(value.candidateIndex, null);
+    const fingerprint = normalizeDiagnosticString(value.fingerprint);
+    const kind = includesLiteral(QUIET_RECALL_ATTEMPT_KINDS, value.kind) ? value.kind : null;
+    const outcome = includesLiteral(QUIET_RECALL_ATTEMPT_OUTCOMES, value.outcome)
+        ? value.outcome
+        : null;
+    if (
+        candidateId === null
+        || candidateIndex === null
+        || fingerprint === null
+        || kind === null
+        || outcome === null
+        || typeof value.reserved !== "boolean"
+    ) {
+        return null;
+    }
+    const reason = includesLiteral(QUIET_RECALL_BLOCK_REASONS, value.reason)
+        || includesLiteral(QUIET_RECALL_REJECTION_REASONS, value.reason)
+        ? value.reason
+        : undefined;
+    const cost = normalizeQuietRecallAttemptCost(value.cost);
+    const limiterUsage = normalizeQuietRecallLimiterUsage(value.limiterUsage);
+    return {
+        candidateId,
+        candidateIndex,
+        fingerprint,
+        kind,
+        reserved: value.reserved,
+        outcome,
+        ...(reason ? { reason } : {}),
+        ...(cost ? { cost } : {}),
+        ...(limiterUsage ? { limiterUsage } : {}),
+    };
+}
+
+function normalizeQuietRecallAttemptCost(value: unknown): QuietRecallAttemptCost | undefined {
+    if (!isRecord(value)) return undefined;
+    const inputTokens = normalizeDiagnosticInteger(value.inputTokens, null, MAX_DIAGNOSTIC_TOKENS);
+    const outputTokens = normalizeDiagnosticInteger(value.outputTokens, null, MAX_DIAGNOSTIC_TOKENS);
+    const estimatedCost = normalizeDiagnosticNumber(
+        value.estimatedCost,
+        MAX_DIAGNOSTIC_ESTIMATED_COST,
+    );
+    if (
+        inputTokens === null
+        || outputTokens === null
+        || estimatedCost === null
+        || value.currency !== "USD"
+        || typeof value.pricingKnown !== "boolean"
+    ) {
+        return undefined;
+    }
+    return {
+        inputTokens,
+        outputTokens,
+        estimatedCost,
+        currency: "USD",
+        pricingKnown: value.pricingKnown,
+    };
+}
+
+function normalizeQuietRecallLimiterUsage(value: unknown): QuietRecallLimiterUsage | undefined {
+    if (!isRecord(value)) return undefined;
+    const hourlyUsed = normalizeDiagnosticInteger(value.hourlyUsed, null);
+    const hourlyCap = normalizeDiagnosticInteger(value.hourlyCap, null);
+    const hourlyRemaining = normalizeDiagnosticInteger(value.hourlyRemaining, null);
+    const dailyUsed = normalizeDiagnosticInteger(value.dailyUsed, null);
+    const dailyCap = normalizeDiagnosticInteger(value.dailyCap, null);
+    const dailyRemaining = normalizeDiagnosticInteger(value.dailyRemaining, null);
+    if (
+        hourlyUsed === null
+        || hourlyCap === null
+        || hourlyRemaining === null
+        || dailyUsed === null
+        || dailyCap === null
+        || dailyRemaining === null
+    ) {
+        return undefined;
+    }
+    return {
+        hourlyUsed,
+        hourlyCap,
+        hourlyRemaining,
+        dailyUsed,
+        dailyCap,
+        dailyRemaining,
+    };
+}
+
+function normalizeDiagnosticString(value: unknown, maxLength = MAX_DIAGNOSTIC_ID_LENGTH): string | null {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim();
+    return normalized.length > 0 && normalized.length <= maxLength ? normalized : null;
+}
+
+function normalizeDiagnosticDate(value: unknown): string | null {
+    const normalized = normalizeDiagnosticString(value, MAX_DIAGNOSTIC_DATE_LENGTH);
+    return normalized !== null && Number.isFinite(Date.parse(normalized)) ? normalized : null;
+}
+
+function normalizeDiagnosticInteger<TFallback extends number | null>(
+    value: unknown,
+    fallback: TFallback,
+    max = MAX_DIAGNOSTIC_COUNT,
+): number | TFallback {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return fallback;
+    return Math.min(value, max);
+}
+
+function normalizeDiagnosticNumber(value: unknown, max: number): number | null {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+        ? Math.min(value, max)
+        : null;
+}
+
+function includesLiteral<const T extends readonly string[]>(values: T, value: unknown): value is T[number] {
+    return typeof value === "string" && (values as readonly string[]).includes(value);
 }
 
 function normalizeRibbonPosition(value: unknown): LegacyRibbonSettingValue {
@@ -953,6 +1365,35 @@ export function renderPageletSection(
                     ) {
                         settings.preloadTokenBudget = { ...settings.preloadTokenBudget, output: parsed };
                     }
+                })));
+
+    // Scope Recap is intentionally separate from generic review preparation:
+    // its first provider-backed background read has its own disclosure and
+    // its opt-out must survive reloads/upgrades.
+    parentEl.createEl("h3", { text: t("pagelet.settings.scopeRecap.heading") });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.scopeRecapPreparation.name"))
+        .setDesc(t("pagelet.settings.scopeRecapPreparation.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.scopeRecapPreparationEnabled)
+                .onChange((value) => saveOnChange(() => {
+                    settings.scopeRecapPreparationEnabled = value;
+                    if (value && settings.scopeRecapBackgroundAuthorization === "declined-v1") {
+                        settings.scopeRecapBackgroundAuthorization = "pending";
+                        settings.scopeRecapAuthorizationContextId = null;
+                    }
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.scopeRecapHints.name"))
+        .setDesc(t("pagelet.settings.scopeRecapHints.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.scopeRecapHighValueHints)
+                .onChange((value) => saveOnChange(() => {
+                    settings.scopeRecapHighValueHints = value;
                 })));
 
     // ── Reviews ────────────────────────────────────────────────────────

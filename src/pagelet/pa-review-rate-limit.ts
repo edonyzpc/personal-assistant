@@ -97,6 +97,12 @@ export interface PageletRateLimiterOptions {
      * Tests override this to drive the daily window deterministically.
      */
     nextLocalMidnight?: (now: number) => number;
+    /**
+     * Stable identity for writers that share one persisted bucket. When set,
+     * reservations are serialized through a process-global tail so a plugin
+     * hot reload cannot let the old and new instances oversubscribe the cap.
+     */
+    coordinationKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +172,7 @@ export class PageletRateLimiter {
     private readonly dailyCap: number;
     private readonly now: () => number;
     private readonly nextLocalMidnight: (now: number) => number;
+    private readonly coordinationKey: string | null;
     /**
      * Cached, possibly stale view of storage. Updated on every `prune()` call
      * (which is invoked by every public method). We tolerate the staleness
@@ -174,6 +181,8 @@ export class PageletRateLimiter {
      */
     private cached: PageletRateLimitState | null = null;
     private cacheLoaded = false;
+    /** Serialize check-and-save so concurrent feature calls cannot oversubscribe a hard cap. */
+    private reserveTail: Promise<void> = Promise.resolve();
 
     constructor(options: PageletRateLimiterOptions = {}) {
         this.storage = options.storage ?? new InMemoryRateLimitStorage();
@@ -181,6 +190,7 @@ export class PageletRateLimiter {
         this.dailyCap = options.config?.dailyCap ?? PAGELET_RATE_LIMIT_DEFAULTS.daily;
         this.now = options.now ?? Date.now;
         this.nextLocalMidnight = options.nextLocalMidnight ?? defaultNextLocalMidnight;
+        this.coordinationKey = options.coordinationKey?.trim() || null;
     }
 
     /**
@@ -203,7 +213,38 @@ export class PageletRateLimiter {
      * granularity (e.g. counting each retry as a separate call), it does
      * so by calling `reserve()` more than once per `reviewNote()`.
      */
-    async reserve(): Promise<RateLimitDecision> {
+    reserve(): Promise<RateLimitDecision> {
+        if (this.coordinationKey) {
+            const tails = getSharedReserveTails();
+            const previous = tails.get(this.coordinationKey) ?? Promise.resolve();
+            const operation = previous.then(() => {
+                // A previous plugin instance may have committed while this
+                // instance was waiting. Reload inside the shared critical
+                // section before every check-and-save.
+                this.invalidate();
+                return this.reserveOnce();
+            });
+            const tail = operation.then(
+                () => undefined,
+                () => undefined,
+            );
+            tails.set(this.coordinationKey, tail);
+            void tail.then(() => {
+                if (tails.get(this.coordinationKey!) === tail) {
+                    tails.delete(this.coordinationKey!);
+                }
+            });
+            return operation;
+        }
+        const operation = this.reserveTail.then(() => this.reserveOnce());
+        this.reserveTail = operation.then(
+            () => undefined,
+            () => undefined,
+        );
+        return operation;
+    }
+
+    private async reserveOnce(): Promise<RateLimitDecision> {
         const state = await this.loadAndPrune();
         const now = this.now();
         const decision = decide(state, this.hourlyCap, this.dailyCap, now);
@@ -249,6 +290,16 @@ export class PageletRateLimiter {
         prune(this.cached, this.now(), this.nextLocalMidnight);
         return this.cached;
     }
+}
+
+const SHARED_RESERVE_TAILS_KEY = "__personalAssistantPageletRateLimitReserveTailsV1";
+
+function getSharedReserveTails(): Map<string, Promise<void>> {
+    const processGlobal = globalThis as typeof globalThis & {
+        [SHARED_RESERVE_TAILS_KEY]?: Map<string, Promise<void>>;
+    };
+    processGlobal[SHARED_RESERVE_TAILS_KEY] ??= new Map<string, Promise<void>>();
+    return processGlobal[SHARED_RESERVE_TAILS_KEY];
 }
 
 // ---------------------------------------------------------------------------

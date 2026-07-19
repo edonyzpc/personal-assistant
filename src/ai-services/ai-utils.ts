@@ -470,13 +470,33 @@ export function buildQwenModelKwargs(
 ): QwenModelKwargs | undefined {
     if (normalizeCapabilityValue(provider) !== "qwen") return undefined;
     if (!isDashScopeCompatibleBaseURL(baseURL)) return undefined;
-    if (!options?.enableThinking) return undefined;
+    if (options?.enableThinking === undefined) return undefined;
 
-    const kwargs: QwenModelKwargs = {};
-    if (options.enableThinking) {
-        kwargs.enable_thinking = true;
+    return { enable_thinking: options.enableThinking };
+}
+
+export function supportsDashScopeThinkingControl(
+    provider: unknown,
+    baseURL: unknown,
+    modelName: unknown,
+): boolean {
+    if (normalizeCapabilityValue(provider) !== "qwen") return false;
+    if (!isDashScopeCompatibleBaseURL(baseURL)) return false;
+    const model = normalizeCapabilityValue(modelName).split("/").at(-1) ?? "";
+    // Fixed-mode Qwen variants reject per-request thinking toggles. Most make
+    // that explicit in the model id; Qwen 3.7 also shipped two thinking-only
+    // Max ids without the suffix.
+    if (/(?:^|[-.])(?:thinking|instruct)(?:[-.]|$)/.test(model)) return false;
+    if (model === "qwen3.7-max-preview" || /^qwen3\.7-max-2026-05-17(?:-|$)/.test(model)) {
+        return false;
     }
-    return kwargs;
+    return [
+        /^qwen3(?:[.-]|$)/,
+        /^deepseek-v4-(?:pro|flash)(?:-|$)/,
+        /^deepseek-v3\.(?:1|2)(?:-|$)/,
+        /^kimi-k2\.(?:5|6)(?:-|$)/,
+        /^glm-/,
+    ].some((pattern) => pattern.test(model));
 }
 
 function isKnownNativeToolProvider(provider: string): boolean {

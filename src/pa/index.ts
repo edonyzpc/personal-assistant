@@ -24,6 +24,7 @@ export * from "./maintenance-review";
 export * from "./maintenance-review-apply";
 export * from "./pattern-detection";
 export * from "./quiet-recall";
+export * from "./quiet-recall-evaluation";
 export * from "./retrieval-habit-profile";
 export * from "./review-artifact-lifecycle";
 export * from "./review-queue-store";

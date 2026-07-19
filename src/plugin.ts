@@ -5,7 +5,12 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
-import { AIUtils, getDashScopeImageGenerationEndpoint } from "./ai-services/ai-utils";
+import {
+    AIUtils,
+    getDashScopeImageGenerationEndpoint,
+    supportsDashScopeThinkingControl,
+    type QwenRequestOptions,
+} from "./ai-services/ai-utils";
 import { stableStringify } from "./ai-services/agent-utils";
 import { ChatService } from "./ai-services/chat-service";
 import { VSS } from './vss'
@@ -38,6 +43,7 @@ import {
     PageletReviewModel,
     PageletCostTracker,
     PageletRateLimiter,
+    ScopeResolver,
     buildPageletScopeReviewBundle,
     createPaReviewRuntime,
     estimateTokens,
@@ -63,11 +69,13 @@ import {
 } from './platform-dom';
 import { normalizeReviewsFolder, type PageletReviewsFolderError, type PageletSettings } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
+import { requestScopeRecapAuthorization } from './pagelet/recap/ScopeRecapAuthorizationModal';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
 import {
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
     clearPageletDetailSessionCache,
+    clearScopeRecapPageletDetailSessionCache,
     registerPageletDetailIcon,
     type PageletDetailPayload,
 } from './pagelet/tab';
@@ -130,10 +138,14 @@ import {
     type PatternDetectionInput,
     type PatternDetectionResult,
     type QuietRecallCandidate,
+    type QuietRecallEvaluationAttempt,
+    type QuietRecallEvaluationBlockReason,
+    type QuietRecallEvaluationDecision,
     type QuietRecallRelatedNote,
     type QuietRecallRunResult,
     type QuietRecallSaveResult,
     type QuietRecallVaultNote,
+    type RecallNoteDigest,
     type RetrievalHabitFeedbackKind,
     type RetrievalHabitProfileRecordResult,
     type ReviewQueueCreateInput,
@@ -144,21 +156,24 @@ import {
     type ReviewQueueState,
     type ReviewQueueStatus,
     type SavedInsight,
-    type ScopeRecapRunResult,
+    type ScopeRecapAttemptCost,
+    type ScopeRecapLocalOverview,
+    type ScopeRecapPreparationResult,
     type ScopeRecapSourceNote,
     addPaRelatedLink,
     applyMaintenanceMoveProposal,
     applyRetrievalHabitProfileToRecallCandidates,
     buildQuietRecallCandidates,
-    buildQuietRecallWithLlm,
+    buildQuietRecallSourceSnapshotId,
     buildRecallRelevancePrompt,
     buildRecapInsightsPrompt,
-    buildScopeRecapWithLlm,
-    detectLanguageMismatch,
+    buildScopeRecapLocalOverview,
+    extractRecallDigest,
+    prepareScopeRecapWithLlm,
     parseRecallRelevanceResponse,
     parseRecapInsightsResponse,
     type GenerateRecapInsightsCallback,
-    type RecallRelevanceEvaluator,
+    QuietRecallEvaluationCoordinator,
     QUIET_RECALL_BUBBLE_MIN_SCORE,
     canAutoConfirmMemoryCandidate,
     coerceQuietRecallSaveResult,
@@ -410,6 +425,187 @@ interface QuietRecallVaultNoteCollection {
     relatedNotes: QuietRecallRelatedNote[];
 }
 
+interface QuietRecallEvaluationMaterial {
+    candidateDigest: RecallNoteDigest;
+    candidateAge: string;
+    prompt: string;
+    sourceSnapshots: Array<{
+        path: string;
+        contentHash: string;
+        modifiedAt: string | null;
+    }>;
+    relationInputs: {
+        relation: QuietRecallCandidate["relation"];
+        score: number;
+        context: QuietRecallCandidate["context"] | null;
+        sourceInsightId: string | null;
+    };
+}
+
+interface QuietRecallProviderModel {
+    invoke(input: string): Promise<unknown> | unknown;
+}
+
+class QuietRecallProviderTimeoutError extends Error {
+    constructor() {
+        super(`Quiet Recall provider timed out after ${QUIET_RECALL_PROVIDER_TIMEOUT_MS}ms.`);
+        this.name = "QuietRecallProviderTimeoutError";
+    }
+}
+
+function quietRecallCandidateAge(note: QuietRecallVaultNote, now: Date): string {
+    const value = note.modifiedAt ?? note.createdAt;
+    if (!value) return "unknown";
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return "unknown";
+    const ageDays = Math.max(0, (now.getTime() - timestamp) / 86_400_000);
+    if (ageDays < 1) return "today";
+    const days = Math.round(ageDays);
+    if (ageDays < 7) return days === 1 ? "1 day" : `${days} days`;
+    const weeks = Math.round(ageDays / 7);
+    if (ageDays < 30) return weeks === 1 ? "1 week" : `${weeks} weeks`;
+    const months = Math.round(ageDays / 30);
+    if (ageDays < 365) return months === 1 ? "1 month" : `${months} months`;
+    const years = Math.round(ageDays / 365);
+    return years === 1 ? "1 year" : `${years} years`;
+}
+
+function quietRecallEvaluationMaterial(
+    candidate: QuietRecallCandidate,
+    currentDigest: RecallNoteDigest,
+    vaultNotes: readonly QuietRecallVaultNote[],
+    now: Date,
+): QuietRecallEvaluationMaterial {
+    const candidatePaths = new Set(candidate.sourceRefs.map((ref) => normalizePath(ref.path)));
+    const matchedNote = vaultNotes.find((note) => candidatePaths.has(normalizePath(note.path)));
+    const candidateDigest = candidate.sourceInsightId
+        ? {
+            title: candidate.title.replace(/^(Recall:|回忆：)\s*/, ""),
+            headings: [],
+            firstParagraph: candidate.summary,
+        }
+        : matchedNote
+        ? extractRecallDigest(matchedNote)
+        : {
+            title: candidate.title.replace(/^(Recall:|回忆：)\s*/, ""),
+            headings: [],
+            firstParagraph: candidate.summary,
+        };
+    const candidateAge = matchedNote ? quietRecallCandidateAge(matchedNote, now) : "unknown";
+    const noteByPath = new Map(vaultNotes.map((note) => [normalizePath(note.path), note]));
+    const sourceSnapshots = candidate.sourceRefs
+        .map((ref) => {
+            const path = normalizePath(ref.path);
+            const note = noteByPath.get(path);
+            return {
+                path,
+                contentHash: stableHash(note?.content ?? ""),
+                modifiedAt: note?.modifiedAt ?? note?.createdAt ?? null,
+            };
+        })
+        .sort((left, right) => left.path.localeCompare(right.path));
+    return {
+        candidateDigest,
+        candidateAge,
+        prompt: buildRecallRelevancePrompt({ currentDigest, candidateDigest, candidateAge }),
+        sourceSnapshots,
+        relationInputs: {
+            relation: candidate.relation,
+            score: candidate.score,
+            context: candidate.context ?? null,
+            sourceInsightId: candidate.sourceInsightId ?? null,
+        },
+    };
+}
+
+function quietRecallContextFingerprint(input: {
+    currentPath: string;
+    currentContent: string;
+    locale: string;
+    provider: string;
+    model: string;
+    dataBoundarySnapshot: string;
+    evaluationPolicySnapshotId: string;
+}): string {
+    return `quiet-recall-context:${stableHash(stableStringify({
+        version: QUIET_RECALL_EVALUATOR_VERSION,
+        currentPath: normalizePath(input.currentPath),
+        currentContentHash: stableHash(input.currentContent),
+        locale: input.locale,
+        provider: input.provider,
+        model: input.model,
+        dataBoundarySnapshot: input.dataBoundarySnapshot,
+        evaluationPolicySnapshotId: input.evaluationPolicySnapshotId,
+    }))}`;
+}
+
+function quietRecallCandidateEvaluationFingerprint(
+    contextFingerprint: string,
+    candidate: QuietRecallCandidate,
+    material: QuietRecallEvaluationMaterial,
+): string {
+    return `quiet-recall-evaluation:${stableHash(stableStringify({
+        contextFingerprint,
+        candidateId: candidate.id,
+        candidateContent: {
+            title: candidate.title,
+            summary: candidate.summary,
+            nextAction: candidate.nextAction,
+        },
+        candidateDigest: material.candidateDigest,
+        candidateAge: material.candidateAge,
+        promptHash: stableHash(material.prompt),
+        sourceSnapshots: material.sourceSnapshots,
+        relationInputs: material.relationInputs,
+    }))}`;
+}
+
+function quietRecallLanguageMismatch(whyNow: string, noteContent: string): boolean {
+    const noteSample = noteContent.slice(0, 2_000);
+    const noteHasCjk = /[一-鿿぀-ゟ゠-ヿ]/.test(noteSample);
+    const noteHasLatin = /[A-Za-z]/.test(noteSample);
+    const whyNowHasCjk = /[一-鿿぀-ゟ゠-ヿ]/.test(whyNow);
+    if (noteHasCjk) return !whyNowHasCjk;
+    if (noteHasLatin) return whyNowHasCjk;
+    return false;
+}
+
+function parseQuietRecallEvaluationDecision(
+    text: string,
+    noteContent: string,
+): QuietRecallEvaluationDecision {
+    let raw: unknown;
+    try {
+        const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+        raw = JSON.parse(cleaned);
+    } catch {
+        return { status: "rejected", reason: "malformed" };
+    }
+    if (!raw || typeof raw !== "object" || typeof (raw as { isConvincing?: unknown }).isConvincing !== "boolean") {
+        return { status: "rejected", reason: "malformed" };
+    }
+    const parsed = parseRecallRelevanceResponse(text);
+    if (!parsed.isConvincing) return { status: "rejected", reason: "not_convincing" };
+    const whyNow = parsed.whyNow?.trim();
+    if (!whyNow) return { status: "rejected", reason: "malformed" };
+    if (quietRecallLanguageMismatch(whyNow, noteContent)) {
+        return { status: "retry", reason: "language_mismatch" };
+    }
+    return { status: "accepted", whyNow };
+}
+
+async function withQuietRecallProviderTimeout<T>(operation: Promise<T>): Promise<T> {
+    let timeout: PlatformTimeoutHandle | null = null;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeout = setPlatformTimeout(() => reject(new QuietRecallProviderTimeoutError()), QUIET_RECALL_PROVIDER_TIMEOUT_MS);
+    });
+    try {
+        return await Promise.race([operation, timeoutPromise]);
+    } finally {
+        if (timeout !== null) clearPlatformTimeout(timeout);
+    }
+}
+
 interface TechnicalMemoryDetail {
     label: string;
     value: string;
@@ -511,6 +707,15 @@ function collectStringValues(value: unknown, output: Set<string>): void {
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
 const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
 const PAGELET_FOREGROUND_REVIEW_TIMEOUT_MS = 120_000;
+const SCOPE_RECAP_PROVIDER_TIMEOUT_MS = 60_000;
+const QUIET_RECALL_PROVIDER_TIMEOUT_MS = 20_000;
+const QUIET_RECALL_EVALUATOR_VERSION = "quiet-recall-why-now-v1";
+const QUIET_RECALL_LANGUAGE_RETRY_INSTRUCTION = [
+    "IMPORTANT: Your previous response used the wrong language.",
+    "Respond in the same language as the notes above and keep the same JSON-only format.",
+].join(" ");
+const SCOPE_RECAP_CALL_LIMITS = Object.freeze({ hourly: 2, daily: 10 });
+const QUIET_RECALL_CALL_LIMITS = Object.freeze({ hourly: 10, daily: 50 });
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
@@ -899,6 +1104,10 @@ export class PluginManager extends Plugin {
     private pageletBackgroundPreparationNoticeSurfacedThisBoot = false;
     private vaultInsightsInjectionNoticeSurfacedThisBoot = false;
     private pageletRateLimiterInstance: PageletRateLimiter | null = null;
+    private scopeRecapRateLimiterInstance: PageletRateLimiter | null = null;
+    private quietRecallRateLimiterInstance: PageletRateLimiter | null = null;
+    private quietRecallEvaluationCoordinatorInstance: QuietRecallEvaluationCoordinator | null = null;
+    private quietRecallEvaluationPolicyIdentitySnapshot: string | null = null;
     private reviewQueueStore: ReviewQueueStore | null = null;
     private savedInsightStore: SavedInsightStore | null = null;
     private memoryGovernanceStore: MemoryGovernanceStore | null = null;
@@ -1531,6 +1740,16 @@ export class PluginManager extends Plugin {
             return;
         }
 
+        const quietRecallPolicyIdentity = this.getQuietRecallEvaluationPolicyIdentity();
+        if (
+            this.quietRecallEvaluationPolicyIdentitySnapshot !== null
+            && this.quietRecallEvaluationPolicyIdentitySnapshot !== quietRecallPolicyIdentity
+        ) {
+            this.quietRecallEvaluationCoordinatorInstance?.clear();
+            this.quietRecallEvaluationCoordinatorInstance = null;
+        }
+        this.quietRecallEvaluationPolicyIdentitySnapshot = quietRecallPolicyIdentity;
+
         this.registerPageletCommandsOnce();
         this.registerPageletFocusCommandOnce();
 
@@ -1548,6 +1767,29 @@ export class PluginManager extends Plugin {
         } catch (error) {
             this.log("Failed to initialize Pagelet", error);
         }
+    }
+
+    private getQuietRecallEvaluationPolicyIdentity(): string {
+        return `quiet-recall-policy:${stableHash(stableStringify({
+            version: QUIET_RECALL_EVALUATOR_VERSION,
+            provider: this.settings.aiProvider,
+            providerPreset: this.settings.aiProviderPreset ?? null,
+            model: this.settings.chatModelName,
+            endpoint: (this.settings.baseURL ?? "").trim().replace(/\/+$/, ""),
+            locale: this.getPageletLocale(),
+            dataBoundarySnapshotId: this.getMemoryDataBoundaryFingerprint(),
+            quietRecall: this.settings.quietRecall,
+            retrievalHabitProfile: this.settings.retrievalHabitProfile,
+            savedInsights: (this.settings.savedInsights?.items ?? []).map((insight) => ({
+                id: insight.id,
+                text: insight.text,
+                status: insight.status,
+                updatedAt: insight.updatedAt,
+                sourceRefs: insight.sourceRefs,
+            })),
+            temperature: this.settings.pagelet.temperature,
+            maxOutputTokens: this.settings.pagelet.maxOutputTokens,
+        }))}`;
     }
 
     private hasConfirmedMemoryExtractionConsent(): boolean {
@@ -1894,6 +2136,13 @@ export class PluginManager extends Plugin {
         this.memoryGovernanceStore = null;
         this.retrievalHabitProfileStore = null;
         this.pageletRateLimiterInstance = null;
+        this.scopeRecapRateLimiterInstance = null;
+        this.quietRecallRateLimiterInstance = null;
+        this.quietRecallEvaluationCoordinatorInstance?.clear();
+        this.quietRecallEvaluationCoordinatorInstance = null;
+        this.quietRecallEvaluationPolicyIdentitySnapshot = null;
+        this._lastRecallLlmEvalAt = 0;
+        this.quietRecallRoundAdmissionTail = Promise.resolve();
     }
 
     private pageletCommandCallbacks(): PageletCommandCallbacks {
@@ -1916,6 +2165,7 @@ export class PluginManager extends Plugin {
             onQuietRecall: () => dispatch((callbacks) => callbacks.onQuietRecall()),
             onGraphDiscovery: () => dispatch((callbacks) => callbacks.onGraphDiscovery()),
             onScopeRecap: () => dispatch((callbacks) => callbacks.onScopeRecap()),
+            onClearScopeRecapCache: () => dispatch((callbacks) => callbacks.onClearScopeRecapCache()),
             onToggleProactiveHints: () => dispatch((callbacks) => callbacks.onToggleProactiveHints()),
             onShowBackgroundPreparationStatus: () => dispatch((callbacks) => callbacks.onShowBackgroundPreparationStatus()),
             onMovePetCorner: () => dispatch((callbacks) => callbacks.onMovePetCorner()),
@@ -2170,8 +2420,12 @@ export class PluginManager extends Plugin {
                 openSettings(this.app);
                 openSettingsTab(this.app, 'personal-assistant');
             },
+            refreshPageletSettings: () => {
+                this.settingTab.refreshPageletSettingsIfVisible();
+            },
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
             openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
+            clearScopeRecapDetailSessionCache: () => clearScopeRecapPageletDetailSessionCache(),
             findRelatedNotes: (primarySourcePath, noteContents, sourcePaths) =>
                 this.findPageletRelatedNotes(primarySourcePath, noteContents, sourcePaths),
             isMemoryReadyForPageletDiscovery: () =>
@@ -2184,8 +2438,29 @@ export class PluginManager extends Plugin {
             runMaintenanceReview: (options) => this.runMaintenanceReview(options),
             runGraphDiscovery: (options) => this.runGraphDiscovery(options),
             detectCrossNotePatterns: () => this.detectCrossNotePatternsForPagelet(),
-            runScopeRecap: () => this.runScopeRecap(),
+            buildScopeRecapLocalOverview: () => this.buildScopeRecapLocalOverview(),
+            isScopeRecapProviderConfigured: () => this.getAISetupIssue() === null,
+            getScopeRecapProviderInfo: () => this.getScopeRecapProviderInfo(),
+            getScopeRecapAuthorizationContextId: () => this.getScopeRecapAuthorizationContextId(),
+            getPageletFeatureRateLimitStatus: () => this.getPageletFeatureRateLimitStatus(),
+            getScopeRecapDataBoundarySnapshotId: () => this.getMemoryDataBoundaryFingerprint(),
+            requestScopeRecapBackgroundAuthorization: (overview) => {
+                const provider = this.getScopeRecapProviderInfo();
+                return requestScopeRecapAuthorization(this.app, {
+                    scopeLabel: overview.scope.label ?? overview.scope.kind,
+                    includedSourceCount: overview.sourceCoverage.includedSourceCount,
+                    skippedSourceCount: overview.sourceCoverage.skippedSourceCount,
+                    provider: provider.provider,
+                    model: provider.model,
+                    endpoint: provider.endpoint,
+                    hourlyCap: SCOPE_RECAP_CALL_LIMITS.hourly,
+                    dailyCap: SCOPE_RECAP_CALL_LIMITS.daily,
+                }, this.getPageletLocale());
+            },
+            runScopeRecap: (options) => this.runScopeRecap(options),
             runQuietRecall: () => this.runQuietRecall(),
+            isQuietRecallRunCurrent: (result) => this.isQuietRecallRunCurrent(result),
+            getQuietRecallEvaluationPolicySnapshotId: () => this.getQuietRecallEvaluationPolicyIdentity(),
             saveQuietRecallAsInsight: (candidate) => this.saveQuietRecallAsInsight(candidate),
             linkRecallCandidate: (currentPath, candidatePath) => this.linkRecallCandidate(currentPath, candidatePath),
             recordQuietRecallFeedback: (candidate, feedback) =>
@@ -2505,55 +2780,415 @@ export class PluginManager extends Plugin {
         return result;
     }
 
-    private async runScopeRecap(): Promise<ScopeRecapRunResult> {
-        const notes = await this.collectScopeRecapSourceNotes();
-        const activeFile = this.app.workspace.getActiveFile();
-        const options = {
-            now: new Date(),
-            isPathAllowed: (path: string) => this.isDataBoundaryAllowedPath(path),
-            scope: activeFile instanceof TFile && activeFile.extension === "md"
-                ? { kind: "folder" as const, label: parentFolder(activeFile.path) || activeFile.basename, paths: notes.map((note) => note.path) }
-                : { kind: "selected_notes" as const, paths: notes.map((note) => note.path) },
-            dataBoundarySnapshotId: "data_boundary:scope_recap",
-        };
-
-        const generateInsights: GenerateRecapInsightsCallback = async (input) => {
-            const model = await this.createChatModel(
-                this.settings.pagelet.temperature,
-                { maxTokens: this.settings.pagelet.maxOutputTokens },
-            );
-            if (!model) return null;
-            const prompt = buildRecapInsightsPrompt(input);
-            try {
-                const result = await model.invoke(prompt);
-                const text = coerceModelResultToString(result);
-                this.pageletCostTracker.record({
-                    inputTokens: estimateTokens(prompt),
-                    outputTokens: estimateTokens(text),
-                    provider: this.settings.aiProvider,
-                    model: this.settings.chatModelName,
-                });
-                return parseRecapInsightsResponse(text);
-            } catch (error) {
-                this.log("Scope Recap LLM insights failed", error);
-                return null;
-            }
-        };
-
-        return buildScopeRecapWithLlm(notes, generateInsights, options);
+    private async buildScopeRecapLocalOverview(): Promise<ScopeRecapLocalOverview> {
+        const notes = await this.collectScopeRecapSourceNotes({ includeContent: true });
+        return buildScopeRecapLocalOverview(
+            notes,
+            this.scopeRecapBuildOptions(notes, { includeRecentChanges: true }),
+        );
     }
 
-    private async collectScopeRecapSourceNotes(): Promise<ScopeRecapSourceNote[]> {
-        const graphNotes = await this.collectGraphDiscoveryNotes();
-        return graphNotes.map((note) => ({
-            path: note.path,
-            title: note.title,
-            content: note.content,
-            tags: note.tags,
-            modifiedAt: note.modifiedAt,
-            isGenerated: note.path.startsWith(".pagelet/") || note.path.startsWith("pagelet-generated/"),
-            sourceRefs: note.sourceRefs,
-        }));
+    private async runScopeRecap(
+        options: {
+            mode: "background" | "foreground-retry";
+            expectedSourceSnapshotId?: string;
+            expectedDataBoundarySnapshotId?: string;
+            expectedAuthorizationContextId?: string;
+        },
+    ): Promise<ScopeRecapPreparationResult> {
+        const runtimeGateIsCurrent = () => {
+            if (this.unloading || this.settings.pagelet?.enabled === false) return false;
+            const currentAuthorizationContextId = this.getScopeRecapAuthorizationContextId();
+            if (
+                options.mode === "background"
+                && (
+                    this.settings.pagelet.scopeRecapBackgroundAuthorization !== "authorized-v1"
+                    || this.settings.pagelet.scopeRecapPreparationEnabled !== true
+                    || this.settings.pagelet.scopeRecapAuthorizationContextId
+                        !== currentAuthorizationContextId
+                )
+            ) return false;
+            return (
+                (!options.expectedDataBoundarySnapshotId
+                    || options.expectedDataBoundarySnapshotId === this.getMemoryDataBoundaryFingerprint())
+                && (!options.expectedAuthorizationContextId
+                    || options.expectedAuthorizationContextId === currentAuthorizationContextId)
+            );
+        };
+        if (!runtimeGateIsCurrent()) {
+            const rejected = await prepareScopeRecapWithLlm([], async () => null, {
+                dataBoundarySnapshotId: this.getMemoryDataBoundaryFingerprint(),
+            });
+            if (rejected.status === "ready") {
+                throw new Error("Scope Recap runtime guard unexpectedly produced an artifact");
+            }
+            rejected.attempt.outcome = "quality_rejected";
+            rejected.attempt.providerCallMade = false;
+            return rejected;
+        }
+        const notes = await this.collectScopeRecapSourceNotes({ includeContent: true });
+        const buildOptions = this.scopeRecapBuildOptions(notes);
+        const localOverview = buildScopeRecapLocalOverview(
+            notes,
+            this.scopeRecapBuildOptions(notes, { includeRecentChanges: true }),
+        );
+        const rejectStaleRequest = async (): Promise<ScopeRecapPreparationResult> => {
+            const rejected = await prepareScopeRecapWithLlm(notes, async () => null, buildOptions);
+            if (rejected.status === "ready") {
+                throw new Error("Scope Recap stale-request guard unexpectedly produced an artifact");
+            }
+            rejected.attempt.outcome = "quality_rejected";
+            rejected.attempt.providerCallMade = false;
+            rejected.localOverview = localOverview;
+            return rejected;
+        };
+        const requestIdentityIsCurrent = () => {
+            if (!runtimeGateIsCurrent()) return false;
+            return (
+                (!options.expectedSourceSnapshotId
+                    || options.expectedSourceSnapshotId === localOverview.sourceSnapshotId)
+            );
+        };
+        const sourceIdentityIsCurrentAtProviderBoundary = async (): Promise<boolean> => {
+            if (!requestIdentityIsCurrent()) return false;
+            const currentNotes = await this.collectScopeRecapSourceNotes({ includeContent: true });
+            if (!requestIdentityIsCurrent()) return false;
+            const currentOverview = buildScopeRecapLocalOverview(
+                currentNotes,
+                this.scopeRecapBuildOptions(currentNotes),
+            );
+            return requestIdentityIsCurrent()
+                && currentOverview.sourceSnapshotId === localOverview.sourceSnapshotId
+                && currentOverview.dataBoundarySnapshotId === localOverview.dataBoundarySnapshotId;
+        };
+        if (!requestIdentityIsCurrent()) return rejectStaleRequest();
+
+        const providerInfo = this.getScopeRecapProviderInfo();
+        let model: QuietRecallProviderModel | null = null;
+        try {
+            model = await this.createChatModel(
+                this.settings.pagelet.temperature,
+                {
+                    maxTokens: Math.min(1000, this.settings.pagelet.maxOutputTokens),
+                    // Recap expects a short strict-JSON answer. DashScope hybrid models
+                    // otherwise spend this bounded budget on reasoning before final content.
+                    qwenRequestOptions: supportsDashScopeThinkingControl(
+                        this.settings.aiProvider,
+                        this.settings.baseURL,
+                        this.settings.chatModelName,
+                    ) ? { enableThinking: false } : undefined,
+                },
+            );
+        } catch (error) {
+            this.log("Scope Recap model setup failed", error);
+        }
+        if (!requestIdentityIsCurrent()) return rejectStaleRequest();
+
+        if (!model) {
+            const unavailable = await prepareScopeRecapWithLlm(notes, async () => null, buildOptions);
+            if (unavailable.status === "no_reliable_insight") {
+                unavailable.attempt.providerCallMade = false;
+            }
+            return unavailable;
+        }
+
+        let attemptedPrompt = "";
+        let providerText = "";
+        let budgetBlocked = false;
+        let providerTimedOut = false;
+        let requestBecameStale = false;
+        const generateInsights: GenerateRecapInsightsCallback = async (input) => {
+            const boundedInput = {
+                ...input,
+                noteDigests: input.noteDigests.slice(0, 12).map((note) => ({
+                    ...note,
+                    digest: note.digest.slice(0, 800),
+                    tags: note.tags.slice(0, 8).map((tag) => tag.slice(0, 40)),
+                })),
+            };
+            const prompt = buildRecapInsightsPrompt(boundedInput);
+            attemptedPrompt = prompt;
+            if (!requestIdentityIsCurrent()) {
+                requestBecameStale = true;
+                throw new Error("scope_recap_request_stale");
+            }
+            let reservation: Awaited<ReturnType<PageletRateLimiter["reserve"]>>;
+            try {
+                reservation = await this.getScopeRecapRateLimiter().reserve();
+            } catch (error) {
+                budgetBlocked = true;
+                throw error;
+            }
+            if (!reservation.ok) {
+                budgetBlocked = true;
+                throw new Error(`scope_recap_${reservation.reason}`);
+            }
+            if (!(await sourceIdentityIsCurrentAtProviderBoundary())) {
+                requestBecameStale = true;
+                throw new Error("scope_recap_request_stale");
+            }
+
+            let result: unknown;
+            try {
+                    result = await this.withPageletProviderTimeout(
+                        Promise.resolve().then(() => model.invoke(prompt)),
+                    SCOPE_RECAP_PROVIDER_TIMEOUT_MS,
+                    "Scope Recap",
+                );
+            } catch (error) {
+                if (error instanceof Error && error.message === "Scope Recap timed out") {
+                    providerTimedOut = true;
+                }
+                throw error;
+            }
+            providerText = coerceModelResultToString(result);
+            if (providerText.trim().length === 0) return [];
+            const parsed = parseRecapInsightsResponse(providerText);
+            // A non-empty parser miss after an actual provider response is
+            // malformed output, not provider unavailability.
+            return parsed ?? { malformed: true };
+        };
+
+        const preparation = await prepareScopeRecapWithLlm(notes, generateInsights, buildOptions);
+        preparation.localOverview = localOverview;
+        if (preparation.status === "no_reliable_insight" && requestBecameStale) {
+            preparation.attempt.outcome = "quality_rejected";
+            preparation.attempt.providerCallMade = false;
+        } else if (preparation.status === "no_reliable_insight" && budgetBlocked) {
+            preparation.attempt.outcome = "budget_blocked";
+            preparation.attempt.providerCallMade = false;
+        } else if (preparation.status === "no_reliable_insight" && providerTimedOut) {
+            preparation.attempt.outcome = "timeout";
+        }
+        if (preparation.attempt.providerCallMade) {
+            const outcome = preparation.attempt.outcome === "success"
+                ? "success" as const
+                : preparation.attempt.outcome === "timeout"
+                    ? "timeout" as const
+                    : preparation.attempt.outcome === "empty"
+                        ? "empty" as const
+                        : preparation.attempt.outcome === "malformed"
+                            ? "malformed" as const
+                            : preparation.attempt.outcome === "quality_rejected"
+                                ? "quality-rejected" as const
+                                : "provider-error" as const;
+            const costEntry = this.pageletCostTracker.record({
+                inputTokens: estimateTokens(attemptedPrompt),
+                outputTokens: estimateTokens(providerText),
+                provider: providerInfo.provider,
+                model: providerInfo.model,
+                feature: "scope-recap",
+                attemptKind: "single",
+                outcome,
+            });
+            const attemptCost: ScopeRecapAttemptCost = {
+                inputTokens: costEntry.inputTokens,
+                outputTokens: costEntry.outputTokens,
+                estimatedCost: costEntry.estimatedCost,
+                currency: costEntry.currency,
+                pricingKnown: costEntry.pricingKnown,
+            };
+            preparation.attempt.cost = attemptCost;
+        }
+        if (preparation.status === "ready") {
+            preparation.artifact.providerInfo = providerInfo;
+        } else if (budgetBlocked) {
+            this.log("Scope Recap provider call skipped by its bounded budget");
+        }
+        return preparation;
+    }
+
+    private getScopeRecapProviderInfo(): { provider: string; model: string; endpoint: string } {
+        return {
+            provider: this.settings.aiProvider || "Not configured",
+            model: this.settings.chatModelName || "Default model",
+            endpoint: this.scopeRecapEndpointDisplay(),
+        };
+    }
+
+    private scopeRecapEndpointIdentity(): string {
+        return (this.settings.baseURL ?? "").trim().replace(/\/+$/, "");
+    }
+
+    private scopeRecapEndpointDisplay(): string {
+        const raw = this.scopeRecapEndpointIdentity();
+        if (!raw) return "Not configured";
+        try {
+            const endpoint = new URL(raw);
+            endpoint.username = "";
+            endpoint.password = "";
+            endpoint.search = "";
+            endpoint.hash = "";
+            return endpoint.toString().replace(/\/+$/, "");
+        } catch {
+            return "Custom endpoint";
+        }
+    }
+
+    private getScopeRecapAuthorizationContextId(): string {
+        const provider = this.getScopeRecapProviderInfo();
+        const settings = this.getPageletSettingsWithDataBoundary();
+        return `scope-recap-authorization:${stableHash(stableStringify({
+            version: 1,
+            provider: provider.provider,
+            model: provider.model,
+            providerPreset: this.settings.aiProviderPreset ?? null,
+            endpoint: this.scopeRecapEndpointIdentity(),
+            dataBoundarySnapshotId: this.getMemoryDataBoundaryFingerprint(),
+            excludedFolders: [...settings.excludedFolders].sort(),
+            excludedTags: [...settings.excludedTags].sort(),
+            excludedPatterns: [...settings.excludedPatterns].sort(),
+            reviewsFolder: settings.reviewsFolder,
+        }))}`;
+    }
+
+    private scopeRecapBuildOptions(
+        notes: readonly ScopeRecapSourceNote[],
+        options: { includeRecentChanges?: boolean } = {},
+    ) {
+        const activeFile = this.app.workspace.getActiveFile();
+        const resolver = this.createScopeRecapScopeResolver();
+        const now = new Date();
+        const allowedPaths = new Set(notes
+            .filter((note) => {
+                if (note.skipReason) return false;
+                const file = this.app.vault.getAbstractFileByPath(note.path);
+                return file instanceof TFile && this.isScopeRecapSourceAllowed(file, resolver);
+            })
+            .map((note) => normalizePath(note.path)));
+        const includedPaths = notes
+            .filter((note) => allowedPaths.has(normalizePath(note.path)))
+            .map((note) => note.path);
+        const recentChangeCutoff = now.getTime() - 7 * 24 * 60 * 60 * 1000;
+        const changedSourcePaths = notes
+            .filter((note) => (
+                allowedPaths.has(normalizePath(note.path))
+                && typeof note.modifiedAt === "string"
+                && Date.parse(note.modifiedAt) >= recentChangeCutoff
+            ))
+            .map((note) => note.path);
+        return {
+            now,
+            isPathAllowed: (path: string) => allowedPaths.has(normalizePath(path)),
+            scope: activeFile instanceof TFile && activeFile.extension === "md"
+                ? {
+                    kind: "folder" as const,
+                    label: parentFolder(activeFile.path) || activeFile.basename,
+                    paths: includedPaths,
+                }
+                : { kind: "selected_notes" as const, paths: includedPaths },
+            dataBoundarySnapshotId: this.getMemoryDataBoundaryFingerprint(),
+            ...(options.includeRecentChanges ? { changedSourcePaths } : {}),
+        };
+    }
+
+    private async collectScopeRecapSourceNotes(
+        options: { includeContent: boolean } = { includeContent: true },
+    ): Promise<ScopeRecapSourceNote[]> {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!(activeFile instanceof TFile) || activeFile.extension !== "md") return [];
+        const resolver = this.createScopeRecapScopeResolver();
+        if (!this.isScopeRecapSourceAllowed(activeFile, resolver)) {
+            return [{
+                path: activeFile.path,
+                title: activeFile.basename,
+                tags: this.getDataBoundaryTags(activeFile),
+                modifiedAt: new Date(activeFile.stat.mtime).toISOString(),
+                isGenerated: this.isGeneratedDataBoundaryFile(activeFile),
+            }];
+        }
+        const activeFolder = parentFolder(activeFile.path);
+        const files = this.app.vault.getMarkdownFiles()
+            .filter((file) => parentFolder(file.path) === activeFolder)
+            .sort((left, right) => {
+                if (left.path === activeFile.path) return -1;
+                if (right.path === activeFile.path) return 1;
+                return right.stat.mtime - left.stat.mtime;
+            });
+        const notes: ScopeRecapSourceNote[] = [];
+        let selectedAllowedCount = 0;
+        for (const file of files) {
+            const base: ScopeRecapSourceNote = {
+                path: file.path,
+                title: file.basename,
+                tags: this.getDataBoundaryTags(file),
+                modifiedAt: new Date(file.stat.mtime).toISOString(),
+                isGenerated: this.isGeneratedDataBoundaryFile(file),
+            };
+            if (!this.isScopeRecapSourceAllowed(file, resolver)) {
+                notes.push(base);
+                continue;
+            }
+            if (selectedAllowedCount >= 12) {
+                notes.push({
+                    ...base,
+                    skipReason: "out_of_scope",
+                    skipLabel: "Outside bounded preparation scope",
+                });
+                continue;
+            }
+            selectedAllowedCount += 1;
+            if (!options.includeContent) {
+                notes.push(base);
+                continue;
+            }
+            try {
+                notes.push({ ...base, content: await this.app.vault.cachedRead(file) });
+            } catch (error) {
+                this.log("Failed to read note for Scope Recap", { path: file.path, error });
+                notes.push({
+                    ...base,
+                    skipReason: "unreadable",
+                    skipLabel: "Unreadable source skipped",
+                });
+            }
+        }
+        return notes;
+    }
+
+    private createScopeRecapScopeResolver(): ScopeResolver {
+        const settings = this.getPageletSettingsWithDataBoundary();
+        return new ScopeResolver(this.app, {
+            excludedFolders: [...settings.excludedFolders],
+            excludedTags: [...settings.excludedTags],
+            excludedPatterns: [...settings.excludedPatterns],
+            maxFileSizeBytes: 100 * 1024,
+            reviewsFolder: settings.reviewsFolder,
+        });
+    }
+
+    private isScopeRecapSourceAllowed(file: TFile, resolver: ScopeResolver): boolean {
+        return this.isDataBoundaryAllowedFile(file)
+            && resolver.resolveCurrentNote(file).included.length === 1;
+    }
+
+    private withPageletProviderTimeout<T>(
+        promise: Promise<T>,
+        timeoutMs: number,
+        label: string,
+    ): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            let settled = false;
+            const timeout = setPlatformTimeout(() => {
+                if (settled) return;
+                settled = true;
+                reject(new Error(`${label} timed out`));
+            }, timeoutMs);
+            promise.then(
+                (value) => {
+                    if (settled) return;
+                    settled = true;
+                    clearPlatformTimeout(timeout);
+                    resolve(value);
+                },
+                (error) => {
+                    if (settled) return;
+                    settled = true;
+                    clearPlatformTimeout(timeout);
+                    reject(error);
+                },
+            );
+        });
     }
 
     private async collectGraphDiscoveryNotes(): Promise<GraphDiscoveryNote[]> {
@@ -2706,7 +3341,9 @@ export class PluginManager extends Plugin {
             const file = this.app.vault.getAbstractFileByPath(path);
             if (!(file instanceof TFile) || file.extension !== "md") continue;
             if (!this.isDataBoundaryAllowedFile(file)) continue;
-            const note = await this.readQuietRecallVaultNote(file, backlinkMap, related.content);
+            // VSS content is retrieval/ranking evidence only. Re-read the live
+            // Markdown source before any provider-backed evaluation.
+            const note = await this.readQuietRecallVaultNote(file, backlinkMap);
             if (!note) continue;
             vaultNotes.push(note);
             recallRelatedNotes.push({
@@ -2794,19 +3431,29 @@ export class PluginManager extends Plugin {
     private async readQuietRecallVaultNote(
         file: TFile,
         backlinkMap: Map<string, string[]>,
-        contentOverride?: string,
     ): Promise<QuietRecallVaultNote | null> {
         try {
-            const content = contentOverride ?? await this.app.vault.cachedRead(file);
+            const before = { mtime: file.stat.mtime, size: file.stat.size };
+            const content = typeof this.app.vault.read === "function"
+                ? await this.app.vault.read(file)
+                : await this.app.vault.cachedRead(file);
+            const current = this.app.vault.getAbstractFileByPath(file.path);
+            if (
+                !(current instanceof TFile)
+                || current.extension !== "md"
+                || current.stat.mtime !== before.mtime
+                || current.stat.size !== before.size
+                || !this.isDataBoundaryAllowedFile(current)
+            ) return null;
             return {
-                path: file.path,
-                title: file.basename,
+                path: current.path,
+                title: current.basename,
                 content,
-                tags: this.getDataBoundaryTags(file),
-                links: this.getGraphDiscoveryLinks(file),
-                backlinks: backlinkMap.get(normalizePath(file.path)) ?? [],
-                modifiedAt: new Date(file.stat.mtime).toISOString(),
-                createdAt: new Date(file.stat.ctime).toISOString(),
+                tags: this.getDataBoundaryTags(current),
+                links: this.getGraphDiscoveryLinks(current),
+                backlinks: backlinkMap.get(normalizePath(current.path)) ?? [],
+                modifiedAt: new Date(current.stat.mtime).toISOString(),
+                createdAt: new Date(current.stat.ctime).toISOString(),
             };
         } catch (error) {
             this.log("Failed to read note for Quiet Recall", { path: file.path, error });
@@ -3080,23 +3727,44 @@ export class PluginManager extends Plugin {
     }
 
     private _lastRecallLlmEvalAt = 0;
+    private quietRecallRoundAdmissionTail: Promise<void> = Promise.resolve();
     private static readonly RECALL_LLM_COOLDOWN_MS = 60_000;
 
     private async runQuietRecall(): Promise<QuietRecallRunResult> {
         const locale = this.getPageletLocale();
-        if (!this.settings.quietRecall.enabled) {
-            return buildQuietRecallCandidates({ now: new Date(), locale });
+        const runNow = new Date();
+        const providerSnapshot = this.settings.aiProvider;
+        const modelSnapshot = this.settings.chatModelName;
+        const evaluationPolicySnapshotId = this.getQuietRecallEvaluationPolicyIdentity();
+        const dataBoundarySnapshotId = this.getMemoryDataBoundaryFingerprint();
+        if (
+            this.unloading
+            || this.settings.pagelet.enabled !== true
+            || this.settings.quietRecall.enabled !== true
+        ) {
+            return buildQuietRecallCandidates({ now: runNow, locale });
         }
 
         const activeFile = this.app.workspace.getActiveFile();
         if (!(activeFile instanceof TFile) || activeFile.extension !== "md") {
-            return buildQuietRecallCandidates({ now: new Date(), locale });
+            return buildQuietRecallCandidates({ now: runNow, locale });
         }
         if (!this.isDataBoundaryAllowedFile(activeFile)) {
-            return buildQuietRecallCandidates({ now: new Date(), locale });
+            return buildQuietRecallCandidates({ now: runNow, locale });
         }
 
-        const content = await this.app.vault.cachedRead(activeFile);
+        const activeSnapshot = { mtime: activeFile.stat.mtime, size: activeFile.stat.size };
+        const content = typeof this.app.vault.read === "function"
+            ? await this.app.vault.read(activeFile)
+            : await this.app.vault.cachedRead(activeFile);
+        const currentActiveFile = this.app.vault.getAbstractFileByPath(activeFile.path);
+        if (
+            !(currentActiveFile instanceof TFile)
+            || currentActiveFile.extension !== "md"
+            || currentActiveFile.stat.mtime !== activeSnapshot.mtime
+            || currentActiveFile.stat.size !== activeSnapshot.size
+            || !this.isDataBoundaryAllowedFile(currentActiveFile)
+        ) return buildQuietRecallCandidates({ now: runNow, locale });
         const collectedVaultNotes = await this.collectQuietRecallVaultNotes(activeFile, content).catch((error) => {
             this.log("Quiet Recall vault-note collection skipped", error);
             return { vaultNotes: [], relatedNotes: [] } satisfies QuietRecallVaultNoteCollection;
@@ -3106,11 +3774,8 @@ export class PluginManager extends Plugin {
         const vaultNotes = collectedVaultNotes.vaultNotes
             .filter((note) => this.isDataBoundaryAllowedPath(note.path));
 
-        const now = Date.now();
-        const useLlm = now - this._lastRecallLlmEvalAt >= PluginManager.RECALL_LLM_COOLDOWN_MS;
-
         const baseInput = {
-            now: new Date(),
+            now: runNow,
             locale,
             currentNote: {
                 path: activeFile.path,
@@ -3121,62 +3786,293 @@ export class PluginManager extends Plugin {
             vaultNotes,
             savedInsights: this.listDataBoundaryAllowedSavedInsights(),
         };
+        const localResult = buildQuietRecallCandidates(baseInput);
+        const discoverCandidates = applyRetrievalHabitProfileToRecallCandidates(
+            localResult.candidates,
+            this.settings.retrievalHabitProfile,
+            { now: runNow },
+        ).filter((candidate) => this.quietRecallCandidateSourcesAreCurrent(candidate));
+        const sourceSnapshotId = this.buildQuietRecallRunSourceSnapshotId(
+            activeFile.path,
+            discoverCandidates,
+        );
+        if (!sourceSnapshotId) {
+            return {
+                ...localResult,
+                totalCount: 0,
+                candidates: [],
+                discoverCandidates: [],
+                dataBoundarySnapshotId,
+                evaluationPolicySnapshotId,
+            };
+        }
+        const evaluationCandidates = discoverCandidates.filter(
+            (candidate) => candidate.score >= QUIET_RECALL_BUBBLE_MIN_SCORE,
+        );
+        if (evaluationCandidates.length === 0) {
+            return {
+                ...localResult,
+                totalCount: 0,
+                candidates: [],
+                discoverCandidates,
+                sourceSnapshotId,
+                dataBoundarySnapshotId,
+                evaluationPolicySnapshotId,
+            };
+        }
 
-        let recall: QuietRecallRunResult;
-        if (useLlm) {
-            const evaluateRelevance: RecallRelevanceEvaluator = async (input) => {
-                const model = await this.createChatModel(
+        const currentDigest = extractRecallDigest(baseInput.currentNote);
+        const evaluationMaterials = new Map<string, QuietRecallEvaluationMaterial>();
+        for (const candidate of evaluationCandidates) {
+            evaluationMaterials.set(
+                candidate.id,
+                quietRecallEvaluationMaterial(candidate, currentDigest, vaultNotes, runNow),
+            );
+        }
+        const contextFingerprint = quietRecallContextFingerprint({
+            currentPath: activeFile.path,
+            currentContent: content,
+            locale,
+            provider: providerSnapshot,
+            model: modelSnapshot,
+            dataBoundarySnapshot: dataBoundarySnapshotId,
+            evaluationPolicySnapshotId,
+        });
+        const runIdentityIsCurrent = () => (
+            !this.unloading
+            && this.settings.pagelet.enabled === true
+            && this.settings.quietRecall.enabled === true
+            && evaluationPolicySnapshotId === this.getQuietRecallEvaluationPolicyIdentity()
+            && dataBoundarySnapshotId === this.getMemoryDataBoundaryFingerprint()
+            && sourceSnapshotId === this.buildQuietRecallRunSourceSnapshotId(
+                activeFile.path,
+                discoverCandidates,
+            )
+        );
+
+        const lastRoundStartedAt = Number.isFinite(this._lastRecallLlmEvalAt)
+            ? this._lastRecallLlmEvalAt
+            : 0;
+        let blockedReason: QuietRecallEvaluationBlockReason | undefined;
+        if (this.getAISetupIssue() !== null) {
+            blockedReason = "provider_unavailable";
+        } else if (
+            lastRoundStartedAt > 0
+            && runNow.getTime() - lastRoundStartedAt < PluginManager.RECALL_LLM_COOLDOWN_MS
+        ) {
+            blockedReason = "cooldown";
+        }
+
+        let model: QuietRecallProviderModel | null = null;
+        if (!blockedReason) {
+            try {
+                model = await this.createChatModel(
                     this.settings.pagelet.temperature,
                     { maxTokens: 300 },
                 );
-                if (!model) return { isConvincing: false, whyNow: null };
-                const prompt = buildRecallRelevancePrompt(input);
-                try {
-                    const result = await model.invoke(prompt);
-                    const text = coerceModelResultToString(result);
-                    this.pageletCostTracker.record({
-                        inputTokens: estimateTokens(prompt),
-                        outputTokens: estimateTokens(text),
-                        provider: this.settings.aiProvider,
-                        model: this.settings.chatModelName,
-                    });
-                    const parsed = parseRecallRelevanceResponse(text);
-                    if (parsed.isConvincing && parsed.whyNow && detectLanguageMismatch(parsed.whyNow, content)) {
-                        const retryResult = await model.invoke(prompt + "\n\nIMPORTANT: Your previous response was in the wrong language. Respond in the same language as the notes above.");
-                        const retryText = coerceModelResultToString(retryResult);
-                        this.pageletCostTracker.record({
-                            inputTokens: estimateTokens(prompt),
-                            outputTokens: estimateTokens(retryText),
-                            provider: this.settings.aiProvider,
-                            model: this.settings.chatModelName,
-                        });
-                        return parseRecallRelevanceResponse(retryText);
-                    }
-                    return parsed;
-                } catch (error) {
-                    this.log("Quiet Recall LLM evaluation failed", error);
-                    return { isConvincing: false, whyNow: null };
-                }
-            };
-
-            this._lastRecallLlmEvalAt = now;
-            recall = await buildQuietRecallWithLlm({
-                ...baseInput,
-                evaluateRelevance,
-                scoreThreshold: QUIET_RECALL_BUBBLE_MIN_SCORE,
-            });
-        } else {
-            recall = buildQuietRecallCandidates(baseInput);
+            } catch (error) {
+                this.log("Quiet Recall model setup failed", error);
+            }
+            if (!model) blockedReason = "provider_unavailable";
         }
 
-        const candidates = applyRetrievalHabitProfileToRecallCandidates(
-            recall.candidates,
-            this.settings.retrievalHabitProfile,
-        );
+        let roundStarted = false;
+        const recall = await this.getQuietRecallEvaluationCoordinator().evaluate({
+            localResult: {
+                ...localResult,
+                totalCount: evaluationCandidates.length,
+                candidates: evaluationCandidates,
+            },
+            contextFingerprint,
+            startedAt: runNow.getTime(),
+            ...(blockedReason ? { blockedReason } : {}),
+            fingerprintCandidate: (fingerprint, candidate) => {
+                const material = evaluationMaterials.get(candidate.id);
+                return material
+                    ? quietRecallCandidateEvaluationFingerprint(fingerprint, candidate, material)
+                    : `quiet-recall-missing-material:${stableHash(`${fingerprint}:${candidate.id}`)}`;
+            },
+            reserve: async () => {
+                if (!runIdentityIsCurrent()) return { ok: false, reason: "invalid_context" };
+                if (!roundStarted) {
+                    const admitted = await this.acquireQuietRecallRoundAdmission();
+                    if (!admitted) return { ok: false, reason: "cooldown" };
+                    roundStarted = true;
+                }
+                const limiter = this.getQuietRecallRateLimiter();
+                const decision = await limiter.reserve();
+                if (!decision.ok) return { ok: false, reason: "budget" };
+                if (!runIdentityIsCurrent()) return { ok: false, reason: "invalid_context" };
+                let usage: PageletRateLimitState | null = null;
+                try {
+                    if (typeof limiter.getStateSnapshot === "function") {
+                        usage = await limiter.getStateSnapshot();
+                    }
+                } catch (error) {
+                    this.log("Quiet Recall post-reservation usage diagnostics unavailable", error);
+                }
+                return {
+                    ok: true,
+                    ...(usage ? { limiterUsage: {
+                        hourlyUsed: usage.hourlyTimestamps.length,
+                        hourlyCap: QUIET_RECALL_CALL_LIMITS.hourly,
+                        hourlyRemaining: Math.max(
+                            0,
+                            QUIET_RECALL_CALL_LIMITS.hourly - usage.hourlyTimestamps.length,
+                        ),
+                        dailyUsed: usage.dailyCount,
+                        dailyCap: QUIET_RECALL_CALL_LIMITS.daily,
+                        dailyRemaining: Math.max(
+                            0,
+                            QUIET_RECALL_CALL_LIMITS.daily - usage.dailyCount,
+                        ),
+                    } } : {}),
+                };
+            },
+            evaluator: async (attempt: QuietRecallEvaluationAttempt) => {
+                const material = evaluationMaterials.get(attempt.candidate.id);
+                if (!runIdentityIsCurrent()) return { status: "rejected", reason: "cancelled" };
+                if (!model) return { status: "rejected", reason: "provider_unavailable" };
+                if (!material) return { status: "rejected", reason: "malformed" };
+                const prompt = attempt.kind === "language_retry"
+                    ? `${material.prompt}\n\n${QUIET_RECALL_LANGUAGE_RETRY_INSTRUCTION}`
+                    : material.prompt;
+                return this.evaluateQuietRecallProviderAttempt(
+                    model,
+                    prompt,
+                    content,
+                    attempt.kind,
+                    { provider: providerSnapshot, model: modelSnapshot },
+                );
+            },
+        });
         return {
             ...recall,
-            totalCount: candidates.length,
-            candidates,
+            discoverCandidates,
+            sourceSnapshotId,
+            dataBoundarySnapshotId,
+            evaluationPolicySnapshotId,
+        };
+    }
+
+    private quietRecallCandidateSourcesAreCurrent(candidate: QuietRecallCandidate): boolean {
+        return candidate.sourceRefs.length > 0 && candidate.sourceRefs.every((ref) => {
+            const file = this.app.vault.getAbstractFileByPath(normalizePath(ref.path));
+            return file instanceof TFile
+                && file.extension === "md"
+                && this.isDataBoundaryAllowedFile(file);
+        });
+    }
+
+    private buildQuietRecallRunSourceSnapshotId(
+        currentPath: string,
+        candidates: readonly QuietRecallCandidate[],
+    ): string | null {
+        const paths = new Set<string>([normalizePath(currentPath)]);
+        for (const candidate of candidates) {
+            for (const ref of candidate.sourceRefs) paths.add(normalizePath(ref.path));
+        }
+        const sources: Array<{ path: string; mtime: number; size: number }> = [];
+        for (const path of paths) {
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (
+                !(file instanceof TFile)
+                || file.extension !== "md"
+                || !this.isDataBoundaryAllowedFile(file)
+            ) return null;
+            sources.push({
+                path: file.path,
+                mtime: file.stat.mtime,
+                size: file.stat.size,
+            });
+        }
+        return buildQuietRecallSourceSnapshotId(sources);
+    }
+
+    private isQuietRecallRunCurrent(result: QuietRecallRunResult): boolean {
+        if (
+            !result.currentPath
+            || !result.sourceSnapshotId
+            || !result.dataBoundarySnapshotId
+            || !result.evaluationPolicySnapshotId
+        ) return false;
+        if (result.dataBoundarySnapshotId !== this.getMemoryDataBoundaryFingerprint()) return false;
+        if (result.evaluationPolicySnapshotId !== this.getQuietRecallEvaluationPolicyIdentity()) return false;
+        return result.sourceSnapshotId === this.buildQuietRecallRunSourceSnapshotId(
+            result.currentPath,
+            result.discoverCandidates ?? result.candidates,
+        );
+    }
+
+    private acquireQuietRecallRoundAdmission(): Promise<boolean> {
+        const tail = this.quietRecallRoundAdmissionTail ?? Promise.resolve();
+        const admission = tail.then(() => {
+            const now = Date.now();
+            if (
+                this._lastRecallLlmEvalAt > 0
+                && now - this._lastRecallLlmEvalAt < PluginManager.RECALL_LLM_COOLDOWN_MS
+            ) return false;
+            this._lastRecallLlmEvalAt = now;
+            return true;
+        });
+        this.quietRecallRoundAdmissionTail = admission.then(
+            () => undefined,
+            () => undefined,
+        );
+        return admission;
+    }
+
+    private async evaluateQuietRecallProviderAttempt(
+        model: QuietRecallProviderModel,
+        prompt: string,
+        currentNoteContent: string,
+        attemptKind: QuietRecallEvaluationAttempt["kind"],
+        pricingIdentity: { provider: string; model: string },
+    ): Promise<QuietRecallEvaluationDecision> {
+        let text = "";
+        let outcome: "accepted" | "rejected" | "malformed" | "timeout" | "provider-error" = "provider-error";
+        let decision: QuietRecallEvaluationDecision;
+        try {
+            const result = await withQuietRecallProviderTimeout(
+                Promise.resolve().then(() => model.invoke(prompt)),
+            );
+            text = coerceModelResultToString(result);
+            decision = parseQuietRecallEvaluationDecision(text, currentNoteContent);
+            outcome = decision.status === "accepted"
+                ? "accepted"
+                : decision.status === "rejected" && decision.reason === "malformed"
+                    ? "malformed"
+                    : "rejected";
+        } catch (error) {
+            this.log("Quiet Recall LLM evaluation failed", error);
+            const timedOut = error instanceof QuietRecallProviderTimeoutError;
+            outcome = timedOut ? "timeout" : "provider-error";
+            decision = {
+                status: "rejected",
+                reason: timedOut ? "timeout" : "provider_error",
+            };
+        }
+        const cost = this.pageletCostTracker.record({
+            inputTokens: estimateTokens(prompt),
+            outputTokens: estimateTokens(text),
+            provider: pricingIdentity.provider,
+            model: pricingIdentity.model,
+            feature: "quiet-recall",
+            attemptKind: attemptKind === "language_retry" ? "language-retry" : "initial",
+            outcome,
+        });
+        // Keep the evaluation decision usable with legacy/test trackers that
+        // record successfully but do not return an entry object.
+        if (!cost) return decision;
+        return {
+            ...decision,
+            cost: {
+                inputTokens: cost.inputTokens,
+                outputTokens: cost.outputTokens,
+                estimatedCost: cost.estimatedCost,
+                currency: cost.currency,
+                pricingKnown: cost.pricingKnown,
+            },
         };
     }
 
@@ -3361,11 +4257,16 @@ export class PluginManager extends Plugin {
     }
 
     private isSavedInsightAllowedByDataBoundary(insight: SavedInsight): boolean {
-        const paths = [
-            ...insight.sourceRefs.map((ref) => ref.path),
-            ...(insight.scope.paths ?? []),
-        ];
-        return paths.length > 0 && paths.every((path) => this.isDataBoundaryAllowedPath(path));
+        const sourcePaths = insight.sourceRefs.map((ref) => normalizePath(ref.path));
+        if (sourcePaths.length === 0) return false;
+        const sourcesExistAndAreAllowed = sourcePaths.every((path) => {
+            const file = this.app.vault.getAbstractFileByPath(path);
+            return file instanceof TFile
+                && file.extension === "md"
+                && this.isDataBoundaryAllowedFile(file);
+        });
+        if (!sourcesExistAndAreAllowed) return false;
+        return (insight.scope.paths ?? []).every((path) => this.isDataBoundaryAllowedPath(path));
     }
 
     private getMemoryGovernanceStore(): MemoryGovernanceStore {
@@ -5101,8 +6002,10 @@ export class PluginManager extends Plugin {
 
     private getPageletRateLimiter(): PageletRateLimiter {
         if (!this.pageletRateLimiterInstance) {
+            const coordinationKey = this.pageletRateLimitStorageKey("foreground-review");
             this.pageletRateLimiterInstance = new PageletRateLimiter({
-                storage: this.createPageletRateLimitStorage(),
+                storage: this.createPageletRateLimitStorage("foreground-review"),
+                coordinationKey,
                 config: {
                     hourlyCap: this.settings.pagelet.foregroundPerHourCap,
                     dailyCap: this.settings.pagelet.foregroundPerDayCap,
@@ -5112,10 +6015,112 @@ export class PluginManager extends Plugin {
         return this.pageletRateLimiterInstance;
     }
 
-    private createPageletRateLimitStorage(): PageletRateLimitStorage {
-        const key = this.pageletRateLimitStorageKey();
+    private getScopeRecapRateLimiter(): PageletRateLimiter {
+        if (!this.scopeRecapRateLimiterInstance) {
+            const coordinationKey = this.pageletRateLimitStorageKey("scope-recap");
+            this.scopeRecapRateLimiterInstance = new PageletRateLimiter({
+                storage: this.createPageletRateLimitStorage("scope-recap"),
+                coordinationKey,
+                config: {
+                    hourlyCap: SCOPE_RECAP_CALL_LIMITS.hourly,
+                    dailyCap: SCOPE_RECAP_CALL_LIMITS.daily,
+                },
+            });
+        }
+        return this.scopeRecapRateLimiterInstance;
+    }
+
+    private getQuietRecallRateLimiter(): PageletRateLimiter {
+        if (!this.quietRecallRateLimiterInstance) {
+            const coordinationKey = this.pageletRateLimitStorageKey("quiet-recall");
+            this.quietRecallRateLimiterInstance = new PageletRateLimiter({
+                storage: this.createPageletRateLimitStorage("quiet-recall"),
+                coordinationKey,
+                config: {
+                    hourlyCap: QUIET_RECALL_CALL_LIMITS.hourly,
+                    dailyCap: QUIET_RECALL_CALL_LIMITS.daily,
+                },
+            });
+        }
+        return this.quietRecallRateLimiterInstance;
+    }
+
+    private async getPageletFeatureRateLimitStatus() {
+        const [scopeRecap, quietRecall] = await Promise.all([
+            this.getScopeRecapRateLimiter().getStateSnapshot(),
+            this.getQuietRecallRateLimiter().getStateSnapshot(),
+        ]);
+        return {
+            scopeRecap: {
+                hourlyUsed: scopeRecap.hourlyTimestamps.length,
+                hourlyCap: SCOPE_RECAP_CALL_LIMITS.hourly,
+                hourlyRemaining: Math.max(
+                    0,
+                    SCOPE_RECAP_CALL_LIMITS.hourly - scopeRecap.hourlyTimestamps.length,
+                ),
+                dailyUsed: scopeRecap.dailyCount,
+                dailyCap: SCOPE_RECAP_CALL_LIMITS.daily,
+                dailyRemaining: Math.max(0, SCOPE_RECAP_CALL_LIMITS.daily - scopeRecap.dailyCount),
+                dailyResetAt: scopeRecap.dailyResetAt,
+            },
+            quietRecall: {
+                hourlyUsed: quietRecall.hourlyTimestamps.length,
+                hourlyCap: QUIET_RECALL_CALL_LIMITS.hourly,
+                hourlyRemaining: Math.max(
+                    0,
+                    QUIET_RECALL_CALL_LIMITS.hourly - quietRecall.hourlyTimestamps.length,
+                ),
+                dailyUsed: quietRecall.dailyCount,
+                dailyCap: QUIET_RECALL_CALL_LIMITS.daily,
+                dailyRemaining: Math.max(0, QUIET_RECALL_CALL_LIMITS.daily - quietRecall.dailyCount),
+                dailyResetAt: quietRecall.dailyResetAt,
+            },
+        };
+    }
+
+    private getQuietRecallEvaluationCoordinator(): QuietRecallEvaluationCoordinator {
+        if (!this.quietRecallEvaluationCoordinatorInstance) {
+            this.quietRecallEvaluationCoordinatorInstance = new QuietRecallEvaluationCoordinator();
+        }
+        return this.quietRecallEvaluationCoordinatorInstance;
+    }
+
+    private createPageletRateLimitStorage(
+        bucket: "foreground-review" | "scope-recap" | "quiet-recall",
+    ): PageletRateLimitStorage {
+        const key = this.pageletRateLimitStorageKey(bucket);
+        const failClosed = bucket !== "foreground-review";
         return {
             load: (): PageletRateLimitState | null => {
+                if (failClosed) {
+                    const storage = getPlatformLocalStorage();
+                    if (!storage) throw new Error(`${bucket} rate-limit storage unavailable`);
+                    const raw = storage.getItem(key);
+                    if (raw === null) return null;
+                    const parsed = JSON.parse(raw) as Partial<PageletRateLimitState> | null;
+                    if (
+                        !parsed
+                        || typeof parsed !== "object"
+                        || !Array.isArray(parsed.hourlyTimestamps)
+                        || !parsed.hourlyTimestamps.every((value) => (
+                            typeof value === "number"
+                            && Number.isFinite(value)
+                            && Number.isInteger(value)
+                            && value >= 0
+                        ))
+                        || typeof parsed.dailyCount !== "number"
+                        || !Number.isFinite(parsed.dailyCount)
+                        || !Number.isInteger(parsed.dailyCount)
+                        || parsed.dailyCount < 0
+                        || typeof parsed.dailyResetAt !== "number"
+                        || !Number.isFinite(parsed.dailyResetAt)
+                        || !Number.isInteger(parsed.dailyResetAt)
+                        || parsed.dailyResetAt <= 0
+                    ) {
+                        throw new Error(`${bucket} rate-limit state is malformed`);
+                    }
+                    return parsed as PageletRateLimitState;
+                }
                 try {
                     const raw = getPlatformLocalStorage()?.getItem(key);
                     if (!raw) return null;
@@ -5126,6 +6131,12 @@ export class PluginManager extends Plugin {
                 }
             },
             save: (state: PageletRateLimitState): void => {
+                if (failClosed) {
+                    const storage = getPlatformLocalStorage();
+                    if (!storage) throw new Error(`${bucket} rate-limit storage unavailable`);
+                    storage.setItem(key, JSON.stringify(state));
+                    return;
+                }
                 try {
                     getPlatformLocalStorage()?.setItem(key, JSON.stringify(state));
                 } catch {
@@ -5135,12 +6146,15 @@ export class PluginManager extends Plugin {
         };
     }
 
-    private pageletRateLimitStorageKey(): string {
+    private pageletRateLimitStorageKey(
+        bucket: "foreground-review" | "scope-recap" | "quiet-recall",
+    ): string {
         const vaultName = typeof this.app.vault.getName === "function"
             ? this.app.vault.getName()
             : "vault";
         return [
             PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX,
+            bucket,
             encodeURIComponent(vaultName),
             encodeURIComponent(getVaultConfigDirStorageScope(this.app.vault)),
         ].join(":");
@@ -5477,6 +6491,13 @@ export class PluginManager extends Plugin {
         this.retrievalHabitProfileStore = null;
         this.quickCaptureService = null;
         this.pageletRateLimiterInstance = null;
+        this.scopeRecapRateLimiterInstance = null;
+        this.quietRecallRateLimiterInstance = null;
+        this.quietRecallEvaluationCoordinatorInstance?.clear();
+        this.quietRecallEvaluationCoordinatorInstance = null;
+        this.quietRecallEvaluationPolicyIdentitySnapshot = null;
+        this._lastRecallLlmEvalAt = 0;
+        this.quietRecallRoundAdmissionTail = Promise.resolve();
         clearPageletDetailSessionCache();
     }
 
@@ -7310,6 +8331,10 @@ export class PluginManager extends Plugin {
 
         await leaf.loadIfDeferred?.();
         if (!(leaf.view instanceof PageletDetailView)) {
+            if (typeof leaf.detach === "function") {
+                leaf.detach();
+                leaf = workspace.getLeaf('tab');
+            }
             await leaf.setViewState({
                 type: PAGELET_DETAIL_VIEW_TYPE,
                 active: true,
@@ -7375,13 +8400,19 @@ export class PluginManager extends Plugin {
      */
     async createChatModel(
         temperature: number,
-        options?: { modelName?: string; transport?: string; maxTokens?: number },
+        options?: {
+            modelName?: string;
+            transport?: string;
+            maxTokens?: number;
+            qwenRequestOptions?: QwenRequestOptions;
+        },
     ) {
         const aiUtils = new AIUtils(this);
         return aiUtils.createChatModel(temperature, {
             modelName: options?.modelName,
             transport: options?.transport as "obsidian" | "native" | undefined,
             maxTokens: options?.maxTokens,
+            qwenRequestOptions: options?.qwenRequestOptions,
         });
     }
 
