@@ -8,7 +8,6 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Delivery status (derived) | Target | Updated | Feature Home / Tracker |
 | --- | --- | --- | --- | --- | --- |
-
-当前没有活跃开发包。
+| Master-first branch management | B-117 | Validated | Repo governance/tooling; no release commitment | 2026-07-19 | [Feature Home](./master-first-branch-management/README.md) / [Tracker](./master-first-branch-management/tracker.md) |
 
 完成或取消后，先生成 `closeout.md`，再将实际存在的 artifacts 移动到 `docs/archive/<year>/<feature>/`，并从本表删除；plan-only track 不补造 SDD。

@@ -243,6 +243,19 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 
 ## Release Instructions
 
+- `master` is the repository integration authority. All accepted runtime code,
+  tests, research/design docs, governance, and release-tooling changes must land
+  on and be verified from `master`, either through PR merge or an explicitly
+  authorized direct commit.
+- Work branches may be used for isolation and review, but they are not beta or
+  stable release sources. Merge accepted work to `master` before packaging.
+- Before a beta publish, local `master` and `origin/master` must identify the
+  same verified commit. Pushing `master` still requires explicit authorization.
+- Every BRAT `beta/<version>` branch must be created from the exact verified
+  `master` HEAD. It may contain only the generated prerelease packaging commit
+  and tag; put beta feedback fixes on `master`, then cut a new beta version.
+- Never merge or rebase beta release commits back to `master`, and never rewrite
+  a published beta branch or tag without explicit maintainer authorization.
 - See `docs/operations/release-process.md` for the full release workflow.
 - Preview without writing files: `make release-dry-run VERSION=x.y.z`.
 - Create local release commit and annotated tag: `make release VERSION=x.y.z`.

@@ -46,3 +46,5 @@
 4. 新 Product feature 或 L2G governance/tooling track planning 时，在 `docs/development/active/<feature>/` 建立 Feature Home、plan、tracker；SDD phase 再创建 SDD，且实现前必须 Approved。Feature Home 必须链接 Product Spec 或 Governance Contract 之一，不得混用。不要把过程文档重新堆回 `docs/` 根目录。
 5. Closeout 必须写明每项信息进入 durable contract、Backlog、Archive 或 delete-after-absorption 的去向，再把完整 package 移入 `docs/archive/<year>/<feature>/`。
 6. 移动、删除或归档后，同步更新索引、仓库引用与 [Disposition Log](./archive/disposition-log.md)，并运行 `npm run docs:check`。
+
+当前分支与 BRAT 包装权威见 [GOV-002 Master-First Branch And Beta Packaging](./development/governance/gov-002-master-first-branch-and-beta-packaging.md)：所有已接受代码、测试、研究/文档和治理修改先进入 `master`，正式 beta 再从该精确基线创建。

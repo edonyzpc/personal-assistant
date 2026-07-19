@@ -664,7 +664,8 @@ shows what blocks tag vs what merely needs follow-up:
 - **S0 — blocks tag.** Data-loss, security regression (e.g. write to a
   path Gate 1 should have rejected), crash on Obsidian launch, modal
   unable to dismiss, missing `requiresConfirmation`. P0 section + S0
-  bug = cannot tag; file fix on the appropriate branch and re-run.
+  bug = cannot tag; land the fix on `master` through PR or authorized direct
+  commit, then create a fresh beta branch/version and re-run.
 - **S1 — ship with known issue.** Cosmetic regression, missing locale
   string, sub-optimal but non-blocking UX (e.g. mascot animation off-tick
   on Reduce-motion). Must have a tracking ticket recorded in the release
@@ -677,7 +678,9 @@ shows what blocks tag vs what merely needs follow-up:
 
 ## Setup
 
-- [ ] Checkout the branch under test.
+- [ ] For formal BRAT prerelease evidence, checkout the matching
+      `beta/<version>` branch created from the exact verified `master` HEAD. A
+      work-branch smoke is development evidence only and cannot authorize a tag.
 - [ ] `npm install` from the repo root.
 - [ ] For the repo's local `test/` vault, run `make deploy`. This builds and
       copies `dist/main.js`, `dist/styles.css`, `dist/manifest.json`, and
@@ -873,14 +876,16 @@ setup; subsequent runs reuse the same vault.
 - [ ] **Path A · BRAT (recommended for Android, works for iOS too).**
     - Install the "Obsidian42 - BRAT" community plugin in your mobile
       vault first; enable it.
-    - In BRAT settings, "Add beta plugin" → paste the URL of your fork
-      / branch (e.g. `https://github.com/<you>/personal-assistant` with
-      a branch that contains built `main.js`, `styles.css`, and `manifest.json`).
-    - BRAT downloads the built artefacts; reload Obsidian to enable
-      Personal Assistant.
-    - Prereq: you have pushed the build (`main.js`, `styles.css`,
-      `manifest.json`) to a branch BRAT can fetch. If you only have a
-      local build, use Path B or C instead.
+    - In BRAT settings, "Add beta plugin" → paste
+      `https://github.com/edonyzpc/personal-assistant`, then select/freeze the
+      intended prerelease tag.
+    - Formal BRAT release evidence is valid only when that tag belongs to a
+      `beta/<version>` packaging branch created from exact `master` under the
+      BRAT runbook. Arbitrary fork/build-branch installs are development
+      sideload evidence, not a published BRAT beta gate.
+    - BRAT downloads the GitHub Release artefacts; reload Obsidian to enable
+      Personal Assistant. If no published prerelease exists, use Path B or C
+      only for development smoke.
 - [ ] **Path B · Insider build with a synced vault (recommended for iOS
       when BRAT cannot reach your branch).**
     - Sync the same vault between desktop and mobile (Obsidian Sync, or
@@ -897,7 +902,8 @@ setup; subsequent runs reuse the same vault.
     - Drop only the build outputs (`main.js`, `styles.css`,
       `manifest.json`) — do NOT clone the full repo into the plugins
       folder, Obsidian will choke on the extra files.
-    - This is the most fragile path; treat as fallback when A and B fail.
+    - This is the most fragile path and is development sideload evidence only;
+      it cannot substitute for formal BRAT install/update validation.
 
 Mobile smoke is required for Pagelet UI changes that touch the panel, bubble,
 pet, command entry points, or save flow. If none of A/B/C is feasible in the

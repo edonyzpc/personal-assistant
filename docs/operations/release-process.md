@@ -27,7 +27,7 @@ make publish VERSION=1.6.6
 `make release VERSION=x.y.z` runs `scripts/release.mjs`:
 
 1. Verifies the working tree is clean.
-2. Verifies the target version is valid, greater than `package.json`, and not already tagged.
+2. Verifies the target version is valid, greater than `package.json`, and not already tagged. For prereleases, it also requires the matching `beta/<VERSION>` branch with pre-release `HEAD` exactly equal to local `master`.
 3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
 4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
 5. Runs `git diff --check`, `npm run check:third-party-notices`, `DOCS_CHECK_BASE=<current-version-tag> npm run docs:check`, `npm test -- --runInBand --coverage`, `npm run lint`, `npm run build`, and `npm run audit:bundle`.
@@ -83,8 +83,18 @@ Before pushing, `scripts/publish-release.mjs` verifies:
 - Stable releases run from `master`.
 - Prerelease versions run from the matching `beta/<VERSION>` branch.
 - The local `VERSION` tag exists and points to `HEAD`.
+- A prerelease `HEAD` is the only single-parent release commit above local
+  `master`; additional or divergent beta commits are rejected.
+- Prerelease package/manifest versions, generated release subject and exact
+  packaging-file set match the tag; live `origin/master` matches local master.
+- The prerelease beta branch and tag are pushed atomically after the live
+  master preflight; normal later master advances remain valid only while the
+  release parent is still in `origin/master` history.
 
-The GitHub workflow builds from the pushed tag and creates a GitHub Release with these assets:
+For prereleases, the GitHub workflow independently refreshes `origin/master`,
+requires the tagged release commit's parent to remain its ancestor and the
+matching beta branch to agree, then repeats metadata-version plus exact
+packaging-file checks before building the GitHub Release with these assets:
 
 - `main.js`
 - `manifest.json`
@@ -112,9 +122,16 @@ Key constraints:
   `beta/2.9.0-beta.1` for version `2.9.0-beta.1`; do not commit a beta
   `manifest.json` version to `master`. The release and publish scripts enforce
   the matching beta branch for prerelease builds.
-- Treat `beta/<version>` as a temporary packaging branch cut from the tested
-  development branch. Do not merge beta release commits back to `master`; merge
-  the development branch through PR, then cut the stable release from `master`.
+- Treat `master` as the sole integration and release-source branch. All accepted
+  code, tests, research/docs and governance/tooling changes must enter and be
+  verified on `master` through PR merge or authorized direct commit first.
+- Treat `beta/<version>` as a temporary packaging branch cut from the exact
+  verified `master` HEAD. It may contain only the generated prerelease release
+  commit/tag. Do not merge beta release commits back to `master`; beta feedback
+  fixes land on `master` before a new beta branch/version is created.
+- Before prerelease publish, local `master` must equal `origin/master`; the
+  GitHub workflow rejects a prerelease whose release parent is not the current
+  remote `master` commit.
 - Use prerelease tags such as `2.9.0-beta.1`. The tag, GitHub Release title,
   and released `manifest.json` version must match.
 - The release workflow marks tags containing `-` as GitHub prereleases.

@@ -12,11 +12,18 @@ Sources:
 ## Policy
 
 - Stable releases stay on `master` and use ordinary tags such as `2.9.0`.
-- Feature work stays on a development branch until it is ready for a PR.
+- `master` is the sole integration and release-source branch. All accepted code,
+  tests, research/design docs, governance and release-tooling changes must enter
+  and be verified on `master`, through PR merge or authorized direct commit,
+  before they can reach BRAT or stable release.
+- Work branches are optional isolation/review transport only; they are never a
+  formal beta or stable source.
 - BRAT beta releases use a matching beta branch and prerelease tag, for example
   branch `beta/2.9.0-beta.1` and tag `2.9.0-beta.1`.
-- A `beta/<version>` branch is a temporary packaging branch for BRAT release
-  commits and tags. Do not merge beta release commits back to `master`.
+- A `beta/<version>` branch is created from the exact verified `master` HEAD and
+  is temporary packaging state. It may contain only the generated prerelease
+  release commit and tag. Do not add product/docs fixes there or merge/rebase
+  beta release commits back to `master`.
 - Do not commit a beta `manifest.json` version to `master`. The released
   `manifest.json` asset must still match the beta tag exactly.
 - `manifest-beta.json` remains in this repo for local deploy and older-tool
@@ -34,11 +41,12 @@ Use this sequence for a feature train:
 | Channel | Example | Notes |
 | --- | --- | --- |
 | Current stable | `2.8.4` | Must already be tagged before release scripts can run. |
-| Development branch | `feature/pagelet-recall` | Owns feature commits and tests. |
-| First BRAT beta | `2.9.0-beta.1` | Cut a temporary `beta/2.9.0-beta.1` packaging branch from the development branch. |
+| Integration authority | `master` | Owns every accepted code/test/research/docs/tooling commit before beta packaging. |
+| Optional work branch | `feature/pagelet-recall` | Review/transport only; merge by PR or authorized direct commit before beta. |
+| First BRAT beta | `2.9.0-beta.1` | Cut `beta/2.9.0-beta.1` from the exact verified `master` HEAD. |
 | Current BRAT beta | `2.9.0-beta.2` | Published prerelease; desktop and iPhone BRAT smoke completed on 2026-07-19. |
 | Next BRAT beta | `2.9.0-beta.3` | Use only when beta feedback needs another build. |
-| Stable graduation | `2.9.0` | Cut from `master` after the approved development branch lands through PR. |
+| Stable graduation | `2.9.0` | Cut directly from verified `master`; beta release commits remain excluded. |
 
 BRAT users who installed `2.9.0-beta.N` should use BRAT to update to the latest
 release when the stable `2.9.0` ships. Do not rely on Obsidian's ordinary update
@@ -46,12 +54,18 @@ mechanism to move a prerelease install to the same final stable version.
 
 ## Create a BRAT Beta Release
 
-Start from a development branch whose feature work and local tests are already
-accepted for beta:
+First put all accepted work on `master`. PR merge and authorized direct commit
+are both valid integration paths; neither permits a work branch to bypass
+`master`. Refresh and verify the integration baseline before creating beta:
 
 ```bash
 git status --short
-git switch feature/pagelet-recall
+git fetch origin master
+git switch master
+git pull --ff-only
+git status --short
+git rev-parse master
+git rev-parse origin/master
 git tag --list 2.8.4
 ```
 
@@ -59,23 +73,34 @@ If `git status --short` is not empty, stop before switching or creating the
 beta branch. Commit, stash, clean, or explicitly confirm the intended dirty
 worktree scope first.
 
-If the named development branch is not present locally, use read-only discovery
-before changing local branch state:
+The local and remote `master` hashes must also match before beta publication.
+If local `master` is ahead, stop until pushing `master` is explicitly authorized;
+do not use the beta push as a substitute for integrating the source branch.
+
+If a work branch is involved, prove no accepted commit remains outside
+`master` before packaging. For example:
 
 ```bash
-git branch --list feature/pagelet-recall
-git branch -r --list origin/feature/pagelet-recall
+git log --oneline master..feature/pagelet-recall
 ```
 
-Fetch or create a local tracking branch only after confirming that is the
-intended source branch.
+Any output means the branch still has commits not integrated into `master`.
+Review them, then use a PR merge or authorized direct commit/merge before
+continuing. Do not create beta from that work branch.
 
-Create a temporary beta packaging branch from that development branch. The
-branch name must match the target version:
+After the appropriate validation passes on `master`, create a temporary beta
+packaging branch from its exact HEAD. The branch name must match the target
+version:
 
 ```bash
+git switch master
 git switch -c beta/2.9.0-beta.1
+git rev-parse master
+git rev-parse HEAD
 ```
+
+The two hashes must match before `make release`. The release script enforces
+this invariant and rejects any beta-only code/docs commit.
 
 Run the local gate that matches the scope. For broad beta builds, use the full
 release gate:
@@ -93,6 +118,8 @@ git branch --show-current
 node -p "require('./package.json').version"
 git rev-parse 2.9.0-beta.1^{}
 git rev-parse HEAD
+git rev-parse HEAD^
+git rev-parse master
 make publish VERSION=2.9.0-beta.1
 ```
 
@@ -102,10 +129,17 @@ Expected before publish:
 - The current branch is `beta/2.9.0-beta.1`.
 - `package.json` version is `2.9.0-beta.1`.
 - `git rev-parse 2.9.0-beta.1^{}` equals `git rev-parse HEAD`.
+- `git rev-parse HEAD^` equals `git rev-parse master`, with exactly one commit
+  present on beta but not on `master`.
+- `git rev-parse master` equals `git rev-parse origin/master`.
 
 The publish script enforces the clean worktree, expected branch, matching
-package version, and tag-to-HEAD checks before it pushes the current beta branch
-and tag. The tag triggers the GitHub release workflow, which uploads:
+package/manifest versions, tag-to-HEAD, direct master parent, generated release
+subject/file set and a live `origin/master` lookup. It pushes the beta branch +
+tag atomically. The tag triggers the GitHub release workflow,
+which accepts a normal post-preflight master advance only when the verified
+release parent remains an ancestor, and independently verifies the matching
+beta ref, metadata versions and exact packaging-only commit before uploading:
 
 - `main.js`
 - `manifest.json`
@@ -181,11 +215,15 @@ BRAT from the published GitHub Release.
 
 ## Update a Beta
 
-For another beta build on the same train, keep code fixes on the development
-branch, then cut a fresh beta packaging branch from it:
+For another beta build on the same train, put every accepted fix on `master`
+first, validate `master`, then cut a fresh packaging branch from its exact HEAD:
 
 ```bash
-git switch feature/pagelet-recall
+git fetch origin master
+git switch master
+git pull --ff-only
+git rev-parse master
+git rev-parse origin/master
 git switch -c beta/2.9.0-beta.3
 make release-dry-run VERSION=2.9.0-beta.3
 make release VERSION=2.9.0-beta.3
@@ -199,12 +237,11 @@ ask rolling testers to run BRAT update.
 
 When beta blockers are closed:
 
-1. Open a PR from the development branch to `master`.
-2. Keep beta release commits, beta tags, and prerelease-only metadata out of the
-   PR. The PR should carry the runtime/docs/test changes, not the
-   `[release] v2.9.0-beta.N` commit.
-3. After the PR is merged and `master` is verified, run the stable release from
-   `master`:
+1. Confirm every accepted beta fix already entered `master` through PR merge or
+   authorized direct commit.
+2. Keep beta release commits, beta tags and prerelease-only metadata out of
+   `master`; they are immutable packaging history only.
+3. Refresh and verify `master`, then run the stable release from it:
 
 ```bash
 git switch master
@@ -217,18 +254,29 @@ make publish VERSION=2.9.0
 ```
 
 Expected before stable release: the current branch is `master`, the worktree is
-clean, and the merged development branch has already been verified on `master`.
+clean, and all accepted code/tests/research/docs/tooling are already verified on
+that exact `master` commit.
 
 The stable release changelog should compare from the previous stable tag, not
 from `2.9.0-beta.N`.
 
 ## Recovery
 
-- If a beta is bad but not published, fix the branch and rerun the release.
-- If a beta is published and testers may have installed it, publish a new beta
-  tag such as `2.9.0-beta.2` instead of deleting or rewriting the tag.
+- If a beta is bad, put the fix on `master`; never patch only the beta branch.
+- If no beta tag was published, recreate packaging from updated `master` only
+  after explicitly authorizing replacement of local release state.
+- If a beta is published and testers may have installed it, create a new beta
+  branch/tag such as `2.9.0-beta.3` from updated `master` instead of deleting or
+  rewriting the published tag.
 - Do not delete, rewrite, or move beta tags without an explicit maintainer
   decision.
 - If BRAT cannot see the release, verify that the GitHub Release exists, the
   asset names are exactly `main.js`, `manifest.json`, and `styles.css`, and the
   `manifest.json` version matches the release tag.
+
+## Transition From The Previous Model
+
+`2.9.0-beta.1` and `2.9.0-beta.2` remain immutable evidence of the workflow used
+when they were published. Do not rewrite their branches, tags, Releases or
+Archive records. The master-first source rule applies prospectively beginning
+with the next beta.
