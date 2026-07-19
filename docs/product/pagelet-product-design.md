@@ -1,6 +1,10 @@
 # Pagelet Product Design
 
-> [!warning] This spec is partially superseded by [PA product discussion 2026-07-02](../archive/pa-product-discussion-2026-07-02.md): Pagelet must include one-time bridge nudges for Maintenance Scan, Quick Capture, and Quiet Recall using the PA Bubble/Pet notification style. Use that discussion as the current product baseline.
+> [!note] Current authority is this design together with the
+> [PA Product North Star](./pa-product-north-star.md), [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
+> through [DEC-020](./decisions/dec-020-independent-quiet-recall-evaluation.md),
+> and the [B-108 owning Scope Recap spec](./specs/pa-scope-recap-theme-summary-product-spec.md).
+> Archive discussions are provenance only, never the current baseline.
 
 ## Status
 
@@ -9,14 +13,16 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta implementation complete — full blueprint gaps tracked as future work |
-| Last revised | 2026-06-29 |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime validated; automated/deploy gates, bounded unlocked desktop/iPhone 15 evidence, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover routing/presentation/Qwen semantics, Scope Recap real-provider token smoke, and the correctly prepared user-owned 3-Second Value Test pass. Release remains separate and pending |
+| Last revised | 2026-07-19 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
-| Write boundary | Review note creation and periodic summary save both run through the **Write Action Framework**; Pagelet creates independent review notes only |
-| Background preparation engine | Optional timed polling with rate-limited background review preparation (D032); disabled by default and enabled explicitly by the user |
+| Write boundary | Current B-108 delivery is read-only; existing user-confirmed review-note creation uses the **Write Action Framework**; there is no current standalone Periodic Summary save contract |
+| Background preparation engine | Optional timed polling with rate-limited generic background review preparation (D032); disabled by default and enabled explicitly by the user |
+| Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup and affirmative first-run Data Boundary authorization, bounded to high-intent scope, and persistently disableable ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md)) |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
-| Decisions record | See [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (D001-D031 active; D032+ proposed in this document) |
+| Current decisions | D001-D039 as reconciled in this document, with DEC-017 through DEC-020 and the owning Scope Recap spec taking precedence for B-108 |
+| Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
 | Technical design | See [pagelet-sdd-guide.md](../development/workflows/pagelet-sdd-guide.md); [review-assistant-sdd.md](../archive/review-assistant-sdd.md) is preserved as historical implementation context |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
@@ -48,7 +54,7 @@ The promise stays intentionally narrow:
 - It treats read-only findings as ignorable by default; only durable saves,
   Memory updates, or vault changes require confirmation. **[NEW]**
 - The Pet is a memorable, always-present entry and context-aware companion, not the product's core value. **[CHANGED — from "mascot is a memorable entry"]**
-- Background review preparation ensures insights are ready the instant the user asks — a performance optimization, not a behavior change. **[NEW]**
+- Background review preparation makes valid insights ready the instant the user asks; when no reliable insight exists, explicit Recap open returns immediate honest scope orientation instead of waiting or pretending. **[DEC-017/DEC-019]**
 
 ---
 
@@ -65,7 +71,7 @@ flowchart LR
   end
 
   subgraph "Quick Path"
-    Pet -->|click / hotkey| Bubble["Bubble<br/>(2-3 items)"]
+    Pet -->|click / hotkey| Bubble["Bubble<br/>(one card by default;<br/>qualified 2-3 stack only)"]
     Bubble -->|close| Done1["看完就走"]
   end
 
@@ -86,7 +92,7 @@ flowchart LR
 
 The memorable UI line (updated for Pagelet):
 
-> A recognizable little paper companion sits quietly in the corner of the workspace. Background review preparation ensures insights are ready instantly when the user asks. When summoned — by click or hotkey — it opens a speech bubble with quick findings. If the user has opted into proactive hints, the Pet can also gently signal when something noteworthy is ready. The user can go deeper into a panel, explore connections, or turn selected findings into a review note.
+> A recognizable little paper companion sits quietly in the corner of the workspace. Background review preparation makes valid insights ready instantly when the user asks; when it cannot, an explicit Recap open immediately gives an honest scope/source orientation. When summoned — by click or hotkey — it opens a speech bubble with the highest-quality finding. Only when every candidate independently clears the quality gate may the user switch through a restrained 2-to-3-card stack. Generic and Quiet Recall proactive hints remain off until enabled; high-value Scope Recap uses the separate DEC-018 default. The user can go deeper into a panel or explore connections.
 
 **[CHANGED from historical design]**: historical design described a linear pipeline (open -> select range -> analyze -> findings -> collect -> confirm -> note). Pagelet replaces this with progressive disclosure across four layers (Pet -> Bubble -> Panel -> Tab) and four usage scenarios.
 
@@ -146,7 +152,7 @@ Preserved from historical design:
 
 New in Pagelet:
 
-- **[NEW] Review initiation friction.** historical design requires opening a panel, selecting a time range, and clicking Run. This is too many steps for a quick check. Users need a zero-step path (prepared insights + Pet bubble) and a one-step path (hotkey -> bubble).
+- **[NEW] Review initiation friction.** historical design requires opening a panel, selecting a time range, and clicking Run. This is too many steps for a quick check. Users need a zero-step path (prepared insights + Pet bubble) and a one-step path (hotkey -> valid insight or honest local orientation).
 - **[NEW] Writing-time blindness.** While writing a note, users cannot see connections to their past notes without stopping to search. Prepared insights can surface these connections when they are most useful.
 - **[NEW] Knowledge silos within the vault.** Notes on related topics written days or weeks apart remain disconnected. Prepared analysis can bridge these silos.
 - **[NEW] Periodic review ceremony is too heavy.** historical design's periodic review requires scope selection, manual include/exclude, draft collection, editing, and confirmation. For a "weekly summary," this is too much friction.
@@ -165,13 +171,17 @@ Pagelet does NOT try to solve (preserved from historical design):
 
 1. **Review first, Pet second.** The Pet exists to make the entry recognizable, the state legible, and context accessible. It must not pull scope toward decoration. **[PRESERVED — "mascot" renamed to "Pet"]**
 
-2. **安静审阅者，即时响应。** 后台审阅准备确保洞察在用户询问时即时就绪。后台准备是性能优化，不是行为变化——审阅者保持安静，直到被召唤。 **[CHANGED — supersedes historical design "User-triggered by default. Pagelet does not analyze notes in the background."]**
-   - English: "The quiet reviewer, instant response. Background review preparation ensures insights are ready when the user asks. The reviewer stays quiet until called — background preparation is a performance optimization, not a behavior change."
-   - Proposed decision: **D032**
+2. **安静审阅者，即时响应。** 后台审阅准备让有效洞察尽量在用户询问时即时就绪；没有可靠洞察时，主动打开也应立即获得诚实的范围方向而不是等待或伪装。后台准备是性能优化，不是行为变化——审阅者保持安静，直到被召唤。 **[CHANGED — DEC-017/DEC-019]**
+   - English: "The quiet reviewer, instant response. Prepare valid insight when possible; otherwise return honest local orientation immediately. The reviewer stays quiet until called."
+   - Current decision: **D032**
 
 3. **Evidence over fluency.** Every suggestion must point back to source evidence. Suggestions without sources should be discarded, downgraded, or shown as "needs confirmation". **[PRESERVED]**
 
-4. **Output is optional, and when chosen, minimal-friction.** For quick review and writing assistance, no output artifact is created. For periodic summary, one-click generation replaces the collect-then-write pipeline. For knowledge discovery, the Panel presents findings the user may optionally save. **[CHANGED — supersedes historical design "Collect, then write." Proposed decision: D035]**
+4. **Output is optional, and when chosen, minimal-friction.** Current Bubble,
+   Recall, and B-108 Recap delivery create no output artifact. Existing
+   intentional review-note creation keeps explicit preview/confirmation.
+   Broader time-range Recap needs separate current authority; standalone
+   Periodic Summary is not a current success contract. **[CHANGED]**
 
 5. **Review should feel like recognition, not administration.** A user can read
    a Bubble, close it, and owe Pagelet nothing. Findings do not become queue
@@ -244,7 +254,7 @@ Avoid (preserved from historical design):
 | `resting` | `#d0d0d0` gray, low opacity | Eyes closed, no float | Long idle, no note activity | NEW (merges historical design concept of deep idle) |
 | `idle` | `#e8e8e8` neutral gray | Slight float + occasional blink | Standby, awake | = historical design `idle` |
 | `working` | `#7c9eff` blue | Pulsing dots in mouth area | AI background preparation or user-triggered analysis in progress | = historical design `thinking` (merges background + foreground analysis) |
-| `nudge` | `#5dd39e` green, notification dot | Gentle bounce + small dot indicator | Insights ready; only visible when proactive hints are enabled | NEW |
+| `nudge` | `#5dd39e` green, notification dot | Gentle bounce + small dot indicator | A quality-gated hint is ready: generic/Quiet Recall only when explicitly enabled, or the separate DEC-018 Recap exception | NEW |
 
 State not preserved from historical design:
 
@@ -258,11 +268,16 @@ States removed from earlier Pagelet draft:
 - `reading` — merged into `working`. Background review preparation uses the same visual state as foreground analysis.
 - `thinking` — renamed to `working` to cover both background preparation and user-triggered analysis.
 
-Proposed decision: **D033** — Pet states: 4 states (resting, idle, working, nudge).
+Decision: **D033** — Pet states: 4 states (resting, idle, working, nudge).
 
 `prefers-reduced-motion` users keep color state changes but lose float/jitter/animation (D007/4).
 
-> **State transitions are automatic.** Pet states are driven by system events (note activity detection, background preparation scheduling, analysis results). Users do not manually control Pet state. The only user-controlled mode is the **proactive hints (主动提示) toggle**, which controls whether the Pet enters `nudge` state when insights are ready. State cycling is NOT exposed as a setting.
+> **State transitions are automatic.** Pet states are driven by system events
+> (note activity detection, background preparation scheduling, analysis
+> results). Users do not manually control Pet state. Generic/Quiet Recall
+> proactive hints default off and can be enabled by the user; high-value Scope
+> Recap has its separate DEC-018 control. State cycling is NOT exposed as a
+> setting.
 
 ### Desktop and iPad Corner Position — [UPDATED]
 
@@ -275,20 +290,29 @@ Proposed decision: **D033** — Pet states: 4 states (resting, idle, working, nu
   active note's left toolbar controls. The saved corner remains the preference
   used on desktop and iPad.
 
-Proposed decision: **D034** — Desktop/iPad corner preference with an iPhone active-note-toolbar exception (replaces drag/pin/position memory).
+Decision: **D034** — Desktop/iPad corner preference with an iPhone active-note-toolbar exception (replaces drag/pin/position memory).
 
 ### Proactive Hints (主动提示) — [NEW]
 
-Proactive hints control whether the Pet signals when prepared insights are ready. This is an opt-in feature, **OFF by default**, respecting the "quiet reviewer" positioning. User-facing language uses "主动提示" (proactive hints), not "Nudge mode".
+Generic proactive hints for Quiet Recall, Pattern, and review remain opt-in and
+**OFF by default**. [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md)
+adds one scoped exception: after DEC-017 authorization, “高价值回顾提醒” is on by
+default and may signal only when a new prepared Scope Recap passes its strict
+cross-note quality gate. User-facing language uses “主动提示” or “高价值回顾提醒”,
+not “Nudge mode”.
 
 | Setting | Behavior |
 | --- | --- |
-| 主动提示 ON | When background preparation discovers insights, Pet transitions to `nudge` state (green notification dot). User clicks to see the Bubble. |
-| 主动提示 OFF (default) | Pet stays quiet. If background preparation has been explicitly enabled, it may still cache results without surfacing a nudge. User-triggered review remains available from the Pet, Panel, or command palette. |
+| 高价值回顾提醒 ON (default after DEC-017 authorization) | Only a new, fresh, specific Recap insight backed by at least two notes may transition Pet to `nudge`; click immediately shows the strongest observation. |
+| 高价值回顾提醒 OFF | Prepared Scope Recap stays silent and cached; click remains instant when a fresh artifact exists. |
+| 其他主动提示 ON | Opt-in Quiet Recall, Pattern, or review hints use their existing gates and the shared Pet nudge treatment. |
+| 其他主动提示 OFF (default) | Non-Recap hints remain quiet; this does not disable high-value Recap hints or background preparation. |
 
 ### Proactive Hints Control Placement — [NEW]
 
-Proactive hints (主动提示) are controlled from three surfaces. No right-click menu, no long-press context menu on the Pet.
+Proactive hints (主动提示) are controlled through the access points below. The
+Pet has no right-click control for proactive hints; its 520 ms long-press quick-action menu
+is reserved for Capture / Review / Discover and does not toggle hint settings.
 
 | Control Point | Action | Notes |
 | --- | --- | --- |
@@ -297,7 +321,9 @@ Proactive hints (主动提示) are controlled from three surfaces. No right-clic
 | Command Palette | `Pagelet: Toggle proactive hints` | Accessible from anywhere |
 | Keyboard shortcut | Toggle proactive hints (e.g., `Ctrl+Alt+N` / `Ctrl+Alt+Shift+N`) | Follows Obsidian command convention — registered but no default binding |
 
-Proposed decision: **D039** — Proactive hints control placement: Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. No right-click menu, no long-press context menu.
+Decision: **D039** — Proactive hints control placement: Settings (full config) +
+Panel header (quick toggle) + Command Palette + keyboard shortcut. The Pet
+long-press menu remains a separate Capture / Review / Discover action surface.
 
 Proactive hints behavior constraints:
 
@@ -307,6 +333,9 @@ Proactive hints behavior constraints:
 - Visual change is subtle (green notification dot + gentle bounce, respects `prefers-reduced-motion`).
 - After the user views the Bubble, the hint clears. It does not re-signal for the same insight set.
 - Cooldown: at most once per configurable interval (default 30 minutes).
+- Prepared Scope Recap additionally requires a concrete structured insight,
+  at least two distinct source notes, current/fresh scope, and a new artifact
+  fingerprint. Summary/coverage-only candidates never nudge.
 
 ### Mounting Rules — [PRESERVED from D029/R1]
 
@@ -325,7 +354,7 @@ Pet (always present, minimal footprint)
   |
   | click / hotkey
   v
-Bubble (speech bubble, 2-3 items + quick actions, ~5s interaction)
+Bubble (one card by default; qualified 2-3 stack + quick actions)
   |
   | "展开" / deeper action needed
   v
@@ -339,17 +368,24 @@ Tab (main window tab, full-size workspace)
 | Layer | Size | Lifespan | Output | Entry |
 | --- | --- | --- | --- | --- |
 | Pet | ~48x48px | Always present | None | — |
-| Bubble | ~280px wide, 3-5 items | Persistent until dismissed | None | Click Pet / hotkey |
+| Bubble | ~280px wide, one visible card by default; optional qualified 2-3-card stack | Persistent until dismissed | None | Click Pet / hotkey |
 | Panel | Side panel (~360px) | Session-persistent | Optional (review note) | "展开" from Bubble / command palette |
 | Tab | Full editor tab | Session-persistent | Optional (review note) | "在新标签页打开" from Panel / command palette |
 
 **Bubble dismiss behavior**: Click outside the Bubble closes it, matching Escape and the X button. Click the Pet again to reopen it.
 
-**Note on proactive hints**: When proactive hints (主动提示) are enabled and the Pet enters `nudge` state, clicking the Pet opens the Bubble as usual. Proactive hints are opt-in (OFF by default), so the default entry path is always user-initiated click or hotkey.
+**Note on proactive hints**: Generic hints remain opt-in (OFF by default).
+High-value Scope Recap hints are the DEC-018 exception: after background-read
+authorization they are on by default, but only a quality-gated result may enter
+`nudge`. Clicking the Pet opens the Bubble as usual; suppressed or disabled
+hints do not remove the instant click path.
 
-### Four Usage Scenarios
+### Current And Broader Usage Scenarios
 
-**Delivery order**: Scenario 1 (Quick Review, beta milestone 1) -> Scenario 4 (Periodic Summary, beta milestone 1) -> Scenario 2 (Writing Assistance, beta milestone 2+) -> Scenario 3 (Knowledge Discovery, beta milestone 3+).
+**Current contract**: Quick Review plus prepared Scope Recap and Quiet Recall
+delivery. Writing Assistance and Knowledge Discovery may reuse the same
+surfaces. Time-range Recap is broader/future; standalone Periodic Summary is not
+a current Pagelet success contract.
 
 #### Scenario 1: Quick Review (快速回顾) — [NEW]
 
@@ -357,7 +393,9 @@ Tab (main window tab, full-size workspace)
 
 **Flow**:
 1. User clicks Pet or presses hotkey.
-2. Bubble appears with 2-3 AI-generated summary items from cached background preparation results.
+2. Bubble shows the highest-quality prepared item. A 2-to-3-card stack is
+   available only when every candidate independently passes its quality gate and
+   remains distinct and source-backed.
 3. User reads items. Clicks "dismiss" or clicks away.
 4. Bubble closes. No output artifact.
 
@@ -393,32 +431,26 @@ Tab (main window tab, full-size workspace)
 3. Pagelet sends the current note and selected related-note context through the normal foreground AI provider path, then opens the discovery Panel layout with connections and gaps.
 4. User can optionally save findings as a review note.
 
+If provider evaluation is unavailable or rejected, explicit Discover may still
+show a source-backed local match, but only as `Local related clue` /
+`本地关联线索`. It contains no AI why-now, does not use proactive Recall styling,
+does not mix into a Recall stack, and cannot trigger `nudge`.
+
 **Future direction**:
 - Show a Bubble preview such as "Found 5 related notes and 2 potential themes."
 - Continue improving relevance explanations, cross-note themes, and potential research gaps.
 
 **Key property**: Results shown in Panel (not just Bubble). This is the deep-analysis path.
 
-#### Scenario 4: Periodic Summary (周期性整理) — [CHANGED from historical design]
+#### Broader/Future: Time-range Recap (supersedes standalone Periodic Summary)
 
-**Intent**: "I want a summary of what I wrote this week."
+**Intent**: "I want to revisit what changed in a chosen time range."
 
-| Aspect | historical design | Pagelet |
-| --- | --- | --- |
-| Trigger | Open panel -> select range -> adjust notes -> run | One-click from command palette or Panel header |
-| Scope selection | Manual time range + include/exclude | Auto (configurable default range, e.g., "last 7 days") |
-| Draft collection | User selects findings -> collects into draft -> edits -> previews -> confirms | Removed. AI generates complete draft directly. |
-| Output | Review note in `.pagelet/` after preview + confirm | Review note in `.pagelet/` after preview + confirm (same output, fewer steps) |
-
-**Flow**:
-1. User uses command palette `Pagelet: Generate periodic summary` or triggers from Panel header.
-2. AI analyzes recent notes (default: last 7 days, configurable).
-3. Preview of the generated review note appears.
-4. User confirms -> review note created in `.pagelet/`.
-
-**Key property**: One-click trigger to output. The draft-collection step is removed. The user still previews and confirms before the note is written. Write boundary (Principle #7, D025/D030) preserved.
-
-Proposed decision: **D035** — Periodic summary simplified flow (supersedes historical design Principle #4 "Collect, then write" for this scenario).
+The independent Periodic Summary / Generate Summary flow is retired as a
+current Pagelet concept. Its useful intent belongs to a future Recap time-range
+mode, which must remain source-backed and derived; any Markdown export requires
+explicit preview and confirmation. This broader direction is not part of B-108
+completion and has no current success criterion or command contract here.
 
 ---
 
@@ -426,15 +458,19 @@ Proposed decision: **D035** — Periodic summary simplified flow (supersedes his
 
 ### Design Principle
 
-historical design prohibited all background analysis. Pagelet introduces a **background preparation engine** — a performance optimization that makes review responses instant rather than requiring the user to wait for AI analysis after each click.
+historical design prohibited all background analysis. Pagelet introduces a **background preparation engine** — a performance optimization that makes valid review insight instant when available and lets DEC-019 return honest local orientation when it is not, rather than forcing an AI wait after every explicit open.
 
-> Background review preparation ensures insights are ready the instant the user asks. The reviewer stays quiet until called — background preparation is a performance optimization, not a behavior change. Proactive hints (主动提示) are an independent opt-in feature that piggybacks on background preparation results.
+> Background review preparation makes valid insights ready the instant the user asks. When no reliable Scope Recap insight exists, explicit open immediately returns honest local scope/source orientation instead. The reviewer stays quiet until called — background preparation is a performance optimization, not a behavior change. Generic proactive hints (主动提示) are an independent opt-in feature that piggybacks on background preparation results; DEC-018 adds one scoped default-on exception for high-value Scope Recap insights.
 
-**Critical constraint**: There is NO local preprocessing, no regex-based TODO detection, no rule-based scanning in the background path. **AI does ALL intelligence.** The background preparation system is a simple timer + change detector + AI call + cache.
+**Critical constraint**: There is NO local preprocessing, no regex-based TODO detection, no rule-based scanning in the background insight path. **AI does ALL intelligence.** DEC-019 permits only a locally derived scope/source orientation as an explanation state; it is not an insight fallback. The background preparation system is a simple timer + change detector + AI call + cache.
 
 **Security constraint**: Background review preparation uses `runKind="background"` with hardcoded `allowWrite=false`. The background path can NEVER trigger write operations. Token budget is lower (4K+1K) vs foreground (8K+2K).
 
-Proposed decision: **D032** — Background preparation engine introduction (supersedes historical design Product Principle #2).
+Decision: **D032** — Background preparation engine introduction
+(supersedes historical design Product Principle #2). Generic review preload
+remains opt-in; [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
+separately makes prepared Scope Recap default-on after affirmative first-run
+Data Boundary authorization.
 
 ### Trigger Mechanism
 
@@ -459,8 +495,14 @@ flowchart TD
 - **Polling interval**: configurable, default every 30 minutes. Range: 5 minutes to 4 hours.
 - **Change detection**: compare vault's file modification timestamps against last-analyzed timestamps. Only notes that changed since the last background preparation run are candidates.
 - **Scope**: same exclusion rules as foreground analysis (`.trash`, hidden folders, excluded tags, etc.).
-- **Result**: cached in memory (not persisted to disk in Pagelet). Cache invalidated when new changes are detected and a new background preparation run completes.
+- **Result**: cached in memory (not persisted to disk in Pagelet). Generic cache may be replaced after a successful new preparation run. Scope Recap follows the DEC-019 last-valid/attempt-status split below.
 - **runKind**: `"background"` with hardcoded `allowWrite=false`. Lower token budget than foreground.
+
+Prepared Scope Recap adds a DEC-019 quality branch after analysis: unavailable,
+failed, empty, malformed, or quality-rejected output creates no ready candidate
+or nudge. The last valid artifact is retained separately from last attempt
+status and remains usable only while its scope/source snapshot, Data Boundary,
+TTL, and freshness still match. Background retry is silent and budgeted.
 
 ### Cost Control — [CHANGED from historical design D018-D023]
 
@@ -476,17 +518,21 @@ Pagelet introduces separate rate limits for background preparation (background) 
 
 **Key rule**: Foreground user-triggered calls are NOT constrained by background preparation quota. The two pools are independent.
 
-Decisions D018-D023 are **preserved** for the foreground pool. Background preparation pool limits are proposed as **D036** — Background preparation engine cost control.
+Decisions D018-D023 are **preserved** for the foreground pool. Background preparation pool limits follow **D036** — Background preparation engine cost control.
 
 ### Result Caching
 
 - Background preparation results are cached in memory per vault.
-- When the user summons the Pet (click or hotkey), cached insights are displayed instantly in the Bubble — no wait. This is the core value of background preparation.
-- If no cached result exists (first launch, cache cleared, all notes unchanged), the Bubble shows a brief "还没有新发现" message with an option to trigger immediate foreground analysis.
-- Cache is cleared when:
-  - A new background preparation run completes (replaces old cache).
+- When the user summons the Pet (click or hotkey), valid cached insights are displayed instantly in the Bubble — no wait. This is the core value of background preparation.
+- For generic review, if no cached result exists (first launch, cache cleared, all notes unchanged), the Bubble may show a brief "还没有新发现" message with an explicit foreground action. Explicit Scope Recap open follows DEC-019 instead: last valid artifact first, otherwise immediate local scope explanation plus Retry/View sources.
+- Generic review cache is cleared when:
+  - A new successful background preparation run completes (replaces old cache).
   - The user closes and reopens the vault.
   - The plugin is reloaded or the vault is closed and reopened. A manual Settings clear action is future work.
+- Prepared Scope Recap follows DEC-019 instead: a failed/empty/rejected attempt
+  never replaces a still-valid artifact. Explicit Recap open without one renders
+  an immediate local scope explanation plus Retry/View sources; only Retry starts
+  a foreground call.
 
 ---
 
@@ -503,7 +549,9 @@ For user-triggered analysis (Scenario 1-3), Pagelet auto-scopes to the **current
 
 Custom range/date-picker scope is future work.
 
-**[CHANGED from historical design]**: historical design required manual scope selection before every run. Pagelet defaults to current note for quick interactions and auto-selects for periodic summary.
+**[CHANGED from historical design]**: historical design required manual scope
+selection before every run. Current Pagelet defaults to the current note for
+quick interactions; broader time-range Recap requires separate authority.
 
 ### Background preparation Scope
 
@@ -513,13 +561,11 @@ For background review preparation, scope is determined by change detection:
 - Subject to the same exclusion rules as foreground (`.trash`, hidden folders, excluded tags, `#no-ai`, `#no-review`).
 - Background preparation does NOT read the entire vault — only changed notes.
 
-### Periodic Summary Scope
+### Future Time-range Recap Scope
 
-For Scenario 4 (periodic summary), scope is auto-selected:
-
-- Default: last 7 days (configurable in settings).
-- No manual include/exclude step. The AI decides what to include based on the time range.
-- The generated preview shows which notes were included, allowing the user to verify before confirming.
+A future time-range Recap may offer bounded date presets and an inspectable
+included/skipped source preview. These are broader product directions, not
+current B-108 behavior or an independent Periodic Summary contract.
 
 ### Exclusion Rules — [PRESERVED from historical design]
 
@@ -554,7 +600,9 @@ The assistant must use bounded, transparent reading:
 
 ### Role
 
-The Bubble is a lightweight, ephemeral speech bubble that appears near the Pet. It is the first response surface for all four scenarios.
+The Bubble is a lightweight, ephemeral speech bubble that appears near the Pet.
+It is the first response surface for current quick delivery; broader scenarios
+may route directly to Panel/Tab.
 
 ### Appearance
 
@@ -568,19 +616,19 @@ The Bubble is a lightweight, ephemeral speech bubble that appears near the Pet. 
 
 ```
 +--------------------------------+
-| [Summary line]                 |
+| [Highest-quality finding]      |
+| [Source / why-now when AI-     |
+|  evaluated]                    |
 |                                |
-| - Finding 1 (with source link) |
-| - Finding 2 (with source link) |
-| - Finding 3 (with source link) |
-|                                |
-| [展开]  [Dismiss]              |
+| [Open] [Later / Dismiss]       |
 +--------------------------------+
 ```
 
-- Maximum 3 items in the Bubble. If more findings exist, "展开" opens the Panel.
-- Each item is 1-2 lines with an optional source link.
-- Quick actions: "展开" (open Panel), "Dismiss" (close Bubble).
+- One card is the default. A single-visible 2-to-3-card stack is available only
+  when every candidate independently passes its quality gate and remains
+  distinct and source-backed. Larger sets route to Panel/Tab.
+- Each card stays compact, with an optional source link and surface-appropriate
+  actions.
 - No editing, no draft collection, no note creation from the Bubble.
 
 ### Interaction
@@ -603,7 +651,9 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 
 ### Direction Principles
 
-1. **Scenario-adaptive**: the Panel layout changes based on which scenario opened it (writing assistance vs knowledge discovery vs periodic summary).
+1. **Scenario-adaptive**: the Panel layout changes based on which current
+   scenario opened it (for example, writing assistance vs knowledge discovery);
+   future time-range Recap is not implied.
 2. **Not a static card list**: historical design's four fixed categories are replaced with a dynamic, AI-organized layout.
 3. **Draft is optional**: unlike historical design where draft collection was the primary output path, Pagelet's Panel can be used purely for reading/exploration.
 4. **Source transparency preserved**: every finding still links to source notes (Principle #3).
@@ -632,7 +682,8 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 - On iPad, retains the configurable-corner model used on desktop.
 - Slightly smaller than desktop (~80% scale).
 - Minimum touch target: 44x44px (iOS HIG / WCAG 2.5.5).
-- Tap = show Bubble. Single gesture only — no long-press context menu.
+- Tap = show Bubble. A 520 ms long press opens the same Capture / Review /
+  Discover quick-action menu as desktop; it auto-dismisses after 3 seconds.
 - No hover interactions (mobile has no hover).
 - States and animations same as desktop (4 states) but may use reduced-motion by default on low-power mode.
 
@@ -658,8 +709,10 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 
 ### Mobile Design Principles
 
-- Same feature parity as desktop (all 4 scenarios work).
-- Adapted interaction patterns (tap instead of click; no long-press context menu, no right-click).
+- Same current Pagelet feature parity as desktop; future time-range Recap is not
+  implied.
+- Adapted interaction patterns (tap instead of click; 520 ms long press for the
+  Capture / Review / Discover quick-action menu; no right-click).
 - Bottom-anchored surfaces (Bubble and Panel slide up from bottom edge).
 - Larger touch targets and text.
 - Respect system-level `prefers-reduced-motion` and low-power mode.
@@ -675,13 +728,14 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 | Quick Review | No | — |
 | Writing Assistance | No | — |
 | Knowledge Discovery | Optional | User explicitly requests from Panel |
-| Periodic Summary | Yes | One-click generate -> preview -> confirm |
+| Future time-range Recap export | Not current | Requires separate authority; if approved, preview -> explicit confirm |
 
-### Periodic Summary Output
+### Future Time-range Recap Output
 
-For Scenario 4, the AI generates a complete review note directly. The historical design draft-collection step is removed.
-
-**[CHANGED from historical design]**: historical design required: generate findings -> user selects cards -> collect into draft -> edit draft blocks -> preview Markdown -> confirm creation. Pagelet: AI generates complete review note -> user previews -> user confirms. Proposed decision: **D035**.
+Standalone Periodic Summary is not a current output or success contract. A
+future time-range Recap may support user-confirmed Markdown export, but it needs
+separate product/implementation authority and must preserve sourceRefs,
+included/skipped scope, preview, and explicit confirmation.
 
 ### File Naming and Location — [PRESERVED from D008, D009, D010]
 
@@ -691,7 +745,7 @@ Default file naming:
 {原笔记名}-pagelet-review-{YYYY-MM-DD}.md
 ```
 
-For periodic summary (multi-note):
+Historical multi-note naming example (non-authoritative):
 
 ```
 pagelet-weekly-review-{YYYY-MM-DD}.md
@@ -828,13 +882,17 @@ Top-level Pagelet settings group inside PA settings:
 - Pet visibility: show / hide (hide recoverable from command palette or this setting).
 - Pet corner position: `bottom-right` (default) / `bottom-left` / `top-right` / `top-left`.
 - 主动提示 (proactive hints): `on` / `off` (default: `off`). Also togglable from Panel header, Command Palette, and keyboard shortcut (D039).
+- 高价值回顾提醒: `on` / `off` (default: `on` after DEC-017 authorization). It
+  is independently disableable without disabling Scope Recap preparation or
+  enabling other hint kinds; exact control consolidation belongs to the SDD.
 - 主动提示 cooldown: `15 min` / `30 min` / `1 hour` / `2 hours` (default: `30 min`).
 - 主动提示 quiet hours: start time / end time (default: off). When active, proactive hints are suppressed during the specified window.
 
 > **Not a setting:** Pet state (resting, idle, working, nudge) is system-driven. Users do not manually cycle states. See the "State transitions are automatic" note in Pet Design.
 
 **Background preparation** — [NEW]
-- Enable background review preparation: `on` / `off` (default: `off`). This is an explicit opt-in performance optimization — it pre-computes insights so they are ready instantly.
+- Enable generic background review preparation: `on` / `off` (default: `off`). This remains an explicit opt-in for non-Recap review preparation.
+- Prepare Scope Recap in background: `on` / `off` (default: `on` only after provider setup and affirmative first-run Data Boundary authorization). It pre-computes source-backed Recap items so they are ready instantly; an explicit user opt-out persists across reloads and upgrades. The UI must not label both controls simply as `preload`.
 - Polling interval: `5 min` / `15 min` / `30 min` / `1 hour` / `2 hours` / `4 hours` (default: `30 min`).
 - Background preparation per-hour cap (default 2, configurable).
 - Background preparation per-day cap (default 20, configurable).
@@ -843,7 +901,9 @@ Top-level Pagelet settings group inside PA settings:
 - Review notes folder (default `.pagelet/`; configurable in advanced).
 
 **Reviews** — [PRESERVED, simplified]
-- Default scope for periodic summary: `Last 3 days` / `Last 7 days` / `Last 14 days` (default: `Last 7 days`).
+- Current review scope controls apply to implemented review flows. Future
+  time-range Recap presets require separate authority; there is no current
+  Periodic Summary default.
 - Excluded folders.
 - Excluded tags.
 - Excluded path/name patterns.
@@ -859,6 +919,12 @@ Top-level Pagelet settings group inside PA settings:
 - Background preparation per-call token budget (default 4K + 1K, max 8K + 2K).
 - Background preparation per-hour cap (default 2).
 - Background preparation per-day cap (default 20).
+- Prepared Scope Recap calls/cost: separately attributable and bounded from generic preload; hard guardrail is 2 actual provider calls per rolling hour and 10 per local day. **[B-108]**
+- Quiet Recall why-now calls: independently evaluate at most 5 candidates, with
+  at most one language retry per candidate and no more than 10 actual provider
+  calls per round. The independent hard guardrail is 10 actual provider calls
+  per rolling hour and 50 per local day; initial and language-retry calls both
+  count. **[DEC-020, B-108]**
 
 **Beta** — [PRESERVED]
 - Settings shows a Beta callout.
@@ -869,8 +935,10 @@ Defaults:
 
 - Feature on (in `-beta.N`). **[PRESERVED]**
 - Pet visible (can be hidden). **[PRESERVED — "mascot" -> "Pet"]**
-- Background review preparation off by default; users explicitly opt in from settings. **[CHANGED from historical design "no background analysis"]**
-- 主动提示 (proactive hints) off. **[NEW — opt-in, respects "quiet reviewer" positioning]**
+- Generic background review preparation off by default; users explicitly opt in from settings. **[D032]**
+- Prepared Scope Recap on by default after provider setup and affirmative first-run Data Boundary authorization; users can disable it persistently. **[DEC-017]**
+- High-value Scope Recap hints on by default after DEC-017 authorization, subject to the DEC-018 quality/dedupe/suppression gate; users can disable hints without disabling preparation. **[DEC-018]**
+- Other proactive hints off. **[D038 — opt-in, respects "quiet reviewer" positioning]**
 - WebSearch off until clicked. **[PRESERVED]**
 - Conservative exclusions on. **[PRESERVED]**
 
@@ -884,6 +952,12 @@ Trust requirements:
 - Background review preparation reads only changed notes, subject to the same exclusion rules as foreground. **[NEW]**
 - Background review preparation results are cached in memory only, not persisted to disk. **[NEW]**
 - Background review preparation can be disabled entirely in settings. **[NEW]**
+- The first provider-backed prepared Scope Recap read requires affirmative Data Boundary `run / adjust / cancel`; a configured provider or passive disclosure alone is insufficient. **[DEC-017]**
+- Prepared Scope Recap activity and cost are separately attributable from generic preload, even if internal runtime is shared; its fixed guardrail is 2 actual calls per rolling hour and 10 per local day. **[DEC-017, B-108]**
+- Scope Recap attempt status is stored separately from last valid artifact; failed/empty/rejected output creates no ready/nudge and ordinary UI uses an honest local explanation without provider jargon. **[DEC-019]**
+- Quiet Recall local candidates become proactive delivery only after independent
+  AI why-now evaluation; provider/cooldown/budget gaps and candidate failures
+  never fall back to a template nudge. **[DEC-020]**
 - Background review preparation uses `runKind="background"` with `allowWrite=false` — it can NEVER trigger write operations. **[NEW]**
 - No hidden note reads before user action — **revised**: background preparation is transparent via the Pet state (`working` state visible when background preparation runs). **[CHANGED]**
 - No sending skipped note bodies to the model. **[PRESERVED]**
@@ -914,16 +988,16 @@ Background preparation transparency:
 
 | Entry | historical design | Pagelet |
 | --- | --- | --- |
-| Pet click | Mascot click opens side panel | Pet click opens Bubble (single gesture only) |
+| Pet click / tap | Mascot click opens side panel | Short click or tap opens Bubble |
+| Pet long press | N/A | A 520 ms hold opens Capture / Review / Discover; the menu auto-dismisses after 3 seconds |
 | Hotkey | User-configurable, opens panel | User-configurable, opens Bubble |
 | Command palette | `Pagelet: Review current note`, `Pagelet: Open Pagelet`, `Pagelet: Toggle mascot visibility` | Current commands are preserved where registered + new commands (see below) |
-| Proactive hints | N/A | Pet enters `nudge` state when opt-in hints are enabled; click to see Bubble |
+| Proactive hints | N/A | Generic/Quiet Recall hints default off and can enter `nudge` only after opt-in; DEC-018 separately governs high-value Recap hints |
 
 New Pagelet commands (command palette, registered with `Pagelet:` prefix per D029):
 
 - `Pagelet: Quick review` — opens existing prepared findings in the Bubble without triggering a provider call; falls back to Panel when the Pet/Bubble anchor is unavailable.
 - `Pagelet: Discover connections` — current beta runs current-note analysis and opens the discovery Panel layout; dedicated cross-note discovery is future work.
-- `Pagelet: Generate periodic summary` — triggers Scenario 4.
 - `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
 - `Pagelet: Show background preparation status` — shows background preparation engine diagnostics.
 - `Pagelet: Move Pet to corner` — switches Pet corner position.
@@ -1050,7 +1124,11 @@ Pagelet considered successful if:
 - Bubble opens in under 200ms when cached results exist.
 - Bubble closes on click-outside, X, and Escape.
 - Proactive hints correctly toggle and respect cooldown.
-- Bubble shows 2-3 relevant findings from prepared analysis.
+- Generic and Quiet Recall proactive hints are off by default; high-value Scope
+  Recap uses the independent DEC-018 default and quality gate.
+- Bubble shows one highest-quality card by default; a 2-to-3-card stack appears
+  only when every candidate independently passes and remains distinct and
+  source-backed.
 
 **Background Preparation Engine (new)**:
 - Background preparation runs at the configured interval.
@@ -1066,11 +1144,6 @@ Pagelet considered successful if:
 - Output includes findings with source links.
 - Findings without valid sources are not shown as strong suggestions.
 
-**Periodic Summary (changed)**:
-- One-click trigger generates a complete review note.
-- Preview is shown before write confirmation.
-- Created note is plain Markdown in `.pagelet/`.
-
 **Core Invariants (preserved from historical design)**:
 - Creating a note never modifies source notes.
 - WebSearch only runs from explicit user action.
@@ -1082,8 +1155,10 @@ Pagelet considered successful if:
 **Product validation target**:
 - In at least one real weekly test window, the user:
   - Uses Quick Review (Bubble) at least 3 times.
-  - Uses Periodic Summary at least once and keeps the generated note.
-  - (If proactive hints enabled) Receives at least one useful hint from prepared analysis.
+  - Opens at least one prepared Scope Recap or honest no-artifact explanation
+    and can verify the sources.
+  - If the user explicitly enables Quiet Recall/generic hints, receives at least
+    one useful hint; default-off behavior is itself a required pass.
 
 ---
 
@@ -1097,17 +1172,20 @@ Pagelet considered successful if:
 | Mascot click -> Panel | Pet click -> Bubble -> Panel | Progressive disclosure replaces direct panel open |
 | Manual scope selection | Auto-scope (current note default) | Panel still allows manual scope adjustment |
 | Four fixed suggestion categories | AI-organized dynamic layout | Structured output schema may evolve |
-| Draft collection flow | Removed for periodic summary; optional for Panel | Periodic summary generates complete note directly |
+| Draft collection flow | Historical Periodic Summary design retired | No independent current contract; future time-range Recap needs separate authority |
 | Included/skipped note adjustment | Preserved in Panel | Simplified; auto-scope removes most manual adjustment |
-| Reminders (local activity threshold) | Proactive hints (AI-driven, opt-in) | Replaces rule-based reminders with AI-driven signals; OFF by default |
+| Reminders (local activity threshold) | Generic proactive hints (AI-driven, opt-in) | Replaces rule-based reminders with AI-driven signals; OFF by default. DEC-018 separately governs the high-value Scope Recap exception. |
 | No background analysis | Background preparation engine | Performance optimization; configurable; can be disabled |
 
 ### Breaking Changes
 
 - **Bubble is new**: historical design users who click the mascot expect the Panel to open. Pagelet opens the Bubble instead. The Panel is one click deeper ("展开"). Pet click still opens the review surface (Bubble, not Panel), and historical design users can adjust.
-- **Draft collection removed**: historical design users who relied on selecting individual findings into a draft need to adapt to the periodic summary's direct-generation flow.
+- **Standalone Periodic Summary retired**: it is no longer a current Pagelet
+  success/command contract; future time-range Recap is a separate direction.
 - **Pet states**: historical design's `done` and `error` states are replaced. Users familiar with the green "done" state will see the Pet return to `idle` instead. The 4 states are resting/idle/working/nudge.
-- **No right-click or long-press menu**: historical design had no context menu, and Pagelet also has none. Pet has a single gesture only (click).
+- **Pet quick-action menu is new**: Pagelet adds a 520 ms long-press menu for
+  Capture / Review / Discover. It is not a proactive-hints settings surface;
+  short click or tap still opens Bubble, and no right-click menu is added.
 
 ### Migration Path
 
@@ -1126,7 +1204,7 @@ Pagelet considered successful if:
 | --- | --- | --- |
 | D001 | Brand naming (Pagelet / 拾页) | Preserved |
 | D002 | Copy tone (允许少量人设) | Preserved |
-| D003 | No LLM-free fallback | Preserved |
+| D003 | No LLM-free insight fallback | Preserved; DEC-019 local scope orientation is B-type explanation only and must never become Recap Delivery or nudge |
 | D004 | Mascot/Pet visual direction (极简线稿) | Preserved |
 | D005 | Visual anchor (Tldraw-like 手绘) | Preserved |
 | D006 | Differentiation positioning | Preserved |
@@ -1158,28 +1236,39 @@ Pagelet considered successful if:
 | D022 | Cost display | Preserved; extended to show background preparation cost in settings |
 | D023 | Exception circuit breakers | Still deferred (OQ003); background preparation adds new failure modes |
 
-### Decisions Needing Revision
+### Reconciled Decisions
 
 | Decision | Topic | Pagelet Change | New Decision |
 | --- | --- | --- | --- |
-| D024 | Runtime (RunKindAdapter) | Needs to support `runKind="background"` background preparation with `allowWrite=false`, not just on-demand | D032 |
-| D025 | Write path strategy | Periodic summary bypasses draft-collection, goes direct to preview+write | D035 |
-| D030 | Write path infrastructure | Periodic summary's direct-generation flow is a new caller pattern for the framework | D035 |
+| D024 | Runtime (RunKindAdapter) | Supports `runKind="background"` background preparation with `allowWrite=false` in the implemented contract | D032 |
+| D025 | Write path strategy | Current B-108 delivery stays read-only; any future Recap export requires explicit preview/confirmation | D035 superseded |
+| D030 | Write path infrastructure | No current standalone Periodic Summary caller; future export must use the Write Action Framework | D035 superseded |
 
-### Proposed New Decisions (D032+)
+### Current Pagelet Decisions (D032+)
 
 | ID | Topic | Summary |
 | --- | --- | --- |
 | **D032** | Background preparation engine | Introduce timed polling + change detection + AI background preparation + result caching. Uses `runKind="background"` with `allowWrite=false`. Supersedes historical design Principle #2 ("no background analysis"). Background preparation is a performance optimization, not proactive analysis. |
 | **D033** | Pet states (4 states) | 4 states: resting (#d0d0d0 gray), idle (#e8e8e8 gray), working (#7c9eff blue), nudge (#5dd39e green). Replaces earlier 6-state proposal. |
 | **D034** | Pet position | Desktop/iPad use a configurable corner (default bottom-right); iPhone follows the active note toolbar. The corner remains switchable via Settings or Command Palette. No drag, no pin, no double-click. |
-| **D035** | Periodic summary simplified flow | One-click generate replaces collect-then-write pipeline for periodic summary. Supersedes historical design Principle #4 for this scenario. |
+| **D035** | Historical Periodic Summary simplification | Superseded as a current contract. The broader product direction is a separately authorized Recap time-range mode, not an independent Periodic Summary flow. |
 | **D036** | Background preparation engine cost control | Separate rate limits and token budgets for background preparation vs foreground AI calls. When enabled, background preparation defaults to 4K+1K tokens, 2/hour, 20/day. |
 | **D037** | Progressive disclosure layers | Four-layer interaction model: Pet -> Bubble -> Panel -> Tab. Each layer is self-contained. Bubble closes on click-outside, X, and Escape. |
-| **D038** | Proactive hints (主动提示) design | Opt-in feature, OFF by default. When ON, Pet enters `nudge` state when prepared insights are ready. Cooldown, no sound, no modal, no focus steal. Respects "quiet reviewer" positioning. |
-| **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. No right-click menu, no long-press context menu. |
+| **D038** | Generic proactive hints (主动提示) design | Quiet Recall, Pattern, and generic review hints remain opt-in and OFF by default. When ON, Pet enters `nudge` only after their own quality gates. Cooldown, no sound, no modal, no focus steal. |
+| **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet long-press menu is reserved for Capture / Review / Discover. |
 
-These proposed decisions should be carried forward from `docs/archive/review-assistant-decisions.md` if implementation resumes.
+[DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) is the accepted
+Scope Recap exception to D038: high-value Recap hints default on after DEC-017
+authorization, while all other hint kinds retain their existing defaults.
+
+[DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md) governs the same
+Recap path when no reliable insight exists: retain any still-valid artifact;
+otherwise show an immediate local scope explanation only after explicit Recap
+open. It does not weaken D003 or create a proactive candidate.
+
+This current document plus DEC-017 through DEC-020 governs these decisions.
+`docs/archive/review-assistant-decisions.md` is provenance only and must not be
+used to override current behavior.
 
 ---
 
@@ -1191,9 +1280,10 @@ These proposed decisions should be carried forward from `docs/archive/review-ass
 - 4-state Pet with transitions and animations.
 - Bubble design and implementation (including click-outside close behavior).
 - Background preparation engine. (D032)
-- Proactive hints (主动提示, opt-in). (D038)
+- Generic proactive hints (主动提示, opt-in). (D038); high-value Scope Recap
+  hints follow the accepted DEC-018 exception.
 - Quick Review scenario (Scenario 1).
-- Periodic Summary scenario (Scenario 4, D035).
+- Future Recap time-range mode; no standalone Periodic Summary contract.
 - Writing Assistance scenario (Scenario 2).
 - Knowledge Discovery scenario (Scenario 3).
 - Separate background preparation/foreground cost controls (D036).
@@ -1234,15 +1324,18 @@ Future product definition: [Pagelet Maintenance Review Product Spec](../archive/
 | Context awareness | Manual scope selection | Pet auto-senses current note context |
 | Output form | Single: independent review note | Multi-level (Bubble -> Panel -> optional note) |
 | Interaction depth | Linear pipeline | Progressive: Pet -> Bubble -> Panel -> Tab |
-| Pet gesture | Click opens panel | Click only — opens Bubble. No right-click, no long-press |
+| Pet gesture | Click opens panel | Short click/tap opens Bubble; 520 ms long press opens Capture / Review / Discover; no right-click menu |
 | Mascot/Pet states | 4 (idle, thinking, done, error) | 4 (resting, idle, working, nudge) |
 | Pet position | N/A | Fixed corner (configurable), no drag |
-| Proactive hints | Rule-based reminders (badge only) | AI-driven proactive hints (opt-in, OFF by default) |
+| Generic proactive hints | Rule-based reminders (badge only) | AI-driven hints remain opt-in and OFF by default; DEC-018 separately makes only quality-gated Scope Recap hints default on after authorization. |
 | Bubble dismiss | N/A | Click-outside, X, and Escape close |
-| Periodic summary | Select range -> adjust -> run -> collect -> edit -> preview -> confirm | One-click -> preview -> confirm |
+| Periodic summary | Select range -> adjust -> run -> collect -> edit -> preview -> confirm | Retired as an independent current contract; future time-range Recap needs separate authority |
 | Background review preparation | Explicitly prohibited | Performance optimization (configurable, rate-limited, `allowWrite=false`) |
 | Cost control | Unified pool | Separate background preparation and foreground pools |
 
 ---
 
-> Document ends. Subsequent revisions must synchronize with `docs/archive/review-assistant-decisions.md` (new decisions recorded with corresponding D### IDs if implementation resumes) and the current Pagelet technical guide.
+> Document ends. Subsequent revisions must synchronize with the current North
+> Star, DEC-017 through DEC-020, the owning Product Spec, and the current Pagelet
+> technical guide. Archive discussions and decision drafts remain provenance
+> only.

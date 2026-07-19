@@ -41,8 +41,13 @@ Pagelet is a **note-review feature** inside an existing Obsidian plugin called *
 | D035 | Periodic summary simplified flow (one-click generate) |
 | D036 | Separate background preparation/foreground cost control pools |
 | D037 | Progressive disclosure: Pet → Bubble → Panel → Tab |
-| D038 | Proactive hints: opt-in, OFF by default |
+| D038 | Generic proactive hints: opt-in, OFF by default; DEC-018 separately makes only quality-gated Scope Recap hints default on after DEC-017 authorization |
 | D039 | Proactive hints control placement: Settings + Panel header + Command Palette + hotkey |
+
+DEC-019 adds a Scope Recap failure boundary: failed/empty/rejected background
+attempts produce no ready/nudge and do not overwrite a still-valid artifact;
+explicit Recap open without one renders an explanation-only local scope overview
+before the user chooses Retry.
 
 ---
 
@@ -148,7 +153,10 @@ note toolbar on iPhone.
                     └──── background preparation/analysis starts ──► working
 ```
 
-**Error handling**: Errors shown as 1.5s flash on Pet, then return to `idle` with small error badge. Error details appear in Bubble on click.
+**Error handling**: Foreground interaction errors may show a 1.5s Pet flash, then
+return to `idle` with non-destructive feedback. DEC-019 Scope Recap background
+failures stay quiet: no flash, badge, ready, or nudge; details remain in
+diagnostics, while explicit Recap open uses the honest local explanation state.
 
 **`prefers-reduced-motion`**: Keep color changes, remove all float/jitter/animation.
 
@@ -257,6 +265,11 @@ User clicks Pet → Bubble shows 2-3 cached findings → User reads → Dismiss
 - If no cache: show "还没有新发现" + option to trigger immediate analysis.
 - Key property: "看完就走" — zero output, under 10 seconds.
 - No artifacts produced.
+- Scope Recap explicit entry is a scoped exception governed by DEC-019: use a
+  still-valid artifact first; otherwise render a synchronous local scope/source
+  explanation with Retry/View sources. The owning entrypoint may render this in
+  Bubble or the detail surface; implementation must not reroute every command
+  through Bubble merely to reuse copy.
 
 ### Scenario 2: Writing Assistance (写作辅助)
 
@@ -316,17 +329,21 @@ Budget Check (per-hour cap remaining?)
 AI Analysis (runKind="background", allowWrite=false, 4K+1K token budget)
   │
   ▼
-Cache Result (in-memory, per vault)
+Outcome + quality gate
+  ├─ valid insight ──► Cache last-valid artifact (in-memory, per vault)
+  └─ unavailable/failed/empty/rejected ──► Record attempt status,
+                                            retain last valid, no ready/nudge
   │
   ▼
-Pet State Update (if 主动提示 ON → nudge; else remain idle)
+Pet State Update (eligible insight + relevant hint setting ON → nudge;
+                  otherwise remain idle)
 ```
 
 ### Constraints
 
 | Rule | Detail |
 | --- | --- |
-| No local preprocessing | NO regex-based TODO detection, NO rule-based scanning. AI does ALL intelligence. |
+| No local insight preprocessing | NO regex-based TODO detection, NO rule-based insight scanning. DEC-019 local scope/source overview is explanation-only and cannot become DeliveryCandidate or nudge. |
 | Security | `runKind="background"` with hardcoded `allowWrite=false`. Background path can NEVER trigger writes. |
 | Token budget | 4K input + 1K output default; configurable up to 8K input + 2K output. |
 | Hard ceiling | 8K input + 2K output per background preparation call. |
@@ -334,7 +351,7 @@ Pet State Update (if 主动提示 ON → nudge; else remain idle)
 | Per-day cap | 20 background preparation calls (default). |
 | On ceiling hit | Silently skip cycle (no user notification). |
 | Scope | Recent notes in the 7-day scope that changed since the last cycle. Same exclusion rules as foreground. |
-| Cache lifetime | In-memory only. Cleared on: new background preparation run, vault close, explicit user clear. |
+| Cache lifetime | In-memory only. Generic cache may be replaced by a new successful run. Scope Recap failure/empty/rejection records attempt status but cannot clear a still-valid artifact; vault close and explicit user clear still apply. |
 | NOT persisted to disk | Privacy consideration. |
 
 ### Foreground vs Background preparation — Independent Pools
@@ -663,10 +680,12 @@ All commands registered with `Pagelet:` prefix (D029).
 | `Pagelet: Quick review` | Open existing prepared findings in the Bubble without triggering a provider call; falls back to Panel when the Pet/Bubble anchor is unavailable |
 | `Pagelet: Discover connections` | Current beta: run current-note analysis and open the discovery Panel layout; dedicated cross-note discovery is future work |
 | `Pagelet: Generate periodic summary` | Trigger Scenario 4 |
-| `Pagelet: Toggle proactive hints` | Toggle 主动提示 on/off |
+| `Pagelet: Toggle proactive hints` | Toggle generic 主动提示 on/off |
 | `Pagelet: Show background preparation status` | Show background preparation engine diagnostics |
 | `Pagelet: Move Pet to corner` | Switch the saved desktop/iPad corner preference |
 | `Pagelet: Toggle Pet visibility` | Show/hide Pet |
+
+DEC-018 的高价值 Recap 提示通过 Settings 中的独立开关控制；当前不注册对应 Command Palette 命令。
 
 **Preserved historical design commands**:
 | Command | Action |
@@ -686,7 +705,8 @@ interface PageletSettings {
 
   // Pet
   petCorner: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'; // default: 'bottom-right'
-  proactiveHints: boolean;             // default: false (OFF)
+  proactiveHints: boolean;             // generic hints; default: false (OFF)
+  scopeRecapHighValueHints: boolean;   // default: true only after DEC-017 authorization
   proactiveHintsCooldown: 15 | 30 | 60 | 120; // minutes, default: 30
   proactiveHintsQuietHours: {
     enabled: boolean;                  // default: false
@@ -890,7 +910,11 @@ src/
 
 1. **RunKindAdapter extension**: Must support `runKind="background"` with hardcoded `allowWrite=false`. This is distinct from the existing on-demand `runKind="foreground"`.
 
-2. **No LLM-free fallback (D003)**: If the LLM provider is not configured, Pagelet is non-functional. Show appropriate empty state.
+2. **No LLM-free insight fallback (D003)**: If AI is not configured or cannot
+   produce reliable output, Pagelet must not manufacture an insight. DEC-019
+   permits a local Scope Recap scope/source overview only as B-type explanation;
+   it cannot become DeliveryCandidate or nudge, and Retry routes to setup or an
+   explicit foreground call.
 
 3. **Structured output (D026)**: AI responses use structured output schemas for type-safe parsing of findings, sources, and suggestions.
 

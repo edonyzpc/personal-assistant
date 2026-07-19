@@ -6,11 +6,13 @@
 | --- | --- |
 | Document type | Product specification |
 | Scope | Pagelet Bubble empty-state redesign, Recall/Discover unification, readiness transparency, DeliveryCandidate contract |
-| Status | Implemented current contract; Phase 6 amendment included |
+| Status | Phase 6 base and DEC-017/DEC-018/DEC-019/DEC-020 B-108 runtime validated with automated/deploy gates passing; bounded unlocked desktop/iPhone 15 evidence, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover routing/presentation/Qwen semantics, and the correctly prepared user-owned 3-Second Value Test complete |
+| Updated | 2026-07-19 |
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
 | Design philosophy | 安静且可信 |
-| Source discussion | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
+| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md) |
+| Historical provenance (non-authoritative) | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
 | Implementation record | [Historical SDD](../../archive/pagelet-bubble-readiness-and-recall-sdd.md) and [redesign tracker](../../archive/pa-product-redesign-development-tracker.md) |
@@ -42,7 +44,7 @@ misconfigured, or working quietly. Those internal states include:
 
 - Pagelet is disabled.
 - Pet is hidden.
-- Proactive hints are off.
+- Generic proactive hints are off and no fresh prepared Recap is available.
 - Quiet Recall Bubble nudges are off.
 - Memory is not prepared.
 - Current note is too short.
@@ -59,9 +61,8 @@ setup — and they are left facing a feature menu instead of a recall doorway.
 
 ## 2. Product Principles
 
-Based on confirmed decisions from the
-[product discussion](../../archive/pagelet-bubble-product-discussion-2026-07-05.md) and
-[PA North Star](../pa-product-north-star.md):
+Based on the current [PA North Star](../pa-product-north-star.md), the B-108
+owning Product Spec, and DEC-017 through DEC-020:
 
 1. **Bubble is PA's Delivery Surface, not a control panel or feature menu.**
    The Bubble exists to present PA-prepared findings. It should not read like a
@@ -120,7 +121,7 @@ state.
 
 | State | Trigger | Content |
 | --- | --- | --- |
-| Recall Delivery | Quiet Recall / Discover found high-confidence old notes | Result card + why now + actions |
+| Recall Delivery | Enabled Quiet Recall or explicit Discover produced an independently AI-evaluated high-quality result | Result card + AI why now + actions |
 | Recap Delivery | A fresh prepared Scope Recap exists for the current scope | Recap card + source coverage + route to details |
 | Pattern Delivery | Cross-note pattern detection found valuable pattern | Pattern description + sources + actions |
 | Review Delivery | Background preparation completed source-backed observations for the current note/scope | Observation result + route to details |
@@ -133,8 +134,9 @@ state.
 | Needs Setup | Memory not prepared | Explain + [Prepare Memory] + [Review this note] as fallback |
 | Preparing | Memory preparation in progress | Progress indication + optional count |
 | Ready, Nothing Found | Everything ready, no high-confidence results | Quiet empty + [Find related old notes] |
-| Intentionally Quiet | User disabled proactive hints | Minimal empty, no repeated explanation |
+| Intentionally Quiet | User disabled generic proactive hints and no prepared delivery is available | Minimal empty, no repeated explanation |
 | Context Limited | Current note too short / Data Boundary exclusion | Brief reason + alternative action |
+| Recap Needs Retry | User explicitly opened Recap, but no valid artifact exists after an unavailable/failed/empty/quality-rejected attempt | Honest status + local scope orientation + [Retry] + [View sources] |
 
 ### 3.2 Delivery Selection Rules
 
@@ -142,8 +144,10 @@ Delivery selection should use a unified candidate pool, not fixed feature-button
 priority. A candidate is eligible only if it can explain why it is worth showing
 now and can route to source-backed detail.
 
-When multiple candidates are eligible, Bubble may show up to three through the
-single-visible-card stack defined below. It must not render a list.
+Bubble defaults to the single highest-quality eligible candidate. It may expose
+a 2-to-3-card single-visible stack only when every candidate independently
+passes its quality gate and remains distinct and source-backed. It must not
+render a list.
 
 Bridge hints never replace a real delivery. If a first-use explanation is useful
 while Recall or Recap is available, it becomes an inline hint on that delivery.
@@ -153,8 +157,10 @@ while Recall or Recap is available, it becomes an inline hint on that delivery.
 the delivery content.
 
 **B-type is mutually exclusive**: Show the single most relevant explanation
-state. B-type priority order: Needs Setup > Preparing > Context Limited >
-Intentionally Quiet > Ready, Nothing Found.
+state. B-type priority order: Needs Setup > Preparing > Context Limited > Recap
+Needs Retry > Intentionally Quiet > Ready, Nothing Found. Recap Needs Retry is
+eligible only after an explicit Recap open; it does not occupy the normal Bubble
+just because a background attempt failed.
 
 ### 3.3 Bubble Card Stack
 
@@ -202,15 +208,18 @@ Recall and Discovery are one unified product line with two trigger modes:
 | Mode | Trigger | Entry |
 | --- | --- | --- |
 | User-initiated (Discover) | User clicks "Find related old notes" in empty state, or uses command palette `PA: Discover connections` | Explicit user action |
-| PA-initiated (Quiet Recall) | Triggered by note open/switch when proactive hints are enabled | Background, automatic |
+| PA-initiated (Quiet Recall) | Triggered by note open/switch only after the user enables Quiet Recall/generic proactive hints; both default off | Background, automatic |
 
-Both share the same result card format and action set. The user should not need
-to know which mode produced a result — the card looks identical.
+An independently AI-evaluated Discover result may share the Recall card format.
+A local-only match is different: explicit Discover may show it as a clearly
+labeled `Local related clue` / `本地关联线索`, but it has no AI why-now, never
+uses proactive Recall styling, never mixes into a proactive Recall stack, and
+cannot nudge. The user must be able to tell these provenance levels apart.
 
 ### 4.2 Why Now Depth: L3 (Full)
 
-Every Recall result MUST include LLM relationship reasoning. The three layers
-are fused, not phased:
+Every proactive Recall and AI-evaluated Discover result MUST include LLM
+relationship reasoning. The three layers are fused, not phased:
 
 | Layer | Mechanism | Role |
 | --- | --- | --- |
@@ -218,14 +227,18 @@ are fused, not phased:
 | L2 (topic + excerpt) | Extract shared topics and source excerpts | Evidence backing — shown as source excerpt |
 | L3 (relationship reasoning) | LLM analyzes why this old note matters NOW for the current note | Display-level explanation — shown as "why now" |
 
-All three layers are executed together. L1 produces candidates, L2 and L3 are
-generated by the LLM in a single call. The user sees L3 (why now) and L2
-(source excerpt). L1 scores are internal and not displayed.
+All three layers are executed together. L1 produces candidates; for each
+candidate, L2 and L3 are generated together in one candidate-scoped initial
+call. Candidates are not batch-judged:
+[DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md) permits
+at most 5 independent initial calls plus one language retry per candidate. The
+user sees L3 (why now) and L2 (source excerpt). L1 scores are internal and not
+displayed.
 
 ### 4.3 Display Threshold
 
-The LLM's ability to articulate a convincing "why now" IS the display
-threshold.
+The LLM's ability to articulate a convincing "why now" IS the proactive Recall
+and AI-evaluated Discover display threshold.
 
 - If LLM can explain why this old note matters now → **show**.
 - If LLM cannot produce a convincing explanation → **do not show**.
@@ -234,6 +247,11 @@ threshold.
 This means Recall may return zero results even when VSS finds candidates. This
 is correct behavior — silence is preferable to unconvincing recommendations
 (Principle 8).
+
+Explicit Discover has one provenance-safe exception: it may show a local match
+as `Local related clue` / `本地关联线索`, with source/title and a verifiable local
+relation signal only. It must omit AI why-now copy and must not be presented as
+Recall Delivery.
 
 ### 4.4 Result Card Structure
 
@@ -278,6 +296,10 @@ Card layout rules:
 - Why now: one sentence from L3. Must be specific to the current context.
 - Source excerpt: one quoted excerpt from the old note (L2). Maximum 2 lines.
 - Actions: horizontally laid out below the excerpt.
+
+These layout rules apply to AI-evaluated Recall cards. A Discover-only local
+clue uses the distinct local label and source facts instead of the L3 why-now
+line.
 
 ### 4.5 Allowed Actions
 
@@ -371,7 +393,7 @@ PA 正在熟悉你的笔记，准备好后会有发现。
 ```
 
 Notes:
-- Progress numbers are optional (see Open Decision §9).
+- Progress numbers are optional (see resolved decision OD-4 in §9).
 - No action buttons in this state — the user should wait.
 - If preparation is taking unusually long, do NOT show an error. Keep the same
   copy. Errors surface through Pet visual state (brief red flash).
@@ -418,10 +440,58 @@ PA 只在你打开时才会查找。
 ```
 
 Notes:
-- Shown when proactive hints are disabled and the user opens Bubble manually.
+- Shown when default-off generic/Quiet Recall proactive hints are disabled and
+  the user opens Bubble manually, unless a prepared Recap or other eligible
+  delivery is available.
 - If the user has already seen and acknowledged this state, do not re-explain.
   Show minimal empty (just the action button, no explanation text).
 - "Find related old notes" triggers user-initiated Discover.
+
+### State: Recap Needs Retry
+
+This is the DEC-019 explanation fallback when an explicit Recap entrypoint uses
+Bubble. The behavior is surface-neutral: a command that already opens the
+detail surface may render the equivalent state there and does not need to route
+through Bubble. It is not a DeliveryCandidate and cannot enter the proactive
+hint pool.
+
+**EN:**
+
+```
+PA couldn't produce a reliable recap this time.
+
+Recently changed in this scope:
+- Release plan
+- Milestone notes
+
+[Retry] [View sources]
+```
+
+**ZH:**
+
+```
+PA 这次没有生成可靠回顾。
+
+这个范围最近有变化的来源：
+- 发布计划
+- 里程碑笔记
+
+[重试] [查看来源]
+```
+
+Notes:
+- Render synchronously from local scope/source metadata. Opening this state does
+  not start a provider call or spinner.
+- Show a bounded list of real source titles/links, scope/range, and relevant
+  skipped/boundary status. Do not invent themes, tensions, actions, or generic
+  tag/count summaries.
+- If a still-valid source-backed artifact exists, show Recap Delivery instead.
+  If local facts are too thin to orient the user, omit the list rather than pad
+  it.
+- Retry is the only action that starts foreground generation. If AI is not set
+  up, replace Retry with a setup action. View sources never calls AI.
+- User-facing copy stays product-level; detailed attempt category belongs in
+  diagnostics.
 
 ### State: Context Limited
 
@@ -535,10 +605,14 @@ When the user clicks "Find related old notes":
 
 1. Capture the active-note snapshot.
 2. Start a lightweight async Discover/Recall search inside Bubble.
-3. If fast high-quality results are available, show them in the single-visible
-   Recall card stack.
-4. If results are slow, weak, or complex, route to Panel/Tab instead.
-5. Drop or mark stale any result whose active-note snapshot no longer matches.
+3. If fast independently AI-evaluated results are available, show the best one
+   by default; expose a 2-to-3-card stack only when every candidate independently
+   passes and remains distinct and source-backed.
+4. If AI evaluation is unavailable or rejected but a source-backed local match
+   exists, explicit Discover may show it only as a labeled local related clue,
+   without AI why-now and without mixing it with Recall cards.
+5. If results are slow or complex, route to Panel/Tab instead.
+6. Drop or mark stale any result whose active-note snapshot no longer matches.
 
 Bubble must not block indefinitely, show weak long lists, or deliver results to
 the wrong current note.
@@ -551,7 +625,7 @@ the wrong current note.
 | --- | --- | --- | --- |
 | Review Current Note | Bubble primary action | Bubble fallback (Needs Setup only), Chat, Command Palette (`PA: Review current note`), Panel/Tab | User-initiated |
 | Generate Summary | Bubble empty-state action | Retired in Phase 6 migration; terminal replacement is Recap time-range mode | Removed legacy entrypoint |
-| Recap Delivery | Not currently a true prepared Bubble artifact | Bubble only after a fresh prepared Scope Recap artifact exists | PA contextual delivery |
+| Recap Delivery | Implemented as a prepared, source-backed B-108 artifact | Bubble only after a fresh prepared Scope Recap artifact exists | PA contextual delivery |
 
 ### Review Current Note
 
@@ -594,27 +668,59 @@ When a prepared recap exists, Bubble may deliver it as A-type content:
 **EN:**
 
 ```
-PA prepared a short recap for this scope.
+Two newer notes changed the release plan from weekly to milestone-based,
+while three earlier notes still assume the weekly cadence.
 
-[View recap] [Later]
+[Review evidence] [Later]
 ```
 
 **ZH:**
 
 ```
-PA 已为这个范围准备了一份简短回顾。
+两篇较新的笔记已把发布计划从每周发布改为按里程碑发布，
+但三篇较早的笔记仍沿用每周节奏。
 
-[查看回顾] [稍后]
+[查看依据] [稍后]
 ```
 
-If no prepared recap exists, Bubble must show no recap card. It must not
-silently fall back to foreground generation.
+If no prepared recap exists, normal Bubble selection must show no recap card.
+An explicit Recap open may show the DEC-019 **Recap Needs Retry** B-type state,
+but it must not silently fall back to foreground generation.
 
 Prepared Recap artifacts are local derived cache objects with enough structured
 detail for Panel/Tab. They must include sourceRefs, source coverage, stale
 status, preparedAt, and scope/range metadata, but must not auto-write Markdown
 or store full raw provider output. Saving/exporting a recap note remains an
 explicit user action.
+
+**Quality-gated proactive Recap signal (DEC-018):**
+
+- A prepared artifact does not earn a nudge merely because generation finished.
+- Nudge eligibility requires a fresh/current artifact with at least one concrete
+  structured cross-note insight, a why-it-matters relationship, and sourceRefs
+  to at least two distinct notes.
+- Summary/coverage-only, stale, failed, empty, repeated, dismissed, Later,
+  quiet-hours, Focus Mode, or cooldown-suppressed artifacts stay silent.
+- One artifact/insight fingerprint can signal at most once. Pet uses only its
+  restrained `nudge` state; no modal, sound, focus steal, or pending count.
+- Click immediately shows the strongest concrete observation and routes to the
+  full detail. Disabling the Recap hint keeps the artifact available on demand.
+- This scoped default does not enable Quiet Recall, Pattern, or generic review
+  proactive hints.
+
+**Honest layered fallback (DEC-019):**
+
+- Unavailable, thrown, timed-out, empty, malformed, or quality-rejected attempts
+  create no Recap Delivery and no nudge.
+- A failed attempt does not overwrite a still-current last valid artifact. That
+  artifact remains A-type delivery until scope/source snapshot, Data Boundary,
+  TTL, or freshness makes it invalid.
+- Without a valid artifact, only an explicit Recap open may show local scope
+  orientation as Recap Needs Retry. Local orientation is B-type explanation,
+  never an insight candidate.
+- Initial open is synchronous and call-free. Only explicit Retry enters a
+  foreground progress state; retry failure preserves existing content and adds
+  non-destructive feedback.
 
 ---
 
@@ -636,7 +742,7 @@ This iteration does NOT include:
 
 ---
 
-## 9. Open Decisions
+## 9. Resolved Decisions
 
 | # | Decision | Options | Notes |
 | --- | --- | --- | --- |
@@ -660,7 +766,7 @@ This iteration does NOT include:
 | 1 | Install + open Bubble | Should see **Needs Setup** state with "Prepare Memory" + "Review this note" fallback. NOT three feature buttons. |
 | 2 | After Prepare Memory starts | Should see **Preparing** state with progress. |
 | 3 | After Prepare Memory completes, open note | Should see **Ready, Nothing Found** with "Find related old notes". |
-| 4 | Click "Find related old notes" | Should trigger Recall/Discover and show L3 result card if found, or stay in Ready, Nothing Found if nothing convincing. |
+| 4 | Click "Find related old notes" | Should trigger Discover and show an L3 result card when AI evaluation passes; otherwise it may show a clearly labeled local related clue with no AI why-now, or stay in Ready, Nothing Found. |
 
 ### Returning user scenarios
 
@@ -668,7 +774,7 @@ This iteration does NOT include:
 | --- | --- | --- |
 | 5 | Open note with Quiet Recall enabled, high-confidence match exists | Should see **Recall Delivery** with why-now card. NOT empty state. |
 | 6 | Open note, no match | Should see **Ready, Nothing Found**. NOT feature menu. |
-| 7 | Proactive hints off, open Bubble | Should see **Intentionally Quiet**. NOT "No new findings yet" with three buttons. |
+| 7 | Generic proactive hints off, no prepared Recap, open Bubble | Should see **Intentionally Quiet**. NOT "No new findings yet" with three buttons. A fresh prepared Recap still takes delivery priority and opens immediately even when its proactive hint is disabled. |
 | 8 | Note is 2 lines long | Should see **Context Limited** (note too short). NOT generic empty. |
 | 9 | Note excluded by Data Boundary | Should see **Context Limited** (boundary variant). |
 
@@ -679,16 +785,21 @@ This iteration does NOT include:
 | 10 | Memory preparing + Recall has partial results | Should show **Recall Delivery** (A beats B) with inline hint "PA is still learning your notes." |
 | 11 | Bridge hint + Recall result both available | Should show **Recall Delivery** with a subtle inline bridge hint. |
 | 12 | User dismisses Recall card | No debt created. Next Bubble open starts fresh. |
-| 13 | Fresh prepared recap exists for current scope | May see **Recap Delivery** as a Bubble card. No prepared recap means no recap CTA. |
+| 13 | Fresh prepared recap exists for current scope | Manual Pet/Bubble open shows **Recap Delivery** immediately, regardless of whether its proactive nudge is enabled. The stricter DEC-018 quality gate controls interruption, not click-to-view availability. No prepared recap means no recap CTA. |
+| 14 | Background Recap attempt fails but prior artifact still matches the current source snapshot | Manual open shows the prior **Recap Delivery** immediately; failure is diagnostic state and does not erase valid value. |
+| 15 | User explicitly opens Recap after failure/empty/quality rejection with no valid artifact | Shows **Recap Needs Retry** immediately with real local scope/source orientation and no provider call. |
+| 16 | User clicks Retry and generation fails | Existing explanation/overview stays visible with non-destructive feedback; no generic summary becomes delivery. |
 
 ### Regression guards
 
 | # | Guard | Assertion |
 | --- | --- | --- |
-| 14 | Generate Summary button must NOT appear in any B-type empty state | No B-type state includes "Generate summary" as an action. |
-| 15 | Review Current Note must NOT appear as primary action in Ready, Nothing Found | "Review current note" only appears as fallback in Needs Setup. |
-| 16 | No state should display VSS, RAG, OPFS, embedding, vector, backend, or queue | All user-facing copy uses product language only. |
-| 17 | Ignoring any Bubble content must create zero future debt | Dismissing, closing, or ignoring any Bubble state produces no pending items, queues, badges, or re-notifications about the same content. |
+| 17 | Generate Summary button must NOT appear in any B-type empty state | No B-type state includes "Generate summary" as an action. |
+| 18 | Review Current Note must NOT appear as primary action in Ready, Nothing Found | "Review current note" only appears as fallback in Needs Setup. |
+| 19 | No state should display VSS, RAG, OPFS, embedding, vector, backend, queue, schema, or provider error codes | All user-facing copy uses product language only. |
+| 20 | Ignoring any Bubble content must create zero future debt | Dismissing, closing, or ignoring any Bubble state produces no pending items, queues, badges, or re-notifications about the same content. |
+| 21 | Local scope overview must never become Recap Delivery or nudge | Explanation-only facts are excluded from DeliveryCandidate and proactive hint pools. |
+| 22 | Discover-only local match must not look like proactive Recall | It is labeled `Local related clue` / `本地关联线索`, contains no AI why-now, never enters a Recall stack, and cannot nudge. |
 
 ---
 
@@ -696,7 +807,7 @@ This iteration does NOT include:
 
 - [PA Product North Star](../pa-product-north-star.md)
 - [Pagelet Product Design](../pagelet-product-design.md)
-- [PA Product Discussion 2026-07-02](../../archive/pa-product-discussion-2026-07-02.md)
-- [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md)
-- [Pagelet Bubble Product Discussion 2026-07-05](../../archive/pagelet-bubble-product-discussion-2026-07-05.md)
+- [Historical PA Product Discussion 2026-07-02](../../archive/pa-product-discussion-2026-07-02.md)
+- [Historical Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md)
+- [Historical Pagelet Bubble Product Discussion 2026-07-05](../../archive/pagelet-bubble-product-discussion-2026-07-05.md)
 - [PA Product Information Architecture Spec](../pa-product-information-architecture-spec.md)

@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-07-11
+Updated: 2026-07-19
 
 这里是已经从 Linear inbox 晋升、但尚未开始或仍未完成的项目事项清单；raw PA idea 继续留在 Linear，不在这里制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -26,13 +26,13 @@ Updated: 2026-07-11
 | B-105 | Architecture quality pass | 以行为保持为前提，按独立 slice 处理 prompt/classifier builder、Chat lifecycle、VSS method extraction 与 DOM/WebWorker tsconfig | [Historical tracker](./archive/architecture-refactor-development-tracker.md) |
 | B-106 | Settings IA 与 componentization | 完成长页面 IA、局部 rerender、Statistics hidden fields 决策、text-input save churn 审计与窄屏 Metadata 验证 | [Current status](./architecture/settings-status.md) |
 | B-107 | UI/UX 延后项 | Community submission 前复议 Settings collapse 的 `localStorage`；出现并发 confirm caller 时处理 count atomicity；仅在高级 diagnostics 进入普通 UI 时做 jargon 清理 | [Historical UI tracker](./archive/pa-ui-ux-optimization-tracker.md) |
-| B-108 | PA Product Redesign dogfood follow-up | 依据真实反馈决定 double-Ctrl scope、Chat Quick Command、frontmatter Sync merge、deprecated Weekly Review 删除与 LLM tension detection；`replace_selection` 仍需完整 WAF | [Historical tracker](./archive/pa-product-redesign-development-tracker.md) |
 | B-109 | Memory Control Center 扩展 | Cross-vault understanding、自动同步、独立 Memory UI、import/export 或更大 action authority 都需要新的产品批准，不是当前迭代漏项 | [Current product spec](./product/specs/pa-memory-control-center-product-spec.md) |
 | B-110 | Statistics 历史清理与 JSONL compaction | v2 文件只能通过单独审核的显式用户操作清理；只有观测到 JSONL 增长问题后才设计 compaction | [Statistics contract](./architecture/statistics-v3-plan.md) |
 | B-111 | Repo-wide optimization follow-up | 先为 Discovery adapter error 建真实 harness；先证明 AbortSignal 端到端支持；历史 accepted-without-record 需要迁移决策；其余 defensive P3 按触发拆小任务 | [Final report](./archive/repo-wide-optimization-2026-07-10-final-report.md#uncompleted-and-deferred-work) |
 | B-112 | 更宽的 Pagelet Trust / Maintenance proposal | 只有当前 Memory Control、source-backed review 与 move-only maintenance 无法满足真实用户需求时，才重开全局 Trust Layer 或更广 vault maintenance；写操作继续受 WAF/Operations Agent gate 约束 | [Trust proposal](./archive/pagelet-trust-layer-product-spec.md), [Maintenance proposal](./archive/pagelet-maintenance-review-product-spec.md) |
 | B-113 | Memory status-transition contract extraction | 只有新的共享 UI/调用方确实需要复用迁移规则时，才讨论把 `VALID_STATUS_TRANSITIONS` 从 store 层移动到 contracts；不要仅因历史 review 做无消费者抽象 | [PR #376 review](./archive/pr-376-review-report.md) |
 | B-114 | Hosted / commercial service layer | Free/Lite BYOK 需求被验证，且 Terms、privacy、billing、entitlement 与 counsel review 都完成后，才设计 Premium 托管层 | [Commercialization analysis](./archive/pa-commercialization-analysis-2026-07-08.md), [active decisions](./product/active-decisions.md) |
+| B-115 | Pagelet 原 B-108 dogfood 延后范围 | 只在真实 dogfood 证据命中时分别重启：double-Ctrl 需跨平台冲突与实体操作证据；Chat Quick Command 需证明现有入口摩擦；`pa-related` frontmatter Sync 需先解决多设备冲突；Weekly Review compatibility helper 需兼容性证明后才移除；Pattern LLM 仅在结构检测不足且成本获批时考虑。`replace_selection` 继续由 B-101 / T-003 的写操作边界治理，不在此重复授权 | [Historical tracker](./archive/pa-product-redesign-development-tracker.md), [current B-108 package](./development/active/pagelet-b108-dogfood-followup/README.md) |
 
 ## 触发型评估
 

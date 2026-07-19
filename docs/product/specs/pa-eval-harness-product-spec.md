@@ -1,6 +1,6 @@
 # PA Eval Harness Product Spec
 
-Updated: 2026-07-11
+Updated: 2026-07-19
 
 ## Status
 
@@ -179,9 +179,9 @@ when a product spec adds a new hard boundary.
 | Memory Type Taxonomy | candidate uses canonical memory type; archive/forget/export transitions preserve lifecycle contract; tombstone has no raw text | Memory panel / Confirmed Memory |
 | Maintenance Review | preview includes affected paths/diff/reason; forbidden action rejected; apply selected only; undo/recovery metadata present | Any source-note mutation |
 | Quick Capture | capture writes original user note; AI expansion separated; task/memory suggestions stay queue-only until confirmed | Quick Capture AI post-processing |
-| Quiet Recall | no nudge when evidence is weak or stale; bonus far association cannot outrank explicit current relevance | Recall nudges |
+| Quiet Recall | no nudge when evidence is weak or stale; bonus far association cannot outrank explicit current relevance; at most 5 candidates receive independent AI evaluation, one candidate failure cannot cancel siblings, and only a language mismatch may retry that candidate once; one round is bounded to 5 initial + 5 retry calls; provider/cooldown/budget absence never promotes a template why-now into proactive Recall; local matches may remain only as localized `Local related clue` Discover source lists without AI why-now, Recall stack or nudge, and accepted AI IDs cannot re-enter local fallback; hourly/daily guards count actual calls including retries | Recall nudges and B-108 DEC-020 cost/quality gate |
 | Saved Insight Ledger | PA-generated insight has sourceRefs; user-authored insight marked unsourced/user-authored; promotion creates explicit target item | Insight save/promotion |
-| Scope Recap / Theme Summary | important claim has sourceRefs; stale recap flagged; generated recap not used as source unless policy allows | Recap generation/write |
+| Scope Recap / Theme Summary | important claim has sourceRefs; stale recap flagged; generated recap not used as source unless policy allows; failed/empty/rejected attempt creates no ready/delivery/nudge and preserves any still-valid artifact; explicit open without one returns only local scope/source explanation plus Retry/View sources; local overview cannot enter insight, DeliveryCandidate, or hint pools | Recap generation/write and B-108 prepared-delivery fallback |
 | Weekly Review | scope disclosure present; accepted-only items enter Markdown note; dismissed/unconfirmed items stay out | Weekly Review write |
 | Lightweight Graph Discovery | graph suggestions have sourceRefs; `theme_chain` does not become memory directly; rejected edge remains local | Graph-aware discovery |
 | Retrieval Habit Profile | disabled mode has no influence; weak signal cannot cross explicit scope/Data Boundary/evidence strength | Retrieval adaptation |

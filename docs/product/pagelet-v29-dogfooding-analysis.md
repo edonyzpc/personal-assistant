@@ -10,7 +10,9 @@
 | Version | v2.9.0-beta.1 |
 | Date | 2026-07-17 |
 | Trigger | 实际使用发现 7 项体验问题 |
-| Priority | P0 — 产品核心价值未传达 |
+| Priority at discovery | P0 — 产品核心价值未传达 |
+| Disposition | Evidence/provenance；B-108 已接管当前设计、实现与验证状态 |
+| Current authority | [B-108 active package](../development/active/pagelet-b108-dogfood-followup/README.md) 与其 owning Product Spec / Tracker |
 
 ---
 
@@ -288,7 +290,7 @@ function mapLlmInsightToItem(
 }
 ```
 
-**降级方案**：LLM 调用失败时沉默（不展示 Recap delivery），不回退到规则引擎。规则引擎的输出（tag 统计）已被判定为对用户无意义。
+**降级方案（由 [DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md) 更新）**：LLM 调用失败时仍不展示 Recap delivery，也不回退到 tag/计数规则洞察；后台保持安静并保留仍有效的旧 artifact。只有用户主动打开 Recap 且没有有效 artifact 时，才即时显示不冒充 insight 的本地 scope/source 概览、明确失败状态与重试入口。
 
 **成本控制**：
 - 结构化 digest（title + headings + 首段）比原始内容更紧凑，~200 tokens/篇
@@ -403,11 +405,14 @@ Default to isConvincing: false when uncertain. The user prefers silence over noi
 
 **方案：双区结构**
 
+> DEC-018 更新：主内容必须直接交付具体 observation，不能只显示“已准备好回顾”。
+
 ```
 ┌─────────────────────────────┐
 │  [主内容区]                   │
-│  PA prepared a recap...      │
-│  [View recap]  [Later]       │
+│  2 篇新笔记改变了发布节奏，    │
+│  但 3 篇旧笔记仍沿用旧计划。   │
+│  [查看依据]  [稍后]           │
 ├─────────────────────────────┤
 │  [上下文行动区] (条件显示)      │
 │  💡 This note has 3 unlinked │
@@ -602,7 +607,7 @@ private renderCard(finding: TabCard, section: TabSection): HTMLElement {
 
 **延迟策略**（贯穿 A/B 实现）：
 - Recall（方案 B）：后台预计算——打开笔记后自动触发 embedding 初筛 + LLM 逐条评估，结果缓存，用户点击 Pet 时零等待
-- Recap（方案 A）：用户触发——显示 Pet working 动画，2-3 秒后出结果
+- Recap（方案 A）：按 [DEC-017](./decisions/dec-017-default-background-recap-preparation.md) 默认进行有界后台准备；fresh、source-backed artifact 已存在时，用户点击立即看到实际洞察。按 [DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md)，无有效 artifact 时先即时显示不冒充洞察的本地 scope/source 方向，由用户选择是否重试，不用泛化摘要伪装 ready
 
 ---
 
@@ -651,10 +656,10 @@ private renderCard(finding: TabCard, section: TabSection): HTMLElement {
 
 | # | 议题 | 决定 | 理由 |
 |---|------|------|------|
-| 1 | 确定性提醒（断链/草稿等）作为 Recap 内容 | 不引入 | 这些是维护任务，制造 obligation，违反 North Star；Recap 保持 LLM 驱动，降级改为沉默 |
-| 2 | LLM 延迟体验策略 | 混合：Recall 后台预计算，Recap 用户触发 | Recall 嵌入打开笔记的行为流可预计算；Recap 是主动操作，接受短暂 loading |
+| 1 | 确定性提醒（断链/草稿等）作为 Recap 内容 | 不引入 | 这些是维护任务，制造 obligation，违反 North Star；Recap insight 保持 LLM 驱动。DEC-019 只允许 explanation-only 的本地 scope/source 定向，不把规则结果变成 Recap 内容 |
+| 2 | LLM 延迟体验策略 | **Superseded by DEC-017/DEC-018**：Recap 默认有界后台准备，只有高质量新洞察轻提示，点击即得 | 正式验证和用户决策确认“有价值的 Recap 不应等待”，但准备完成本身不等于值得打扰 |
 | 3 | "Not reviewed recently" 上下文行动 | 移除 | 制造 obligation，违反"安静且可信"；上下文行动区只允许发现类提示 |
-| 4 | 冷启动（笔记少时 LLM 返回空） | 不专门设计新机制 | 沉默是正确行为；确保 "Ready Nothing Found" 文案传递"继续写，PA 会在合适时候出现" |
+| 4 | 冷启动（笔记少时 LLM 返回空） | **Superseded by DEC-019**：后台仍沉默；主动打开 Recap 时显示诚实的本地范围状态与来源入口 | 不制造洞察，但避免用户主动点击后完全落空 |
 | 5 | 卡片种类数量 | 保留 5 种 | 先实现，dogfooding 后按实际效果裁减 |
 | 6 | 双区只在 B-class 时显示 | 不接受，A/B-class 均可显示 | 即使有 Recap，用户也应能看到"还有相关笔记可探索" |
 | 7 | B（Recall）先于 A（Recap）执行 | 不接受，A+B 并行 | 并行整体交付更快 |

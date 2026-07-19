@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-07-12
+Updated: 2026-07-18
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Linear、Claude/Codex Memory 或其他外部工具只能提供输入和镜像；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -23,6 +23,10 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 | DEC-004 | Quiet Recall 候选来自整个 vault，使用打开笔记、保存后自然间隙与快捷键等低打扰触发 | 回忆自己的内容，不制造待处理队列 | [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | Dogfood 证明触发负担高于返回价值 |
 | DEC-005 | Memory 默认自动提取，并以可见、可纠正、可撤销和 effect/risk 边界补偿信任 | 不采用逐条 clickworker 确认；高后果动作仍需披露或授权 | [Decision Record](./decisions/dec-005-memory-governance.md), [Memory Control Center](./specs/pa-memory-control-center-product-spec.md) | 真实安全事件或用户研究否定当前治理模型 |
 | DEC-009 | Pagelet 保持安静、可忽略的 Pet/Bubble/Review delivery 模型 | 不把独立 AI 功能按钮和队列重新堆回 surface | [Pagelet Product Design](./pagelet-product-design.md) | 当前 delivery 无法满足真实 Capture/Recall 需求 |
+| DEC-017 | Scope Recap 默认进行有界后台准备 | 在 provider 配置并通过首次 `run / adjust / cancel` 明确授权后台读取后提前准备高意图 scope，使用户点击即得；用户可关闭，且不得持续 whole-vault 总结或自动写入 | [Decision Record](./decisions/dec-017-default-background-recap-preparation.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 成本、资源、隐私或低价值 dogfood 信号证明默认开启负担更高 |
+| DEC-018 | Scope Recap 仅在高价值时主动轻提示 | 新的、fresh、当前 scope 相关且至少有两篇来源支撑的具体洞察才触发一次 Pet nudge；泛化摘要、重复/失败/低质量结果保持静默，其他提示类型不随之默认开启 | [Decision Record](./decisions/dec-018-quality-gated-scope-recap-hints.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 提示干扰高于价值、质量门长期不触发或统一提示策略证明更优 |
+| DEC-019 | Scope Recap 失败时采用分层诚实降级 | 后台失败/空/低质量结果不制造 ready 或 nudge，也不覆盖仍有效 artifact；主动打开时优先显示有效旧洞察，否则即时显示不冒充 insight 的本地范围方向与重试 | [Decision Record](./decisions/dec-019-honest-layered-recap-fallback.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 本地概览被误解为洞察、没有定向价值或 artifact freshness 产生误报 |
+| DEC-020 | Quiet Recall 对最多 5 个候选逐条独立 AI 评估 | 每个候选独立过 why-now 质量门，最多一次语言重试，单轮最多 10 次实际调用；小时/日额度由 SDD 按实际调用固化，未评估/失败候选不以模板补位 | [Decision Record](./decisions/dec-020-independent-quiet-recall-evaluation.md), [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | 真实成本/延迟频繁阻断高价值 Recall，或 batch 在质量与失败隔离上达到同等结果 |
 
 ## Active Architecture Decisions
 
