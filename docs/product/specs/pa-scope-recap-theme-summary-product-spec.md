@@ -11,9 +11,9 @@ Authority: Scope Recap 及其 B-108 dogfood follow-up 的用户行为、Quiet Re
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Delivery status | Validated: B-108 runtime, automated/deploy gates, bounded unlocked desktop/iPhone 15 UI evidence, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover routing/presentation/Qwen semantics, optional Scope Recap real-provider token smoke, and the correctly prepared user-owned 3-Second Value Test are complete. No release claim |
+| Delivery status | Shipped to BRAT `2.9.0-beta.2` prerelease: B-108 runtime, automated/deploy gates, desktop/iPhone BRAT smoke, physical interaction, real Obsidian Review/Discover semantics, Scope Recap provider smoke and the correctly prepared user-owned 3-Second Value Test are complete. Stable release remains unshipped |
 | Related decisions | [DEC-018 — quality-gated proactive hints](../decisions/dec-018-quality-gated-scope-recap-hints.md), [DEC-019 — honest layered failure fallback](../decisions/dec-019-honest-layered-recap-fallback.md), [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md) |
-| Active package | [B-108 Pagelet dogfood follow-up](../../development/active/pagelet-b108-dogfood-followup/README.md) |
+| Archived delivery package | [B-108 Pagelet dogfood follow-up](../../archive/2026/pagelet-b108-dogfood-followup/README.md) |
 | Feature family | Scope Recap / Theme Summary / Derived map |
 | Current B-108 surfaces | Pagelet Bubble, Pagelet Panel, Pagelet Tab |
 | Broader/future integrations | Weekly Review, saved scopes, Markdown export targets, and broader Chat use; none is a B-108 completion claim |
@@ -29,8 +29,8 @@ Obsidian Review/Discover downstream routing/presentation and user-operated
 desktop/iPhone physical long-press pass. The correctly prepared user-owned 3-Second Value Test also passed: an honest statement of the test vault's limited evidence increased trust and future-open intent. The
 provider-backed Review/Discover semantic smoke and the separate optional Scope
 Recap real-provider token smoke passed after explicit bounded data-transfer and
-cost authorization. None of these
-are shipped-runtime claims. Recap remains
+cost authorization. These behaviors are shipped through the `2.9.0-beta.2`
+BRAT prerelease, not the stable Obsidian community channel. Recap remains
 derived, not source truth.
 
 The product definition:

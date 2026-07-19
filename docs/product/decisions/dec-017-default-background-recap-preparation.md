@@ -2,7 +2,7 @@
 
 Decision ID: DEC-017
 Status: Accepted
-Updated: 2026-07-18
+Updated: 2026-07-19
 Authority: 用户于 2026-07-18 在 Pagelet v2.9 正式验证后的逐项产品讨论中选择方案 C
 Work item: B-108
 
@@ -86,6 +86,6 @@ Recap 的有界后台准备默认开启。被动 Notice 或仅仅配置 provider
 - Product Spec: [PA Scope Recap And Theme Summary](../specs/pa-scope-recap-theme-summary-product-spec.md)
 - Follow-up decisions: [DEC-018](./dec-018-quality-gated-scope-recap-hints.md), [DEC-019](./dec-019-honest-layered-recap-fallback.md)
 - Product design: [Pagelet Product Design](../pagelet-product-design.md)
-- Validation source: [Pagelet v2.9 validation handoff](../../development/handoff-pagelet-v29-validation.md)
-- Active package: [B-108](../../development/active/pagelet-b108-dogfood-followup/README.md)
+- Validation source: [Pagelet v2.9 validation handoff](../../archive/2026/pagelet-b108-dogfood-followup/handoff-pagelet-v29-validation.md)
+- Archived package: [B-108](../../archive/2026/pagelet-b108-dogfood-followup/README.md)
 - Deferred original dogfood scope: [B-116](../../backlog.md#已延期的产品与工程工作)

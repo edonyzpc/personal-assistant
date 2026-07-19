@@ -1,20 +1,21 @@
 # Pagelet B-108 Dogfood Follow-up Development Tracker
 
-Document status: Current
-Delivery status: Validated
+Document status: Archived
+Delivery status: Closed
 Updated: 2026-07-19
 Work item: B-108
 Authority: 本 track 的唯一执行状态、finding lifecycle、验证证据与 closeout readiness。
 Product spec: [Scope Recap And Theme Summary Product Spec](../../../product/specs/pa-scope-recap-theme-summary-product-spec.md)
 Plan: [Delivery Plan](./plan.md)
 SDD: [Approved Software Design](./sdd.md)
+Closeout: [Final Closeout](./closeout.md)
 
 ## Current Snapshot
 
-- Current phase: B-108 implementation、completion audit/fix、自动化与 local/iCloud deploy、桌面/iPhone 物理交互、真实 Qwen semantics/cost 以及用户主导的正式 3-Second Value Test 均完成。首次 CTA-only 样本保留为通用 `intentionally-quiet` 产品反馈，但不计 prepared Recap 验收；正确前置条件下的第二次测试已通过。
-- Next action: 验证证据已收口；等待用户另行授权 Git commit、closeout/archive 或 release，不把 `Validated` 等同于已发布。
+- Current phase: B-108 implementation、completion audit/fix、自动化与 local/iCloud deploy、桌面/iPhone 物理交互、真实 Qwen semantics/cost、用户主导的正式 3-Second Value Test、`2.9.0-beta.2` prerelease 发布及桌面/iPhone BRAT 安装烟测均完成。首次 CTA-only 样本保留为通用 `intentionally-quiet` 产品反馈，但不计 prepared Recap 验收；正确前置条件下的第二次测试已通过。
+- Next action: B-108 已 Closed/Archived；stable release 仍需独立授权，后续真实 dogfood 只按 B-116 的启动条件另开工作。
 - Blocker / decision needed: 无验证 blocker，无新的 B-108 产品决策。普通 Pet CTA-only 状态是否也应提供本地价值方向属于未来议题，不阻塞本 track。
-- Last verified behavior: 当前树通过 15 focused suites / 807 tests、Scope compatibility focused gate 4 suites / 348 tests、Scope adapter suite 192 tests、最终授权/设置 gate 4 suites / 323 tests，以及 160 full suites / 3165 tests；lint、TypeScript、build、docs、whitespace、community DOM scan、local/iCloud deploy 均通过，两处四项 runtime assets 都与 `dist` byte-match。独立复核确认同会话 `Cancel → Settings re-enable` 只恢复一次 disclosure eligibility，Run 前零 provider call，Run/Adjust/Cancel 三条后续路径相互隔离。用户随后在正式 disclosure 中亲自选择 `Run`，后台以 12 个 bounded sources 成功生成 fresh artifact（995 input + 639 output），Pet 在点击前显示 `insights ready`；正式三秒测试中，用户认为 Recap 有意义，其对测试 vault 局限的诚实判断建立了信任，并愿意以后继续打开观察新的发现和长期理解。点击后 `lastAttempt` 的时间、snapshot 与成本保持不变，证明没有重复 provider call。
+- Last verified behavior: 当前树通过 15 focused suites / 807 tests、Scope compatibility focused gate 4 suites / 348 tests、Scope adapter suite 192 tests、最终授权/设置 gate 4 suites / 323 tests，以及 160 full suites / 3165 tests；lint、TypeScript、build、docs、whitespace、community DOM scan、local/iCloud deploy 均通过。用户在正式 disclosure 中亲自选择 `Run` 后，后台以 12 个 bounded sources 成功生成 fresh artifact（995 input + 639 output），Pet 在点击前显示 `insights ready`；点击没有重复 provider call，Recap 对测试 vault 局限的诚实判断建立了信任。发布 gate 与 GitHub Actions run `29685255023` 通过；GitHub prerelease 资产随后通过桌面和 iPhone BRAT 固定 `2.9.0-beta.2` 安装。两端 `main.js` / `styles.css` 与 release asset 字节一致，manifest 语义一致；桌面 Settings、Chat mount、prepared Recap 与 iPhone 44×44 Pet/实体短点 Bubble 路径通过，fresh errors 均为空。
 
 ## Work
 
@@ -34,6 +35,7 @@ SDD: [Approved Software Design](./sdd.md)
 | T-11 | B-108/REQ-22 / B-108/AC-19 | AI provenance gate, default one-card Bubble, qualified stack and diagnostics | [x] | Only `ai` + evaluation fingerprint may enter Recall; accepted IDs win dedupe and cannot re-enter local fallback; mixed accepted/rejected regressions plus single-card/stack, diagnostics, cost attribution and no-queue tests pass |
 | T-12 | B-108/AC-02, B-108/AC-07, B-108/AC-09, B-108/AC-12, B-108/AC-19 | Reconcile v2.9 context action, long-press, font and card presentation with current contracts | [x] | Context action coverage, direct production PetView Capture/Review/Discover callback routing, cross-leaf timer/menu teardown, desktop renderer/typography/theme/hover/523ms menu, iPhone 15 short-click/44×44/Bubble/synthetic menu, provider-free real Obsidian Review/Discover route-and-render evidence, and user-reported desktop/iPhone physical long-press pass |
 | T-13 | All B-108 requirements and ACs | Focused tests, independent review lanes, local validation gate, `make deploy`, Obsidian formal smoke | [x] | Completion-audit findings fixed; current-tree deploy/tests, deterministic core runtime smoke, authorization/settings real-UI smoke, local-clue and Review/Discover real-renderer fixtures, real Qwen semantics, desktop/iPhone evidence and physical long-press pass. Correctly prepared Recap opened with zero user wait and passed the user-owned 3-Second Value Test |
+| T-14 | B-108 delivery | Publish and verify `2.9.0-beta.2` through the BRAT prerelease channel | [x] | Local release gate and GitHub Actions passed; prerelease assets verified; desktop and iPhone BRAT installs are pinned to beta.2 and load runtime version `2.9.0-beta.2` |
 
 Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancelled`。
 
@@ -94,6 +96,9 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | 2026-07-19 | 3-Second Value Test attempt 1 | User-authored fresh note + physical Pet click + persisted-state/runtime trace | Inconclusive for B-108; user-perception fail | User saw only `Find related old notes` and would perhaps click it because no substantive content was visible. Persisted state was `declined-v1`, Recap preparation off, generic hints off, Recall Bubble off and quiet state already acknowledged; this exactly selects an empty-body `intentionally-quiet` Bubble. The sample is retained as product feedback, but a user-authorized fresh prepared artifact must exist before the acceptance rerun. |
 | 2026-07-19 | Same-session reauthorization regression | Orchestrator/settings/modal focused gate; TypeScript; full local/iCloud deploy; independent review | Passed | The exact `Cancel → Settings re-enable` sequence reopens disclosure once; Run invokes once, Adjust/Cancel invoke zero times. Four suites passed 323/323 tests; full local/iCloud deploy each passed 160/160 suites and 3165/3165 tests with lint/build; all four assets in both destinations byte-match `dist`; independent review found no P0-P2 issue. |
 | 2026-07-19 | 3-Second Value Test attempt 2 | User-authorized prepared Recap + persisted diagnostics + Pet ready state + physical click | Passed | Before click, authorization was `authorized-v1`, preparation on, a fresh 12-source background attempt succeeded at 995 input + 639 output tokens, and Pet exposed `insights ready`; after click the same attempt timestamp/snapshot/cost remained unchanged, proving zero wait and zero duplicate foreground call. User saw a meaningful Recap whose honest recognition of the test vault's limited real-world value increased trust, and said they would open it again to see future discoveries and deeper understanding. |
+| 2026-07-19 | BRAT prerelease publication | `make release-dry-run VERSION=2.9.0-beta.2`; `make release`; `make publish`; GitHub Actions run `29685255023` | Passed | Full release gate passed with 160 suites / 3165 tests, docs/lint/build/bundle audit and signed release metadata. GitHub Release `2.9.0-beta.2` is a prerelease with LICENSE, main.js, manifest.json, NOTICE, styles.css and THIRD_PARTY_NOTICES.md; beta release commit/tag remain isolated on `beta/2.9.0-beta.2`. Stable release was not created. |
+| 2026-07-19 | Desktop BRAT smoke | BRAT 2.2.0 fixed-version install from GitHub prerelease; plugin reload; Settings/Chat/Pagelet | Passed | BRAT persisted `edonyzpc/personal-assistant` at `2.9.0-beta.2`; runtime manifest loaded beta.2. Personal Assistant Settings and independent Recap controls opened, Chat mounted with an empty composer and no provider call, and Pagelet displayed/opened the prepared source-backed Recap without a duplicate call. `dev:errors` reported no captured errors. Release `main.js`/`styles.css` byte-match the installed files; BRAT's compact manifest is semantically identical to the release asset. |
+| 2026-07-19 | iPhone BRAT smoke | iPhone 15 Mirroring + Safari Web Inspector + BRAT 2.2.0 fixed-version install | Passed | BRAT was installed/enabled in the iCloud `test` vault, selected `2.9.0-beta.2 (Prerelease)`, registered the repository and persisted the frozen version. After plugin reload the real WKWebView runtime reported `2.9.0-beta.2`; Inspector measured the Pet at 44×44 and Mirroring short taps closed/reopened the visible `Find related old notes` Bubble. Release `main.js`/`styles.css` byte-match the iCloud files and manifest semantics match; a cleared fresh Console reported no errors. Earlier user-operated physical iPhone long-press remains valid because the published runtime/CSS bytes are identical. |
 
 ## Decision Log
 
@@ -113,5 +118,5 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 - [x] `make deploy` 和 repo-local Obsidian 三秒价值 smoke 已通过；移动端 claim 有真机证据或明确 residual risk。
 - [x] 所有 P0/P1/P2 findings 已关闭或由用户明确延期。
 - [x] 未完成项已进入 Backlog。
-- [ ] `closeout.md` 已记录每份 artifact/handoff/validation evidence 的信息 disposition。
+- [x] `closeout.md` 已记录每份 artifact/handoff/validation evidence 的信息 disposition。
 - [x] Active Registry 与 `docs/archive/2026/pagelet-b108-dogfood-followup/` 更新方案明确。

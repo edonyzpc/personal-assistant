@@ -1,6 +1,6 @@
 # Pagelet B-108 Dogfood Follow-up Delivery Plan
 
-Document status: Approved
+Document status: Archived
 Updated: 2026-07-19
 Work item: B-108
 Authority: 本 track 的交付顺序、依赖、风险、验证策略与 stop point。

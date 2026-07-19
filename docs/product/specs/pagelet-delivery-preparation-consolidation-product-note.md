@@ -184,8 +184,9 @@ separate follow-up directions; they are not unfinished B-108 deltas.
 ## Historical Phase 6 Plan
 
 This delivered phase explains the consolidation provenance. Current behavior and
-status come from the owning Product Spec and B-108 active package, not this plan
-table or an Archive discussion:
+status come from the owning Product Spec and the
+[B-108 archived delivery package](../../archive/2026/pagelet-b108-dogfood-followup/README.md),
+not this plan table or an Archive discussion:
 
 ### Phase 6: Pagelet Delivery Preparation Consolidation
 

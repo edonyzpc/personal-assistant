@@ -2,7 +2,7 @@
 
 Decision ID: DEC-020
 Status: Accepted
-Updated: 2026-07-18
+Updated: 2026-07-19
 Authority: 用户于 2026-07-18 在 Pagelet v2.9 正式验证后的逐项产品讨论中选择方案 A
 Work item: B-108
 
@@ -78,7 +78,7 @@ provider call 只判断一个候选；单个候选的失败、拒绝或语言重
 
 - Product Spec: [PA Quiet Recall And Insight Timing](../specs/pa-quiet-recall-insight-timing-product-spec.md)
 - Bubble contract: [Pagelet Bubble Readiness & Recall](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)
-- Product analysis: [Pagelet v2.9 dogfooding analysis](../pagelet-v29-dogfooding-analysis.md)
-- Validation source: [Pagelet v2.9 validation handoff](../../development/handoff-pagelet-v29-validation.md)
-- Active package: [B-108](../../development/active/pagelet-b108-dogfood-followup/README.md)
+- Product analysis: [Pagelet v2.9 dogfooding analysis](../../archive/2026/pagelet-b108-dogfood-followup/pagelet-v29-dogfooding-analysis.md)
+- Validation source: [Pagelet v2.9 validation handoff](../../archive/2026/pagelet-b108-dogfood-followup/handoff-pagelet-v29-validation.md)
+- Archived package: [B-108](../../archive/2026/pagelet-b108-dogfood-followup/README.md)
 - Deferred original dogfood scope: [B-116](../../backlog.md#已延期的产品与工程工作)

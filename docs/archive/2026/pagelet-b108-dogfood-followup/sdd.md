@@ -1,6 +1,6 @@
 # Pagelet B-108 Dogfood Follow-up Software Design Document
 
-Document status: Approved
+Document status: Archived
 Updated: 2026-07-19
 Work item: B-108
 Authority: 本 track 的 source-verified implementation design、兼容性、成本/隐私风险、回滚与 test matrix。

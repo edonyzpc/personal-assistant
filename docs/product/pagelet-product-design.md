@@ -13,7 +13,7 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime validated; automated/deploy gates, bounded unlocked desktop/iPhone 15 evidence, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover routing/presentation/Qwen semantics, Scope Recap real-provider token smoke, and the correctly prepared user-owned 3-Second Value Test pass. Release remains separate and pending |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; automated/deploy gates, desktop/iPhone BRAT smoke, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover semantics, Scope Recap provider smoke and the correctly prepared user-owned 3-Second Value Test pass. Stable release remains separate and pending |
 | Last revised | 2026-07-19 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |

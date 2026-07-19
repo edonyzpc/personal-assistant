@@ -1,5 +1,10 @@
 # Pagelet v2.9.0-beta.1 Dogfooding 问题分析与行动方案
 
+Document status: Archived
+Delivery status: Closed
+Updated: 2026-07-19
+Work item: B-108
+
 > 基于 2026-07-17 实际使用测试的系统性分析
 
 ## Status
@@ -12,7 +17,7 @@
 | Trigger | 实际使用发现 7 项体验问题 |
 | Priority at discovery | P0 — 产品核心价值未传达 |
 | Disposition | Evidence/provenance；B-108 已接管当前设计、实现与验证状态 |
-| Current authority | [B-108 active package](../development/active/pagelet-b108-dogfood-followup/README.md) 与其 owning Product Spec / Tracker |
+| Current authority | [Scope Recap Product Spec](../../../product/specs/pa-scope-recap-theme-summary-product-spec.md)；本 [B-108 package](./README.md) 仅保留历史交付证据 |
 
 ---
 
@@ -290,7 +295,7 @@ function mapLlmInsightToItem(
 }
 ```
 
-**降级方案（由 [DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md) 更新）**：LLM 调用失败时仍不展示 Recap delivery，也不回退到 tag/计数规则洞察；后台保持安静并保留仍有效的旧 artifact。只有用户主动打开 Recap 且没有有效 artifact 时，才即时显示不冒充 insight 的本地 scope/source 概览、明确失败状态与重试入口。
+**降级方案（由 [DEC-019](../../../product/decisions/dec-019-honest-layered-recap-fallback.md) 更新）**：LLM 调用失败时仍不展示 Recap delivery，也不回退到 tag/计数规则洞察；后台保持安静并保留仍有效的旧 artifact。只有用户主动打开 Recap 且没有有效 artifact 时，才即时显示不冒充 insight 的本地 scope/source 概览、明确失败状态与重试入口。
 
 **成本控制**：
 - 结构化 digest（title + headings + 首段）比原始内容更紧凑，~200 tokens/篇
@@ -607,7 +612,7 @@ private renderCard(finding: TabCard, section: TabSection): HTMLElement {
 
 **延迟策略**（贯穿 A/B 实现）：
 - Recall（方案 B）：后台预计算——打开笔记后自动触发 embedding 初筛 + LLM 逐条评估，结果缓存，用户点击 Pet 时零等待
-- Recap（方案 A）：按 [DEC-017](./decisions/dec-017-default-background-recap-preparation.md) 默认进行有界后台准备；fresh、source-backed artifact 已存在时，用户点击立即看到实际洞察。按 [DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md)，无有效 artifact 时先即时显示不冒充洞察的本地 scope/source 方向，由用户选择是否重试，不用泛化摘要伪装 ready
+- Recap（方案 A）：按 [DEC-017](../../../product/decisions/dec-017-default-background-recap-preparation.md) 默认进行有界后台准备；fresh、source-backed artifact 已存在时，用户点击立即看到实际洞察。按 [DEC-019](../../../product/decisions/dec-019-honest-layered-recap-fallback.md)，无有效 artifact 时先即时显示不冒充洞察的本地 scope/source 方向，由用户选择是否重试，不用泛化摘要伪装 ready
 
 ---
 

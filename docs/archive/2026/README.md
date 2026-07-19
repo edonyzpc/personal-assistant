@@ -1,7 +1,7 @@
 # 2026 Structured Archive
 
 Document status: Current
-Updated: 2026-07-12
+Updated: 2026-07-19
 Authority: 2026 年按新 Documentation Workflow closeout 的完整 track 与 discovery/decision/governance 终态记录索引。
 
 本页登记按新 Documentation Workflow 完成 closeout 的结构化 package。既有历史文档继续保留在 `docs/archive/` 根目录，不做无收益的机械迁移。
@@ -11,6 +11,7 @@ Authority: 2026 年按新 Documentation Workflow closeout 的完整 track 与 di
 | Feature | Work item | Final status | Closed | Feature Home | Current authority |
 | --- | --- | --- | --- | --- | --- |
 | Agent-Managed Docs Lifecycle | B-115 | Closed | 2026-07-12 | [Feature Home](./agent-managed-docs-lifecycle/README.md) | [GOV-001](../../development/governance/gov-001-agent-managed-project-lifecycle.md) |
+| Pagelet B-108 dogfood follow-up | B-108 | Closed | 2026-07-19 | [Feature Home](./pagelet-b108-dogfood-followup/README.md) | [DEC-017](../../product/decisions/dec-017-default-background-recap-preparation.md) through [DEC-020](../../product/decisions/dec-020-independent-quiet-recall-evaluation.md); [Scope Recap Spec](../../product/specs/pa-scope-recap-theme-summary-product-spec.md) |
 
 ## Rejected / Cancelled Discovery And Decisions
 

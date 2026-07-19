@@ -1,5 +1,11 @@
 # Handoff: Pagelet v2.9 LLM Integration — Validation Tasks
 
+Document status: Archived
+Delivery status: Closed
+Updated: 2026-07-19
+Work item: B-108
+Authority: B-108 formal validation、physical evidence 与 provider/BRAT smoke 的历史记录；当前行为以 Product Spec 为准。
+
 > 本文档记录 2026-07-17 实现会话中未完成的测试验证工作，交接给后续 Codex 执行。
 
 > [!info] 2026-07-18 formal validation update
@@ -16,7 +22,7 @@
 > 截至 2026-07-18，desktop gesture/theme/font 与 mobile interaction matrix
 > 因 Mac 锁屏和无真机证据仍未完成；该状态已由下方 2026-07-19 update supersede。
 > 当前状态与 residual risk 以
-> [B-108 Tracker](./active/pagelet-b108-dogfood-followup/tracker.md) 为准。
+> [B-108 Tracker](./tracker.md) 为准。
 
 > [!info] 2026-07-19 physical validation update
 > 桌面 Obsidian 已真实验证 Pet 短点打开/关闭 Bubble、16px/24px 字号、
@@ -322,8 +328,9 @@ prepared Recap 的通过或失败证据。
 Test 主观判断为 pass → 可以继续下一步
 （prompt 调优或发布 beta.2）。Review/Discover provider 语义 smoke 与独立的 Scope Recap
 真实 provider token/cost smoke、桌面/iPhone 实体长按与正确前置条件下的用户主观复测
-均已执行通过。B-108 当前状态为 `Validated`；commit、closeout/archive 与 release 仍需
-各自的明确授权。
+均已执行通过。随后用户明确授权模块化 commit、closeout/archive 与 BRAT prerelease；
+`2.9.0-beta.2` 已通过 release gate、GitHub Actions 及桌面/iPhone BRAT 固定版本烟测。
+B-108 当前状态为 `Closed`，本文件随完整 package 归档；stable release 仍未授权、未发布。
 
 如果正确前置条件下的 3-Second Value Test 判断为 fail → 记录具体原因。实际洞察
 泛泛时优先调整 prompt（`src/pa/pagelet-prompts.ts`）；CTA-only、错误状态或无 artifact

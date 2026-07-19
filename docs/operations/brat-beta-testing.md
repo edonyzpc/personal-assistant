@@ -36,7 +36,8 @@ Use this sequence for a feature train:
 | Current stable | `2.8.4` | Must already be tagged before release scripts can run. |
 | Development branch | `feature/pagelet-recall` | Owns feature commits and tests. |
 | First BRAT beta | `2.9.0-beta.1` | Cut a temporary `beta/2.9.0-beta.1` packaging branch from the development branch. |
-| Next BRAT beta | `2.9.0-beta.2` | Use when beta feedback needs another build. |
+| Current BRAT beta | `2.9.0-beta.2` | Published prerelease; desktop and iPhone BRAT smoke completed on 2026-07-19. |
+| Next BRAT beta | `2.9.0-beta.3` | Use only when beta feedback needs another build. |
 | Stable graduation | `2.9.0` | Cut from `master` after the approved development branch lands through PR. |
 
 BRAT users who installed `2.9.0-beta.N` should use BRAT to update to the latest
@@ -185,13 +186,13 @@ branch, then cut a fresh beta packaging branch from it:
 
 ```bash
 git switch feature/pagelet-recall
-git switch -c beta/2.9.0-beta.2
-make release-dry-run VERSION=2.9.0-beta.2
-make release VERSION=2.9.0-beta.2
-make publish VERSION=2.9.0-beta.2
+git switch -c beta/2.9.0-beta.3
+make release-dry-run VERSION=2.9.0-beta.3
+make release VERSION=2.9.0-beta.3
+make publish VERSION=2.9.0-beta.3
 ```
 
-Then ask testers who froze `2.9.0-beta.1` to switch BRAT to `2.9.0-beta.2`, or
+Then ask testers who froze `2.9.0-beta.2` to switch BRAT to `2.9.0-beta.3`, or
 ask rolling testers to run BRAT update.
 
 ## Graduate to Stable
