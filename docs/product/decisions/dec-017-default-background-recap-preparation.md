@@ -88,4 +88,4 @@ Recap 的有界后台准备默认开启。被动 Notice 或仅仅配置 provider
 - Product design: [Pagelet Product Design](../pagelet-product-design.md)
 - Validation source: [Pagelet v2.9 validation handoff](../../development/handoff-pagelet-v29-validation.md)
 - Active package: [B-108](../../development/active/pagelet-b108-dogfood-followup/README.md)
-- Deferred original dogfood scope: [B-115](../../backlog.md#已延期的产品与工程工作)
+- Deferred original dogfood scope: [B-116](../../backlog.md#已延期的产品与工程工作)

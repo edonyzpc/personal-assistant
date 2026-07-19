@@ -81,4 +81,4 @@ provider call 只判断一个候选；单个候选的失败、拒绝或语言重
 - Product analysis: [Pagelet v2.9 dogfooding analysis](../pagelet-v29-dogfooding-analysis.md)
 - Validation source: [Pagelet v2.9 validation handoff](../../development/handoff-pagelet-v29-validation.md)
 - Active package: [B-108](../../development/active/pagelet-b108-dogfood-followup/README.md)
-- Deferred original dogfood scope: [B-115](../../backlog.md#已延期的产品与工程工作)
+- Deferred original dogfood scope: [B-116](../../backlog.md#已延期的产品与工程工作)

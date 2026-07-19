@@ -16,7 +16,7 @@ Tracker: [Development Tracker](./tracker.md)
 - Delivery class: L3，涉及后台 provider 读取、隐私授权、持久设置/计数迁移、共享 Pagelet runtime、Bubble/Tab UI 与移动端交互验证。
 - Current phase: B-108 已完成 runtime、completion audit/fix、自动化与 local/iCloud deploy/byte-match、桌面/iPhone 物理交互、真实 Qwen semantics/cost 及正式 3-Second Value Test。首次 CTA-only 样本被正确归为通用 `intentionally-quiet` 产品反馈；随后修复同会话 Cancel 后重新开启却不再弹 disclosure 的问题。用户亲自选择 `Run` 后，12-source fresh Recap 在点击前生成成功（995 input + 639 output），Pet 显示 `insights ready`；点击后没有重复 provider call。用户认为 Recap 有意义，其对测试 vault 局限的诚实判断建立了信任，并愿意后续继续打开观察新的发现与深入理解。当前状态为 `Validated`，不代表已 commit、归档或发布。
 - Target release / no release commitment: v2.9 dogfood follow-up；本 track 不承诺发布版本或发布时间。
-- Explicit non-goals: 不启用 generic preload、generic proactive hints、Pattern 或 Quiet Recall hint 的其他默认值；不做 whole-vault/daily/weekly 自动 Recap；不自动写 Markdown、Memory、task 或 Review Queue；不扩展 double-Ctrl、Chat Quick Command、frontmatter Sync、Weekly Review、`replace_selection` 或 Operations Agent 边界；原 dogfood 延后范围已转入 [B-115](../../../backlog.md#已延期的产品与工程工作)，写操作仍由 [B-101 / T-003](../../../backlog.md) 治理；不授权 commit、push、tag、publish 或 release。
+- Explicit non-goals: 不启用 generic preload、generic proactive hints、Pattern 或 Quiet Recall hint 的其他默认值；不做 whole-vault/daily/weekly 自动 Recap；不自动写 Markdown、Memory、task 或 Review Queue；不扩展 double-Ctrl、Chat Quick Command、frontmatter Sync、Weekly Review、`replace_selection` 或 Operations Agent 边界；原 dogfood 延后范围已转入 [B-116](../../../backlog.md#已延期的产品与工程工作)，写操作仍由 [B-101 / T-003](../../../backlog.md) 治理。2026-07-19 用户另行授权 B-108 的模块化提交、closeout/archive 与 `2.9.0-beta.2` BRAT prerelease；stable release 仍未授权。
 
 ## Authority And Evidence
 
