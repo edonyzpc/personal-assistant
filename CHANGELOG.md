@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.0-beta.1...2.9.0-beta.2) (2026-07-19)
+
+### Features
+- pagelet: add LLM-based 'why now' reasoning to Quiet Recall
+- pagelet: add LLM-driven insights to Scope Recap
+- pagelet: add context action zone to Bubble
+- pagelet: expand Pet long-press to 3-item menu
+- pagelet: add 5 card styles and hover micro-interactions to Detail View
+- pagelet: wire LLM callbacks into production Recap and Recall flows
+- pagelet: complete B-108 dogfood runtime flow
+
+### Fix
+- pagelet: align font-sizes with Obsidian system CSS variables
+- pagelet: address review findings from code review
+- remove unused imports flagged by lint
+- test: use relative timestamp in memory governance bootstrap test
+
+### Docs
+- product: add v2.9 dogfooding analysis and action plan
+- dev: add validation handoff for Pagelet v2.9 LLM integration
+- register new docs in product and development indexes
+- pagelet: record B-108 dogfood follow-up design and lifecycle
+- pagelet: align B-108 deferred scope and beta authorization
+
+### Tests
+- pagelet: add B-108 dogfood follow-up coverage
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
