@@ -120,6 +120,26 @@ function assertPrereleaseBranch(targetVersion) {
   }
 }
 
+function assertPrereleaseSourceMatchesMaster(targetVersion) {
+  if (semver.prerelease(targetVersion) === null) return;
+
+  let masterCommit;
+  try {
+    masterCommit = capture("git", ["rev-parse", "--verify", "refs/heads/master^{commit}"]);
+  } catch {
+    throw new Error(
+      `Prerelease version ${targetVersion} requires a local master branch as its sole source, but refs/heads/master does not exist.`,
+    );
+  }
+
+  const headCommit = capture("git", ["rev-parse", "HEAD"]);
+  if (headCommit !== masterCommit) {
+    throw new Error(
+      `Prerelease version ${targetVersion} requires beta/${targetVersion} HEAD to exactly match local master before release or dry-run; HEAD is ${headCommit}, local master is ${masterCommit}. Do not add code or documentation commits on the beta branch.`,
+    );
+  }
+}
+
 function validateVersion(targetVersion, currentVersion) {
   if (!targetVersion) {
     throw new Error("A new semantic version is required.");
@@ -206,6 +226,7 @@ async function main() {
 
   validateVersion(targetVersion, currentVersion);
   assertPrereleaseBranch(targetVersion);
+  assertPrereleaseSourceMatchesMaster(targetVersion);
   assertTagAvailable(targetVersion);
   assertCleanWorktree();
   assertCurrentVersionTagged(currentVersion);

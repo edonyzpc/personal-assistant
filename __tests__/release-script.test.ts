@@ -37,8 +37,8 @@ describe("scripts/release.mjs", () => {
         const repo = createReleaseRepo();
         const script = join(process.cwd(), "scripts/release.mjs");
 
-        git(repo, ["switch", "-c", "beta/2.9.0-beta.1"]);
         commit(repo, "feat(pagelet): prepare beta recall");
+        git(repo, ["switch", "-c", "beta/2.9.0-beta.1"]);
 
         const output = execFileSync("node", [
             script,
@@ -50,6 +50,22 @@ describe("scripts/release.mjs", () => {
         expect(output).toContain("Changelog range: 2.8.4..HEAD");
     });
 
+    it("rejects prerelease dry-runs with commits added only to the beta branch", () => {
+        const repo = createReleaseRepo();
+        const script = join(process.cwd(), "scripts/release.mjs");
+
+        commit(repo, "feat(pagelet): prepare beta recall");
+        git(repo, ["switch", "-c", "beta/2.9.0-beta.1"]);
+        commit(repo, "docs(release): beta-only instructions");
+
+        const output = expectReleaseFailure(repo, script, "2.9.0-beta.1");
+
+        expect(output).toContain(
+            "Prerelease version 2.9.0-beta.1 requires beta/2.9.0-beta.1 HEAD to exactly match local master before release or dry-run",
+        );
+        expect(output).toContain("Do not add code or documentation commits on the beta branch.");
+    });
+
     it("checks tagged releases against the previous reachable tag with full history", () => {
         const workflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 
@@ -58,11 +74,38 @@ describe("scripts/release.mjs", () => {
         expect(workflow).toContain('git rev-list --max-parents=0 "${GITHUB_SHA}"');
         expect(workflow).toContain("DOCS_CHECK_BASE: ${{ steps.docs-base.outputs.base }}");
     });
+
+    it("guards prerelease tags against the current origin/master parent", () => {
+        const workflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
+
+        expect(workflow).toContain("Verify prerelease tag source");
+        expect(workflow).toContain('refs/heads/master:refs/remotes/origin/master');
+        expect(workflow).toContain('git rev-parse "${GITHUB_SHA}^{commit}"');
+        expect(workflow).toContain('git rev-parse "${release_commit}^"');
+        expect(workflow).toContain('git rev-parse "origin/master"');
+        expect(workflow).toContain('git merge-base --is-ancestor "${release_parent}" "${master_head}"');
+        expect(workflow).toContain('beta_ref="refs/heads/beta/${GITHUB_REF_NAME}"');
+        expect(workflow).toContain('git diff-tree --no-commit-id --name-only -r "${release_commit}"');
+        expect(workflow).toContain("Prerelease release commit contains non-packaging file");
+        expect(workflow).toContain("Prerelease release commit is missing generated packaging file");
+        expect(workflow).toContain("Verify release metadata version");
+        expect(workflow).toContain('["package.json", "manifest.json", "manifest-beta.json"]');
+        expect(workflow).toContain("Verify built manifest version");
+        expect(workflow).toContain('require("./dist/manifest.json").version');
+    });
+
+    it("does not classify stable build metadata containing a hyphen as prerelease", () => {
+        const workflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
+
+        expect(workflow.match(/version_core="\$\{GITHUB_REF_NAME%%\+\*\}"/g)).toHaveLength(2);
+        expect(workflow).toContain('if [[ "${version_core}" != *-* ]]');
+        expect(workflow).toContain('if [[ "${version_core}" == *-* ]]');
+    });
 });
 
 function createReleaseRepo(): string {
     const repo = mkdtempSync(join(tmpdir(), "pa-release-"));
-    git(repo, ["init", "-b", "main"]);
+    git(repo, ["init", "-b", "master"]);
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test User"]);
     git(repo, ["config", "commit.gpgsign", "false"]);

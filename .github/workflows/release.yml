@@ -18,11 +18,81 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Verify prerelease tag source
+        shell: bash
+        run: |
+          version_core="${GITHUB_REF_NAME%%+*}"
+          if [[ "${version_core}" != *-* ]]; then
+            exit 0
+          fi
+
+          git fetch --no-tags origin "+refs/heads/master:refs/remotes/origin/master"
+          release_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          parent_record="$(git rev-list --parents -n 1 "${release_commit}")"
+          read -r -a commit_and_parents <<< "${parent_record}"
+          if [[ "${#commit_and_parents[@]}" -ne 2 ]]; then
+            echo "::error::Prerelease tag ${GITHUB_REF_NAME} must point to a single-parent packaging release commit."
+            exit 1
+          fi
+
+          release_parent="$(git rev-parse "${release_commit}^")"
+          master_head="$(git rev-parse "origin/master")"
+          if ! git merge-base --is-ancestor "${release_parent}" "${master_head}"; then
+            echo "::error::Prerelease tag ${GITHUB_REF_NAME} has release parent ${release_parent}, which is not in current origin/master history ${master_head}."
+            exit 1
+          fi
+
+          beta_ref="refs/heads/beta/${GITHUB_REF_NAME}"
+          beta_head="$(git ls-remote --heads origin "${beta_ref}" | awk '{print $1}')"
+          if [[ "${beta_head}" != "${release_commit}" ]]; then
+            echo "::error::Prerelease tag ${GITHUB_REF_NAME} must match remote ${beta_ref}; tag commit is ${release_commit}, branch head is ${beta_head:-missing}."
+            exit 1
+          fi
+
+          expected_subject="[release] v${GITHUB_REF_NAME}, check the CHANGELOG.md for details"
+          release_subject="$(git log -1 --format=%s "${release_commit}")"
+          if [[ "${release_subject}" != "${expected_subject}" ]]; then
+            echo "::error::Prerelease tag ${GITHUB_REF_NAME} must point to the generated release commit; found subject: ${release_subject}."
+            exit 1
+          fi
+
+          packaging_files=(package.json package-lock.json manifest.json manifest-beta.json versions.json CHANGELOG.md NOTICE)
+          declare -A seen_packaging_files=()
+          while IFS= read -r changed_file; do
+            case "${changed_file}" in
+              package.json|package-lock.json|manifest.json|manifest-beta.json|versions.json|CHANGELOG.md|NOTICE)
+                seen_packaging_files["${changed_file}"]=1
+                ;;
+              *)
+                echo "::error::Prerelease release commit contains non-packaging file: ${changed_file}."
+                exit 1
+                ;;
+            esac
+          done < <(git diff-tree --no-commit-id --name-only -r "${release_commit}")
+
+          for packaging_file in "${packaging_files[@]}"; do
+            if [[ -z "${seen_packaging_files[${packaging_file}]:-}" ]]; then
+              echo "::error::Prerelease release commit is missing generated packaging file: ${packaging_file}."
+              exit 1
+            fi
+          done
       - name: Use Node.js
         uses: actions/setup-node@v6
         with:
           node-version-file: package.json
           cache: npm
+      - name: Verify release metadata version
+        run: |
+          node -e '
+            const expected = process.env.GITHUB_REF_NAME;
+            for (const file of ["package.json", "manifest.json", "manifest-beta.json"]) {
+              const actual = require(`./${file}`).version;
+              if (actual !== expected) {
+                console.error(`::error::${file} version ${actual} does not match release tag ${expected}.`);
+                process.exit(1);
+              }
+            }
+          '
       - name: Install dependencies
         run: npm ci
       - name: Check third-party notices
@@ -48,6 +118,15 @@ jobs:
         run: npm run lint
       - name: Build
         run: npm run build --if-present
+      - name: Verify built manifest version
+        run: |
+          node -e '
+            const actual = require("./dist/manifest.json").version;
+            if (actual !== process.env.GITHUB_REF_NAME) {
+              console.error(`::error::dist/manifest.json version ${actual} does not match release tag ${process.env.GITHUB_REF_NAME}.`);
+              process.exit(1);
+            }
+          '
       - name: Audit bundle
         run: npm run audit:bundle
       - name: Stage release assets
@@ -74,7 +153,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           release_flags=()
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+          version_core="${GITHUB_REF_NAME%%+*}"
+          if [[ "${version_core}" == *-* ]]; then
             release_flags+=(--prerelease)
           fi
 

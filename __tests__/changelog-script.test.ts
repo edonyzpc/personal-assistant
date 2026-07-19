@@ -42,14 +42,17 @@ describe("scripts/changelog.mjs", () => {
         expect(output).toContain("pagelet: prepare beta recall");
     });
 
-    it("uses the previous prerelease tag when generating the next beta changelog", () => {
+    it("uses the previous prerelease tag for a sibling beta cut from updated master", () => {
         const repo = createGitRepo();
         const script = join(process.cwd(), "scripts/changelog.mjs");
 
         commit(repo, "seed");
         git(repo, ["tag", "2.8.4"]);
         commit(repo, "feat(pagelet): prepare beta recall");
+        git(repo, ["switch", "-c", "beta/2.9.0-beta.1"]);
+        commit(repo, "[release] v2.9.0-beta.1, check the CHANGELOG.md for details");
         git(repo, ["tag", "2.9.0-beta.1"]);
+        git(repo, ["switch", "master"]);
         commit(repo, "fix(chat): repair beta install smoke");
 
         const output = execFileSync("node", [
@@ -66,7 +69,7 @@ describe("scripts/changelog.mjs", () => {
 
 function createGitRepo(): string {
     const repo = mkdtempSync(join(tmpdir(), "pa-changelog-"));
-    git(repo, ["init", "-b", "main"]);
+    git(repo, ["init", "-b", "master"]);
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test User"]);
     git(repo, ["config", "commit.gpgsign", "false"]);
