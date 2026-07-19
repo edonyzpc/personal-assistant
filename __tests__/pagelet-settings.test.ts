@@ -179,6 +179,12 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS.maxInputTokens).toBe(8000);      // D018
         expect(PAGELET_DEFAULTS.maxOutputTokens).toBe(2000);     // D018
         expect(PAGELET_DEFAULTS.preloadEnabled).toBe(false);     // background prep is explicit opt-in
+        expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(false);
+        expect(PAGELET_DEFAULTS.scopeRecapBackgroundAuthorization).toBe("pending");
+        expect(PAGELET_DEFAULTS.scopeRecapHighValueHints).toBe(true);
+        expect(PAGELET_DEFAULTS.scopeRecapLastAttempt).toBeNull();
+        expect(PAGELET_DEFAULTS.quietRecallLastDiagnostics).toBeNull();
+        expect(PAGELET_DEFAULTS.quietRecallLastAcceptedCount).toBe(0);
     });
 
     it("is frozen to prevent at-runtime mutation", () => {
@@ -244,6 +250,43 @@ describe("mergePageletSettings", () => {
             proactiveHints: false,
             proactiveHintsCooldown: 30,
             preloadEnabled: true,
+            scopeRecapPreparationEnabled: true,
+            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
+            scopeRecapHighValueHints: false,
+            scopeRecapNudgeSuppressions: [],
+            scopeRecapLastAttempt: {
+                attemptedAt: "2026-07-18T08:30:00.000Z",
+                outcome: "success",
+                scope: { kind: "folder" },
+                sourceSnapshotId: "scope-snapshot",
+                dataBoundarySnapshotId: "boundary-snapshot",
+                providerCallMade: true,
+                includedSourceCount: 2,
+                cost: {
+                    inputTokens: 100,
+                    outputTokens: 20,
+                    estimatedCost: 0.001,
+                    currency: "USD",
+                    pricingKnown: true,
+                },
+            },
+            quietRecallLastDiagnostics: {
+                roundId: "round-1",
+                startedAt: Date.parse("2026-07-18T08:31:00.000Z"),
+                contextFingerprint: "context-fingerprint",
+                candidateCount: 1,
+                evaluatedCandidateCount: 1,
+                providerCalls: 1,
+                initialCalls: 1,
+                languageRetryCalls: 0,
+                cacheHits: 0,
+                inFlightHits: 0,
+                estimatedCost: 0.002,
+                pricingKnown: true,
+                attempts: [],
+            },
+            quietRecallLastAcceptedCount: 1,
             preloadInterval: 30,
             preloadPerHourCap: 2,
             preloadPerDayCap: 20,
@@ -270,6 +313,283 @@ describe("mergePageletSettings", () => {
         expect(merged.maintenanceScanSuggested).toBe(false);
         expect(merged.quickCaptureExplained).toBe(false);
         expect(merged.quietRecallExplained).toBe(false);
+    });
+
+    it.each([
+        [
+            "malformed authorization tuple",
+            {
+                scopeRecapBackgroundAuthorization: "authorized-v0",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: 42,
+            },
+            {
+                scopeRecapBackgroundAuthorization: "pending",
+                scopeRecapPreparationEnabled: false,
+                scopeRecapAuthorizationContextId: null,
+            },
+        ],
+        [
+            "pending authorization with stale context",
+            {
+                scopeRecapBackgroundAuthorization: "pending",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: "stale-context",
+            },
+            {
+                scopeRecapBackgroundAuthorization: "pending",
+                scopeRecapPreparationEnabled: false,
+                scopeRecapAuthorizationContextId: null,
+            },
+        ],
+        [
+            "declined authorization with stale context",
+            {
+                scopeRecapBackgroundAuthorization: "declined-v1",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: "stale-context",
+            },
+            {
+                scopeRecapBackgroundAuthorization: "declined-v1",
+                scopeRecapPreparationEnabled: false,
+                scopeRecapAuthorizationContextId: null,
+            },
+        ],
+        [
+            "authorized state without a usable context",
+            {
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: "   ",
+            },
+            {
+                scopeRecapBackgroundAuthorization: "pending",
+                scopeRecapPreparationEnabled: false,
+                scopeRecapAuthorizationContextId: null,
+            },
+        ],
+        [
+            "authorized state with a normalized context",
+            {
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: "  provider-model-policy-v1  ",
+            },
+            {
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: "provider-model-policy-v1",
+            },
+        ],
+    ])("normalizes the Recap authorization tuple: %s", (_label, input, expected) => {
+        expect(mergePageletSettings(input)).toMatchObject(expected);
+    });
+
+    it("normalizes, deduplicates, and caps the persisted Recap suppression ledger", () => {
+        const validEntries = Array.from({ length: 205 }, (_, index) => ({
+            fingerprint: `recap-${index}`,
+            shownAt: index + 0.9,
+        }));
+        const merged = mergePageletSettings({
+            scopeRecapNudgeSuppressions: [
+                null,
+                { fingerprint: "", shownAt: 1 },
+                { fingerprint: "x".repeat(161), shownAt: 1 },
+                { fingerprint: "not-a-number", shownAt: "1" },
+                ...validEntries,
+                {
+                    fingerprint: "  recap-100  ",
+                    shownAt: 999.9,
+                    snoozedUntil: 1234.9,
+                },
+            ],
+        });
+        const ledger = merged.scopeRecapNudgeSuppressions;
+
+        expect(ledger).toHaveLength(200);
+        expect(new Set(ledger.map((entry) => entry.fingerprint)).size).toBe(200);
+        expect(ledger.at(-1)).toEqual({
+            fingerprint: "recap-100",
+            shownAt: 999,
+            snoozedUntil: 1234,
+        });
+        expect(ledger).not.toContainEqual(expect.objectContaining({ fingerprint: "not-a-number" }));
+    });
+
+    it("persists only bounded, content-free Scope Recap attempt diagnostics", () => {
+        const merged = mergePageletSettings({
+            scopeRecapLastAttempt: {
+                attemptedAt: " 2026-07-18T08:30:00.000Z ",
+                outcome: "success",
+                scope: {
+                    kind: "folder",
+                    label: "Private project title",
+                    paths: ["Projects/Secret.md"],
+                },
+                sourceSnapshotId: " scope-snapshot ",
+                dataBoundarySnapshotId: "boundary-snapshot",
+                providerCallMade: true,
+                includedSourceCount: 2.9,
+                cost: {
+                    inputTokens: 100,
+                    outputTokens: 20,
+                    estimatedCost: 0.001,
+                    currency: "USD",
+                    pricingKnown: true,
+                    prompt: "private note content",
+                },
+                summary: "private generated summary",
+                sourceRefs: [{ path: "Projects/Secret.md" }],
+            },
+        });
+
+        // A malformed required count rejects the whole record instead of
+        // silently persisting a partly trustworthy status object.
+        expect(merged.scopeRecapLastAttempt).toBeNull();
+
+        const valid = mergePageletSettings({
+            scopeRecapLastAttempt: {
+                attemptedAt: " 2026-07-18T08:30:00.000Z ",
+                outcome: "success",
+                scope: {
+                    kind: "folder",
+                    label: "Private project title",
+                    paths: ["Projects/Secret.md"],
+                },
+                sourceSnapshotId: " scope-snapshot ",
+                dataBoundarySnapshotId: "boundary-snapshot",
+                providerCallMade: true,
+                includedSourceCount: 2,
+                cost: {
+                    inputTokens: 100,
+                    outputTokens: 20,
+                    estimatedCost: 0.001,
+                    currency: "USD",
+                    pricingKnown: true,
+                    prompt: "private note content",
+                },
+                summary: "private generated summary",
+                sourceRefs: [{ path: "Projects/Secret.md" }],
+            },
+        }).scopeRecapLastAttempt;
+
+        expect(valid).toEqual({
+            attemptedAt: "2026-07-18T08:30:00.000Z",
+            outcome: "success",
+            scope: { kind: "folder" },
+            sourceSnapshotId: "scope-snapshot",
+            dataBoundarySnapshotId: "boundary-snapshot",
+            providerCallMade: true,
+            includedSourceCount: 2,
+            cost: {
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: "USD",
+                pricingKnown: true,
+            },
+        });
+        expect(JSON.stringify(valid)).not.toContain("private");
+        expect(JSON.stringify(valid)).not.toContain("Secret.md");
+    });
+
+    it("whitelists and bounds persisted Quiet Recall evaluation diagnostics", () => {
+        const attempts = Array.from({ length: 25 }, (_, index) => ({
+            candidateId: `candidate-${index}`,
+            candidateIndex: index,
+            fingerprint: `fingerprint-${index}`,
+            kind: "initial",
+            reserved: true,
+            outcome: "accepted",
+            reason: "not_convincing",
+            candidate: {
+                title: "private title",
+                excerpt: "private note content",
+                sourceRefs: [{ path: "Projects/Secret.md" }],
+            },
+            cost: {
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: "USD",
+                pricingKnown: true,
+                prompt: "private prompt",
+            },
+        }));
+        attempts.splice(1, 0, {
+            ...attempts[0],
+            candidateId: "x".repeat(161),
+        });
+        const diagnostics = mergePageletSettings({
+            quietRecallLastDiagnostics: {
+                roundId: " round-1 ",
+                startedAt: Date.parse("2026-07-18T08:31:00.000Z"),
+                contextFingerprint: "context-fingerprint",
+                candidateCount: Number.MAX_SAFE_INTEGER,
+                evaluatedCandidateCount: 25,
+                providerCalls: 25,
+                initialCalls: 25,
+                languageRetryCalls: 0,
+                cacheHits: 0,
+                inFlightHits: 0,
+                estimatedCost: Number.MAX_VALUE,
+                pricingKnown: true,
+                limiterUsage: {
+                    hourlyUsed: 3,
+                    hourlyCap: 10,
+                    hourlyRemaining: 7,
+                    dailyUsed: 8,
+                    dailyCap: 50,
+                    dailyRemaining: 42,
+                    resetLabel: "private schedule",
+                },
+                blockedReason: "cooldown",
+                attempts,
+                whyNow: "private generated rationale",
+            },
+            quietRecallLastAcceptedCount: Number.MAX_SAFE_INTEGER,
+        });
+
+        expect(diagnostics.quietRecallLastDiagnostics).toMatchObject({
+            roundId: "round-1",
+            candidateCount: 1_000_000,
+            estimatedCost: 1_000_000,
+            blockedReason: "cooldown",
+        });
+        expect(diagnostics.quietRecallLastDiagnostics?.attempts).toHaveLength(20);
+        expect(diagnostics.quietRecallLastDiagnostics?.attempts[0]).toEqual({
+            candidateId: "candidate-0",
+            candidateIndex: 0,
+            fingerprint: "fingerprint-0",
+            kind: "initial",
+            reserved: true,
+            outcome: "accepted",
+            reason: "not_convincing",
+            cost: {
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: "USD",
+                pricingKnown: true,
+            },
+        });
+        expect(diagnostics.quietRecallLastAcceptedCount).toBe(1_000_000);
+        const serialized = JSON.stringify(diagnostics.quietRecallLastDiagnostics);
+        expect(serialized).not.toContain("private");
+        expect(serialized).not.toContain("Secret.md");
+    });
+
+    it("fails closed for malformed persisted diagnostics and counts", () => {
+        for (const malformed of [undefined, null, [], "diagnostics", { roundId: "only-one-field" }]) {
+            expect(mergePageletSettings({ quietRecallLastDiagnostics: malformed })
+                .quietRecallLastDiagnostics).toBeNull();
+            expect(mergePageletSettings({ scopeRecapLastAttempt: malformed })
+                .scopeRecapLastAttempt).toBeNull();
+        }
+        for (const malformedCount of ["2", -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+            expect(mergePageletSettings({ quietRecallLastAcceptedCount: malformedCount })
+                .quietRecallLastAcceptedCount).toBe(0);
+        }
     });
 
     it("ignores garbage values on a single field without poisoning others", () => {
@@ -733,7 +1053,7 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        expect(rows).toHaveLength(24);
+        expect(rows).toHaveLength(26);
         expect(rows.map((r) => r.name)).toEqual([
             "Enable Pagelet",
             "Reviews folder",
@@ -753,6 +1073,9 @@ describe("renderPageletSection", () => {
             "Per-day preparation cap",
             "Preparation input token budget",
             "Preparation output token budget",
+            // Scope Recap preparation (independent from generic preload)
+            "Prepare Scope Recap in the background",
+            "High-value Recap hints",
             // Exclusions
             "Excluded folders",
             "Excluded tags",
@@ -780,7 +1103,7 @@ describe("renderPageletSection", () => {
         const headings = parent.children.filter((c) => c.tagName.startsWith("h") || c.tagName === "p" || c.tagName === "div");
         expect(headings.map((h) => h.tagName)).toEqual([
             "h2", "p", "div", "h3", "div", "h3", "h3",
-            "h3", "h3", "h3", "h3", "h3",
+            "h3", "h3", "h3", "h3", "h3", "h3",
         ]);
         expect(headings[0].text).toBe("Pagelet");
         // The beta callout must be visible from the moment Pagelet ships

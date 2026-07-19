@@ -325,6 +325,7 @@ import {
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
     clearPageletDetailSessionCache,
+    clearScopeRecapPageletDetailSessionCache,
 } from "../src/pagelet/tab/PageletDetailView";
 
 describe("Pagelet panel and tab view regressions", () => {
@@ -625,6 +626,32 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).toContain("A concise source-backed recap.");
         expect(contentEl.textContent).not.toContain("1 findings found");
         expect(contentEl.textContent).not.toContain("Raw finding text should not render");
+    });
+
+    it("renders structured insight and comparison cards with their visual modifier classes", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Scope Recap", [{
+            title: "Observations",
+            cards: [
+                {
+                    title: "Shared theme",
+                    body: "Trust is becoming a shared constraint.",
+                    cardStyle: "insight",
+                },
+                {
+                    title: "Product tension",
+                    body: "Immediate value and quiet preparation pull in different directions.",
+                    cardStyle: "comparison",
+                },
+            ],
+        }]);
+
+        expect(container.querySelector(".pa-pagelet-tab-card--insight")).not.toBeNull();
+        expect(container.querySelector(".pa-pagelet-tab-card--comparison")).not.toBeNull();
     });
 
     it("renders Saved Insight and Memory ledger sections in the native detail tab", () => {
@@ -2051,6 +2078,8 @@ describe("Pagelet panel and tab view regressions", () => {
             relation: "related",
             score: 80,
             generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-recall-alpha",
         };
 
         tab.mount(container as unknown as HTMLElement);
@@ -2339,6 +2368,8 @@ describe("Pagelet panel and tab view regressions", () => {
             score: 90,
             generatedAt: "2026-06-29T12:00:00.000Z",
             context: { kind: "note_retrieval" },
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-ins-1",
         };
         const quietRecall = {
             generatedAt: "2026-06-29T12:00:00.000Z",
@@ -2455,6 +2486,8 @@ describe("Pagelet panel and tab view regressions", () => {
             relation: "current",
             score: 90,
             generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-self-only",
         };
         const onLinkRecallCandidate = jest.fn(async () => ({ ok: true, message: "Linked" }));
         const container = new FakeElement("div");
@@ -2476,6 +2509,79 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelector(".pa-pagelet-tab-recall-card")).not.toBeNull();
         expect(container.querySelector(".pa-pagelet-tab-recall-link")).toBeNull();
         expect(onLinkRecallCandidate).not.toHaveBeenCalled();
+    });
+
+    it("separates local Discover clues from AI Recall cards and omits local why-now copy", () => {
+        const aiCandidate: QuietRecallCandidate = {
+            id: "qr-ai",
+            title: "Recall: Accepted",
+            summary: "An accepted source-backed recall.",
+            sourceRefs: [{ path: "notes/accepted.md", evidenceStrength: "medium" }],
+            whyNow: ["This accepted note resolves the question in the current note."],
+            nextAction: "Open the accepted source.",
+            relation: "related",
+            score: 82,
+            generatedAt: "2026-07-19T10:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-accepted",
+        };
+        const localCandidate: QuietRecallCandidate = {
+            id: "qr-local",
+            title: "Recall: Local template title",
+            summary: "LOCAL SUMMARY MUST NOT RENDER",
+            sourceRefs: [{ path: "notes/local-clue.md", evidenceStrength: "medium" }],
+            whyNow: ["LOCAL WHY NOW MUST NOT RENDER"],
+            nextAction: "LOCAL NEXT ACTION MUST NOT RENDER",
+            relation: "related",
+            score: 78,
+            generatedAt: "2026-07-19T10:00:00.000Z",
+            evaluationProvenance: "local",
+        };
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en", {
+            onLinkRecallCandidate: jest.fn(async () => ({ ok: true, message: "Linked" })),
+            onSaveQuietRecallAsInsight: jest.fn(async () => ({
+                ok: false as const,
+                reason: "write_failed" as const,
+                message: "Not saved",
+            })),
+        });
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Quiet Recall", [], {
+            layoutType: "current",
+            extra: {
+                quietRecall: {
+                    generatedAt: aiCandidate.generatedAt,
+                    currentPath: "notes/current.md",
+                    totalCount: 1,
+                    candidates: [aiCandidate],
+                    discoverCandidates: [
+                        { ...aiCandidate, evaluationProvenance: "local", evaluationFingerprint: undefined },
+                        localCandidate,
+                    ],
+                },
+            },
+        });
+
+        const recallCards = container.querySelectorAll(".pa-pagelet-tab-recall-card");
+        const localCards = container.querySelectorAll(".pa-pagelet-tab-local-clue-card");
+        const localCard = localCards[0];
+
+        expect(recallCards).toHaveLength(1);
+        expect(localCards).toHaveLength(1);
+        expect(container.textContent).toContain("1 source-backed recalls are available.");
+        expect(container.textContent).toContain("Why now: This accepted note resolves the question in the current note.");
+        expect(localCard?.textContent).toContain("Local related clue");
+        expect(localCard?.textContent).toContain("local-clue");
+        expect(localCard?.textContent).toContain("Related by local note signals.");
+        expect(localCard?.textContent).not.toContain("LOCAL WHY NOW MUST NOT RENDER");
+        expect(localCard?.textContent).not.toContain("LOCAL SUMMARY MUST NOT RENDER");
+        expect(localCard?.textContent).not.toContain("LOCAL NEXT ACTION MUST NOT RENDER");
+        expect(localCard?.classList.contains("pa-pagelet-tab-card--source-list")).toBe(true);
+        expect(localCard?.classList.contains("pa-pagelet-tab-recall-card")).toBe(false);
+        expect(localCard?.querySelector(".pa-pagelet-tab-recall-save")).toBeNull();
+        expect(recallCards[0]?.querySelector(".pa-pagelet-tab-recall-save")).not.toBeNull();
     });
 
     it("renders the dedicated Quiet Recall empty state when no candidate is strong enough", () => {
@@ -2513,6 +2619,8 @@ describe("Pagelet panel and tab view regressions", () => {
             score: 80,
             generatedAt: "2026-06-29T12:00:00.000Z",
             context: { kind: "governed_claim", claimId: "claim-exact" },
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-governed",
         };
         const openMemorySettings = jest.fn((_targetId?: string) => undefined);
         const container = new FakeElement("div");
@@ -2549,6 +2657,8 @@ describe("Pagelet panel and tab view regressions", () => {
             relation: "related",
             score: 80,
             generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-failure",
         };
         const tabContainer = new FakeElement("div");
         tabContainer.isConnected = true;
@@ -2680,6 +2790,44 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).toContain("Recap Preview");
         expect(contentEl.textContent).toContain("A concise source-backed recap.");
         expect(contentEl.textContent).not.toContain("Result no longer available");
+    });
+
+    it("clears only Scope Recap payloads from the in-memory native detail session", async () => {
+        const createCachedSummary = async (
+            entryReason: "scope-recap" | "default",
+            marker: string,
+        ): Promise<Record<string, unknown>> => {
+            const view = new PageletDetailView({} as never, () => "en");
+            await view.onOpen();
+            view.setPayload({
+                title: "Pagelet — Detail View",
+                locale: "en",
+                layoutType: "summary",
+                content: [],
+                entryReason,
+                extra: { markdown: `# ${marker}\n\n${marker} body` },
+            });
+            return view.getState();
+        };
+        const restore = async (state: Record<string, unknown>): Promise<FakeElement> => {
+            const view = new PageletDetailView({} as never, () => "en");
+            await view.onOpen();
+            await view.setState(state, {} as never);
+            return view.contentEl as unknown as FakeElement;
+        };
+
+        const recapState = await createCachedSummary("scope-recap", "PRIVATE RECAP CACHE");
+        const otherState = await createCachedSummary("default", "OTHER PAGELET CACHE");
+
+        clearScopeRecapPageletDetailSessionCache();
+
+        const restoredRecap = await restore(recapState);
+        expect(restoredRecap.textContent).toContain("Result no longer available");
+        expect(restoredRecap.textContent).not.toContain("PRIVATE RECAP CACHE");
+
+        const restoredOther = await restore(otherState);
+        expect(restoredOther.textContent).toContain("OTHER PAGELET CACHE body");
+        expect(restoredOther.textContent).not.toContain("Result no longer available");
     });
 
     it("restores discovery payloads from the in-memory native detail session", async () => {
@@ -2877,6 +3025,8 @@ describe("Pagelet panel and tab view regressions", () => {
             relation: "current",
             score: 90,
             generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-entry-reason",
         };
         const openSource = jest.fn((_path: string) => undefined);
         const createView = (): PageletDetailView => new PageletDetailView(
@@ -3200,13 +3350,13 @@ describe("Pagelet panel and tab view regressions", () => {
     });
 
     it("keeps a failed selected review visible and retryable in the panel", async () => {
-        let panel: PanelView;
+        const panelRef: { current: PanelView | null } = { current: null };
         const runSelected = jest.fn(async () => {
-            panel.showReviewError("Pagelet review timed out. Try again, or shorten the note before retrying.");
+            panelRef.current?.showReviewError("Pagelet review timed out. Try again, or shorten the note before retrying.");
         });
         const container = new FakeElement("div");
         container.isConnected = true;
-        panel = new PanelView({
+        const panel = new PanelView({
             app: {} as never,
             callbacks: {
                 onClose: () => undefined,
@@ -3217,6 +3367,7 @@ describe("Pagelet panel and tab view regressions", () => {
             },
             getLocale: () => "en",
         });
+        panelRef.current = panel;
 
         panel.mount(container as unknown as HTMLElement);
         panel.open("review", [], {
@@ -3766,5 +3917,22 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).toContain("No connection graph yet.");
         expect(container.textContent).toContain("Enable Memory to Discover Connections");
         expect(relatedNoteClick).not.toHaveBeenCalled();
+    });
+
+    it("ties Bubble, Panel, Tab, and Pet text tiers to Obsidian's text-size setting", () => {
+        const css = readFileSync("src/custom.pcss", "utf8");
+        const pageletTypographyRoot = /\.pa-pagelet-bubble,\s*\.pa-pagelet-panel,\s*\.pa-pagelet-tab,\s*\.pa-pagelet-pet\s*\{([\s\S]*?)\}/.exec(css)?.[1] ?? "";
+
+        expect(pageletTypographyRoot).toContain(
+            "--font-ui-medium: calc(var(--font-text-size, 16px) * 0.875);",
+        );
+        expect(pageletTypographyRoot).toContain(
+            "--font-ui-small: calc(var(--font-text-size, 16px) * 0.8125);",
+        );
+        expect(pageletTypographyRoot).toContain(
+            "--font-ui-smaller: calc(var(--font-text-size, 16px) * 0.75);",
+        );
+        expect(css).toMatch(/\.pa-pagelet-panel-preview-h1\s*\{[\s\S]*?font-size:\s*var\(--font-text-size, 16px\);/);
+        expect(css).toMatch(/\.pa-pagelet-tab-section h2\s*\{[\s\S]*?font-size:\s*calc\(var\(--font-text-size, 16px\) \* 1\.125\);/);
     });
 });

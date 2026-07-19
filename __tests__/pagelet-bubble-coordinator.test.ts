@@ -101,10 +101,12 @@ function makeCoordinator(
             onPatternDetectionView: jest.fn(),
             onPatternDetectionDismiss: jest.fn(),
             getPreparedRecapCandidate: () => null,
+            getPreparedRecapNudgeCandidate: () => null,
             onPreparedRecapView: jest.fn(),
             onPreparedRecapLater: jest.fn(),
             getUnconvincingRecallCount: () => 0,
             ...overrides,
+            onQuietRecallDiscoverOnly: overrides.onQuietRecallDiscoverOnly ?? jest.fn(),
         },
     );
 }
@@ -115,6 +117,39 @@ function shownContent(bubbleView: BubbleView): BubbleContent {
 }
 
 describe("BubbleCoordinator Review Queue reminders", () => {
+    it("routes a Discover-only context action to Quiet Recall local candidates", () => {
+        const onDiscoverConnections = jest.fn();
+        const onQuietRecallDiscoverOnly = jest.fn();
+        const coordinator = makeCoordinator(() => [], {}, {
+            onDiscoverConnections,
+            onQuietRecallDiscoverOnly,
+            getUnconvincingRecallCount: () => 2,
+        });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+        const contextAction = shownContent(bubbleView).contextAction;
+
+        expect(contextAction).toEqual(expect.objectContaining({
+            label: "2 related notes found",
+            action: "discover",
+        }));
+        contextAction?.callback();
+        expect(onQuietRecallDiscoverOnly).toHaveBeenCalledTimes(1);
+        expect(onDiscoverConnections).not.toHaveBeenCalled();
+    });
+
+    it("does not show a Discover-only context action when there are no local candidates", () => {
+        const coordinator = makeCoordinator(() => [], {}, {
+            getUnconvincingRecallCount: () => 0,
+        });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+
+        expect(shownContent(bubbleView).contextAction).toBeUndefined();
+    });
+
     it("does not turn Review Queue items into Bubble work", async () => {
         const listReviewQueueItems = jest.fn((filter?: ReviewQueueListFilter) => {
             return [];
@@ -198,6 +233,32 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(onPreparedRecapView).toHaveBeenCalledWith(candidate);
     });
 
+    it("shows a prepared Recap from the nudge path only when its high-value nudge is pending", () => {
+        const candidate = {
+            id: "recap-nudge-1",
+            kind: "recap" as const,
+            title: "Trust is becoming the shared design constraint",
+            body: "Two source notes connect instant value with source-backed trust.",
+            sourceRefs: [
+                { path: "Projects/PA/A.md", title: "A" },
+                { path: "Projects/PA/B.md", title: "B" },
+            ],
+            whyNow: ["A concrete cross-note insight is ready."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            staleStatus: "fresh" as const,
+            route: { surface: "tab" as const, payloadType: "scope-recap" },
+        };
+        const coordinator = makeCoordinator(() => [], {}, {
+            getPreparedRecapCandidate: () => candidate,
+            getPreparedRecapNudgeCandidate: () => candidate,
+        });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showNudgeBubble(bubbleView, makePetView());
+
+        expect(shownContent(bubbleView).type).toBe("recap-delivery");
+    });
+
     it("shows Needs Setup from the readiness snapshot before Memory is ready", () => {
         const coordinator = makeCoordinator(() => [], {
             isMemoryReadyForPageletDiscovery: async () => false,
@@ -223,6 +284,49 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const content = shownContent(bubbleView);
         expect(content.type).toBe("context-limited");
         expect(content.actions.map((action) => action.label)).toEqual(["View boundary settings"]);
+    });
+
+    it("does not display stale cards when an ordinary Bubble Discover run is no longer current", async () => {
+        const recall: Awaited<ReturnType<PageletHost["runQuietRecall"]>> = {
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 1,
+            candidates: [{
+                id: "recall-stale",
+                title: "Recall: Stale",
+                summary: "This stale candidate must not render.",
+                sourceRefs: [{ path: "notes/stale.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
+                whyNow: ["Its evaluation context has changed."],
+                nextAction: "Open it.",
+                relation: "related",
+                score: 80,
+                generatedAt: "2026-07-05T12:00:00.000Z",
+            }],
+        };
+        const runQuietRecall = jest.fn(async () => recall);
+        const isQuietRecallRunCurrent = jest.fn<(_result: typeof recall) => boolean>(() => false);
+        const onSourceClick = jest.fn();
+        const coordinator = makeCoordinator(() => [], {
+            runQuietRecall,
+            isQuietRecallRunCurrent,
+        }, { onSourceClick });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+        await Promise.resolve();
+        shownContent(bubbleView).actions[0].callback();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const show = bubbleView.show as unknown as jest.Mock;
+        const shownTypes = show.mock.calls.map(([content]) => (content as BubbleContent).type);
+        expect(runQuietRecall).toHaveBeenCalledTimes(1);
+        expect(isQuietRecallRunCurrent).toHaveBeenCalledWith(recall);
+        expect(shownTypes).not.toContain("recall-delivery");
+        expect(JSON.stringify(show.mock.calls)).not.toContain("This stale candidate must not render.");
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+        expect(bubbleView.bubbleState).toBe("hidden");
+        expect(onSourceClick).not.toHaveBeenCalled();
     });
 
     it("does not publish Bubble Discover results after the active note changes", async () => {
@@ -348,6 +452,8 @@ describe("BubbleCoordinator Review Queue reminders", () => {
                 relation: "related" as const,
                 score: 80,
                 generatedAt: "2026-07-05T12:00:00.000Z",
+                evaluationProvenance: "ai" as const,
+                evaluationFingerprint: "eval-recall-alpha",
             }, {
                 id: "recall-weak",
                 title: "Recall: Weak",
@@ -368,6 +474,20 @@ describe("BubbleCoordinator Review Queue reminders", () => {
                 relation: "current" as const,
                 score: 90,
                 generatedAt: "2026-07-05T12:00:00.000Z",
+                evaluationProvenance: "ai" as const,
+                evaluationFingerprint: "eval-recall-current",
+            }],
+            discoverCandidates: [{
+                id: "recall-local-only",
+                title: "Recall: Local candidate",
+                summary: "LOCAL SUMMARY MUST NOT RENDER",
+                sourceRefs: [{ path: "notes/local.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
+                whyNow: ["LOCAL WHY NOW MUST NOT RENDER"],
+                nextAction: "LOCAL NEXT ACTION MUST NOT RENDER",
+                relation: "related" as const,
+                score: 85,
+                generatedAt: "2026-07-05T12:00:00.000Z",
+                evaluationProvenance: "local" as const,
             }],
         }));
         const coordinator = makeCoordinator(() => [], { runQuietRecall }, { onSourceClick });
@@ -387,6 +507,9 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(content.type).toBe("recall-delivery");
         expect(content.cards).toHaveLength(2);
         expect(JSON.stringify(content)).toContain("Alpha may matter again.");
+        expect(JSON.stringify(content)).toContain("Source appears near the current note in Memory search.");
+        expect(JSON.stringify(content)).not.toContain("LOCAL WHY NOW MUST NOT RENDER");
+        expect(JSON.stringify(content)).not.toContain("LOCAL SUMMARY MUST NOT RENDER");
         expect(content.cards?.[0]?.actions.map((action) => action.label))
             .toContain("Link");
         expect(content.cards?.[1]?.actions.map((action) => action.label))
@@ -394,6 +517,59 @@ describe("BubbleCoordinator Review Queue reminders", () => {
 
         content.cards?.[0]?.actions[0].callback();
         expect(onSourceClick).toHaveBeenCalledWith("notes/alpha.md");
+    });
+
+    it("renders local-only Bubble Discover as one labeled clue without Recall stack or why-now", async () => {
+        const onSourceClick = jest.fn();
+        let preparationActive = false;
+        const runQuietRecall = jest.fn(async () => ({
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 0,
+            candidates: [],
+            discoverCandidates: [{
+                id: "recall-local",
+                title: "Recall: Local candidate",
+                summary: "LOCAL SUMMARY MUST NOT RENDER",
+                sourceRefs: [{ path: "notes/local.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
+                whyNow: ["LOCAL WHY NOW MUST NOT RENDER"],
+                nextAction: "LOCAL NEXT ACTION MUST NOT RENDER",
+                relation: "related" as const,
+                score: 85,
+                generatedAt: "2026-07-05T12:00:00.000Z",
+                evaluationProvenance: "local" as const,
+            }],
+        }));
+        const coordinator = makeCoordinator(() => [], {
+            runQuietRecall,
+            getMemoryPreparationStatus: () => preparationActive
+                ? { filesDone: 1, filesTotal: 2 }
+                : null,
+        }, { onSourceClick });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+        await Promise.resolve();
+        preparationActive = true;
+        shownContent(bubbleView).actions[0].callback();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const content = shownContent(bubbleView);
+        expect(content.type).toBe("discovery");
+        expect(content.cards).toBeUndefined();
+        expect(content.inlineHint).toBeUndefined();
+        expect(content.findings[0]?.text).toBe("Local related clue");
+        expect(content.findings[1]).toEqual({
+            text: "Related by local note signals.",
+            sourceLink: "notes/local.md",
+            sourceTitle: "local",
+        });
+        expect(JSON.stringify(content)).not.toContain("LOCAL WHY NOW MUST NOT RENDER");
+        expect(JSON.stringify(content)).not.toContain("LOCAL SUMMARY MUST NOT RENDER");
+
+        content.actions[0]?.callback();
+        expect(onSourceClick).toHaveBeenCalledWith("notes/local.md");
     });
 
     it("hides proactive Quiet Recall Link when no distinct source exists", () => {
@@ -407,6 +583,8 @@ describe("BubbleCoordinator Review Queue reminders", () => {
             relation: "current" as const,
             score: 90,
             generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "ai" as const,
+            evaluationFingerprint: "eval-recall-current",
         };
         const nudge = {
             candidateId: candidate.id,

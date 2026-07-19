@@ -817,6 +817,63 @@ describe('Qwen response option settings', () => {
     });
 });
 
+describe('PA settings refresh', () => {
+    it('tracks Settings visibility on the container owner document', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const ownerClassList = {
+            add: jest.fn(),
+            remove: jest.fn(),
+            contains: jest.fn(() => false),
+        };
+        const globalClassList = {
+            add: jest.fn(),
+            remove: jest.fn(),
+        };
+        const containerEl = new MockContainerEl('div');
+        Object.assign(containerEl, {
+            ownerDocument: { body: { classList: ownerClassList } },
+        });
+        Object.assign(document, { body: { classList: globalClassList } });
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        tab.hide();
+
+        expect(ownerClassList.add).toHaveBeenCalledWith('pa-settings-tab-open');
+        expect(ownerClassList.remove).toHaveBeenCalledWith('pa-settings-tab-open');
+        expect(globalClassList.add).not.toHaveBeenCalled();
+        expect(globalClassList.remove).not.toHaveBeenCalled();
+    });
+
+    it('re-renders the Pagelet group only in the Settings window that owns the visible tab', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const visibleClasses = new Set<string>();
+        const containerEl = new MockContainerEl('div');
+        Object.assign(containerEl, {
+            ownerDocument: {
+                body: {
+                    classList: {
+                        contains: (className: string) => visibleClasses.has(className),
+                    },
+                },
+            },
+        });
+        tab.containerEl = containerEl as never;
+        const display = jest.spyOn(tab, 'display').mockImplementation(() => undefined);
+        const openGroup = jest.spyOn(tab, 'openGroup').mockImplementation(() => undefined);
+
+        expect(tab.refreshPageletSettingsIfVisible()).toBe(false);
+        expect(display).not.toHaveBeenCalled();
+
+        visibleClasses.add('pa-settings-tab-open');
+        expect(tab.refreshPageletSettingsIfVisible()).toBe(true);
+        expect(display).toHaveBeenCalledTimes(1);
+        expect(openGroup).toHaveBeenCalledWith('features');
+    });
+});
+
 describe('Statistics settings copy', () => {
     it('explains sync without exposing storage internals', () => {
         expect(STATISTICS_SYNC_SETTING_DESC).toContain('writing history can sync across devices');
@@ -1282,6 +1339,38 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
     it('keeps top-level overrides (debug, etc.)', () => {
         const merged = mergeLoadedSettings({ debug: true });
         expect(merged.debug).toBe(true);
+    });
+
+    it('routes persisted Pagelet diagnostics through the content-free normalizer', () => {
+        const merged = mergeLoadedSettings({
+            pagelet: {
+                scopeRecapLastAttempt: {
+                    attemptedAt: '2026-07-18T08:30:00.000Z',
+                    outcome: 'success',
+                    scope: { kind: 'folder', label: 'Private project' },
+                    sourceSnapshotId: 'scope-snapshot',
+                    dataBoundarySnapshotId: 'boundary-snapshot',
+                    providerCallMade: true,
+                    includedSourceCount: 2,
+                    summary: 'private generated summary',
+                },
+                quietRecallLastDiagnostics: { roundId: 'incomplete' },
+                quietRecallLastAcceptedCount: '2',
+            },
+        });
+
+        expect(merged.pagelet.scopeRecapLastAttempt).toEqual({
+            attemptedAt: '2026-07-18T08:30:00.000Z',
+            outcome: 'success',
+            scope: { kind: 'folder' },
+            sourceSnapshotId: 'scope-snapshot',
+            dataBoundarySnapshotId: 'boundary-snapshot',
+            providerCallMade: true,
+            includedSourceCount: 2,
+        });
+        expect(merged.pagelet.quietRecallLastDiagnostics).toBeNull();
+        expect(merged.pagelet.quietRecallLastAcceptedCount).toBe(0);
+        expect(JSON.stringify(merged.pagelet.scopeRecapLastAttempt)).not.toContain('private');
     });
 
     it('treats arrays as opaque user values (no element-level merge)', () => {
@@ -2876,7 +2965,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h3:Local recall preferences',
             'h3:Local data cleanup',
             // Pagelet section ships between Memory and Statistics (B3). Its
-            // three sub-headings (General/Model/Limits) are also top-level
+            // sub-headings are also top-level
             // children of containerEl because `renderPageletSection` writes
             // them onto the same parent as the h2.
             'h2:Pagelet',
@@ -2885,6 +2974,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h3:Limits',
             'h3:Pet',
             'h3:Background Review Preparation',
+            'h3:Scope Recap',
             'h3:Reviews',
             'h3:Quiet Hours',
             'h3:Foreground Cost',

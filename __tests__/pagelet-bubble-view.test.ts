@@ -396,6 +396,91 @@ describe("Pagelet BubbleView", () => {
         view.destroy();
     });
 
+    it("localizes the compact Discover-only context action", async () => {
+        const onDiscover = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "zh",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "ready-empty",
+            findings: [{ text: "暂时没有足够值得带回来的内容。" }],
+            actions: [],
+            contextAction: {
+                label: "找到 2 篇相关笔记",
+                action: "discover",
+                callback: onDiscover,
+            },
+        }, anchor as unknown as HTMLElement);
+
+        const zone = container.querySelector(".pa-pagelet-bubble-context-action");
+        const button = zone?.querySelector(".pa-pagelet-bubble-context-action-btn");
+        expect(zone?.querySelector(".pa-pagelet-bubble-context-action-label")?.textContent)
+            .toBe("找到 2 篇相关笔记");
+        expect(button?.textContent).toBe("发现");
+
+        await button?.click();
+        expect(onDiscover).toHaveBeenCalledTimes(1);
+        view.destroy();
+    });
+
+    it("keeps the mobile context action touch-sized", () => {
+        const css = readFileSync("src/custom.pcss", "utf8");
+        const block = getCssBlock(
+            css,
+            "body.is-mobile .pa-pagelet-bubble-context-action-btn",
+        );
+
+        expect(block).toContain("min-width: 44px;");
+        expect(block).toContain("min-height: 44px;");
+    });
+
+    it("renders a local clue as Discovery without Recall stack or why-now chrome", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "discovery",
+            findings: [{ text: "Local related clue" }, {
+                text: "Related by local note signals.",
+                sourceLink: "notes/local.md",
+                sourceTitle: "local",
+            }],
+            actions: [],
+        }, anchor as unknown as HTMLElement);
+
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+        expect(bubble?.getAttribute("data-content-type")).toBe("discovery");
+        expect(bubble?.querySelectorAll(".pa-pagelet-bubble-text").map((item) => item.textContent))
+            .toEqual(["Local related clue", "Related by local note signals."]);
+        expect(bubble?.querySelector(".pa-pagelet-bubble-inline-hint")?.getAttribute("hidden"))
+            .toBe("true");
+        expect(bubble?.querySelector(".pa-pagelet-bubble-stack-nav")?.getAttribute("hidden"))
+            .toBe("true");
+        expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-dot")).toHaveLength(0);
+
+        view.destroy();
+    });
+
     it("renders one active Bubble card at a time and routes actions to the active card", async () => {
         const first = jest.fn();
         const second = jest.fn();

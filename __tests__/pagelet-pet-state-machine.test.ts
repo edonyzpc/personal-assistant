@@ -5,8 +5,7 @@ import { readFileSync } from "fs";
 import { Platform } from "obsidian";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
-import type { PetEvent } from "../src/pagelet/pet/PetStateMachine";
-import { getPetAriaLabel, PetView, resolvePetMountTarget } from "../src/pagelet/pet/PetView";
+import { getPetAriaLabel, getPetHoldMenuLabels, PetView, resolvePetMountTarget } from "../src/pagelet/pet/PetView";
 
 afterEach(() => {
     jest.useRealTimers();
@@ -19,6 +18,120 @@ function escapeRegex(value: string): string {
 function getCssRuleBlock(css: string, selector: string): string {
     const match = new RegExp(`${escapeRegex(selector)}\\s*\\{([\\s\\S]*?)\\}`, "m").exec(css);
     return match?.[1] ?? "";
+}
+
+type HoldMenuListener = EventListenerOrEventListenerObject;
+
+class HoldMenuFakeElement {
+    className = "";
+    textContent: string | null = null;
+    readonly children: HoldMenuFakeElement[] = [];
+    private readonly listeners = new Map<string, HoldMenuListener[]>();
+    private readonly attributes = new Map<string, string>();
+    private parent: HoldMenuFakeElement | null = null;
+
+    appendChild(child: HoldMenuFakeElement): HoldMenuFakeElement {
+        child.parent = this;
+        this.children.push(child);
+        return child;
+    }
+
+    setAttribute(name: string, value: string): void {
+        this.attributes.set(name, value);
+    }
+
+    removeAttribute(name: string): void {
+        this.attributes.delete(name);
+    }
+
+    addEventListener(type: string, listener: HoldMenuListener): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: HoldMenuListener): void {
+        this.listeners.set(type, (this.listeners.get(type) ?? []).filter((item) => item !== listener));
+    }
+
+    dispatch(type: string): void {
+        const event = {
+            target: this,
+            stopPropagation: jest.fn(),
+        } as unknown as Event;
+        for (const listener of this.listeners.get(type) ?? []) {
+            if (typeof listener === "function") listener(event);
+            else listener.handleEvent(event);
+        }
+    }
+
+    contains(target: Node | null): boolean {
+        const candidate = target as unknown as HoldMenuFakeElement | null;
+        return candidate === this || this.children.some((child) => child.contains(target));
+    }
+
+    remove(): void {
+        if (!this.parent) return;
+        const index = this.parent.children.indexOf(this);
+        if (index >= 0) this.parent.children.splice(index, 1);
+        this.parent = null;
+    }
+}
+
+class HoldMenuFakeDocument {
+    private readonly listeners = new Map<string, HoldMenuListener[]>();
+
+    createElement(): HoldMenuFakeElement {
+        return new HoldMenuFakeElement();
+    }
+
+    addEventListener(type: string, listener: HoldMenuListener): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: HoldMenuListener): void {
+        this.listeners.set(type, (this.listeners.get(type) ?? []).filter((item) => item !== listener));
+    }
+
+    listenerCount(type: string): number {
+        return (this.listeners.get(type) ?? []).length;
+    }
+}
+
+function withHoldMenuDocument(run: (doc: HoldMenuFakeDocument) => void): void {
+    const globals = globalThis as typeof globalThis & {
+        activeDocument?: Document;
+        document?: Document;
+    };
+    const originalActiveDocument = globals.activeDocument;
+    const originalDocument = globals.document;
+    const doc = new HoldMenuFakeDocument();
+    Object.defineProperty(globals, "activeDocument", {
+        configurable: true,
+        writable: true,
+        value: doc as unknown as Document,
+    });
+    Object.defineProperty(globals, "document", {
+        configurable: true,
+        writable: true,
+        value: doc as unknown as Document,
+    });
+    try {
+        run(doc);
+    } finally {
+        Object.defineProperty(globals, "activeDocument", {
+            configurable: true,
+            writable: true,
+            value: originalActiveDocument,
+        });
+        Object.defineProperty(globals, "document", {
+            configurable: true,
+            writable: true,
+            value: originalDocument,
+        });
+    }
 }
 
 describe("PetStateMachine", () => {
@@ -212,6 +325,19 @@ describe("PetView locale labels", () => {
         expect(getPetAriaLabel("en", "working", "connection")).toBe("Pagelet assistant: discovering connections");
         expect(getPetAriaLabel("zh", "working", "summary")).toBe("拾页助手: 正在准备回顾");
     });
+
+    it("localizes the three long-press actions", () => {
+        expect(getPetHoldMenuLabels("en")).toEqual({
+            capture: "Capture",
+            review: "Review",
+            discover: "Discover",
+        });
+        expect(getPetHoldMenuLabels("zh")).toEqual({
+            capture: "随手记下",
+            review: "审阅",
+            discover: "发现关联",
+        });
+    });
 });
 
 describe("PetView task kind", () => {
@@ -227,14 +353,17 @@ describe("PetView task kind", () => {
         expect(view.taskKind).toBe("summary");
     });
 
-    it("defines a hold gesture that opens the shared Quick Capture modal", () => {
+    it("defines a 520ms hold gesture for the three-action menu", () => {
         const source = readFileSync("src/pagelet/pet/PetView.ts", "utf8");
 
         expect(source).toContain("const QUICK_CAPTURE_HOLD_MS = 520;");
         expect(source).toContain("onQuickCaptureOpen");
-        expect(source).toContain("this.openQuickCapture();");
+        expect(source).toContain("onReviewCurrentNote");
+        expect(source).toContain("onDiscoverConnections");
+        expect(source).toContain("this.showHoldMenu();");
         expect(source).toContain("_handleMouseDown");
         expect(source).toContain("_handleTouchstart");
+        expect(source).toContain("_handleTouchcancel");
         expect(source).toContain("this.startQuickCaptureHold();");
         expect(source).toContain("if (this.consumeQuickCaptureHold()) return;");
         expect(source).not.toContain("pa-pagelet-pet-capture-form");
@@ -260,6 +389,92 @@ describe("PetView task kind", () => {
 
         expect(internals._quickCaptureHoldTriggered).toBe(true);
         expect(onToggleBubble).not.toHaveBeenCalled();
+    });
+
+    it("routes every hold-menu button to its exact callback without toggling Bubble", () => {
+        jest.useFakeTimers();
+        withHoldMenuDocument(() => {
+            const onToggleBubble = jest.fn();
+            const callbacks = [jest.fn(), jest.fn(), jest.fn()];
+            const view = new PetView({
+                callbacks: {
+                    onToggleBubble,
+                    onQuickCaptureOpen: callbacks[0],
+                    onReviewCurrentNote: callbacks[1],
+                    onDiscoverConnections: callbacks[2],
+                },
+                getLocale: () => "en",
+            });
+            const root = new HoldMenuFakeElement();
+            const internals = view as unknown as {
+                _rootEl: HTMLElement | null;
+                startQuickCaptureHold: () => void;
+            };
+            internals._rootEl = root as unknown as HTMLElement;
+
+            for (let index = 0; index < callbacks.length; index += 1) {
+                internals.startQuickCaptureHold();
+                jest.advanceTimersByTime(520);
+                const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+                expect(menu?.children.map((item) => item.textContent)).toEqual([
+                    "Capture",
+                    "Review",
+                    "Discover",
+                ]);
+
+                menu?.children[index]?.dispatch("click");
+
+                expect(callbacks[index]).toHaveBeenCalledTimes(1);
+                expect(onToggleBubble).not.toHaveBeenCalled();
+                expect(root.children).toHaveLength(0);
+            }
+
+            view.unmount();
+        });
+    });
+
+    it("clears a pending or visible hold menu when unmounted between leaves", () => {
+        jest.useFakeTimers();
+        withHoldMenuDocument((doc) => {
+            const view = new PetView({
+                callbacks: {
+                    onToggleBubble: jest.fn(),
+                    onQuickCaptureOpen: jest.fn(),
+                    onReviewCurrentNote: jest.fn(),
+                    onDiscoverConnections: jest.fn(),
+                },
+            });
+            const firstRoot = new HoldMenuFakeElement();
+            const internals = view as unknown as {
+                _rootEl: HTMLElement | null;
+                _quickCaptureHoldTriggered: boolean;
+                startQuickCaptureHold: () => void;
+            };
+            internals._rootEl = firstRoot as unknown as HTMLElement;
+
+            internals.startQuickCaptureHold();
+            jest.advanceTimersByTime(519);
+            view.unmount();
+
+            const nextRoot = new HoldMenuFakeElement();
+            internals._rootEl = nextRoot as unknown as HTMLElement;
+            jest.advanceTimersByTime(1);
+            expect(nextRoot.children).toHaveLength(0);
+            expect(internals._quickCaptureHoldTriggered).toBe(false);
+            expect(jest.getTimerCount()).toBe(0);
+
+            internals.startQuickCaptureHold();
+            jest.advanceTimersByTime(520);
+            expect(nextRoot.children).toHaveLength(1);
+            expect(doc.listenerCount("pointerdown")).toBe(1);
+
+            view.unmount();
+
+            expect(nextRoot.children).toHaveLength(0);
+            expect(doc.listenerCount("pointerdown")).toBe(0);
+            expect(internals._quickCaptureHoldTriggered).toBe(false);
+            expect(jest.getTimerCount()).toBe(0);
+        });
     });
 });
 
@@ -318,6 +533,29 @@ describe("PetView touch suppression", () => {
 
         view.destroy();
 
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it("cancels an in-progress hold when the platform cancels the touch", () => {
+        jest.useFakeTimers();
+        type PetViewHoldInternals = {
+            startQuickCaptureHold: () => void;
+            _handleTouchcancel: () => void;
+            _quickCaptureHoldTriggered: boolean;
+        };
+        const view = new PetView({
+            callbacks: {
+                onToggleBubble: jest.fn(),
+                onQuickCaptureOpen: jest.fn(),
+            },
+        });
+        const internals = view as unknown as PetViewHoldInternals;
+
+        internals.startQuickCaptureHold();
+        internals._handleTouchcancel();
+        jest.advanceTimersByTime(520);
+
+        expect(internals._quickCaptureHoldTriggered).toBe(false);
         expect(jest.getTimerCount()).toBe(0);
     });
 });
@@ -502,7 +740,7 @@ describe("PetView mobile positioning styles", () => {
         expect(mobileRestingSvgWrapBlock).toContain("filter: none;");
     });
 
-    it("does not change Pagelet motion behavior via prefers-reduced-motion", () => {
+    it("preserves existing Pagelet motion while disabling the hold-menu entrance for reduced motion", () => {
         const css = readFileSync("src/custom.pcss", "utf8");
         const pageletMotionStart = css.indexOf("body.is-mobile .pa-pagelet-tab-body");
         const pageletMascotStart = css.indexOf("Pagelet (Review Assistant) — mascot", pageletMotionStart);
@@ -514,5 +752,23 @@ describe("PetView mobile positioning styles", () => {
         expect(pageletMotionCss).not.toContain("prefers-reduced-motion");
         expect(pageletMotionCss).not.toContain("transition-duration: .01s!important");
         expect(pageletMotionCss).not.toContain("animation: none!important");
+        expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pa-pagelet-pet-hold-menu \{[\s\S]*?animation:\s*none;/);
+    });
+
+    it("places the phone hold menu below the toolbar and keeps every action touch-sized", () => {
+        const css = readFileSync("src/custom.pcss", "utf8");
+        const menuBlock = getCssRuleBlock(
+            css,
+            "body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-pet-hold-menu",
+        );
+        const itemBlock = getCssRuleBlock(
+            css,
+            "body.is-mobile .pa-pagelet-pet-hold-menu-item",
+        );
+
+        expect(menuBlock).toContain("top: calc(100% + 8px);");
+        expect(menuBlock).toContain("bottom: auto;");
+        expect(itemBlock).toContain("min-width: 44px;");
+        expect(itemBlock).toContain("min-height: 44px;");
     });
 });

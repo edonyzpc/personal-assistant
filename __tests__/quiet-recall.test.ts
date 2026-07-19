@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 
 import {
     buildQuietRecallCandidates,
+    buildQuietRecallSourceSnapshotId,
     buildQuietRecallWithLlm,
     computeRecallScore,
     extractRecallDigest,
@@ -11,7 +12,6 @@ import {
     quietRecallCandidateToSavedInsightInput,
     quietRecallLinkTargetPath,
     type RecallRelevanceEvaluator,
-    type RecallRelevanceResult,
     type SavedInsight,
 } from "../src/pa";
 
@@ -34,6 +34,27 @@ function makeInsight(overrides: Partial<SavedInsight> = {}): SavedInsight {
 }
 
 describe("buildQuietRecallCandidates", () => {
+    it("builds a deterministic source snapshot from normalized path and file stats", () => {
+        const first = buildQuietRecallSourceSnapshotId([
+            { path: "./Projects/Alpha.md", mtime: 100, size: 10 },
+            { path: "Projects\\Beta.md", mtime: 200, size: 20 },
+        ]);
+        const reordered = buildQuietRecallSourceSnapshotId([
+            { path: "Projects/Beta.md", mtime: 200, size: 20 },
+            { path: "Projects/Alpha.md", mtime: 100, size: 10 },
+        ]);
+
+        expect(reordered).toBe(first);
+        expect(buildQuietRecallSourceSnapshotId([
+            { path: "Projects/Alpha.md", mtime: 101, size: 10 },
+            { path: "Projects/Beta.md", mtime: 200, size: 20 },
+        ])).not.toBe(first);
+        expect(buildQuietRecallSourceSnapshotId([
+            { path: "Projects/Alpha.md", mtime: 100, size: 11 },
+            { path: "Projects/Beta.md", mtime: 200, size: 20 },
+        ])).not.toBe(first);
+    });
+
     it("requires an exact governed claim trace before exposing a Memory target", () => {
         const base = buildQuietRecallCandidates({
             now: new Date("2026-06-29T12:00:00.000Z"),
@@ -285,6 +306,29 @@ describe("buildQuietRecallCandidates", () => {
         expect(result.candidates.some((candidate) => candidate.id.startsWith("qr-vault-"))).toBe(true);
     });
 
+    it("hard-clamps local retrieval to five candidates", () => {
+        const result = buildQuietRecallCandidates({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md" },
+            relatedNotes: Array.from({ length: 7 }, (_, index) => ({
+                path: `Projects/Related-${index}.md`,
+                score: 0.9 - index * 0.01,
+            })),
+            vaultNotes: Array.from({ length: 7 }, (_, index) => ({
+                path: `Projects/Related-${index}.md`,
+                title: `Related ${index}`,
+                content: "A related note with enough content to produce a recall candidate.",
+                modifiedAt: "2026-06-28T12:00:00.000Z",
+            })),
+            maxCandidates: 99,
+        });
+
+        expect(result.candidates).toHaveLength(5);
+        expect(result.candidates.every(
+            (candidate) => candidate.evaluationProvenance === "local",
+        )).toBe(true);
+    });
+
     it("applies path filtering to vault-note candidates", () => {
         const result = buildQuietRecallCandidates({
             now: new Date("2026-06-29T12:00:00.000Z"),
@@ -509,6 +553,34 @@ describe("evaluateRecallWithLlm", () => {
 });
 
 describe("buildQuietRecallWithLlm", () => {
+    it("invalidates the candidate fingerprint when Saved Insight text changes", async () => {
+        const run = (text: string) => buildQuietRecallWithLlm({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: {
+                path: "Projects/Alpha.md",
+                content: "# Alpha\n\nCurrent context.",
+            },
+            vaultNotes: [{
+                path: "Projects/Alpha.md",
+                title: "Alpha",
+                content: "Stable source note content.",
+                modifiedAt: "2026-06-28T12:00:00.000Z",
+            }],
+            savedInsights: [makeInsight({ text })],
+            evaluateRelevance: async () => ({
+                isConvincing: true,
+                whyNow: "This saved insight is useful now.",
+            }),
+        });
+
+        const first = await run("Original saved insight text.");
+        const changed = await run("Updated saved insight text.");
+
+        expect(first.candidates[0].id).toBe(changed.candidates[0].id);
+        expect(first.candidates[0].evaluationFingerprint)
+            .not.toBe(changed.candidates[0].evaluationFingerprint);
+    });
+
     it("filters out candidates the LLM deems unconvincing", async () => {
         const evaluator: RecallRelevanceEvaluator = async ({ candidateDigest }) => {
             if (candidateDigest.title.includes("Beta")) {
@@ -546,6 +618,14 @@ describe("buildQuietRecallWithLlm", () => {
         expect(result.candidates[0].whyNow).toEqual([
             "Beta is directly relevant to your current caching discussion.",
         ]);
+        expect(result.candidates[0]).toEqual(expect.objectContaining({
+            evaluationProvenance: "ai",
+            evaluationFingerprint: expect.any(String),
+        }));
+        expect(result.discoverCandidates).toHaveLength(2);
+        expect(result.discoverCandidates?.every(
+            (candidate) => candidate.evaluationProvenance === "local",
+        )).toBe(true);
     });
 
     it("replaces template whyNow with LLM reasoning", async () => {
@@ -571,7 +651,7 @@ describe("buildQuietRecallWithLlm", () => {
         expect(result.candidates[0].whyNow).toEqual(["LLM-generated specific reason."]);
     });
 
-    it("skips LLM evaluation when no current note provided", async () => {
+    it("keeps local candidates Discover-only when no current note is available", async () => {
         let evaluatorCalled = false;
         const evaluator: RecallRelevanceEvaluator = async () => {
             evaluatorCalled = true;
@@ -591,9 +671,35 @@ describe("buildQuietRecallWithLlm", () => {
             evaluateRelevance: evaluator,
         });
 
-        // Without a current note, LLM evaluation is skipped; base result returned as-is
         expect(evaluatorCalled).toBe(false);
-        expect(result.candidates).toHaveLength(1);
+        expect(result.candidates).toHaveLength(0);
+        expect(result.discoverCandidates).toHaveLength(1);
+        expect(result.discoverCandidates?.[0].evaluationProvenance).toBe("local");
+    });
+
+    it("keeps candidates below the evaluation threshold Discover-only", async () => {
+        let evaluatorCalled = false;
+        const result = await buildQuietRecallWithLlm({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md", content: "# Alpha\n\nCurrent context." },
+            relatedNotes: [{ path: "Projects/Beta.md", score: 0.7 }],
+            vaultNotes: [{
+                path: "Projects/Beta.md",
+                title: "Beta",
+                content: "A locally relevant note.",
+                modifiedAt: "2026-06-28T12:00:00.000Z",
+            }],
+            savedInsights: [],
+            scoreThreshold: 100,
+            evaluateRelevance: async () => {
+                evaluatorCalled = true;
+                return { isConvincing: true, whyNow: "Should not run." };
+            },
+        });
+
+        expect(evaluatorCalled).toBe(false);
+        expect(result.candidates).toHaveLength(0);
+        expect(result.discoverCandidates).toHaveLength(1);
     });
 
     it("gracefully handles LLM failure for individual candidates", async () => {

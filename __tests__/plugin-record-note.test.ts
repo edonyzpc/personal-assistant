@@ -366,6 +366,33 @@ function installMockWindowLocalStorage(initial: Record<string, string> = {}) {
     };
 }
 
+function installUnavailablePlatformLocalStorage() {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    const previousActiveWindow = Object.getOwnPropertyDescriptor(globalThis, 'activeWindow');
+    Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: {},
+    });
+    Object.defineProperty(globalThis, 'activeWindow', {
+        configurable: true,
+        value: {},
+    });
+    return {
+        restore: () => {
+            if (previousWindow) {
+                Object.defineProperty(globalThis, 'window', previousWindow);
+            } else {
+                delete (globalThis as { window?: Window }).window;
+            }
+            if (previousActiveWindow) {
+                Object.defineProperty(globalThis, 'activeWindow', previousActiveWindow);
+            } else {
+                delete (globalThis as { activeWindow?: Window }).activeWindow;
+            }
+        },
+    };
+}
+
 function getRegisteredCommand(
     plugin: { addCommand: jest.Mock },
     id: string,
@@ -4251,6 +4278,1215 @@ describe('Memory governance plugin bootstrap', () => {
     });
 });
 
+describe('Scope Recap production adapter data boundary', () => {
+    function createScopeRecapGuardHarness() {
+        let alphaContent = 'Alpha commits to shipping the feature.';
+        const notes = () => [{
+            path: 'Projects/PA/Alpha.md',
+            title: 'Alpha',
+            content: alphaContent,
+        }, {
+            path: 'Projects/PA/Beta.md',
+            title: 'Beta',
+            content: 'Beta records a pause decision for the same feature.',
+        }];
+        const invoke = jest.fn(async (_prompt: string): Promise<unknown> => JSON.stringify([{
+            title: 'The plan and pause decision now conflict',
+            summary: 'Alpha commits to ship while Beta records a pause for the same feature.',
+            whyItMatters: 'The owner should resolve the conflict before the next release step.',
+            sourceNoteTitles: ['Alpha', 'Beta'],
+            section: 'tension',
+        }]));
+        let reserveImpl = async () => ({ ok: true as const });
+        const reserve = jest.fn(() => reserveImpl());
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.unloading = false;
+        plugin.settings = {
+            aiProvider: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            baseURL: 'https://api.openai.com/v1',
+            pagelet: {
+                enabled: true,
+                temperature: 0.2,
+                maxOutputTokens: 2_000,
+                scopeRecapBackgroundAuthorization: 'authorized-v1',
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
+            },
+        };
+        plugin.collectScopeRecapSourceNotes = jest.fn(async () => notes());
+        plugin.scopeRecapBuildOptions = jest.fn((currentNotes: Array<{ path: string }>) => ({
+            now: new Date('2026-07-18T12:00:00.000Z'),
+            scope: {
+                kind: 'folder',
+                label: 'Projects/PA',
+                paths: currentNotes.map((note: { path: string }) => note.path),
+            },
+            isPathAllowed: jest.fn(() => true),
+            dataBoundarySnapshotId: 'data_boundary:test',
+        }));
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
+        plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
+        plugin.createChatModel = jest.fn(async () => ({ invoke }));
+        plugin.getScopeRecapRateLimiter = jest.fn(() => ({
+            reserve,
+        }));
+        plugin.pageletCostTracker = {
+            record: jest.fn(() => ({
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: 'USD',
+                pricingKnown: true,
+            })),
+        };
+        plugin.log = jest.fn();
+        return {
+            plugin,
+            invoke,
+            reserve,
+            setAlphaContent(value: string) { alphaContent = value; },
+            setReserve(fn: () => Promise<{ ok: true }>) { reserveImpl = fn; },
+        };
+    }
+
+    it('does not read or send Pagelet- or Data Boundary-excluded sources', async () => {
+        const createScopeFile = (path: string, mtime: number) => {
+            const file = createTFileWithStat(path, { mtime, size: 100 }) as TFile & { basename: string };
+            file.basename = file.name.replace(/\.md$/i, '');
+            return file;
+        };
+        const activeFile = createScopeFile('Projects/PA/Current.md', 4_000);
+        const allowedFile = createScopeFile('Projects/PA/Allowed.md', 3_000);
+        const pageletExcludedFile = createScopeFile('Projects/PA/pagelet-secret.md', 2_000);
+        const boundaryExcludedFile = createScopeFile('Projects/PA/boundary-secret.md', 1_000);
+        const files = [activeFile, allowedFile, pageletExcludedFile, boundaryExcludedFile];
+        const contents = new Map<string, string>([
+            [activeFile.path, '# Current\n\nShould we keep Redis for the next release?'],
+            [allowedFile.path, '# Allowed\n\nALLOWED-DECISION-EVIDENCE supports keeping Redis.'],
+            [pageletExcludedFile.path, '# Pagelet secret\n\nPAGELET-SECRET-PAYLOAD'],
+            [boundaryExcludedFile.path, '# Boundary secret\n\nBOUNDARY-SECRET-PAYLOAD'],
+        ]);
+        const cachedRead = jest.fn(async (file: TFile) => contents.get(file.path) ?? '');
+        const invoke = jest.fn(async (_prompt: string) => JSON.stringify([{
+            title: 'Redis release decision needs confirmation',
+            summary: 'Current asks whether to keep Redis while Allowed records supporting release evidence.',
+            whyItMatters: 'The release owner should confirm that the older benchmark still applies before shipping.',
+            sourceNoteTitles: ['Current', 'Allowed'],
+            section: 'open_question',
+        }]));
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            pagelet: {
+                enabled: true,
+                temperature: 0.2,
+                maxOutputTokens: 2_000,
+                reviewsFolder: '.pagelet',
+                excludedFolders: [],
+                excludedTags: [],
+                excludedPatterns: ['pagelet-secret'],
+                scopeRecapBackgroundAuthorization: 'authorized-v1',
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
+            },
+            dataBoundary: {
+                excludedFolders: [],
+                excludedTags: ['boundary-private'],
+                generatedNotePolicy: 'include-generated',
+                providerDisclosureReasons: [],
+                cleanupGroups: [],
+            },
+        };
+        plugin.app = {
+            workspace: { getActiveFile: jest.fn(() => activeFile) },
+            vault: {
+                configDir: '.obsidian',
+                getMarkdownFiles: jest.fn(() => files),
+                getAbstractFileByPath: jest.fn((path: string) => files.find((file) => file.path === path) ?? null),
+                cachedRead,
+            },
+            metadataCache: {
+                getFileCache: jest.fn((file: TFile) => (
+                    file.path === boundaryExcludedFile.path
+                        ? { tags: [{ tag: '#boundary-private' }] }
+                        : null
+                )),
+            },
+        };
+        plugin.createChatModel = jest.fn(async () => ({ invoke }));
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
+        plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
+        plugin.getScopeRecapRateLimiter = jest.fn(() => ({
+            reserve: jest.fn(async () => ({ ok: true as const })),
+        }));
+        plugin.pageletCostTracker = {
+            record: jest.fn(() => ({
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: 'USD',
+            })),
+        };
+        plugin.log = jest.fn();
+
+        const result = await plugin.runScopeRecap({ mode: 'background' });
+        const prompt = invoke.mock.calls[0]?.[0] as string;
+
+        expect(result.status).toBe('ready');
+        expect(cachedRead.mock.calls.map(([file]) => file.path)).toEqual([
+            activeFile.path,
+            allowedFile.path,
+            activeFile.path,
+            allowedFile.path,
+        ]);
+        expect(prompt).toContain('ALLOWED-DECISION-EVIDENCE');
+        expect(prompt).not.toContain('PAGELET-SECRET-PAYLOAD');
+        expect(prompt).not.toContain('BOUNDARY-SECRET-PAYLOAD');
+        expect(prompt).not.toContain('pagelet-secret');
+        expect(prompt).not.toContain('boundary-secret');
+    });
+
+    it('counts the full folder and applies the 12-source provider cap after Data Boundary filtering', async () => {
+        const now = Date.now();
+        const makeFile = (path: string, mtime: number) => {
+            const file = createTFileWithStat(path, { mtime, size: 100 }) as TFile & { basename: string };
+            file.basename = file.name.replace(/\.md$/i, '');
+            return file;
+        };
+        const activeFile = makeFile('Projects/PA/Current.md', now);
+        const allowedFiles = Array.from({ length: 13 }, (_, index) => makeFile(
+            `Projects/PA/Allowed-${String(index + 1).padStart(2, '0')}.md`,
+            now - (index + 1) * 1_000,
+        ));
+        const excludedFiles = [
+            makeFile('Projects/PA/Private-01.md', now + 2_000),
+            makeFile('Projects/PA/Private-02.md', now + 1_000),
+        ];
+        const files = [activeFile, ...allowedFiles, ...excludedFiles];
+        const contents = new Map(files.map((file) => [
+            file.path,
+            `${file.basename.toUpperCase()}-EVIDENCE`,
+        ]));
+        const cachedRead = jest.fn(async (file: TFile) => contents.get(file.path) ?? '');
+        const invoke = jest.fn(async (_prompt: string) => JSON.stringify([{
+            title: 'Current and Allowed 01 identify a release tension',
+            summary: 'The current note and Allowed 01 record conflicting release direction.',
+            whyItMatters: 'The owner should resolve this before the release advances.',
+            sourceNoteTitles: ['Current', 'Allowed-01'],
+            section: 'tension',
+        }]));
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.unloading = false;
+        plugin.settings = {
+            aiProvider: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            pagelet: {
+                enabled: true,
+                temperature: 0.2,
+                maxOutputTokens: 2_000,
+                reviewsFolder: '.pagelet',
+                excludedFolders: [],
+                excludedTags: [],
+                excludedPatterns: [],
+                scopeRecapBackgroundAuthorization: 'authorized-v1',
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
+            },
+            dataBoundary: {
+                excludedFolders: [],
+                excludedTags: ['boundary-private'],
+                generatedNotePolicy: 'include-generated',
+                providerDisclosureReasons: [],
+                cleanupGroups: [],
+            },
+        };
+        plugin.app = {
+            workspace: { getActiveFile: jest.fn(() => activeFile) },
+            vault: {
+                configDir: '.obsidian',
+                getMarkdownFiles: jest.fn(() => files),
+                getAbstractFileByPath: jest.fn((path: string) => files.find((file) => file.path === path) ?? null),
+                cachedRead,
+            },
+            metadataCache: {
+                getFileCache: jest.fn((file: TFile) => (
+                    excludedFiles.includes(file as typeof excludedFiles[number])
+                        ? { tags: [{ tag: '#boundary-private' }] }
+                        : null
+                )),
+            },
+        };
+        plugin.createChatModel = jest.fn(async () => ({ invoke }));
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
+        plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
+        plugin.getScopeRecapRateLimiter = jest.fn(() => ({
+            reserve: jest.fn(async () => ({ ok: true as const })),
+        }));
+        plugin.pageletCostTracker = {
+            record: jest.fn(() => ({
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: 'USD',
+                pricingKnown: true,
+            })),
+        };
+        plugin.log = jest.fn();
+
+        const result = await plugin.runScopeRecap({ mode: 'background' });
+        const prompt = invoke.mock.calls[0]?.[0] as string;
+
+        expect(result.status).toBe('ready');
+        expect(result.localOverview.sourceCoverage).toEqual({
+            totalSourceCount: 16,
+            includedSourceCount: 12,
+            skippedSourceCount: 4,
+            coverageRatio: 0.75,
+        });
+        expect(result.localOverview.skippedSources).toEqual(expect.arrayContaining([
+            expect.objectContaining({ reason: 'data_boundary', count: 2 }),
+            expect.objectContaining({ reason: 'out_of_scope', count: 2 }),
+        ]));
+        if (result.status === 'ready') {
+            expect(result.artifact.sourceRefs).toHaveLength(12);
+        }
+        expect(cachedRead).toHaveBeenCalledTimes(24);
+        const readPaths = new Set(cachedRead.mock.calls.map(([file]) => file.path));
+        expect(readPaths).toEqual(new Set([
+            activeFile.path,
+            ...allowedFiles.slice(0, 11).map((file) => file.path),
+        ]));
+        expect(prompt).toContain('ALLOWED-11-EVIDENCE');
+        expect(prompt).not.toContain('ALLOWED-12-EVIDENCE');
+        expect(prompt).not.toContain('ALLOWED-13-EVIDENCE');
+        expect(prompt).not.toContain('PRIVATE-01-EVIDENCE');
+        expect(prompt).not.toContain('PRIVATE-02-EVIDENCE');
+    });
+
+    it.each([
+        'expectedSourceSnapshotId',
+        'expectedDataBoundarySnapshotId',
+        'expectedAuthorizationContextId',
+    ] as const)('does not initialize a model or invoke the provider when %s drifts', async (driftField) => {
+        const notes = [{
+            path: 'Projects/PA/Alpha.md',
+            title: 'Alpha',
+            content: 'Alpha commits to shipping the feature.',
+        }, {
+            path: 'Projects/PA/Beta.md',
+            title: 'Beta',
+            content: 'Beta records a pause decision for the same feature.',
+        }];
+        const invoke = jest.fn(async () => '[]');
+        const createChatModel = jest.fn(async () => ({ invoke }));
+        const reserve = jest.fn(async () => ({ ok: true as const }));
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            pagelet: {
+                enabled: true,
+                temperature: 0.2,
+                maxOutputTokens: 2_000,
+                scopeRecapBackgroundAuthorization: 'authorized-v1',
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: 'scope-recap-auth:current',
+            },
+        };
+        plugin.collectScopeRecapSourceNotes = jest.fn(async () => notes);
+        plugin.scopeRecapBuildOptions = jest.fn(() => ({
+            now: new Date('2026-07-18T12:00:00.000Z'),
+            scope: {
+                kind: 'folder',
+                label: 'Projects/PA',
+                paths: notes.map((note) => note.path),
+            },
+            isPathAllowed: jest.fn(() => true),
+            dataBoundarySnapshotId: 'data_boundary:current',
+        }));
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:current');
+        plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:current');
+        plugin.createChatModel = createChatModel;
+        plugin.getScopeRecapRateLimiter = jest.fn(() => ({ reserve }));
+        plugin.pageletCostTracker = { record: jest.fn() };
+        plugin.log = jest.fn();
+
+        const overview = await plugin.buildScopeRecapLocalOverview();
+        const expected = {
+            expectedSourceSnapshotId: overview.sourceSnapshotId,
+            expectedDataBoundarySnapshotId: 'data_boundary:current',
+            expectedAuthorizationContextId: 'scope-recap-auth:current',
+        };
+        expected[driftField] = `${expected[driftField]}:stale`;
+
+        const result = await plugin.runScopeRecap({ mode: 'background', ...expected });
+
+        expect(result.status).toBe('no_reliable_insight');
+        expect(result.attempt.providerCallMade).toBe(false);
+        expect(createChatModel).not.toHaveBeenCalled();
+        expect(reserve).not.toHaveBeenCalled();
+        expect(invoke).not.toHaveBeenCalled();
+        expect(plugin.pageletCostTracker.record).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['background preparation disabled', (plugin: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+            plugin.settings.pagelet.scopeRecapPreparationEnabled = false;
+        }],
+        ['plugin unload started', (plugin: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+            plugin.unloading = true;
+        }],
+    ] as const)('rechecks %s after limiter wait and makes no provider call', async (_label, mutate) => {
+        const harness = createScopeRecapGuardHarness();
+        let markReserveEntered = (): void => undefined;
+        const reserveEntered = new Promise<void>((resolve) => { markReserveEntered = resolve; });
+        let releaseReserve = (): void => undefined;
+        const reserveGate = new Promise<void>((resolve) => { releaseReserve = resolve; });
+        harness.setReserve(async () => {
+            markReserveEntered();
+            await reserveGate;
+            return { ok: true as const };
+        });
+
+        const running = harness.plugin.runScopeRecap({ mode: 'background' });
+        await reserveEntered;
+        mutate(harness.plugin);
+        releaseReserve();
+        const result = await running;
+
+        expect(result.status).toBe('no_reliable_insight');
+        expect(result.attempt.providerCallMade).toBe(false);
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(harness.plugin.pageletCostTracker.record).not.toHaveBeenCalled();
+    });
+
+    it('rechecks the complete source snapshot after limiter wait and makes no provider call when content changed', async () => {
+        const harness = createScopeRecapGuardHarness();
+        let markReserveEntered = (): void => undefined;
+        const reserveEntered = new Promise<void>((resolve) => { markReserveEntered = resolve; });
+        let releaseReserve = (): void => undefined;
+        const reserveGate = new Promise<void>((resolve) => { releaseReserve = resolve; });
+        harness.setReserve(async () => {
+            markReserveEntered();
+            await reserveGate;
+            return { ok: true as const };
+        });
+
+        const running = harness.plugin.runScopeRecap({ mode: 'background' });
+        await reserveEntered;
+        harness.setAlphaContent('Alpha now cancels the release instead.');
+        releaseReserve();
+        const result = await running;
+
+        expect(result.status).toBe('no_reliable_insight');
+        expect(result.attempt.providerCallMade).toBe(false);
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(harness.plugin.collectScopeRecapSourceNotes).toHaveBeenCalledTimes(2);
+    });
+
+    it('attributes Recap cost to the provider/model snapshot captured at call start', async () => {
+        const harness = createScopeRecapGuardHarness();
+        harness.invoke.mockImplementationOnce(async () => {
+            harness.plugin.settings.aiProvider = 'qwen';
+            harness.plugin.settings.chatModelName = 'later-model';
+            return JSON.stringify([{
+                title: 'The plan and pause decision now conflict',
+                summary: 'Alpha commits to ship while Beta records a pause for the same feature.',
+                whyItMatters: 'The owner should resolve the conflict before the next release step.',
+                sourceNoteTitles: ['Alpha', 'Beta'],
+                section: 'tension',
+            }]);
+        });
+
+        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(result.status).toBe('ready');
+        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
+            feature: 'scope-recap',
+            provider: 'openai',
+            model: 'gpt-4o-mini',
+        }));
+    });
+
+    it('disables DashScope thinking for the bounded Recap JSON request', async () => {
+        const harness = createScopeRecapGuardHarness();
+        harness.plugin.settings.aiProvider = 'qwen';
+        harness.plugin.settings.chatModelName = 'deepseek-v4-flash';
+        harness.plugin.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(result.status).toBe('ready');
+        expect(harness.plugin.createChatModel).toHaveBeenCalledWith(0.2, {
+            maxTokens: 1_000,
+            qwenRequestOptions: { enableThinking: false },
+        });
+    });
+
+    it('classifies an empty final answer as empty without retrying reasoning content', async () => {
+        const harness = createScopeRecapGuardHarness();
+        harness.invoke.mockResolvedValueOnce({
+            content: '',
+            additional_kwargs: { reasoning_content: 'Provider reasoning is not the final answer.' },
+        });
+
+        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(result).toEqual(expect.objectContaining({
+            status: 'no_reliable_insight',
+            artifact: null,
+            attempt: expect.objectContaining({
+                outcome: 'empty',
+                providerCallMade: true,
+            }),
+        }));
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
+            feature: 'scope-recap',
+            outcome: 'empty',
+            outputTokens: 0,
+        }));
+    });
+
+    it('keeps non-empty invalid JSON classified as malformed', async () => {
+        const harness = createScopeRecapGuardHarness();
+        harness.invoke.mockResolvedValueOnce({ content: 'not json' });
+
+        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(result).toEqual(expect.objectContaining({
+            status: 'no_reliable_insight',
+            artifact: null,
+            attempt: expect.objectContaining({
+                outcome: 'malformed',
+                providerCallMade: true,
+            }),
+        }));
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
+            feature: 'scope-recap',
+            outcome: 'malformed',
+        }));
+    });
+
+    it.each([
+        ['endpoint', (settings: Record<string, unknown>) => {
+            settings.baseURL = 'https://gateway.example.test/v2';
+        }],
+        ['provider preset', (settings: Record<string, unknown>) => {
+            settings.aiProviderPreset = 'custom';
+        }],
+    ] as const)('changes the Recap authorization context when the %s changes', (_label, mutate) => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'openai',
+            aiProviderPreset: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            baseURL: 'https://api.openai.com/v1/',
+        };
+        plugin.getPageletSettingsWithDataBoundary = jest.fn(() => ({
+            excludedFolders: [],
+            excludedTags: [],
+            excludedPatterns: [],
+            reviewsFolder: '.pagelet',
+        }));
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:current');
+        const initial = plugin.getScopeRecapAuthorizationContextId();
+
+        mutate(plugin.settings);
+
+        expect(plugin.getScopeRecapAuthorizationContextId()).not.toBe(initial);
+    });
+});
+
+describe('Scope Recap and Quiet Recall production rate-limit storage', () => {
+    const buckets = ['scope-recap', 'quiet-recall'] as const;
+    const featureCaps = [
+        { bucket: 'scope-recap' as const, hourly: 2, daily: 10 },
+        { bucket: 'quiet-recall' as const, hourly: 10, daily: 50 },
+    ];
+
+    function createRateLimitHarness() {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            vault: {
+                configDir: '.obsidian-test',
+                getName: jest.fn(() => 'adapter-test-vault'),
+            },
+        };
+        plugin.scopeRecapRateLimiterInstance = null;
+        plugin.quietRecallRateLimiterInstance = null;
+        return plugin;
+    }
+
+    function getLimiter(
+        plugin: any, // eslint-disable-line @typescript-eslint/no-explicit-any
+        bucket: typeof buckets[number],
+    ) {
+        return bucket === 'scope-recap'
+            ? plugin.getScopeRecapRateLimiter()
+            : plugin.getQuietRecallRateLimiter();
+    }
+
+    it.each(featureCaps)(
+        'enforces the production $bucket $hourly-call hourly boundary exactly',
+        async ({ bucket, hourly }) => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date(2026, 6, 18, 8, 0, 0));
+            const localStorage = installMockWindowLocalStorage();
+            try {
+                const limiter = getLimiter(createRateLimitHarness(), bucket);
+                for (let call = 0; call < hourly; call += 1) {
+                    await expect(limiter.reserve()).resolves.toEqual({ ok: true });
+                }
+
+                const blocked = await limiter.reserve();
+
+                expect(blocked).toEqual(expect.objectContaining({
+                    ok: false,
+                    reason: 'hr-cap',
+                }));
+                const state = await limiter.getStateSnapshot();
+                expect(state.dailyCount).toBe(hourly);
+                expect(state.hourlyTimestamps).toHaveLength(hourly);
+            } finally {
+                localStorage.restore();
+                jest.useRealTimers();
+            }
+        },
+    );
+
+    it.each(featureCaps)(
+        'enforces the production $bucket $daily-call local-day boundary exactly',
+        async ({ bucket, hourly, daily }) => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date(2026, 6, 18, 8, 0, 0));
+            const localStorage = installMockWindowLocalStorage();
+            try {
+                const limiter = getLimiter(createRateLimitHarness(), bucket);
+                const batches = daily / hourly;
+                for (let batch = 0; batch < batches; batch += 1) {
+                    for (let call = 0; call < hourly; call += 1) {
+                        await expect(limiter.reserve()).resolves.toEqual({ ok: true });
+                    }
+                    jest.advanceTimersByTime(60 * 60 * 1000 + 1);
+                }
+
+                const blocked = await limiter.reserve();
+
+                expect(blocked).toEqual(expect.objectContaining({
+                    ok: false,
+                    reason: 'day-cap',
+                }));
+                await expect(limiter.getStateSnapshot()).resolves.toEqual(expect.objectContaining({
+                    dailyCount: daily,
+                }));
+            } finally {
+                localStorage.restore();
+                jest.useRealTimers();
+            }
+        },
+    );
+
+    it.each(buckets)('fails closed when %s localStorage is unavailable', async (bucket) => {
+        const unavailable = installUnavailablePlatformLocalStorage();
+        try {
+            const plugin = createRateLimitHarness();
+            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow(
+                `${bucket} rate-limit storage unavailable`,
+            );
+        } finally {
+            unavailable.restore();
+        }
+    });
+
+    it.each(buckets)('fails closed when %s localStorage contains bad JSON', async (bucket) => {
+        const localStorage = installMockWindowLocalStorage();
+        try {
+            const plugin = createRateLimitHarness();
+            const key = plugin.pageletRateLimitStorageKey(bucket);
+            localStorage.storage.setItem(key, '{not-json');
+
+            await expect(getLimiter(plugin, bucket).reserve()).rejects.toBeInstanceOf(SyntaxError);
+        } finally {
+            localStorage.restore();
+        }
+    });
+
+    it.each(buckets)('fails closed when %s localStorage contains a bad state shape', async (bucket) => {
+        const localStorage = installMockWindowLocalStorage();
+        try {
+            const plugin = createRateLimitHarness();
+            const key = plugin.pageletRateLimitStorageKey(bucket);
+            localStorage.storage.setItem(key, JSON.stringify({
+                hourlyTimestamps: 'not-an-array',
+                dailyCount: 0,
+                dailyResetAt: Date.now() + 86_400_000,
+            }));
+
+            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow(
+                `${bucket} rate-limit state is malformed`,
+            );
+        } finally {
+            localStorage.restore();
+        }
+    });
+
+    it.each(buckets)('fails closed when %s localStorage persistence fails', async (bucket) => {
+        const localStorage = installMockWindowLocalStorage();
+        try {
+            const plugin = createRateLimitHarness();
+            localStorage.storage.setItem.mockImplementation(() => {
+                throw new Error('storage quota denied');
+            });
+
+            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow('storage quota denied');
+        } finally {
+            localStorage.restore();
+        }
+    });
+
+    it('does not invoke the Scope Recap provider when its persisted limiter cannot load', async () => {
+        const unavailable = installUnavailablePlatformLocalStorage();
+        try {
+            const invoke = jest.fn(async () => '[]');
+            const plugin = createRateLimitHarness();
+            plugin.settings = {
+                aiProvider: 'openai',
+                chatModelName: 'gpt-4o-mini',
+                pagelet: {
+                    enabled: true,
+                    temperature: 0.2,
+                    maxOutputTokens: 2_000,
+                    scopeRecapBackgroundAuthorization: 'authorized-v1',
+                    scopeRecapPreparationEnabled: true,
+                    scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
+                },
+            };
+            plugin.collectScopeRecapSourceNotes = jest.fn(async () => [
+                {
+                    path: 'Projects/PA/Alpha.md',
+                    title: 'Alpha',
+                    content: 'Alpha commits to shipping the feature.',
+                },
+                {
+                    path: 'Projects/PA/Beta.md',
+                    title: 'Beta',
+                    content: 'Beta records a pause decision for the same feature.',
+                },
+            ]);
+            plugin.scopeRecapBuildOptions = jest.fn(() => ({
+                now: new Date('2026-07-18T12:00:00.000Z'),
+                scope: {
+                    kind: 'folder',
+                    label: 'Projects/PA',
+                    paths: ['Projects/PA/Alpha.md', 'Projects/PA/Beta.md'],
+                },
+                isPathAllowed: jest.fn(() => true),
+                dataBoundarySnapshotId: 'data_boundary:test',
+            }));
+            plugin.createChatModel = jest.fn(async () => ({ invoke }));
+            plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
+            plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
+            plugin.pageletCostTracker = { record: jest.fn() };
+            plugin.log = jest.fn();
+
+            const result = await plugin.runScopeRecap({ mode: 'background' });
+
+            expect(result.status).toBe('no_reliable_insight');
+            expect(result.attempt).toEqual(expect.objectContaining({
+                outcome: 'budget_blocked',
+                providerCallMade: false,
+            }));
+            expect(invoke).not.toHaveBeenCalled();
+            expect(plugin.pageletCostTracker.record).not.toHaveBeenCalled();
+        } finally {
+            unavailable.restore();
+        }
+    });
+});
+
+describe('Quiet Recall DEC-020 production adapter', () => {
+    function createRuntimeHarness(options: {
+        currentContent?: string;
+        candidateContent?: string;
+        setupIssue?: string | null;
+        includeCandidate?: boolean;
+        savedInsights?: Array<Record<string, unknown>>;
+        reserve?: () => Promise<{ ok: true } | { ok: false; reason: 'hr-cap' }>;
+        invoke?: (prompt: string) => Promise<unknown>;
+    } = {}) {
+        const activeFile = createTFileWithStat('notes/current.md', { mtime: 1_000, size: 100 });
+        const candidateFile = createTFileWithStat('notes/redis.md', { mtime: 900, size: 120 });
+        let candidateAvailable = true;
+        let currentContent = options.currentContent ?? '# Current\n\nShould we keep the Redis cache?';
+        let candidateContent = options.candidateContent
+            ?? '# Redis decision\n\n## Benchmarks\n\nThe previous benchmark supports keeping Redis.';
+        const invoke = jest.fn(options.invoke ?? (async () => JSON.stringify({
+            isConvincing: true,
+            whyNow: 'Your current cache question is answered by the older Redis benchmark.',
+        })));
+        const reserve = jest.fn(options.reserve ?? (async () => ({ ok: true as const })));
+        const recordCost = jest.fn();
+        const createChatModel = jest.fn(async () => ({ invoke }));
+        const getAISetupIssue = jest.fn(() => options.setupIssue ?? null);
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.unloading = false;
+        plugin.settings = {
+            quietRecall: { enabled: true },
+            pagelet: { enabled: true, temperature: 0.2 },
+            retrievalHabitProfile: { enabled: false, state: { aggregates: [] } },
+            savedInsights: { items: options.savedInsights ?? [] },
+            aiProvider: 'openai',
+            aiProviderPreset: 'openai',
+            baseURL: 'https://api.openai.com/v1',
+            chatModelName: 'gpt-4o-mini',
+        };
+        plugin.app = {
+            workspace: { getActiveFile: jest.fn(() => activeFile) },
+            vault: {
+                cachedRead: jest.fn(async () => currentContent),
+                getAbstractFileByPath: jest.fn((path: string) => {
+                    if (path === activeFile.path) return activeFile;
+                    if (path === candidateFile.path && candidateAvailable) return candidateFile;
+                    return null;
+                }),
+            },
+        };
+        plugin.getPageletLocale = jest.fn(() => 'en');
+        plugin.isDataBoundaryAllowedFile = jest.fn(() => true);
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+        plugin.collectQuietRecallVaultNotes = jest.fn(async () => (
+            options.includeCandidate === false
+                ? { relatedNotes: [], vaultNotes: [] }
+                : {
+                    relatedNotes: [{ path: 'notes/redis.md', score: 0.95 }],
+                    vaultNotes: [{
+                        path: 'notes/redis.md',
+                        title: 'Redis decision',
+                        content: candidateContent,
+                        modifiedAt: '2026-07-01T00:00:00.000Z',
+                    }],
+                }
+        ));
+        plugin.listDataBoundaryAllowedSavedInsights = jest.fn(() => options.savedInsights ?? []);
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
+        plugin.getAISetupIssue = getAISetupIssue;
+        plugin.createChatModel = createChatModel;
+        plugin.getQuietRecallRateLimiter = jest.fn(() => ({ reserve }));
+        plugin.pageletCostTracker = { record: recordCost };
+        plugin.log = jest.fn();
+        plugin._lastRecallLlmEvalAt = 0;
+        plugin.quietRecallRoundAdmissionTail = Promise.resolve();
+        plugin.quietRecallEvaluationCoordinatorInstance = null;
+        return {
+            plugin,
+            invoke,
+            reserve,
+            recordCost,
+            createChatModel,
+            getAISetupIssue,
+            setCurrentContent: (value: string) => { currentContent = value; },
+            setCandidateContent: (value: string) => { candidateContent = value; },
+            setCandidateAvailable: (value: boolean) => { candidateAvailable = value; },
+        };
+    }
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    it('reserves every actual call, retries a wrong-language result once, and reuses the exact cache during cooldown', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
+        const events: string[] = [];
+        const harness = createRuntimeHarness({
+            reserve: async () => {
+                events.push('reserve');
+                return { ok: true };
+            },
+            invoke: async (prompt) => {
+                events.push('invoke');
+                return prompt.includes('IMPORTANT:')
+                    ? JSON.stringify({
+                        isConvincing: true,
+                        whyNow: 'The older Redis benchmark answers the cache question in the current note.',
+                    })
+                    : JSON.stringify({
+                        isConvincing: true,
+                        whyNow: '旧的 Redis 基准测试回答了当前笔记中的缓存问题。',
+                    });
+            },
+        });
+
+        const first = await harness.plugin.runQuietRecall();
+        const cached = await harness.plugin.runQuietRecall();
+
+        expect(events).toEqual(['reserve', 'invoke', 'reserve', 'invoke']);
+        expect(first.candidates).toEqual([
+            expect.objectContaining({
+                evaluationProvenance: 'ai',
+                evaluationFingerprint: expect.any(String),
+                whyNow: ['The older Redis benchmark answers the cache question in the current note.'],
+            }),
+        ]);
+        expect(first.discoverCandidates).toEqual([
+            expect.objectContaining({ evaluationProvenance: 'local' }),
+        ]);
+        expect(first.evaluationDiagnostics).toEqual(expect.objectContaining({
+            providerCalls: 2,
+            languageRetryCalls: 1,
+        }));
+        expect(cached.candidates).toHaveLength(1);
+        expect(cached.evaluationDiagnostics).toEqual(expect.objectContaining({
+            cacheHits: 1,
+            providerCalls: 0,
+        }));
+        expect(harness.createChatModel).toHaveBeenCalledTimes(1);
+        expect(harness.reserve).toHaveBeenCalledTimes(2);
+        expect(harness.invoke).toHaveBeenCalledTimes(2);
+        expect(harness.recordCost).toHaveBeenCalledTimes(2);
+        expect(harness.recordCost.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            feature: 'quiet-recall',
+        }));
+        const initialCost = harness.recordCost.mock.calls[0]?.[0] as { inputTokens: number };
+        const retryCost = harness.recordCost.mock.calls[1]?.[0] as { inputTokens: number };
+        expect(retryCost.inputTokens).toBeGreaterThan(initialCost.inputTokens);
+    });
+
+    it('invalidates cache reuse when the actual candidate digest changes and lets cooldown block the miss', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
+        const harness = createRuntimeHarness();
+
+        const first = await harness.plugin.runQuietRecall();
+        harness.setCandidateContent('# Redis decision\n\n## Reversal\n\nThe benchmark now recommends removing Redis.');
+        const blockedMiss = await harness.plugin.runQuietRecall();
+
+        expect(first.candidates).toHaveLength(1);
+        expect(blockedMiss.candidates).toHaveLength(0);
+        expect(blockedMiss.discoverCandidates).toHaveLength(1);
+        expect(blockedMiss.evaluationDiagnostics?.blockedReason).toBe('cooldown');
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(60_001);
+        const reevaluated = await harness.plugin.runQuietRecall();
+        expect(reevaluated.candidates).toHaveLength(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('invalidates cache reuse when only the end of the current note body changes', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
+        const currentPrefix = '# Current\n\nShould we keep the Redis cache?\n\n## Working notes\n\n';
+        const harness = createRuntimeHarness({
+            currentContent: `${currentPrefix}Original end-of-body detail.`,
+        });
+
+        const first = await harness.plugin.runQuietRecall();
+        harness.setCurrentContent(`${currentPrefix}Changed end-of-body detail only.`);
+        const blockedMiss = await harness.plugin.runQuietRecall();
+
+        expect(first.candidates).toHaveLength(1);
+        expect(blockedMiss.candidates).toHaveLength(0);
+        expect(blockedMiss.discoverCandidates).toHaveLength(1);
+        expect(blockedMiss.evaluationDiagnostics?.blockedReason).toBe('cooldown');
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(60_001);
+        const reevaluated = await harness.plugin.runQuietRecall();
+        expect(reevaluated.candidates).toHaveLength(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(2);
+    });
+
+    it('evaluates the actual Saved Insight text and invalidates delivery after the insight changes', async () => {
+        const savedInsight = {
+            id: 'ins-redis-decision',
+            type: 'decision',
+            text: 'SAVED-INSIGHT-DECISION-TEXT: keep Redis until the benchmark is rerun.',
+            origin: 'pa-generated',
+            sourceRefs: [{ path: 'notes/current.md', evidenceStrength: 'strong' }],
+            whyShown: [],
+            scope: { kind: 'current_note', paths: ['notes/current.md'] },
+            status: 'active',
+            influencePolicy: 'weak-only',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+        const harness = createRuntimeHarness({
+            includeCandidate: false,
+            savedInsights: [savedInsight],
+        });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.invoke.mock.calls[0]?.[0]).toContain('SAVED-INSIGHT-DECISION-TEXT');
+        expect(result.candidates).toHaveLength(1);
+        expect(harness.plugin.isQuietRecallRunCurrent(result)).toBe(true);
+
+        savedInsight.status = 'archived';
+        savedInsight.updatedAt = new Date(Date.now() + 1_000).toISOString();
+        expect(harness.plugin.isQuietRecallRunCurrent(result)).toBe(false);
+    });
+
+    it('attributes a completed provider call to the provider and model captured at call start', async () => {
+        let resolveInvoke!: (value: unknown) => void;
+        let markInvokeStarted!: () => void;
+        const invokeGate = new Promise<unknown>((resolve) => { resolveInvoke = resolve; });
+        const invokeStarted = new Promise<void>((resolve) => { markInvokeStarted = resolve; });
+        const harness = createRuntimeHarness({
+            invoke: async () => {
+                markInvokeStarted();
+                return invokeGate;
+            },
+        });
+
+        const pending = harness.plugin.runQuietRecall();
+        await invokeStarted;
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+
+        harness.plugin.settings.aiProvider = 'anthropic';
+        harness.plugin.settings.chatModelName = 'claude-new';
+        resolveInvoke(JSON.stringify({
+            isConvincing: true,
+            whyNow: 'The older Redis benchmark answers the cache question in the current note.',
+        }));
+        await pending;
+
+        expect(harness.recordCost).toHaveBeenCalledWith(expect.objectContaining({
+            provider: 'openai',
+            model: 'gpt-4o-mini',
+            feature: 'quiet-recall',
+        }));
+    });
+
+    it.each([
+        ['Pagelet disabled', (harness: ReturnType<typeof createRuntimeHarness>) => {
+            harness.plugin.settings.pagelet.enabled = false;
+        }],
+        ['Quiet Recall disabled', (harness: ReturnType<typeof createRuntimeHarness>) => {
+            harness.plugin.settings.quietRecall.enabled = false;
+        }],
+        ['plugin unload started', (harness: ReturnType<typeof createRuntimeHarness>) => {
+            harness.plugin.unloading = true;
+        }],
+        ['source deleted', (harness: ReturnType<typeof createRuntimeHarness>) => {
+            harness.setCandidateAvailable(false);
+        }],
+    ])('does not invoke Quiet Recall after limiter wait when %s', async (_label, mutate) => {
+        let markReserveEntered = (): void => undefined;
+        const reserveEntered = new Promise<void>((resolve) => { markReserveEntered = resolve; });
+        let releaseReserve = (): void => undefined;
+        const reserveGate = new Promise<void>((resolve) => { releaseReserve = resolve; });
+        const harness = createRuntimeHarness({
+            reserve: async () => {
+                markReserveEntered();
+                await reserveGate;
+                return { ok: true };
+            },
+        });
+
+        const pending = harness.plugin.runQuietRecall();
+        await reserveEntered;
+        mutate(harness);
+        releaseReserve();
+        const result = await pending;
+
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(harness.recordCost).not.toHaveBeenCalled();
+        expect(result.candidates).toHaveLength(0);
+        expect(result.discoverCandidates).toHaveLength(1);
+        expect(result.evaluationDiagnostics).toEqual(expect.objectContaining({
+            blockedReason: 'invalid_context',
+            providerCalls: 0,
+        }));
+    });
+
+    it('re-reads VSS-ranked notes from the live vault and rejects a note changed during the read', async () => {
+        const candidateFile = createTFileWithStat('notes/redis.md', { mtime: 900, size: 120 }) as TFile & {
+            basename: string;
+        };
+        candidateFile.basename = 'redis';
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const read = jest.fn<(_file: TFile) => Promise<string>>(async () => 'LIVE-VAULT-CONTENT');
+        const cachedRead = jest.fn<(_file: TFile) => Promise<string>>(
+            async () => 'CACHED-CONTENT-SHOULD-NOT-BE-USED',
+        );
+        plugin.app = {
+            vault: {
+                read,
+                cachedRead,
+                getAbstractFileByPath: jest.fn(() => candidateFile),
+            },
+        };
+        plugin.buildGraphDiscoveryBacklinkMap = jest.fn(() => new Map());
+        plugin.isDataBoundaryAllowedFile = jest.fn(() => true);
+        plugin.getDataBoundaryTags = jest.fn(() => []);
+        plugin.getGraphDiscoveryLinks = jest.fn(() => []);
+        plugin.log = jest.fn();
+
+        const live = await plugin.collectQuietRecallVaultNotesFromRelatedNotes([{
+            path: candidateFile.path,
+            content: 'STALE-VSS-CONTENT',
+            score: 0.95,
+        }]);
+
+        expect(live.vaultNotes).toEqual([
+            expect.objectContaining({ content: 'LIVE-VAULT-CONTENT' }),
+        ]);
+        expect(JSON.stringify(live)).not.toContain('STALE-VSS-CONTENT');
+        expect(read).toHaveBeenCalledWith(candidateFile);
+        expect(cachedRead).not.toHaveBeenCalled();
+
+        read.mockImplementationOnce(async () => {
+            candidateFile.stat.mtime += 1;
+            return 'CHANGED-DURING-READ';
+        });
+        const changed = await plugin.collectQuietRecallVaultNotesFromRelatedNotes([{
+            path: candidateFile.path,
+            content: 'STALE-VSS-CONTENT',
+            score: 0.95,
+        }]);
+        expect(changed).toEqual({ vaultNotes: [], relatedNotes: [] });
+    });
+
+    it('rejects a completed run after a source is deleted or its evaluation policy changes', async () => {
+        const harness = createRuntimeHarness();
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(harness.plugin.isQuietRecallRunCurrent(result)).toBe(true);
+
+        harness.setCandidateAvailable(false);
+        expect(harness.plugin.isQuietRecallRunCurrent(result)).toBe(false);
+
+        harness.setCandidateAvailable(true);
+        harness.plugin.settings.aiProviderPreset = 'custom';
+        expect(harness.plugin.isQuietRecallRunCurrent(result)).toBe(false);
+    });
+
+    it('clears the evaluation coordinator across policy A-to-B-to-A transitions', () => {
+        let dataBoundarySnapshotId = 'data_boundary:A';
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const coordinatorA = { clear: jest.fn() };
+        const coordinatorB = { clear: jest.fn() };
+        plugin.settings = {
+            aiProvider: 'openai',
+            aiProviderPreset: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            baseURL: 'https://api.openai.com/v1',
+            quietRecall: { enabled: true, bubbleNudgesEnabled: true },
+            retrievalHabitProfile: { enabled: false, state: { aggregates: [] } },
+            pagelet: {
+                enabled: true,
+                temperature: 0.2,
+                maxOutputTokens: 2_000,
+            },
+        };
+        plugin.getPageletLocale = jest.fn(() => 'en');
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => dataBoundarySnapshotId);
+        plugin.registerPageletCommandsOnce = jest.fn();
+        plugin.registerPageletFocusCommandOnce = jest.fn();
+        plugin.surfacePageletBackgroundPreparationNotice = jest.fn();
+        plugin.pageletOrchestrator = { syncSettings: jest.fn() };
+        plugin.quietRecallEvaluationCoordinatorInstance = coordinatorA;
+        plugin.quietRecallEvaluationPolicyIdentitySnapshot = null;
+
+        plugin.syncPageletRuntime();
+        expect(coordinatorA.clear).not.toHaveBeenCalled();
+
+        dataBoundarySnapshotId = 'data_boundary:B';
+        plugin.syncPageletRuntime();
+        expect(coordinatorA.clear).toHaveBeenCalledTimes(1);
+        expect(plugin.quietRecallEvaluationCoordinatorInstance).toBeNull();
+
+        plugin.quietRecallEvaluationCoordinatorInstance = coordinatorB;
+        dataBoundarySnapshotId = 'data_boundary:A';
+        plugin.syncPageletRuntime();
+        expect(coordinatorB.clear).toHaveBeenCalledTimes(1);
+        expect(plugin.quietRecallEvaluationCoordinatorInstance).toBeNull();
+    });
+
+    it('admits only one concurrent Quiet Recall round into the session cooldown', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
+        const { plugin } = createRuntimeHarness();
+
+        const admissions = await Promise.all([
+            plugin.acquireQuietRecallRoundAdmission(),
+            plugin.acquireQuietRecallRoundAdmission(),
+        ]);
+
+        expect(admissions.filter(Boolean)).toHaveLength(1);
+        expect(admissions.filter((admitted: boolean) => !admitted)).toHaveLength(1);
+        expect(plugin._lastRecallLlmEvalAt).toBe(Date.now());
+
+        jest.advanceTimersByTime(60_001);
+        await expect(plugin.acquireQuietRecallRoundAdmission()).resolves.toBe(true);
+    });
+
+    it('does not start model or limiter work without a configured provider or eligible candidate', async () => {
+        const missingProvider = createRuntimeHarness({ setupIssue: 'provider missing' });
+        const missingProviderResult = await missingProvider.plugin.runQuietRecall();
+
+        expect(missingProviderResult.candidates).toHaveLength(0);
+        expect(missingProviderResult.discoverCandidates).toHaveLength(1);
+        expect(missingProvider.createChatModel).not.toHaveBeenCalled();
+        expect(missingProvider.reserve).not.toHaveBeenCalled();
+        expect(missingProvider.invoke).not.toHaveBeenCalled();
+
+        const empty = createRuntimeHarness({ includeCandidate: false });
+        const emptyResult = await empty.plugin.runQuietRecall();
+        expect(emptyResult.candidates).toHaveLength(0);
+        expect(empty.getAISetupIssue).not.toHaveBeenCalled();
+        expect(empty.createChatModel).not.toHaveBeenCalled();
+        expect(empty.reserve).not.toHaveBeenCalled();
+    });
+
+    it('blocks provider invocation when the persisted Quiet Recall bucket is exhausted', async () => {
+        const harness = createRuntimeHarness({
+            reserve: async () => ({ ok: false, reason: 'hr-cap' }),
+        });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(result.candidates).toHaveLength(0);
+        expect(result.discoverCandidates).toHaveLength(1);
+        expect(result.evaluationDiagnostics?.blockedReason).toBe('budget');
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(harness.recordCost).not.toHaveBeenCalled();
+    });
+
+    it('times out a reserved provider call at twenty seconds and records its feature cost', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
+        const harness = createRuntimeHarness({
+            invoke: async () => new Promise<never>(() => undefined),
+        });
+
+        const pending = harness.plugin.runQuietRecall();
+        await jest.advanceTimersByTimeAsync(20_000);
+        const result = await pending;
+
+        expect(result.candidates).toHaveLength(0);
+        expect(result.evaluationDiagnostics?.attempts[0]).toEqual(expect.objectContaining({
+            outcome: 'rejected',
+            reason: 'timeout',
+        }));
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.recordCost).toHaveBeenCalledWith(expect.objectContaining({
+            feature: 'quiet-recall',
+            outputTokens: 0,
+        }));
+    });
+});
+
 describe('Quiet Recall user-safe feedback', () => {
     const candidate: QuietRecallCandidate = {
         id: 'quiet-recall-safe-feedback',
@@ -4889,6 +6125,76 @@ describe('Pagelet detail workspace leaf', () => {
         expect(setViewState).not.toHaveBeenCalled();
         expect(revealLeaf).toHaveBeenCalledWith(leaf);
         expect(detailView.setPayload).toHaveBeenCalledWith(payload);
+    });
+
+    it('replaces a detachable hot-reload detail leaf before sending the payload', async () => {
+        const events: string[] = [];
+        const detailView = Object.create(PageletDetailView.prototype) as PageletDetailView;
+        detailView.setPayload = jest.fn(() => {
+            events.push('set-payload');
+        });
+        const oldLeaf = {
+            view: {},
+            loadIfDeferred: jest.fn(async () => {
+                events.push('old-load');
+            }),
+            setViewState: jest.fn<(_state: unknown) => Promise<void>>(async () => undefined),
+            detach: jest.fn(() => {
+                events.push('old-detach');
+            }),
+        };
+        const newLeaf = {
+            view: detailView,
+            setViewState: jest.fn<(_state: unknown) => Promise<void>>(async () => {
+                events.push('new-set-view-state');
+            }),
+            loadIfDeferred: jest.fn(async () => {
+                events.push('new-load');
+            }),
+        };
+        const revealLeaf = jest.fn<(_leaf: unknown) => Promise<void>>(async () => {
+            events.push('reveal-new');
+        });
+        const getLeaf = jest.fn<(_kind: string) => typeof newLeaf>(() => {
+            events.push('get-new-leaf');
+            return newLeaf;
+        });
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => [oldLeaf]),
+                getLeaf,
+                revealLeaf,
+            },
+        };
+        const payload = {
+            title: 'Pagelet — Detail View',
+            content: [],
+            locale: 'en' as const,
+        };
+
+        await plugin.openPageletDetailView(payload);
+
+        expect(oldLeaf.loadIfDeferred).toHaveBeenCalledTimes(1);
+        expect(oldLeaf.detach).toHaveBeenCalledTimes(1);
+        expect(oldLeaf.setViewState).not.toHaveBeenCalled();
+        expect(getLeaf).toHaveBeenCalledWith('tab');
+        expect(newLeaf.setViewState).toHaveBeenCalledWith({
+            type: 'pa-pagelet-detail-view',
+            active: true,
+        });
+        expect(newLeaf.loadIfDeferred).toHaveBeenCalledTimes(1);
+        expect(revealLeaf).toHaveBeenCalledWith(newLeaf);
+        expect(detailView.setPayload).toHaveBeenCalledWith(payload);
+        expect(events).toEqual([
+            'old-load',
+            'old-detach',
+            'get-new-leaf',
+            'new-set-view-state',
+            'new-load',
+            'reveal-new',
+            'set-payload',
+        ]);
     });
 
     it('rejects instead of silently showing an empty detail leaf when the view cannot initialize', async () => {

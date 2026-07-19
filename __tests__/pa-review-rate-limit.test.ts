@@ -193,6 +193,79 @@ describe("PageletRateLimiter.reserve (atomic check + commit)", () => {
         expect(persisted?.dailyCount).toBe(1);
     });
 
+    it("serializes concurrent reservations so a hard cap cannot be oversubscribed", async () => {
+        let releaseLoad = (): void => undefined;
+        const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+        const cell: { persisted: PageletRateLimitState | null } = { persisted: null };
+        const storage: PageletRateLimitStorage = {
+            async load() {
+                await loadGate;
+                return cell.persisted;
+            },
+            async save(state) {
+                cell.persisted = state;
+            },
+        };
+        const limiter = new PageletRateLimiter({
+            storage,
+            config: { hourlyCap: 1, dailyCap: 1 },
+            now: () => 1_000,
+            nextLocalMidnight: midnightAfter,
+        });
+
+        const first = limiter.reserve();
+        const second = limiter.reserve();
+        releaseLoad();
+
+        const decisions = await Promise.all([first, second]);
+        expect(decisions.filter((decision) => decision.ok)).toHaveLength(1);
+        expect(decisions.filter((decision) => !decision.ok)).toHaveLength(1);
+        expect(cell.persisted?.dailyCount).toBe(1);
+        expect(cell.persisted?.hourlyTimestamps).toHaveLength(1);
+    });
+
+    it("serializes separate hot-reload instances that share a persisted bucket", async () => {
+        let releaseFirstLoad = (): void => undefined;
+        const firstLoadGate = new Promise<void>((resolve) => { releaseFirstLoad = resolve; });
+        let loadCount = 0;
+        const cell: { persisted: PageletRateLimitState | null } = { persisted: null };
+        const storage: PageletRateLimitStorage = {
+            async load() {
+                loadCount += 1;
+                if (loadCount === 1) await firstLoadGate;
+                return cell.persisted
+                    ? { ...cell.persisted, hourlyTimestamps: [...cell.persisted.hourlyTimestamps] }
+                    : null;
+            },
+            async save(state) {
+                cell.persisted = {
+                    ...state,
+                    hourlyTimestamps: [...state.hourlyTimestamps],
+                };
+            },
+        };
+        const makeLimiter = () => new PageletRateLimiter({
+            storage,
+            coordinationKey: "vault:test:scope-recap",
+            config: { hourlyCap: 1, dailyCap: 1 },
+            now: () => 1_000,
+            nextLocalMidnight: midnightAfter,
+        });
+        const oldInstance = makeLimiter();
+        const reloadedInstance = makeLimiter();
+
+        const first = oldInstance.reserve();
+        const second = reloadedInstance.reserve();
+        releaseFirstLoad();
+
+        const decisions = await Promise.all([first, second]);
+        expect(decisions.filter((decision) => decision.ok)).toHaveLength(1);
+        expect(decisions.filter((decision) => !decision.ok)).toHaveLength(1);
+        expect(cell.persisted?.dailyCount).toBe(1);
+        expect(cell.persisted?.hourlyTimestamps).toHaveLength(1);
+        expect(loadCount).toBe(2);
+    });
+
     it("rejects the 11th reservation in a 1-hour window with hr-cap", async () => {
         const storage = new InMemoryRateLimitStorage();
         let clock = 1_000;

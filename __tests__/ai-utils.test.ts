@@ -17,6 +17,7 @@ import {
     getDashScopeTasksUrl,
     isDashScopeCompatibleBaseURL,
     SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
+    supportsDashScopeThinkingControl,
 } from '../src/ai-services/ai-utils';
 
 jest.mock('obsidian');
@@ -329,6 +330,57 @@ describe('Qwen DashScope request options', () => {
         });
     });
 
+    it('forwards an explicit Bailian thinking opt-out for DashScope qwen', () => {
+        expect(buildQwenModelKwargs('qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1', {
+            enableThinking: false,
+        })).toEqual({
+            enable_thinking: false,
+        });
+    });
+
+    it('limits structured-call thinking control to supported DashScope model families', () => {
+        expect(supportsDashScopeThinkingControl(
+            'qwen',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'deepseek-v4-flash',
+        )).toBe(true);
+        expect(supportsDashScopeThinkingControl(
+            'qwen',
+            'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+            'qwen3.6-plus',
+        )).toBe(true);
+        expect(supportsDashScopeThinkingControl(
+            'qwen',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'qwen-plus',
+        )).toBe(false);
+        expect(supportsDashScopeThinkingControl(
+            'qwen',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'qwen3-235b-a22b-thinking-2507',
+        )).toBe(false);
+        expect(supportsDashScopeThinkingControl(
+            'qwen',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'qwen3-235b-a22b-instruct-2507',
+        )).toBe(false);
+        expect(supportsDashScopeThinkingControl(
+            'qwen',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'qwen3.7-max-preview',
+        )).toBe(false);
+        expect(supportsDashScopeThinkingControl(
+            'qwen',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'qwen3.7-max-2026-05-17',
+        )).toBe(false);
+        expect(supportsDashScopeThinkingControl(
+            'openai',
+            'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'deepseek-v4-flash',
+        )).toBe(false);
+    });
+
     it('does not send Bailian kwargs by default or for non-DashScope providers', () => {
         expect(buildQwenModelKwargs('qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1')).toBeUndefined();
         expect(buildQwenModelKwargs('openai', 'https://dashscope.aliyuncs.com/compatible-mode/v1', {
@@ -336,6 +388,9 @@ describe('Qwen DashScope request options', () => {
         })).toBeUndefined();
         expect(buildQwenModelKwargs('qwen', 'https://example.invalid/v1', {
             enableThinking: true,
+        })).toBeUndefined();
+        expect(buildQwenModelKwargs('qwen', 'https://example.invalid/v1', {
+            enableThinking: false,
         })).toBeUndefined();
     });
 });

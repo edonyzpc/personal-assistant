@@ -37,8 +37,8 @@ describe("buildRecapInsightsPrompt", () => {
 describe("parseRecapInsightsResponse", () => {
     it("parses valid JSON array", () => {
         const result = parseRecapInsightsResponse(JSON.stringify([
-            { title: "T1", summary: "S1", sourceNoteTitles: ["A"], section: "theme" },
-            { title: "T2", summary: "S2", sourceNoteTitles: ["B"], section: "tension" },
+            { title: "T1", summary: "S1", whyItMatters: "W1", sourceNoteTitles: ["A", "B"], section: "theme" },
+            { title: "T2", summary: "S2", whyItMatters: "W2", sourceNoteTitles: ["B", "C"], section: "tension" },
         ]));
         expect(result).toHaveLength(2);
         expect(result![0].title).toBe("T1");
@@ -47,10 +47,20 @@ describe("parseRecapInsightsResponse", () => {
 
     it("strips markdown code fences", () => {
         const result = parseRecapInsightsResponse(
-            '```json\n[{"title":"T","summary":"S","sourceNoteTitles":["A"],"section":"open_question"}]\n```',
+            '```json\n[{"title":"T","summary":"S","whyItMatters":"W","sourceNoteTitles":["A","B"],"section":"open_question"}]\n```',
         );
         expect(result).toHaveLength(1);
         expect(result![0].section).toBe("open_question");
+    });
+
+    it("accepts one attributed source for explicit click-to-view Recap", () => {
+        expect(parseRecapInsightsResponse(JSON.stringify([{
+            title: "T",
+            summary: "S",
+            whyItMatters: "This affects the next decision.",
+            sourceNoteTitles: ["A"],
+            section: "open_question",
+        }]))).toEqual([expect.objectContaining({ sourceNoteTitles: ["A"] })]);
     });
 
     it("returns null for non-array JSON", () => {
@@ -61,14 +71,13 @@ describe("parseRecapInsightsResponse", () => {
         expect(parseRecapInsightsResponse("not json at all")).toBeNull();
     });
 
-    it("filters items with missing required fields", () => {
+    it("rejects a mixed-validity array instead of silently accepting a partial schema", () => {
         const result = parseRecapInsightsResponse(JSON.stringify([
-            { title: "Valid", summary: "S", sourceNoteTitles: ["A"], section: "theme" },
+            { title: "Valid", summary: "S", whyItMatters: "W", sourceNoteTitles: ["A", "B"], section: "theme" },
             { title: "Missing section", summary: "S", sourceNoteTitles: ["A"] },
             { summary: "Missing title", sourceNoteTitles: ["A"], section: "theme" },
         ]));
-        expect(result).toHaveLength(1);
-        expect(result![0].title).toBe("Valid");
+        expect(result).toBeNull();
     });
 
     it("returns empty array for empty JSON array", () => {
@@ -105,7 +114,7 @@ describe("buildRecallRelevancePrompt", () => {
             candidateDigest: { title: "B", headings: [], firstParagraph: "" },
             candidateAge: "unknown",
         });
-        expect(prompt).toContain("Respond in the same language as the notes");
+        expect(prompt).toContain("Respond in the same language as the current note");
     });
 });
 

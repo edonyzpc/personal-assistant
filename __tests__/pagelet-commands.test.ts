@@ -1,5 +1,6 @@
 import {
     PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
+    PAGELET_CLEAR_SCOPE_RECAP_CACHE_COMMAND_ID,
     PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
     PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
     PAGELET_OPEN_PANEL_COMMAND_ID,
@@ -37,6 +38,7 @@ function makeCallbacks(): PageletCommandCallbacks {
         onQuietRecall: jest.fn(),
         onGraphDiscovery: jest.fn(),
         onScopeRecap: jest.fn(),
+        onClearScopeRecapCache: jest.fn(),
         onToggleProactiveHints: jest.fn(),
         onShowBackgroundPreparationStatus: jest.fn(),
         onMovePetCorner: jest.fn(),
@@ -58,6 +60,7 @@ describe("registerPageletCommands", () => {
             PAGELET_QUIET_RECALL_COMMAND_ID,
             PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
             PAGELET_SCOPE_RECAP_COMMAND_ID,
+            PAGELET_CLEAR_SCOPE_RECAP_CACHE_COMMAND_ID,
             PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
             PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
         ]));
@@ -79,6 +82,7 @@ describe("registerPageletCommands", () => {
         host.registered.find((command) => command.id === PAGELET_QUIET_RECALL_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_GRAPH_DISCOVERY_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_SCOPE_RECAP_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_CLEAR_SCOPE_RECAP_CACHE_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID)?.callback();
 
@@ -88,6 +92,7 @@ describe("registerPageletCommands", () => {
         expect(callbacks.onQuietRecall).toHaveBeenCalledTimes(1);
         expect(callbacks.onGraphDiscovery).toHaveBeenCalledTimes(1);
         expect(callbacks.onScopeRecap).toHaveBeenCalledTimes(1);
+        expect(callbacks.onClearScopeRecapCache).toHaveBeenCalledTimes(1);
         expect(callbacks.onShowBackgroundPreparationStatus).toHaveBeenCalledTimes(2);
     });
 });

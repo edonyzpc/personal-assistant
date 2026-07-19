@@ -35,10 +35,15 @@ import type {
     ConfirmedMemoryRecord,
     QuietRecallBubbleNudge,
     QuietRecallCandidate,
+    QuietRecallEvaluationDiagnostics,
     MaintenanceReviewRunResult,
     QuietRecallRunResult,
     ReviewQueueItem,
     SavedInsight,
+    ScopeRecapLocalOverview,
+    ScopeRecapAttemptStatus,
+    ScopeRecapPreparationResult,
+    ScopeRecapRunResult,
 } from "../src/pa";
 
 function makeTFile(path: string, stat: { size?: number; mtime?: number; ctime?: number } = {}): TFile {
@@ -54,12 +59,22 @@ async function flushAsyncWork(): Promise<void> {
     }
 }
 
+function persistPageletSettingUpdates(host: PageletHost) {
+    const update = jest.fn((key: keyof PageletHost["settings"]["pagelet"], value: unknown) => {
+        const settings = host.settings.pagelet as unknown as Record<string, unknown>;
+        settings[key] = value;
+    });
+    host.updatePageletSetting = update as PageletHost["updatePageletSetting"];
+    return update;
+}
+
 function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
     const activeFile = makeTFile("notes/current.md", { size: 100, mtime: Date.now() });
     const host: PageletHost = {
         app: {
             workspace: {
                 getActiveFile: jest.fn(() => activeFile),
+                getMostRecentLeaf: jest.fn(() => null),
             },
             vault: {
                 getMarkdownFiles: jest.fn(() => [activeFile]),
@@ -85,6 +100,14 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 preloadPerHourCap: 2,
                 preloadPerDayCap: 20,
                 preloadTokenBudget: { input: 4000, output: 1000 },
+                scopeRecapPreparationEnabled: true,
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapAuthorizationContextId: "scope-recap-auth-test",
+                scopeRecapHighValueHints: true,
+                scopeRecapNudgeSuppressions: [],
+                scopeRecapLastAttempt: null,
+                quietRecallLastDiagnostics: null,
+                quietRecallLastAcceptedCount: 0,
                 outputLanguage: "auto",
                 temperature: 0.2,
                 foregroundPerHourCap: 999,
@@ -159,36 +182,92 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             skippedSourceCount: 0,
         }),
         detectCrossNotePatterns: async () => null,
-        runScopeRecap: async () => ({
-            id: "recap-test",
+        buildScopeRecapLocalOverview: async () => ({
+            kind: "local_scope_overview",
+            generatedAt: new Date().toISOString(),
             scope: { kind: "current_note", paths: ["notes/current.md"] },
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            ttlDays: 30,
-            staleStatus: "fresh",
+            sourceSnapshotId: "scope-snapshot-test",
+            dataBoundarySnapshotId: "data_boundary:scope_recap",
             sourceCoverage: {
-                totalSourceCount: 1,
-                includedSourceCount: 1,
+                totalSourceCount: 2,
+                includedSourceCount: 2,
                 skippedSourceCount: 0,
                 coverageRatio: 1,
             },
+            includedSources: [
+                { path: "notes/current.md", title: "current", changed: false },
+                { path: "notes/related.md", title: "related", changed: false },
+            ],
             skippedSources: [],
-            summary: {
-                id: "recap-summary",
-                section: "summary",
-                title: "Scope summary",
-                summary: "Derived helper.",
-                sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
-                generatedAt: "2026-06-29T12:00:00.000Z",
-                generatedHelper: true,
-                status: "candidate",
-            },
-            themes: [],
-            tensions: [],
-            openQuestions: [],
-            nextReviewActions: [],
-            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
-            dataBoundarySnapshotId: "data_boundary:scope_recap",
         }),
+        isScopeRecapProviderConfigured: () => true,
+        getScopeRecapProviderInfo: () => ({
+            provider: "test",
+            model: "test",
+            endpoint: "https://example.test/v1",
+        }),
+        getScopeRecapAuthorizationContextId: () => "scope-recap-auth-test",
+        getScopeRecapDataBoundarySnapshotId: () => "data_boundary:scope_recap",
+        requestScopeRecapBackgroundAuthorization: async () => "run",
+        runScopeRecap: async () => {
+            const generatedAt = new Date().toISOString();
+            const sourceRefs = [
+                { path: "notes/current.md", evidenceStrength: "medium" as const },
+                { path: "notes/related.md", evidenceStrength: "medium" as const },
+            ];
+            const scope = { kind: "current_note" as const, paths: ["notes/current.md"] };
+            const localOverview = await host.buildScopeRecapLocalOverview();
+            const artifact = {
+                id: "recap-test",
+                scope,
+                sourceSnapshotId: "scope-snapshot-test",
+                generatedAt,
+                ttlDays: 30,
+                staleStatus: "fresh" as const,
+                sourceCoverage: localOverview.sourceCoverage,
+                skippedSources: [],
+                summary: {
+                    id: "recap-summary",
+                    section: "summary" as const,
+                    title: "Scope summary",
+                    summary: "Derived helper.",
+                    sourceRefs,
+                    generatedAt,
+                    generatedHelper: true as const,
+                    status: "candidate" as const,
+                },
+                themes: [{
+                    id: "recap-theme",
+                    section: "theme" as const,
+                    title: "Trust is becoming the shared design constraint",
+                    summary: "Both notes connect instant value with source-backed trust.",
+                    whyItMatters: "This shared constraint should decide which interaction ships next.",
+                    sourceRefs,
+                    generatedAt,
+                    generatedHelper: true as const,
+                    status: "candidate" as const,
+                }],
+                tensions: [],
+                openQuestions: [],
+                nextReviewActions: [],
+                sourceRefs,
+                dataBoundarySnapshotId: "data_boundary:scope_recap",
+            };
+            return {
+                status: "ready" as const,
+                artifact,
+                attempt: {
+                    attemptedAt: generatedAt,
+                    outcome: "success" as const,
+                    scope,
+                    sourceSnapshotId: "scope-snapshot-test",
+                    dataBoundarySnapshotId: "data_boundary:scope_recap",
+                    providerCallMade: true,
+                    includedSourceCount: 2,
+                },
+                localOverview,
+            };
+        },
         runQuietRecall: async () => ({
             generatedAt: "2026-06-29T12:00:00.000Z",
             currentPath: "notes/current.md",
@@ -654,9 +733,87 @@ describe("PageletOrchestrator pet task visuals", () => {
         expect(petView.mount).toHaveBeenCalledWith(contentEl);
         orchestrator.destroy();
     });
+
+    it("prefers the focused markdown leaf when the most-recent leaf is stale Pagelet detail", () => {
+        const contentEl = {} as HTMLElement;
+        const focusedLeaf = {
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/current.md"),
+                contentEl,
+            },
+        };
+        const staleDetailLeaf = {
+            view: {
+                getViewType: () => "pa-pagelet-detail-view",
+            },
+        };
+        const host = makeHost();
+        const workspace = host.app.workspace as unknown as {
+            activeLeaf: typeof focusedLeaf;
+            getMostRecentLeaf: jest.Mock;
+        };
+        workspace.activeLeaf = focusedLeaf;
+        workspace.getMostRecentLeaf = jest.fn(() => staleDetailLeaf);
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            destroy: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: false,
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+        };
+        const bubbleView = { close: jest.fn(), destroy: jest.fn() };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            bubbleView: typeof bubbleView;
+            handleFileOpen(): void;
+        };
+        internals.petView = petView;
+        internals.bubbleView = bubbleView;
+
+        internals.handleFileOpen();
+
+        expect(petView.mount).toHaveBeenCalledWith(contentEl);
+        expect(workspace.getMostRecentLeaf).not.toHaveBeenCalled();
+        orchestrator.destroy();
+    });
 });
 
 describe("PageletOrchestrator detail expansion", () => {
+    it("maps Recap themes and tensions to insight and comparison card styles", async () => {
+        const host = makeHost();
+        const preparation = await host.runScopeRecap({ mode: "foreground-retry" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const theme = preparation.artifact.themes[0];
+        if (!theme) throw new Error("expected Recap theme fixture");
+        const recap: ScopeRecapRunResult = {
+            ...preparation.artifact,
+            tensions: [{
+                ...theme,
+                id: "recap-tension",
+                section: "tension",
+                title: "Speed and trust pull in different directions",
+            }],
+        };
+        const orchestrator = new PageletOrchestrator(host);
+        const payload = (orchestrator as unknown as {
+            buildPreparedRecapPayload(recap: ScopeRecapRunResult): PageletDetailPayload;
+        }).buildPreparedRecapPayload(recap);
+        const cards = payload.content.flatMap((section) => (
+            "cards" in section ? section.cards : []
+        ));
+
+        expect(cards.find((card) => card.title === theme.title)).toEqual(expect.objectContaining({
+            cardStyle: "insight",
+        }));
+        expect(cards.find((card) => card.title === "Speed and trust pull in different directions"))
+            .toEqual(expect.objectContaining({ cardStyle: "comparison" }));
+    });
+
     it("passes the current Discovery panel payload to the detail tab", () => {
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
         const host = makeHost({ openPageletDetailView });
@@ -1161,72 +1318,458 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
     });
 
-    it("runs Scope Recap and opens a read-only summary preview until items are accepted", async () => {
-        const runScopeRecap = jest.fn(async () => ({
-            id: "recap-test",
-            scope: { kind: "folder" as const, label: "notes", paths: ["notes/current.md", "notes/related.md"] },
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            ttlDays: 30,
-            staleStatus: "fresh" as const,
+    it("resets a mismatched Recap authorization context and makes no provider call without a new Run choice", async () => {
+        jest.useFakeTimers();
+        const requestAuthorization = jest.fn(async () => "adjust" as const);
+        const providerRun = jest.fn(async () => {
+            throw new Error("provider must stay gated");
+        });
+        const clearScopeRecapDetailSessionCache = jest.fn();
+        const host = makeHost({
+            getScopeRecapAuthorizationContextId: () => "scope-recap-auth-new",
+            requestScopeRecapBackgroundAuthorization: requestAuthorization,
+            runScopeRecap: providerRun,
+            clearScopeRecapDetailSessionCache,
+        });
+        host.settings.pagelet.preloadEnabled = false;
+        host.settings.pagelet.scopeRecapAuthorizationContextId = "scope-recap-auth-old";
+        const updatePageletSetting = persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+
+        orchestrator.syncSettings();
+        jest.runOnlyPendingTimers();
+        await flushAsyncWork();
+
+        expect(host.settings.pagelet).toMatchObject({
+            scopeRecapBackgroundAuthorization: "pending",
+            scopeRecapPreparationEnabled: false,
+            scopeRecapAuthorizationContextId: null,
+        });
+        expect(updatePageletSetting).toHaveBeenCalledWith(
+            "scopeRecapBackgroundAuthorization",
+            "pending",
+        );
+        expect(updatePageletSetting).toHaveBeenCalledWith("scopeRecapPreparationEnabled", false);
+        expect(updatePageletSetting).toHaveBeenCalledWith("scopeRecapAuthorizationContextId", null);
+        expect(requestAuthorization).toHaveBeenCalledTimes(1);
+        expect(providerRun).not.toHaveBeenCalled();
+        expect(clearScopeRecapDetailSessionCache).toHaveBeenCalled();
+        orchestrator.destroy();
+    });
+
+    it("persists the current Recap authorization context before the Run choice reaches the provider", async () => {
+        const host = makeHost();
+        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+        host.settings.pagelet.scopeRecapPreparationEnabled = false;
+        host.settings.pagelet.scopeRecapAuthorizationContextId = null;
+        persistPageletSettingUpdates(host);
+        const saveSettings = jest.fn(async () => undefined);
+        host.saveSettings = saveSettings;
+        const defaultProviderRun = host.runScopeRecap;
+        const providerRun = jest.fn(defaultProviderRun);
+        host.runScopeRecap = providerRun;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
+        };
+
+        await internals.prepareRecapDelivery("pagelet-open");
+
+        expect(host.settings.pagelet).toMatchObject({
+            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapPreparationEnabled: true,
+            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
+        });
+        expect(saveSettings).toHaveBeenCalledTimes(1);
+        expect(providerRun).toHaveBeenCalledTimes(1);
+        expect(providerRun).toHaveBeenCalledWith(expect.objectContaining({
+            mode: "background",
+            expectedSourceSnapshotId: "scope-snapshot-test",
+            expectedDataBoundarySnapshotId: "data_boundary:scope_recap",
+            expectedAuthorizationContextId: "scope-recap-auth-test",
+        }));
+    });
+
+    it("surfaces a high-value nudge through the actual background preparation path", async () => {
+        const host = makeHost();
+        persistPageletSettingUpdates(host);
+        const defaultRunScopeRecap = host.runScopeRecap;
+        const runScopeRecap = jest.fn(defaultRunScopeRecap);
+        host.runScopeRecap = runScopeRecap;
+        const forceState = jest.fn();
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
+            petView: {
+                stateMachine: { forceState: (state: string) => void };
+                destroy(): void;
+            };
+        };
+        internals.petView = { stateMachine: { forceState }, destroy: jest.fn() };
+
+        await internals.prepareRecapDelivery("pagelet-open");
+        await internals.prepareRecapDelivery("pagelet-open");
+
+        expect(runScopeRecap).toHaveBeenCalledTimes(1);
+        expect(runScopeRecap).toHaveBeenCalledWith(expect.objectContaining({ mode: "background" }));
+        expect(forceState).toHaveBeenCalledTimes(1);
+        expect(forceState).toHaveBeenCalledWith("nudge");
+        expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([
+            expect.objectContaining({
+                fingerprint: expect.stringMatching(/^recap-insight-/),
+                shownAt: expect.any(Number),
+            }),
+        ]);
+        orchestrator.destroy();
+    });
+
+    it("keeps an authorized single-source scope out of background provider preparation", async () => {
+        const host = makeHost();
+        host.buildScopeRecapLocalOverview = async () => ({
+            kind: "local_scope_overview",
+            generatedAt: new Date().toISOString(),
+            scope: { kind: "current_note", paths: ["notes/current.md"] },
+            sourceSnapshotId: "scope-snapshot-single",
+            dataBoundarySnapshotId: "data_boundary:scope_recap",
+            sourceCoverage: {
+                totalSourceCount: 1,
+                includedSourceCount: 1,
+                skippedSourceCount: 0,
+                coverageRatio: 1,
+            },
+            includedSources: [{ path: "notes/current.md", title: "current", changed: false }],
+            skippedSources: [],
+        });
+        const defaultRunScopeRecap = host.runScopeRecap;
+        const runScopeRecap = jest.fn(defaultRunScopeRecap);
+        host.runScopeRecap = runScopeRecap;
+        const forceState = jest.fn();
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
+            preparedRecapArtifact: ScopeRecapRunResult | null;
+            petView: {
+                stateMachine: { forceState: (state: string) => void };
+                destroy(): void;
+            };
+        };
+        internals.petView = { stateMachine: { forceState }, destroy: jest.fn() };
+
+        await internals.prepareRecapDelivery("pagelet-open");
+
+        expect(runScopeRecap).not.toHaveBeenCalled();
+        expect(forceState).not.toHaveBeenCalled();
+        expect(internals.preparedRecapArtifact).toBeNull();
+        orchestrator.destroy();
+    });
+
+    it("reuses a current ready Recap after the debounce window when the full source snapshot is unchanged", async () => {
+        const host = makeHost();
+        persistPageletSettingUpdates(host);
+        const defaultRunScopeRecap = host.runScopeRecap;
+        const runScopeRecap = jest.fn(defaultRunScopeRecap);
+        host.runScopeRecap = runScopeRecap;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+            lastRecapPreparationAttemptAt: number;
+            preparedRecapArtifact: ScopeRecapRunResult | null;
+        };
+
+        await internals.prepareRecapDelivery("idle");
+        expect(runScopeRecap).toHaveBeenCalledTimes(1);
+        expect(internals.preparedRecapArtifact).not.toBeNull();
+
+        internals.lastRecapPreparationAttemptAt = Date.now() - 6 * 60 * 1000;
+        await internals.prepareRecapDelivery("idle");
+
+        expect(runScopeRecap).toHaveBeenCalledTimes(1);
+        expect(internals.preparedRecapArtifact).not.toBeNull();
+        orchestrator.destroy();
+    });
+
+    it("reruns a background Recap when the matching ready artifact has expired", async () => {
+        const host = makeHost();
+        persistPageletSettingUpdates(host);
+        const defaultRunScopeRecap = host.runScopeRecap;
+        const runScopeRecap = jest.fn(defaultRunScopeRecap);
+        host.runScopeRecap = runScopeRecap;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+            lastRecapPreparationAttemptAt: number;
+            preparedRecapArtifact: ScopeRecapRunResult | null;
+        };
+
+        await internals.prepareRecapDelivery("idle");
+        if (!internals.preparedRecapArtifact) throw new Error("expected ready Recap");
+        internals.preparedRecapArtifact.generatedAt = new Date(
+            Date.now() - 31 * 24 * 60 * 60 * 1000,
+        ).toISOString();
+        internals.lastRecapPreparationAttemptAt = Date.now() - 6 * 60 * 1000;
+
+        await internals.prepareRecapDelivery("idle");
+
+        expect(runScopeRecap).toHaveBeenCalledTimes(2);
+        orchestrator.destroy();
+    });
+
+    it("does not call the Recap provider when the disclosed scope changes before Run", async () => {
+        let resolveChoice!: (choice: "run") => void;
+        const choiceGate = new Promise<"run">((resolve) => { resolveChoice = resolve; });
+        let snapshotId = "scope-snapshot-a";
+        const buildScopeRecapLocalOverview = jest.fn(async (): Promise<ScopeRecapLocalOverview> => ({
+            kind: "local_scope_overview",
+            generatedAt: new Date().toISOString(),
+            scope: { kind: "folder", paths: ["notes/current.md", "notes/related.md"] },
+            sourceSnapshotId: snapshotId,
+            dataBoundarySnapshotId: "data_boundary:scope_recap",
             sourceCoverage: {
                 totalSourceCount: 2,
                 includedSourceCount: 2,
                 skippedSourceCount: 0,
                 coverageRatio: 1,
             },
+            includedSources: [
+                { path: "notes/current.md", title: "current", changed: false },
+                { path: "notes/related.md", title: "related", changed: false },
+            ],
             skippedSources: [],
-            summary: {
-                id: "recap-summary",
-                section: "summary" as const,
-                title: "Scope summary",
-                summary: "Derived helper.",
-                sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" as const }],
-                generatedAt: "2026-06-29T12:00:00.000Z",
-                generatedHelper: true as const,
-                status: "candidate" as const,
-            },
-            themes: [{
-                id: "recap-theme",
-                section: "theme" as const,
-                title: "Theme: #pa",
-                summary: "#pa appears across source notes.",
-                sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" as const }],
-                generatedAt: "2026-06-29T12:00:00.000Z",
-                generatedHelper: true as const,
-                status: "candidate" as const,
-            }],
-            tensions: [],
-            openQuestions: [],
-            nextReviewActions: [],
-            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" as const }],
-            dataBoundarySnapshotId: "data_boundary:scope_recap",
         }));
-        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const providerRun = jest.fn(makeHost().runScopeRecap);
         const host = makeHost({
-            runScopeRecap,
-            openPageletDetailView,
+            buildScopeRecapLocalOverview,
+            requestScopeRecapBackgroundAuthorization: () => choiceGate,
+            runScopeRecap: providerRun,
         });
+        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+        host.settings.pagelet.scopeRecapPreparationEnabled = false;
+        host.settings.pagelet.scopeRecapAuthorizationContextId = null;
+        persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
+        };
+
+        const preparation = internals.prepareRecapDelivery("pagelet-open");
+        await flushAsyncWork();
+        snapshotId = "scope-snapshot-b";
+        resolveChoice("run");
+        await preparation;
+
+        expect(providerRun).not.toHaveBeenCalled();
+        expect(host.settings.pagelet).toMatchObject({
+            scopeRecapBackgroundAuthorization: "pending",
+            scopeRecapPreparationEnabled: false,
+            scopeRecapAuthorizationContextId: null,
+        });
+        orchestrator.destroy();
+    });
+
+    it("allows Adjust to re-disclose in the same session after settings synchronization", async () => {
+        jest.useFakeTimers();
+        const requestAuthorization = jest.fn<PageletHost["requestScopeRecapBackgroundAuthorization"]>()
+            .mockResolvedValueOnce("adjust")
+            .mockResolvedValueOnce("run");
+        const openPageletSettings = jest.fn();
+        const refreshPageletSettings = jest.fn();
+        const host = makeHost({
+            requestScopeRecapBackgroundAuthorization: requestAuthorization,
+            openPageletSettings,
+            refreshPageletSettings,
+        });
+        host.settings.pagelet.preloadEnabled = false;
+        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+        host.settings.pagelet.scopeRecapPreparationEnabled = true;
+        host.settings.pagelet.scopeRecapAuthorizationContextId = null;
+        persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null>;
+        };
+
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toBeNull();
+        expect(openPageletSettings).toHaveBeenCalledTimes(1);
+        expect(refreshPageletSettings).toHaveBeenCalledTimes(1);
+        expect(host.settings.pagelet).toMatchObject({
+            preloadEnabled: false,
+            scopeRecapBackgroundAuthorization: "pending",
+            scopeRecapPreparationEnabled: false,
+            scopeRecapAuthorizationContextId: null,
+        });
+
+        orchestrator.syncSettings();
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
+            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
+        );
+
+        expect(requestAuthorization).toHaveBeenCalledTimes(2);
+        expect(host.settings.pagelet).toMatchObject({
+            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapPreparationEnabled: true,
+            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
+        });
+        orchestrator.destroy();
+    });
+
+    it("keeps Cancel disabled and clears its authorization context across later checks", async () => {
+        const requestAuthorization = jest.fn(async () => "cancel" as const);
+        const defaultHost = makeHost();
+        const providerRun = jest.fn(defaultHost.runScopeRecap);
+        const openPageletSettings = jest.fn();
+        const refreshPageletSettings = jest.fn();
+        const host = makeHost({
+            requestScopeRecapBackgroundAuthorization: requestAuthorization,
+            runScopeRecap: providerRun,
+            openPageletSettings,
+            refreshPageletSettings,
+        });
+        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+        host.settings.pagelet.scopeRecapPreparationEnabled = true;
+        host.settings.pagelet.scopeRecapAuthorizationContextId = "stale-context";
+        persistPageletSettingUpdates(host);
+        const saveSettings = jest.fn(async () => undefined);
+        host.saveSettings = saveSettings;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null>;
+        };
+
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toBeNull();
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toBeNull();
+
+        expect(host.settings.pagelet).toMatchObject({
+            scopeRecapBackgroundAuthorization: "declined-v1",
+            scopeRecapPreparationEnabled: false,
+            scopeRecapAuthorizationContextId: null,
+        });
+        expect(requestAuthorization).toHaveBeenCalledTimes(1);
+        expect(saveSettings).toHaveBeenCalledTimes(1);
+        expect(providerRun).not.toHaveBeenCalled();
+        expect(openPageletSettings).not.toHaveBeenCalled();
+        expect(refreshPageletSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["run", "authorized-v1", true, 1, 0],
+        ["adjust", "pending", false, 0, 1],
+        ["cancel", "declined-v1", false, 0, 0],
+    ] as const)(
+        "re-discloses after Cancel when the user re-enables preparation, then handles %s",
+        async (nextChoice, expectedAuthorization, expectedEnabled, expectedProviderCalls, expectedSettingsOpens) => {
+            jest.useFakeTimers();
+            const requestAuthorization = jest.fn<PageletHost["requestScopeRecapBackgroundAuthorization"]>()
+                .mockResolvedValueOnce("cancel")
+                .mockResolvedValueOnce(nextChoice);
+            const defaultHost = makeHost();
+            const providerRun = jest.fn(defaultHost.runScopeRecap);
+            const openPageletSettings = jest.fn();
+            const host = makeHost({
+                requestScopeRecapBackgroundAuthorization: requestAuthorization,
+                runScopeRecap: providerRun,
+                openPageletSettings,
+            });
+            host.settings.pagelet.preloadEnabled = false;
+            host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+            host.settings.pagelet.scopeRecapPreparationEnabled = true;
+            host.settings.pagelet.scopeRecapAuthorizationContextId = null;
+            persistPageletSettingUpdates(host);
+            const orchestrator = new PageletOrchestrator(host);
+            const internals = orchestrator as unknown as {
+                prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
+            };
+
+            await internals.prepareRecapDelivery("pagelet-open");
+
+            expect(requestAuthorization).toHaveBeenCalledTimes(1);
+            expect(providerRun).not.toHaveBeenCalled();
+            expect(host.settings.pagelet).toMatchObject({
+                scopeRecapBackgroundAuthorization: "declined-v1",
+                scopeRecapPreparationEnabled: false,
+                scopeRecapAuthorizationContextId: null,
+            });
+
+            // Mirrors the Settings toggle's explicit declined -> pending/on transition.
+            host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+            host.settings.pagelet.scopeRecapPreparationEnabled = true;
+            orchestrator.syncSettings();
+
+            expect(providerRun).not.toHaveBeenCalled();
+            jest.runOnlyPendingTimers();
+            await flushAsyncWork();
+
+            expect(requestAuthorization).toHaveBeenCalledTimes(2);
+            expect(providerRun).toHaveBeenCalledTimes(expectedProviderCalls);
+            expect(openPageletSettings).toHaveBeenCalledTimes(expectedSettingsOpens);
+            expect(host.settings.pagelet).toMatchObject({
+                scopeRecapBackgroundAuthorization: expectedAuthorization,
+                scopeRecapPreparationEnabled: expectedEnabled,
+                scopeRecapAuthorizationContextId: nextChoice === "run"
+                    ? "scope-recap-auth-test"
+                    : null,
+            });
+            orchestrator.destroy();
+        },
+    );
+
+    it("opens an immediate local Scope Recap explanation, then performs provider work only after Retry", async () => {
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({ openPageletDetailView });
+        const defaultRunScopeRecap = host.runScopeRecap;
+        const runScopeRecap = jest.fn(defaultRunScopeRecap);
+        host.runScopeRecap = runScopeRecap;
         const orchestrator = new PageletOrchestrator(host);
 
         await orchestrator.getCommandCallbacks().onScopeRecap();
 
-        expect(runScopeRecap).toHaveBeenCalledTimes(1);
+        expect(runScopeRecap).not.toHaveBeenCalled();
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
             title: "Scope Recap",
-            content: [],
-            layoutType: "summary",
+            content: expect.arrayContaining([
+                expect.objectContaining({
+                    cards: expect.arrayContaining([
+                        expect.objectContaining({ actionLabel: "Retry" }),
+                    ]),
+                }),
+            ]),
+            layoutType: "review",
             sourcePath: "notes/current.md",
+        }));
+
+        const explanationPayload = openPageletDetailView.mock.calls[0]?.[0];
+        const retryCard = explanationPayload?.content
+            .flatMap((section) => ("cards" in section ? section.cards : []))
+            .find((card) => card.actionLabel === "Retry");
+        expect(retryCard?.actionCallback).toBeDefined();
+        retryCard?.actionCallback?.();
+        await flushAsyncWork();
+
+        expect(runScopeRecap).toHaveBeenCalledWith(expect.objectContaining({
+            mode: "foreground-retry",
+            expectedSourceSnapshotId: "scope-snapshot-test",
+            expectedDataBoundarySnapshotId: "data_boundary:scope_recap",
+            expectedAuthorizationContextId: "scope-recap-auth-test",
+        }));
+        expect(openPageletDetailView).toHaveBeenLastCalledWith(expect.objectContaining({
+            title: "Scope Recap",
+            layoutType: "review",
             extra: expect.objectContaining({
-                markdown: expect.stringContaining("Coverage: 2/2 source notes"),
                 scopeRecap: expect.objectContaining({
                     id: "recap-test",
                     sourceCoverage: expect.objectContaining({ includedSourceCount: 2 }),
                 }),
             }),
+            content: expect.arrayContaining([
+                expect.objectContaining({
+                    cards: expect.arrayContaining([
+                        expect.objectContaining({
+                            title: "Trust is becoming the shared design constraint",
+                            body: expect.stringContaining("Both notes connect instant value with source-backed trust."),
+                        }),
+                    ]),
+                }),
+            ]),
         }));
-        const payload = openPageletDetailView.mock.calls[0]?.[0];
-        expect(payload?.summarySaveNote).toBeUndefined();
-        expect(payload?.extra?.markdown).not.toContain("Theme: #pa");
 
         const bubbleView = {
             bubbleState: "hidden",
@@ -1250,6 +1793,177 @@ describe("PageletOrchestrator detail expansion", () => {
         }, HTMLElement];
         expect(content.type).toBe("recap-delivery");
         expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
+    });
+
+    it("routes Retry to provider settings without provider, duplicate detail, or write side effects", async () => {
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const openPageletSettings = jest.fn();
+        const runScopeRecap = jest.fn(makeHost().runScopeRecap);
+        const writeReviewNote = jest.fn(async () => ({
+            success: true as const,
+            filePath: ".pagelet/unexpected.md",
+        }));
+        const saveSettings = jest.fn(async () => undefined);
+        const host = makeHost({
+            isScopeRecapProviderConfigured: () => false,
+            openPageletDetailView,
+            openPageletSettings,
+            runScopeRecap,
+            writeReviewNote,
+            saveSettings,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+
+        await orchestrator.getCommandCallbacks().onScopeRecap();
+
+        const explanationPayload = openPageletDetailView.mock.calls[0]?.[0];
+        const retryCard = explanationPayload?.content
+            .flatMap((section) => ("cards" in section ? section.cards : []))
+            .find((card) => card.actionLabel === "Retry");
+        expect(retryCard?.actionCallback).toBeDefined();
+
+        retryCard?.actionCallback?.();
+        await flushAsyncWork();
+
+        expect(openPageletSettings).toHaveBeenCalledTimes(1);
+        expect(Notice).toHaveBeenCalledWith(
+            "Set up an AI provider before retrying Scope Recap.",
+            5000,
+        );
+        expect(runScopeRecap).not.toHaveBeenCalled();
+        expect(openPageletDetailView).toHaveBeenCalledTimes(1);
+        expect(writeReviewNote).not.toHaveBeenCalled();
+        expect(saveSettings).not.toHaveBeenCalled();
+        expect(host.updatePageletSetting).not.toHaveBeenCalled();
+    });
+
+    it("renders recent source and time-range facts in the local Recap fallback without a provider call", async () => {
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const runScopeRecap = jest.fn(makeHost().runScopeRecap);
+        const host = makeHost({
+            openPageletDetailView,
+            runScopeRecap,
+            buildScopeRecapLocalOverview: async () => ({
+                kind: "local_scope_overview",
+                generatedAt: "2026-07-18T12:00:00.000Z",
+                scope: { kind: "folder", label: "notes", paths: ["notes/current.md", "notes/related.md"] },
+                sourceSnapshotId: "scope-snapshot-changed",
+                dataBoundarySnapshotId: "data_boundary:scope_recap",
+                sourceCoverage: {
+                    totalSourceCount: 2,
+                    includedSourceCount: 2,
+                    skippedSourceCount: 0,
+                    coverageRatio: 1,
+                },
+                includedSources: [{
+                    path: "notes/current.md",
+                    title: "current",
+                    modifiedAt: "2026-07-18T09:00:00.000Z",
+                    changed: true,
+                }, {
+                    path: "notes/related.md",
+                    title: "related",
+                    modifiedAt: "2026-06-01T09:00:00.000Z",
+                    changed: false,
+                }],
+                skippedSources: [],
+            }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+
+        await orchestrator.getCommandCallbacks().onScopeRecap();
+
+        expect(runScopeRecap).not.toHaveBeenCalled();
+        const payload = openPageletDetailView.mock.calls[0]?.[0];
+        const changes = payload?.content.find(
+            (section) => section.title === "Recently updated sources",
+        );
+        expect(changes).toEqual(expect.objectContaining({
+            cards: [expect.objectContaining({
+                body: expect.stringContaining("1 source note"),
+                sourceLinks: [{ path: "notes/current.md", title: "current" }],
+            })],
+        }));
+        expect(JSON.stringify(changes)).not.toContain("notes/related.md");
+        orchestrator.destroy();
+    });
+
+    it("restores content-free Recap and Recall diagnostics after orchestrator reload", () => {
+        const host = makeHost();
+        persistPageletSettingUpdates(host);
+        const recapAttempt: ScopeRecapAttemptStatus = {
+            attemptedAt: "2026-07-18T10:00:00.000Z",
+            outcome: "success",
+            scope: { kind: "folder" },
+            sourceSnapshotId: "recap-snapshot-hash",
+            dataBoundarySnapshotId: "boundary-hash",
+            providerCallMade: true,
+            includedSourceCount: 2,
+            cost: {
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: "USD",
+                pricingKnown: true,
+            },
+        };
+        const recallDiagnostics: QuietRecallEvaluationDiagnostics = {
+            roundId: "round-hash",
+            startedAt: Date.parse("2026-07-18T10:01:00.000Z"),
+            contextFingerprint: "context-hash",
+            candidateCount: 1,
+            evaluatedCandidateCount: 1,
+            providerCalls: 1,
+            initialCalls: 1,
+            languageRetryCalls: 0,
+            cacheHits: 0,
+            inFlightHits: 0,
+            estimatedCost: 0.002,
+            pricingKnown: true,
+            attempts: [],
+        };
+        const first = new PageletOrchestrator(host);
+        const firstInternals = first as unknown as {
+            recordScopeRecapAttempt(attempt: ScopeRecapAttemptStatus): void;
+            recordQuietRecallDiagnostics(result: QuietRecallRunResult): void;
+        };
+        firstInternals.recordScopeRecapAttempt(recapAttempt);
+        firstInternals.recordQuietRecallDiagnostics({
+            generatedAt: "2026-07-18T10:01:00.000Z",
+            currentPath: "private/current.md",
+            totalCount: 1,
+            candidates: [{
+                id: "candidate-hash",
+                title: "Private candidate title",
+                summary: "Private excerpt",
+                score: 0.99,
+                sourceRefs: [{ path: "private/source.md", evidenceStrength: "medium" }],
+                whyNow: ["Private why now"],
+                nextAction: "Review it",
+                relation: "related",
+                generatedAt: "2026-07-18T10:01:00.000Z",
+                evaluationProvenance: "ai",
+                evaluationFingerprint: "candidate-fingerprint",
+            }],
+            evaluationDiagnostics: recallDiagnostics,
+        });
+        first.destroy();
+
+        const reloaded = new PageletOrchestrator(host) as unknown as {
+            lastRecapAttempt: ScopeRecapAttemptStatus | null;
+            lastQuietRecallDiagnostics: QuietRecallEvaluationDiagnostics | null;
+            lastQuietRecallAcceptedCount: number;
+        };
+
+        expect(reloaded.lastRecapAttempt).toEqual(recapAttempt);
+        expect(reloaded.lastQuietRecallDiagnostics).toEqual(recallDiagnostics);
+        expect(reloaded.lastQuietRecallAcceptedCount).toBe(1);
+        const persisted = JSON.stringify({
+            recap: host.settings.pagelet.scopeRecapLastAttempt,
+            recall: host.settings.pagelet.quietRecallLastDiagnostics,
+        });
+        expect(persisted).not.toContain("private/");
+        expect(persisted).not.toContain("Private");
     });
 
     it("does not deliver a prepared Recap after the active note changes", async () => {
@@ -1312,6 +2026,379 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(content.type).not.toBe("recap-delivery");
     });
 
+    it("persists Later suppression across reloads while explicit Recap still opens", async () => {
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({ openPageletDetailView });
+        persistPageletSettingUpdates(host);
+        const preparation = await host.runScopeRecap({ mode: "foreground-retry" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+
+        const first = new PageletOrchestrator(host);
+        const firstBubble = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        };
+        const firstInternals = first as unknown as {
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            bubbleView: typeof firstBubble;
+            petView: { rootEl: HTMLElement };
+            showBubble(): void;
+        };
+        firstInternals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            {},
+            firstInternals.currentRecapScopeKey(),
+        );
+        firstInternals.bubbleView = firstBubble;
+        firstInternals.petView = { rootEl: {} as HTMLElement };
+
+        firstInternals.showBubble();
+        const [firstContent] = firstBubble.show.mock.calls[0] as unknown as [{
+            type: string;
+            actions: Array<{ label: string; callback: () => void }>;
+        }, HTMLElement];
+        expect(firstContent.type).toBe("recap-delivery");
+        firstContent.actions.find((action) => action.label === "Later")?.callback();
+
+        expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([
+            expect.objectContaining({
+                fingerprint: expect.stringMatching(/^recap-insight-/),
+                snoozedUntil: expect.any(Number),
+            }),
+        ]);
+
+        const reloaded = new PageletOrchestrator(host);
+        const reloadedBubble = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        };
+        const reloadedInternals = reloaded as unknown as {
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            bubbleView: typeof reloadedBubble;
+            petView: { rootEl: HTMLElement };
+            showBubble(): void;
+        };
+        reloadedInternals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            {},
+            reloadedInternals.currentRecapScopeKey(),
+        );
+        reloadedInternals.bubbleView = reloadedBubble;
+        reloadedInternals.petView = { rootEl: {} as HTMLElement };
+
+        reloadedInternals.showBubble();
+
+        const [suppressedContent] = reloadedBubble.show.mock.calls[0] as unknown as [{ type: string }, HTMLElement];
+        expect(suppressedContent.type).not.toBe("recap-delivery");
+
+        await reloaded.getCommandCallbacks().onScopeRecap();
+        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
+            extra: expect.objectContaining({
+                scopeRecap: expect.objectContaining({ id: "recap-test" }),
+            }),
+        }));
+    });
+
+    it("surfaces one high-value prepared Recap nudge and suppresses the same fingerprint", async () => {
+        const host = makeHost();
+        persistPageletSettingUpdates(host);
+        const preparation = await host.runScopeRecap({ mode: "background" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const forceState = jest.fn();
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            petView: { stateMachine: { forceState: (state: string) => void } };
+        };
+        internals.petView = { stateMachine: { forceState } };
+
+        internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+        internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+
+        expect(forceState).toHaveBeenCalledTimes(1);
+        expect(forceState).toHaveBeenCalledWith("nudge");
+        expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([
+            expect.objectContaining({
+                fingerprint: expect.stringMatching(/^recap-insight-/),
+                shownAt: expect.any(Number),
+            }),
+        ]);
+    });
+
+    it.each([
+        ["the Recap hint is disabled", (host: PageletHost) => {
+            host.settings.pagelet.scopeRecapHighValueHints = false;
+        }],
+        ["Focus Mode is active", (host: PageletHost) => {
+            host.settings.focusMode = true;
+        }],
+        ["the Pet is hidden", (host: PageletHost) => {
+            host.settings.pagelet.petVisible = false;
+        }],
+    ])("keeps a high-value prepared Recap silent when %s", async (_label, configure) => {
+        const host = makeHost();
+        configure(host);
+        const preparation = await host.runScopeRecap({ mode: "background" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const forceState = jest.fn();
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            petView: { stateMachine: { forceState: (state: string) => void } };
+        };
+        internals.petView = { stateMachine: { forceState } };
+
+        internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+
+        expect(forceState).not.toHaveBeenCalled();
+    });
+
+    it("keeps a high-value prepared Recap silent during quiet hours", async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date(2026, 6, 19, 12, 0, 0));
+        const host = makeHost();
+        host.settings.pagelet.proactiveHintsQuietHours = {
+            enabled: true,
+            start: "11:00",
+            end: "13:00",
+        };
+        const preparation = await host.runScopeRecap({ mode: "background" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const forceState = jest.fn();
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            petView: { stateMachine: { forceState: (state: string) => void } };
+        };
+        internals.petView = { stateMachine: { forceState } };
+
+        internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+
+        expect(forceState).not.toHaveBeenCalled();
+    });
+
+    it("discards a late background Recap after a sibling note revises the scope", async () => {
+        const seed = await makeHost().runScopeRecap({ mode: "background" });
+        let resolveProvider!: (value: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const providerRun = jest.fn((_options: { mode: "background" | "foreground-retry" }) => providerGate);
+        const host = makeHost({ runScopeRecap: providerRun });
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "note-activity"): Promise<void>;
+            invalidatePreparedRecapScope(): void;
+            preparedRecapArtifact: unknown;
+            preparedRecapPayload: unknown;
+        };
+
+        const inFlight = internals.prepareRecapDelivery("note-activity");
+        await flushAsyncWork();
+        expect(providerRun).toHaveBeenCalledTimes(1);
+
+        internals.invalidatePreparedRecapScope();
+        resolveProvider(seed);
+        await inFlight;
+
+        expect(internals.preparedRecapArtifact).toBeNull();
+        orchestrator.destroy();
+        expect(internals.preparedRecapPayload).toBeNull();
+    });
+
+    it("does not accept or immediately rebuild a Recap cleared while its provider call is in flight", async () => {
+        jest.useFakeTimers();
+        const seed = await makeHost().runScopeRecap({ mode: "background" });
+        let resolveProvider!: (value: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const providerRun = jest.fn(() => providerGate);
+        const host = makeHost({ runScopeRecap: providerRun });
+        persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+            preparedRecapArtifact: unknown;
+            preparedRecapPayload: unknown;
+        };
+
+        const inFlight = internals.prepareRecapDelivery("idle");
+        await flushAsyncWork();
+        expect(providerRun).toHaveBeenCalledTimes(1);
+
+        orchestrator.clearScopeRecapCache();
+        orchestrator.syncSettings();
+        jest.runOnlyPendingTimers();
+        resolveProvider(seed);
+        await inFlight;
+        await flushAsyncWork();
+
+        expect(internals.preparedRecapArtifact).toBeNull();
+        expect(internals.preparedRecapPayload).toBeNull();
+        expect(providerRun).toHaveBeenCalledTimes(1);
+        orchestrator.destroy();
+    });
+
+    it("does not accept a late background Recap after preparation is disabled", async () => {
+        const seed = await makeHost().runScopeRecap({ mode: "background" });
+        let resolveProvider!: (value: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const host = makeHost({ runScopeRecap: () => providerGate });
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+            preparedRecapArtifact: unknown;
+        };
+
+        const inFlight = internals.prepareRecapDelivery("idle");
+        await flushAsyncWork();
+        host.settings.pagelet.scopeRecapPreparationEnabled = false;
+        orchestrator.syncSettings();
+        resolveProvider(seed);
+        await inFlight;
+
+        expect(internals.preparedRecapArtifact).toBeNull();
+        orchestrator.destroy();
+    });
+
+    it("drains the latest pending Recap scope after an older scope finishes", async () => {
+        jest.useFakeTimers();
+        const seed = await makeHost().runScopeRecap({ mode: "background" });
+        let resolveFirst!: (value: ScopeRecapPreparationResult) => void;
+        const firstGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveFirst = resolve;
+        });
+        const providerRun = jest.fn<() => Promise<ScopeRecapPreparationResult>>()
+            .mockImplementationOnce(() => firstGate)
+            .mockResolvedValueOnce(seed);
+        const host = makeHost({ runScopeRecap: providerRun });
+        const activeA = makeTFile("notes/a.md", { mtime: 1000, size: 100 });
+        const activeB = makeTFile("notes/b.md", { mtime: 2000, size: 120 });
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(activeA);
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "note-activity"): Promise<void>;
+            invalidatePreparedRecapScope(): void;
+            preparedRecapArtifact: ScopeRecapPreparationResult extends { artifact: infer T } ? T : unknown;
+        };
+
+        const first = internals.prepareRecapDelivery("note-activity");
+        await flushAsyncWork();
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(activeB);
+        internals.invalidatePreparedRecapScope();
+        await internals.prepareRecapDelivery("note-activity");
+
+        resolveFirst(seed);
+        await first;
+        jest.runOnlyPendingTimers();
+        await flushAsyncWork();
+
+        expect(providerRun).toHaveBeenCalledTimes(2);
+        expect(internals.preparedRecapArtifact).not.toBeNull();
+        orchestrator.destroy();
+    });
+
+    it("single-flights foreground Retry with an in-flight background Recap for the same scope", async () => {
+        const seed = await makeHost().runScopeRecap({ mode: "background" });
+        let resolveProvider!: (value: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const providerRun = jest.fn((_options: { mode: "background" | "foreground-retry" }) => providerGate);
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({ runScopeRecap: providerRun, openPageletDetailView });
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+        };
+
+        const background = internals.prepareRecapDelivery("idle");
+        await flushAsyncWork();
+        expect(providerRun).toHaveBeenCalledWith(expect.objectContaining({
+            mode: "background",
+            expectedSourceSnapshotId: "scope-snapshot-test",
+            expectedDataBoundarySnapshotId: "data_boundary:scope_recap",
+            expectedAuthorizationContextId: "scope-recap-auth-test",
+        }));
+
+        await orchestrator.getCommandCallbacks().onScopeRecap();
+        const explanation = openPageletDetailView.mock.calls.at(-1)?.[0];
+        const retry = explanation?.content
+            .flatMap((section) => ("cards" in section ? section.cards : []))
+            .find((card) => card.actionLabel === "Retry");
+        retry?.actionCallback?.();
+        await flushAsyncWork();
+
+        expect(providerRun).toHaveBeenCalledTimes(1);
+        resolveProvider(seed);
+        await background;
+        await flushAsyncWork();
+
+        expect(providerRun).toHaveBeenCalledTimes(1);
+        expect(openPageletDetailView).toHaveBeenLastCalledWith(expect.objectContaining({
+            extra: expect.objectContaining({
+                scopeRecap: expect.objectContaining({ id: "recap-test" }),
+            }),
+        }));
+    });
+
     it("runs Quiet Recall and opens recall candidates in the native detail tab", async () => {
         const quietRecall: QuietRecallRunResult = {
             generatedAt: "2026-06-29T12:00:00.000Z",
@@ -1329,6 +2416,8 @@ describe("PageletOrchestrator detail expansion", () => {
                 score: 90,
                 generatedAt: "2026-06-29T12:00:00.000Z",
                 context: { kind: "note_retrieval" },
+                evaluationProvenance: "ai",
+                evaluationFingerprint: "eval-qr-ins-1",
             }],
         };
         const runQuietRecall = jest.fn(async () => quietRecall);
@@ -1363,7 +2452,244 @@ describe("PageletOrchestrator detail expansion", () => {
         });
     });
 
+    it.each([
+        ["active path changes", () => makeTFile("notes/other.md", { size: 100, mtime: 1000 })],
+        ["the same note is edited", () => makeTFile("notes/current.md", { size: 140, mtime: 2000 })],
+    ])("does not publish stale foreground Quiet Recall when %s", async (_label, nextFile) => {
+        const initialFile = makeTFile("notes/current.md", { size: 100, mtime: 1000 });
+        let resolveRecall!: (value: QuietRecallRunResult) => void;
+        const recallGate = new Promise<QuietRecallRunResult>((resolve) => {
+            resolveRecall = resolve;
+        });
+        const runQuietRecall = jest.fn(() => recallGate);
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({ runQuietRecall, openPageletDetailView });
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(initialFile);
+        const orchestrator = new PageletOrchestrator(host);
+
+        const inFlight = orchestrator.runQuietRecall();
+        await flushAsyncWork();
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(nextFile());
+        resolveRecall({
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: initialFile.path,
+            totalCount: 0,
+            candidates: [],
+        });
+        await inFlight;
+
+        expect(openPageletDetailView).not.toHaveBeenCalled();
+        expect(host.log).toHaveBeenCalledWith(
+            "Discarded stale Quiet Recall foreground result",
+            expect.any(Object),
+        );
+    });
+
+    it("does not publish foreground Quiet Recall after a source or policy snapshot becomes stale", async () => {
+        const initialFile = makeTFile("notes/current.md", { size: 100, mtime: 1000 });
+        const quietRecall: QuietRecallRunResult = {
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: initialFile.path,
+            sourceSnapshotId: "recall-snapshot-old",
+            dataBoundarySnapshotId: "data_boundary:scope_recap",
+            evaluationPolicySnapshotId: "policy-old",
+            totalCount: 0,
+            candidates: [],
+        };
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({
+            runQuietRecall: async () => quietRecall,
+            isQuietRecallRunCurrent: () => false,
+            openPageletDetailView,
+        });
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(initialFile);
+
+        const orchestrator = new PageletOrchestrator(host);
+        await orchestrator.runQuietRecall();
+
+        expect(openPageletDetailView).not.toHaveBeenCalled();
+        expect(host.log).toHaveBeenCalledWith(
+            "Discarded stale Quiet Recall foreground result",
+            { reason: "source_or_policy_changed" },
+        );
+        orchestrator.destroy();
+    });
+
+    it("keeps local Quiet Recall matches Discover-only in the explicit detail tab", async () => {
+        const localCandidate: QuietRecallCandidate = {
+            id: "qr-local",
+            title: "Recall: Local",
+            summary: "Local similarity only.",
+            sourceRefs: [{ path: "notes/local.md" }],
+            whyNow: ["A local ranking template."],
+            nextAction: "Discover the source.",
+            relation: "related",
+            score: 90,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "local",
+        };
+        const aiCandidate: QuietRecallCandidate = {
+            ...localCandidate,
+            id: "qr-ai",
+            whyNow: ["This older decision resolves the question in the note you are viewing."],
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-ai",
+        };
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({
+            runQuietRecall: async () => ({
+                generatedAt: "2026-06-29T12:00:00.000Z",
+                currentPath: "notes/current.md",
+                totalCount: 2,
+                candidates: [localCandidate, aiCandidate],
+                discoverCandidates: [localCandidate],
+            }),
+            openPageletDetailView,
+        });
+
+        await new PageletOrchestrator(host).getCommandCallbacks().onQuietRecall();
+
+        const delivered = openPageletDetailView.mock.calls[0]?.[0].extra?.quietRecall;
+        expect(delivered?.totalCount).toBe(2);
+        expect(delivered?.candidates.map((candidate) => candidate.id)).toEqual(["qr-local", "qr-ai"]);
+        expect(delivered?.discoverCandidates?.map((candidate) => candidate.id)).toEqual(["qr-local"]);
+    });
+
     afterEach(() => { jest.useRealTimers(); });
+
+    it("rejects local-only proactive Recall and counts Discover minus AI accepted", async () => {
+        const localCandidate: QuietRecallCandidate = {
+            id: "qr-local-proactive",
+            title: "Recall: Local",
+            summary: "Local similarity only.",
+            sourceRefs: [{ path: "notes/local.md" }],
+            whyNow: ["A local ranking template."],
+            nextAction: "Discover the source.",
+            relation: "related",
+            score: 95,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "local",
+        };
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({
+            runQuietRecall: async () => ({
+                generatedAt: "2026-06-29T12:00:00.000Z",
+                currentPath: "notes/current.md",
+                totalCount: 1,
+                candidates: [localCandidate],
+                discoverCandidates: [localCandidate, { ...localCandidate, id: "qr-local-2" }],
+            }),
+            openPageletDetailView,
+        });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareQuietRecallBubbleNudge(): Promise<void>;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            unconvincingRecallCount: number;
+            openQuietRecallDiscoverFallback(): Promise<void>;
+            invalidateQuietRecallBubbleNudge(): void;
+        };
+
+        await internals.prepareQuietRecallBubbleNudge();
+
+        expect(internals.quietRecallBubbleNudge).toBeNull();
+        expect(internals.unconvincingRecallCount).toBe(2);
+
+        await internals.openQuietRecallDiscoverFallback();
+        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
+            entryReason: "quiet-recall",
+            extra: expect.objectContaining({
+                quietRecall: expect.objectContaining({
+                    candidates: [
+                        expect.objectContaining({ id: "qr-local-proactive" }),
+                        expect.objectContaining({ id: "qr-local-2" }),
+                    ],
+                    discoverCandidates: [
+                        expect.objectContaining({ id: "qr-local-proactive" }),
+                        expect.objectContaining({ id: "qr-local-2" }),
+                    ],
+                }),
+            }),
+        }));
+
+        internals.invalidateQuietRecallBubbleNudge();
+        expect(internals.unconvincingRecallCount).toBe(0);
+        orchestrator.destroy();
+    });
+
+    it("keeps only unaccepted local candidates in the Discover fallback", async () => {
+        const localAccepted: QuietRecallCandidate = {
+            id: "qr-shared",
+            title: "Recall: Shared local candidate",
+            summary: "Local candidate later accepted by AI.",
+            sourceRefs: [{ path: "notes/shared.md" }],
+            whyNow: ["LOCAL SHARED TEMPLATE"],
+            nextAction: "Discover the source.",
+            relation: "related",
+            score: 95,
+            generatedAt: "2026-07-19T10:00:00.000Z",
+            evaluationProvenance: "local",
+        };
+        const localRejected: QuietRecallCandidate = {
+            ...localAccepted,
+            id: "qr-local-rejected",
+            title: "Recall: Rejected local candidate",
+            summary: "This remains a local clue.",
+            sourceRefs: [{ path: "notes/local-rejected.md" }],
+            whyNow: ["LOCAL REJECTED TEMPLATE"],
+        };
+        const acceptedSameId: QuietRecallCandidate = {
+            ...localAccepted,
+            whyNow: ["AI accepted the shared candidate for the current context."],
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-shared",
+        };
+        const acceptedDifferentId: QuietRecallCandidate = {
+            ...acceptedSameId,
+            id: "qr-ai-different",
+            sourceRefs: [{ path: "notes/ai-different.md" }],
+            whyNow: ["AI accepted a different candidate too."],
+            evaluationFingerprint: "eval-different",
+        };
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({
+            runQuietRecall: async () => ({
+                generatedAt: localAccepted.generatedAt,
+                currentPath: "notes/current.md",
+                totalCount: 2,
+                candidates: [acceptedSameId, acceptedDifferentId],
+                discoverCandidates: [localAccepted, localRejected],
+            }),
+            openPageletDetailView,
+        });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            prepareQuietRecallBubbleNudge(): Promise<void>;
+            unconvincingRecallCount: number;
+            openQuietRecallDiscoverFallback(): Promise<void>;
+        };
+
+        await internals.prepareQuietRecallBubbleNudge();
+
+        expect(internals.unconvincingRecallCount).toBe(1);
+        await internals.openQuietRecallDiscoverFallback();
+
+        const fallback = openPageletDetailView.mock.calls[0]?.[0].extra?.quietRecall;
+        expect(fallback?.totalCount).toBe(1);
+        expect(fallback?.candidates.map((candidate) => candidate.id)).toEqual([
+            "qr-local-rejected",
+        ]);
+        expect(fallback?.discoverCandidates?.map((candidate) => candidate.id)).toEqual([
+            "qr-local-rejected",
+        ]);
+        expect(JSON.stringify(fallback)).not.toContain("AI accepted the shared candidate");
+        expect(JSON.stringify(fallback)).not.toContain("qr-ai-different");
+        orchestrator.destroy();
+    });
 
     it("prepares a Quiet Recall Bubble nudge after opening a markdown note", async () => {
         jest.useFakeTimers();
@@ -1377,6 +2703,8 @@ describe("PageletOrchestrator detail expansion", () => {
             relation: "related",
             score: 70,
             generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-vault-beta",
         };
         const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
             generatedAt: "2026-06-29T12:00:00.000Z",
@@ -1447,6 +2775,8 @@ describe("PageletOrchestrator detail expansion", () => {
                 relation: "related",
                 score: 64,
                 generatedAt: "2026-06-29T12:00:00.000Z",
+                evaluationProvenance: "ai",
+                evaluationFingerprint: "eval-qr-vault-low-signal",
             }],
         }));
         const host = makeHost({ runQuietRecall });
@@ -1500,6 +2830,8 @@ describe("PageletOrchestrator detail expansion", () => {
             relation: "related",
             score: 70,
             generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-vault-quiet-hours",
         };
         const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
             generatedAt: "2026-06-29T12:00:00.000Z",
@@ -1560,6 +2892,8 @@ describe("PageletOrchestrator detail expansion", () => {
             relation: "related",
             score: 70,
             generatedAt: "2026-06-29T12:01:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-vault-latest",
         };
         const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
             generatedAt: "2026-06-29T12:01:00.000Z",
@@ -1622,6 +2956,8 @@ describe("PageletOrchestrator detail expansion", () => {
             relation: "related",
             score: 60,
             generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-stale",
         };
         const latestCandidate: QuietRecallCandidate = {
             id: "qr-latest",
@@ -1633,6 +2969,8 @@ describe("PageletOrchestrator detail expansion", () => {
             relation: "related",
             score: 80,
             generatedAt: "2026-06-29T12:01:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-latest",
         };
         const runQuietRecall = jest.fn<() => Promise<QuietRecallRunResult>>()
             .mockImplementationOnce(() => firstRun)
@@ -1816,6 +3154,92 @@ describe("PageletOrchestrator detail expansion", () => {
             title: "Maintenance Review",
             extra: expect.objectContaining({ maintenanceReview }),
         }));
+    });
+
+    it("reports authorization-aware runtime state, feature usage, round diagnostics, and cost", async () => {
+        jest.mocked(Notice).mockClear();
+        const getPageletFeatureRateLimitStatus = jest.fn(async () => ({
+            scopeRecap: {
+                hourlyUsed: 1,
+                hourlyCap: 2,
+                hourlyRemaining: 1,
+                dailyUsed: 4,
+                dailyCap: 10,
+                dailyRemaining: 6,
+                dailyResetAt: Date.parse("2026-07-19T00:00:00.000Z"),
+            },
+            quietRecall: {
+                hourlyUsed: 3,
+                hourlyCap: 10,
+                hourlyRemaining: 7,
+                dailyUsed: 8,
+                dailyCap: 50,
+                dailyRemaining: 42,
+                dailyResetAt: Date.parse("2026-07-19T00:00:00.000Z"),
+            },
+        }));
+        const host = makeHost({ getPageletFeatureRateLimitStatus });
+        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+        host.settings.pagelet.scopeRecapPreparationEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            lastRecapAttempt: ScopeRecapPreparationResult["attempt"];
+            lastQuietRecallDiagnostics: QuietRecallEvaluationDiagnostics;
+            lastQuietRecallAcceptedCount: number;
+        };
+        internals.lastRecapAttempt = {
+            attemptedAt: "2026-07-18T08:30:00.000Z",
+            outcome: "success",
+            scope: { kind: "folder" },
+            sourceSnapshotId: "scope-snapshot",
+            dataBoundarySnapshotId: "boundary-snapshot",
+            providerCallMade: true,
+            includedSourceCount: 2,
+            cost: {
+                inputTokens: 100,
+                outputTokens: 20,
+                estimatedCost: 0.001,
+                currency: "USD",
+                pricingKnown: true,
+            },
+        };
+        internals.lastQuietRecallDiagnostics = {
+            roundId: "round-12345678",
+            startedAt: Date.parse("2026-07-18T08:31:00.000Z"),
+            contextFingerprint: "context-fingerprint",
+            candidateCount: 1,
+            evaluatedCandidateCount: 1,
+            providerCalls: 1,
+            initialCalls: 1,
+            languageRetryCalls: 0,
+            cacheHits: 0,
+            inFlightHits: 0,
+            estimatedCost: 0.002,
+            pricingKnown: true,
+            limiterUsage: {
+                hourlyUsed: 3,
+                hourlyCap: 10,
+                hourlyRemaining: 7,
+                dailyUsed: 8,
+                dailyCap: 50,
+                dailyRemaining: 42,
+            },
+            attempts: [],
+        };
+        internals.lastQuietRecallAcceptedCount = 1;
+
+        orchestrator.getCommandCallbacks().onShowBackgroundPreparationStatus();
+        await flushAsyncWork();
+
+        expect(getPageletFeatureRateLimitStatus).toHaveBeenCalledTimes(1);
+        const message = jest.mocked(Notice).mock.calls.at(-1)?.[0] as string;
+        expect(message).toContain("Scope Recap preparation: Stopped");
+        expect(message).toContain("actual AI call yes");
+        expect(message).toContain("estimated cost $0.001000");
+        expect(message).toContain("Quiet Recall evaluation: round round-12");
+        expect(message).toContain("estimated cost $0.002000");
+        expect(message).toContain("Scope Recap 1/2 this hour and 4/10 today");
+        expect(message).toContain("Quiet Recall 3/10 this hour and 8/50 today");
     });
 });
 

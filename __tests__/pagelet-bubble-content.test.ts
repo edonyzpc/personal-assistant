@@ -14,8 +14,12 @@ import {
     buildPreparingContent,
     buildContextLimitedContent,
     buildIntentionallyQuietContent,
+    buildLocalDiscoveryClueContent,
 } from "../src/pagelet/bubble/BubbleContent";
-import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
+import {
+    quietRecallCandidateToDeliveryCandidate,
+    quietRecallCandidateToDiscoveryCandidate,
+} from "../src/pagelet/bubble/recall-card";
 import { scopeRecapToDeliveryCandidate } from "../src/pagelet/bubble/recap-card";
 import type { BubbleStateCallbacks } from "../src/pagelet/bubble/types";
 
@@ -44,6 +48,8 @@ describe("Pagelet Bubble quick access content", () => {
             relation: "related" as const,
             score: 82,
             generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "ai" as const,
+            evaluationFingerprint: "recall-evaluation-1",
         };
 
         expect(quietRecallCandidateToDeliveryCandidate(candidate)).toEqual({
@@ -57,12 +63,98 @@ describe("Pagelet Bubble quick access content", () => {
             staleStatus: "fresh",
             route: { surface: "tab", payloadType: "quiet-recall" },
         });
+        expect(quietRecallCandidateToDiscoveryCandidate(candidate)).toBeNull();
+    });
+
+    it("fails closed when a Quiet Recall candidate has not passed AI evaluation", () => {
+        const candidate = {
+            id: "recall-local",
+            title: "Recall: Local match",
+            summary: "A local similarity match.",
+            sourceRefs: [{ path: "Projects/Local.md" }],
+            whyNow: ["A local ranking template."],
+            nextAction: "Discover the source.",
+            relation: "related" as const,
+            score: 90,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "local" as const,
+        };
+
+        expect(quietRecallCandidateToDeliveryCandidate(candidate)).toBeNull();
+        expect(quietRecallCandidateToDiscoveryCandidate(candidate)).toEqual({
+            id: "recall-local",
+            sourceRefs: [{ path: "Projects/Local.md", title: "Local" }],
+            relation: "related",
+            preparedAt: "2026-07-05T12:00:00.000Z",
+        });
+    });
+
+    it("builds a provenance-labeled local Discover clue without Recall why-now or stack UI", () => {
+        const candidate = quietRecallCandidateToDiscoveryCandidate({
+            id: "recall-local",
+            title: "Recall: Local match",
+            summary: "LOCAL SUMMARY MUST NOT RENDER",
+            sourceRefs: [{ path: "Projects/Local.md" }],
+            whyNow: ["LOCAL WHY NOW MUST NOT RENDER"],
+            nextAction: "LOCAL NEXT ACTION MUST NOT RENDER",
+            relation: "related",
+            score: 90,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "local",
+        });
+        expect(candidate).not.toBeNull();
+        const callbacks = {
+            onOpen: jest.fn(),
+            onLinkToCurrent: jest.fn(),
+            canLinkToCurrent: jest.fn(() => true),
+            onLater: jest.fn(),
+        };
+
+        const en = buildLocalDiscoveryClueContent(candidate!, callbacks, "en");
+        const zh = buildLocalDiscoveryClueContent(candidate!, callbacks, "zh");
+
+        expect(en.type).toBe("discovery");
+        expect(en.cards).toBeUndefined();
+        expect(en.inlineHint).toBeUndefined();
+        expect(en.findings).toEqual([
+            { text: "Local related clue" },
+            {
+                text: "Related by local note signals.",
+                sourceLink: "Projects/Local.md",
+                sourceTitle: "Local",
+            },
+        ]);
+        expect(zh.findings[0]?.text).toBe("本地关联线索");
+        expect(zh.findings[1]?.text).toBe("由本地笔记信号关联。");
+        expect(JSON.stringify(en)).not.toContain("LOCAL WHY NOW MUST NOT RENDER");
+        expect(JSON.stringify(en)).not.toContain("LOCAL SUMMARY MUST NOT RENDER");
+        expect(en.actions.map((action) => action.label)).toEqual([
+            "Open source note",
+            "Link",
+            "Later",
+        ]);
+    });
+
+    it("fails closed when AI provenance lacks its exact evaluation fingerprint", () => {
+        expect(quietRecallCandidateToDeliveryCandidate({
+            id: "recall-ai-without-fingerprint",
+            title: "Recall: Unproven",
+            summary: "This candidate cannot prove which evaluation accepted it.",
+            whyNow: ["It should stay silent."],
+            sourceRefs: [{ path: "notes/source.md" }],
+            relation: "related",
+            score: 90,
+            nextAction: "Open the source note.",
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "ai",
+        })).toBeNull();
     });
 
     it("adapts fresh ScopeRecap artifacts into Recap Delivery candidates", () => {
         const recap = {
             id: "recap-1",
             scope: { kind: "folder" as const, label: "Projects/PA", paths: ["Projects/PA"] },
+            sourceSnapshotId: "recap-snapshot-1",
             generatedAt: "2026-07-05T12:00:00.000Z",
             ttlDays: 7,
             staleStatus: "fresh" as const,
@@ -84,7 +176,20 @@ describe("Pagelet Bubble quick access content", () => {
                 status: "candidate" as const,
             },
             themes: [],
-            tensions: [],
+            tensions: [{
+                id: "tension",
+                section: "tension" as const,
+                title: "Delivery and menu designs conflict",
+                summary: "A.md moves toward direct delivery while B.md still assumes a feature menu, so the interaction contract needs one decision.",
+                whyItMatters: "Shipping both interaction models would make Pagelet feel unpredictable.",
+                sourceRefs: [
+                    { path: "Projects/PA/A.md", generatedAt: "2026-07-05T12:00:00.000Z" },
+                    { path: "Projects/PA/B.md", generatedAt: "2026-07-05T12:00:00.000Z" },
+                ],
+                generatedAt: "2026-07-05T12:00:00.000Z",
+                generatedHelper: true as const,
+                status: "candidate" as const,
+            }],
             openQuestions: [],
             nextReviewActions: [],
             sourceRefs: [
@@ -95,10 +200,14 @@ describe("Pagelet Bubble quick access content", () => {
         };
 
         expect(scopeRecapToDeliveryCandidate(recap)).toMatchObject({
-            id: "recap-1",
+            id: expect.stringMatching(/^recap-insight-/),
             kind: "recap",
-            title: "Projects/PA",
-            body: "The project moved from feature menu to delivery.",
+            title: "Delivery and menu designs conflict",
+            body: "A.md moves toward direct delivery while B.md still assumes a feature menu, so the interaction contract needs one decision.",
+            sourceRefs: [
+                { path: "Projects/PA/A.md", title: "A" },
+                { path: "Projects/PA/B.md", title: "B" },
+            ],
             staleStatus: "fresh",
             route: { surface: "tab", payloadType: "scope-recap" },
         });
@@ -107,6 +216,23 @@ describe("Pagelet Bubble quick access content", () => {
             ...recap,
             staleStatus: "stale",
         })).toBeNull();
+
+        expect(scopeRecapToDeliveryCandidate({
+            ...recap,
+            tensions: [],
+        })).toBeNull();
+
+        expect(scopeRecapToDeliveryCandidate({
+            ...recap,
+            tensions: [{
+                ...recap.tensions[0],
+                sourceRefs: recap.tensions[0].sourceRefs.slice(0, 1),
+            }],
+        })).toMatchObject({
+            kind: "recap",
+            title: "Delivery and menu designs conflict",
+            sourceRefs: [{ path: "Projects/PA/A.md", title: "A" }],
+        });
     });
 
     it.each([
