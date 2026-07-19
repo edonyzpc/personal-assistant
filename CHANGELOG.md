@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.3](https://github.com/edonyzpc/personal-assistant/compare/2.9.0-beta.2...2.9.0-beta.3) (2026-07-19)
+
+### Features
+- release: enforce master-sourced beta packaging
+
+### Docs
+- pagelet: close B-108 after BRAT beta validation
+- governance: adopt master-first branch management
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
