@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-07-19
+Updated: 2026-07-20
 
 这里是已经从 Linear inbox 晋升、但尚未开始或仍未完成的项目事项清单；raw PA idea 继续留在 Linear，不在这里制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -33,6 +33,7 @@ Updated: 2026-07-19
 | B-113 | Memory status-transition contract extraction | 只有新的共享 UI/调用方确实需要复用迁移规则时，才讨论把 `VALID_STATUS_TRANSITIONS` 从 store 层移动到 contracts；不要仅因历史 review 做无消费者抽象 | [PR #376 review](./archive/pr-376-review-report.md) |
 | B-114 | Hosted / commercial service layer | Free/Lite BYOK 需求被验证，且 Terms、privacy、billing、entitlement 与 counsel review 都完成后，才设计 Premium 托管层 | [Commercialization analysis](./archive/pa-commercialization-analysis-2026-07-08.md), [active decisions](./product/active-decisions.md) |
 | B-116 | Pagelet 原 B-108 dogfood 延后范围 | 只在真实 dogfood 证据命中时分别重启：double-Ctrl 需跨平台冲突与实体操作证据；Chat Quick Command 需证明现有入口摩擦；`pa-related` frontmatter Sync 需先解决多设备冲突；Weekly Review compatibility helper 需兼容性证明后才移除；Pattern LLM 仅在结构检测不足且成本获批时考虑。`replace_selection` 继续由 B-101 / T-003 的写操作边界治理，不在此重复授权 | [Historical tracker](./archive/pa-product-redesign-development-tracker.md), [archived B-108 package](./archive/2026/pagelet-b108-dogfood-followup/README.md) |
+| B-119 | Insight Enhancement Layer | Discovery Brief 已完成分析（Needs Decision）；用户批准后创建 Decision Record + Product Spec + Active Package | [Discovery Brief](./development/discovery/insight-enhancement-layer.md) |
 
 ## 触发型评估
 
