@@ -13,7 +13,7 @@ Updated: 2026-07-19
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Quiet Recall v1 and DEC-020 independent evaluation, limiter, exact-cache, provenance, and distinctly labeled Discover-only fallback validated; bounded unlocked desktop/iPhone 15 evidence, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover routing/presentation/Qwen semantics, and the correctly prepared B-108 user-owned 3-Second Value Test are complete |
+| Status | DEC-020 evaluation/limiter/cache/provenance substrate is validated, but the 2026-07-19 B-118 audit confirmed user-reachability, action/feedback, first-use provider disclosure and settings drift. Treat Off/Quiet/Balanced UI and Not relevant delivery as Planned under B-118, not currently delivered. |
 | Feature family | Quiet Recall / Just-in-time insight / Cognitive scaffolding |
 | Primary surfaces | Pagelet Bubble, Pagelet Panel, optional Review Queue handoff |
 | Current authority | This spec, [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), and the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md) |
@@ -35,6 +35,11 @@ Quiet Recall is PA's just-in-time cognitive scaffolding layer:
 
 This document records the one-question-at-a-time product decisions initially
 confirmed on 2026-06-28 and the DEC-020/B-108 amendments through 2026-07-19.
+[DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md) and the
+[B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) record current
+action, feedback, disclosure and settings drift. B-118 may repair evidence-backed
+defects, but new frequency, migration, authorization-reuse, feedback-retention or
+Later semantics require the explicit stop gates recorded there.
 
 ## Confirmed Decisions
 

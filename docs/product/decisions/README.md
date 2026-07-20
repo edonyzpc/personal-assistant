@@ -1,7 +1,7 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-07-18
+Updated: 2026-07-19
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
@@ -18,5 +18,6 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-018 | Quality-gated proactive hints for Scope Recap | Accepted | Pagelet Recap visibility, attention and suppression boundary | [Record](./dec-018-quality-gated-scope-recap-hints.md) |
 | DEC-019 | Honest layered fallback for failed Scope Recap preparation | Accepted | Pagelet Recap failure, last-valid artifact and local explanation boundary | [Record](./dec-019-honest-layered-recap-fallback.md) |
 | DEC-020 | Independent AI evaluation for each Quiet Recall candidate | Accepted | Quiet Recall quality, failure isolation and provider-call budget boundary | [Record](./dec-020-independent-quiet-recall-evaluation.md) |
+| DEC-021 | Evidence-led Pagelet UI/UX hardening | Accepted | Staged repair scope, evidence boundaries and product stop gates | [Record](./dec-021-evidence-led-pagelet-ui-ux-hardening.md) |
 
 Accepted 记录必须出现在 Active Decision Register。Rejected/Superseded 记录如果只剩历史价值，应移动到年度 Archive 并在 successor/年度索引中可追溯。

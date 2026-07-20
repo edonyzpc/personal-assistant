@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-07-18
+Updated: 2026-07-19
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Linear、Claude/Codex Memory 或其他外部工具只能提供输入和镜像；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -27,6 +27,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 | DEC-018 | Scope Recap 仅在高价值时主动轻提示 | 新的、fresh、当前 scope 相关且至少有两篇来源支撑的具体洞察才触发一次 Pet nudge；泛化摘要、重复/失败/低质量结果保持静默，其他提示类型不随之默认开启 | [Decision Record](./decisions/dec-018-quality-gated-scope-recap-hints.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 提示干扰高于价值、质量门长期不触发或统一提示策略证明更优 |
 | DEC-019 | Scope Recap 失败时采用分层诚实降级 | 后台失败/空/低质量结果不制造 ready 或 nudge，也不覆盖仍有效 artifact；主动打开时优先显示有效旧洞察，否则即时显示不冒充 insight 的本地范围方向与重试 | [Decision Record](./decisions/dec-019-honest-layered-recap-fallback.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 本地概览被误解为洞察、没有定向价值或 artifact freshness 产生误报 |
 | DEC-020 | Quiet Recall 对最多 5 个候选逐条独立 AI 评估 | 每个候选独立过 why-now 质量门，最多一次语言重试，单轮最多 10 次实际调用；小时/日额度由 SDD 按实际调用固化，未评估/失败候选不以模板补位 | [Decision Record](./decisions/dec-020-independent-quiet-recall-evaluation.md), [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | 真实成本/延迟频繁阻断高价值 Recall，或 batch 在质量与失败隔离上达到同等结果 |
+| DEC-021 | Pagelet UI/UX 按真实界面证据分阶段修复 | 先恢复真机菜单触控与 Recap 首屏价值，再修不涉及新产品决定的 motion、状态、布局与可读性；频率、授权复用、反馈、Later 和动作 taxonomy 受显式 stop gate 阻断 | [Decision Record](./decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [B-118 Product Spec](./specs/pagelet-ui-ux-hardening-product-spec.md) | 真机证据要求重构事件模型，或 stop gate 获得新的产品决定 |
 
 ## Active Architecture Decisions
 

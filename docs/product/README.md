@@ -30,6 +30,7 @@
 
 - [Bubble Readiness and Recall](./specs/pagelet-bubble-readiness-and-recall-product-spec.md)
 - [Delivery Preparation Consolidation](./specs/pagelet-delivery-preparation-consolidation-product-note.md)
+- [Pagelet UI/UX Hardening](./specs/pagelet-ui-ux-hardening-product-spec.md)
 
 ## Shared Product Infrastructure
 

@@ -6,7 +6,7 @@
 | --- | --- |
 | Document type | Product specification |
 | Scope | Pagelet Bubble empty-state redesign, Recall/Discover unification, readiness transparency, DeliveryCandidate contract |
-| Status | Phase 6 base and DEC-017/DEC-018/DEC-019/DEC-020 B-108 runtime validated with automated/deploy gates passing; bounded unlocked desktop/iPhone 15 evidence, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover routing/presentation/Qwen semantics, and the correctly prepared user-owned 3-Second Value Test complete |
+| Status | Phase 6/B-108 substrate has its recorded validation, but the 2026-07-19 B-118 audit confirmed current hold-menu action, Recap first-screen and Recall action/feedback drift. B-118 repair is Planned and prior evidence must not be reused as a current all-surface PASS. |
 | Updated | 2026-07-19 |
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
