@@ -492,7 +492,7 @@ describe("Pagelet Bubble quick access content", () => {
         const content = buildPreparedRecapDeliveryContent(candidate, callbacks, "en");
 
         expect(content.type).toBe("recap-delivery");
-        expect(content.findings[0]?.text).toBe("PA prepared a short recap for this scope.");
+        expect(content.findings[0]?.text).toBe("Project notes changed this week.");
         expect(JSON.stringify(content)).not.toContain("Generate summary");
         expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
 

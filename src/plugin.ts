@@ -69,7 +69,8 @@ import {
 } from './platform-dom';
 import { normalizeReviewsFolder, type PageletReviewsFolderError, type PageletSettings } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
-import { requestScopeRecapAuthorization } from './pagelet/recap/ScopeRecapAuthorizationModal';
+// SG-06: Modal authorization removed. Import kept as comment for reference.
+// import { requestScopeRecapAuthorization } from './pagelet/recap/ScopeRecapAuthorizationModal';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
 import {
     PAGELET_DETAIL_VIEW_TYPE,
@@ -2444,19 +2445,8 @@ export class PluginManager extends Plugin {
             getScopeRecapAuthorizationContextId: () => this.getScopeRecapAuthorizationContextId(),
             getPageletFeatureRateLimitStatus: () => this.getPageletFeatureRateLimitStatus(),
             getScopeRecapDataBoundarySnapshotId: () => this.getMemoryDataBoundaryFingerprint(),
-            requestScopeRecapBackgroundAuthorization: (overview) => {
-                const provider = this.getScopeRecapProviderInfo();
-                return requestScopeRecapAuthorization(this.app, {
-                    scopeLabel: overview.scope.label ?? overview.scope.kind,
-                    includedSourceCount: overview.sourceCoverage.includedSourceCount,
-                    skippedSourceCount: overview.sourceCoverage.skippedSourceCount,
-                    provider: provider.provider,
-                    model: provider.model,
-                    endpoint: provider.endpoint,
-                    hourlyCap: SCOPE_RECAP_CALL_LIMITS.hourly,
-                    dailyCap: SCOPE_RECAP_CALL_LIMITS.daily,
-                }, this.getPageletLocale());
-            },
+            // SG-06: Modal removed. Auto-authorize; orchestrator handles notification.
+            requestScopeRecapBackgroundAuthorization: () => Promise.resolve("run" as const),
             runScopeRecap: (options) => this.runScopeRecap(options),
             runQuietRecall: () => this.runQuietRecall(),
             isQuietRecallRunCurrent: (result) => this.isQuietRecallRunCurrent(result),

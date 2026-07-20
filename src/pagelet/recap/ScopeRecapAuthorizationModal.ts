@@ -18,7 +18,11 @@ export interface ScopeRecapAuthorizationSummary {
 }
 
 /**
- * First-run disclosure for provider-backed Scope Recap preparation.
+ * @deprecated SG-06: Modal authorization removed in B-118. Settings default ON
+ * with non-blocking first-use notification. This function is retained for
+ * backward compatibility but should not be called from new code.
+ *
+ * Original: First-run disclosure for provider-backed Scope Recap preparation.
  * Closing the modal is treated as Adjust/later: it never grants consent and
  * it does not turn a non-choice into a durable opt-out.
  */

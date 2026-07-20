@@ -112,13 +112,18 @@ export interface PageletHost {
             quickCaptureExplained: boolean;
             quietRecallExplained: boolean;
             quietAcknowledged: boolean;
+            pageletProviderFirstUseNotified: boolean;
+            quietRecallMode: "off" | "on";
         };
         contextPager: {
             enabled: boolean;
         };
         quietRecall: {
             enabled: boolean;
+            /** @deprecated Use quietRecallMode instead. */
             bubbleNudgesEnabled: boolean;
+            /** SG-01: Off/On two-tier. */
+            quietRecallMode: "off" | "on";
         };
         focusMode: boolean;
         confirmedMemoryCount: number;
@@ -241,7 +246,10 @@ export interface PageletHost {
     /** Current Data Boundary fingerprint used to invalidate derived Recaps. */
     getScopeRecapDataBoundarySnapshotId(): string;
 
-    /** Ask for first-run provider-backed background-read authorization. */
+    /**
+     * @deprecated SG-06: Modal authorization removed. Settings default ON + non-blocking notification.
+     * Kept for interface compatibility; implementation returns "run" immediately.
+     */
     requestScopeRecapBackgroundAuthorization(
         overview: ScopeRecapLocalOverview,
     ): Promise<ScopeRecapAuthorizationChoice>;

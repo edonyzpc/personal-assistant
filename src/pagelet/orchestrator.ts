@@ -11,7 +11,8 @@
  */
 
 import { Notice, TFile, normalizePath } from "obsidian";
-import type { MarkdownView, WorkspaceLeaf } from "obsidian";
+import { MarkdownView } from "obsidian";
+import type { WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 import {
@@ -64,6 +65,7 @@ import {
     QUIET_RECALL_BUBBLE_MIN_SCORE,
     createContextPagerStateFromRetrievalOutcome,
     quietRecallCandidateToBubbleNudge,
+    quietRecallCandidateToReviewQueueInput,
     quietRecallLinkTargetPath,
     reviewQueueItemHasUserIntentOrDurableConsequence,
     evaluateScopeRecapProactiveQuality,
@@ -337,6 +339,11 @@ export class PageletOrchestrator {
                 onExpandPanel: (type) => this.handleExpandPanel(type),
                 onSourceClick: (link) => this.handleSourceClick(link),
                 onDismiss: () => this.handleBubbleDismiss(),
+            },
+            // F-09: Clamp Bubble to active leaf bounds on desktop
+            getActiveLeafBounds: () => {
+                const view = this.host.app.workspace.getActiveViewOfType(MarkdownView);
+                return view?.contentEl?.getBoundingClientRect() ?? null;
             },
         });
         this.bubbleView.mount(overlayRoot);
@@ -670,6 +677,8 @@ export class PageletOrchestrator {
         });
         if (routeToken === null) return;
         try {
+            // SG-05: Shared first-use non-blocking notification
+            this.showProviderFirstUseNotificationIfNeeded();
             const quietRecall = await this.withForegroundTimeout(this.host.runQuietRecall());
             this.recordQuietRecallDiagnostics(quietRecall);
             if (!this.isCurrentForegroundRoute(routeToken)) return;
@@ -678,12 +687,14 @@ export class PageletOrchestrator {
                     expectedContextKey,
                     currentContextKey: this.currentActiveNoteSnapshotKey(),
                 });
+                this.settleForForegroundOwner(routeToken);
                 return;
             }
             if (!this.quietRecallRunIsCurrent(quietRecall)) {
                 this.host.log("Discarded stale Quiet Recall foreground result", {
                     reason: "source_or_policy_changed",
                 });
+                this.settleForForegroundOwner(routeToken);
                 return;
             }
             this.transitionPet("analysis-done");
@@ -990,6 +1001,12 @@ export class PageletOrchestrator {
     private buildPreparedRecapPayload(recap: ScopeRecapRunResult): PageletDetailPayload {
         const locale = getPageletUiLanguage();
         const items = this.orderedScopeRecapItems(recap);
+        const dateFormatter = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en", {
+            dateStyle: "medium",
+            timeStyle: "short",
+        });
+        const localizedGeneratedAt = dateFormatter.format(new Date(recap.generatedAt));
+        const scopeLabel = recap.scope.label ?? recap.scope.kind;
         const content: TabSection[] = [
             {
                 title: pageletT("pagelet.recap.detail.observations", locale),
@@ -1001,6 +1018,15 @@ export class PageletOrchestrator {
                     cardStyle: item.section === "tension" ? "comparison" : "insight",
                     sourceLinks: item.sourceRefs.map((ref) => ({ path: ref.path })),
                 })),
+            },
+            {
+                title: pageletT("pagelet.recap.detail.scope", locale),
+                cards: [{
+                    body: pageletT("pagelet.recap.detail.scopeInfo", locale, {
+                        scope: scopeLabel,
+                        generatedAt: localizedGeneratedAt,
+                    }),
+                }],
             },
             {
                 title: pageletT("pagelet.recap.detail.sources", locale),
@@ -1183,49 +1209,26 @@ export class PageletOrchestrator {
         }
     }
 
+    /**
+     * SG-06: Modal removed. Scope Recap is enabled by default via settings.
+     * On first use, show a non-blocking notification (shared SG-05 first-use).
+     * No modal prompt, no blocking authorization flow.
+     */
     private async ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null> {
         const settings = this.host.settings.pagelet;
         if (!this.host.isScopeRecapProviderConfigured()) return null;
-        if (settings.scopeRecapBackgroundAuthorization === "authorized-v1") {
-            if (
-                settings.scopeRecapAuthorizationContextId
-                === this.host.getScopeRecapAuthorizationContextId()
-            ) {
-                if (!settings.scopeRecapPreparationEnabled) return null;
-                const overview = await this.host.buildScopeRecapLocalOverview();
-                return overview.sourceCoverage.includedSourceCount >= 2 ? overview : null;
-            }
-            this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "pending");
-            this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
-            this.host.updatePageletSetting("scopeRecapAuthorizationContextId", null);
-            this.recapAuthorizationPromptedThisSession = false;
-        }
-        if (
-            settings.scopeRecapBackgroundAuthorization === "declined-v1"
-            || this.recapAuthorizationPromptedThisSession
-        ) return null;
+        if (!settings.scopeRecapPreparationEnabled) return null;
 
         const overview = await this.host.buildScopeRecapLocalOverview();
         this.lastRecapLocalOverview = overview;
         if (overview.sourceCoverage.includedSourceCount < 2) return null;
-        const disclosedScopeKey = this.currentRecapScopeKey();
-        const disclosedAuthorizationContextId = this.host.getScopeRecapAuthorizationContextId();
-        this.recapAuthorizationPromptedThisSession = true;
-        const choice = await this.host.requestScopeRecapBackgroundAuthorization(overview);
-        if (choice === "run") {
-            const currentOverview = await this.host.buildScopeRecapLocalOverview();
-            if (
-                disclosedScopeKey !== this.currentRecapScopeKey()
-                || disclosedAuthorizationContextId !== this.host.getScopeRecapAuthorizationContextId()
-                || overview.sourceSnapshotId !== currentOverview.sourceSnapshotId
-                || overview.dataBoundarySnapshotId !== currentOverview.dataBoundarySnapshotId
-            ) {
-                this.recapAuthorizationPromptedThisSession = false;
-                this.schedulePreparedRecap("pagelet-open", 0);
-                return null;
-            }
+
+        // SG-05: Shared first-use non-blocking notification
+        this.showProviderFirstUseNotificationIfNeeded();
+
+        // Auto-authorize on first run (no modal)
+        if (settings.scopeRecapBackgroundAuthorization !== "authorized-v1") {
             this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "authorized-v1");
-            this.host.updatePageletSetting("scopeRecapPreparationEnabled", true);
             this.host.updatePageletSetting(
                 "scopeRecapAuthorizationContextId",
                 this.host.getScopeRecapAuthorizationContextId(),
@@ -1233,26 +1236,25 @@ export class PageletOrchestrator {
             this.observedRecapAuthorization = "authorized-v1";
             this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
             await Promise.resolve(this.host.saveSettings());
-            return currentOverview;
         }
-        if (choice === "adjust") {
-            this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
-            this.observedRecapAuthorization = "pending";
-            this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
-            await Promise.resolve(this.host.saveSettings());
-            this.recapAuthorizationAwaitingAdjustment = true;
-            this.host.openPageletSettings();
-            this.host.refreshPageletSettings?.();
-            return null;
-        }
-        this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "declined-v1");
-        this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
-        this.host.updatePageletSetting("scopeRecapAuthorizationContextId", null);
-        this.observedRecapAuthorization = "declined-v1";
-        this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
-        await Promise.resolve(this.host.saveSettings());
-        this.host.refreshPageletSettings?.();
-        return null;
+        return overview;
+    }
+
+    /**
+     * SG-05: Show a non-blocking notification on first Pagelet provider use.
+     * Shared across all provider paths (Recap, Recall, Discover).
+     */
+    private showProviderFirstUseNotificationIfNeeded(): void {
+        if (this.host.settings.pagelet.pageletProviderFirstUseNotified) return;
+        this.host.updatePageletSetting("pageletProviderFirstUseNotified", true);
+        const provider = this.host.getScopeRecapProviderInfo();
+        const locale = getPageletUiLanguage();
+        new Notice(
+            pageletT("pagelet.provider.firstUseNotification", locale, {
+                provider: provider.provider,
+            }),
+            6000,
+        );
     }
 
     private recordScopeRecapBackgroundFailure(): void {
@@ -1435,6 +1437,18 @@ export class PageletOrchestrator {
 
     private isCurrentForegroundRoute(routeToken: number): boolean {
         return !this.destroyed && routeToken === this.foregroundRouteToken;
+    }
+
+    /**
+     * F-06: Settle Pet to idle/nudge when a foreground route completes or
+     * becomes stale. Only acts if the given routeToken is still the current
+     * foreground owner. Stale owners are silently ignored.
+     */
+    private settleForForegroundOwner(routeToken: number): void {
+        if (!this.isCurrentForegroundRoute(routeToken)) return;
+        if (this.petView?.stateMachine.state === "working") {
+            this.transitionPet("analysis-done");
+        }
     }
 
     private withForegroundTimeout<T>(promise: Promise<T>): Promise<T> {
@@ -2167,13 +2181,16 @@ export class PageletOrchestrator {
     // Bubble / Panel callbacks
     // ======================================================================
 
+    /**
+     * F-07 / SG-01: simplified to check quietRecallMode === "on".
+     * Quality gate, quiet hours, Focus Mode, per-candidate-once remain.
+     */
     private canPrepareQuietRecallBubbleNudge(): boolean {
         return !this.host.settings.focusMode
             && this.host.settings.pagelet.enabled
             && this.host.settings.pagelet.petVisible
-            && this.host.settings.pagelet.proactiveHints
             && this.host.settings.quietRecall.enabled
-            && this.host.settings.quietRecall.bubbleNudgesEnabled;
+            && this.host.settings.quietRecall.quietRecallMode === "on";
     }
 
     private quietRecallLeafChangeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2200,11 +2217,22 @@ export class PageletOrchestrator {
     private clearQuietRecallBubbleNudge(
         options: { preserveDiscoverFallback?: boolean } = {},
     ): void {
+        const hadNudge = this.quietRecallBubbleNudge !== null;
         this.quietRecallNudgeCandidate = null;
         this.quietRecallBubbleNudge = null;
         if (!options.preserveDiscoverFallback) {
             this.quietRecallDiscoverFallback = null;
             this.unconvincingRecallCount = 0;
+        }
+        // F-06: Reset Pet from nudge to idle when cleared nudge was the only active payload
+        if (
+            hadNudge
+            && this.petView?.stateMachine.state === "nudge"
+            && !this.onboardingNudge
+            && !this.patternDetectionNudge
+            && !this.preparedRecapNudgeFingerprint
+        ) {
+            this.petView.stateMachine.forceState("idle");
         }
     }
 
@@ -2239,6 +2267,8 @@ export class PageletOrchestrator {
         }
         this.quietRecallNudgeInFlight = true;
         try {
+            // SG-05: Shared first-use non-blocking notification
+            this.showProviderFirstUseNotificationIfNeeded();
             const recall = await this.host.runQuietRecall();
             this.recordQuietRecallDiagnostics(recall);
             if (runId !== this.quietRecallNudgeRunId || this.destroyed) return;
@@ -2363,12 +2393,46 @@ export class PageletOrchestrator {
         });
     }
 
+    /**
+     * F-05 / SG-02: View opens Tab with existing candidates. Does NOT re-run provider.
+     */
     private async handleQuietRecallBubbleView(nudge: QuietRecallBubbleNudge): Promise<void> {
         const candidate = this.quietRecallCandidateForNudge(nudge);
-        this.clearQuietRecallBubbleNudge();
         this.bubbleView?.close();
         this.recordQuietRecallFeedback(candidate, "view");
-        await this.runQuietRecall();
+
+        // Use existing candidates — no additional provider call
+        const discoverFallback = this.quietRecallDiscoverFallback;
+        const existingCandidates = candidate
+            ? [candidate, ...(discoverFallback?.candidates ?? []).filter((c) => c.id !== candidate.id)]
+            : discoverFallback?.candidates ?? [];
+
+        if (existingCandidates.length === 0) {
+            // Fallback: if no candidates available, open Tab with empty state
+            this.clearQuietRecallBubbleNudge();
+            await this.runQuietRecall();
+            return;
+        }
+
+        const locale = getPageletUiLanguage();
+        const recall: QuietRecallRunResult = {
+            generatedAt: new Date().toISOString(),
+            ...(discoverFallback ?? {}),
+            currentPath: nudge.currentPath,
+            candidates: existingCandidates,
+            totalCount: existingCandidates.length,
+        };
+        const payload: PageletDetailPayload = {
+            title: pageletT("pagelet.tab.recall.title", locale),
+            content: [],
+            locale,
+            layoutType: "current",
+            extra: { quietRecall: recall },
+            entryReason: "quiet-recall",
+        };
+        if (recall.currentPath) payload.sourcePath = recall.currentPath;
+        this.clearQuietRecallBubbleNudge();
+        await Promise.resolve(this.host.openPageletDetailView(payload));
     }
 
     private async handleQuietRecallBubbleLink(nudge: QuietRecallBubbleNudge): Promise<void> {
@@ -2408,15 +2472,23 @@ export class PageletOrchestrator {
         this.recordQuietRecallFeedback(candidate, "dismiss");
     }
 
+    /**
+     * F-05 / SG-04: Later = enter Review Queue instead of 24h snooze.
+     */
     private handleQuietRecallBubbleLater(nudge: QuietRecallBubbleNudge): void {
         const candidate = this.quietRecallCandidateForNudge(nudge);
-        this.quietRecallSnoozedCandidateIds.set(
-            nudge.candidateId,
-            Date.now() + PageletOrchestrator.QUIET_RECALL_LATER_SNOOZE_MS,
-        );
         this.clearQuietRecallBubbleNudge();
         this.bubbleView?.close();
         this.recordQuietRecallFeedback(candidate, "later");
+        if (candidate) {
+            void this.host.createReviewQueueItem(
+                quietRecallCandidateToReviewQueueInput(candidate, {
+                    admissionReason: "user_kept_for_later",
+                }),
+            ).catch((error) => {
+                this.host.log("Quiet Recall Later → Review Queue failed", error);
+            });
+        }
     }
 
     /** Expand Bubble -> Panel. */

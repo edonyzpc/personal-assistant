@@ -754,8 +754,9 @@ export class BubbleView {
 
         const anchorRect = anchorEl.getBoundingClientRect();
 
-        // Compute container offset for absolute positioning.
-        const containerRect = this.containerEl?.getBoundingClientRect();
+        // F-09: Use active leaf bounds for desktop clamping when available
+        const leafBounds = this.options.getActiveLeafBounds?.() ?? null;
+        const containerRect = leafBounds ?? this.containerEl?.getBoundingClientRect();
         const positioning = getPositioningContext(this.rootEl, this.containerEl);
         const offsetX = positioning.rect?.left ?? 0;
         const offsetY = positioning.rect?.top ?? 0;
@@ -827,7 +828,9 @@ export class BubbleView {
         if (!this.rootEl || !this.anchorEl || !this.containerEl) return;
 
         const anchorRect = this.anchorEl.getBoundingClientRect();
-        const containerRect = this.containerEl.getBoundingClientRect();
+        // F-09: Use active leaf bounds for desktop clamping when available
+        const leafBounds = this.options.getActiveLeafBounds?.() ?? null;
+        const containerRect = leafBounds ?? this.containerEl.getBoundingClientRect();
         const positioning = getPositioningContext(this.rootEl, this.containerEl);
         const offsetX = positioning.rect?.left ?? 0;
         const offsetY = positioning.rect?.top ?? 0;

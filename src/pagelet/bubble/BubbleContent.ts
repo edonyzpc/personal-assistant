@@ -363,17 +363,29 @@ export function buildRecallDeliveryStackContent(
     };
 }
 
+/**
+ * F-02: Recap Bubble content — candidate.body is primary finding text.
+ * candidate.title and source count become secondary metadata.
+ * whyNow stays as inline hint.
+ */
 export function buildPreparedRecapDeliveryContent(
     candidate: DeliveryCandidate & { kind: "recap" },
     callbacks: { onViewRecap(candidate: DeliveryCandidate & { kind: "recap" }): void; onLater(candidate: DeliveryCandidate & { kind: "recap" }): void },
     locale: PageletLocale = "en",
 ): BubbleContent {
+    const sourceCount = candidate.sourceRefs.length;
+    const firstSource = candidate.sourceRefs[0];
     return {
         type: "recap-delivery",
-        findings: [{
-            text: pageletT("pagelet.bubble.recapDelivery", locale),
-            sourceTitle: candidate.title,
-        }],
+        findings: [
+            {
+                text: candidate.body,
+                sourceLink: firstSource?.path,
+                sourceTitle: sourceCount > 1
+                    ? pageletT("pagelet.bubble.recapDelivery.sourceCount", locale, { count: sourceCount })
+                    : firstSource?.title ?? firstSource?.path,
+            },
+        ],
         inlineHint: candidate.whyNow[0]
             ? { text: candidate.whyNow[0], icon: "calendar" }
             : undefined,

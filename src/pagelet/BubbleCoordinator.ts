@@ -243,8 +243,7 @@ export class BubbleCoordinator {
             && eligibleQuietRecallNudge
             && this.host.settings.pagelet.enabled
             && this.host.settings.quietRecall.enabled
-            && this.host.settings.quietRecall.bubbleNudgesEnabled
-            && this.host.settings.pagelet.proactiveHints
+            && this.host.settings.quietRecall.quietRecallMode === "on"
             && !this.proactiveHints.quietHoursActive
         ) {
             const linkTargetPath = quietRecallLinkTargetPath(
@@ -280,8 +279,8 @@ export class BubbleCoordinator {
         const quietRecallContent = buildQuietRecallNudgeContent({
             pageletEnabled: this.host.settings.pagelet.enabled,
             quietRecallEnabled: this.host.settings.quietRecall.enabled,
-            bubbleNudgesEnabled: this.host.settings.quietRecall.bubbleNudgesEnabled,
-            proactiveHints: this.host.settings.pagelet.proactiveHints,
+            bubbleNudgesEnabled: this.host.settings.quietRecall.quietRecallMode === "on",
+            proactiveHints: this.host.settings.quietRecall.quietRecallMode === "on",
             quietHoursActive: this.proactiveHints.quietHoursActive,
             candidate: eligibleQuietRecallNudge,
         }, {

@@ -604,6 +604,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
                 quietRecall: {
                     enabled: true,
                     bubbleNudgesEnabled: true,
+                    quietRecallMode: "on",
                 },
             } as PageletHost["settings"],
         }, {

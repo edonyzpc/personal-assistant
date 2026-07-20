@@ -132,4 +132,9 @@ export interface BubbleStateCallbacks extends BubbleQuickAccessCallbacks {
 export interface BubbleViewOptions {
     callbacks: BubbleCallbacks;
     getLocale?: () => PageletLocale;
+    /**
+     * F-09: Return the active Markdown leaf's content bounds for desktop
+     * placement clamping. If absent or returns null, falls back to container.
+     */
+    getActiveLeafBounds?: () => DOMRect | null;
 }

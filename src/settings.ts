@@ -141,14 +141,21 @@ export const WEEKLY_REVIEW_DEFAULTS: Readonly<WeeklyReviewSettings> = Object.fre
     preparedReviewEnabled: false,
 });
 
+/** SG-01: Off/On two-tier, no frequency cap. */
+export type QuietRecallMode = "off" | "on";
+
 export interface QuietRecallSettings {
     enabled: boolean;
+    /** @deprecated Use quietRecallMode instead. Kept for migration. */
     bubbleNudgesEnabled: boolean;
+    /** SG-01: User-facing Off/On toggle. Default "off". */
+    quietRecallMode: QuietRecallMode;
 }
 
 export const QUIET_RECALL_DEFAULTS: Readonly<QuietRecallSettings> = Object.freeze({
     enabled: true,
     bubbleNudgesEnabled: false,
+    quietRecallMode: "off",
 });
 
 export const DATA_BOUNDARY_DEFAULTS: Readonly<DataBoundarySettings> = Object.freeze({
@@ -786,13 +793,22 @@ export function mergeWeeklyReviewSettings(loaded: unknown): WeeklyReviewSettings
 
 export function mergeQuietRecallSettings(loaded: unknown): QuietRecallSettings {
     const loadedObject = isRecord(loaded) ? loaded : {};
+    const bubbleNudgesEnabled = typeof loadedObject.bubbleNudgesEnabled === "boolean"
+        ? loadedObject.bubbleNudgesEnabled
+        : QUIET_RECALL_DEFAULTS.bubbleNudgesEnabled;
+    // SG-01 migration: old bubbleNudgesEnabled: true → "on"; false/missing → "off"
+    let quietRecallMode: QuietRecallMode;
+    if (loadedObject.quietRecallMode === "on" || loadedObject.quietRecallMode === "off") {
+        quietRecallMode = loadedObject.quietRecallMode;
+    } else {
+        quietRecallMode = bubbleNudgesEnabled ? "on" : "off";
+    }
     return {
         enabled: typeof loadedObject.enabled === "boolean"
             ? loadedObject.enabled
             : QUIET_RECALL_DEFAULTS.enabled,
-        bubbleNudgesEnabled: typeof loadedObject.bubbleNudgesEnabled === "boolean"
-            ? loadedObject.bubbleNudgesEnabled
-            : QUIET_RECALL_DEFAULTS.bubbleNudgesEnabled,
+        bubbleNudgesEnabled,
+        quietRecallMode,
     };
 }
 

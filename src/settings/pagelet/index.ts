@@ -171,6 +171,17 @@ export interface PageletSettings {
     quietRecallExplained: boolean;
     /** Whether the user has already seen the intentionally quiet Bubble explanation. */
     quietAcknowledged: boolean;
+    /**
+     * SG-05: Shared first-use notification across all Pagelet provider paths.
+     * Once any surface (Recap/Recall/Discover) shows the provider disclosure,
+     * don't re-notify for other surfaces.
+     */
+    pageletProviderFirstUseNotified: boolean;
+    /**
+     * SG-01: User-facing Quiet Recall Off/On toggle.
+     * Mirrors QuietRecallSettings.quietRecallMode for Settings UI convenience.
+     */
+    quietRecallMode: "off" | "on";
 }
 
 // ---------------------------------------------------------------------------
@@ -198,8 +209,8 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     preloadPerHourCap: 2,
     preloadPerDayCap: 20,
     preloadTokenBudget: Object.freeze({ input: 4000, output: 1000 }),
-    // Scope Recap preparation becomes active only after affirmative authorization.
-    scopeRecapPreparationEnabled: false,
+    // SG-06: Scope Recap defaults ON; no modal authorization required.
+    scopeRecapPreparationEnabled: true,
     scopeRecapBackgroundAuthorization: "pending",
     scopeRecapAuthorizationContextId: null,
     scopeRecapHighValueHints: true,
@@ -222,6 +233,8 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     quickCaptureExplained: false,
     quietRecallExplained: false,
     quietAcknowledged: false,
+    pageletProviderFirstUseNotified: false,
+    quietRecallMode: "off",
 });
 
 /**
@@ -412,6 +425,10 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         quickCaptureExplained: typeof raw.quickCaptureExplained === "boolean" ? raw.quickCaptureExplained : PAGELET_DEFAULTS.quickCaptureExplained,
         quietRecallExplained: typeof raw.quietRecallExplained === "boolean" ? raw.quietRecallExplained : PAGELET_DEFAULTS.quietRecallExplained,
         quietAcknowledged: typeof raw.quietAcknowledged === "boolean" ? raw.quietAcknowledged : PAGELET_DEFAULTS.quietAcknowledged,
+        pageletProviderFirstUseNotified: typeof raw.pageletProviderFirstUseNotified === "boolean" ? raw.pageletProviderFirstUseNotified : PAGELET_DEFAULTS.pageletProviderFirstUseNotified,
+        quietRecallMode: raw.quietRecallMode === "on" || raw.quietRecallMode === "off"
+            ? raw.quietRecallMode
+            : PAGELET_DEFAULTS.quietRecallMode,
     };
 }
 
@@ -1432,6 +1449,21 @@ export function renderPageletSection(
                 .onChange((value) => saveOnChange(() => {
                     settings.excludedPatterns = value.split(",").map((s) => s.trim()).filter(Boolean);
                 })));
+
+    // ── Quiet Recall (SG-01) ─────────────────────────────────────────
+    parentEl.createEl("h3", { text: t("pagelet.settings.quietRecall.heading") });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.quietRecallMode.name"))
+        .setDesc(t("pagelet.settings.quietRecallMode.desc"))
+        .addToggle((toggle) => {
+            const mode = settings.quietRecallMode ?? PAGELET_DEFAULTS.quietRecallMode;
+            toggle
+                .setValue(mode === "on")
+                .onChange((value) => saveOnChange(() => {
+                    settings.quietRecallMode = value ? "on" : "off";
+                }));
+        });
 
     // ── Quiet Hours ───────────────────────────────────────────────────
     parentEl.createEl("h3", { text: t("pagelet.settings.quietHours.heading") });

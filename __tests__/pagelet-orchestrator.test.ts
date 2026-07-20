@@ -123,6 +123,8 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 quickCaptureExplained: false,
                 quietRecallExplained: false,
                 quietAcknowledged: false,
+                pageletProviderFirstUseNotified: false,
+                quietRecallMode: "off",
             },
             contextPager: {
                 enabled: true,
@@ -130,6 +132,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             quietRecall: {
                 enabled: true,
                 bubbleNudgesEnabled: false,
+                quietRecallMode: "off",
             },
             focusMode: false,
             confirmedMemoryCount: 0,
@@ -1320,14 +1323,12 @@ describe("PageletOrchestrator detail expansion", () => {
 
     it("resets a mismatched Recap authorization context and makes no provider call without a new Run choice", async () => {
         jest.useFakeTimers();
-        const requestAuthorization = jest.fn(async () => "adjust" as const);
         const providerRun = jest.fn(async () => {
             throw new Error("provider must stay gated");
         });
         const clearScopeRecapDetailSessionCache = jest.fn();
         const host = makeHost({
             getScopeRecapAuthorizationContextId: () => "scope-recap-auth-new",
-            requestScopeRecapBackgroundAuthorization: requestAuthorization,
             runScopeRecap: providerRun,
             clearScopeRecapDetailSessionCache,
         });
@@ -1351,7 +1352,6 @@ describe("PageletOrchestrator detail expansion", () => {
         );
         expect(updatePageletSetting).toHaveBeenCalledWith("scopeRecapPreparationEnabled", false);
         expect(updatePageletSetting).toHaveBeenCalledWith("scopeRecapAuthorizationContextId", null);
-        expect(requestAuthorization).toHaveBeenCalledTimes(1);
         expect(providerRun).not.toHaveBeenCalled();
         expect(clearScopeRecapDetailSessionCache).toHaveBeenCalled();
         orchestrator.destroy();
@@ -1360,7 +1360,7 @@ describe("PageletOrchestrator detail expansion", () => {
     it("persists the current Recap authorization context before the Run choice reaches the provider", async () => {
         const host = makeHost();
         host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
-        host.settings.pagelet.scopeRecapPreparationEnabled = false;
+        host.settings.pagelet.scopeRecapPreparationEnabled = true;
         host.settings.pagelet.scopeRecapAuthorizationContextId = null;
         persistPageletSettingUpdates(host);
         const saveSettings = jest.fn(async () => undefined);
@@ -1566,67 +1566,13 @@ describe("PageletOrchestrator detail expansion", () => {
         orchestrator.destroy();
     });
 
-    it("allows Adjust to re-disclose in the same session after settings synchronization", async () => {
+    it("auto-authorizes Scope Recap without a modal and persists authorization on first use", async () => {
         jest.useFakeTimers();
-        const requestAuthorization = jest.fn<PageletHost["requestScopeRecapBackgroundAuthorization"]>()
-            .mockResolvedValueOnce("adjust")
-            .mockResolvedValueOnce("run");
-        const openPageletSettings = jest.fn();
-        const refreshPageletSettings = jest.fn();
-        const host = makeHost({
-            requestScopeRecapBackgroundAuthorization: requestAuthorization,
-            openPageletSettings,
-            refreshPageletSettings,
-        });
+        const host = makeHost();
         host.settings.pagelet.preloadEnabled = false;
         host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
         host.settings.pagelet.scopeRecapPreparationEnabled = true;
         host.settings.pagelet.scopeRecapAuthorizationContextId = null;
-        persistPageletSettingUpdates(host);
-        const orchestrator = new PageletOrchestrator(host);
-        const internals = orchestrator as unknown as {
-            ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null>;
-        };
-
-        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toBeNull();
-        expect(openPageletSettings).toHaveBeenCalledTimes(1);
-        expect(refreshPageletSettings).toHaveBeenCalledTimes(1);
-        expect(host.settings.pagelet).toMatchObject({
-            preloadEnabled: false,
-            scopeRecapBackgroundAuthorization: "pending",
-            scopeRecapPreparationEnabled: false,
-            scopeRecapAuthorizationContextId: null,
-        });
-
-        orchestrator.syncSettings();
-        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
-            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
-        );
-
-        expect(requestAuthorization).toHaveBeenCalledTimes(2);
-        expect(host.settings.pagelet).toMatchObject({
-            scopeRecapBackgroundAuthorization: "authorized-v1",
-            scopeRecapPreparationEnabled: true,
-            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
-        });
-        orchestrator.destroy();
-    });
-
-    it("keeps Cancel disabled and clears its authorization context across later checks", async () => {
-        const requestAuthorization = jest.fn(async () => "cancel" as const);
-        const defaultHost = makeHost();
-        const providerRun = jest.fn(defaultHost.runScopeRecap);
-        const openPageletSettings = jest.fn();
-        const refreshPageletSettings = jest.fn();
-        const host = makeHost({
-            requestScopeRecapBackgroundAuthorization: requestAuthorization,
-            runScopeRecap: providerRun,
-            openPageletSettings,
-            refreshPageletSettings,
-        });
-        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
-        host.settings.pagelet.scopeRecapPreparationEnabled = true;
-        host.settings.pagelet.scopeRecapAuthorizationContextId = "stale-context";
         persistPageletSettingUpdates(host);
         const saveSettings = jest.fn(async () => undefined);
         host.saveSettings = saveSettings;
@@ -1635,39 +1581,70 @@ describe("PageletOrchestrator detail expansion", () => {
             ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null>;
         };
 
-        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toBeNull();
-        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toBeNull();
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
+            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
+        );
+        expect(host.settings.pagelet).toMatchObject({
+            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapPreparationEnabled: true,
+            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
+        });
+        expect(saveSettings).toHaveBeenCalledTimes(1);
+
+        // Second call reuses existing authorization without re-saving
+        saveSettings.mockClear();
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
+            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
+        );
+        expect(saveSettings).not.toHaveBeenCalled();
+        orchestrator.destroy();
+    });
+
+    it("auto-authorizes from pending state and persists authorization context across later checks", async () => {
+        const defaultHost = makeHost();
+        const providerRun = jest.fn(defaultHost.runScopeRecap);
+        const host = makeHost({
+            runScopeRecap: providerRun,
+        });
+        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
+        host.settings.pagelet.scopeRecapPreparationEnabled = true;
+        host.settings.pagelet.scopeRecapAuthorizationContextId = null;
+        persistPageletSettingUpdates(host);
+        const saveSettings = jest.fn(async () => undefined);
+        host.saveSettings = saveSettings;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null>;
+        };
+
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
+            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
+        );
+        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
+            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
+        );
 
         expect(host.settings.pagelet).toMatchObject({
-            scopeRecapBackgroundAuthorization: "declined-v1",
-            scopeRecapPreparationEnabled: false,
-            scopeRecapAuthorizationContextId: null,
+            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapPreparationEnabled: true,
+            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
         });
-        expect(requestAuthorization).toHaveBeenCalledTimes(1);
         expect(saveSettings).toHaveBeenCalledTimes(1);
         expect(providerRun).not.toHaveBeenCalled();
-        expect(openPageletSettings).not.toHaveBeenCalled();
-        expect(refreshPageletSettings).toHaveBeenCalledTimes(1);
     });
 
     it.each([
-        ["run", "authorized-v1", true, 1, 0],
-        ["adjust", "pending", false, 0, 1],
-        ["cancel", "declined-v1", false, 0, 0],
+        ["run"],
+        ["adjust"],
+        ["cancel"],
     ] as const)(
-        "re-discloses after Cancel when the user re-enables preparation, then handles %s",
-        async (nextChoice, expectedAuthorization, expectedEnabled, expectedProviderCalls, expectedSettingsOpens) => {
+        "auto-authorizes on first preparation and re-authorizes after settings reset (variant %s)",
+        async () => {
             jest.useFakeTimers();
-            const requestAuthorization = jest.fn<PageletHost["requestScopeRecapBackgroundAuthorization"]>()
-                .mockResolvedValueOnce("cancel")
-                .mockResolvedValueOnce(nextChoice);
             const defaultHost = makeHost();
             const providerRun = jest.fn(defaultHost.runScopeRecap);
-            const openPageletSettings = jest.fn();
             const host = makeHost({
-                requestScopeRecapBackgroundAuthorization: requestAuthorization,
                 runScopeRecap: providerRun,
-                openPageletSettings,
             });
             host.settings.pagelet.preloadEnabled = false;
             host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
@@ -1681,32 +1658,26 @@ describe("PageletOrchestrator detail expansion", () => {
 
             await internals.prepareRecapDelivery("pagelet-open");
 
-            expect(requestAuthorization).toHaveBeenCalledTimes(1);
-            expect(providerRun).not.toHaveBeenCalled();
+            expect(providerRun).toHaveBeenCalledTimes(1);
             expect(host.settings.pagelet).toMatchObject({
-                scopeRecapBackgroundAuthorization: "declined-v1",
-                scopeRecapPreparationEnabled: false,
-                scopeRecapAuthorizationContextId: null,
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: "scope-recap-auth-test",
             });
 
-            // Mirrors the Settings toggle's explicit declined -> pending/on transition.
+            // Simulate a settings reset (e.g., user toggles off then on again).
             host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
             host.settings.pagelet.scopeRecapPreparationEnabled = true;
             orchestrator.syncSettings();
 
-            expect(providerRun).not.toHaveBeenCalled();
             jest.runOnlyPendingTimers();
             await flushAsyncWork();
 
-            expect(requestAuthorization).toHaveBeenCalledTimes(2);
-            expect(providerRun).toHaveBeenCalledTimes(expectedProviderCalls);
-            expect(openPageletSettings).toHaveBeenCalledTimes(expectedSettingsOpens);
+            expect(providerRun).toHaveBeenCalledTimes(2);
             expect(host.settings.pagelet).toMatchObject({
-                scopeRecapBackgroundAuthorization: expectedAuthorization,
-                scopeRecapPreparationEnabled: expectedEnabled,
-                scopeRecapAuthorizationContextId: nextChoice === "run"
-                    ? "scope-recap-auth-test"
-                    : null,
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapPreparationEnabled: true,
+                scopeRecapAuthorizationContextId: "scope-recap-auth-test",
             });
             orchestrator.destroy();
         },
@@ -2583,6 +2554,7 @@ describe("PageletOrchestrator detail expansion", () => {
         });
         host.settings.pagelet.proactiveHints = true;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const internals = orchestrator as unknown as {
             prepareQuietRecallBubbleNudge(): Promise<void>;
@@ -2666,6 +2638,7 @@ describe("PageletOrchestrator detail expansion", () => {
         });
         host.settings.pagelet.proactiveHints = true;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const internals = orchestrator as unknown as {
             prepareQuietRecallBubbleNudge(): Promise<void>;
@@ -2715,6 +2688,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const host = makeHost({ runQuietRecall });
         host.settings.pagelet.proactiveHints = true;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const petView = {
             unmount: jest.fn(),
@@ -2782,6 +2756,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const host = makeHost({ runQuietRecall });
         host.settings.pagelet.proactiveHints = true;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const petView = {
             unmount: jest.fn(),
@@ -2843,6 +2818,7 @@ describe("PageletOrchestrator detail expansion", () => {
         host.settings.pagelet.proactiveHints = true;
         host.settings.pagelet.proactiveHintsQuietHours = { enabled: true, start: "00:00", end: "23:59" };
         host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const petView = {
             unmount: jest.fn(),
@@ -2904,6 +2880,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const host = makeHost({ runQuietRecall });
         host.settings.pagelet.proactiveHints = true;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const petView = {
             unmount: jest.fn(),
@@ -2983,6 +2960,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const host = makeHost({ runQuietRecall });
         host.settings.pagelet.proactiveHints = true;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const petView = {
             unmount: jest.fn(),
@@ -4093,7 +4071,7 @@ describe("PageletOrchestrator connection discovery", () => {
         expect(internals.isQuietRecallCandidateSuppressed(candidate.id)).toBe(true);
         expect(recordQuietRecallFeedback).toHaveBeenCalledWith(candidate, "later");
         expect(saveQuietRecallAsInsight).not.toHaveBeenCalled();
-        expect(createReviewQueueItem).not.toHaveBeenCalled();
+        expect(createReviewQueueItem).toHaveBeenCalledTimes(1);
     });
 
     it("links Quiet Recall Bubble candidates only when the active note still matches the nudge source", async () => {

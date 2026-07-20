@@ -2976,6 +2976,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h3:Background Review Preparation',
             'h3:Scope Recap',
             'h3:Reviews',
+            'h3:Quiet Recall',
             'h3:Quiet Hours',
             'h3:Foreground Cost',
             'h2:Quick Capture',
@@ -3141,6 +3142,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(DEFAULT_SETTINGS.quietRecall).toEqual({
             enabled: true,
             bubbleNudgesEnabled: false,
+            quietRecallMode: "off",
         });
         expect(DEFAULT_SETTINGS.retrievalHabitProfile).toEqual({
             enabled: false,

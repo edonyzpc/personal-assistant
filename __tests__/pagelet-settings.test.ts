@@ -179,7 +179,9 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS.maxInputTokens).toBe(8000);      // D018
         expect(PAGELET_DEFAULTS.maxOutputTokens).toBe(2000);     // D018
         expect(PAGELET_DEFAULTS.preloadEnabled).toBe(false);     // background prep is explicit opt-in
-        expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(false);
+        expect(PAGELET_DEFAULTS.pageletProviderFirstUseNotified).toBe(false);
+        expect(PAGELET_DEFAULTS.quietRecallMode).toBe("off");
+        expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(true);
         expect(PAGELET_DEFAULTS.scopeRecapBackgroundAuthorization).toBe("pending");
         expect(PAGELET_DEFAULTS.scopeRecapHighValueHints).toBe(true);
         expect(PAGELET_DEFAULTS.scopeRecapLastAttempt).toBeNull();
@@ -226,14 +228,18 @@ describe("PAGELET_FIXED_CALL_LIMITS", () => {
 
 describe("mergePageletSettings", () => {
     it("returns defaults when input is undefined / null", () => {
-        expect(mergePageletSettings(undefined)).toEqual({ ...PAGELET_DEFAULTS });
-        expect(mergePageletSettings(null)).toEqual({ ...PAGELET_DEFAULTS });
+        // scopeRecapPreparationEnabled is force-normalized to false when
+        // authorization is not authorized-v1 — even though the default is true.
+        const expected = { ...PAGELET_DEFAULTS, scopeRecapPreparationEnabled: false };
+        expect(mergePageletSettings(undefined)).toEqual(expected);
+        expect(mergePageletSettings(null)).toEqual(expected);
     });
 
     it("returns defaults when input is not an object", () => {
-        expect(mergePageletSettings("garbage")).toEqual({ ...PAGELET_DEFAULTS });
-        expect(mergePageletSettings(42)).toEqual({ ...PAGELET_DEFAULTS });
-        expect(mergePageletSettings([{ enabled: false }])).toEqual({ ...PAGELET_DEFAULTS });
+        const expected = { ...PAGELET_DEFAULTS, scopeRecapPreparationEnabled: false };
+        expect(mergePageletSettings("garbage")).toEqual(expected);
+        expect(mergePageletSettings(42)).toEqual(expected);
+        expect(mergePageletSettings([{ enabled: false }])).toEqual(expected);
     });
 
     it("preserves well-formed values", () => {
@@ -302,6 +308,8 @@ describe("mergePageletSettings", () => {
             quickCaptureExplained: true,
             quietRecallExplained: true,
             quietAcknowledged: true,
+            pageletProviderFirstUseNotified: false,
+            quietRecallMode: "off",
         };
         expect(mergePageletSettings(persisted)).toEqual(persisted);
     });
@@ -1053,7 +1061,7 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        expect(rows).toHaveLength(26);
+        expect(rows).toHaveLength(27);
         expect(rows.map((r) => r.name)).toEqual([
             "Enable Pagelet",
             "Reviews folder",
@@ -1080,6 +1088,8 @@ describe("renderPageletSection", () => {
             "Excluded folders",
             "Excluded tags",
             "Excluded patterns",
+            // Quiet Recall
+            "Quiet Recall",
             // Quiet Hours
             "Enable quiet hours",
             "Start time",
@@ -1103,7 +1113,7 @@ describe("renderPageletSection", () => {
         const headings = parent.children.filter((c) => c.tagName.startsWith("h") || c.tagName === "p" || c.tagName === "div");
         expect(headings.map((h) => h.tagName)).toEqual([
             "h2", "p", "div", "h3", "div", "h3", "h3",
-            "h3", "h3", "h3", "h3", "h3", "h3",
+            "h3", "h3", "h3", "h3", "h3", "h3", "h3",
         ]);
         expect(headings[0].text).toBe("Pagelet");
         // The beta callout must be visible from the moment Pagelet ships
