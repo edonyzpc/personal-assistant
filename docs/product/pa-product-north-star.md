@@ -45,6 +45,13 @@ sensitive inference, durable task constraints, cross-vault/global effects,
 vault mutation, and external action require prior user disclosure, decision,
 or authorization appropriate to their consequence.
 
+Provider trust model: when a user configures an AI provider, they have already
+made a trust decision. PA features should work by default with transparent
+notification on first use, not blocking modals that interrupt workflow. Settings
+provide opt-out for each capability. Only broad-scope, high-sensitivity, or
+costly operations require explicit per-use confirmation. This is consistent
+with Chat, which uses the configured provider without a pre-authorization gate.
+
 The current runtime's 30-confirmation Memory Level 2 rule is a scoped legacy
 admission policy, not this North Star's general rule. Preserve it during safe
 migration without expanding its scope or inventing record-level confirmation
@@ -90,7 +97,7 @@ feature tradeoffs:
 - Less generation, more return.
 - Less interruption, more right-time presence.
 - Less black-box insight, more source-backed evidence.
-- Less full automation, more earned trust.
+- Less pre-authorization friction, more trust-by-default with transparency.
 - Less tool jargon, more long-term companionship.
 
 Review should feel like recognition, not administration.

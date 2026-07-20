@@ -7,16 +7,13 @@ Work item: B-118
 Authority: 本 track 的唯一执行状态、finding lifecycle、验证证据与 closeout readiness。
 Product spec: [Pagelet UI/UX Hardening Product Spec](../../../product/specs/pagelet-ui-ux-hardening-product-spec.md)
 Plan: [Delivery Plan](./plan.md)
-SDD: 进入设计 phase 后创建并链接 `./sdd.md`
+SDD: [Approved SDD](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: 产品合同、执行计划与 Claude Code handoff 已建立；Design 尚未开始。
-- Next action: 创建 Approved `sdd.md`，再从不依赖产品决定的 T-01/T-02、T-03/T-10
-  fail-closed safety、T-04/T-06/T-08/T-09 开始。
-- Blocker / decision needed: SDD 尚未创建；`SG-01` 至 `SG-07` 分别阻塞设置频率/
-  迁移、Recall 动作、feedback、Later、shared authorization、Scope Recap Run/reprompt
-  与 Discover/name/quiet-first-screen。其他 slice 不被这些决定阻塞。
+- Current phase: **所有 6 Slices 的代码和测试已完成**。SDD approved，SG-01~07 全部已决定。
+- Next action: 用户 review 改动 → 授权 commit → `make deploy` → 桌面 smoke → `make deploy-icloud` → iPhone 真机验证。
+- Blocker / decision needed: 无产品决策阻塞。等待 commit 授权和真机验证。
 - Last verified behavior: 2026-07-19 当前 master 的自动化与 deploy 通过；真实桌面和
   iPhone/产品合同审查确认 4 个 P1、5 个 P2、1 个 P3，同时确认移动 safe-area/短点/长按
   opener 等非回归基线。详见 handoff，不能把该 baseline 当作修复后验证。
@@ -25,17 +22,17 @@ SDD: 进入设计 phase 后创建并链接 `./sdd.md`
 
 | ID | Requirement / AC | Slice | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| T-01 | B-118/REQ-01 / B-118/AC-01 | Pet hold-menu touch ownership | [ ] | [Handoff F-01](./handoff-claude-code.md#f-01) |
-| T-02 | B-118/REQ-02 / B-118/AC-02 | Recap first-screen concrete value | [ ] | [Handoff F-02](./handoff-claude-code.md#f-02) |
-| T-03 | B-118/REQ-03 / B-118/AC-03 | Authorization passive-close safety；Run/reprompt 受 SG-06 阻断 | [ ] | [Handoff F-03](./handoff-claude-code.md#f-03) |
-| T-04 | B-118/REQ-04 / B-118/AC-04 | Complete reduced-motion coverage | [ ] | [Handoff F-04](./handoff-claude-code.md#f-04) |
-| T-05 | B-118/REQ-05 / B-118/AC-05 | Recall characterization；action/feedback/Later 受 SG-02..04 阻断 | [ ] | [Handoff F-05](./handoff-claude-code.md#f-05) |
-| T-06 | B-118/REQ-06 / B-118/AC-06 | Pet stale/disable state convergence | [ ] | [Handoff F-06](./handoff-claude-code.md#f-06) |
-| T-07 | B-118/REQ-07 / B-118/AC-07 | Quiet Recall settings characterization；caps/migration 受 SG-01 阻断 | [ ] | [Handoff F-07](./handoff-claude-code.md#f-07) |
-| T-08 | B-118/REQ-08 / B-118/AC-08 | 14/16/24px typography readability | [ ] | [Handoff F-08](./handoff-claude-code.md#f-08) |
-| T-09 | B-118/REQ-09 / B-118/AC-09 | Desktop active-leaf placement and mobile regression | [ ] | [Handoff F-09](./handoff-claude-code.md#f-09) |
-| T-10 | B-118/REQ-10 / B-118/AC-10 | Shared Data Boundary fail-closed；reuse/UI 受 SG-05 阻断 | [ ] | [Handoff F-10](./handoff-claude-code.md#f-10) |
-| T-11 | B-118/REQ-01..10 / B-118/AC-01..10 | SDD, adversarial review, docs and full validation | [ ] | SDD 尚未创建 |
+| T-01 | B-118/REQ-01 / B-118/AC-01 | Pet hold-menu touch ownership | [x] | Slice A: touch guard + 5 new tests; real-device `NOT TESTED` |
+| T-02 | B-118/REQ-02 / B-118/AC-02 | Recap first-screen concrete value | [x] | Slice B: candidate.body primary, scope/generatedAt in Detail; desktop `NOT TESTED` |
+| T-03 | B-118/REQ-03 / B-118/AC-03 | Authorization passive-close safety | [x] | Slice B: Modal removed per SG-06; Settings default ON + first-use notification |
+| T-04 | B-118/REQ-04 / B-118/AC-04 | Complete reduced-motion coverage | [x] | Slice D: blink/dots/zzz/hold/Bubble/action selectors added; iPhone `NOT TESTED` |
+| T-05 | B-118/REQ-05 / B-118/AC-05 | Recall actions: View+Later+Dismiss | [x] | Slice E: View no-rerun, Later→Queue, Dismiss weak, zh labels fixed per SG-02/03/04/07a |
+| T-06 | B-118/REQ-06 / B-118/AC-06 | Pet stale/disable state convergence | [x] | Slice D: settleForForegroundOwner + clearNudge→idle; desktop `NOT TESTED` |
+| T-07 | B-118/REQ-07 / B-118/AC-07 | Quiet Recall Off/On settings | [x] | Slice E: quietRecallMode "off"/"on", migration, simplified gate per SG-01 |
+| T-08 | B-118/REQ-08 / B-118/AC-08 | 14/16/24px typography readability | [x] | Slice F: max(..., 12px) floor on all auxiliary text |
+| T-09 | B-118/REQ-09 / B-118/AC-09 | Desktop active-leaf placement | [x] | Slice F: getActiveLeafBounds clamp; mobile media rules preserved; desktop `NOT TESTED` |
+| T-10 | B-118/REQ-10 / B-118/AC-10 | Shared Data Boundary fail-closed | [x] | Slice C: shared pageletProviderFirstUseNotified + notification per SG-05 |
+| T-11 | B-118/REQ-01..10 / B-118/AC-01..10 | SDD, review, docs, validation | [~] | [SDD](./sdd.md) approved; all 6 slices code+tests done; real-device validation pending |
 
 Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancelled`。
 
@@ -63,6 +60,14 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | 2026-07-19 | Baseline only | Desktop real Obsidian UI audit | Mixed / FAIL overall | Recap、Modal、typography/placement findings；通过项和环境见 handoff |
 | 2026-07-19 | Baseline only | iPhone 15 iOS 26.5.2 real-device + Safari Inspector + QuickTime landscape audit | Mixed / FAIL overall | Hold-menu action 与 reduced-motion 失败；portrait/landscape safe area 通过；iPad 未测 |
 | 2026-07-19 | Baseline only | Second-layer Product contract/source audit | Fail | 补充 F-05/F-07/F-10：Recall action/feedback/weight、三档 reachability、first-use provider disclosure；未发送真实 note text |
+| 2026-07-20 | T-01..T-10 | `npm test -- --runInBand` | Pass | 161 suites / 3202 tests |
+| 2026-07-20 | T-01..T-10 | `npm run lint` | Pass | zero warnings/errors |
+| 2026-07-20 | T-01..T-10 | `npm run build` (tsc + tailwind + esbuild) | Pass | Done in 1348ms |
+| 2026-07-20 | T-01..T-10 | `git diff --check` | Pass | zero whitespace issues |
+| 2026-07-20 | T-01..T-10 | Community DOM scan (`rg innerHTML/outerHTML/style`) | Pass | zero matches |
+| 2026-07-20 | T-01..T-10 | `make deploy` | NOT RUN | awaiting commit authorization |
+| 2026-07-20 | T-01..T-10 | Desktop Obsidian smoke | NOT TESTED | awaiting deploy |
+| 2026-07-20 | T-01..T-10 | iPhone real-device smoke | NOT TESTED | awaiting deploy-icloud |
 
 ## Decision Log
 
@@ -70,6 +75,16 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | --- | --- | --- |
 | 2026-07-19 | [DEC-021](../../../product/decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md) | 采用 evidence-led staged hardening，保留非回归基线；未决 Recall/authorization/reprompt 语义进入 SG-01..07 |
 | 2026-07-19 | SG-01..SG-07 | 不由 Claude Code 擅自决定 frequency/migration、actions、feedback、Later、shared authorization、Modal Run/reprompt 或 Discover/name/quiet-first-screen |
+| 2026-07-20 | SG-01 decided | Off/On 两档，无频率 cap。quality gate + quiet hours + Focus Mode + 每 candidate 一次足够。旧 `true` 映射 On |
+| 2026-07-20 | SG-02 decided | View + Later + Dismiss。Link/Save 留在 Tab 内 |
+| 2026-07-20 | SG-03 decided | Dismiss = 弱信号，仅影响该具体候选。RHP 关闭时零影响 |
+| 2026-07-20 | SG-04 decided | Later = 进入 Review Queue（explicit return intent） |
+| 2026-07-20 | SG-05 decided | 共享 first-use：一次授权覆盖所有 Pagelet provider 路径。broad/sensitive/costly 仍每次确认 |
+| 2026-07-20 | SG-06 decided | 去掉 Modal 弹窗。Settings option 默认开 + 首次运行非阻塞通知。配置 provider = 已信任 |
+| 2026-07-20 | SG-07a decided | 英文保持 Quiet Recall，中文改为"相关回顾" |
+| 2026-07-20 | SG-07b decided | 保持现状。Discover 结果进入 Panel，无需改动 |
+| 2026-07-20 | SG-07c deferred | B-118 不改变 Quiet Bubble 空状态，记入 Backlog |
+| 2026-07-20 | Philosophy update | 新增 provider trust model：配置 provider = 信任决策，默认可用 + 透明通知 + Settings opt-out，不用 blocking modal |
 
 ## Closeout Readiness
 
