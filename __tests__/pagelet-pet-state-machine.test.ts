@@ -44,7 +44,7 @@ class HoldMenuFakeElement {
         this.attributes.delete(name);
     }
 
-    addEventListener(type: string, listener: HoldMenuListener): void {
+    addEventListener(type: string, listener: HoldMenuListener, _options?: AddEventListenerOptions | boolean): void {
         const listeners = this.listeners.get(type) ?? [];
         listeners.push(listener);
         this.listeners.set(type, listeners);
@@ -54,10 +54,27 @@ class HoldMenuFakeElement {
         this.listeners.set(type, (this.listeners.get(type) ?? []).filter((item) => item !== listener));
     }
 
-    dispatch(type: string): void {
+    get classList(): { contains: (name: string) => boolean } {
+        const cn = this.className;
+        return { contains: (name: string) => cn.split(/\s+/).includes(name) };
+    }
+
+    dispatch(type: string, extra?: Partial<Event & TouchEvent>): void {
+        const self = this;
         const event = {
             target: this,
+            type,
             stopPropagation: jest.fn(),
+            preventDefault: jest.fn(),
+            composedPath: () => {
+                const path: HoldMenuFakeElement[] = [];
+                let node: HoldMenuFakeElement | null = self;
+                while (node) { path.push(node); node = node.parent; }
+                return path;
+            },
+            touches: [],
+            changedTouches: [],
+            ...extra,
         } as unknown as Event;
         for (const listener of this.listeners.get(type) ?? []) {
             if (typeof listener === "function") listener(event);
@@ -429,6 +446,186 @@ describe("PetView task kind", () => {
                 expect(root.children).toHaveLength(0);
             }
 
+            view.unmount();
+        });
+    });
+
+    it("routes menu-origin touch events to target callback without toggling Pet root", () => {
+        jest.useFakeTimers();
+        withHoldMenuDocument(() => {
+            const onToggleBubble = jest.fn();
+            const onCapture = jest.fn();
+            const onReview = jest.fn();
+            const onDiscover = jest.fn();
+            const view = new PetView({
+                callbacks: {
+                    onToggleBubble,
+                    onQuickCaptureOpen: onCapture,
+                    onReviewCurrentNote: onReview,
+                    onDiscoverConnections: onDiscover,
+                },
+                getLocale: () => "en",
+            });
+            const root = new HoldMenuFakeElement();
+            const internals = view as unknown as {
+                _rootEl: HTMLElement | null;
+                startQuickCaptureHold: () => void;
+            };
+            internals._rootEl = root as unknown as HTMLElement;
+
+            const allCallbacks = [onCapture, onReview, onDiscover];
+            for (let index = 0; index < allCallbacks.length; index += 1) {
+                onToggleBubble.mockClear();
+                allCallbacks.forEach((cb) => cb.mockClear());
+
+                internals.startQuickCaptureHold();
+                jest.advanceTimersByTime(520);
+                const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+                const btn = menu?.children[index];
+                expect(btn).toBeDefined();
+
+                const touch = { clientX: 100, clientY: 200 };
+                btn!.dispatch("touchstart", { touches: [touch] } as never);
+                btn!.dispatch("touchend", {
+                    touches: [],
+                    changedTouches: [touch],
+                } as never);
+
+                expect(allCallbacks[index]).toHaveBeenCalledTimes(1);
+                expect(onToggleBubble).not.toHaveBeenCalled();
+                expect(root.children.filter((c) => c.className === "pa-pagelet-pet-hold-menu")).toHaveLength(0);
+            }
+            view.unmount();
+        });
+    });
+
+    it("prevents duplicate callback when synthetic click follows touch on menu item", () => {
+        jest.useFakeTimers();
+        withHoldMenuDocument(() => {
+            const onToggleBubble = jest.fn();
+            const onCapture = jest.fn();
+            const view = new PetView({
+                callbacks: {
+                    onToggleBubble,
+                    onQuickCaptureOpen: onCapture,
+                },
+                getLocale: () => "en",
+            });
+            const root = new HoldMenuFakeElement();
+            const internals = view as unknown as {
+                _rootEl: HTMLElement | null;
+                startQuickCaptureHold: () => void;
+            };
+            internals._rootEl = root as unknown as HTMLElement;
+
+            internals.startQuickCaptureHold();
+            jest.advanceTimersByTime(520);
+            const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+            const btn = menu?.children[0];
+
+            const touch = { clientX: 100, clientY: 200 };
+            btn!.dispatch("touchstart", { touches: [touch] } as never);
+            btn!.dispatch("touchend", { touches: [], changedTouches: [touch] } as never);
+            btn!.dispatch("click");
+
+            expect(onCapture).toHaveBeenCalledTimes(1);
+            expect(onToggleBubble).not.toHaveBeenCalled();
+            view.unmount();
+        });
+    });
+
+    it("cancels menu item callback on touchcancel", () => {
+        jest.useFakeTimers();
+        withHoldMenuDocument(() => {
+            const onCapture = jest.fn();
+            const onToggleBubble = jest.fn();
+            const view = new PetView({
+                callbacks: { onToggleBubble, onQuickCaptureOpen: onCapture },
+                getLocale: () => "en",
+            });
+            const root = new HoldMenuFakeElement();
+            const internals = view as unknown as {
+                _rootEl: HTMLElement | null;
+                startQuickCaptureHold: () => void;
+            };
+            internals._rootEl = root as unknown as HTMLElement;
+
+            internals.startQuickCaptureHold();
+            jest.advanceTimersByTime(520);
+            const btn = root.children
+                .find((c) => c.className === "pa-pagelet-pet-hold-menu")
+                ?.children[0];
+
+            btn!.dispatch("touchstart", { touches: [{ clientX: 0, clientY: 0 }] } as never);
+            btn!.dispatch("touchcancel");
+
+            expect(onCapture).not.toHaveBeenCalled();
+            expect(onToggleBubble).not.toHaveBeenCalled();
+            view.unmount();
+        });
+    });
+
+    it("cancels menu item callback on movement exceeding 12px", () => {
+        jest.useFakeTimers();
+        withHoldMenuDocument(() => {
+            const onCapture = jest.fn();
+            const onToggleBubble = jest.fn();
+            const view = new PetView({
+                callbacks: { onToggleBubble, onQuickCaptureOpen: onCapture },
+                getLocale: () => "en",
+            });
+            const root = new HoldMenuFakeElement();
+            const internals = view as unknown as {
+                _rootEl: HTMLElement | null;
+                startQuickCaptureHold: () => void;
+            };
+            internals._rootEl = root as unknown as HTMLElement;
+
+            internals.startQuickCaptureHold();
+            jest.advanceTimersByTime(520);
+            const btn = root.children
+                .find((c) => c.className === "pa-pagelet-pet-hold-menu")
+                ?.children[0];
+
+            const start = { clientX: 100, clientY: 100 };
+            btn!.dispatch("touchstart", { touches: [start] } as never);
+            btn!.dispatch("touchend", {
+                touches: [],
+                changedTouches: [{ clientX: 115, clientY: 100 }],
+            } as never);
+
+            expect(onCapture).not.toHaveBeenCalled();
+            expect(onToggleBubble).not.toHaveBeenCalled();
+            view.unmount();
+        });
+    });
+
+    it("executes menu item callback via keyboard Enter without Pet root toggle", () => {
+        jest.useFakeTimers();
+        withHoldMenuDocument(() => {
+            const onCapture = jest.fn();
+            const onToggleBubble = jest.fn();
+            const view = new PetView({
+                callbacks: { onToggleBubble, onQuickCaptureOpen: onCapture },
+                getLocale: () => "en",
+            });
+            const root = new HoldMenuFakeElement();
+            const internals = view as unknown as {
+                _rootEl: HTMLElement | null;
+                startQuickCaptureHold: () => void;
+            };
+            internals._rootEl = root as unknown as HTMLElement;
+
+            internals.startQuickCaptureHold();
+            jest.advanceTimersByTime(520);
+            const btn = root.children
+                .find((c) => c.className === "pa-pagelet-pet-hold-menu")
+                ?.children[0];
+
+            btn!.dispatch("keydown", { key: "Enter" } as never);
+
+            expect(onCapture).toHaveBeenCalledTimes(1);
+            expect(onToggleBubble).not.toHaveBeenCalled();
             view.unmount();
         });
     });

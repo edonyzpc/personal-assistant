@@ -162,10 +162,12 @@ export class PetView implements PetRenderer {
             this._quickCaptureHoldTriggered = false;
             this._rootEl?.removeAttribute("data-capture-hold");
         };
-        this._handleTouchstart = () => {
+        this._handleTouchstart = (e: TouchEvent) => {
+            if (this.isHoldMenuEvent(e)) return;
             this.startQuickCaptureHold();
         };
         this._handleTouchend = (e: TouchEvent) => {
+            if (this.isHoldMenuEvent(e)) return;
             e.preventDefault();
             this._recentTouch = true;
             const holdTriggered = this.consumeQuickCaptureHold();
@@ -417,6 +419,17 @@ export class PetView implements PetRenderer {
         }, QUICK_CAPTURE_HOLD_MS);
     }
 
+    private isHoldMenuEvent(e: Event): boolean {
+        if (!this._holdMenuEl) return false;
+        const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+        return path.some((node) =>
+            node instanceof HTMLElement && (
+                node.classList.contains("pa-pagelet-pet-hold-menu")
+                || node.classList.contains("pa-pagelet-pet-hold-menu-item")
+            ),
+        );
+    }
+
     private showHoldMenu(): void {
         this.dismissHoldMenu();
         if (!this._rootEl || this._destroyed) return;
@@ -438,10 +451,50 @@ export class PetView implements PetRenderer {
             btn.setAttribute("type", "button");
             btn.textContent = item.label;
             const cb = item.callback;
-            btn.addEventListener("click", (e) => {
+            let touchFired = false;
+            let touchStartX = 0;
+            let touchStartY = 0;
+            btn.addEventListener("touchstart", (e) => {
                 e.stopPropagation();
+                touchFired = false;
+                const touch = e.touches[0];
+                if (touch) {
+                    touchStartX = touch.clientX;
+                    touchStartY = touch.clientY;
+                }
+            }, { passive: true });
+            btn.addEventListener("touchend", (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                if (e.touches.length > 0) return;
+                const changedTouch = e.changedTouches[0];
+                if (changedTouch) {
+                    const dx = changedTouch.clientX - touchStartX;
+                    const dy = changedTouch.clientY - touchStartY;
+                    if (Math.sqrt(dx * dx + dy * dy) > 12) return;
+                }
+                if (touchFired) return;
+                touchFired = true;
                 this.dismissHoldMenu();
                 cb();
+            });
+            btn.addEventListener("touchcancel", (e) => {
+                e.stopPropagation();
+                touchFired = false;
+            });
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (touchFired) { touchFired = false; return; }
+                this.dismissHoldMenu();
+                cb();
+            });
+            btn.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.dismissHoldMenu();
+                    cb();
+                }
             });
             menu.appendChild(btn);
         }
