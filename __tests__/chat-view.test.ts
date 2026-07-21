@@ -3203,6 +3203,22 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+button\.message-action-button\s*{[\s\S]*?flex-basis:\s*44px;[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/);
     });
 
+    it('overlays rendered code copy buttons until hover or keyboard focus', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        const codeBlock = getCssRuleBlock(css, '.llm-view .message-content pre');
+        const copyButtonBlock = getCssRuleBlock(css, '.llm-view .message-content pre > button.copy-code-button');
+
+        expect(codeBlock).toContain('position: relative;');
+        expect(copyButtonBlock).toContain('position: absolute;');
+        expect(copyButtonBlock).toContain('inset-block-start: 6px;');
+        expect(copyButtonBlock).toContain('inset-inline-end: 6px;');
+        expect(copyButtonBlock).toContain('opacity: 0;');
+        expect(copyButtonBlock).toContain('pointer-events: none;');
+        expect(copyButtonBlock).not.toContain('display: none;');
+        expect(css).toMatch(/\.llm-view\s+\.message-content\s+pre:hover\s*>\s*button\.copy-code-button,\s*\n\.llm-view\s+\.message-content\s+pre:focus-within\s*>\s*button\.copy-code-button\s*{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/);
+        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.message-content\s+pre\s*>\s*button\.copy-code-button\s*{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/);
+    });
+
     it('opens message overflow menus upward from the bottom toolbar', () => {
         const css = readFileSync('src/custom.pcss', 'utf8');
         const sharedMenuItemBlock = getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item');

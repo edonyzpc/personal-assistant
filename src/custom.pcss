@@ -1452,10 +1452,56 @@ body.is-mobile .llm-view .thinking-status-context-memory-link {
 }
 
 .llm-view .message-content pre {
+	position: relative;
 	background: var(--background-primary);
 	border-radius: 6px;
 	padding: 12px;
 	margin: 8px 0;
+}
+
+.llm-view .message-content pre > button.copy-code-button {
+	-webkit-appearance: none;
+	appearance: none;
+	box-sizing: border-box;
+	position: absolute;
+	inset-block-start: 6px;
+	inset-inline-end: 6px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	min-width: 28px;
+	min-height: 28px;
+	margin: 0;
+	padding: 6px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.llm-view .message-content pre > button.copy-code-button svg {
+	width: var(--pa-chat-button-icon-size);
+	height: var(--pa-chat-button-icon-size);
+}
+
+.llm-view .message-content pre:hover > button.copy-code-button,
+.llm-view .message-content pre:focus-within > button.copy-code-button {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+@media (hover: none) {
+	.llm-view .message-content pre > button.copy-code-button {
+		opacity: 1;
+		pointer-events: auto;
+	}
 }
 
 .llm-view .message-content code {
