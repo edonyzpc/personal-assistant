@@ -2,9 +2,13 @@
 
 Decision ID: DEC-021
 Status: Accepted
-Updated: 2026-07-19
+Updated: 2026-07-21
 Authority: 用户于 2026-07-19 要求把当日 UI/UX 审查与桌面/iPhone 实测完整交接给 Claude Code，并用于后续优化开发
 Work item: B-118
+Scoped resolution: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
+解决，SG-07c 已延期；SG-05/SG-06 由
+[DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 于 2026-07-21 统一，当前无
+未决 SG product stop gate
 
 ## Context
 
@@ -18,13 +22,14 @@ Work item: B-118
 Bubble 定位等风险。另一方面，iPhone 竖屏、真实横屏 safe area、44×44 触控目标、
 短点开关和长按菜单出现/自动收起已有正向证据，修复不能把这些通过项无差别重做。
 
-部分审查建议超出了“修复已复现 UI 漂移”的授权范围，并与现行合同存在张力：
-Quiet/Balanced 的精确展示频率与迁移未定；Recall Bubble 与 Quiet Recall 的动作表
-并不一致；Retrieval Habit Profile 对反馈的学习必须先 opt in；Saved Insight 已允许
-用户选择 `Later` 后形成 Review Queue item 或 lightweight saved draft；共享 Data
-Boundary 采用 first-use 加 broad/sensitive/costly 再披露，以及 excluded scope 的
-显式 per-run override，而不是每个 feature 自建授权体系。B-118 不能替用户补出这些
-新的产品、隐私或数据保留决定。
+作为 2026-07-19 的审查来源记录，部分建议当时超出了“修复已复现 UI 漂移”的授权
+范围，并与现行合同存在张力：Quiet/Balanced 的精确展示频率与迁移尚未决定；Recall
+Bubble 与 Quiet Recall 的动作表并不一致；Retrieval Habit Profile 对反馈的学习必须
+先 opt in；Saved Insight 已允许用户选择 `Later` 后形成 Review Queue item 或
+lightweight saved draft；共享 Data Boundary 采用 first-use 加 broad/sensitive/costly
+再披露，以及 excluded scope 的显式 per-run override，而不是每个 feature 自建授权
+体系。B-118 当时不能替用户补出这些新的产品、隐私或数据保留决定；用户随后于
+2026-07-20 解决 SG-01 至 SG-04、SG-07a/SG-07b，并把 SG-07c 延期。
 
 ## Options Considered
 
@@ -32,7 +37,7 @@ Boundary 采用 first-use 加 broad/sensitive/costly 再披露，以及 excluded
 | --- | --- | --- | --- |
 | A. 维持 B-108 已验证状态，只补更多自动化 | 改动最少 | 无法修复已在真机复现的核心触控与首屏价值失败 | Rejected；把历史测试误当成当前用户证据 |
 | B. 趁机重做 Pagelet 视觉、动作和设置架构 | 可统一处理全部历史问题 | 范围过大，也会静默决定频率、授权、反馈和队列语义 | Rejected；不符合最小、可信修复原则 |
-| C. 先修有证据的 P1/P2 漂移，再做有界视觉 polish；未决产品边界设置 stop gate | 恢复核心体验且不越权 | 需要按 slice 保留证据和阻断点 | Accepted；与“安静且可信”和用户交接意图一致 |
+| C. 先修有证据的 P1/P2 漂移，再做有界视觉 polish；当时未决的产品边界设置 stop gate | 恢复核心体验且不越权 | 需要按 slice 保留证据和阻断点 | Accepted；2026-07-20 后相关 gate 按下文 resolution 执行 |
 
 ## Decision
 
@@ -42,7 +47,7 @@ Boundary 采用 first-use 加 broad/sensitive/costly 再披露，以及 excluded
    polish` 分阶段修复；每个阶段独立测试、review、桌面 smoke 与真机回归。
 2. iPhone 菜单动作不得额外触发 Pet 根 `onToggleBubble`。Capture、Review、Discover
    自己的 downstream callback 仍可按现行实现与合同打开或更新 Bubble、Panel 或
-   Modal；“根切换为零”不能误写成“整个 Bubble 永远不变化”。
+   Detail；“根切换为零”不能误写成“整个 Bubble 永远不变化”。
 3. prepared Recap 首屏必须交付 fresh、source-backed 的具体 observation；通用
    ready 文案不能代替内容。该项执行 DEC-018 和现行 Scope Recap 合同，不创设新
    Recap 语义。
@@ -54,45 +59,68 @@ Boundary 采用 first-use 加 broad/sensitive/costly 再披露，以及 excluded
    横屏证据必须分开标记；一种证据不能冒充另一种。provider-backed 路径默认使用
    provider-free fixture，无法建立无发送 seam 时标记 `BLOCKED`，不静默调用。
 6. 共享合同继续优先于 B-118 的修复建议：
-   - Data Boundary 继续使用 first-use 与 broad/sensitive/costly disclosure；excluded
-     scope 只有显式 per-run override 后才能包含。B-118 不创建 feature-specific
-     authorization。
+   - Data Boundary 的标准有界 Pagelet provider path 共用一次非阻断 first-use
+     notice；broad/sensitive/costly/whole-vault 与 excluded override 仍逐次阻断。
+     B-118 不创建或重置 feature-specific first-use state。
    - Retrieval Habit Profile 继续默认关闭，只有显式启用或完成轻量 first-use notice
-     才能收集反馈并影响排序。
-   - Saved Insight 继续允许用户选择 `Later / Keep` 后创建 Review Queue item 或
-     lightweight saved draft；B-118 不规定固定 snooze 时长，也不取消该语义。
-7. 以下事项是实现 stop gate，不在 DEC-021 中替用户做决定。Claude Code 遇到相应
-   slice 必须停下并请求产品决定；不依赖该决定的触控、Recap、motion、状态与布局
-   工作可以继续：
-   - `SG-01`：Quiet/Balanced 的精确 display/context caps、旧设置迁移、与 generic
-     hints 父门的映射及文案承诺。
-   - `SG-02`：Recall Bubble 的最终 primary/secondary action taxonomy，`View`、
-     `Open source`、`Link/Save/Later` 的优先级与 Bubble/Detail/Panel 落点。
-   - `SG-03`：Dismiss/Not relevant 的负反馈粒度、保留期、对已 opt-in RHP 的权重；
-     不得预设 exact-source-only、90 天或零权重。
-   - `SG-04`：Later 的具体 snooze、是否及何时进入 Review Queue / Saved Insight
-     draft；不得预设 24 小时或 no-queue。
-   - `SG-05`：共享 Data Boundary 授权在 Recall/Discover/Recap 间的复用条件、版本
-     迁移、未来 proactive included/skipped scope、local clue 升级 AI why-now 的判据
-     与 UI 形态；在决定前只执行现行 shared contract。
-   - `SG-06`：Scope Recap Modal 的 `Run` 是仅本次运行，还是同时授权以后有界后台
-     准备；X/Escape 等非显式关闭后何时可再次询问。被动关闭不构成 affirmative
-     provider authorization，也不得直接触发 provider call，但持久提示状态与重询
-     间隔必须先决定。
-   - `SG-07`：Explicit Discover 的最终路由、Quiet Recall 用户名称、普通
-     Intentionally Quiet Bubble 的首次 3 秒价值方案。
+     才能收集反馈并影响排序；Quiet Recall 的 `Dismiss` 仅在此边界内成为具体
+     candidate 的弱信号。
+   - Quiet Recall Bubble 的 `Later` 进入既有 Review Queue；`Link / Save` 仍留在
+     Recall Detail Tab，不新增平行 queue 或 snooze 模型。
+7. 2026-07-19 提出的 SG-01 至 SG-04、SG-07 不再是未决 gate：当前实现必须执行
+   2026-07-20 的 resolution；SG-07c 的 ordinary Quiet Bubble empty-state redesign
+   已移出 B-118，不阻断其余 slice。SG-05/SG-06 只执行 DEC-023。
 8. 不新增自动写入、队列模型、全局 UI 架构、provider 调用或 release 行为。任何
    durable write 继续遵循现有确认与写入边界。
 
+## SG-01..04 / SG-07 Resolution (2026-07-20)
+
+2026-07-19 审查中记录的下列项目仅作为决策 provenance 保留；用户于 2026-07-20
+给出当前产品 resolution，因此它们不再是 B-118 的未决实现 gate：
+
+- `SG-01`：Quiet Recall 仅 `Off / On` 两档，默认 Off，不另设 frequency cap；由
+  quality gate、quiet hours、Focus Mode 与每 candidate 一次共同控制噪声。旧
+  `bubbleNudgesEnabled=true` 迁移为 On，false、缺失或其他状态迁移为 Off；Quiet
+  Recall 与 generic hints、Scope Recap preparation/hints 解耦。
+- `SG-02`：Quiet Recall Bubble 固定为 `View / Later / Dismiss`；`Link / Save` 留在
+  Recall Detail Tab，View 使用当前候选进入 Tab 且不得重跑 provider。
+- `SG-03`：Dismiss 只对当前具体 candidate 形成弱信号；RHP 关闭时零收集、零写入、
+  零排序影响，被动关闭保持中性。
+- `SG-04`：Later 进入既有 Review Queue，表达用户明确的 return intent。
+- `SG-07a`：英文保留 `Quiet Recall`，中文使用“相关回顾”。
+- `SG-07b`：显式 Discover 保持进入 Panel，不改变现有 IA。
+- `SG-07c`：普通 Quiet Bubble empty state 保持现状，redesign 延期并进入 Backlog；
+  该延期不阻断 B-118。
+
+## SG-05 / SG-06 Scoped Resolution (2026-07-21)
+
+用户选择方案 A，并由
+[DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 正式更新当前产品合同：
+
+- Scope Recap、Recall、Discover 与 B-119 标准有界 provider path 共用一次非阻断
+  first-use notice；通知显示后运行继续，不保留 Scope Recap 授权 Modal。
+- 用户已有 opt-out 继续有效；任一 feature 不得创建、迁移或重置自己的首次状态。
+- broad/sensitive/costly/whole-vault 与 excluded override 仍须在 provider call 和 cost
+  reservation 前逐次 blocking `run / adjust / cancel`。
+- 若第一次实际调用恰为高风险，完整 blocking disclosure 只在 affirmative Run 后、
+  调用即将发生时同时完成 shared first-use，不追加第二条 notice；后续高风险仍逐次确认。
+- provider trust 不授予 Memory admission、写入、Markdown 或 external action 权限。
+
+DEC-021 最初将 SG-05/SG-06 记录为 stop gates 的文字属于 2026-07-19 审查来源与
+决策过程证据；从 2026-07-21 起，执行以 DEC-023、B-118 Product Spec/SDD/Tracker
+为准。DEC-023 独立拥有 provider first-use 语义，DEC-021 不重复扩展它。
+
 ## Consequences
 
-- Product behavior: B-118 可以先恢复已被真实证据否定的核心交互和首屏价值，但
-  不能借“polish”静默重定义频率、授权、反馈、队列或写入行为。
+- Product behavior: B-118 在恢复核心交互与首屏价值的同时，落实 Off/On Quiet
+  Recall、View/Later/Dismiss、candidate-specific weak dismiss、Review Queue Later、
+  中英文名称与 Discover Panel resolution；不借“polish”扩展这些语义。
 - Architecture / data / safety: touch ownership、background working lifecycle、
-  reduced-motion 和布局可在现有合同内修复；需要新持久字段或学习语义的 slice 受
-  stop gate 阻断。
-- Compatibility / migration: 已通过的移动布局和显式关闭偏好必须保留；DEC-021
-  不授权任何 Quiet Recall 设置迁移。
+  reduced-motion 和布局可在现有合同内修复；Dismiss 只有在 RHP 已启用时才能成为
+  当前 candidate 的弱信号，provider trust 仍由 DEC-023 控制。
+- Compatibility / migration: 已通过的移动布局和显式关闭偏好必须保留；旧
+  `bubbleNudgesEnabled=true` 迁移为 On，false、缺失或其他状态迁移为 Off，且不得
+  联动 generic hints、Recap 或 RHP。
 - Work created or removed: 创建 B-118 Product Spec、Active Package 与 Claude Code
   handoff；实现、commit、push、tag 与 release 仍按各自授权边界执行。
 
@@ -100,7 +128,8 @@ Boundary 采用 first-use 加 broad/sensitive/costly 再披露，以及 excluded
 
 - 真机回归显示菜单隔离需要重构 Pet 根事件模型，而非局部修复。
 - Recap 首屏无法在不重复调用 provider 的情况下读取 fresh artifact。
-- 某个 stop gate 已获得用户决定，需要建立或更新对应 Decision/Product Spec。
+- dogfood 证明 Off/On 配合既定 quality/quiet/focus/per-candidate gates 仍无法控制
+  噪声，或现有 Review Queue 承接 Later 明显增加管理负担。
 - active-leaf 定位在 Obsidian 多窗格/侧栏组合中产生新的遮挡。
 
 ## Traceability
@@ -109,5 +138,6 @@ Boundary 采用 first-use 加 broad/sensitive/costly 再披露，以及 excluded
 - Active Package: [B-118 Feature Home](../../development/active/pagelet-ui-ux-optimization/README.md)
 - Implementation handoff: [Claude Code handoff](../../development/active/pagelet-ui-ux-optimization/handoff-claude-code.md)
 - Preceding decisions: [DEC-017](./dec-017-default-background-recap-preparation.md), [DEC-018](./dec-018-quality-gated-scope-recap-hints.md), [DEC-020](./dec-020-independent-quiet-recall-evaluation.md)
+- Scoped provider resolution: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
 - Existing contracts: [Scope Recap](../specs/pa-scope-recap-theme-summary-product-spec.md), [Quiet Recall](../specs/pa-quiet-recall-insight-timing-product-spec.md), [Bubble](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)
 - Trust contracts: [Data Boundary](../specs/pa-data-boundary-product-spec.md), [Retrieval Habit Profile](../specs/pa-retrieval-habit-profile-product-spec.md), [Saved Insight](../specs/pa-saved-insight-ledger-product-spec.md)

@@ -1,13 +1,13 @@
 # PA Data Boundary Product Spec
 
-Updated: 2026-07-11
+Updated: 2026-07-21
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Shared v1 Data Boundary implemented; new data classes require explicit extension |
+| Status | Shared v1 Data Boundary implemented; DEC-023 provider-first-use runtime reconciliation remains open in B-118, and new data classes require explicit extension |
 | Feature family | Data Boundary / Privacy / Local-first controls |
 | Primary surfaces | Settings, Chat, Pagelet, Memory, Maintenance Review |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -165,27 +165,72 @@ Recommended source-worthiness rule:
 
 ## 6. Provider Disclosure
 
-Provider disclosure should happen:
+Provider disclosure has two levels:
+
+1. First use of standard bounded Pagelet note reading through a configured
+   provider uses one shared, non-blocking notification and continues the
+   requested/eligible run. Features must not create or reset parallel first-use
+   authorization state.
+2. Broad, costly, sensitive, whole-vault, or excluded-scope-override runs use a
+   blocking per-run disclosure before any provider call or cost reservation.
+
+This first-use rule is owned by
+[DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md) and covers
+standard bounded Scope Recap, Quiet Recall, Discover, and B-119 Graph、Pattern、
+Maintenance runs. The second rule applies as soon as a run exceeds its standard
+envelope. Provider trust does not grant Memory admission, vault write, Markdown,
+or external-action authority.
+
+If the first actual Pagelet provider call is itself broad, sensitive, costly,
+whole-vault, out-of-envelope, or an excluded-scope override, its blocking
+disclosure also satisfies the shared first-use disclosure when it fully covers
+the allowed note excerpts/data, provider, possible cost, and capability opt-out.
+Do not stack a second non-blocking notice onto that confirmed run.
+
+| Operation | Disclosure / confirmation |
+| --- | --- |
+| Standard bounded Pagelet provider note reading | One shared first-use non-blocking notification; eligible run continues |
+| First actual Pagelet provider call is high-risk | One complete blocking disclosure may also satisfy shared first-use; no extra non-blocking notice |
+| Broad / sensitive / costly / whole-vault / out-of-envelope / excluded override | Blocking per-run `run / adjust / cancel` before provider call or cost reservation, even when the shared flag is already true |
+| Prepare / Update Memory and Memory admission | Existing Memory-specific confirmation and cost contract |
+| Vault mutation, Markdown, or external action | Separate effect-based preview / confirmation contract; provider notice is insufficient |
+
+Disclosure should happen:
 
 - on first use of provider-backed note reading
 - before broad/costly/sensitive runs
-- before first Prepare/Update Memory
+- before first Prepare/Update Memory under its Memory-specific contract
 - before broad Pagelet review or weekly scan
 - before Maintenance scan over broad scope
 - before runs that generate Memory Candidates or Confirmed Memory
 - when excluded/sensitive scopes are temporarily included
 
-Disclosure should show:
+The shared first-use notification should show, in ordinary product language:
 
+- that allowed note excerpts may be sent to the configured AI provider
+- that API credits/cost may be used
+- where the capability can be disabled
+
+Blocking broad/costly/sensitive disclosure should show:
+
+- allowed note excerpts/data that may be sent
 - included scope
 - excluded scope
 - provider/model when relevant
 - "note text may be sent to the configured AI provider"
 - possible API credits/cost
+- where the capability can be disabled
 - run / adjust / cancel
 
-Small current-note or already-authorized low-risk runs should not repeat heavy
-disclosure each time.
+For a first high-risk call, set `pageletProviderFirstUseNotified=true` only after
+the user explicitly chooses `Run`, every gate passes, and the provider invocation
+is immediately next. `Cancel` or passive close leaves it false. `Adjust` must be
+re-evaluated: a still-high-risk run repeats the blocking gate, while a run reduced
+to the standard bounded envelope uses the ordinary shared notice. Later high-risk
+runs still require per-run confirmation regardless of the shared flag.
+
+Eligible bounded runs, after the shared first-use notice has been shown when
+needed, should not repeat heavy disclosure each time.
 
 ## 7. Data Cleanup
 
@@ -303,6 +348,8 @@ Quality gates:
 - excluded paths do not appear without explicit per-run override
 - generated notes are excluded by default
 - provider disclosure appears for broad/sensitive/costly runs
+- first-use disclosure is recorded only at an imminent real provider call;
+  high-risk Cancel/close/unpassed Adjust leaves the shared flag unchanged
 - clearing local index does not delete vault notes
 - clearing queue does not undo applied actions
 - Confirmed Memory deletion requires explicit confirmation

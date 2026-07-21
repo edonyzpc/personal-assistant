@@ -1,13 +1,13 @@
 # PA Retrieval Habit Profile Product Spec
 
-Updated: 2026-07-11
+Updated: 2026-07-21
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Confirmed decision spec; M12 runtime implemented for local opt-in weak retrieval adaptation |
+| Status | Confirmed decision spec; M12 runtime implemented for local opt-in weak retrieval adaptation. B-118 narrows Quiet Recall Dismiss to an exact-candidate signal; runtime reconciliation and current-surface validation remain pending. |
 | Feature family | Retrieval Habit Profile / Local retrieval adaptation |
 | Primary surfaces | Active Vault Indexer, Quiet Recall, Pagelet, Settings advanced data controls |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -18,6 +18,13 @@ adaptation layer for retrieval and recall. Slice G implemented the narrow
 disabled-by-default aggregate feedback seed; M12 implemented user-facing opt-in
 and clear controls, 90-day aggregate retention, unsafe-shape rejection, and weak
 near-tie influence through the Active Vault Indexer.
+
+The B-118 contract further narrows Quiet Recall Bubble feedback: only an
+explicit `Dismiss`, while Retrieval Habit Profile is enabled, may weakly affect
+the exact candidate. It must not downrank similar sources, topics, or candidates.
+The [B-118 Tracker](../../development/active/pagelet-ui-ux-optimization/tracker.md)
+owns the remaining runtime reconciliation and current-surface validation; this
+document does not claim that work is already complete.
 
 The product definition:
 
@@ -47,6 +54,7 @@ This document records the one-question-at-a-time product decisions confirmed on
 | RHP-D7 | Include deterministic eval for weak-influence boundaries. | Tests assert it cannot cross explicit scope, Data Boundary, Context Firewall, or evidence strength. |
 | RHP-D8 | Provide lightweight why-shown explanations. | Example: "Shown higher because you often use tags in this vault." |
 | RHP-D9 | Default collection requires a lightweight first-use notice or explicit enablement. | PA does not silently start behavior-like local adaptation without a visible Data & Privacy control. |
+| RHP-D10 | Quiet Recall `Dismiss` is a weak signal for the exact candidate only. | When RHP is off, collection, writes, and ranking influence are zero; passive close/ignore is neutral and similar candidates are unchanged. |
 
 ## 1. Product Decision
 
@@ -84,11 +92,11 @@ Allowed v1 signals:
 | Source click | user opens a cited note from PA result |
 | Search query type | path/folder-like, tag-like, natural language, exact term |
 | Related note open | user opens a related-note suggestion |
-| Recall feedback | keep, dismiss, not relevant |
+| Recall feedback | Explicit actions defined by the owning surface; current Quiet Recall Bubble exposes candidate-specific `Dismiss` only |
 | Saved insight | user saves a theme/tension/question |
 | Kept related note | user keeps a related-note suggestion |
 | Common entry type | Chat, Pagelet, Weekly Review, Quick Capture |
-| Dismissed / not relevant | lightweight negative feedback |
+| Explicit negative feedback | Weak, scoped only as the owning surface defines; no implicit cross-candidate generalization |
 
 Not collected in v1:
 
@@ -265,7 +273,7 @@ Suggested local aggregate fields:
 | `scopeSignalWeights` | Local weak weights for folder/tag/link/time/current-note preferences |
 | `sourceClickSignals` | Aggregated low-sensitive source click patterns |
 | `entryTypeSignals` | Chat/Pagelet/Weekly/Quick Capture usage mix |
-| `negativeSignals` | Dismiss / not relevant aggregates |
+| `negativeSignals` | Explicit owning-contract-scoped aggregates; current Quiet Recall Dismiss remains exact-candidate and must not become a source/topic/cross-candidate weight |
 | `decayVersion` | Decay model version |
 | `enabled` | Whether the profile can influence retrieval |
 
@@ -305,15 +313,20 @@ Examples:
 
 - show more tag-linked cues when user often opens tag-based sources
 - show more recent-note cues when recent-note clicks are strong
-- reduce source types repeatedly marked not relevant
+- weakly adjust only an explicitly dismissed Quiet Recall candidate; do not
+  generalize that signal to similar sources, topics, or candidates
 
 Boundaries:
 
-- still max 2 to 3 Bubble items
+- still one Bubble item by default, with a 2-to-3-item stack only when every
+  candidate independently passes the high quality gate
 - still source-backed
-- still obey frequency settings
+- still obey quality, quiet-hours, Focus Mode, per-candidate-once, cooldown, and
+  provider-call gates
 - still explain with light why-shown
 - no identity/profile claim
+- when RHP is off, Quiet Recall Dismiss produces no collection, write, or ranking
+  effect; passive close/ignore is neutral
 
 ## 11. Relationship To Memory Taxonomy
 
@@ -368,7 +381,7 @@ Suggested cases:
 | Explicit folder scope | Habit does not pull results from another scope |
 | Excluded tag | Habit cannot surface excluded sources |
 | Strong evidence vs habit match | Strong evidence ranks above weak habit match |
-| Not relevant feedback | Similar future suggestions are downranked |
+| Quiet Recall Dismiss | With RHP on, only the exact candidate receives a weak signal and similar candidates stay unchanged; with RHP off, collection, writes, and ranking influence are zero |
 | Clear profile | Ordering returns to neutral |
 | Disabled profile | No habit-based why-shown appears |
 | Old signal | Decayed signal has lower influence |

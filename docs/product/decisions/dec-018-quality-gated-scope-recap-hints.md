@@ -2,14 +2,16 @@
 
 Decision ID: DEC-018
 Status: Accepted
-Updated: 2026-07-19
+Updated: 2026-07-21
 Authority: 用户于 2026-07-18 在 Pagelet v2.9 正式验证后的逐项产品讨论中选择方案 C
 Work item: B-108
 
 ## Context
 
 [DEC-017](./dec-017-default-background-recap-preparation.md) 已确认 Scope Recap
-在首次 Data Boundary 授权后默认进行有界后台准备，让用户点击时不必等待。仍需
+在 provider 已配置、能力未关闭且来源合规时默认进行有界后台准备；首次实际
+provider 调用遵循 [DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 的共享非
+阻断通知，让用户点击时不必等待。仍需
 决定：fresh prepared Recap 就绪后，Pagelet 是每次主动提示、始终保持安静，还是
 只在内容真正值得打断注意力时提示。
 
@@ -27,8 +29,9 @@ Work item: B-108
 
 ## Decision
 
-选择 Option C：在 DEC-017 的首次后台读取授权生效后，**高价值 Scope Recap
-轻提示默认开启**；只有新的、fresh、当前 scope 相关、可验证且具体的跨笔记
+选择 Option C：在 DEC-017 的有界后台准备满足运行条件后，**高价值 Scope Recap
+轻提示默认开启**；首次 provider 调用的共享通知不是提示开关的前置授权。只有
+新的、fresh、当前 scope 相关、可验证且具体的跨笔记
 洞察通过质量门时，Pet 才进入一次 `nudge` 状态。
 
 质量门必须同时满足：
@@ -81,6 +84,7 @@ Work item: B-108
 ## Traceability
 
 - Preceding decision: [DEC-017](./dec-017-default-background-recap-preparation.md)
+- Shared first-use boundary: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
 - Failure fallback decision: [DEC-019](./dec-019-honest-layered-recap-fallback.md)
 - Product Spec: [PA Scope Recap And Theme Summary](../specs/pa-scope-recap-theme-summary-product-spec.md)
 - Bubble contract: [Pagelet Bubble Readiness & Recall](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)

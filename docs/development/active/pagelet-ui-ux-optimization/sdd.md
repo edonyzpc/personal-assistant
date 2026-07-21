@@ -1,17 +1,38 @@
 # Pagelet UI/UX Optimization SDD
 
 Document status: Approved
-Updated: 2026-07-20
+Updated: 2026-07-21
 Work item: B-118
-Authority: [Handoff](./handoff-claude-code.md), [Plan](./plan.md),
-[B-118 Product Spec](../../../product/specs/pagelet-ui-ux-hardening-product-spec.md),
-[DEC-021](../../../product/decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
+Authority: B-118 的批准设计、接口边界、slice 验证矩阵与回滚约束。
+Plan: [Delivery Plan](./plan.md)
+Tracker: [Development Tracker](./tracker.md)
+Product spec: [Pagelet UI/UX Hardening Product Spec](../../../product/specs/pagelet-ui-ux-hardening-product-spec.md)
+Decision: [DEC-021 — evidence-led Pagelet UI/UX hardening](../../../product/decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
+Provider trust amendment: [DEC-023 — shared non-blocking Pagelet provider first-use](../../../product/decisions/dec-023-shared-pagelet-provider-first-use.md)
+Evidence handoff: [Claude Code Handoff](./handoff-claude-code.md)
 
 ## Scope
 
 Fix 4 P1 + 5 P2 + 1 P3 confirmed by real desktop/iPhone evidence on 2026-07-19.
 Preserve existing positive baselines (mobile safe area, 44×44 targets, short tap,
 hold menu appearance). All SG-01~07 product decisions resolved 2026-07-20.
+DEC-023 on 2026-07-21 is the current authority for SG-05/SG-06 provider
+first-use behavior.
+
+## Traceability Matrix
+
+| Product requirement | Acceptance criterion | SDD slice |
+| --- | --- | --- |
+| B-118/REQ-01 | B-118/AC-01 | Slice A — Pet touch ownership |
+| B-118/REQ-02 | B-118/AC-02 | Slice B — Recap first-screen value |
+| B-118/REQ-03 | B-118/AC-03 | Slice B/C — shared provider notice and old Modal removal |
+| B-118/REQ-04 | B-118/AC-04 | Slice D — reduced motion |
+| B-118/REQ-05 | B-118/AC-05 | Slice E — Recall actions |
+| B-118/REQ-06 | B-118/AC-06 | Slice D — Pet lifecycle convergence |
+| B-118/REQ-07 | B-118/AC-07 | Slice E — Quiet Recall settings |
+| B-118/REQ-08 | B-118/AC-08 | Slice F — typography floor |
+| B-118/REQ-09 | B-118/AC-09 | Slice F — active-leaf placement |
+| B-118/REQ-10 | B-118/AC-10 | Slice C — shared Data Boundary/provider trust |
 
 ## Non-Goals
 
@@ -29,16 +50,35 @@ hold menu appearance). All SG-01~07 product decisions resolved 2026-07-20.
 | SG-02 | View + Later + Dismiss | Bubble actions finalized |
 | SG-03 | Dismiss = weak signal, specific candidate only | RHP: minimal effect on dismiss |
 | SG-04 | Later = enter Review Queue | Change from 24h snooze to queue handoff |
-| SG-05 | Shared first-use across all Pagelet provider paths | Single shared authorization state |
-| SG-06 | Remove Modal; Settings default ON + first-run notification | Delete ScopeRecapAuthorizationModal |
+| SG-05 | Shared first-use across all Pagelet provider paths | One shared disclosure state; a complete first high-risk blocking disclosure may satisfy it; no feature authorization |
+| SG-06 | Remove Modal; standard bounded path defaults on + first-use notice | Preserve existing opt-out; do not reset shared notice |
 | SG-07a | Chinese "相关回顾" | i18n label change only |
 
 ## Provider Trust Model
 
-Per updated North Star: configuring an AI provider is a trust decision. PA
-features work by default with transparent non-blocking notification on first
-use. Settings provide opt-out. Only broad/sensitive/costly operations require
-per-use confirmation. No blocking modals for standard-scope operations.
+Per North Star and DEC-023, configuring an AI provider is a trust decision.
+When Pagelet and the relevant capability are enabled, sources pass Data Boundary,
+and the run stays inside that capability's standard bounded envelope, the first
+actual provider call shows the shared non-blocking notice and the eligible run
+continues. The notice explains note-excerpt transmission, possible API cost, and
+the Settings opt-out. It only means “notice shown”: it is not authorization for
+Memory admission, persistence, vault writes, Markdown, or external actions.
+
+`pageletProviderFirstUseNotified` is the only shared first-use field. Existing
+`true` and capability opt-outs survive reload/upgrade; implementation must not
+reset, migrate, or shadow it with feature-specific state. Broad, sensitive,
+costly, whole-vault, out-of-envelope, and excluded-scope override runs remain
+blocking `run / adjust / cancel` flows before any provider call or cost
+reservation. Provider missing, disabled capability, no eligible source, and
+Data Boundary deny remain zero-call fail-closed paths.
+
+If the first actual call is high-risk, a blocking disclosure that fully covers
+allowed note excerpts/data, provider, possible cost, and the capability opt-out
+also satisfies shared first-use; do not add the non-blocking notice. Persist the
+flag only after explicit `Run`, all gates pass, and invocation is immediately
+next. Cancel/passive close does not persist it. Adjust stays behind the blocking
+gate while still high-risk, or uses the ordinary shared notice after becoming
+standard bounded. The shared flag never suppresses later per-run high-risk gates.
 
 ---
 
@@ -115,28 +155,37 @@ In orchestrator Recap Detail payload:
 - Add coverage/freshness in product language (not `stale/fresh/cache`)
 - View action uses current prepared artifact; provider call count = 0
 
-### Design — F-03 Remove Modal, Replace with Settings + Notification
+### Design — F-03 Remove Modal, Reuse DEC-023 Shared Notification
 
 **Files**: `src/pagelet/recap/ScopeRecapAuthorizationModal.ts` (delete or gut),
 `src/pagelet/orchestrator.ts`, `src/settings/pagelet/index.ts`
 
 Per SG-06: remove the Modal entirely. Replace with:
 
-1. **Settings**: `scopeRecapPreparationEnabled` already exists (default will be
-   changed to `true` per SG-06 "默认开")
+1. **Settings**: `scopeRecapPreparationEnabled` remains the capability opt-out.
+   New defaults may be enabled per SG-06, but an existing persisted `false` must
+   remain `false` across reload/upgrade.
 
-2. **First-run notification**: On first Scope Recap background run, show a
-   non-blocking BubbleContent notification: "PA is preparing a recap of your
-   recent notes using [provider name]. You can adjust this in Settings."
-   Track `scopeRecapFirstRunNotified: boolean` in pagelet settings.
+2. **First-use notification**: Immediately before the first actual eligible
+   Pagelet provider call, use the shared non-blocking notification route. It
+   explains note-excerpt transmission, possible provider cost, and the Settings
+   opt-out, then the current bounded run continues.
 
 3. **Orchestrator changes**: Remove `showScopeRecapAuthorizationModal()` call.
    Instead, check `scopeRecapPreparationEnabled` directly. If enabled, proceed.
    If disabled, skip (no modal, no prompt).
 
-4. This notification also serves as the **shared first-use disclosure** (SG-05).
-   Track `pageletProviderFirstUseNotified: boolean`. Once any Pagelet surface
-   shows this notification, don't repeat for other surfaces.
+4. Track only `pageletProviderFirstUseNotified: boolean`. Do not add
+   `scopeRecapFirstRunNotified` or any feature-specific authorization field.
+   Once any bounded Pagelet surface shows the notice, other surfaces do not
+   repeat it; existing `true` is never reset.
+
+5. If a run is broad/sensitive/costly/whole-vault/out-of-envelope or requests
+   excluded-scope override, route to blocking `run / adjust / cancel` before
+   provider call or cost reservation. If it is also the first actual provider
+   call, a complete blocking disclosure may satisfy shared first-use without an
+   extra notice; write the flag only after explicit Run, all gates pass, and the
+   call is immediately next. Cancel/close/unpassed Adjust leaves the flag false.
 
 ### Tests — F-02
 
@@ -151,9 +200,18 @@ Per SG-06: remove the Modal entirely. Replace with:
 - No Modal appears for any Recap flow
 - Settings `scopeRecapPreparationEnabled=true`: Recap runs without prompt
 - Settings `scopeRecapPreparationEnabled=false`: Recap does not run
-- First-run notification appears once, uses BubbleContent style
+- First actual eligible provider call shows the shared notice once and proceeds
 - Second run: no notification
 - Shared first-use: after Recap notifies, Recall provider path doesn't re-notify
+- Existing `pageletProviderFirstUseNotified=true` remains true after reload/upgrade
+- Existing `scopeRecapPreparationEnabled=false` remains disabled
+- No `scopeRecapFirstRunNotified` or feature-specific authorization field exists
+- First actual call is high-risk + Run: complete blocking disclosure=1,
+  non-blocking notice=0; flag changes only at the imminent invocation seam
+- High-risk Cancel/passive close or Adjust that remains high-risk: provider call,
+  cost reservation, and provider-trust settings mutation all remain 0
+- Adjust to standard bounded: ordinary shared notice is shown once; later
+  high-risk runs still require per-run confirmation after the flag becomes true
 
 ---
 
@@ -164,14 +222,18 @@ Per SG-06: remove the Modal entirely. Replace with:
 **Files**: `src/plugin.ts`, `src/pagelet/orchestrator.ts`,
 `src/settings/pagelet/index.ts`
 
-Per SG-05 + SG-06: shared first-use across all Pagelet provider paths.
+Per SG-05/SG-06 and DEC-023: shared first-use across all Pagelet provider paths;
+a complete high-risk blocking disclosure may satisfy first-use when the first
+actual call itself is high-risk.
 
-1. New setting: `pageletProviderFirstUseNotified: boolean` (default `false`)
+1. Shared setting: `pageletProviderFirstUseNotified: boolean` (new-install
+   default `false`; persisted values are preserved)
 
-2. Before any Pagelet provider call (Recap, Recall, Discover), check:
-   - If `!pageletProviderFirstUseNotified`: show non-blocking notification
-     via BubbleContent, set flag to `true`, then proceed (non-blocking = the
-     call happens, notification is informational)
+2. Before the first actual standard-envelope Pagelet provider call (Recap,
+   Recall, Discover), check:
+   - If `!pageletProviderFirstUseNotified`: show the shared non-blocking
+     notification, persist the notice-shown flag only at the imminent invocation
+     seam, then proceed
    - If already notified: proceed silently
 
 3. Fail-closed conditions (provider call = 0):
@@ -182,19 +244,37 @@ Per SG-05 + SG-06: shared first-use across all Pagelet provider paths.
 4. Pure local Discover clues: no provider call, no disclosure, use
    "Local related clue / 本地关联线索" label
 
-5. Broad/sensitive/costly runs still require per-use confirmation (existing
-   Data Boundary contract preserved)
+5. Broad/sensitive/costly/whole-vault/out-of-envelope/excluded-override runs
+   still require blocking per-use confirmation before provider call or cost
+   reservation. For a first high-risk call, the blocking disclosure also
+   satisfies shared first-use only when it covers allowed note excerpts/data,
+   provider, possible cost, and capability opt-out. Explicit `Run` + all gates
+   passed + invocation immediately next writes the shared flag without an extra
+   non-blocking notice. Cancel/passive close leaves it false; Adjust repeats the
+   high-risk gate or, after reducing to standard bounded, uses the ordinary
+   shared notice. Later high-risk runs remain per-use confirmed.
+
+6. The shared field is notification state only. It does not authorize Memory,
+   Saved Insight, Review Queue, Markdown, vault writes, or external actions.
 
 ### Tests
 
 - First-use: provider spy shows notification displayed + call proceeds
 - Second-use: no notification, call proceeds
 - Cross-feature: Recap first-use → Recall no notification
+- Reload/upgrade: existing shared notice and every capability opt-out are preserved
 - Provider not configured: 0 calls
 - Feature disabled: 0 calls
 - Data Boundary excludes all files: 0 calls
 - Local Discover: 0 provider calls, local label shown
-- Broad/sensitive/costly: per-use confirmation required
+- Broad/sensitive/costly/whole-vault/out-of-envelope/excluded override:
+  per-use confirmation required before provider call/cost reservation
+- First actual call high-risk + Run: complete blocking disclosure=1,
+  non-blocking notice=0, flag persists only at imminent call seam
+- First actual call high-risk + Cancel/passive close: provider/cost/flag mutation=0
+- High-risk Adjust: still high-risk repeats blocking gate with flag=false;
+  reduced-to-standard uses ordinary shared notice
+- Already-notified high-risk run: blocking disclosure still appears every run
 
 ---
 

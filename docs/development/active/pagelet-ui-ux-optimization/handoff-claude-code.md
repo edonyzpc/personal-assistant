@@ -1,16 +1,40 @@
 # Pagelet UI/UX 优化 — Claude Code 开发 Handoff
 
 Document status: Current
-Updated: 2026-07-19
+Updated: 2026-07-21
 Work item: B-118
 Authority: 2026-07-19 当日 commits、源码/测试审查、真实 Obsidian 桌面界面、iPhone 15 实体触控、Safari Web Inspector 与 QuickTime 横屏证据的完整开发交接。
 
+> [!important] 2026-07-21 provider trust resolution
+> 本 handoff 主体保留 2026-07-19 审查证据、当时未决的 SG-01..07 和旧 Modal
+> 复现，不再作为这些产品语义的现行权威。当前统一 provider 合同是
+> [DEC-023](../../../product/decisions/dec-023-shared-pagelet-provider-first-use.md)：
+> 标准有界 Pagelet provider 路径在 capability 开启、来源通过 Data Boundary 后，首次
+> 显示一次共享、非阻断通知并继续当前 eligible run；只复用
+> `pageletProviderFirstUseNotified`，不得新建/重置 feature-specific authorization 或
+> notice。broad、sensitive、costly、whole-vault、超出标准 envelope 与 excluded-scope
+> override 仍须在 provider call/cost reservation 前逐次 `run / adjust / cancel`。
+> 若首次实际调用恰为高风险，完整阻断披露在用户 Run、全部 gate 通过且调用即将发生时
+> 同时完成 shared first-use，不追加第二条 notice；Cancel/close/未完成 Adjust 不写 flag。
+> provider 信任不授予 Memory、持久化、vault/Markdown 写入或外部 action 权限。
+> SG-01..04、SG-07 的现行 resolution 见
+> [B-118 Product Spec](../../../product/specs/pagelet-ui-ux-hardening-product-spec.md) 与
+> [Approved SDD](./sdd.md)。后文凡与这些当前合同冲突的 `PRODUCT GATE`、
+> `Off / Quiet / Balanced`、旧 action table、首次阻断 Modal 或“SG 仍未决”措辞均只代表
+> 历史 finding/复现，不得继续驱动实现。
+>
+> 2026-07-21 只读源码复核同时确认：该产品合同尚未完整进入 runtime。fresh install
+> 仍被旧 authorization tuple 置为 Scope Recap preparation off；shared notice 的 actual-
+> call timing 与 Discover coverage 也未闭合。当前执行状态以 Tracker 的 F-03/F-10 为准，
+> 具体源码证据、最小修复边界、focused regression matrix 与 exit gate 见
+> [Tracker execution record](./tracker.md#dec-023-runtime-reconciliation-execution-record)。先修复并验证，
+> 不能从本 banner 推断“已实现”或直接进入 app smoke。
+
 > [!important] 交付结论
-> 当前 Pagelet UI/UX **不是 OK**。自动化、build、部署和移动 safe-area 基线通过，
-> 但存在 4 个 P1、5 个 P2、1 个 P3。Claude Code 必须先完成 SDD，再按
-> P1 → P2 → P3 修复；不能用现有 160 suites / 3175 tests 或 DOM 模拟替代修复后的
-> 真实桌面/iPhone 证据。F-03/F-05/F-07/F-10 中标为 `PRODUCT GATE` 的部分不得由
-> Claude Code 自行决定；它们必须先回到用户/产品决定，再进入代码。
+> 当前 Pagelet UI/UX **仍不是 OK**。SDD 已批准，多数 slice 已有实现与自动化证据，
+> 但 F-03/F-10 runtime reconciliation 重新打开，且修复后的桌面/iPhone 真实证据仍缺失。
+> 当前没有 SG 产品决策 blocker；后续只按 Product Spec、DEC-023、SDD 与 Tracker 实现和
+> 验证，不能用既有自动化或历史 smoke 冒充当前完成。
 
 ## 0. 给 Claude Code 的直接指令
 

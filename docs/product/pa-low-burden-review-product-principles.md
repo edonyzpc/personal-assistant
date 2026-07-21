@@ -1,6 +1,6 @@
 # PA Low-Burden Review Product Principles
 
-Updated: 2026-06-29
+Updated: 2026-07-21
 
 ## Status
 
@@ -149,7 +149,9 @@ Constraints:
 - Bubble shows only a few items.
 - Closing Bubble creates no pending debt.
 - Bubble must not surface Review Queue counts for merely generated `suggested`
-  items; only user-kept or snoozed items may receive a soft "later" reminder.
+  items. Only explicit user return intent can create queue debt: for Quiet
+  Recall this is `Later`; other item types may use Keep/Snooze only when their
+  owning contract explicitly defines it.
 - Panel shows evidence and optional actions.
 - Tab is for intentional deeper review.
 - Pet state can indicate "something is ready" but must not demand attention.
@@ -177,10 +179,15 @@ Rules:
 
 - Do not create Review Queue items merely because a cue was generated.
 - Do not require accept/dismiss for learning to continue.
-- Allow `Dismiss` and `Not relevant` as lightweight feedback, not required
-  forms.
-- Route durable save, Memory, or maintenance choices to the appropriate
-  confirmed flow.
+- `View` opens or expands the current candidate in Recall Detail Tab without a
+  provider rerun.
+- `Later` is the only Bubble queue handoff. It creates one item in the existing
+  Review Queue as explicit return intent, not as a fixed snooze.
+- `Dismiss` closes only the exact candidate. It becomes a weak signal only when
+  Retrieval Habit Profile is enabled; when disabled, collection, writes, and
+  ranking influence are all zero.
+- Passive close or ignore is neutral. Route `Link` / `Save`, Memory, or
+  maintenance choices to the appropriate Tab or confirmed flow.
 
 ### 4.4 Saved Insight
 

@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-07-19
+Updated: 2026-07-21
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Linear、Claude/Codex Memory 或其他外部工具只能提供输入和镜像；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -23,11 +23,13 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 | DEC-004 | Quiet Recall 候选来自整个 vault，使用打开笔记、保存后自然间隙与快捷键等低打扰触发 | 回忆自己的内容，不制造待处理队列 | [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | Dogfood 证明触发负担高于返回价值 |
 | DEC-005 | Memory 默认自动提取，并以可见、可纠正、可撤销和 effect/risk 边界补偿信任 | 不采用逐条 clickworker 确认；高后果动作仍需披露或授权 | [Decision Record](./decisions/dec-005-memory-governance.md), [Memory Control Center](./specs/pa-memory-control-center-product-spec.md) | 真实安全事件或用户研究否定当前治理模型 |
 | DEC-009 | Pagelet 保持安静、可忽略的 Pet/Bubble/Review delivery 模型 | 不把独立 AI 功能按钮和队列重新堆回 surface | [Pagelet Product Design](./pagelet-product-design.md) | 当前 delivery 无法满足真实 Capture/Recall 需求 |
-| DEC-017 | Scope Recap 默认进行有界后台准备 | 在 provider 配置并通过首次 `run / adjust / cancel` 明确授权后台读取后提前准备高意图 scope，使用户点击即得；用户可关闭，且不得持续 whole-vault 总结或自动写入 | [Decision Record](./decisions/dec-017-default-background-recap-preparation.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 成本、资源、隐私或低价值 dogfood 信号证明默认开启负担更高 |
+| DEC-017 | Scope Recap 默认进行有界后台准备 | provider 配置后提前准备高意图 scope，使用户点击即得；首次通知按 DEC-023，用户 opt-out、独立预算、非 whole-vault 与只读 derived artifact 边界继续有效 | [Decision Record](./decisions/dec-017-default-background-recap-preparation.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md) | 成本、资源、隐私或低价值 dogfood 信号证明默认开启负担更高 |
 | DEC-018 | Scope Recap 仅在高价值时主动轻提示 | 新的、fresh、当前 scope 相关且至少有两篇来源支撑的具体洞察才触发一次 Pet nudge；泛化摘要、重复/失败/低质量结果保持静默，其他提示类型不随之默认开启 | [Decision Record](./decisions/dec-018-quality-gated-scope-recap-hints.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 提示干扰高于价值、质量门长期不触发或统一提示策略证明更优 |
 | DEC-019 | Scope Recap 失败时采用分层诚实降级 | 后台失败/空/低质量结果不制造 ready 或 nudge，也不覆盖仍有效 artifact；主动打开时优先显示有效旧洞察，否则即时显示不冒充 insight 的本地范围方向与重试 | [Decision Record](./decisions/dec-019-honest-layered-recap-fallback.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md) | 本地概览被误解为洞察、没有定向价值或 artifact freshness 产生误报 |
 | DEC-020 | Quiet Recall 对最多 5 个候选逐条独立 AI 评估 | 每个候选独立过 why-now 质量门，最多一次语言重试，单轮最多 10 次实际调用；小时/日额度由 SDD 按实际调用固化，未评估/失败候选不以模板补位 | [Decision Record](./decisions/dec-020-independent-quiet-recall-evaluation.md), [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | 真实成本/延迟频繁阻断高价值 Recall，或 batch 在质量与失败隔离上达到同等结果 |
-| DEC-021 | Pagelet UI/UX 按真实界面证据分阶段修复 | 先恢复真机菜单触控与 Recap 首屏价值，再修不涉及新产品决定的 motion、状态、布局与可读性；频率、授权复用、反馈、Later 和动作 taxonomy 受显式 stop gate 阻断 | [Decision Record](./decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [B-118 Product Spec](./specs/pagelet-ui-ux-hardening-product-spec.md) | 真机证据要求重构事件模型，或 stop gate 获得新的产品决定 |
+| DEC-021 | Pagelet UI/UX 按真实界面证据分阶段修复 | 先恢复真机菜单触控与 Recap 首屏价值，再修 motion、状态、布局与可读性；SG-01..07 均已有决定或 disposition，当前只剩合同同步、runtime reconciliation 与真实 surface 验证 | [Decision Record](./decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [B-118 Product Spec](./specs/pagelet-ui-ux-hardening-product-spec.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md) | 真机证据要求重构事件模型，或已定产品语义需要重新讨论 |
+| DEC-022 | Graph、Pattern 与 Maintenance 使用有界、来源支持的 AI 增强；Writing Insight 延期 | 结构结果始终先行；标准 provider scope 默认开启并复用共享首次通知，broad/sensitive/costly 逐次确认；Maintenance AI 只预览，只有既有 move 可 confirm/apply/undo | [Decision Record](./decisions/dec-022-bounded-insight-enhancement-layer.md), [B-119 Product Spec](./specs/pa-insight-enhancement-layer-product-spec.md) | Dogfood 证明 Writing 有独立低负担价值、预算失配，或需要更宽写权限 |
+| DEC-023 | Pagelet 标准有界 provider 路径共享首次非阻断通知 | 配置 provider 后，Recap/Recall/Discover 与 B-119 三项能力在各自标准 envelope 内默认工作并共享一次透明通知；若首次实际调用是高风险运行，完整 blocking disclosure 在用户 Run 且即将调用时同时完成首次告知，不追加第二条 notice；高风险仍逐次确认，provider 信任不授予写权限 | [Decision Record](./decisions/dec-023-shared-pagelet-provider-first-use.md), [Data Boundary](./specs/pa-data-boundary-product-spec.md) | 隐私事件、opt-out 失效，或新能力无法定义可信的标准 envelope |
 
 ## Active Architecture Decisions
 

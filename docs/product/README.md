@@ -25,6 +25,7 @@
 - [Memory Control Center](./specs/pa-memory-control-center-product-spec.md)
 - [Memory Type Taxonomy](./specs/pa-memory-type-taxonomy-product-spec.md)
 - [Saved Insight and Insight Ledger](./specs/pa-saved-insight-ledger-product-spec.md)
+- [Insight Enhancement Layer](./specs/pa-insight-enhancement-layer-product-spec.md)
 
 ## Pagelet Delivery
 

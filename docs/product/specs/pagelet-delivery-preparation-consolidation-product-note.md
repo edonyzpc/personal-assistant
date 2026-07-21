@@ -1,8 +1,9 @@
 # Pagelet Delivery Preparation Consolidation Product Note
 
-Updated: 2026-07-19
+Updated: 2026-07-21
 Status: **Implemented Phase 6 base plus B-108/DEC-017/DEC-018/DEC-019/DEC-020
-runtime contract** — supporting product narrative for the Pagelet Bubble
+runtime contract; DEC-023 amends the current product contract while its B-118
+runtime reconciliation remains open** — supporting product narrative for the Pagelet Bubble
 Readiness & Recall runtime. The owning B-108 behavior authority is the
 [Scope Recap Product Spec](./pa-scope-recap-theme-summary-product-spec.md);
 automated/deploy, bounded unlocked desktop/iPhone 15 evidence, and provider-free
@@ -58,19 +59,19 @@ These are settled for the Bubble Readiness & Recall iteration:
 | Decision | Result |
 | --- | --- |
 | Bubble Recall display | Default to the one highest-quality card. Expose a 2-to-3-card single-visible stack only when every candidate independently passes the high-quality gate and remains distinct and source-backed; otherwise keep one card. |
-| Save as insight | Do not show in Bubble. It belongs in Panel/Tab detail because it is a durable insight decision. |
-| Link to current note | Keep in Bubble as a secondary action. It must validate the active card and active-note snapshot and show success/failure feedback. |
+| Quiet Recall actions | Bubble uses `View / Later / Dismiss`. View opens current evidence without rerunning provider-backed Recall; Later enters the existing Review Queue as explicit return intent; Dismiss is a weak exact-candidate signal only when RHP is enabled. Passive close/ignore stays neutral. |
+| Link / Save | Do not show in Bubble or Panel. They remain in Recall Detail Tab because they are durable decisions and retain their existing write/confirmation boundary. |
 | First-use guidance | Real Recall delivery takes priority. Onboarding annotates value moments as inline hints; it does not replace real delivery. |
 | Data Boundary explanation | Treat as a trust signal, not setup error. Show "PA will stay quiet" copy and only a weak settings-view action. |
 | Recap Delivery | May enter the design only as an already-prepared recap delivery. Bubble must not show a "PA can build a recap" CTA when no prepared recap exists. |
 | Prepared Recap artifact | Use a local derived cache with enough structured information for Panel/Tab detail. Do not auto-write Markdown and do not store full raw provider output. User confirmation is required to export/save a recap note. |
 | Recap scope and triggers | Default to current-context + time-range recap. Pagelet open, note save, and low-frequency idle preparation may prepare recap artifacts; do not default to daily/weekly whole-vault summaries. |
-| Prepared Scope Recap default | Distinct from generic review preload: after provider setup and affirmative first-run Data Boundary authorization, bounded Recap preparation is on by default and remains user-disableable. Its calls/cost are separately attributable. It must make fresh value immediately available without turning every note event into a provider call. See [DEC-017](../decisions/dec-017-default-background-recap-preparation.md). |
-| Prepared Scope Recap hint | After DEC-017 authorization, high-value Recap hints are on by default but require a new, fresh, concrete cross-note insight backed by at least two sources. Summary/coverage-only and repeated/suppressed artifacts stay silent; other hint kinds retain their existing defaults. See [DEC-018](../decisions/dec-018-quality-gated-scope-recap-hints.md). |
+| Prepared Scope Recap default | Distinct from generic review preload: after provider setup, with the capability enabled and sources allowed, bounded Recap preparation is on by default and remains user-disableable. The first actual standard Pagelet provider call shows one shared non-blocking notice and continues; broad/sensitive/costly/whole-vault or excluded-override runs still block before any call. If the first call is high risk, its complete blocking disclosure counts as first use only after affirmative Run and does not stack a second notice. Its calls/cost are separately attributable. It must make fresh value immediately available without turning every note event into a provider call. See [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) and [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md). |
+| Prepared Scope Recap hint | For an eligible bounded Recap path, high-value Recap hints are on by default but require a new, fresh, concrete cross-note insight backed by at least two sources. The shared first-use notice is not a hint-enable authorization gate. Summary/coverage-only and repeated/suppressed artifacts stay silent; other hint kinds retain their existing defaults. See [DEC-018](../decisions/dec-018-quality-gated-scope-recap-hints.md). |
 | Scope Recap failure fallback | Failed/empty/quality-rejected attempts create no ready delivery or nudge and do not overwrite a still-valid artifact. Explicit Recap open without a valid artifact immediately shows an explanation-only local scope overview plus Retry/View sources, never a rule-generated insight. See [DEC-019](../decisions/dec-019-honest-layered-recap-fallback.md). |
-| DeliveryCandidate persistence | `DeliveryCandidate` is a display/action contract, not one unified durable inbox. Recap may use local derived cache; Pattern may use short-term dedupe; Recall and Review should not add new long-term persistence by default. |
+| DeliveryCandidate persistence | `DeliveryCandidate` is a display/action contract, not one unified durable inbox. Recap may use local derived cache; Pattern may use short-term dedupe; Recall and Review do not add long-term persistence automatically. Quiet Recall `Later` is the explicit exception and enters the existing Review Queue. |
 | Review findings in Bubble | Generic review does not enter Bubble. Only source-backed, high-confidence review candidates with clear why-now and low-burden next action may appear, and they rank below Recall, Recap, and Pattern. |
-| Discover click behavior | Run a lightweight async search inside Bubble. AI-evaluated results may use Recall cards. When AI evaluation is unavailable or rejected, explicit Discover may still show a local match only as a clearly labeled `Local related clue` / `本地关联线索`, without AI why-now copy and never mixed with proactive Recall cards. Slow or complex results route to Panel. Results remain bound to the active-note snapshot at trigger time. |
+| Discover click behavior | Bubble remains the trigger and Discover results continue into Panel. AI-evaluated results may use the Recall evidence shape there; a local-only match is labeled `Local related clue` / `本地关联线索`, has no AI why-now, and never mixes into proactive Recall. Results remain bound to the active-note snapshot at trigger time. |
 | Small interaction defaults | Intentionally Quiet copy shows once then becomes minimal; progress numbers appear only for larger vaults; Pet state expansion is out of this round; Bubble must not show queue-like pending counts. |
 | Periodic Summary terminal state | Do not keep Periodic Summary as an independent long-term capability. Migrate its value into Recap time-range mode and directly remove old Periodic Summary / Generate Summary entrypoints in the migration; no legacy alias or redirect. |
 
@@ -116,7 +117,9 @@ lifecycle and persistence policy.
   is 3; larger sets route to Panel/Tab.
 - No autoplay. No prominent unresolved count. No queue pressure.
 - Every card action acts on the active card only.
-- Dismiss/Later creates no future debt.
+- Passive close/ignore creates no future debt. Dismiss affects only the exact
+  candidate through enabled RHP; Later intentionally creates one existing Review
+  Queue item.
 - Durable actions require explicit, clearly named user action and success or
   failure feedback.
 
@@ -173,8 +176,8 @@ The B-108 product choices are no longer open implementation questions:
 | Decision | Implemented contract |
 | --- | --- |
 | Prepared Recap storage | Local derived artifact, no Markdown auto-write, no raw provider output; source/currentness invalidation and clear controls apply. |
-| Recap preparation budget | Prepared Scope Recap becomes default-on only after affirmative first-run Data Boundary authorization; generic review preload remains a separate opt-in; Recap has its own persisted opt-out and 2/hour, 10/day actual-call bucket. |
-| Recap hint gate | High-value Recap hints are independently disableable and default on only after DEC-017 authorization; stable fingerprint, shown/dismiss/Later, quiet/focus, cooldown, and source-quality gates apply. Generic and Quiet Recall hints remain off by default. |
+| Recap preparation budget | Prepared Scope Recap is default-on after provider setup when the capability remains enabled and sources are allowed; the first actual standard Pagelet provider call uses the shared non-blocking notice from DEC-023, while a first high-risk call may satisfy the same transparency through its affirmative blocking disclosure without a duplicate notice. Generic review preload remains a separate opt-in; Recap has its own persisted opt-out and 2/hour, 10/day actual-call bucket. |
+| Recap hint gate | High-value Recap hints are independently disableable and default on for an eligible bounded Recap path; stable fingerprint, shown/dismiss/Later, quiet/focus, cooldown, and source-quality gates apply. Generic and Quiet Recall hints remain off by default. |
 | Recap failure state | Last valid artifact and last attempt status remain separate; explicit open without a valid artifact returns local scope orientation plus Retry/View sources, never a rule-generated insight. |
 | Quiet Recall evaluation | Each candidate is independently AI-evaluated within the DEC-020 limiter/cache boundary; local-only matches stay explicit-Discover clues and never become proactive Recall. |
 

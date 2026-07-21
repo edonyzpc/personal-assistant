@@ -2,9 +2,10 @@
 
 Decision ID: DEC-017
 Status: Accepted
-Updated: 2026-07-19
-Authority: 用户于 2026-07-18 在 Pagelet v2.9 正式验证后的逐项产品讨论中选择方案 C
+Updated: 2026-07-21
+Authority: 用户于 2026-07-18 选择方案 C；2026-07-21 选择方案 A，并由 DEC-023 修订首次 provider 通知方式
 Work item: B-108
+Scoped amendment: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 只替代本文原始 first-use blocking clause；默认有界后台准备及其余边界继续有效
 
 ## Context
 
@@ -34,9 +35,12 @@ Pagelet 打开、当前笔记活动或 idle 时准备 Recap，却不读取通用
 
 ## Decision
 
-选择 Option C：在 Pagelet 与 AI provider 已配置，并且用户通过 Data Boundary 的
-`run / adjust / cancel` 首次披露明确授权 provider-backed 后台笔记读取后，Scope
-Recap 的有界后台准备默认开启。被动 Notice 或仅仅配置 provider 不构成授权。
+选择 Option C：在 Pagelet 与 AI provider 已配置、Scope Recap preparation 开启，且
+来源通过 Data Boundary 后，Scope Recap 的有界后台准备默认运行。首次实际 Pagelet
+provider 调用按 [DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 显示一次共享、
+非阻断通知后继续；不再要求 Scope Recap 专属 Modal 或平行 first-use authorization。
+广范围、敏感、高成本、whole-vault 或 excluded-scope override 仍须在调用和成本预留前
+逐次提供 `run / adjust / cancel`。
 
 生效边界：
 
@@ -69,7 +73,8 @@ Recap 的有界后台准备默认开启。被动 Notice 或仅仅配置 provider
   `allowWrite=false`。
 - Compatibility / migration: 需要为既有通用 `preloadEnabled` 与独立 Recap
   scheduler 定义迁移；现有显式关闭偏好必须继续受到尊重，升级不能把用户已经
-  关闭的相关后台能力静默改回开启。
+  关闭的相关后台能力静默改回开启。保留既有 shared notice 与 Recap state，不重置
+  已通知用户，也不把 feature-specific authorization 当作新的权限来源。
 - Work created or removed: B-108 继续承接产品呈现、调用预算和正式
   验证；本次决定不授权 runtime 实现、commit、push 或 release。
 
@@ -83,6 +88,7 @@ Recap 的有界后台准备默认开启。被动 Notice 或仅仅配置 provider
 ## Traceability
 
 - Source signal: [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/idea-%E9%87%8D%E6%96%B0%E8%AF%84%E5%AE%A1-insight-%E5%A6%82%E4%BD%95%E8%A7%A3%E5%86%B3-obsidian-%E4%BD%BF%E7%94%A8%E7%97%9B%E7%82%B9)
+- First-use amendment: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
 - Product Spec: [PA Scope Recap And Theme Summary](../specs/pa-scope-recap-theme-summary-product-spec.md)
 - Follow-up decisions: [DEC-018](./dec-018-quality-gated-scope-recap-hints.md), [DEC-019](./dec-019-honest-layered-recap-fallback.md)
 - Product design: [Pagelet Product Design](../pagelet-product-design.md)

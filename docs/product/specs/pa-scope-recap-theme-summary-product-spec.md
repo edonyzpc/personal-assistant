@@ -1,7 +1,7 @@
 # PA Scope Recap And Theme Summary Product Spec
 
 Document status: Current
-Updated: 2026-07-19
+Updated: 2026-07-21
 Work item: B-108
 Decision: [DEC-017 — default bounded background preparation](../decisions/dec-017-default-background-recap-preparation.md)
 Authority: Scope Recap 及其 B-108 dogfood follow-up 的用户行为、Quiet Recall 支撑边界、范围、非目标与验收标准。
@@ -11,8 +11,8 @@ Authority: Scope Recap 及其 B-108 dogfood follow-up 的用户行为、Quiet Re
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Delivery status | B-108 shipped to BRAT `2.9.0-beta.2` with its recorded validation, but the 2026-07-19 B-118 audit confirmed current Recap Bubble first-screen and authorization-close drift. B-118 repair is Planned; stable release remains unshipped. |
-| Related decisions | [DEC-018 — quality-gated proactive hints](../decisions/dec-018-quality-gated-scope-recap-hints.md), [DEC-019 — honest layered failure fallback](../decisions/dec-019-honest-layered-recap-fallback.md), [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md) |
+| Delivery status | B-108 shipped to BRAT `2.9.0-beta.2` with its recorded validation. DEC-023 resolves the provider first-use product contract, but B-118 runtime reconciliation remains open for fresh-install preparation and shared actual-call notice coverage; final current-surface desktop/iPhone smoke and stable release remain pending. |
+| Related decisions | [DEC-018 — quality-gated proactive hints](../decisions/dec-018-quality-gated-scope-recap-hints.md), [DEC-019 — honest layered failure fallback](../decisions/dec-019-honest-layered-recap-fallback.md), [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md) |
 | Archived delivery package | [B-108 Pagelet dogfood follow-up](../../archive/2026/pagelet-b108-dogfood-followup/README.md) |
 | Feature family | Scope Recap / Theme Summary / Derived map |
 | Current B-108 surfaces | Pagelet Bubble, Pagelet Panel, Pagelet Tab |
@@ -31,8 +31,9 @@ provider-backed Review/Discover semantic smoke and the separate optional Scope
 Recap real-provider token smoke passed after explicit bounded data-transfer and
 cost authorization. These behaviors were shipped through the `2.9.0-beta.2`
 BRAT prerelease, not the stable Obsidian community channel. The newer
-[B-118 hardening contract](./pagelet-ui-ux-hardening-product-spec.md) records
-the current first-screen/authorization drift and required repair. Recap remains
+[B-118 hardening contract](./pagelet-ui-ux-hardening-product-spec.md) and tracker
+record the first-screen work, the open DEC-023 provider-boundary runtime
+reconciliation, and the remaining real current-surface smoke. Recap remains
 derived, not source truth.
 
 The product definition:
@@ -44,14 +45,15 @@ tensions, and prepare next review actions. They must not replace source notes,
 act as facts by themselves, or silently become Markdown.
 
 This document records the one-question-at-a-time product decisions initially
-confirmed on 2026-06-28 and the B-108 follow-up decisions through 2026-07-18.
+confirmed on 2026-06-28, the B-108 follow-up decisions, and the DEC-023
+first-use amendment confirmed through 2026-07-21.
 
 ## Confirmed Decisions
 
 | ID | Decision | Product consequence |
 | --- | --- | --- |
 | REC-D1 | Recap scope is user-selected, not Project-assumed. | Supported scopes include current note, selected notes, folder, tag, time range, query/search result, and future saved scope. |
-| REC-D2 | Generation is on-demand plus default-on, bounded background preparation for current/high-intent scopes after provider setup and affirmative first-run Data Boundary authorization. | PA prepares valuable Recap content before the user asks, while avoiding continuous whole-vault summarization and respecting an explicit user disable preference. |
+| REC-D2 | Generation is on-demand plus default-on, bounded background preparation for current/high-intent scopes after provider setup, with DEC-023 shared first-use notification and persistent capability opt-out. | PA prepares valuable Recap content before the user asks, while avoiding continuous whole-vault summarization and preserving broad/sensitive/costly confirmation. |
 | REC-D3 | Recap is stored as a local derived object; user confirmation is required for Markdown. | Summaries are reusable without polluting the vault. |
 | REC-D4 | Important claims/themes require sourceRefs, and the whole recap shows source coverage. | Recap remains readable while keeping core claims verifiable. |
 | REC-D5 | Output includes summary, themes, tensions, open questions, and next review actions. | Recap is review-oriented, not just a generic summary. |
@@ -158,11 +160,18 @@ This policy governs the prepared Scope Recap scheduler. It does not implicitly
 enable generic Pagelet review preload, even if both paths later share internal
 scheduling infrastructure.
 
-- B-108/REQ-01: After Pagelet and an AI provider are configured, the first
-  provider-backed background note read must show included/excluded scope,
-  provider, data-sending and cost disclosure with `run / adjust / cancel`.
-  Bounded Scope Recap background preparation becomes on by default only after
-  affirmative authorization; a passive Notice is insufficient.
+- B-108/REQ-01: After Pagelet and an AI provider are configured, bounded Scope
+  Recap background preparation is on by default unless the user has disabled it.
+  Before the first actual Pagelet provider call, PA shows the shared DEC-023
+  non-blocking notification with provider, data-sending, possible cost, and the
+  Settings opt-out; the eligible run then continues. Broad/sensitive/costly/
+  whole-vault/excluded-override runs still require blocking per-run
+  `run / adjust / cancel` before any provider call or cost reservation. If the
+  first actual Pagelet call is such a high-risk run, a complete blocking
+  disclosure counts as the shared first-use notice only after affirmative
+  `Run`, immediately before invocation; it does not stack another notice.
+  Cancel/close or an Adjust that has not reached an eligible run leaves the
+  shared flag unchanged.
 - B-108/REQ-02: A user who disables background preparation remains opted out
   across reload and upgrade; PA must not issue background Recap provider calls.
 - B-108/REQ-03: Background preparation requires a changed, current/high-intent
@@ -186,9 +195,9 @@ scheduling infrastructure.
 
 ### 3.4 Quality-Gated Proactive Return
 
-- B-108/REQ-08: High-value Scope Recap hints are on by default after the
-  DEC-017 affirmative background-read authorization and can be disabled without
-  disabling background preparation or click-to-view.
+- B-108/REQ-08: High-value Scope Recap hints are on by default when bounded
+  preparation is enabled under DEC-023 and can be disabled without disabling
+  background preparation or click-to-view.
 - B-108/REQ-09: A proactive Recap hint requires at least one actual structured
   insight with a concrete why-it-matters relationship and sourceRefs to at least
   two distinct notes. Scope summary, coverage, tags/counts, and ready-state copy
@@ -568,7 +577,7 @@ Suggested cases:
 | Low evidence | Low-evidence label appears |
 | Markdown write | Requires user confirmation and includes generatedAt/sourceRefs |
 | Retrieval influence | Recap weakly reranks but does not answer as fact |
-| Default background preparation | After affirmative first-run Data Boundary authorization and provider setup, a changed high-intent scope can prepare one budgeted derived artifact before the user opens Recap |
+| Default background preparation | After provider setup and the shared first-use notification, a changed high-intent scope can prepare one budgeted derived artifact before the user opens Recap; broad/sensitive/costly runs still stop for per-run confirmation |
 | Background preparation disabled | Reload and upgrade preserve the opt-out and issue zero background Recap provider calls |
 | Prepared artifact opened | Fresh source-backed insight renders immediately without waiting for another provider call |
 | Empty or failed preparation | No false-ready Recap delivery is created |
@@ -595,10 +604,12 @@ Deterministic checks:
 - stale status changes when sources change
 - recap cannot create Confirmed Memory directly
 - recap cannot write Markdown without user action
-- B-108/AC-01: default background preparation is active only after provider setup
-  and affirmative first-run Data Boundary authorization, remains bounded by
-  changed high-intent scope and budget, and respects a persisted disable
-  preference
+- B-108/AC-01: after provider setup, default background preparation shows the
+  shared first-use non-blocking notification before the first actual call,
+  remains bounded by changed high-intent scope and budget, and respects a
+  persisted disable preference; a first high-risk call may satisfy the shared
+  disclosure through its complete blocking prompt only after affirmative Run,
+  without a duplicate notice or Cancel/Adjust state mutation
 - B-108/AC-02: opening a fresh prepared Recap performs no duplicate provider call
   and displays at least one source-backed item immediately
 - B-108/AC-03: provider failure, empty insight output, stale evidence, or quality
@@ -608,9 +619,11 @@ Deterministic checks:
 - B-108/AC-05: generic review preload and prepared Scope Recap have unambiguous
   settings semantics; changing one does not silently violate the other's
   documented default or user opt-out
-- B-108/AC-06: first provider-backed background preparation cannot run before an
-  affirmative `run` choice, and Recap calls/cost are separately attributable
-  from generic preload even if they share runtime infrastructure
+- B-108/AC-06: standard bounded first provider-backed preparation shows the
+  shared notification and proceeds without a feature-specific authorization;
+  broad/sensitive/costly/whole-vault/excluded override still has zero provider
+  calls and zero cost reservation before affirmative `run`, and Recap calls/cost
+  remain separately attributable from generic preload
 - B-108/AC-07: a fresh structured insight with at least two distinct source notes
   and a concrete why-it-matters relationship emits exactly one restrained nudge
 - B-108/AC-08: summary-only, coverage-only, stale, failed, empty, low-value,
@@ -657,7 +670,7 @@ Deterministic checks:
 ## 17. Broader/Future Roadmap
 
 This roadmap records directions outside the implemented B-108 current-context
-contract. It is not execution status, does not reopen DEC-017 through DEC-020,
+contract. It is not execution status, does not reopen DEC-017 through DEC-023,
 and must not be used as a B-108 completion checklist.
 
 ### Future Phase 0: Broader Product Contract

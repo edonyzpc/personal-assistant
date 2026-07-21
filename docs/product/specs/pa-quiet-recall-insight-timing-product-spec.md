@@ -3,24 +3,24 @@
 > [!note] Current implementation includes the 2026-07-02 amendments: the
 > candidate pool spans the eligible vault and triggers are note open/switch,
 > save-after, and user-initiated shortcut. Current authority is this spec,
-> DEC-020, and the B-108 owning Scope Recap spec; Archive links below are
-> historical provenance only.
+> DEC-020, the B-108 owning Scope Recap spec, and the B-118/DEC-023 amendments;
+> Archive links below are historical provenance only.
 
-Updated: 2026-07-19
+Updated: 2026-07-21
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | DEC-020 evaluation/limiter/cache/provenance substrate is validated, but the 2026-07-19 B-118 audit confirmed user-reachability, action/feedback, first-use provider disclosure and settings drift. Treat Off/Quiet/Balanced UI and Not relevant delivery as Planned under B-118, not currently delivered. |
+| Status | DEC-020 evaluation/limiter/cache/provenance substrate is validated. B-118 fixes the current contract to Off/On plus View/Later/Dismiss; focused automation exists, while current-surface Settings/Recall validation and DEC-023 provider-first-use runtime reconciliation remain pending. |
 | Feature family | Quiet Recall / Just-in-time insight / Cognitive scaffolding |
 | Primary surfaces | Pagelet Bubble, Pagelet Panel, optional Review Queue handoff |
-| Current authority | This spec, [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), and the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md) |
+| Current authority | This spec, [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md), the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and the [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) |
 | Historical research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
 | Related current specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet doc | [Pagelet product design](../pagelet-product-design.md) |
-| Related decisions | [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md) |
+| Related decisions | [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021 — evidence-led Pagelet UI/UX hardening](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md) |
 | Product doctrine | [Low-Burden Review Product Principles](../pa-low-burden-review-product-principles.md) |
 
 This spec defines when and how PA proactively surfaces old notes, themes, and
@@ -34,27 +34,27 @@ Quiet Recall is PA's just-in-time cognitive scaffolding layer:
 > interruption.
 
 This document records the one-question-at-a-time product decisions initially
-confirmed on 2026-06-28 and the DEC-020/B-108 amendments through 2026-07-19.
+confirmed on 2026-06-28 and the DEC-020/B-108/B-118 amendments through 2026-07-21.
 [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md) and the
 [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) record current
-action, feedback, disclosure and settings drift. B-118 may repair evidence-backed
-defects, but new frequency, migration, authorization-reuse, feedback-retention or
-Later semantics require the explicit stop gates recorded there.
+action, feedback, disclosure and settings semantics. DEC-023 is the current
+provider first-use authority and does not grant write, Memory, or external-action
+permission.
 
 ## Confirmed Decisions
 
 | ID | Decision | Product consequence |
 | --- | --- | --- |
 | QR-D1 | When explicitly enabled, Quiet Recall uses Pagelet Bubble. | The feature defaults off; enabled Recall appears as low-frequency, high-signal Pagelet nudges, not editor inline interruptions or modals. |
-| QR-D2 | Enabled Recall triggers after explicit context changes. | Current triggers include note open/switch, save-after, and user-initiated review; weekly scan is broader/future. All automatic triggers require cooldown and frequency limits. |
+| QR-D2 | Enabled Recall triggers after explicit context changes. | Current triggers include note open/switch, save-after, and user-initiated review; weekly scan is broader/future. Automatic delivery remains gated by quality, quiet hours, Focus Mode, per-candidate-once suppression, cooldown, and provider-call budgets. |
 | QR-D3 | Recall content includes related notes, theme chains, and lightweight conflicts/counterexamples. | Recall surfaces clickable, verifiable lines of thought rather than black-box "AI insights." |
 | QR-D4 | Ranking defaults to mixed relevance, with a small remote-association bonus. | Rank by semantic relevance, recent activity, explicit links/tags, and confirmed memories/themes; allow at most a small "far association" candidate with explanation. |
 | QR-D5 | Bubble defaults to one visible item and may expose a 2-to-3-item stack only when every candidate independently passes the high quality gate and is distinct/source-backed. | The first glance stays calm; Pagelet Panel can expand to more evidence and candidates. |
 | QR-D6 | Recall does not write automatically. | Users can save a recall as a link, insight, or Memory Candidate; PA does not mutate notes or Memory by default. |
-| QR-D7 | Recall supports dismiss and `not relevant` feedback. | PA can learn lightweight negative signals without asking users to fill out reason forms. |
-| QR-D8 | Recall has simple frequency settings: Off / Quiet / Balanced, with Off as the default. | Users opt into proactive behavior without a complex rule engine; generic Pagelet hints stay off as well. |
-| QR-D9 | Bubble shows only a line and why-shown; evidence lives in Pagelet Panel. | Bubble remains a doorway; Panel provides source-backed verification. |
-| QR-D10 | Recall is not a queue item by default. | Closing, ignoring, or dismissing a recall cue creates no user debt; Review Queue is used only after user-chosen save, later, promotion, or action handoff. |
+| QR-D7 | Bubble uses one lightweight `Dismiss` action. | Dismiss closes the current candidate and, only when Retrieval Habit Profile is enabled, forms a weak signal for that exact candidate; passive close/ignore is neutral. |
+| QR-D8 | Quiet Recall has one Off/On setting, with Off as the default. | No display/context frequency tier or cap is exposed. Quiet Recall, generic hints, and Recap remain independently controlled. |
+| QR-D9 | Bubble shows only a line and why-shown; `View` navigates to or expands current evidence without rerunning the provider. | Recall detail lives in Tab; explicit Discover continues into Panel. |
+| QR-D10 | Recall is not a queue item by default. | Closing, ignoring, or dismissing creates no queue item. Only user-chosen `Later` expresses return intent and enters the existing Review Queue; Link/Save remain in Tab. |
 | QR-D11 | Each eligible Recall candidate receives an independent AI why-now evaluation. | Local ranking may nominate at most 5 candidates per round; each candidate fails independently, receives at most one language retry, and never falls back to a template proactive nudge. |
 
 ## 1. Product Decision
@@ -100,8 +100,9 @@ This promise includes a burden boundary:
 > Recall is allowed to be noticed and then disappear.
 
 PA should not create a Review Queue item merely because a recall candidate was
-generated. Queue handoff is reserved for explicit user intent, such as `Later`,
-`Save`, `Create Memory Candidate`, or a maintenance/action proposal.
+generated. In Bubble, only `Later` creates the existing Review Queue handoff as
+explicit return intent. Link/Save and other durable actions remain in Recall
+Detail Tab and keep their existing write/confirmation boundaries.
 
 ## 3. Trigger Model
 
@@ -131,31 +132,36 @@ Future SDDs may add more triggers, but each trigger must define:
 
 - user-visible purpose
 - cooldown
-- daily limit interaction
+- provider-call budget interaction
 - data boundary behavior
 - evidence requirements
 - off-switch behavior
 
-## 4. Frequency Settings
+## 4. Quiet Recall Setting And Quietness Gates
 
-Quiet Recall should expose simple frequency settings.
+Quiet Recall exposes one independent Off/On setting.
 
-| Setting | Behavior | Intended user |
-| --- | --- | --- |
-| Off (default) | No proactive Bubble hints; local matches may appear only after explicit Discover and under the labeling boundary below. | Users who do not want proactive behavior |
-| Quiet | Very low frequency; only strongest signals appear. | Users who are sensitive to interruption |
-| Balanced | Opt-in bounded daily and per-context nudges. | Users who want useful recall without noise |
+| Setting | Behavior |
+| --- | --- |
+| Off (default) | No proactive Quiet Recall delivery. Explicit Discover remains available and routes to Panel. |
+| On | A candidate may surface only after the existing quality, quiet-hours, Focus Mode, per-candidate-once, cooldown, and provider-call gates pass. |
 
-Call limits are fixed by the B-108 owning contract; display-frequency tuning
-must stay within these product principles:
+Migration is fail-closed: legacy `bubbleNudgesEnabled=true` maps to On; false,
+missing, or any other legacy value maps to Off. Quiet Recall does not inherit or
+change generic proactive hints or Scope Recap preparation/hints.
+
+There is no separate display/context frequency tier or cap. Quietness remains a
+consequence of these product gates:
 
 - never show repeated nudges for the same note in a short window
 - default to one visible Bubble item; expose a 2-to-3-item stack only when all
   candidates independently pass the high quality gate and remain distinct
-- never use a modal
-- never block editing
+- standard bounded first use follows DEC-023's shared non-blocking notice; only
+  its high-risk paths may require per-use confirmation before call/cost
+- standard proactive delivery never blocks editing
 - allow immediate dismiss
-- respect quiet hours if Pagelet has them
+- respect quiet hours and Focus Mode
+- show each candidate proactively at most once
 
 ### 4.1 Independent Evaluation And Call Boundary
 
@@ -235,7 +241,7 @@ Default ranking signals:
 - user-confirmed memories
 - user-confirmed themes
 - prior accepted recall suggestions
-- negative feedback from dismiss / not relevant
+- candidate-specific weak Dismiss feedback, only when Retrieval Habit Profile is enabled
 
 ### 6.1 Semantic Relevance Is Candidate Generation
 
@@ -260,7 +266,8 @@ Rules:
   default
 - label it clearly, for example `A farther connection`
 - explain why it appears
-- demote it quickly after `not relevant`
+- when explicitly dismissed, apply only the enabled-RHP weak signal for that
+  exact candidate
 
 This preserves the creative value of surprising connections without letting
 surprise dominate the product.
@@ -279,7 +286,7 @@ Bubble should show:
 - each item as one short line
 - one `why-shown` sentence or compact label
 - source count when useful
-- actions: `View`, `Dismiss`, `Not relevant`, optionally `Later`
+- actions: `View`, `Later`, `Dismiss`
 
 These rules describe AI-evaluated Recall. Explicit Discover may instead show a
 local related clue when evaluation is unavailable or rejected. That clue must
@@ -309,11 +316,13 @@ Bubble should not show:
 - automatic write actions
 - batch review controls
 
-## 8. Pagelet Panel Contract
+## 8. Pagelet Panel And Recall Detail Tab Contract
 
-Pagelet Panel is the evidence and action surface.
+`View` opens or expands the current candidates in Recall Detail Tab and does not
+rerun provider-backed Recall (`provider rerun = 0`). Explicit Discover continues
+to route into Panel. Panel and Tab are evidence surfaces; Link/Save are Tab-only.
 
-When the user opens a recall item, Panel should show:
+The applicable detail surface should show:
 
 - related source notes
 - source excerpts
@@ -322,26 +331,24 @@ When the user opens a recall item, Panel should show:
 - theme chain when relevant
 - counterexample or tension when relevant
 - local graph context when useful and bounded
-- actions to save, dismiss, or mark not relevant
+- actions appropriate to that surface
 
-### 8.1 Panel Actions
+### 8.1 Actions By Surface
 
 Allowed actions:
 
-| Action | Result |
-| --- | --- |
-| Open source | Opens source note |
-| Save as link suggestion | Creates a link proposal or accepted link action, depending on write policy |
-| Save as insight | Creates a source-backed insight card or review note |
-| Create Memory Candidate | Sends a source-backed candidate to Trust Layer |
-| Dismiss | Removes this recall item |
-| Not relevant | Records negative feedback and dismisses |
-| Later | Snoozes the item and may create a Review Queue handoff |
+| Surface | Action | Result |
+| --- | --- | --- |
+| Bubble | View | Navigates to/expands current candidates in Tab; provider rerun is 0 |
+| Bubble | Later | Creates one item in the existing Review Queue as explicit return intent |
+| Bubble | Dismiss | Closes this candidate; optional RHP signal is weak and candidate-specific |
+| Panel / Tab | Open source | Opens source note |
+| Tab only | Link / Save / Create Memory Candidate | Uses the existing source-backed durable-action and write-confirmation contract |
 
 Any action that writes to source notes must follow the relevant write boundary
 and review policy.
 
-Panel actions are optional. Opening evidence does not require the user to save,
+Detail actions are optional. Opening evidence does not require the user to save,
 accept, or classify the recall item.
 
 ## 9. No Automatic Writes
@@ -381,25 +388,28 @@ Quiet Recall needs lightweight feedback.
 `Dismiss` means:
 
 - hide this item
-- do not treat it as a strong negative signal
-- allow similar items later if they are strong enough
+- only when Retrieval Habit Profile is enabled, record a weak signal for this
+  exact candidate/sourceRefs
+- do not downrank similar sources, topics, or candidates
+- when Retrieval Habit Profile is off, write no feedback and affect no ranking
 
-### 10.2 Not Relevant
+### 10.2 Passive Close Or Ignore
 
-`Not relevant` means:
+Closing with X/Escape/outside click, or simply ignoring the card, is neutral:
 
-- hide this item
-- reduce similar future suggestions
-- lower the weight of similar source, topic, trigger, or remote-association
-  pattern
-- do not ask the user for a reason
+- no feedback
+- no Review Queue item
+- no dismiss state
 
-Do not make users choose among many reason categories in v1. A single
-negative-signal action is enough.
+### 10.3 Later
 
-### 10.3 Accepted Or Saved
+`Later` closes the Bubble and creates one item in the existing Review Queue. It
+is explicit return intent, not a fixed snooze and not an automatic queue item.
 
-Accepted or saved recall should increase confidence for:
+### 10.4 Accepted Or Saved
+
+When RHP is explicitly enabled, accepted or saved recall may increase confidence
+for:
 
 - similar explicit structures
 - similar themes
@@ -468,7 +478,7 @@ Examples:
 - PA quietly finds related older notes
 - Bubble shows one recall cue later, with a stack only when multiple candidates
   independently clear the same high quality bar
-- Panel lets user save an insight, link, or Memory Candidate
+- Recall Detail Tab lets the user save an insight, link, or Memory Candidate
 
 Important boundary:
 
@@ -502,9 +512,12 @@ Required behavior:
 - Off setting disables proactive recall
 - excluded folders/tags are not used unless explicitly overridden
 - generated notes are excluded by default according to Data Boundary policy
-- provider disclosure applies if recall generation sends note content to an AI
-  provider
-- broad or sensitive recall should disclose included/skipped scopes
+- DEC-023's shared non-blocking notice appears only before the first actual
+  standard-bounded Pagelet provider call; no-call/local-only paths do not consume it
+- broad/sensitive/costly/whole-vault runs and excluded-scope overrides keep
+  per-use confirmation before provider call or cost reservation
+- provider trust does not grant Memory admission, vault write, Markdown, or
+  external-action permission
 - feedback data remains local unless a future sync/export feature explicitly
   says otherwise
 
@@ -532,8 +545,8 @@ Suggested recall item fields:
 | `whyShown` | Compact human-readable reason |
 | `rankingSignals` | Mixed ranking signal summary |
 | `isRemoteAssociation` | Whether this is the small surprise candidate |
-| `status` | suggested, viewed, dismissed, not_relevant, snoozed, saved |
-| `frequencyPolicy` | Off, Quiet, Balanced snapshot |
+| `status` | suggested, viewed, dismissed, later_queued, saved |
+| `quietRecallMode` | Off or On snapshot |
 | `dataBoundarySnapshot` | Policy used when generated |
 | `createdAt` | Creation time |
 | `expiresAt` | Optional expiry to prevent stale hints |
@@ -544,7 +557,7 @@ Suggested feedback fields:
 | Field | Meaning |
 | --- | --- |
 | `recallItemId` | Recall item being rated |
-| `action` | dismiss, not_relevant, saved, opened_source |
+| `action` | dismiss, later, saved, opened_source |
 | `sourceRefIds` | Sources affected by feedback |
 | `trigger` | Trigger context |
 | `createdAt` | Feedback timestamp |
@@ -562,8 +575,9 @@ Suggested cases:
 | Theme chain | Panel shows source-backed chain, not unsupported conclusion |
 | Counterexample | Panel identifies a source-backed tension |
 | Remote association | At most one appears and is labeled as farther connection |
-| Not relevant feedback | Similar future cue is downranked |
+| Dismiss feedback | With RHP on, only the exact candidate receives a weak signal; with RHP off, feedback/ranking effects are zero |
 | Off setting | No proactive Bubble hint appears |
+| On setting | Delivery still requires quality, quiet-hours, Focus Mode, per-candidate-once, cooldown, and provider-call gates |
 | Excluded folder | Excluded note is not used |
 | Quick Capture trigger | Recall happens after save, not before raw capture is stored |
 | Five eligible candidates | Each candidate is evaluated independently; one failure does not cancel completed siblings |
@@ -576,7 +590,14 @@ Deterministic checks:
 - recall items include sourceRefs
 - Bubble includes why-shown but not full evidence
 - Panel includes evidence
-- closing or ignoring a Bubble item does not create Review Queue debt
+- View uses current candidates and adds zero provider calls
+- Later creates one existing Review Queue item as explicit return intent
+- Dismiss closes only the exact candidate; RHP off means zero feedback/ranking effect
+- passive close or ignore creates no feedback, dismiss state, or Review Queue item
+- legacy true maps to On; false, missing, and other values map to Off
+- Quiet Recall, generic hints, and Recap settings remain independent
+- explicit Discover continues into Panel; B-118 does not redesign the ordinary
+  quiet Bubble empty state
 - no vault writes occur without user action
 - no Confirmed Memory is created by recall alone
 - an evaluation round makes at most 5 initial calls and 5 language retries
@@ -616,7 +637,8 @@ directions and are not B-108 completion claims.
 ### Delivered Phase 2: Bubble Recall Nudges
 
 - Add note-open and Quick Capture saved triggers.
-- Add cooldown and frequency settings.
+- Add the default-Off Off/On setting; noise remains controlled by product gates,
+  not display/context frequency tiers.
 - Enforce DEC-020 independent evaluation, actual-call accounting, finite
   hour/day guards, and no-template fallback.
 - Show one Bubble item by default; expose a 2-to-3-item stack only when every
@@ -628,7 +650,7 @@ directions and are not B-108 completion claims.
 - Add theme chains.
 - Add counterexample/tension items.
 - Add small remote-association bonus candidate.
-- Add `not relevant` feedback downranking.
+- Add candidate-specific weak Dismiss feedback when RHP is enabled.
 
 ### Broader/Future Phase 4: Weekly Recall
 
@@ -646,13 +668,10 @@ directions and are not B-108 completion claims.
 ## 19. Broader/Future Questions
 
 These questions do not reopen the implemented B-108 defaults, triggers,
-evaluation boundary, Discover-only labeling, or relationship with generic
-proactive hints:
+evaluation boundary, Discover-only labeling, the B-118 Off/On and action
+semantics, or the independence from generic proactive hints and Recap:
 
-- What should the exact user-facing label be: `Recall`, `Related`, `Connections`,
-  or a quieter Pagelet-native phrase?
 - How long should a recall item remain eligible before expiring?
-- Should `not relevant` downrank by note, theme, trigger, or all three?
 - Should saved insight artifacts be Markdown notes, local records, or both?
 
 ## 20. Summary
@@ -672,8 +691,10 @@ The durable contract:
   every candidate independently passes the high quality gate
 - Panel shows evidence and actions
 - no automatic writes
-- dismiss and not-relevant feedback improve future recall
-- Off by default, with opt-in Quiet / Balanced modes, gives users control
+- Bubble actions are View / Later / Dismiss; View reruns no provider, Later enters
+  the existing Review Queue, and Dismiss is candidate-specific and weak only when RHP is on
+- passive close/ignore is neutral; Link/Save remain Tab-only
+- Off by default, with one opt-in On mode independent from generic hints and Recap
 
 This lets PA help users rediscover their own thinking without interrupting the
 act of thinking.

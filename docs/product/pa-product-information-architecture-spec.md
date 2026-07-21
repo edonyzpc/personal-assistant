@@ -1,6 +1,6 @@
 # PA Product Information Architecture Spec
 
-Updated: 2026-07-11
+Updated: 2026-07-21
 
 ## Status
 
@@ -359,11 +359,23 @@ Examples:
 
 ### 4.2 Bubble Routes Deeper
 
-Bubble actions should be small:
+Bubble actions should be small and follow the owning delivery contract. For
+Quiet Recall:
 
-- `View` opens the exact Pagelet Panel/Tab item.
-- `Dismiss` dismisses the nudge, not necessarily the underlying queue item.
-- `Later` snoozes the nudge.
+- `View` opens or expands the current candidate in Recall Detail Tab and adds
+  zero provider reruns.
+- `Later` closes the Bubble and creates one item in the existing Review Queue as
+  explicit return intent. It is not a fixed snooze and does not create a
+  parallel queue model.
+- `Dismiss` closes only the exact candidate. Only an enabled Retrieval Habit
+  Profile may record a weak candidate-specific signal; when it is off,
+  collection, writes, and ranking influence are all zero.
+- Passive close or ignore is neutral. `Link` / `Save` remain in Recall Detail
+  Tab.
+
+Other queue item types may retain a generic `Snoozed` transition when their own
+contract explicitly allows it; that transition does not redefine Quiet Recall
+`Later`.
 
 The Bubble should avoid destructive or durable actions. It may support low-risk
 acknowledgements only when the underlying queue item remains inspectable later.
@@ -569,7 +581,8 @@ MVP should not include:
 ### Phase 4: Bubble Digest
 
 - Show only top 1 to 3 nudges.
-- Add `View`, `Dismiss`, and `Later`.
+- For Quiet Recall, use `View`, `Later`, and `Dismiss` with the exact semantics
+  in section 4.2; do not add `Link` / `Save` to Bubble.
 - Route deeper review to Panel/Tab.
 - Avoid durable or destructive actions from Bubble.
 

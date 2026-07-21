@@ -6,12 +6,12 @@
 | --- | --- |
 | Document type | Product specification |
 | Scope | Pagelet Bubble empty-state redesign, Recall/Discover unification, readiness transparency, DeliveryCandidate contract |
-| Status | Phase 6/B-108 substrate has its recorded validation, but the 2026-07-19 B-118 audit confirmed current hold-menu action, Recap first-screen and Recall action/feedback drift. B-118 repair is Planned and prior evidence must not be reused as a current all-surface PASS. |
-| Updated | 2026-07-19 |
+| Status | Phase 6/B-108 substrate has its recorded validation. Most B-118 repair slices have automation evidence, but DEC-023 provider-first-use runtime reconciliation and final current-surface desktop/iPhone smoke remain pending; prior evidence must not be reused as a current all-surface PASS. |
+| Updated | 2026-07-21 |
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
 | Design philosophy | 安静且可信 |
-| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md) |
+| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md) |
 | Historical provenance (non-authoritative) | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
@@ -62,7 +62,7 @@ setup — and they are left facing a feature menu instead of a recall doorway.
 ## 2. Product Principles
 
 Based on the current [PA North Star](../pa-product-north-star.md), the B-108
-owning Product Spec, and DEC-017 through DEC-020:
+owning Product Spec, and DEC-017 through DEC-023:
 
 1. **Bubble is PA's Delivery Surface, not a control panel or feature menu.**
    The Bubble exists to present PA-prepared findings. It should not read like a
@@ -121,7 +121,7 @@ state.
 
 | State | Trigger | Content |
 | --- | --- | --- |
-| Recall Delivery | Enabled Quiet Recall or explicit Discover produced an independently AI-evaluated high-quality result | Result card + AI why now + actions |
+| Recall Delivery | Quiet Recall is On and produced an independently AI-evaluated high-quality result | Result card + AI why now + actions |
 | Recap Delivery | A fresh prepared Scope Recap exists for the current scope | Recap card + source coverage + route to details |
 | Pattern Delivery | Cross-note pattern detection found valuable pattern | Pattern description + sources + actions |
 | Review Delivery | Background preparation completed source-backed observations for the current note/scope | Observation result + route to details |
@@ -134,7 +134,7 @@ state.
 | Needs Setup | Memory not prepared | Explain + [Prepare Memory] + [Review this note] as fallback |
 | Preparing | Memory preparation in progress | Progress indication + optional count |
 | Ready, Nothing Found | Everything ready, no high-confidence results | Quiet empty + [Find related old notes] |
-| Intentionally Quiet | User disabled generic proactive hints and no prepared delivery is available | Minimal empty, no repeated explanation |
+| Intentionally Quiet | Generic proactive hints and Quiet Recall are both off and no prepared delivery is available | Minimal empty, no repeated explanation |
 | Context Limited | Current note too short / Data Boundary exclusion | Brief reason + alternative action |
 | Recap Needs Retry | User explicitly opened Recap, but no valid artifact exists after an unavailable/failed/empty/quality-rejected attempt | Honest status + local scope orientation + [Retry] + [View sources] |
 
@@ -207,10 +207,18 @@ Recall and Discovery are one unified product line with two trigger modes:
 
 | Mode | Trigger | Entry |
 | --- | --- | --- |
-| User-initiated (Discover) | User clicks "Find related old notes" in empty state, or uses command palette `PA: Discover connections` | Explicit user action |
-| PA-initiated (Quiet Recall) | Triggered by note open/switch only after the user enables Quiet Recall/generic proactive hints; both default off | Background, automatic |
+| User-initiated (Discover) | User clicks "Find related old notes" in empty state, or uses command palette `PA: Discover connections` | Explicit user action; results continue into Panel |
+| PA-initiated (Quiet Recall) | Triggered by note open/switch only when Quiet Recall is On | Background, automatic |
 
-An independently AI-evaluated Discover result may share the Recall card format.
+The user-facing name remains `Quiet Recall` in English and is “相关回顾” in
+Chinese. Its setting is Off/On, defaults Off, and has no display/context
+frequency tier or cap. Legacy true maps to On; false, missing, and other values
+map to Off. Quality gate, quiet hours, Focus Mode, and per-candidate-once keep it
+quiet. Quiet Recall, generic proactive hints, and Recap are independently
+controlled.
+
+An independently AI-evaluated Discover result may share the Recall card format
+in Panel.
 A local-only match is different: explicit Discover may show it as a clearly
 labeled `Local related clue` / `本地关联线索`, but it has no AI why-now, never
 uses proactive Recall styling, never mixes into a proactive Recall stack, and
@@ -248,10 +256,10 @@ This means Recall may return zero results even when VSS finds candidates. This
 is correct behavior — silence is preferable to unconvincing recommendations
 (Principle 8).
 
-Explicit Discover has one provenance-safe exception: it may show a local match
-as `Local related clue` / `本地关联线索`, with source/title and a verifiable local
-relation signal only. It must omit AI why-now copy and must not be presented as
-Recall Delivery.
+Explicit Discover has one provenance-safe exception: Panel may show a local
+match as `Local related clue` / `本地关联线索`, with source/title and a verifiable
+local relation signal only. It must omit AI why-now copy and must not be
+presented as Recall Delivery.
 
 ### 4.4 Result Card Structure
 
@@ -262,7 +270,7 @@ Recall Delivery.
 │  reasoning from LLM]               │
 │ "[Source excerpt from old note]"    │
 │                                     │
-│ [Open] [Link to current] [Later]    │
+│ [View] [Later] [Dismiss]            │
 └─────────────────────────────────────┘
 ```
 
@@ -276,7 +284,7 @@ Your current note discusses a transaction timeout issue.
 You explored a similar trade-off 3 months ago:
 "Decided on saga pattern, but worried about compensation complexity..."
 
-[Open] [Link to current note] [Later]
+[View] [Later] [Dismiss]
 ```
 
 **中文：**
@@ -287,12 +295,13 @@ You explored a similar trade-off 3 months ago:
 3 个月前你做过类似的权衡：
 "当时决定用 saga 模式，但担心补偿逻辑的复杂度..."
 
-[打开] [链接到当前笔记] [稍后]
+[查看] [稍后] [忽略这次]
 ```
 
 Card layout rules:
 
-- Title line: note title with 📄 icon prefix. Clickable — opens the note.
+- Title line: note title with 📄 icon prefix. Source navigation remains in the
+  detail surface.
 - Why now: one sentence from L3. Must be specific to the current context.
 - Source excerpt: one quoted excerpt from the old note (L2). Maximum 2 lines.
 - Actions: horizontally laid out below the excerpt.
@@ -305,20 +314,22 @@ line.
 
 | Action | Effect | Durable? | Success feedback |
 | --- | --- | --- | --- |
-| Open | Navigate to the old note | No (no debt created) | Note opens in editor |
-| Link to current note | Write `pa-related` frontmatter link | Yes (needs success feedback) | Brief toast: "Linked ✓" / "已链接 ✓" |
-| Later / Dismiss | Close the card | No (no debt created) | Card closes |
+| View | Navigate to or expand the current candidate in Recall Detail Tab; provider rerun = 0 | No | Detail opens with existing candidates |
+| Later | Close the card and create one existing Review Queue item as explicit return intent | Yes, user-requested return state | Card closes; queue handoff succeeds |
+| Dismiss | Close this exact candidate; only enabled RHP may record a weak candidate-specific signal | No queue/write action | Card closes |
 
 Durable boundary:
 
-- **Opening or dismissing creates no debt.** The user can read, close, or
-  ignore any Recall card without creating pending items, queues, or future
-  notifications about the same result.
-- **Linking writes `pa-related`** frontmatter and needs a clear success state.
-  This is a vault mutation and follows the Write Action Framework (D025, D030).
-- **Saving as insight does not appear in Bubble in this iteration.** It belongs
-  in Panel/Tab detail where sourceRefs, why-now, and the durable consequence can
-  be shown clearly.
+- **View is navigation/expansion only.** It uses current candidates and never
+  hides a provider-backed Recall rerun.
+- **Later is the sole Bubble queue handoff.** It expresses explicit return intent
+  and enters the existing Review Queue; generated, viewed, closed, ignored, or
+  dismissed candidates do not enter automatically.
+- **Dismiss is lightweight.** It affects only the exact candidate, forms a weak
+  signal only when RHP is enabled, and has zero feedback/ranking effect when RHP
+  is off. Passive close/ignore is not feedback.
+- **Link/Save do not appear in Bubble or Panel.** They remain in Recall Detail
+  Tab and keep the existing Write Action Framework confirmation boundary.
 
 ### 4.6 Relation Types (for LLM guidance)
 
@@ -440,12 +451,14 @@ PA 只在你打开时才会查找。
 ```
 
 Notes:
-- Shown when default-off generic/Quiet Recall proactive hints are disabled and
+- Shown when default-off generic proactive hints and Quiet Recall are both off and
   the user opens Bubble manually, unless a prepared Recap or other eligible
   delivery is available.
 - If the user has already seen and acknowledged this state, do not re-explain.
   Show minimal empty (just the action button, no explanation text).
 - "Find related old notes" triggers user-initiated Discover.
+- B-118 keeps this ordinary quiet empty state and copy unchanged; any redesign
+  remains deferred.
 
 ### State: Recap Needs Retry
 
@@ -544,7 +557,7 @@ Notes:
 
 | State | Primary Action | Secondary Actions |
 | --- | --- | --- |
-| Recall Delivery | Open source note | Link to current / Later |
+| Recall Delivery | View | Later / Dismiss |
 | Recap Delivery | View recap | Later |
 | Pattern Delivery | View pattern details | Dismiss / Later |
 | Review Delivery | View details | Dismiss |
@@ -567,7 +580,9 @@ Notes:
 - No state shows more than three total action buttons.
 - Actions must be valid for the current state. Do not show "Prepare Memory" in
   Ready, Nothing Found. Do not show "Find related old notes" in Needs Setup.
-- Dismiss/Later always closes the Bubble without creating any debt.
+- View only navigates/expands current candidates and adds zero provider calls.
+- Dismiss closes the exact candidate; passive close/ignore is neutral.
+- Later closes the Bubble and intentionally creates one existing Review Queue item.
 
 ### DeliveryCandidate Persistence Rules
 
@@ -576,13 +591,14 @@ is not a single durable inbox of PA suggestions.
 
 | Candidate kind | Persistence default | Product reason |
 | --- | --- | --- |
-| Recall | Reuse existing Quiet Recall state / in-memory delivery | Recall can be recomputed; storing it as a queue creates debt. |
+| Recall | Reuse existing Quiet Recall state / in-memory delivery; create a queue item only after explicit Later | Recall can be recomputed; automatic queue storage creates debt. |
 | Recap | Local derived cache | Bubble can claim "prepared" only when a structured artifact already exists. |
 | Pattern | Short-term dedupe only | Prevent repeated nudges without creating a long-term review queue. |
 | Review | In-memory / existing preload cache | Generic review findings should not become a durable task list. |
 
-Dismiss/Later may affect short-term display and ranking, but must not create an
-unresolved item count or a user-visible backlog.
+Dismiss may affect only the exact candidate through enabled RHP and never creates
+a queue item. Later is the explicit exception: it creates one existing Review
+Queue item as return intent, not an automatic unresolved item.
 
 ### Review Candidate Eligibility
 
@@ -604,18 +620,16 @@ default Bubble identity.
 When the user clicks "Find related old notes":
 
 1. Capture the active-note snapshot.
-2. Start a lightweight async Discover/Recall search inside Bubble.
-3. If fast independently AI-evaluated results are available, show the best one
-   by default; expose a 2-to-3-card stack only when every candidate independently
-   passes and remains distinct and source-backed.
+2. Open/update Panel and start the bounded Discover search there.
+3. If independently AI-evaluated results are available, show them in Panel with
+   source-backed why-now detail.
 4. If AI evaluation is unavailable or rejected but a source-backed local match
-   exists, explicit Discover may show it only as a labeled local related clue,
-   without AI why-now and without mixing it with Recall cards.
-5. If results are slow or complex, route to Panel/Tab instead.
-6. Drop or mark stale any result whose active-note snapshot no longer matches.
+   exists, Panel may show it only as a labeled local related clue, without AI
+   why-now and without mixing it with proactive Recall cards.
+5. Drop or mark stale any result whose active-note snapshot no longer matches.
 
-Bubble must not block indefinitely, show weak long lists, or deliver results to
-the wrong current note.
+Bubble must not become a second Discover result surface, block indefinitely,
+show weak long lists, or deliver results to the wrong current note.
 
 ---
 
@@ -748,10 +762,10 @@ This iteration does NOT include:
 | --- | --- | --- | --- |
 | OD-1 | Pet visual states for Presence | Resolved for this round: no Pet state expansion | Keep only necessary existing state mapping; Pet redesign is not blocking Bubble work. |
 | OD-2 | Bubble card stack | Resolved: single-visible-card stack, max 3 cards | Default one; enable card switching only for multiple high-quality distinct candidates. |
-| OD-3 | "Intentionally Quiet" acknowledgment | Resolved: show once, then minimal | Persist acknowledgment so repeated Bubble opens do not over-explain quiet mode. |
+| OD-3 | "Intentionally Quiet" acknowledgment | Resolved: show once, then minimal | B-118 keeps the current ordinary quiet empty state; redesign remains deferred. |
 | OD-4 | Preparing state: show progress numbers? | Resolved: show numbers only for larger vaults | Use a threshold such as 20+ notes. Small vaults show simple preparing copy. |
 | OD-5 | Bridge hint content for first Recall | Resolved: real delivery first; bridge as inline hint | Onboarding annotates value moments, not replaces them. |
-| OD-6 | Discover trigger from empty state | Resolved: Bubble async first, Panel fallback | Fast high-quality results stay in Bubble. Slow, weak, or complex results route to Panel. Results must be active-note snapshot-bound. |
+| OD-6 | Discover trigger from empty state | Resolved: keep routing results into Panel | Bubble is only the trigger; results remain active-note-snapshot-bound in Panel. |
 | OD-7 | Periodic Summary terminal migration | Resolved: migrate standalone Periodic Summary into Recap time-range mode | Phase 6 directly removes old Periodic Summary / Generate Summary entrypoints; no alias/redirect. |
 | OD-8 | Recap Delivery runtime timing | Resolved product direction: implement prepared Recap as local derived cache | Phase 6 implements local prepared Recap Delivery scoped to the active note snapshot; future durable cache work requires a separate storage and staleness design. |
 
@@ -766,7 +780,7 @@ This iteration does NOT include:
 | 1 | Install + open Bubble | Should see **Needs Setup** state with "Prepare Memory" + "Review this note" fallback. NOT three feature buttons. |
 | 2 | After Prepare Memory starts | Should see **Preparing** state with progress. |
 | 3 | After Prepare Memory completes, open note | Should see **Ready, Nothing Found** with "Find related old notes". |
-| 4 | Click "Find related old notes" | Should trigger Discover and show an L3 result card when AI evaluation passes; otherwise it may show a clearly labeled local related clue with no AI why-now, or stay in Ready, Nothing Found. |
+| 4 | Click "Find related old notes" | Should open/update Panel and show an L3 result when AI evaluation passes; otherwise Panel may show a clearly labeled local related clue with no AI why-now. Bubble does not become the result surface. |
 
 ### Returning user scenarios
 
@@ -774,7 +788,7 @@ This iteration does NOT include:
 | --- | --- | --- |
 | 5 | Open note with Quiet Recall enabled, high-confidence match exists | Should see **Recall Delivery** with why-now card. NOT empty state. |
 | 6 | Open note, no match | Should see **Ready, Nothing Found**. NOT feature menu. |
-| 7 | Generic proactive hints off, no prepared Recap, open Bubble | Should see **Intentionally Quiet**. NOT "No new findings yet" with three buttons. A fresh prepared Recap still takes delivery priority and opens immediately even when its proactive hint is disabled. |
+| 7 | Generic proactive hints off and Quiet Recall Off, no prepared Recap, open Bubble | Should see the existing **Intentionally Quiet** state. A fresh prepared Recap still takes delivery priority because the three controls are independent. |
 | 8 | Note is 2 lines long | Should see **Context Limited** (note too short). NOT generic empty. |
 | 9 | Note excluded by Data Boundary | Should see **Context Limited** (boundary variant). |
 
@@ -784,7 +798,7 @@ This iteration does NOT include:
 | --- | --- | --- |
 | 10 | Memory preparing + Recall has partial results | Should show **Recall Delivery** (A beats B) with inline hint "PA is still learning your notes." |
 | 11 | Bridge hint + Recall result both available | Should show **Recall Delivery** with a subtle inline bridge hint. |
-| 12 | User dismisses Recall card | No debt created. Next Bubble open starts fresh. |
+| 12 | User dismisses Recall card | Exact candidate closes; no queue item is created. RHP off means zero feedback/ranking effect; enabled RHP receives only a weak exact-candidate signal. |
 | 13 | Fresh prepared recap exists for current scope | Manual Pet/Bubble open shows **Recap Delivery** immediately, regardless of whether its proactive nudge is enabled. The stricter DEC-018 quality gate controls interruption, not click-to-view availability. No prepared recap means no recap CTA. |
 | 14 | Background Recap attempt fails but prior artifact still matches the current source snapshot | Manual open shows the prior **Recap Delivery** immediately; failure is diagnostic state and does not erase valid value. |
 | 15 | User explicitly opens Recap after failure/empty/quality rejection with no valid artifact | Shows **Recap Needs Retry** immediately with real local scope/source orientation and no provider call. |
@@ -797,9 +811,11 @@ This iteration does NOT include:
 | 17 | Generate Summary button must NOT appear in any B-type empty state | No B-type state includes "Generate summary" as an action. |
 | 18 | Review Current Note must NOT appear as primary action in Ready, Nothing Found | "Review current note" only appears as fallback in Needs Setup. |
 | 19 | No state should display VSS, RAG, OPFS, embedding, vector, backend, queue, schema, or provider error codes | All user-facing copy uses product language only. |
-| 20 | Ignoring any Bubble content must create zero future debt | Dismissing, closing, or ignoring any Bubble state produces no pending items, queues, badges, or re-notifications about the same content. |
+| 20 | Passive close/ignore must stay neutral | Closing or ignoring produces no feedback, dismiss state, queue item, badge, or durable write. Dismiss is a separate explicit weak candidate action; Later is the separate explicit queue handoff. |
 | 21 | Local scope overview must never become Recap Delivery or nudge | Explanation-only facts are excluded from DeliveryCandidate and proactive hint pools. |
-| 22 | Discover-only local match must not look like proactive Recall | It is labeled `Local related clue` / `本地关联线索`, contains no AI why-now, never enters a Recall stack, and cannot nudge. |
+| 22 | Discover-only local match must not look like proactive Recall | It remains in Panel, is labeled `Local related clue` / `本地关联线索`, contains no AI why-now, never enters a Recall stack, and cannot nudge. |
+| 23 | Recall Bubble action taxonomy | Only View / Later / Dismiss appear. View provider rerun = 0; Later creates one existing Review Queue item; Link/Save appear only in Tab. |
+| 24 | Quiet Recall setting and migration | Only Off/On appears, default Off; legacy true -> On and false/missing/other -> Off. Generic hints and Recap remain unchanged when it toggles. |
 
 ---
 

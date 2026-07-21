@@ -2,7 +2,7 @@
 
 > [!note] Current authority is this design together with the
 > [PA Product North Star](./pa-product-north-star.md), [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
-> through [DEC-020](./decisions/dec-020-independent-quiet-recall-evaluation.md),
+> through [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md),
 > and the [B-108 owning Scope Recap spec](./specs/pa-scope-recap-theme-summary-product-spec.md).
 > Archive discussions are provenance only, never the current baseline.
 
@@ -13,15 +13,15 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; automated/deploy gates, desktop/iPhone BRAT smoke, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover semantics, Scope Recap provider smoke and the correctly prepared user-owned 3-Second Value Test pass. Stable release remains separate and pending |
-| Last revised | 2026-07-19 |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; automated/deploy gates, desktop/iPhone BRAT smoke, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover semantics, Scope Recap provider smoke and the correctly prepared user-owned 3-Second Value Test pass. Most B-118 repair slices have automation evidence, but DEC-023 F-03/F-10 runtime reconciliation and final current-surface desktop/iPhone smoke remain pending; stable release remains separate |
+| Last revised | 2026-07-21 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
 | Write boundary | Current B-108 delivery is read-only; existing user-confirmed review-note creation uses the **Write Action Framework**; there is no current standalone Periodic Summary save contract |
 | Background preparation engine | Optional timed polling with rate-limited generic background review preparation (D032); disabled by default and enabled explicitly by the user |
-| Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup and affirmative first-run Data Boundary authorization, bounded to high-intent scope, and persistently disableable ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md)) |
+| Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup when the capability is enabled and sources are allowed, bounded to high-intent scope, and persistently disableable. The first actual Pagelet provider call uses one shared non-blocking notice; high-risk runs still block before any call ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md)) |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
-| Current decisions | D001-D039 as reconciled in this document, with DEC-017 through DEC-020 and the owning Scope Recap spec taking precedence for B-108 |
+| Current decisions | D001-D039 as reconciled in this document, with DEC-017 through DEC-023 and the owning Scope Recap spec taking precedence for B-108 |
 | Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
 | Technical design | See [pagelet-sdd-guide.md](../development/workflows/pagelet-sdd-guide.md); [review-assistant-sdd.md](../archive/review-assistant-sdd.md) is preserved as historical implementation context |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
@@ -296,14 +296,14 @@ Decision: **D034** — Desktop/iPad corner preference with an iPhone active-note
 
 Generic proactive hints for Quiet Recall, Pattern, and review remain opt-in and
 **OFF by default**. [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md)
-adds one scoped exception: after DEC-017 authorization, “高价值回顾提醒” is on by
-default and may signal only when a new prepared Scope Recap passes its strict
+adds one scoped exception: on an eligible bounded Recap path, “高价值回顾提醒” is
+on by default and may signal only when a new prepared Scope Recap passes its strict
 cross-note quality gate. User-facing language uses “主动提示” or “高价值回顾提醒”,
 not “Nudge mode”.
 
 | Setting | Behavior |
 | --- | --- |
-| 高价值回顾提醒 ON (default after DEC-017 authorization) | Only a new, fresh, specific Recap insight backed by at least two notes may transition Pet to `nudge`; click immediately shows the strongest observation. |
+| 高价值回顾提醒 ON (default for an eligible bounded Recap path) | Only a new, fresh, specific Recap insight backed by at least two notes may transition Pet to `nudge`; click immediately shows the strongest observation. |
 | 高价值回顾提醒 OFF | Prepared Scope Recap stays silent and cached; click remains instant when a fresh artifact exists. |
 | 其他主动提示 ON | Opt-in Quiet Recall, Pattern, or review hints use their existing gates and the shared Pet nudge treatment. |
 | 其他主动提示 OFF (default) | Non-Recap hints remain quiet; this does not disable high-value Recap hints or background preparation. |
@@ -375,8 +375,8 @@ Tab (main window tab, full-size workspace)
 **Bubble dismiss behavior**: Click outside the Bubble closes it, matching Escape and the X button. Click the Pet again to reopen it.
 
 **Note on proactive hints**: Generic hints remain opt-in (OFF by default).
-High-value Scope Recap hints are the DEC-018 exception: after background-read
-authorization they are on by default, but only a quality-gated result may enter
+High-value Scope Recap hints are the DEC-018 exception: for an eligible bounded
+Recap path they are on by default, but only a quality-gated result may enter
 `nudge`. Clicking the Pet opens the Bubble as usual; suppressed or disabled
 hints do not remove the instant click path.
 
@@ -469,8 +469,12 @@ historical design prohibited all background analysis. Pagelet introduces a **bac
 Decision: **D032** — Background preparation engine introduction
 (supersedes historical design Product Principle #2). Generic review preload
 remains opt-in; [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
-separately makes prepared Scope Recap default-on after affirmative first-run
-Data Boundary authorization.
+separately makes prepared Scope Recap default-on after provider setup when the
+capability is enabled and sources are allowed. [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md)
+governs the shared first-use notice and high-risk blocking boundary. When the
+first actual call is itself high risk, an affirmative blocking disclosure that
+contains the full first-use transparency content also completes the shared
+notice at the provider seam; PA does not stack a second non-blocking notice.
 
 ### Trigger Mechanism
 
@@ -882,7 +886,7 @@ Top-level Pagelet settings group inside PA settings:
 - Pet visibility: show / hide (hide recoverable from command palette or this setting).
 - Pet corner position: `bottom-right` (default) / `bottom-left` / `top-right` / `top-left`.
 - 主动提示 (proactive hints): `on` / `off` (default: `off`). Also togglable from Panel header, Command Palette, and keyboard shortcut (D039).
-- 高价值回顾提醒: `on` / `off` (default: `on` after DEC-017 authorization). It
+- 高价值回顾提醒: `on` / `off` (default: `on` for an eligible bounded Recap path). It
   is independently disableable without disabling Scope Recap preparation or
   enabling other hint kinds; exact control consolidation belongs to the SDD.
 - 主动提示 cooldown: `15 min` / `30 min` / `1 hour` / `2 hours` (default: `30 min`).
@@ -892,7 +896,7 @@ Top-level Pagelet settings group inside PA settings:
 
 **Background preparation** — [NEW]
 - Enable generic background review preparation: `on` / `off` (default: `off`). This remains an explicit opt-in for non-Recap review preparation.
-- Prepare Scope Recap in background: `on` / `off` (default: `on` only after provider setup and affirmative first-run Data Boundary authorization). It pre-computes source-backed Recap items so they are ready instantly; an explicit user opt-out persists across reloads and upgrades. The UI must not label both controls simply as `preload`.
+- Prepare Scope Recap in background: `on` / `off` (default: `on` after provider setup when the capability is enabled and sources are allowed). The first actual Pagelet provider call shows one shared non-blocking notice and continues; broad/sensitive/costly/whole-vault or excluded-override runs still require blocking confirmation. It pre-computes source-backed Recap items so they are ready instantly; an explicit user opt-out persists across reloads and upgrades. The UI must not label both controls simply as `preload`.
 - Polling interval: `5 min` / `15 min` / `30 min` / `1 hour` / `2 hours` / `4 hours` (default: `30 min`).
 - Background preparation per-hour cap (default 2, configurable).
 - Background preparation per-day cap (default 20, configurable).
@@ -936,8 +940,8 @@ Defaults:
 - Feature on (in `-beta.N`). **[PRESERVED]**
 - Pet visible (can be hidden). **[PRESERVED — "mascot" -> "Pet"]**
 - Generic background review preparation off by default; users explicitly opt in from settings. **[D032]**
-- Prepared Scope Recap on by default after provider setup and affirmative first-run Data Boundary authorization; users can disable it persistently. **[DEC-017]**
-- High-value Scope Recap hints on by default after DEC-017 authorization, subject to the DEC-018 quality/dedupe/suppression gate; users can disable hints without disabling preparation. **[DEC-018]**
+- Prepared Scope Recap on by default after provider setup when the capability is enabled and sources are allowed; the shared first-use notification and high-risk blocking boundary follow DEC-023. Users can disable it persistently. **[DEC-017, DEC-023]**
+- High-value Scope Recap hints on by default for an eligible bounded Recap path, subject to the DEC-018 quality/dedupe/suppression gate; users can disable hints without disabling preparation. **[DEC-018]**
 - Other proactive hints off. **[D038 — opt-in, respects "quiet reviewer" positioning]**
 - WebSearch off until clicked. **[PRESERVED]**
 - Conservative exclusions on. **[PRESERVED]**
@@ -952,7 +956,7 @@ Trust requirements:
 - Background review preparation reads only changed notes, subject to the same exclusion rules as foreground. **[NEW]**
 - Background review preparation results are cached in memory only, not persisted to disk. **[NEW]**
 - Background review preparation can be disabled entirely in settings. **[NEW]**
-- The first provider-backed prepared Scope Recap read requires affirmative Data Boundary `run / adjust / cancel`; a configured provider or passive disclosure alone is insufficient. **[DEC-017]**
+- The first actual standard bounded Pagelet provider read shows one shared non-blocking notice and continues. Broad/sensitive/costly/whole-vault or excluded-override runs still require blocking `run / adjust / cancel` before any provider call or cost reservation. If that confirmed high-risk run is the first actual call, its complete disclosure counts as first use only after `Run`, at the provider seam, and no second notice is stacked; Cancel/close/unfinished Adjust leaves the shared flag unchanged. Provider trust does not grant Memory admission, write, Markdown, or external-action permission. **[DEC-023]**
 - Prepared Scope Recap activity and cost are separately attributable from generic preload, even if internal runtime is shared; its fixed guardrail is 2 actual calls per rolling hour and 10 per local day. **[DEC-017, B-108]**
 - Scope Recap attempt status is stored separately from last valid artifact; failed/empty/rejected output creates no ready/nudge and ordinary UI uses an honest local explanation without provider jargon. **[DEC-019]**
 - Quiet Recall local candidates become proactive delivery only after independent
@@ -1258,15 +1262,15 @@ Pagelet considered successful if:
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet long-press menu is reserved for Capture / Review / Discover. |
 
 [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) is the accepted
-Scope Recap exception to D038: high-value Recap hints default on after DEC-017
-authorization, while all other hint kinds retain their existing defaults.
+Scope Recap exception to D038: high-value Recap hints default on for an eligible
+bounded Recap path, while all other hint kinds retain their existing defaults.
 
 [DEC-019](./decisions/dec-019-honest-layered-recap-fallback.md) governs the same
 Recap path when no reliable insight exists: retain any still-valid artifact;
 otherwise show an immediate local scope explanation only after explicit Recap
 open. It does not weaken D003 or create a proactive candidate.
 
-This current document plus DEC-017 through DEC-020 governs these decisions.
+This current document plus DEC-017 through DEC-023 governs these decisions.
 `docs/archive/review-assistant-decisions.md` is provenance only and must not be
 used to override current behavior.
 
@@ -1327,7 +1331,7 @@ Future product definition: [Pagelet Maintenance Review Product Spec](../archive/
 | Pet gesture | Click opens panel | Short click/tap opens Bubble; 520 ms long press opens Capture / Review / Discover; no right-click menu |
 | Mascot/Pet states | 4 (idle, thinking, done, error) | 4 (resting, idle, working, nudge) |
 | Pet position | N/A | Fixed corner (configurable), no drag |
-| Generic proactive hints | Rule-based reminders (badge only) | AI-driven hints remain opt-in and OFF by default; DEC-018 separately makes only quality-gated Scope Recap hints default on after authorization. |
+| Generic proactive hints | Rule-based reminders (badge only) | AI-driven hints remain opt-in and OFF by default; DEC-018 separately makes only quality-gated Scope Recap hints default on for an eligible bounded Recap path. |
 | Bubble dismiss | N/A | Click-outside, X, and Escape close |
 | Periodic summary | Select range -> adjust -> run -> collect -> edit -> preview -> confirm | Retired as an independent current contract; future time-range Recap needs separate authority |
 | Background review preparation | Explicitly prohibited | Performance optimization (configurable, rate-limited, `allowWrite=false`) |
@@ -1336,6 +1340,6 @@ Future product definition: [Pagelet Maintenance Review Product Spec](../archive/
 ---
 
 > Document ends. Subsequent revisions must synchronize with the current North
-> Star, DEC-017 through DEC-020, the owning Product Spec, and the current Pagelet
+> Star, DEC-017 through DEC-023, the owning Product Spec, and the current Pagelet
 > technical guide. Archive discussions and decision drafts remain provenance
 > only.

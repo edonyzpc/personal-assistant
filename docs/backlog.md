@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-07-20
+Updated: 2026-07-21
 
 这里是已经从 Linear inbox 晋升、但尚未开始或仍未完成的项目事项清单；raw PA idea 继续留在 Linear，不在这里制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -32,8 +32,8 @@ Updated: 2026-07-20
 | B-112 | 更宽的 Pagelet Trust / Maintenance proposal | 只有当前 Memory Control、source-backed review 与 move-only maintenance 无法满足真实用户需求时，才重开全局 Trust Layer 或更广 vault maintenance；写操作继续受 WAF/Operations Agent gate 约束 | [Trust proposal](./archive/pagelet-trust-layer-product-spec.md), [Maintenance proposal](./archive/pagelet-maintenance-review-product-spec.md) |
 | B-113 | Memory status-transition contract extraction | 只有新的共享 UI/调用方确实需要复用迁移规则时，才讨论把 `VALID_STATUS_TRANSITIONS` 从 store 层移动到 contracts；不要仅因历史 review 做无消费者抽象 | [PR #376 review](./archive/pr-376-review-report.md) |
 | B-114 | Hosted / commercial service layer | Free/Lite BYOK 需求被验证，且 Terms、privacy、billing、entitlement 与 counsel review 都完成后，才设计 Premium 托管层 | [Commercialization analysis](./archive/pa-commercialization-analysis-2026-07-08.md), [active decisions](./product/active-decisions.md) |
-| B-116 | Pagelet 原 B-108 dogfood 延后范围 | 只在真实 dogfood 证据命中时分别重启：double-Ctrl 需跨平台冲突与实体操作证据；Chat Quick Command 需证明现有入口摩擦；`pa-related` frontmatter Sync 需先解决多设备冲突；Weekly Review compatibility helper 需兼容性证明后才移除；Pattern LLM 仅在结构检测不足且成本获批时考虑。`replace_selection` 继续由 B-101 / T-003 的写操作边界治理，不在此重复授权 | [Historical tracker](./archive/pa-product-redesign-development-tracker.md), [archived B-108 package](./archive/2026/pagelet-b108-dogfood-followup/README.md) |
-| B-119 | Insight Enhancement Layer | Discovery Brief 已完成分析（Needs Decision）；用户批准后创建 Decision Record + Product Spec + Active Package | [Discovery Brief](./development/discovery/insight-enhancement-layer.md) |
+| B-116 | Pagelet 原 B-108 dogfood 延后范围 | 只在真实 dogfood 证据命中时分别重启：double-Ctrl 需跨平台冲突与实体操作证据；Chat Quick Command 需证明现有入口摩擦；`pa-related` frontmatter Sync 需先解决多设备冲突；Weekly Review compatibility helper 需兼容性证明后才移除。Pattern LLM 已由 B-119 接管，不再是本条重启条件。`replace_selection` 继续由 B-101 / T-003 的写操作边界治理，不在此重复授权 | [Historical tracker](./archive/pa-product-redesign-development-tracker.md), [B-119 Active Package](./development/active/insight-enhancement-layer/README.md) |
+| B-120 | Writing Insight / 近期笔记写作回顾 | 只有 B-119 Graph/Pattern/Maintenance 真实 dogfood 后，仍证明独立写作趋势能提供 Recall/Recap 未覆盖的低负担价值，才重新决定来源呈现、触发频率、成本和 UI；当前不进入实现 | [DEC-022](./product/decisions/dec-022-bounded-insight-enhancement-layer.md), [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance) |
 
 ## 触发型评估
 
