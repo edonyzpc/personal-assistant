@@ -57,8 +57,18 @@ export interface QuietRecallEvaluationAttempt {
     kind: QuietRecallEvaluationAttemptKind;
 }
 
+/** Provisional persisted slot committed only at the actual provider seam. */
+export interface QuietRecallEvaluationProviderCallReservation {
+    commit(): void;
+    rollback(): void | PromiseLike<void>;
+}
+
 export type QuietRecallEvaluationReserveDecision =
-    | { ok: true; limiterUsage?: QuietRecallEvaluationLimiterUsage }
+    | {
+        ok: true;
+        limiterUsage?: QuietRecallEvaluationLimiterUsage;
+        providerCallReservation?: QuietRecallEvaluationProviderCallReservation;
+    }
     | { ok: false; reason: QuietRecallEvaluationBlockReason };
 
 export type QuietRecallEvaluationReserve = (
@@ -67,6 +77,7 @@ export type QuietRecallEvaluationReserve = (
 
 export type QuietRecallEvaluator = (
     attempt: QuietRecallEvaluationAttempt,
+    providerCallReservation?: QuietRecallEvaluationProviderCallReservation,
 ) => QuietRecallEvaluationDecision | Promise<QuietRecallEvaluationDecision>;
 
 export interface QuietRecallEvaluationAttemptDiagnostic {
@@ -87,7 +98,12 @@ export interface QuietRecallEvaluationDiagnostics {
     contextFingerprint: string;
     candidateCount: number;
     evaluatedCandidateCount: number;
+    /** Evaluator-stage calls only (initial + language retry). */
     providerCalls: number;
+    /** Cold semantic query-embedding calls made before evaluation. */
+    semanticRetrievalCalls?: number;
+    /** All actual Quiet Recall provider calls charged to the shared 10/50 bucket. */
+    totalProviderCalls?: number;
     initialCalls: number;
     languageRetryCalls: number;
     cacheHits: number;
@@ -371,12 +387,52 @@ export class QuietRecallEvaluationCoordinator {
             diagnostics.limiterUsage = { ...reservation.limiterUsage };
         }
 
-        diagnostics.providerCalls += 1;
-        if (attempt.kind === "initial") diagnostics.initialCalls += 1;
-        else diagnostics.languageRetryCalls += 1;
+        const provisional = reservation.providerCallReservation;
+        let providerInvoked = provisional === undefined;
+        let reservationSettled = provisional === undefined;
+        const trackedReservation = provisional
+            ? {
+                commit: () => {
+                    provisional.commit();
+                    providerInvoked = true;
+                    reservationSettled = true;
+                },
+                rollback: async () => {
+                    if (reservationSettled) return;
+                    await provisional.rollback();
+                    reservationSettled = true;
+                },
+            }
+            : undefined;
+        const recordActualProviderCall = (): void => {
+            diagnostics.providerCalls += 1;
+            if (attempt.kind === "initial") diagnostics.initialCalls += 1;
+            else diagnostics.languageRetryCalls += 1;
+        };
+        const recordNoCallBlock = async (): Promise<{
+            decision: QuietRecallEvaluationDecision;
+            stopRound: boolean;
+            infrastructureFailure: boolean;
+        }> => {
+            await trackedReservation?.rollback();
+            diagnostics.blockedReason = "invalid_context";
+            diagnostics.attempts.push({
+                ...attemptDiagnosticBase(attempt),
+                reserved: false,
+                outcome: "blocked",
+                reason: "invalid_context",
+            });
+            return {
+                decision: { status: "rejected", reason: "cancelled" },
+                stopRound: true,
+                infrastructureFailure: true,
+            };
+        };
 
         try {
-            const decision = normalizeDecision(await input.evaluator(attempt));
+            const decision = normalizeDecision(await input.evaluator(attempt, trackedReservation));
+            if (!providerInvoked) return await recordNoCallBlock();
+            recordActualProviderCall();
             if (decision.cost) {
                 diagnostics.estimatedCost += decision.cost.estimatedCost;
                 diagnostics.pricingKnown = diagnostics.pricingKnown && decision.cost.pricingKnown;
@@ -388,6 +444,25 @@ export class QuietRecallEvaluationCoordinator {
             ));
             return { decision, stopRound: false, infrastructureFailure: false };
         } catch {
+            if (!providerInvoked) {
+                try {
+                    return await recordNoCallBlock();
+                } catch {
+                    diagnostics.blockedReason = "reserve_error";
+                    diagnostics.attempts.push({
+                        ...attemptDiagnosticBase(attempt),
+                        reserved: false,
+                        outcome: "blocked",
+                        reason: "reserve_error",
+                    });
+                    return {
+                        decision: { status: "rejected", reason: "cancelled" },
+                        stopRound: true,
+                        infrastructureFailure: true,
+                    };
+                }
+            }
+            recordActualProviderCall();
             diagnostics.attempts.push({
                 ...attemptDiagnosticBase(attempt),
                 reserved: true,

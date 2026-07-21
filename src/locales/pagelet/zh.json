@@ -92,10 +92,10 @@
     "pagelet.settings.scopeRecapHints.desc": "只有出现至少由两篇笔记支撑的具体新洞察时，才让拾页轻提示。关闭后，已准备的回顾仍可点击查看。",
     "pagelet.settings.preloadInterval.name": "准备间隔（分钟）",
     "pagelet.settings.preloadInterval.desc": "后台审阅准备周期之间的分钟数。范围 5–240，默认 30。",
-    "pagelet.settings.preloadPerHourCap.name": "每小时准备上限",
-    "pagelet.settings.preloadPerHourCap.desc": "每小时最大后台审阅准备周期数。范围 1–20，默认 2。",
-    "pagelet.settings.preloadPerDayCap.name": "每日准备上限",
-    "pagelet.settings.preloadPerDayCap.desc": "每日最大后台审阅准备周期数。范围 1–200，默认 20。",
+    "pagelet.settings.preloadPerHourCap.name": "每小时后台 AI 调用上限",
+    "pagelet.settings.preloadPerHourCap.desc": "通用后台审阅准备每个滚动小时最多使用的 AI 调用次数。范围 1–2，默认 2。",
+    "pagelet.settings.preloadPerDayCap.name": "每日后台 AI 调用上限",
+    "pagelet.settings.preloadPerDayCap.desc": "通用后台审阅准备每个本地自然日最多使用的 AI 调用次数。范围 1–20，默认 20。",
 
     "pagelet.settings.reviews.heading": "审阅",
 
@@ -139,6 +139,7 @@
 
     "pagelet.command.reviewCurrent": "拾页：审阅当前笔记",
     "pagelet.command.openPanel": "拾页：打开拾页面板",
+    "pagelet.command.openPreparedReview": "拾页：打开已准备的审阅",
 
     "pagelet.panel.title": "拾页",
     "pagelet.panel.source.none": "尚未选择笔记",
@@ -262,7 +263,6 @@
     "pagelet.preview.panel.markdown": "预览 Markdown",
     "pagelet.preview.confirm": "保存审阅笔记",
     "pagelet.preview.cancel": "取消",
-    "pagelet.backgroundPreparation.startupNotice": "拾页的后台审阅准备已开启。笔记正文可能会发送给当前 AI 服务商，并可能消耗额度。你可以在设置中关闭它。",
 
     "pagelet.pet.idle": "拾页在静静看着。",
     "pagelet.pet.working": "正在准备…",
@@ -353,7 +353,7 @@
     "pagelet.command.graphDiscovery": "拾页：审阅图谱建议",
     "pagelet.command.scopeRecap": "拾页：打开范围回顾",
     "pagelet.command.clearScopeRecapCache": "拾页：清除已准备的范围回顾",
-    "pagelet.provider.firstUseNotification": "PA 正在使用 {provider} 帮助发现相关笔记。你可以在设置中调整。",
+    "pagelet.provider.firstUseNotification": "PA 可能把允许范围内的笔记摘录发送给 {provider}，以帮助发现相关内容；这可能消耗 API 额度，你可以在设置中关闭相关功能。",
     "pagelet.recap.cacheCleared": "已清除准备好的范围回顾缓存。",
     "pagelet.recap.providerSetupRequired": "请先设置 AI 服务商，再重试范围回顾。",
     "pagelet.recap.retryFailed": "这次没有得到可靠的回顾。来源笔记和仍然有效的已准备回顾都没有被改动。",
@@ -395,6 +395,17 @@
     "pagelet.recap.authorization.run": "运行",
     "pagelet.recap.authorization.adjust": "调整设置",
     "pagelet.recap.authorization.cancel": "取消",
+    "pagelet.review.highRisk.title": "要用 AI 回顾多篇笔记吗？",
+    "pagelet.review.highRisk.intro": "这次回顾包含多篇允许读取的笔记。任何 AI 调用或用量预留前，都需要先确认本次范围。",
+    "pagelet.review.highRisk.scope": "当前范围：{scope}。包含 {included} 篇笔记；另有 {skipped} 篇所选笔记因数据边界或输入上限被跳过。",
+    "pagelet.review.highRisk.provider": "AI 服务商：{provider} · {model}。端点：{endpoint}。包含的笔记摘录可能发送到这里。",
+    "pagelet.review.highRisk.cost": "有界用量：每小时前台调用最多 {hourly} 次、每天最多 {daily} 次，可能消耗 AI 额度。",
+    "pagelet.review.highRisk.safety": "不会修改来源笔记。你可以先调整回顾范围，再重新运行。",
+    "pagelet.review.highRisk.optOut": "你可以随时在设置中关闭审阅功能。",
+    "pagelet.review.highRisk.run": "运行",
+    "pagelet.review.highRisk.adjust": "调整范围",
+    "pagelet.review.highRisk.cancel": "取消",
+    "pagelet.review.highRisk.adjustNotice": "已安全停止本次回顾。请在回顾面板调整所选笔记后重新运行。",
     "pagelet.command.toggleHints": "拾页：切换主动提示",
     "pagelet.command.preloadStatus": "拾页：显示后台审阅准备状态",
     "pagelet.command.preloadStatusLegacy": "拾页：显示后台审阅准备状态（兼容旧命令）",
@@ -415,9 +426,9 @@
 
 
     "pagelet.settings.preloadTokenBudgetInput.name": "后台准备输入 token 预算",
-    "pagelet.settings.preloadTokenBudgetInput.desc": "每次后台审阅准备的最大输入 token。范围 1000–8000，默认 4000。",
+    "pagelet.settings.preloadTokenBudgetInput.desc": "每次后台审阅准备的最大输入 token。范围 1000–4000，默认 4000。",
     "pagelet.settings.preloadTokenBudgetOutput.name": "后台准备输出 token 预算",
-    "pagelet.settings.preloadTokenBudgetOutput.desc": "每次后台审阅准备的最大输出 token。范围 500–2000，默认 1000。",
+    "pagelet.settings.preloadTokenBudgetOutput.desc": "每次后台审阅准备的最大输出 token。范围 500–1000，默认 1000。",
 
 
     "pagelet.preload.status.title": "后台审阅准备状态",

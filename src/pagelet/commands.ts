@@ -8,6 +8,7 @@ import { pageletT, type PageletLocale } from "../locales/pagelet";
 // ---------------------------------------------------------------------------
 
 export const PAGELET_OPEN_PANEL_COMMAND_ID = "pa-pagelet:open-panel" as const;
+export const PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID = "pa-pagelet:open-prepared-review" as const;
 export const PAGELET_REVIEW_CURRENT_COMMAND_ID = "pa-pagelet:review-current" as const;
 export const PAGELET_QUICK_REVIEW_COMMAND_ID = "pa-pagelet:quick-review" as const;
 export const PAGELET_DISCOVER_COMMAND_ID = "pa-pagelet:discover-connections" as const;
@@ -28,6 +29,7 @@ export const PAGELET_TOGGLE_PET_COMMAND_ID = "pa-pagelet:toggle-pet-visibility" 
 
 export interface PageletCommandCallbacks {
     onOpenPanel: () => void | Promise<void>;
+    onOpenPreparedReview: () => void | Promise<void>;
     onReviewCurrent: () => void | Promise<void>;
     onQuickReview: () => void | Promise<void>;
     onDiscoverConnections: () => void | Promise<void>;
@@ -63,6 +65,12 @@ export function registerPageletCommands(
         id: PAGELET_OPEN_PANEL_COMMAND_ID,
         name: pageletT("pagelet.command.openPanel", locale),
         callback: safeCallback(callbacks.onOpenPanel),
+    });
+
+    host.addCommand({
+        id: PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
+        name: pageletT("pagelet.command.openPreparedReview", locale),
+        callback: safeCallback(callbacks.onOpenPreparedReview),
     });
 
     host.addCommand({

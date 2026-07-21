@@ -1,11 +1,73 @@
 /* Copyright 2023 edonyzpc */
 
-import type { App, CachedMetadata, TFile } from "obsidian";
+import type { App, TFile } from "obsidian";
 
-import { getVaultConfigDir, isVaultPathInConfigDir } from "../../obsidian-paths";
+import { getVaultConfigDir } from "../../obsidian-paths";
 import type { ExclusionReason, ScopeCandidate, ScopeConfig, ScopeResult } from "./types";
 
-const DEFAULT_MAX_FILE_SIZE_BYTES = 100 * 1024;
+export const DEFAULT_MAX_FILE_SIZE_BYTES = 100 * 1024;
+
+export interface ScopeExclusionMetadataLike {
+    frontmatter?: Record<string, unknown>;
+    tags?: readonly ({ tag?: string } | string)[];
+}
+
+export interface ScopeExclusionInput {
+    path: string;
+    extension?: string;
+    size?: number;
+    configDir?: string;
+    maxFileSizeBytes?: number;
+    reviewsFolder: string;
+    excludedFolders: readonly string[];
+    excludedTags: readonly string[];
+    excludedPatterns: readonly string[];
+    metadata?: ScopeExclusionMetadataLike;
+}
+
+/** Pure exclusion classifier shared by runtime resolution and scope preview. */
+export function classifyScopeExclusion(input: ScopeExclusionInput): ExclusionReason | null {
+    const path = input.path;
+
+    if (path.startsWith(".trash/") || path === ".trash") return "trash";
+
+    const reviewsFolder = normalizeFolder(input.reviewsFolder);
+    if (reviewsFolder && isUnderFolder(path, reviewsFolder)) return "pagelet-output";
+
+    if (hasHiddenSegment(path)) return "hidden-folder";
+
+    const configDir = normalizeFolder(input.configDir ?? ".obsidian");
+    if ((configDir && isUnderFolder(path, configDir)) || path.startsWith("node_modules/")) {
+        return "plugin-generated";
+    }
+
+    if (/(?:^|\/)templates(?:\/|$)/i.test(path)) return "template";
+
+    if (input.extension?.toLowerCase() !== "md" && !path.toLowerCase().endsWith(".md")) {
+        return "non-markdown";
+    }
+
+    if (input.size === 0) return "empty";
+
+    const maxSize = input.maxFileSizeBytes || DEFAULT_MAX_FILE_SIZE_BYTES;
+    if (typeof input.size === "number" && input.size > maxSize) return "too-large";
+
+    for (const folder of input.excludedFolders) {
+        const normalized = normalizeFolder(folder);
+        if (normalized && isUnderFolder(path, normalized)) return "excluded-folder";
+    }
+
+    if (input.metadata) {
+        if (hasPageletFrontmatter(input.metadata)) return "pagelet-frontmatter";
+        if (hasExcludedTag(input.metadata, input.excludedTags)) return "excluded-tag";
+    }
+
+    for (const pattern of input.excludedPatterns) {
+        if (pattern && path.includes(pattern)) return "excluded-pattern";
+    }
+
+    return null;
+}
 
 export class ScopeResolver {
     constructor(
@@ -57,66 +119,20 @@ export class ScopeResolver {
     }
 
     private shouldExclude(file: TFile): ExclusionReason | null {
-        const path = file.path;
-
-        if (path.startsWith(".trash/") || path === ".trash") return "trash";
-
-        if (hasHiddenSegment(path)) return "hidden-folder";
-
+        const metadata = this.app.metadataCache?.getFileCache?.(file);
         const configDir = getVaultConfigDir(this.app.vault);
-        if (isVaultPathInConfigDir(path, configDir) || path.startsWith("node_modules/")) {
-            return "plugin-generated";
-        }
-
-        if (/(?:^|\/)templates(?:\/|$)/i.test(path)) return "template";
-
-        if (file.extension !== "md") return "non-markdown";
-
-        if (file.stat.size === 0) return "empty";
-
-        const maxSize = this.config.maxFileSizeBytes || DEFAULT_MAX_FILE_SIZE_BYTES;
-        if (file.stat.size > maxSize) return "too-large";
-
-        const reviewsFolder = normalizeFolder(this.config.reviewsFolder);
-        if (reviewsFolder && isUnderFolder(path, reviewsFolder)) return "pagelet-output";
-
-        if (this.isExcludedFolder(path)) return "excluded-folder";
-
-        const metadata = this.app.metadataCache.getFileCache(file);
-        if (metadata) {
-            if (hasPageletFrontmatter(metadata)) return "pagelet-frontmatter";
-            if (this.hasExcludedTag(metadata)) return "excluded-tag";
-        }
-
-        if (this.matchesExcludedPattern(path)) return "excluded-pattern";
-
-        return null;
-    }
-
-    private isExcludedFolder(path: string): boolean {
-        for (const folder of this.config.excludedFolders) {
-            const normalized = normalizeFolder(folder);
-            if (normalized && isUnderFolder(path, normalized)) return true;
-        }
-        return false;
-    }
-
-    private hasExcludedTag(metadata: CachedMetadata): boolean {
-        const fileTags = collectTags(metadata);
-        if (fileTags.size === 0) return false;
-        if (fileTags.has("#no-ai") || fileTags.has("#no-review")) return true;
-        for (const tag of this.config.excludedTags) {
-            if (fileTags.has(normalizeTag(tag))) return true;
-        }
-        return false;
-    }
-
-    private matchesExcludedPattern(path: string): boolean {
-        for (const pattern of this.config.excludedPatterns) {
-            if (!pattern) continue;
-            if (path.includes(pattern)) return true;
-        }
-        return false;
+        return classifyScopeExclusion({
+            path: file.path,
+            extension: file.extension,
+            size: file.stat.size,
+            configDir,
+            maxFileSizeBytes: this.config.maxFileSizeBytes,
+            reviewsFolder: this.config.reviewsFolder,
+            excludedFolders: this.config.excludedFolders,
+            excludedTags: this.config.excludedTags,
+            excludedPatterns: this.config.excludedPatterns,
+            metadata: metadata ?? undefined,
+        });
     }
 
     private getMarkdownFiles(): TFile[] {
@@ -141,16 +157,27 @@ function isUnderFolder(path: string, folder: string): boolean {
     return path === folder || path.startsWith(`${folder}/`);
 }
 
-function hasPageletFrontmatter(metadata: CachedMetadata): boolean {
+function hasPageletFrontmatter(metadata: ScopeExclusionMetadataLike): boolean {
     const value = metadata.frontmatter?.pagelet;
     return value === true || value === "true";
 }
 
-function collectTags(metadata: CachedMetadata): Set<string> {
+function hasExcludedTag(
+    metadata: ScopeExclusionMetadataLike,
+    excludedTags: readonly string[],
+): boolean {
+    const fileTags = collectTags(metadata);
+    if (fileTags.size === 0) return false;
+    if (fileTags.has("#no-ai") || fileTags.has("#no-review")) return true;
+    return excludedTags.some((tag) => fileTags.has(normalizeTag(tag)));
+}
+
+function collectTags(metadata: ScopeExclusionMetadataLike): Set<string> {
     const tags = new Set<string>();
     if (metadata.tags) {
         for (const entry of metadata.tags) {
-            if (entry.tag) tags.add(normalizeTag(entry.tag));
+            const tag = typeof entry === "string" ? entry : entry.tag;
+            if (tag) tags.add(normalizeTag(tag));
         }
     }
     const fmTags = metadata.frontmatter?.tags;

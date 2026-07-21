@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, debounce, moment as obsidianMoment, normalizePath, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
@@ -43,6 +43,8 @@ import {
     PageletReviewModel,
     PageletCostTracker,
     PageletRateLimiter,
+    LocalStoragePreloadBudgetStorage,
+    LocalStorageChangeDetectorStorage,
     ScopeResolver,
     buildPageletScopeReviewBundle,
     createPaReviewRuntime,
@@ -69,8 +71,15 @@ import {
 } from './platform-dom';
 import { normalizeReviewsFolder, type PageletReviewsFolderError, type PageletSettings } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
-// SG-06: Modal authorization removed. Import kept as comment for reference.
-// import { requestScopeRecapAuthorization } from './pagelet/recap/ScopeRecapAuthorizationModal';
+import {
+    PageletProviderCallAdmission,
+    PageletProviderCallControlError,
+    type PageletProviderCallReservation,
+} from './pagelet/provider-call-admission';
+import {
+    requestPageletReviewHighRiskDecision,
+    type PageletReviewHighRiskSummary,
+} from './pagelet/ReviewHighRiskModal';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
 import {
     PAGELET_DETAIL_VIEW_TYPE,
@@ -80,7 +89,7 @@ import {
     registerPageletDetailIcon,
     type PageletDetailPayload,
 } from './pagelet/tab';
-import type { AnalyzeCallback } from './pagelet/preload/types';
+import type { AnalyzeCallContext, AnalyzeCallback, PreloadConfig } from './pagelet/preload/types';
 import type {
     DiscoveryResult,
     PanelMemoryActionPolicy,
@@ -139,6 +148,7 @@ import {
     type PatternDetectionInput,
     type PatternDetectionResult,
     type QuietRecallCandidate,
+    type QuietRecallEvaluationDiagnostics,
     type QuietRecallEvaluationAttempt,
     type QuietRecallEvaluationBlockReason,
     type QuietRecallEvaluationDecision,
@@ -424,7 +434,46 @@ function getMemoryGovernanceVaultDeviceScope(vault: {
 interface QuietRecallVaultNoteCollection {
     vaultNotes: QuietRecallVaultNote[];
     relatedNotes: QuietRecallRelatedNote[];
+    sourceSnapshots?: QuietRecallSourceSnapshot[];
+    retrievalMode?: "semantic" | "metadata";
 }
+
+interface QuietRecallSourceSnapshot {
+    path: string;
+    mtime: number;
+    size: number;
+}
+
+interface QuietRecallVaultNoteRead {
+    note: QuietRecallVaultNote;
+    snapshot: QuietRecallSourceSnapshot;
+}
+
+interface QuietRecallSavedInsightCollection {
+    insights: SavedInsight[];
+    sourceSnapshots: QuietRecallSourceSnapshot[];
+}
+
+interface QuietRecallLimiterUsage {
+    hourlyUsed: number;
+    hourlyCap: number;
+    hourlyRemaining: number;
+    dailyUsed: number;
+    dailyCap: number;
+    dailyRemaining: number;
+}
+
+type QuietRecallProviderCallReservation =
+    | {
+        ok: true;
+        startedRound: boolean;
+        reservation: PageletProviderCallReservation;
+        limiterUsage?: QuietRecallLimiterUsage;
+    }
+    | {
+        ok: false;
+        reason: QuietRecallEvaluationBlockReason;
+    };
 
 interface QuietRecallEvaluationMaterial {
     candidateDigest: RecallNoteDigest;
@@ -706,7 +755,6 @@ function collectStringValues(value: unknown, output: Set<string>): void {
  * separately for each vault.
  */
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
-const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
 const PAGELET_FOREGROUND_REVIEW_TIMEOUT_MS = 120_000;
 const SCOPE_RECAP_PROVIDER_TIMEOUT_MS = 60_000;
 const QUIET_RECALL_PROVIDER_TIMEOUT_MS = 20_000;
@@ -719,7 +767,16 @@ const SCOPE_RECAP_CALL_LIMITS = Object.freeze({ hourly: 2, daily: 10 });
 const QUIET_RECALL_CALL_LIMITS = Object.freeze({ hourly: 10, daily: 50 });
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
+const PAGELET_CHANGE_WATERMARK_STORAGE_KEY_PREFIX = "pa-pagelet-preload-changes";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
+const PAGELET_DISCOVERY_MAX_RELATED_NOTES = 6;
+const PAGELET_BACKGROUND_STANDARD_LIMITS = Object.freeze({
+    inputTokens: 4_000,
+    outputTokens: 1_000,
+    hourly: 2,
+    daily: 20,
+    rangeMs: 7 * 24 * 60 * 60 * 1000,
+});
 const MEMORY_FORGET_RETRY_INITIAL_MS = 1_000;
 const MEMORY_FORGET_RETRY_MAX_MS = 60_000;
 const MEMORY_PROFILE_PROJECTION_RETRY_INITIAL_MS = 1_000;
@@ -729,6 +786,12 @@ const MEMORY_GOVERNANCE_COMPLETED_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 type TimeoutHandle = PlatformTimeoutHandle;
 type IntervalHandle = PlatformIntervalHandle;
+
+function createPageletProviderAbortError(): Error {
+    const error = new Error("Pagelet provider call aborted.");
+    error.name = "AbortError";
+    return error;
+}
 
 function nextMemoryGovernanceGarbageCollectionAt(
     state: DeviceMemoryGovernanceStateV1,
@@ -1034,22 +1097,6 @@ function cloneSerializable<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function readPageletBackgroundPreparationNoticeFlag(): boolean {
-    try {
-        return getPlatformLocalStorage()?.getItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY) === "1";
-    } catch {
-        return false;
-    }
-}
-
-function writePageletBackgroundPreparationNoticeFlag(): void {
-    try {
-        getPlatformLocalStorage()?.setItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY, "1");
-    } catch {
-        /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
-    }
-}
-
 function readVaultInsightsInjectionNoticeFlag(): boolean {
     try {
         return getPlatformLocalStorage()?.getItem(VAULT_INSIGHTS_INJECTION_NOTICE_KEY) === "1";
@@ -1102,11 +1149,11 @@ export class PluginManager extends Plugin {
     private pageletSettingsUnsubscribe: (() => void) | null = null;
     private pageletCommandsRegistered = false;
     private pageletFocusCommandRegistered = false;
-    private pageletBackgroundPreparationNoticeSurfacedThisBoot = false;
     private vaultInsightsInjectionNoticeSurfacedThisBoot = false;
     private pageletRateLimiterInstance: PageletRateLimiter | null = null;
     private scopeRecapRateLimiterInstance: PageletRateLimiter | null = null;
     private quietRecallRateLimiterInstance: PageletRateLimiter | null = null;
+    private pageletProviderCallAdmissionInstance: PageletProviderCallAdmission | null = null;
     private quietRecallEvaluationCoordinatorInstance: QuietRecallEvaluationCoordinator | null = null;
     private quietRecallEvaluationPolicyIdentitySnapshot: string | null = null;
     private reviewQueueStore: ReviewQueueStore | null = null;
@@ -1757,12 +1804,10 @@ export class PluginManager extends Plugin {
         if (this.pageletOrchestrator) {
             this.pageletRateLimiterInstance = null;
             this.pageletOrchestrator.syncSettings();
-            this.surfacePageletBackgroundPreparationNotice();
             return;
         }
 
         try {
-            this.surfacePageletBackgroundPreparationNotice();
             this.pageletOrchestrator = new PageletOrchestrator(this.createPageletHost());
             this.pageletOrchestrator.initialize();
         } catch (error) {
@@ -1776,6 +1821,7 @@ export class PluginManager extends Plugin {
             provider: this.settings.aiProvider,
             providerPreset: this.settings.aiProviderPreset ?? null,
             model: this.settings.chatModelName,
+            embeddingModel: this.settings.embeddingModelName,
             endpoint: (this.settings.baseURL ?? "").trim().replace(/\/+$/, ""),
             locale: this.getPageletLocale(),
             dataBoundarySnapshotId: this.getMemoryDataBoundaryFingerprint(),
@@ -1788,6 +1834,12 @@ export class PluginManager extends Plugin {
                 updatedAt: insight.updatedAt,
                 sourceRefs: insight.sourceRefs,
             })),
+            pageletSourcePolicy: {
+                reviewsFolder: this.settings.pagelet.reviewsFolder ?? "",
+                excludedFolders: [...(this.settings.pagelet.excludedFolders ?? [])].sort(),
+                excludedTags: [...(this.settings.pagelet.excludedTags ?? [])].sort(),
+                excludedPatterns: [...(this.settings.pagelet.excludedPatterns ?? [])].sort(),
+            },
             temperature: this.settings.pagelet.temperature,
             maxOutputTokens: this.settings.pagelet.maxOutputTokens,
         }))}`;
@@ -2159,6 +2211,7 @@ export class PluginManager extends Plugin {
         };
         return {
             onOpenPanel: () => dispatch((callbacks) => callbacks.onOpenPanel()),
+            onOpenPreparedReview: () => dispatch((callbacks) => callbacks.onOpenPreparedReview()),
             onReviewCurrent: () => dispatch((callbacks) => callbacks.onReviewCurrent()),
             onQuickReview: () => dispatch((callbacks) => callbacks.onQuickReview()),
             onDiscoverConnections: () => dispatch((callbacks) => callbacks.onDiscoverConnections()),
@@ -2248,61 +2301,118 @@ export class PluginManager extends Plugin {
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
             registerEvent: (ref) => this.registerEvent(ref),
             saveSettings: () => this.saveSettings(),
+            createPreloadBudgetStorage: () => new LocalStoragePreloadBudgetStorage(
+                () => this.pageletVaultStorageScope() ? getPlatformLocalStorage() : undefined,
+                this.pageletRateLimitStorageKey("background-review"),
+            ),
+            createPreloadChangeDetectorStorage: () => new LocalStorageChangeDetectorStorage(
+                () => this.pageletVaultStorageScope() ? getPlatformLocalStorage() : undefined,
+                this.pageletChangeWatermarkStorageKey(),
+            ),
             openQuickCapture: () => this.openQuickCaptureModal(),
             createPreloadAnalyzeCallback: (): AnalyzeCallback => {
-                return async (files, config) => {
+                return async (files, config, callContext) => {
+                    const emptyResult = () => ({
+                        findings: [],
+                        analyzedFiles: [],
+                        analyzedAt: Date.now(),
+                        tokenCost: { input: 0, output: 0 },
+                        usedGovernedMemoryClaimIds: [],
+                    });
+                    if (!this.isStandardBackgroundPreloadRequest(config, callContext)) {
+                        return emptyResult();
+                    }
+                    const reserveBackgroundProviderCall = (): boolean | PageletProviderCallReservation => (
+                        callContext?.reserveProviderCall() ?? false
+                    );
                     const noteContents = await this.readPageletNoteContents(
                         files,
                         config.tokenBudget.input,
                     );
-                    if (noteContents.length === 0) {
-                        return {
-                            findings: [],
-                            analyzedFiles: [],
-                            analyzedAt: Date.now(),
-                            tokenCost: { input: 0, output: 0 },
-                            usedGovernedMemoryClaimIds: [],
-                        };
+                    if (
+                        noteContents.length === 0
+                        || !this.isStandardBackgroundPreloadRequest(config, callContext, noteContents)
+                    ) return emptyResult();
+                    const admittedProvider = this.settings.aiProvider;
+                    const admittedModel = this.settings.chatModelName;
+                    // Generic preload is changed-only. Semantic results can
+                    // introduce recent-but-unchanged notes, so enrichment is
+                    // intentionally disabled in this background lane.
+                    const enrichedContents = noteContents;
+                    const sourceSnapshots = this.capturePageletSourceSnapshots(enrichedContents);
+                    if (!sourceSnapshots) {
+                        return emptyResult();
                     }
-                    const relatedNotes = await this.findPageletRelatedNotes(
-                        noteContents[0]?.path ?? "",
-                        noteContents,
-                        noteContents.map((entry) => entry.path),
-                    ).catch(() => []);
-                    const relatedBudget = Math.floor(config.tokenBudget.input * 0.3);
-                    const primaryBudget = { input: config.tokenBudget.input - relatedBudget, output: config.tokenBudget.output };
-                    const truncatedRelated = relatedNotes.length > 0
-                        ? relatedNotes.map((rn) => ({
-                            path: rn.path,
-                            content: rn.content.slice(0, Math.floor(relatedBudget / Math.max(1, relatedNotes.length))),
-                        }))
-                        : [];
-                    const enrichedContents = [...noteContents, ...truncatedRelated];
-                    const prompt = buildPreloadPrompt(enrichedContents, primaryBudget);
+                    const expectedProviderPolicyIdentity = this.getScopeRecapAuthorizationContextId();
+                    const requestIsCurrent = () => (
+                        this.isStandardBackgroundPreloadRequest(
+                            config,
+                            callContext,
+                            enrichedContents,
+                        )
+                        && expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
+                        && this.pageletSourceSnapshotsAreCurrent(sourceSnapshots)
+                    );
+                    const prompt = buildPreloadPrompt(enrichedContents, config.tokenBudget);
+                    const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
+                    const inputTokens = estimateTokens(fullPrompt);
+                    if (inputTokens > PAGELET_BACKGROUND_STANDARD_LIMITS.inputTokens) {
+                        return emptyResult();
+                    }
                     const model = await this.createChatModel(0.3, {
                         maxTokens: prompt.maxOutputTokens,
                     });
                     if (!model) {
                         throw new Error("No AI model configured");
                     }
-                    const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
-                    const result = await model.invoke(fullPrompt);
+                    if (!requestIsCurrent()) {
+                        return emptyResult();
+                    }
+                    let result: unknown;
+                    try {
+                        result = await this.getPageletProviderCallAdmission().executeStandardCall(
+                            () => model.invoke(fullPrompt),
+                            {
+                                revalidate: requestIsCurrent,
+                                reserve: reserveBackgroundProviderCall,
+                            },
+                        );
+                    } catch (error) {
+                        if (
+                            error instanceof Error
+                            && error.message.includes("pagelet_provider_call_stale")
+                        ) return emptyResult();
+                        throw error;
+                    }
                     const text = coerceModelResultToString(result);
                     const parsed = parseStructuredResponse(text);
-                    const inputTokens = estimateTokens(fullPrompt);
                     const outputTokens = estimateTokens(text);
                     this.pageletCostTracker.record({
                         inputTokens,
                         outputTokens,
-                        provider: this.settings.aiProvider,
-                        model: this.settings.chatModelName,
+                        provider: admittedProvider,
+                        model: admittedModel,
+                        feature: "background-review",
+                        attemptKind: "single",
                     });
+                    if (!requestIsCurrent()) {
+                        throw new Error("Pagelet preload request became stale");
+                    }
+                    const allowedSourcePaths = new Map(noteContents.map((entry) => (
+                        [normalizePath(entry.path), entry.path]
+                    )));
                     return {
-                        findings: parsed.findings.map((f) => ({
-                            text: f.text,
-                            sourceFile: f.sourceFile || noteContents[0]?.path || "",
-                            sourceTitle: f.sourceTitle || noteContents[0]?.path.split("/").pop()?.replace(/\.md$/, "") || "",
-                        })),
+                        findings: parsed.findings.flatMap((finding) => {
+                            const sourceFile = allowedSourcePaths.get(normalizePath(finding.sourceFile));
+                            if (!sourceFile) return [];
+                            return [{
+                                text: finding.text,
+                                sourceFile,
+                                sourceTitle: finding.sourceTitle
+                                    || sourceFile.split("/").pop()?.replace(/\.md$/, "")
+                                    || sourceFile,
+                            }];
+                        }),
                         analyzedFiles: noteContents.map((entry) => entry.path),
                         analyzedAt: Date.now(),
                         tokenCost: { input: inputTokens, output: outputTokens },
@@ -2343,14 +2453,183 @@ export class PluginManager extends Plugin {
                         };
                     }
 
-                    const relatedNotes = await this.findPageletRelatedNotes(
-                        bundle.primarySourcePath,
-                        noteContents,
-                        bundle.sourcePaths,
+                    const bundleSourcePaths = new Set(
+                        bundle.sourcePaths.map((path) => normalizePath(path)),
                     );
-                    const reviewInput = relatedNotes.length > 0
-                        ? { ...bundle.input, relatedNotes }
+                    const includedNoteContents = noteContents.filter((entry) => (
+                        bundleSourcePaths.has(normalizePath(entry.path))
+                    ));
+                    const initialSourceSnapshots = this.capturePageletSourceSnapshots(includedNoteContents);
+                    if (!initialSourceSnapshots) {
+                        throw new Error("Pagelet review sources became unavailable");
+                    }
+                    let sourceSnapshots = initialSourceSnapshots;
+                    const expectedProviderPolicyIdentity = this.getScopeRecapAuthorizationContextId();
+                    const admittedProvider = this.settings.aiProvider;
+                    const admittedModel = this.settings.chatModelName;
+                    const admittedEmbeddingModel = this.settings.embeddingModelName;
+                    const requestIsCurrent = () => (
+                        expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
+                        && this.pageletSourceSnapshotsAreCurrent(
+                            sourceSnapshots,
+                            bundle.primarySourcePath,
+                        )
+                    );
+                    const stoppedResult = (error: unknown) => {
+                        if (!(error instanceof PageletProviderCallControlError)) throw error;
+                        if (error.reason === "blocked" || error.reason === "rate-limit") throw error;
+                        if (error.reason === "adjust") {
+                            new Notice(pageletT(
+                                "pagelet.review.highRisk.adjustNotice",
+                                this.getPageletLocale(),
+                            ), 5000);
+                        }
+                        return {
+                            findings: [],
+                            analyzedFiles: bundle.sourcePaths,
+                            analyzedAt: Date.now(),
+                            tokenCost: { input: 0, output: 0 },
+                            usedGovernedMemoryClaimIds: [],
+                        };
+                    };
+                    let highRiskRunApproved = false;
+                    const limiter = this.getPageletRateLimiter();
+                    const executeReviewProviderCall = async <TResult>(
+                        invoke: () => Promise<TResult>,
+                        options: { signal: AbortSignal },
+                    ): Promise<TResult> => {
+                        if (options.signal.aborted) throw createPageletProviderAbortError();
+                        const capacity = await limiter.peek();
+                        if (options.signal.aborted) throw createPageletProviderAbortError();
+                        if (!capacity.ok) {
+                            const key = capacity.reason === "hr-cap"
+                                ? "pagelet.errors.rate_limit_hourly"
+                                : "pagelet.errors.rate_limit_daily";
+                            throw new PageletProviderCallControlError(
+                                "rate-limit",
+                                pageletT(key, this.getPageletLocale()),
+                            );
+                        }
+                        const sourceCount = new Set(
+                            sourceSnapshots.map((snapshot) => normalizePath(snapshot.path)),
+                        ).size;
+                        let reservationBlock: "condition" | "rate-limit" | null = null;
+                        const providerInfo = this.getScopeRecapProviderInfo();
+                        const result = await this.getPageletProviderCallAdmission().executeRiskAwareCall({
+                            signal: options.signal,
+                            input: {
+                                sourceCount,
+                                summary: {
+                                    scopeLabel: bundle.sourceLabel,
+                                    includedSourceCount: sourceCount,
+                                    skippedSourceCount: Math.max(0, files.length - bundle.sourcePaths.length),
+                                    provider: providerInfo.provider,
+                                    model: providerInfo.model,
+                                    endpoint: providerInfo.endpoint,
+                                    hourlyCap: this.settings.pagelet.foregroundPerHourCap,
+                                    dailyCap: this.settings.pagelet.foregroundPerDayCap,
+                                } satisfies PageletReviewHighRiskSummary,
+                            },
+                            classifyRisk: (input) => (
+                                !highRiskRunApproved && input.sourceCount > 1
+                                    ? "high-risk"
+                                    : "standard"
+                            ),
+                            requestHighRiskDecision: async (input, signal) => {
+                                const choice = await this.requestForegroundReviewHighRiskDecision(
+                                    input.summary,
+                                    signal,
+                                );
+                                if (choice === "run") {
+                                    highRiskRunApproved = true;
+                                    return { action: "run" as const };
+                                }
+                                if (choice === "adjust") return { action: "adjust" as const };
+                                return { action: choice };
+                            },
+                            revalidate: () => !options.signal.aborted && requestIsCurrent(),
+                            reserve: async () => {
+                                const reservation = await limiter.reserveLeaseIf(() => (
+                                    !options.signal.aborted && requestIsCurrent()
+                                ));
+                                reservationBlock = reservation.ok
+                                    ? null
+                                    : reservation.reason === "condition"
+                                        ? "condition"
+                                        : "rate-limit";
+                                return reservation.ok ? reservation.reservation : false;
+                            },
+                            invoke,
+                        });
+                        if (result.status === "cancelled") {
+                            throw new PageletProviderCallControlError(
+                                result.action,
+                                `Pagelet review ${result.action}`,
+                            );
+                        }
+                        if (result.status === "blocked") {
+                            throw new PageletProviderCallControlError(
+                                reservationBlock === "rate-limit" ? "rate-limit" : "blocked",
+                                reservationBlock === "rate-limit"
+                                    ? pageletT("pagelet.notice.foregroundLimit", this.getPageletLocale())
+                                    : "Pagelet review request became stale",
+                            );
+                        }
+                        return result.value;
+                    };
+
+                    let relatedNotes: Awaited<ReturnType<typeof this.findPageletRelatedNotes>> = [];
+                    // A confirmed multi-note scope must not silently expand
+                    // after disclosure. It already has cross-note context, so
+                    // skip optional semantic enrichment and keep the approved
+                    // source set exact. A one-note scope may enrich first; if
+                    // that adds sources, generation is reclassified using the
+                    // final set below.
+                    if (bundle.sourcePaths.length === 1) {
+                        try {
+                            relatedNotes = await this.findPageletRelatedNotes(
+                                bundle.primarySourcePath,
+                                includedNoteContents,
+                                bundle.sourcePaths,
+                                {
+                                    limit: PAGELET_DISCOVERY_MAX_RELATED_NOTES,
+                                    additionalCurrentCheck: requestIsCurrent,
+                                    executeProviderCall: executeReviewProviderCall,
+                                    onProviderInvoke: () => {
+                                        const primary = includedNoteContents[0];
+                                        if (!primary) return;
+                                        this.pageletCostTracker.record({
+                                            inputTokens: estimateTokens(buildPageletRelatedNotesQuery(primary)),
+                                            outputTokens: 0,
+                                            provider: admittedProvider,
+                                            model: admittedEmbeddingModel,
+                                            feature: "foreground-review",
+                                            attemptKind: "semantic-retrieval",
+                                        });
+                                    },
+                                },
+                            );
+                        } catch (error) {
+                            return stoppedResult(error);
+                        }
+                    }
+                    const reviewRelatedNotes = relatedNotes.map((note) => ({
+                        path: note.path,
+                        content: note.content,
+                        ...(note.score === undefined ? {} : { score: note.score }),
+                        ...(note.headingPath === undefined ? {} : { headingPath: note.headingPath }),
+                    }));
+                    const reviewInput = reviewRelatedNotes.length > 0
+                        ? { ...bundle.input, relatedNotes: reviewRelatedNotes }
                         : bundle.input;
+                    const enrichedSourceSnapshots = this.capturePageletSourceSnapshots([
+                        ...includedNoteContents,
+                        ...relatedNotes,
+                    ]);
+                    if (!enrichedSourceSnapshots) {
+                        throw new Error("Pagelet review sources became unavailable");
+                    }
+                    sourceSnapshots = enrichedSourceSnapshots;
 
                     const reviewModel = new PageletReviewModel(
                         (temperature, options) => this.createChatModel(temperature, {
@@ -2365,17 +2644,29 @@ export class PluginManager extends Plugin {
                                 maxOutputTokens: this.settings.pagelet.maxOutputTokens,
                             },
                             costTracker: this.pageletCostTracker,
-                            rateLimiter: this.getPageletRateLimiter(),
-                            providerForPricing: this.settings.aiProvider,
-                            modelForPricing: this.settings.chatModelName,
+                            // executeReviewProviderCall owns the conditional
+                            // limiter reservation so a high-risk Run happens
+                            // before each actual-call slot is committed.
+                            providerCallOwnsRateLimitReservation: true,
+                            providerForPricing: admittedProvider,
+                            modelForPricing: admittedModel,
+                            executeProviderCall: executeReviewProviderCall,
                             userMessageLocale: this.getPageletLocale(),
                             reviewTimeoutMs: PAGELET_FOREGROUND_REVIEW_TIMEOUT_MS,
                         },
                     );
 
-                    const outcome = await reviewModel.reviewNote(reviewInput);
+                    let outcome;
+                    try {
+                        outcome = await reviewModel.reviewNote(reviewInput);
+                    } catch (error) {
+                        return stoppedResult(error);
+                    }
                     if (outcome.status === "error") {
                         throw new Error(outcome.userMessage);
+                    }
+                    if (!requestIsCurrent()) {
+                        throw new Error("Pagelet review request became stale");
                     }
 
                     const sourceById = new Map(
@@ -2416,7 +2707,7 @@ export class PluginManager extends Plugin {
             },
             prepareMemoryForPagelet: () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
             getMemoryPreparationStatus: () => this.memoryManager?.getActivePreparationStatus() ?? null,
-            isPathAllowedForPagelet: (path) => this.isDataBoundaryAllowedPath(path),
+            isPathAllowedForPagelet: (path) => this.isPageletProviderPathAllowed(path),
             openPageletSettings: () => {
                 openSettings(this.app);
                 openSettingsTab(this.app, 'personal-assistant');
@@ -2428,7 +2719,12 @@ export class PluginManager extends Plugin {
             openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
             clearScopeRecapDetailSessionCache: () => clearScopeRecapPageletDetailSessionCache(),
             findRelatedNotes: (primarySourcePath, noteContents, sourcePaths) =>
-                this.findPageletRelatedNotes(primarySourcePath, noteContents, sourcePaths),
+                this.findPageletRelatedNotes(
+                    primarySourcePath,
+                    noteContents,
+                    sourcePaths,
+                    { limit: PAGELET_DISCOVERY_MAX_RELATED_NOTES },
+                ),
             isMemoryReadyForPageletDiscovery: () =>
                 this.isPageletMemorySearchReady(),
             discoverConnections: async (currentNote, relatedNotes) =>
@@ -2445,8 +2741,6 @@ export class PluginManager extends Plugin {
             getScopeRecapAuthorizationContextId: () => this.getScopeRecapAuthorizationContextId(),
             getPageletFeatureRateLimitStatus: () => this.getPageletFeatureRateLimitStatus(),
             getScopeRecapDataBoundarySnapshotId: () => this.getMemoryDataBoundaryFingerprint(),
-            // SG-06: Modal removed. Auto-authorize; orchestrator handles notification.
-            requestScopeRecapBackgroundAuthorization: () => Promise.resolve("run" as const),
             runScopeRecap: (options) => this.runScopeRecap(options),
             runQuietRecall: () => this.runQuietRecall(),
             isQuietRecallRunCurrent: (result) => this.isQuietRecallRunCurrent(result),
@@ -2792,10 +3086,8 @@ export class PluginManager extends Plugin {
             if (
                 options.mode === "background"
                 && (
-                    this.settings.pagelet.scopeRecapBackgroundAuthorization !== "authorized-v1"
-                    || this.settings.pagelet.scopeRecapPreparationEnabled !== true
-                    || this.settings.pagelet.scopeRecapAuthorizationContextId
-                        !== currentAuthorizationContextId
+                    this.settings.pagelet.scopeRecapPreparationEnabled !== true
+                    || this.settings.pagelet.scopeRecapBackgroundAuthorization === "declined-v1"
                 )
             ) return false;
             return (
@@ -2902,29 +3194,39 @@ export class PluginManager extends Plugin {
                 requestBecameStale = true;
                 throw new Error("scope_recap_request_stale");
             }
-            let reservation: Awaited<ReturnType<PageletRateLimiter["reserve"]>>;
-            try {
-                reservation = await this.getScopeRecapRateLimiter().reserve();
-            } catch (error) {
-                budgetBlocked = true;
-                throw error;
-            }
-            if (!reservation.ok) {
-                budgetBlocked = true;
-                throw new Error(`scope_recap_${reservation.reason}`);
-            }
-            if (!(await sourceIdentityIsCurrentAtProviderBoundary())) {
-                requestBecameStale = true;
-                throw new Error("scope_recap_request_stale");
-            }
-
             let result: unknown;
             try {
-                    result = await this.withPageletProviderTimeout(
+                result = await this.getPageletProviderCallAdmission().executeStandardCall(() => (
+                    this.withPageletProviderTimeout(
                         Promise.resolve().then(() => model.invoke(prompt)),
-                    SCOPE_RECAP_PROVIDER_TIMEOUT_MS,
-                    "Scope Recap",
-                );
+                        SCOPE_RECAP_PROVIDER_TIMEOUT_MS,
+                        "Scope Recap",
+                    )
+                ), {
+                    revalidate: async () => {
+                        const current = await sourceIdentityIsCurrentAtProviderBoundary();
+                        if (!current) requestBecameStale = true;
+                        return current;
+                    },
+                    reserve: async () => {
+                        let reservation: Awaited<ReturnType<PageletRateLimiter["reserveLeaseIf"]>>;
+                        try {
+                            reservation = await this.getScopeRecapRateLimiter().reserveLeaseIf(
+                                sourceIdentityIsCurrentAtProviderBoundary,
+                            );
+                        } catch (error) {
+                            budgetBlocked = true;
+                            throw error;
+                        }
+                        if (reservation.ok) return reservation.reservation;
+                        if (reservation.reason === "condition") {
+                            requestBecameStale = true;
+                            throw new Error("scope_recap_request_stale");
+                        }
+                        budgetBlocked = true;
+                        throw new Error(`scope_recap_${reservation.reason}`);
+                    },
+                });
             } catch (error) {
                 if (error instanceof Error && error.message === "Scope Recap timed out") {
                     providerTimedOut = true;
@@ -3019,9 +3321,10 @@ export class PluginManager extends Plugin {
         const provider = this.getScopeRecapProviderInfo();
         const settings = this.getPageletSettingsWithDataBoundary();
         return `scope-recap-authorization:${stableHash(stableStringify({
-            version: 1,
+            version: 2,
             provider: provider.provider,
             model: provider.model,
+            embeddingModel: this.settings.embeddingModelName || "Default embedding model",
             providerPreset: this.settings.aiProviderPreset ?? null,
             endpoint: this.scopeRecapEndpointIdentity(),
             dataBoundarySnapshotId: this.getMemoryDataBoundaryFingerprint(),
@@ -3037,13 +3340,13 @@ export class PluginManager extends Plugin {
         options: { includeRecentChanges?: boolean } = {},
     ) {
         const activeFile = this.app.workspace.getActiveFile();
-        const resolver = this.createScopeRecapScopeResolver();
+        const resolver = this.createPageletProviderSourceResolver();
         const now = new Date();
         const allowedPaths = new Set(notes
             .filter((note) => {
                 if (note.skipReason) return false;
                 const file = this.app.vault.getAbstractFileByPath(note.path);
-                return file instanceof TFile && this.isScopeRecapSourceAllowed(file, resolver);
+                return file instanceof TFile && this.isPageletProviderSourceAllowedByResolver(file, resolver);
             })
             .map((note) => normalizePath(note.path)));
         const includedPaths = notes
@@ -3077,8 +3380,8 @@ export class PluginManager extends Plugin {
     ): Promise<ScopeRecapSourceNote[]> {
         const activeFile = this.app.workspace.getActiveFile();
         if (!(activeFile instanceof TFile) || activeFile.extension !== "md") return [];
-        const resolver = this.createScopeRecapScopeResolver();
-        if (!this.isScopeRecapSourceAllowed(activeFile, resolver)) {
+        const resolver = this.createPageletProviderSourceResolver();
+        if (!this.isPageletProviderSourceAllowedByResolver(activeFile, resolver)) {
             return [{
                 path: activeFile.path,
                 title: activeFile.basename,
@@ -3096,6 +3399,7 @@ export class PluginManager extends Plugin {
                 return right.stat.mtime - left.stat.mtime;
             });
         const notes: ScopeRecapSourceNote[] = [];
+        const contentSnapshots: Array<{ path: string; mtime: number; size: number }> = [];
         let selectedAllowedCount = 0;
         for (const file of files) {
             const base: ScopeRecapSourceNote = {
@@ -3105,7 +3409,7 @@ export class PluginManager extends Plugin {
                 modifiedAt: new Date(file.stat.mtime).toISOString(),
                 isGenerated: this.isGeneratedDataBoundaryFile(file),
             };
-            if (!this.isScopeRecapSourceAllowed(file, resolver)) {
+            if (!this.isPageletProviderSourceAllowedByResolver(file, resolver)) {
                 notes.push(base);
                 continue;
             }
@@ -3123,7 +3427,43 @@ export class PluginManager extends Plugin {
                 continue;
             }
             try {
-                notes.push({ ...base, content: await this.app.vault.cachedRead(file) });
+                const before = { mtime: file.stat.mtime, size: file.stat.size };
+                const content = await this.app.vault.cachedRead(file);
+                const current = this.app.vault.getAbstractFileByPath(file.path);
+                const latestBoundary = this.getLatestPageletContentBoundary(file.path, content);
+                if (
+                    !(current instanceof TFile)
+                    || current.extension !== "md"
+                    || current.stat.mtime !== before.mtime
+                    || current.stat.size !== before.size
+                    || !this.isPageletProviderSourceAllowedByResolver(current, resolver)
+                ) {
+                    notes.push({
+                        ...base,
+                        skipReason: "unreadable",
+                        skipLabel: "Source changed during preparation",
+                    });
+                    continue;
+                }
+                if (latestBoundary?.allowed !== true) {
+                    notes.push({
+                        ...base,
+                        skipReason: "data_boundary",
+                        skipLabel: "Source excluded by current data boundary",
+                    });
+                    continue;
+                }
+                notes.push({
+                    ...base,
+                    content,
+                    tags: latestBoundary.tags,
+                    isGenerated: latestBoundary.isGenerated,
+                });
+                contentSnapshots.push({
+                    path: current.path,
+                    mtime: before.mtime,
+                    size: before.size,
+                });
             } catch (error) {
                 this.log("Failed to read note for Scope Recap", { path: file.path, error });
                 notes.push({
@@ -3133,10 +3473,22 @@ export class PluginManager extends Plugin {
                 });
             }
         }
+        const collectionIsCurrent = contentSnapshots.every((snapshot) => {
+            const current = this.app.vault.getAbstractFileByPath(snapshot.path);
+            return current instanceof TFile
+                && current.extension === "md"
+                && current.stat.mtime === snapshot.mtime
+                && current.stat.size === snapshot.size
+                && this.isPageletProviderSourceAllowedByResolver(current, resolver);
+        });
+        if (!collectionIsCurrent) {
+            this.log("Scope Recap source collection became stale");
+            return [];
+        }
         return notes;
     }
 
-    private createScopeRecapScopeResolver(): ScopeResolver {
+    private createPageletProviderSourceResolver(): ScopeResolver {
         const settings = this.getPageletSettingsWithDataBoundary();
         return new ScopeResolver(this.app, {
             excludedFolders: [...settings.excludedFolders],
@@ -3147,7 +3499,7 @@ export class PluginManager extends Plugin {
         });
     }
 
-    private isScopeRecapSourceAllowed(file: TFile, resolver: ScopeResolver): boolean {
+    private isPageletProviderSourceAllowedByResolver(file: TFile, resolver: ScopeResolver): boolean {
         return this.isDataBoundaryAllowedFile(file)
             && resolver.resolveCurrentNote(file).included.length === 1;
     }
@@ -3245,10 +3597,7 @@ export class PluginManager extends Plugin {
         if (pageletSettings.maintenanceScanSuggested) return;
         if (this.app.vault.getMarkdownFiles().length <= PAGELET_MAINTENANCE_ONBOARDING_MIN_NOTES) return;
 
-        const surfaced = this.pageletOrchestrator?.setOnboardingNudge("maintenance_scan") === true;
-        if (!surfaced) return;
-        pageletSettings.maintenanceScanSuggested = true;
-        await this.saveSettings();
+        this.pageletOrchestrator.setOnboardingNudge("maintenance_scan");
     }
 
     private async maybeShowQuickCaptureOnboardingNudge(): Promise<void> {
@@ -3259,10 +3608,7 @@ export class PluginManager extends Plugin {
         this.syncPageletRuntime();
         if (!this.pageletOrchestrator) return;
 
-        const surfaced = this.pageletOrchestrator?.setOnboardingNudge("quick_capture") === true;
-        if (!surfaced) return;
-        pageletSettings.quickCaptureExplained = true;
-        await this.saveSettings();
+        this.pageletOrchestrator.setOnboardingNudge("quick_capture");
     }
 
     private async detectCrossNotePatternsForPagelet(now = new Date()): Promise<PatternDetectionResult | null> {
@@ -3307,42 +3653,82 @@ export class PluginManager extends Plugin {
     private async collectQuietRecallVaultNotes(
         activeFile: TFile,
         currentContent: string,
+        options: {
+            reserveProviderCall: () =>
+                | boolean
+                | PageletProviderCallReservation
+                | PromiseLike<boolean | PageletProviderCallReservation>;
+            additionalCurrentCheck: () => boolean;
+            onProviderInvoke?: () => void;
+        },
     ): Promise<QuietRecallVaultNoteCollection> {
         if (await this.isPageletMemorySearchReady()) {
+            let searchCompleted = false;
             const relatedNotes = await this.findPageletRelatedNotes(
                 activeFile.path,
                 [{ path: activeFile.path, content: currentContent }],
                 [activeFile.path],
-                QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES,
+                {
+                    limit: QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES,
+                    requireActivePrimary: true,
+                    reserveProviderCall: options.reserveProviderCall,
+                    additionalCurrentCheck: options.additionalCurrentCheck,
+                    onProviderInvoke: options.onProviderInvoke,
+                    onSearchOutcome: (outcome) => {
+                        searchCompleted = outcome === "completed";
+                    },
+                },
             );
-            return this.collectQuietRecallVaultNotesFromRelatedNotes(relatedNotes);
+            if (searchCompleted) {
+                return this.collectQuietRecallVaultNotesFromRelatedNotes(relatedNotes);
+            }
         }
         return this.collectQuietRecallVaultNotesFromMetadata(activeFile);
     }
 
     private async collectQuietRecallVaultNotesFromRelatedNotes(
-        relatedNotes: Array<{ path: string; content: string; score?: number; headingPath?: string[] }>,
+        relatedNotes: Array<{
+            path: string;
+            content: string;
+            score?: number;
+            headingPath?: string[];
+        }>,
     ): Promise<QuietRecallVaultNoteCollection> {
         const backlinkMap = this.buildGraphDiscoveryBacklinkMap();
         const vaultNotes: QuietRecallVaultNote[] = [];
         const recallRelatedNotes: QuietRecallRelatedNote[] = [];
+        const sourceSnapshots: QuietRecallSourceSnapshot[] = [];
         for (const related of relatedNotes.slice(0, QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES)) {
             const path = normalizePath(related.path).replace(/^\.\//, "");
             const file = this.app.vault.getAbstractFileByPath(path);
             if (!(file instanceof TFile) || file.extension !== "md") continue;
-            if (!this.isDataBoundaryAllowedFile(file)) continue;
-            // VSS content is retrieval/ranking evidence only. Re-read the live
-            // Markdown source before any provider-backed evaluation.
-            const note = await this.readQuietRecallVaultNote(file, backlinkMap);
-            if (!note) continue;
-            vaultNotes.push(note);
+            if (!this.isPageletProviderSourceAllowedFile(file)) continue;
+            // Search results are ranking evidence only. Re-read the current
+            // Markdown body and retain the exact stats paired with that body.
+            const read = await this.readQuietRecallVaultNote(file, backlinkMap);
+            if (!read) continue;
+            vaultNotes.push(read.note);
+            sourceSnapshots.push(read.snapshot);
             recallRelatedNotes.push({
-                path: file.path,
+                path: read.note.path,
                 score: related.score ?? 0.5,
                 headingPath: related.headingPath,
             });
         }
-        return { vaultNotes, relatedNotes: recallRelatedNotes };
+        if (!this.quietRecallSourceSnapshotsAreCurrent(sourceSnapshots)) {
+            return {
+                vaultNotes: [],
+                relatedNotes: [],
+                sourceSnapshots: [],
+                retrievalMode: "semantic",
+            };
+        }
+        return {
+            vaultNotes,
+            relatedNotes: recallRelatedNotes,
+            sourceSnapshots,
+            retrievalMode: "semantic",
+        };
     }
 
     private async collectQuietRecallVaultNotesFromMetadata(activeFile: TFile): Promise<QuietRecallVaultNoteCollection> {
@@ -3351,16 +3737,26 @@ export class PluginManager extends Plugin {
             .slice(0, QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES);
         const vaultNotes: QuietRecallVaultNote[] = [];
         const relatedNotes: QuietRecallRelatedNote[] = [];
+        const sourceSnapshots: QuietRecallSourceSnapshot[] = [];
         for (const candidate of candidates) {
-            const note = await this.readQuietRecallVaultNote(candidate.file, backlinkMap);
-            if (!note) continue;
-            vaultNotes.push(note);
+            const read = await this.readQuietRecallVaultNote(candidate.file, backlinkMap);
+            if (!read) continue;
+            vaultNotes.push(read.note);
+            sourceSnapshots.push(read.snapshot);
             relatedNotes.push({
-                path: candidate.file.path,
+                path: read.note.path,
                 score: candidate.score,
             });
         }
-        return { vaultNotes, relatedNotes };
+        if (!this.quietRecallSourceSnapshotsAreCurrent(sourceSnapshots)) {
+            return {
+                vaultNotes: [],
+                relatedNotes: [],
+                sourceSnapshots: [],
+                retrievalMode: "metadata",
+            };
+        }
+        return { vaultNotes, relatedNotes, sourceSnapshots, retrievalMode: "metadata" };
     }
 
     private rankQuietRecallMetadataCandidates(
@@ -3377,7 +3773,7 @@ export class PluginManager extends Plugin {
         const addScore = (file: TFile | null | undefined, amount: number): void => {
             if (!(file instanceof TFile) || file.extension !== "md") return;
             if (file.path === activeFile.path) return;
-            if (!this.isDataBoundaryAllowedFile(file)) return;
+            if (!this.isPageletProviderSourceAllowedFile(file)) return;
             const existing = scores.get(file.path);
             const score = Math.min(0.95, (existing?.score ?? 0) + amount);
             scores.set(file.path, { file, score });
@@ -3393,7 +3789,7 @@ export class PluginManager extends Plugin {
         const resolvedLinks = this.app.metadataCache?.resolvedLinks as
             Record<string, Record<string, number>> | undefined;
         for (const file of this.app.vault.getMarkdownFiles()) {
-            if (file.path === activeFile.path || !this.isDataBoundaryAllowedFile(file)) continue;
+            if (file.path === activeFile.path || !this.isPageletProviderSourceAllowedFile(file)) continue;
             if (parentFolder(file.path) === activeFolder) addScore(file, 0.18);
             const tags = this.getDataBoundaryTags(file);
             const sharedTagCount = tags.filter((tag) => activeTags.has(tag)).length;
@@ -3421,34 +3817,56 @@ export class PluginManager extends Plugin {
     private async readQuietRecallVaultNote(
         file: TFile,
         backlinkMap: Map<string, string[]>,
-    ): Promise<QuietRecallVaultNote | null> {
+    ): Promise<QuietRecallVaultNoteRead | null> {
         try {
             const before = { mtime: file.stat.mtime, size: file.stat.size };
             const content = typeof this.app.vault.read === "function"
                 ? await this.app.vault.read(file)
                 : await this.app.vault.cachedRead(file);
             const current = this.app.vault.getAbstractFileByPath(file.path);
+            const latestBoundary = this.getLatestPageletContentBoundary(file.path, content);
             if (
                 !(current instanceof TFile)
                 || current.extension !== "md"
                 || current.stat.mtime !== before.mtime
                 || current.stat.size !== before.size
-                || !this.isDataBoundaryAllowedFile(current)
+                || !this.isPageletProviderSourceAllowedFile(current, content)
+                || latestBoundary?.allowed !== true
             ) return null;
             return {
-                path: current.path,
-                title: current.basename,
-                content,
-                tags: this.getDataBoundaryTags(current),
-                links: this.getGraphDiscoveryLinks(current),
-                backlinks: backlinkMap.get(normalizePath(current.path)) ?? [],
-                modifiedAt: new Date(current.stat.mtime).toISOString(),
-                createdAt: new Date(current.stat.ctime).toISOString(),
+                note: {
+                    path: current.path,
+                    title: current.basename,
+                    content,
+                    tags: latestBoundary.tags,
+                    links: this.getGraphDiscoveryLinks(current),
+                    backlinks: backlinkMap.get(normalizePath(current.path)) ?? [],
+                    modifiedAt: new Date(before.mtime).toISOString(),
+                    createdAt: new Date(current.stat.ctime).toISOString(),
+                },
+                snapshot: {
+                    path: current.path,
+                    mtime: before.mtime,
+                    size: before.size,
+                },
             };
         } catch (error) {
             this.log("Failed to read note for Quiet Recall", { path: file.path, error });
             return null;
         }
+    }
+
+    private quietRecallSourceSnapshotsAreCurrent(
+        snapshots: readonly QuietRecallSourceSnapshot[],
+    ): boolean {
+        return snapshots.every((snapshot) => {
+            const file = this.app.vault.getAbstractFileByPath(normalizePath(snapshot.path));
+            return file instanceof TFile
+                && file.extension === "md"
+                && file.stat.mtime === snapshot.mtime
+                && file.stat.size === snapshot.size
+                && this.isPageletProviderSourceAllowedFile(file);
+        });
     }
 
     private getGraphDiscoveryLinks(file: TFile): string[] {
@@ -3725,6 +4143,7 @@ export class PluginManager extends Plugin {
         const runNow = new Date();
         const providerSnapshot = this.settings.aiProvider;
         const modelSnapshot = this.settings.chatModelName;
+        const embeddingModelSnapshot = this.settings.embeddingModelName;
         const evaluationPolicySnapshotId = this.getQuietRecallEvaluationPolicyIdentity();
         const dataBoundarySnapshotId = this.getMemoryDataBoundaryFingerprint();
         if (
@@ -3739,30 +4158,109 @@ export class PluginManager extends Plugin {
         if (!(activeFile instanceof TFile) || activeFile.extension !== "md") {
             return buildQuietRecallCandidates({ now: runNow, locale });
         }
-        if (!this.isDataBoundaryAllowedFile(activeFile)) {
+        if (!this.isPageletProviderSourceAllowedFile(activeFile)) {
             return buildQuietRecallCandidates({ now: runNow, locale });
         }
 
-        const activeSnapshot = { mtime: activeFile.stat.mtime, size: activeFile.stat.size };
+        const activeSnapshot: QuietRecallSourceSnapshot = {
+            path: activeFile.path,
+            mtime: activeFile.stat.mtime,
+            size: activeFile.stat.size,
+        };
         const content = typeof this.app.vault.read === "function"
             ? await this.app.vault.read(activeFile)
             : await this.app.vault.cachedRead(activeFile);
         const currentActiveFile = this.app.vault.getAbstractFileByPath(activeFile.path);
+        const activeWorkspaceFileIsCurrent = () => {
+            const currentWorkspaceFile = this.app.workspace.getActiveFile();
+            return currentWorkspaceFile instanceof TFile
+                && currentWorkspaceFile.extension === "md"
+                && normalizePath(currentWorkspaceFile.path) === normalizePath(activeSnapshot.path);
+        };
         if (
             !(currentActiveFile instanceof TFile)
             || currentActiveFile.extension !== "md"
             || currentActiveFile.stat.mtime !== activeSnapshot.mtime
             || currentActiveFile.stat.size !== activeSnapshot.size
-            || !this.isDataBoundaryAllowedFile(currentActiveFile)
+            || !this.isPageletProviderSourceAllowedFile(currentActiveFile, content)
+            || !activeWorkspaceFileIsCurrent()
         ) return buildQuietRecallCandidates({ now: runNow, locale });
-        const collectedVaultNotes = await this.collectQuietRecallVaultNotes(activeFile, content).catch((error) => {
+        const activeSourceIdentityIsCurrent = () => (
+            !this.unloading
+            && this.settings.pagelet.enabled === true
+            && this.settings.quietRecall.enabled === true
+            && evaluationPolicySnapshotId === this.getQuietRecallEvaluationPolicyIdentity()
+            && dataBoundarySnapshotId === this.getMemoryDataBoundaryFingerprint()
+            && activeWorkspaceFileIsCurrent()
+            && this.quietRecallSourceSnapshotsAreCurrent([activeSnapshot])
+        );
+        let providerCallIdentityIsCurrent = activeSourceIdentityIsCurrent;
+        let roundStarted = false;
+        let retrievalProviderCalls = 0;
+        let retrievalEstimatedCost = 0;
+        let retrievalPricingKnown = true;
+        const reserveActualProviderCall = async (): Promise<QuietRecallProviderCallReservation> => {
+            const decision = await this.reserveQuietRecallProviderCall({
+                roundStarted,
+                revalidate: providerCallIdentityIsCurrent,
+            });
+            if (!decision.ok || !decision.startedRound) return decision;
+            const reservation = decision.reservation;
+            return {
+                ...decision,
+                reservation: {
+                    commit: () => {
+                        reservation.commit();
+                        roundStarted = true;
+                    },
+                    rollback: () => reservation.rollback(),
+                },
+            };
+        };
+        const collectedVaultNotes = await this.collectQuietRecallVaultNotes(activeFile, content, {
+            additionalCurrentCheck: activeSourceIdentityIsCurrent,
+            reserveProviderCall: async () => {
+                if (this.getAISetupIssue() !== null) {
+                    throw new Error("quiet_recall_provider_unavailable");
+                }
+                const reservation = await reserveActualProviderCall();
+                if (!reservation.ok) {
+                    throw new Error(`quiet_recall_${reservation.reason}`);
+                }
+                return reservation.reservation;
+            },
+            onProviderInvoke: () => {
+                retrievalProviderCalls += 1;
+                const cost = this.pageletCostTracker.record({
+                    inputTokens: estimateTokens(buildPageletRelatedNotesQuery({
+                        path: activeFile.path,
+                        content,
+                    })),
+                    outputTokens: 0,
+                    provider: providerSnapshot,
+                    model: embeddingModelSnapshot,
+                    feature: "quiet-recall",
+                    attemptKind: "semantic-retrieval",
+                });
+                if (cost) {
+                    retrievalEstimatedCost += cost.estimatedCost;
+                    retrievalPricingKnown = retrievalPricingKnown && cost.pricingKnown;
+                }
+            },
+        }).catch((error) => {
             this.log("Quiet Recall vault-note collection skipped", error);
-            return { vaultNotes: [], relatedNotes: [] } satisfies QuietRecallVaultNoteCollection;
+            return {
+                vaultNotes: [],
+                relatedNotes: [],
+                sourceSnapshots: [],
+                retrievalMode: "metadata",
+            } satisfies QuietRecallVaultNoteCollection;
         });
         const relatedNotes = collectedVaultNotes.relatedNotes
-            .filter((note) => this.isDataBoundaryAllowedPath(note.path));
+            .filter((note) => this.isPageletProviderPathAllowed(note.path));
         const vaultNotes = collectedVaultNotes.vaultNotes
-            .filter((note) => this.isDataBoundaryAllowedPath(note.path));
+            .filter((note) => this.isPageletProviderPathAllowed(note.path));
+        const savedInsightCollection = await this.collectPageletProviderAllowedSavedInsights();
 
         const baseInput = {
             now: runNow,
@@ -3774,7 +4272,42 @@ export class PluginManager extends Plugin {
             },
             relatedNotes,
             vaultNotes,
-            savedInsights: this.listDataBoundaryAllowedSavedInsights(),
+            savedInsights: savedInsightCollection.insights,
+        };
+        const contextFingerprint = quietRecallContextFingerprint({
+            currentPath: activeFile.path,
+            currentContent: content,
+            locale,
+            provider: providerSnapshot,
+            model: modelSnapshot,
+            dataBoundarySnapshot: dataBoundarySnapshotId,
+            evaluationPolicySnapshotId,
+        });
+        const retrievalOnlyDiagnostics = async (
+            candidateCount: number,
+            blockedReason?: QuietRecallEvaluationBlockReason,
+        ): Promise<QuietRecallEvaluationDiagnostics | undefined> => {
+            if (retrievalProviderCalls === 0) return undefined;
+            const usage = await this.getQuietRecallLimiterUsage(this.getQuietRecallRateLimiter());
+            return {
+                roundId: stableHash(`${contextFingerprint}:${runNow.getTime()}`),
+                startedAt: runNow.getTime(),
+                contextFingerprint,
+                candidateCount,
+                evaluatedCandidateCount: 0,
+                providerCalls: 0,
+                semanticRetrievalCalls: retrievalProviderCalls,
+                totalProviderCalls: retrievalProviderCalls,
+                initialCalls: 0,
+                languageRetryCalls: 0,
+                cacheHits: 0,
+                inFlightHits: 0,
+                estimatedCost: retrievalEstimatedCost,
+                pricingKnown: retrievalPricingKnown,
+                ...(usage.limiterUsage ? { limiterUsage: usage.limiterUsage } : {}),
+                ...(blockedReason ? { blockedReason } : {}),
+                attempts: [],
+            };
         };
         const localResult = buildQuietRecallCandidates(baseInput);
         const discoverCandidates = applyRetrievalHabitProfileToRecallCandidates(
@@ -3782,11 +4315,23 @@ export class PluginManager extends Plugin {
             this.settings.retrievalHabitProfile,
             { now: runNow },
         ).filter((candidate) => this.quietRecallCandidateSourcesAreCurrent(candidate));
-        const sourceSnapshotId = this.buildQuietRecallRunSourceSnapshotId(
-            activeFile.path,
+        const capturedSourceSnapshots = this.resolveQuietRecallRunSourceSnapshots(
+            activeSnapshot,
+            [
+                ...(collectedVaultNotes.sourceSnapshots ?? []),
+                ...savedInsightCollection.sourceSnapshots,
+            ],
             discoverCandidates,
         );
-        if (!sourceSnapshotId) {
+        const sourceSnapshotId = capturedSourceSnapshots
+            ? buildQuietRecallSourceSnapshotId(capturedSourceSnapshots)
+            : null;
+        const sourcePaths = capturedSourceSnapshots?.map((snapshot) => snapshot.path);
+        if (!sourceSnapshotId || !capturedSourceSnapshots) {
+            const evaluationDiagnostics = await retrievalOnlyDiagnostics(
+                discoverCandidates.length,
+                "invalid_context",
+            );
             return {
                 ...localResult,
                 totalCount: 0,
@@ -3794,20 +4339,28 @@ export class PluginManager extends Plugin {
                 discoverCandidates: [],
                 dataBoundarySnapshotId,
                 evaluationPolicySnapshotId,
+                ...(evaluationDiagnostics ? { evaluationDiagnostics } : {}),
             };
         }
-        const evaluationCandidates = discoverCandidates.filter(
-            (candidate) => candidate.score >= QUIET_RECALL_BUBBLE_MIN_SCORE,
-        );
+        const evaluationCandidates = discoverCandidates.filter((candidate) => (
+            candidate.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
+            && (
+                collectedVaultNotes.retrievalMode !== "metadata"
+                || candidate.context?.kind === "governed_claim"
+            )
+        ));
         if (evaluationCandidates.length === 0) {
+            const evaluationDiagnostics = await retrievalOnlyDiagnostics(0);
             return {
                 ...localResult,
                 totalCount: 0,
                 candidates: [],
                 discoverCandidates,
                 sourceSnapshotId,
+                ...(sourcePaths ? { sourcePaths } : {}),
                 dataBoundarySnapshotId,
                 evaluationPolicySnapshotId,
+                ...(evaluationDiagnostics ? { evaluationDiagnostics } : {}),
             };
         }
 
@@ -3819,26 +4372,16 @@ export class PluginManager extends Plugin {
                 quietRecallEvaluationMaterial(candidate, currentDigest, vaultNotes, runNow),
             );
         }
-        const contextFingerprint = quietRecallContextFingerprint({
-            currentPath: activeFile.path,
-            currentContent: content,
-            locale,
-            provider: providerSnapshot,
-            model: modelSnapshot,
-            dataBoundarySnapshot: dataBoundarySnapshotId,
-            evaluationPolicySnapshotId,
-        });
         const runIdentityIsCurrent = () => (
             !this.unloading
             && this.settings.pagelet.enabled === true
             && this.settings.quietRecall.enabled === true
             && evaluationPolicySnapshotId === this.getQuietRecallEvaluationPolicyIdentity()
             && dataBoundarySnapshotId === this.getMemoryDataBoundaryFingerprint()
-            && sourceSnapshotId === this.buildQuietRecallRunSourceSnapshotId(
-                activeFile.path,
-                discoverCandidates,
-            )
+            && activeWorkspaceFileIsCurrent()
+            && this.quietRecallSourceSnapshotsAreCurrent(capturedSourceSnapshots)
         );
+        providerCallIdentityIsCurrent = runIdentityIsCurrent;
 
         const lastRoundStartedAt = Number.isFinite(this._lastRecallLlmEvalAt)
             ? this._lastRecallLlmEvalAt
@@ -3847,6 +4390,8 @@ export class PluginManager extends Plugin {
         if (this.getAISetupIssue() !== null) {
             blockedReason = "provider_unavailable";
         } else if (
+            !roundStarted
+            &&
             lastRoundStartedAt > 0
             && runNow.getTime() - lastRoundStartedAt < PluginManager.RECALL_LLM_COOLDOWN_MS
         ) {
@@ -3866,7 +4411,6 @@ export class PluginManager extends Plugin {
             if (!model) blockedReason = "provider_unavailable";
         }
 
-        let roundStarted = false;
         const recall = await this.getQuietRecallEvaluationCoordinator().evaluate({
             localResult: {
                 ...localResult,
@@ -3884,42 +4428,17 @@ export class PluginManager extends Plugin {
             },
             reserve: async () => {
                 if (!runIdentityIsCurrent()) return { ok: false, reason: "invalid_context" };
-                if (!roundStarted) {
-                    const admitted = await this.acquireQuietRecallRoundAdmission();
-                    if (!admitted) return { ok: false, reason: "cooldown" };
-                    roundStarted = true;
-                }
-                const limiter = this.getQuietRecallRateLimiter();
-                const decision = await limiter.reserve();
-                if (!decision.ok) return { ok: false, reason: "budget" };
-                if (!runIdentityIsCurrent()) return { ok: false, reason: "invalid_context" };
-                let usage: PageletRateLimitState | null = null;
-                try {
-                    if (typeof limiter.getStateSnapshot === "function") {
-                        usage = await limiter.getStateSnapshot();
-                    }
-                } catch (error) {
-                    this.log("Quiet Recall post-reservation usage diagnostics unavailable", error);
-                }
+                const reservation = await reserveActualProviderCall();
+                if (!reservation.ok) return reservation;
                 return {
                     ok: true,
-                    ...(usage ? { limiterUsage: {
-                        hourlyUsed: usage.hourlyTimestamps.length,
-                        hourlyCap: QUIET_RECALL_CALL_LIMITS.hourly,
-                        hourlyRemaining: Math.max(
-                            0,
-                            QUIET_RECALL_CALL_LIMITS.hourly - usage.hourlyTimestamps.length,
-                        ),
-                        dailyUsed: usage.dailyCount,
-                        dailyCap: QUIET_RECALL_CALL_LIMITS.daily,
-                        dailyRemaining: Math.max(
-                            0,
-                            QUIET_RECALL_CALL_LIMITS.daily - usage.dailyCount,
-                        ),
-                    } } : {}),
+                    providerCallReservation: reservation.reservation,
+                    ...(reservation.limiterUsage
+                        ? { limiterUsage: reservation.limiterUsage }
+                        : {}),
                 };
             },
-            evaluator: async (attempt: QuietRecallEvaluationAttempt) => {
+            evaluator: async (attempt: QuietRecallEvaluationAttempt, providerCallReservation) => {
                 const material = evaluationMaterials.get(attempt.candidate.id);
                 if (!runIdentityIsCurrent()) return { status: "rejected", reason: "cancelled" };
                 if (!model) return { status: "rejected", reason: "provider_unavailable" };
@@ -3933,13 +4452,35 @@ export class PluginManager extends Plugin {
                     content,
                     attempt.kind,
                     { provider: providerSnapshot, model: modelSnapshot },
+                    runIdentityIsCurrent,
+                    providerCallReservation,
                 );
             },
         });
+        const postRunLimiterUsage = recall.evaluationDiagnostics
+            ? await this.getQuietRecallLimiterUsage(this.getQuietRecallRateLimiter())
+            : {};
+        const evaluationDiagnostics = recall.evaluationDiagnostics
+            ? {
+                ...recall.evaluationDiagnostics,
+                semanticRetrievalCalls: retrievalProviderCalls,
+                totalProviderCalls: recall.evaluationDiagnostics.providerCalls
+                    + retrievalProviderCalls,
+                estimatedCost: recall.evaluationDiagnostics.estimatedCost
+                    + retrievalEstimatedCost,
+                pricingKnown: recall.evaluationDiagnostics.pricingKnown
+                    && retrievalPricingKnown,
+                ...(postRunLimiterUsage.limiterUsage
+                    ? { limiterUsage: postRunLimiterUsage.limiterUsage }
+                    : {}),
+            }
+            : undefined;
         return {
             ...recall,
+            ...(evaluationDiagnostics ? { evaluationDiagnostics } : {}),
             discoverCandidates,
             sourceSnapshotId,
+            ...(sourcePaths ? { sourcePaths } : {}),
             dataBoundarySnapshotId,
             evaluationPolicySnapshotId,
         };
@@ -3950,17 +4491,202 @@ export class PluginManager extends Plugin {
             const file = this.app.vault.getAbstractFileByPath(normalizePath(ref.path));
             return file instanceof TFile
                 && file.extension === "md"
-                && this.isDataBoundaryAllowedFile(file);
+                && this.isPageletProviderSourceAllowedFile(file);
         });
+    }
+
+    private resolveQuietRecallRunSourceSnapshots(
+        activeSnapshot: QuietRecallSourceSnapshot,
+        capturedCandidateSnapshots: readonly QuietRecallSourceSnapshot[],
+        candidates: readonly QuietRecallCandidate[],
+    ): QuietRecallSourceSnapshot[] | null {
+        const capturedByPath = new Map<string, QuietRecallSourceSnapshot>();
+        const rememberCaptured = (snapshot: QuietRecallSourceSnapshot): boolean => {
+            const path = normalizePath(snapshot.path);
+            const existing = capturedByPath.get(path);
+            if (
+                existing
+                && (existing.mtime !== snapshot.mtime || existing.size !== snapshot.size)
+            ) return false;
+            capturedByPath.set(path, { ...snapshot, path });
+            return true;
+        };
+        if (!rememberCaptured(activeSnapshot)) return null;
+        for (const snapshot of capturedCandidateSnapshots) {
+            if (!rememberCaptured(snapshot)) return null;
+        }
+
+        const paths = new Set<string>([normalizePath(activeSnapshot.path)]);
+        for (const candidate of candidates) {
+            for (const ref of candidate.sourceRefs) paths.add(normalizePath(ref.path));
+        }
+        const snapshots: QuietRecallSourceSnapshot[] = [];
+        for (const path of paths) {
+            const captured = capturedByPath.get(path);
+            if (captured) {
+                snapshots.push(captured);
+                continue;
+            }
+            // Derived candidate text is provider-bound only when every source
+            // body was freshly validated and paired with its captured stat.
+            return null;
+        }
+        return this.quietRecallSourceSnapshotsAreCurrent(snapshots) ? snapshots : null;
+    }
+
+    private async reserveQuietRecallProviderCall(options: {
+        roundStarted: boolean;
+        revalidate: () => boolean;
+    }): Promise<QuietRecallProviderCallReservation> {
+        const reserve = async (startedRound: boolean): Promise<QuietRecallProviderCallReservation> => {
+            if (!options.revalidate()) return { ok: false, reason: "invalid_context" };
+            const limiter = this.getQuietRecallRateLimiter();
+            let decision: Awaited<ReturnType<PageletRateLimiter["reserveLeaseIf"]>>;
+            try {
+                decision = await limiter.reserveLeaseIf(options.revalidate);
+            } catch (error) {
+                this.log("Quiet Recall rate-limit reservation failed closed", error);
+                return { ok: false, reason: "budget" };
+            }
+            if (!decision.ok) {
+                return {
+                    ok: false,
+                    reason: decision.reason === "condition" ? "invalid_context" : "budget",
+                };
+            }
+            if (!options.revalidate()) {
+                await decision.reservation.rollback();
+                return { ok: false, reason: "invalid_context" };
+            }
+            let settled = false;
+            return {
+                ok: true,
+                startedRound,
+                reservation: {
+                    commit: () => {
+                        decision.reservation.commit();
+                        settled = true;
+                    },
+                    rollback: async () => {
+                        if (settled) return;
+                        await decision.reservation.rollback();
+                        settled = true;
+                    },
+                },
+            };
+        };
+
+        if (options.roundStarted) return reserve(false);
+
+        const tail = this.quietRecallRoundAdmissionTail ?? Promise.resolve();
+        let releaseClaim!: () => void;
+        let claimReleased = false;
+        const claimSettled = new Promise<void>((resolve) => {
+            releaseClaim = () => {
+                if (claimReleased) return;
+                claimReleased = true;
+                resolve();
+            };
+        });
+        // Hold the serialized first-round claim until the provisional slot is
+        // committed or rolled back. Concurrent runs then re-check cooldown
+        // against the actual outcome instead of racing past a returned lease.
+        this.quietRecallRoundAdmissionTail = tail.then(
+            () => claimSettled,
+            () => claimSettled,
+        ).then(() => undefined);
+        const admission = tail.then(async (): Promise<QuietRecallProviderCallReservation> => {
+            if (!options.revalidate()) {
+                releaseClaim();
+                return { ok: false, reason: "invalid_context" };
+            }
+            const now = Date.now();
+            if (
+                this._lastRecallLlmEvalAt > 0
+                && now - this._lastRecallLlmEvalAt < PluginManager.RECALL_LLM_COOLDOWN_MS
+            ) {
+                releaseClaim();
+                return { ok: false, reason: "cooldown" };
+            }
+            const decision = await reserve(true);
+            if (!decision.ok) {
+                releaseClaim();
+                return decision;
+            }
+            const reservation = decision.reservation;
+            let settled = false;
+            return {
+                ...decision,
+                reservation: {
+                    commit: () => {
+                        if (settled) return;
+                        try {
+                            reservation.commit();
+                            this._lastRecallLlmEvalAt = now;
+                            settled = true;
+                        } finally {
+                            releaseClaim();
+                        }
+                    },
+                    rollback: async () => {
+                        if (settled) return;
+                        try {
+                            await reservation.rollback();
+                            settled = true;
+                        } finally {
+                            releaseClaim();
+                        }
+                    },
+                },
+            };
+        }).catch((error) => {
+            releaseClaim();
+            throw error;
+        });
+        return admission;
+    }
+
+    private async getQuietRecallLimiterUsage(
+        limiter: PageletRateLimiter,
+    ): Promise<{ limiterUsage?: QuietRecallLimiterUsage }> {
+        try {
+            if (typeof limiter.getStateSnapshot !== "function") return {};
+            const usage = await limiter.getStateSnapshot();
+            return {
+                limiterUsage: {
+                    hourlyUsed: usage.hourlyTimestamps.length,
+                    hourlyCap: QUIET_RECALL_CALL_LIMITS.hourly,
+                    hourlyRemaining: Math.max(
+                        0,
+                        QUIET_RECALL_CALL_LIMITS.hourly - usage.hourlyTimestamps.length,
+                    ),
+                    dailyUsed: usage.dailyCount,
+                    dailyCap: QUIET_RECALL_CALL_LIMITS.daily,
+                    dailyRemaining: Math.max(
+                        0,
+                        QUIET_RECALL_CALL_LIMITS.daily - usage.dailyCount,
+                    ),
+                },
+            };
+        } catch (error) {
+            this.log("Quiet Recall post-reservation usage diagnostics unavailable", error);
+            return {};
+        }
     }
 
     private buildQuietRecallRunSourceSnapshotId(
         currentPath: string,
         candidates: readonly QuietRecallCandidate[],
+        capturedSourcePaths?: readonly string[],
     ): string | null {
-        const paths = new Set<string>([normalizePath(currentPath)]);
-        for (const candidate of candidates) {
-            for (const ref of candidate.sourceRefs) paths.add(normalizePath(ref.path));
+        const paths = new Set<string>();
+        if (capturedSourcePaths && capturedSourcePaths.length > 0) {
+            for (const path of capturedSourcePaths) paths.add(normalizePath(path));
+        } else {
+            paths.add(normalizePath(currentPath));
+            for (const candidate of candidates) {
+                for (const ref of candidate.sourceRefs) paths.add(normalizePath(ref.path));
+            }
         }
         const sources: Array<{ path: string; mtime: number; size: number }> = [];
         for (const path of paths) {
@@ -3968,7 +4694,7 @@ export class PluginManager extends Plugin {
             if (
                 !(file instanceof TFile)
                 || file.extension !== "md"
-                || !this.isDataBoundaryAllowedFile(file)
+                || !this.isPageletProviderSourceAllowedFile(file)
             ) return null;
             sources.push({
                 path: file.path,
@@ -3986,11 +4712,18 @@ export class PluginManager extends Plugin {
             || !result.dataBoundarySnapshotId
             || !result.evaluationPolicySnapshotId
         ) return false;
+        const activeFile = this.app.workspace.getActiveFile();
+        if (
+            !(activeFile instanceof TFile)
+            || activeFile.extension !== "md"
+            || normalizePath(activeFile.path) !== normalizePath(result.currentPath)
+        ) return false;
         if (result.dataBoundarySnapshotId !== this.getMemoryDataBoundaryFingerprint()) return false;
         if (result.evaluationPolicySnapshotId !== this.getQuietRecallEvaluationPolicyIdentity()) return false;
         return result.sourceSnapshotId === this.buildQuietRecallRunSourceSnapshotId(
             result.currentPath,
             result.discoverCandidates ?? result.candidates,
+            result.sourcePaths,
         );
     }
 
@@ -4018,14 +4751,25 @@ export class PluginManager extends Plugin {
         currentNoteContent: string,
         attemptKind: QuietRecallEvaluationAttempt["kind"],
         pricingIdentity: { provider: string; model: string },
+        revalidate: () => boolean,
+        providerCallReservation?: PageletProviderCallReservation,
     ): Promise<QuietRecallEvaluationDecision> {
         let text = "";
         let outcome: "accepted" | "rejected" | "malformed" | "timeout" | "provider-error" = "provider-error";
+        let providerInvoked = false;
         let decision: QuietRecallEvaluationDecision;
         try {
-            const result = await withQuietRecallProviderTimeout(
-                Promise.resolve().then(() => model.invoke(prompt)),
-            );
+            const result = await this.getPageletProviderCallAdmission().executeStandardCall(() => {
+                providerInvoked = true;
+                return withQuietRecallProviderTimeout(
+                    Promise.resolve().then(() => model.invoke(prompt)),
+                );
+            }, {
+                revalidate,
+                ...(providerCallReservation
+                    ? { reserve: () => providerCallReservation }
+                    : {}),
+            });
             text = coerceModelResultToString(result);
             decision = parseQuietRecallEvaluationDecision(text, currentNoteContent);
             outcome = decision.status === "accepted"
@@ -4039,9 +4783,14 @@ export class PluginManager extends Plugin {
             outcome = timedOut ? "timeout" : "provider-error";
             decision = {
                 status: "rejected",
-                reason: timedOut ? "timeout" : "provider_error",
+                reason: timedOut
+                    ? "timeout"
+                    : providerInvoked
+                        ? "provider_error"
+                        : "cancelled",
             };
         }
+        if (!providerInvoked) return decision;
         const cost = this.pageletCostTracker.record({
             inputTokens: estimateTokens(prompt),
             outputTokens: estimateTokens(text),
@@ -4242,21 +4991,64 @@ export class PluginManager extends Plugin {
         return this.getSavedInsightStore().list();
     }
 
-    private listDataBoundaryAllowedSavedInsights(): SavedInsight[] {
-        return this.listSavedInsights().filter((insight) => this.isSavedInsightAllowedByDataBoundary(insight));
-    }
+    private async collectPageletProviderAllowedSavedInsights(): Promise<QuietRecallSavedInsightCollection> {
+        const validationByPath = new Map<string, Promise<QuietRecallSourceSnapshot | null>>();
+        const validateSource = (rawPath: string): Promise<QuietRecallSourceSnapshot | null> => {
+            const path = normalizePath(rawPath);
+            const existing = validationByPath.get(path);
+            if (existing) return existing;
+            const validation = (async () => {
+                try {
+                    const file = this.app.vault.getAbstractFileByPath(path);
+                    if (
+                        !(file instanceof TFile)
+                        || file.extension !== "md"
+                        || !this.isPageletProviderSourceAllowedFile(file)
+                    ) return null;
+                    const before = { path: file.path, mtime: file.stat.mtime, size: file.stat.size };
+                    const content = typeof this.app.vault.read === "function"
+                        ? await this.app.vault.read(file)
+                        : await this.app.vault.cachedRead(file);
+                    const current = this.app.vault.getAbstractFileByPath(path);
+                    if (
+                        !(current instanceof TFile)
+                        || current.extension !== "md"
+                        || current.stat.mtime !== before.mtime
+                        || current.stat.size !== before.size
+                        || !this.isPageletProviderSourceAllowedFile(current, content)
+                    ) return null;
+                    return before;
+                } catch (error) {
+                    this.log("Saved Insight source validation skipped", { path, error });
+                    return null;
+                }
+            })();
+            validationByPath.set(path, validation);
+            return validation;
+        };
 
-    private isSavedInsightAllowedByDataBoundary(insight: SavedInsight): boolean {
-        const sourcePaths = insight.sourceRefs.map((ref) => normalizePath(ref.path));
-        if (sourcePaths.length === 0) return false;
-        const sourcesExistAndAreAllowed = sourcePaths.every((path) => {
-            const file = this.app.vault.getAbstractFileByPath(path);
-            return file instanceof TFile
-                && file.extension === "md"
-                && this.isDataBoundaryAllowedFile(file);
-        });
-        if (!sourcesExistAndAreAllowed) return false;
-        return (insight.scope.paths ?? []).every((path) => this.isDataBoundaryAllowedPath(path));
+        const insights: SavedInsight[] = [];
+        const snapshots = new Map<string, QuietRecallSourceSnapshot>();
+        for (const insight of this.listSavedInsights()) {
+            if (insight.status !== "active" || insight.sourceRefs.length === 0) continue;
+            const scopeAllowed = (insight.scope.paths ?? []).every((rawPath) => {
+                const path = normalizePath(rawPath);
+                const file = this.app.vault.getAbstractFileByPath(path);
+                return file instanceof TFile
+                    ? this.isPageletProviderSourceAllowedFile(file)
+                    : this.isDataBoundaryAllowedPath(path);
+            });
+            if (!scopeAllowed) continue;
+            const sourceSnapshots = await Promise.all(
+                insight.sourceRefs.map((ref) => validateSource(ref.path)),
+            );
+            if (sourceSnapshots.some((snapshot) => snapshot === null)) continue;
+            insights.push(insight);
+            for (const snapshot of sourceSnapshots) {
+                if (snapshot) snapshots.set(normalizePath(snapshot.path), snapshot);
+            }
+        }
+        return { insights, sourceSnapshots: [...snapshots.values()] };
     }
 
     private getMemoryGovernanceStore(): MemoryGovernanceStore {
@@ -5992,10 +6784,12 @@ export class PluginManager extends Plugin {
 
     private getPageletRateLimiter(): PageletRateLimiter {
         if (!this.pageletRateLimiterInstance) {
-            const coordinationKey = this.pageletRateLimitStorageKey("foreground-review");
+            const vaultStorageScope = this.pageletVaultStorageScope();
             this.pageletRateLimiterInstance = new PageletRateLimiter({
-                storage: this.createPageletRateLimitStorage("foreground-review"),
-                coordinationKey,
+                ...(vaultStorageScope ? {
+                    storage: this.createPageletRateLimitStorage("foreground-review", vaultStorageScope),
+                    coordinationKey: this.pageletRateLimitStorageKey("foreground-review", vaultStorageScope),
+                } : {}),
                 config: {
                     hourlyCap: this.settings.pagelet.foregroundPerHourCap,
                     dailyCap: this.settings.pagelet.foregroundPerDayCap,
@@ -6007,10 +6801,12 @@ export class PluginManager extends Plugin {
 
     private getScopeRecapRateLimiter(): PageletRateLimiter {
         if (!this.scopeRecapRateLimiterInstance) {
-            const coordinationKey = this.pageletRateLimitStorageKey("scope-recap");
+            const vaultStorageScope = this.pageletVaultStorageScope();
             this.scopeRecapRateLimiterInstance = new PageletRateLimiter({
-                storage: this.createPageletRateLimitStorage("scope-recap"),
-                coordinationKey,
+                storage: this.createPageletRateLimitStorage("scope-recap", vaultStorageScope),
+                ...(vaultStorageScope ? {
+                    coordinationKey: this.pageletRateLimitStorageKey("scope-recap", vaultStorageScope),
+                } : {}),
                 config: {
                     hourlyCap: SCOPE_RECAP_CALL_LIMITS.hourly,
                     dailyCap: SCOPE_RECAP_CALL_LIMITS.daily,
@@ -6022,10 +6818,12 @@ export class PluginManager extends Plugin {
 
     private getQuietRecallRateLimiter(): PageletRateLimiter {
         if (!this.quietRecallRateLimiterInstance) {
-            const coordinationKey = this.pageletRateLimitStorageKey("quiet-recall");
+            const vaultStorageScope = this.pageletVaultStorageScope();
             this.quietRecallRateLimiterInstance = new PageletRateLimiter({
-                storage: this.createPageletRateLimitStorage("quiet-recall"),
-                coordinationKey,
+                storage: this.createPageletRateLimitStorage("quiet-recall", vaultStorageScope),
+                ...(vaultStorageScope ? {
+                    coordinationKey: this.pageletRateLimitStorageKey("quiet-recall", vaultStorageScope),
+                } : {}),
                 config: {
                     hourlyCap: QUIET_RECALL_CALL_LIMITS.hourly,
                     dailyCap: QUIET_RECALL_CALL_LIMITS.daily,
@@ -6033,6 +6831,44 @@ export class PluginManager extends Plugin {
             });
         }
         return this.quietRecallRateLimiterInstance;
+    }
+
+    private getPageletProviderCallAdmission(): PageletProviderCallAdmission {
+        if (!this.pageletProviderCallAdmissionInstance) {
+            this.pageletProviderCallAdmissionInstance = new PageletProviderCallAdmission({
+                isFirstUseNotified: () => (
+                    this.settings.pagelet.pageletProviderFirstUseNotified === true
+                ),
+                markFirstUseNotified: () => {
+                    if (this.settings.pagelet.pageletProviderFirstUseNotified) return;
+                    this.settings.pagelet.pageletProviderFirstUseNotified = true;
+                    void Promise.resolve(this.saveSettings()).catch((error) => {
+                        this.log("Pagelet provider first-use state persistence failed", error);
+                    });
+                },
+                showStandardFirstUseNotice: () => {
+                    const provider = this.getScopeRecapProviderInfo().provider;
+                    new Notice(pageletT(
+                        "pagelet.provider.firstUseNotification",
+                        this.getPageletLocale(),
+                        { provider },
+                    ), 6000);
+                },
+            });
+        }
+        return this.pageletProviderCallAdmissionInstance;
+    }
+
+    private requestForegroundReviewHighRiskDecision(
+        summary: PageletReviewHighRiskSummary,
+        signal?: AbortSignal,
+    ) {
+        return requestPageletReviewHighRiskDecision(
+            this.app,
+            summary,
+            this.getPageletLocale(),
+            signal,
+        );
     }
 
     private async getPageletFeatureRateLimitStatus() {
@@ -6077,12 +6913,16 @@ export class PluginManager extends Plugin {
 
     private createPageletRateLimitStorage(
         bucket: "foreground-review" | "scope-recap" | "quiet-recall",
+        vaultStorageScope: string | null = this.pageletVaultStorageScope(),
     ): PageletRateLimitStorage {
-        const key = this.pageletRateLimitStorageKey(bucket);
+        const key = this.pageletRateLimitStorageKey(bucket, vaultStorageScope);
         const failClosed = bucket !== "foreground-review";
         return {
             load: (): PageletRateLimitState | null => {
                 if (failClosed) {
+                    if (!vaultStorageScope) {
+                        throw new Error(`${bucket} rate-limit vault identity unavailable`);
+                    }
                     const storage = getPlatformLocalStorage();
                     if (!storage) throw new Error(`${bucket} rate-limit storage unavailable`);
                     const raw = storage.getItem(key);
@@ -6122,6 +6962,9 @@ export class PluginManager extends Plugin {
             },
             save: (state: PageletRateLimitState): void => {
                 if (failClosed) {
+                    if (!vaultStorageScope) {
+                        throw new Error(`${bucket} rate-limit vault identity unavailable`);
+                    }
                     const storage = getPlatformLocalStorage();
                     if (!storage) throw new Error(`${bucket} rate-limit storage unavailable`);
                     storage.setItem(key, JSON.stringify(state));
@@ -6137,22 +6980,60 @@ export class PluginManager extends Plugin {
     }
 
     private pageletRateLimitStorageKey(
-        bucket: "foreground-review" | "scope-recap" | "quiet-recall",
+        bucket: "foreground-review" | "scope-recap" | "quiet-recall" | "background-review",
+        vaultStorageScope: string | null = this.pageletVaultStorageScope(),
     ): string {
-        const vaultName = typeof this.app.vault.getName === "function"
-            ? this.app.vault.getName()
-            : "vault";
         return [
             PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX,
             bucket,
-            encodeURIComponent(vaultName),
-            encodeURIComponent(getVaultConfigDirStorageScope(this.app.vault)),
+            vaultStorageScope ?? "unavailable",
         ].join(":");
     }
 
-    private async reservePageletRateLimitSlot(): Promise<void> {
-        const decision = await this.getPageletRateLimiter().reserve();
-        if (decision.ok) return;
+    private pageletChangeWatermarkStorageKey(): string {
+        return [
+            PAGELET_CHANGE_WATERMARK_STORAGE_KEY_PREFIX,
+            this.pageletVaultStorageScope() ?? "unavailable",
+        ].join(":");
+    }
+
+    /** Stable device-local identity prevents same-name vaults sharing quotas or watermarks. */
+    private pageletVaultStorageScope(): string | null {
+        const vault = this.app.vault;
+        const adapter = vault.adapter as {
+            getBasePath?: () => string;
+            getFullPath?: (path: string) => string;
+        };
+        let localPath: string | undefined;
+        try {
+            if (typeof adapter.getBasePath === "function") {
+                localPath = adapter.getBasePath();
+            } else if (typeof adapter.getFullPath === "function") {
+                localPath = adapter.getFullPath("");
+            }
+        } catch {
+            return null;
+        }
+        if (!localPath?.trim()) return null;
+        const vaultName = typeof vault.getName === "function" ? vault.getName() : "vault";
+        return stableHash([
+            vaultName,
+            getVaultConfigDirStorageScope(vault),
+            localPath,
+        ].join("\n"));
+    }
+
+    private async reservePageletRateLimitSlot(
+        revalidate?: () => boolean | PromiseLike<boolean>,
+    ): Promise<PageletProviderCallReservation> {
+        const limiter = this.getPageletRateLimiter();
+        const decision = revalidate
+            ? await limiter.reserveLeaseIf(revalidate)
+            : await limiter.reserveLeaseIf(() => true);
+        if (decision.ok) return decision.reservation;
+        if (decision.reason === "condition") {
+            throw new Error("pagelet_provider_call_stale");
+        }
         const key = decision.reason === "hr-cap"
             ? "pagelet.errors.rate_limit_hourly"
             : "pagelet.errors.rate_limit_daily";
@@ -6185,11 +7066,58 @@ export class PluginManager extends Plugin {
         return this.pageletRuntime;
     }
 
+    private isStandardBackgroundPreloadRequest(
+        config: PreloadConfig,
+        callContext: AnalyzeCallContext | undefined,
+        sources?: readonly { path: string; mtime: number; size: number }[],
+    ): boolean {
+        const envelope = callContext?.backgroundEnvelope;
+        const settings = this.settings.pagelet;
+        const requestIsStandard = settings.preloadEnabled === true
+            && settings.preloadPerHourCap > 0
+            && settings.preloadPerHourCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.hourly
+            && settings.preloadPerDayCap > 0
+            && settings.preloadPerDayCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.daily
+            && settings.preloadTokenBudget.input > 0
+            && settings.preloadTokenBudget.input <= PAGELET_BACKGROUND_STANDARD_LIMITS.inputTokens
+            && settings.preloadTokenBudget.output > 0
+            && settings.preloadTokenBudget.output <= PAGELET_BACKGROUND_STANDARD_LIMITS.outputTokens
+            && config.enabled === true
+            && (config.range === undefined || config.range === "last7")
+            && config.perHourCap > 0
+            && config.perHourCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.hourly
+            && config.perDayCap > 0
+            && config.perDayCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.daily
+            && config.tokenBudget.input > 0
+            && config.tokenBudget.input <= PAGELET_BACKGROUND_STANDARD_LIMITS.inputTokens
+            && config.tokenBudget.output > 0
+            && config.tokenBudget.output <= PAGELET_BACKGROUND_STANDARD_LIMITS.outputTokens
+            && envelope?.kind === "generic-changed-only"
+            && envelope.rangeDays === 7
+            && envelope.allowWrite === false
+            && envelope.wholeVault === false
+            && envelope.excludedScopeOverride === false;
+        if (!requestIsStandard || sources === undefined) return requestIsStandard;
+        if (sources.length === 0) return false;
+
+        const now = Date.now();
+        const cutoff = now - PAGELET_BACKGROUND_STANDARD_LIMITS.rangeMs;
+        return sources.every((source) => {
+            if (source.mtime < cutoff || source.mtime > now) return false;
+            const file = this.app.vault.getAbstractFileByPath(normalizePath(source.path));
+            return file instanceof TFile
+                && file.extension === "md"
+                && file.stat.mtime === source.mtime
+                && file.stat.size === source.size
+                && this.isPageletProviderSourceAllowedFile(file);
+        });
+    }
+
     private async readPageletNoteContents(
         files: TFile[],
         inputTokenBudget: number,
-    ): Promise<Array<{ path: string; content: string }>> {
-        const allowedFiles = files.filter((file) => this.isDataBoundaryAllowedFile(file));
+    ): Promise<Array<{ path: string; content: string; mtime: number; size: number }>> {
+        const allowedFiles = files.filter((file) => this.isPageletProviderSourceAllowedFile(file));
         if (allowedFiles.length === 0) return [];
         const maxFiles = Math.max(
             1,
@@ -6198,16 +7126,27 @@ export class PluginManager extends Plugin {
         const selectedFiles = allowedFiles.slice(0, maxFiles);
         const totalCharBudget = Math.max(1_000, Math.max(1, inputTokenBudget) * 4);
         const perFileCharBudget = Math.max(1_000, Math.floor(totalCharBudget / selectedFiles.length));
-        const noteContents: Array<{ path: string; content: string }> = [];
+        const noteContents: Array<{ path: string; content: string; mtime: number; size: number }> = [];
 
         for (const file of selectedFiles) {
             try {
+                const before = { mtime: file.stat.mtime, size: file.stat.size };
                 const content = await this.app.vault.cachedRead(file);
+                const current = this.app.vault.getAbstractFileByPath(file.path);
+                if (
+                    !(current instanceof TFile)
+                    || current.extension !== "md"
+                    || current.stat.mtime !== before.mtime
+                    || current.stat.size !== before.size
+                    || !this.isPageletProviderSourceAllowedFile(current, content)
+                ) continue;
                 noteContents.push({
-                    path: file.path,
+                    path: current.path,
                     content: content.length > perFileCharBudget
                         ? `${content.slice(0, perFileCharBudget)}\n[...truncated]`
                         : content,
+                    mtime: before.mtime,
+                    size: before.size,
                 });
             } catch (error) {
                 this.log("Failed to read Pagelet note content", { path: file.path, error });
@@ -6217,21 +7156,134 @@ export class PluginManager extends Plugin {
         return noteContents;
     }
 
+    private capturePageletSourceSnapshots(
+        notes: readonly { path: string; mtime?: number; size?: number }[],
+    ): Array<{ path: string; mtime: number; size: number }> | null {
+        const snapshots: Array<{ path: string; mtime: number; size: number }> = [];
+        const seen = new Set<string>();
+        for (const note of notes) {
+            const path = normalizePath(note.path);
+            if (seen.has(path)) continue;
+            seen.add(path);
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (
+                !(file instanceof TFile)
+                || file.extension !== "md"
+                || !this.isPageletProviderSourceAllowedFile(file)
+            ) return null;
+            const mtime = note.mtime ?? file.stat.mtime;
+            const size = note.size ?? file.stat.size;
+            if (file.stat.mtime !== mtime || file.stat.size !== size) return null;
+            snapshots.push({ path: file.path, mtime, size });
+        }
+        return snapshots;
+    }
+
+    private pageletSourceSnapshotsAreCurrent(
+        snapshots: readonly { path: string; mtime: number; size: number }[],
+        requiredActivePath?: string,
+    ): boolean {
+        if (this.unloading || this.settings.pagelet.enabled !== true) return false;
+        if (requiredActivePath) {
+            const activeFile = this.app.workspace.getActiveFile();
+            if (
+                !(activeFile instanceof TFile)
+                || normalizePath(activeFile.path) !== normalizePath(requiredActivePath)
+            ) return false;
+        }
+        return snapshots.every((snapshot) => {
+            const file = this.app.vault.getAbstractFileByPath(snapshot.path);
+            return file instanceof TFile
+                && file.extension === "md"
+                && file.stat.mtime === snapshot.mtime
+                && file.stat.size === snapshot.size
+                && this.isPageletProviderSourceAllowedFile(file);
+        });
+    }
+
     private async findPageletRelatedNotes(
         primarySourcePath: string,
         noteContents: Array<{ path: string; content: string }>,
         sourcePaths: readonly string[],
-        limit = 6,
-    ): Promise<Array<{ path: string; content: string; score?: number; headingPath?: string[] }>> {
+        options: {
+            limit?: number;
+            requireActivePrimary?: boolean;
+            reserveProviderCall?: () =>
+                | boolean
+                | PageletProviderCallReservation
+                | PromiseLike<boolean | PageletProviderCallReservation>;
+            additionalCurrentCheck?: () => boolean;
+            onProviderInvoke?: () => void;
+            onSearchOutcome?: (outcome: "completed" | "failed") => void;
+            executeProviderCall?: <TResult>(
+                invoke: () => Promise<TResult>,
+                options: { signal: AbortSignal },
+            ) => Promise<TResult>;
+        } = {},
+    ): Promise<Array<{
+        path: string;
+        content: string;
+        score?: number;
+        headingPath?: string[];
+        mtime: number;
+        size: number;
+    }>> {
         if (!this.vss || noteContents.length === 0) return [];
+        if (!this.isPageletProviderPathAllowed(primarySourcePath)) return [];
+        const expectedProviderPolicyIdentity = this.getScopeRecapAuthorizationContextId();
+        const limit = options.limit ?? PAGELET_DISCOVERY_MAX_RELATED_NOTES;
+        const requireActivePrimary = options.requireActivePrimary ?? true;
         if (!(await this.isPageletMemorySearchReady())) return [];
         const excluded = new Set(sourcePaths.map((path) => normalizePath(path)));
-        const primary = noteContents.find((entry) => normalizePath(entry.path) === normalizePath(primarySourcePath))
-            ?? noteContents[0];
+        const normalizedPrimaryPath = normalizePath(primarySourcePath);
+        const primaryFile = this.app.vault.getAbstractFileByPath(normalizedPrimaryPath);
+        if (
+            !(primaryFile instanceof TFile)
+            || primaryFile.extension !== "md"
+            || !this.isPageletProviderSourceAllowedFile(primaryFile)
+        ) return [];
+        const primarySnapshot = {
+            mtime: primaryFile.stat.mtime,
+            size: primaryFile.stat.size,
+        };
+        let primaryContent: string;
+        try {
+            primaryContent = await this.app.vault.cachedRead(primaryFile);
+        } catch (error) {
+            this.log("Pagelet related-note primary source read skipped", error);
+            return [];
+        }
+        const currentPrimaryFile = this.app.vault.getAbstractFileByPath(normalizedPrimaryPath);
+        if (
+            !(currentPrimaryFile instanceof TFile)
+            || currentPrimaryFile.extension !== "md"
+            || currentPrimaryFile.stat.mtime !== primarySnapshot.mtime
+            || currentPrimaryFile.stat.size !== primarySnapshot.size
+            || !this.isPageletProviderSourceAllowedFile(currentPrimaryFile, primaryContent)
+        ) return [];
+        const primary = { path: currentPrimaryFile.path, content: primaryContent };
         const query = buildPageletRelatedNotesQuery(primary);
         if (!query.trim()) return [];
         const controller = new AbortController();
         const timeout = setPlatformTimeout(() => controller.abort(), PAGELET_RELATED_NOTES_TIMEOUT_MS);
+        const requestIsCurrent = () => {
+            const activeFile = this.app.workspace.getActiveFile();
+            const currentPrimary = this.app.vault.getAbstractFileByPath(normalizedPrimaryPath);
+            return !controller.signal.aborted
+                && !this.unloading
+                && this.settings.pagelet.enabled === true
+                && expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
+                && (options.additionalCurrentCheck?.() ?? true)
+                && currentPrimary instanceof TFile
+                && currentPrimary.extension === "md"
+                && currentPrimary.stat.mtime === primarySnapshot.mtime
+                && currentPrimary.stat.size === primarySnapshot.size
+                && this.isPageletProviderSourceAllowedFile(currentPrimary)
+                && (!requireActivePrimary || (
+                    activeFile instanceof TFile
+                    && normalizePath(activeFile.path) === normalizedPrimaryPath
+                ));
+        };
         try {
             const indexer = new ActiveVaultIndexer({
                 searchHybrid: (searchQuery, searchOptions) =>
@@ -6241,19 +7293,82 @@ export class PluginManager extends Plugin {
                 taskKind: "pagelet-related-notes",
                 scope: "pagelet-current",
                 excludedPaths: [...excluded],
-                isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
+                isPathAllowed: (path) => this.isPageletProviderPathAllowed(path),
                 retrievalHabitProfile: this.settings.retrievalHabitProfile,
                 ftsQueryOverride: null,
                 signal: controller.signal,
+                executeEmbeddingInvoke: async (invoke) => {
+                    if (!requestIsCurrent()) throw new Error("pagelet_related_notes_request_stale");
+                    if (options.executeProviderCall) {
+                        return options.executeProviderCall(
+                            () => {
+                                options.onProviderInvoke?.();
+                                return invoke();
+                            },
+                            { signal: controller.signal },
+                        );
+                    }
+                    return this.getPageletProviderCallAdmission().executeStandardCall(
+                        () => {
+                            options.onProviderInvoke?.();
+                            return invoke();
+                        },
+                        {
+                            revalidate: requestIsCurrent,
+                            reserve: options.reserveProviderCall
+                                ?? (() => this.reservePageletRateLimitSlot(requestIsCurrent)),
+                            signal: controller.signal,
+                        },
+                    );
+                },
+                canCacheEmbeddingResult: requestIsCurrent,
                 limit: Math.max(1, Math.min(limit, QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES)),
             });
-            return result.evidence.map((entry) => ({
-                path: entry.path,
-                content: entry.content.slice(0, 1200),
-                score: entry.score,
-                headingPath: entry.headingPath,
-            }));
+            if (!requestIsCurrent()) throw new Error("pagelet_related_notes_request_stale");
+            options.onSearchOutcome?.("completed");
+            const relatedNotes: Array<{
+                path: string;
+                content: string;
+                score?: number;
+                headingPath?: string[];
+                mtime: number;
+                size: number;
+            }> = [];
+            for (const entry of result.evidence) {
+                const path = normalizePath(entry.path);
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (
+                    !(file instanceof TFile)
+                    || file.extension !== "md"
+                    || !this.isPageletProviderSourceAllowedFile(file)
+                ) continue;
+                const snapshot = { mtime: file.stat.mtime, size: file.stat.size };
+                try {
+                    const content = await this.app.vault.cachedRead(file);
+                    const current = this.app.vault.getAbstractFileByPath(path);
+                    if (
+                        !(current instanceof TFile)
+                        || current.extension !== "md"
+                        || current.stat.mtime !== snapshot.mtime
+                        || current.stat.size !== snapshot.size
+                        || !this.isPageletProviderSourceAllowedFile(current, content)
+                    ) continue;
+                    relatedNotes.push({
+                        path: current.path,
+                        content: content.slice(0, 1200),
+                        score: entry.score,
+                        headingPath: entry.headingPath,
+                        mtime: snapshot.mtime,
+                        size: snapshot.size,
+                    });
+                } catch (error) {
+                    this.log("Pagelet related-note live source read skipped", { path, error });
+                }
+            }
+            return relatedNotes;
         } catch (error) {
+            options.onSearchOutcome?.("failed");
+            if (error instanceof PageletProviderCallControlError) throw error;
             if (!controller.signal.aborted) {
                 this.log("Pagelet related-note Memory search skipped", error);
             }
@@ -6278,7 +7393,15 @@ export class PluginManager extends Plugin {
         currentNote: { path: string; content: string },
         relatedNotes: Array<{ path: string; content: string }>,
     ): Promise<DiscoveryResult | null> {
-        const prompt = buildDiscoveryPrompt(currentNote, relatedNotes, {
+        const expectedProviderPolicyIdentity = this.getScopeRecapAuthorizationContextId();
+        const admittedProvider = this.settings.aiProvider;
+        const admittedModel = this.settings.chatModelName;
+        const liveSources = await this.readLivePageletDiscoverySources(
+            currentNote.path,
+            relatedNotes.map((note) => note.path),
+        );
+        if (!liveSources) return null;
+        const prompt = buildDiscoveryPrompt(liveSources.currentNote, liveSources.relatedNotes, {
             input: this.settings.pagelet.maxInputTokens,
             output: this.settings.pagelet.maxOutputTokens,
         });
@@ -6286,24 +7409,107 @@ export class PluginManager extends Plugin {
             maxTokens: prompt.maxOutputTokens,
         });
         if (!model) return null;
+        const requestIsCurrent = () => (
+            liveSources.isCurrent()
+            && expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
+        );
+        if (!requestIsCurrent()) return null;
         try {
             const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
-            const result = await model.invoke(fullPrompt);
+            const result = await this.getPageletProviderCallAdmission().executeStandardCall(() => (
+                model.invoke(fullPrompt)
+            ), {
+                revalidate: requestIsCurrent,
+                reserve: () => this.reservePageletRateLimitSlot(requestIsCurrent),
+            });
             const text = coerceModelResultToString(result);
             const inputTokens = estimateTokens(fullPrompt);
             const outputTokens = estimateTokens(text);
             this.pageletCostTracker.record({
                 inputTokens,
                 outputTokens,
-                provider: this.settings.aiProvider,
-                model: this.settings.chatModelName,
+                provider: admittedProvider,
+                model: admittedModel,
             });
+            if (!requestIsCurrent()) return null;
             const parsed = parseStructuredResponse(text);
             return buildDiscoveryResultFromFindings(parsed.findings, currentNote.path, relatedNotes);
         } catch (error) {
             this.log("Discovery analysis failed", error);
             return null;
         }
+    }
+
+    private async readLivePageletDiscoverySources(
+        currentPath: string,
+        relatedPaths: readonly string[],
+    ): Promise<{
+        currentNote: { path: string; content: string };
+        relatedNotes: Array<{ path: string; content: string }>;
+        isCurrent: () => boolean;
+    } | null> {
+        const normalizedCurrentPath = normalizePath(currentPath);
+        const normalizedRelatedPaths = [...new Set(relatedPaths.map((path) => normalizePath(path)))]
+            .filter((path) => path && path !== normalizedCurrentPath);
+        if (
+            normalizedRelatedPaths.length === 0
+            || normalizedRelatedPaths.length > PAGELET_DISCOVERY_MAX_RELATED_NOTES
+        ) return null;
+        const paths = [normalizedCurrentPath, ...normalizedRelatedPaths];
+        const snapshots: Array<{ path: string; mtime: number; size: number; file: TFile }> = [];
+        for (const path of paths) {
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (
+                !(file instanceof TFile)
+                || file.extension !== "md"
+                || !this.isPageletProviderSourceAllowedFile(file)
+            ) return null;
+            snapshots.push({
+                path: file.path,
+                mtime: file.stat.mtime,
+                size: file.stat.size,
+                file,
+            });
+        }
+
+        let contents: string[];
+        try {
+            contents = await Promise.all(snapshots.map(({ file }) => this.app.vault.cachedRead(file)));
+        } catch (error) {
+            this.log("Pagelet Discover live source read skipped", error);
+            return null;
+        }
+        const isCurrent = () => {
+            if (this.unloading || this.settings.pagelet.enabled !== true) return false;
+            const activeFile = this.app.workspace.getActiveFile();
+            if (
+                !(activeFile instanceof TFile)
+                || normalizePath(activeFile.path) !== normalizedCurrentPath
+            ) return false;
+            return snapshots.every((snapshot) => {
+                const file = this.app.vault.getAbstractFileByPath(snapshot.path);
+                return file instanceof TFile
+                    && file.extension === "md"
+                    && file.stat.mtime === snapshot.mtime
+                    && file.stat.size === snapshot.size
+                    && this.isPageletProviderSourceAllowedFile(file);
+            });
+        };
+        if (!isCurrent()) return null;
+        if (!snapshots.every((snapshot, index) => (
+            this.isPageletProviderSourceAllowedFile(
+                snapshot.file,
+                contents[index] ?? "",
+            )
+        ))) return null;
+        return {
+            currentNote: { path: snapshots[0]!.path, content: contents[0] ?? "" },
+            relatedNotes: snapshots.slice(1).map((snapshot, index) => ({
+                path: snapshot.path,
+                content: (contents[index + 1] ?? "").slice(0, 1200),
+            })),
+            isCurrent,
+        };
     }
 
     private async writePageletReviewNote(note: GeneratedReviewNote): Promise<WriteResult> {
@@ -8406,20 +9612,6 @@ export class PluginManager extends Plugin {
         });
     }
 
-    private surfacePageletBackgroundPreparationNotice(): void {
-        if (this.pageletBackgroundPreparationNoticeSurfacedThisBoot) return;
-        if (!this.settings.pagelet?.enabled || !this.settings.pagelet.preloadEnabled) return;
-        if (readPageletBackgroundPreparationNoticeFlag()) return;
-        this.pageletBackgroundPreparationNoticeSurfacedThisBoot = true;
-        const locale = this.getPageletLocale();
-        try {
-            new Notice(pageletT("pagelet.backgroundPreparation.startupNotice", locale), 10000);
-        } catch (error) {
-            this.log("Failed to fire Pagelet background preparation Notice", error);
-        }
-        writePageletBackgroundPreparationNoticeFlag();
-    }
-
     private surfaceVaultInsightsInjectionNotice(): void {
         if (this.vaultInsightsInjectionNoticeSurfacedThisBoot) return;
         if (!this.hasConfirmedMemoryExtractionConsent()) return;
@@ -8485,6 +9677,88 @@ export class PluginManager extends Plugin {
         return decision.decision === "allow";
     }
 
+    /** Pagelet provider sources must satisfy both shared and Pagelet-local scope rules. */
+    private isPageletProviderPathAllowed(path: string): boolean {
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+        return file instanceof TFile
+            && file.extension === "md"
+            && this.isPageletProviderSourceAllowedFile(file);
+    }
+
+    private isPageletProviderSourceAllowedFile(file: TFile, markdown?: string): boolean {
+        const resolver = this.createPageletProviderSourceResolver();
+        if (!this.isPageletProviderSourceAllowedByResolver(file, resolver)) return false;
+        return markdown === undefined
+            || this.getLatestPageletContentBoundary(file.path, markdown)?.allowed === true;
+    }
+
+    /** Re-check explicit boundary markers from the exact body sent to a provider. */
+    private getLatestPageletContentBoundary(
+        path: string,
+        markdown: string,
+    ): { allowed: boolean; tags: string[]; isGenerated: boolean } | null {
+        try {
+            const frontmatterInfo = getFrontMatterInfo(markdown);
+            if (
+                !frontmatterInfo.exists
+                && /^\uFEFF?---\s*(?:\r?\n|$)/.test(markdown)
+            ) return null;
+            let frontmatter: Record<string, unknown> = {};
+            if (frontmatterInfo.exists && frontmatterInfo.frontmatter.trim()) {
+                const parsed = parseYaml(frontmatterInfo.frontmatter);
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+                frontmatter = parsed as Record<string, unknown>;
+            }
+
+            const tags = new Set<string>();
+            this.collectDataBoundaryTags(frontmatter.tags, tags);
+            this.collectDataBoundaryTags(frontmatter.tag, tags);
+            this.collectLatestMarkdownBodyTags(
+                markdown.slice(frontmatterInfo.contentStart),
+                tags,
+            );
+            const normalizedTags = [...tags];
+            const isGenerated = frontmatter.pagelet === true
+                || (typeof frontmatter.pagelet === "string"
+                    && frontmatter.pagelet.trim().toLowerCase() === "true");
+            const excludedTags = new Set([
+                "no-ai",
+                "no-review",
+                ...(this.settings?.pagelet?.excludedTags ?? []),
+                ...(this.settings?.dataBoundary?.excludedTags ?? []),
+            ].map((tag) => (
+                tag.trim().replace(/^#+/, "").toLowerCase()
+            )));
+            const tagDenied = normalizedTags.some((tag) => excludedTags.has(tag));
+            const dataBoundaryDecision = decideDataBoundaryForSource(
+                { path, tags: normalizedTags, isGenerated },
+                this.settings?.dataBoundary,
+            );
+            return {
+                allowed: !tagDenied
+                    && !isGenerated
+                    && dataBoundaryDecision.decision === "allow",
+                tags: normalizedTags,
+                isGenerated,
+            };
+        } catch (error) {
+            this.log("Latest Pagelet source boundary parse failed closed", { path, error });
+            return null;
+        }
+    }
+
+    private collectLatestMarkdownBodyTags(markdown: string, tags: Set<string>): void {
+        const withoutNonContent = markdown
+            .replace(/<!--[\s\S]*?-->/g, " ")
+            .replace(/(^|\n)\s*```[^\n]*\n[\s\S]*?\n\s*```(?=\n|$)/g, " ")
+            .replace(/(^|\n)\s*~~~[^\n]*\n[\s\S]*?\n\s*~~~(?=\n|$)/g, " ")
+            .replace(/`[^`\n]*`/g, " ");
+        const tagPattern = /(^|[\s([{"'>])#([\p{L}\p{N}_/-]+)/gu;
+        for (const match of withoutNonContent.matchAll(tagPattern)) {
+            this.collectDataBoundaryTag(match[2] ?? "", tags);
+        }
+    }
+
     private getDataBoundaryTags(file: TFile): string[] {
         const tags = new Set<string>();
         const cache = this.app.metadataCache?.getFileCache(file);
@@ -8526,20 +9800,29 @@ export class PluginManager extends Plugin {
     }
 
     private getPageletSettingsWithDataBoundary(): PageletSettings {
-        const dataBoundaryGeneratedFolders = this.settings.dataBoundary.generatedNotePolicy === "include-generated"
+        const pageletSettings = this.settings?.pagelet ?? DEFAULT_SETTINGS.pagelet;
+        const dataBoundarySettings = this.settings?.dataBoundary
+            ?? DEFAULT_SETTINGS.dataBoundary
+            ?? {
+                excludedFolders: [],
+                excludedTags: [],
+                generatedNotePolicy: "exclude-generated" as const,
+            };
+        const dataBoundaryGeneratedFolders = dataBoundarySettings.generatedNotePolicy === "include-generated"
             ? []
             : [".pagelet", "pagelet-generated"];
         return {
-            ...this.settings.pagelet,
+            ...pageletSettings,
             excludedFolders: this.uniqueSettingList([
-                ...this.settings.pagelet.excludedFolders,
-                ...this.settings.dataBoundary.excludedFolders,
+                ...(pageletSettings.excludedFolders ?? []),
+                ...(dataBoundarySettings.excludedFolders ?? []),
                 ...dataBoundaryGeneratedFolders,
             ]),
             excludedTags: this.uniqueSettingList([
-                ...this.settings.pagelet.excludedTags,
-                ...this.settings.dataBoundary.excludedTags.map((tag) => tag.replace(/^#+/, "").toLowerCase()),
+                ...(pageletSettings.excludedTags ?? []),
+                ...(dataBoundarySettings.excludedTags ?? []).map((tag) => tag.replace(/^#+/, "").toLowerCase()),
             ]),
+            excludedPatterns: pageletSettings.excludedPatterns ?? [],
         };
     }
 

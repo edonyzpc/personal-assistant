@@ -28,8 +28,6 @@ export interface BackgroundPreparationCallbacks {
     onPetTransition(event: "analysis-start" | "analysis-done" | "insights-ready"): void;
     /** Flash an error on the Pet. */
     onPetFlashError(): void;
-    /** Check proactive hints cooldown after insights are ready. */
-    onInsightsReady(): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,11 +135,10 @@ export class BackgroundPreparationCoordinator {
                 break;
 
             case "cycle-complete":
-                if (event.result.findings.length > 0 && this.callbacks.onInsightsReady()) {
-                    this.callbacks.onPetTransition("insights-ready");
-                } else {
-                    this.callbacks.onPetTransition("analysis-done");
-                }
+                // Raw preload findings lack the stable identity, currentness,
+                // evidence and route contract required for proactive delivery.
+                // Keep them cached for the explicit prepared Panel only.
+                this.callbacks.onPetTransition("analysis-done");
                 break;
 
             case "cycle-error":

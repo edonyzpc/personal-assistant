@@ -25,6 +25,10 @@ export interface ActiveVaultIndexerRawResult {
 export interface ActiveVaultIndexerSearchOptions {
     ftsQueryOverride?: string | null;
     signal?: AbortSignal;
+    /** Pagelet-only wrapper that admits and immediately invokes query embedding. */
+    executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+    /** Current-run proof required before a successful embedding enters the exact cache. */
+    canCacheEmbeddingResult?: () => boolean;
 }
 
 export interface ActiveVaultIndexerSearchPort {
@@ -147,6 +151,8 @@ export class ActiveVaultIndexer {
         const raw = await this.port.searchHybrid(query, {
             ftsQueryOverride: options.ftsQueryOverride,
             signal: options.signal,
+            executeEmbeddingInvoke: options.executeEmbeddingInvoke,
+            canCacheEmbeddingResult: options.canCacheEmbeddingResult,
         });
         return mapSearchResultsToRetrievalOutcome(raw, {
             id,

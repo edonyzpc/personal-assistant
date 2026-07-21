@@ -94,6 +94,36 @@ describe("pageletT lookup", () => {
         expect(zh).toContain("已有对话不会改动");
         expect(zh).toContain("另行删除对应消息或对话");
     });
+
+    it("fully discloses Pagelet provider first use in English and Chinese", () => {
+        const en = pageletT("pagelet.provider.firstUseNotification", "en", { provider: "Example AI" });
+        const zh = pageletT("pagelet.provider.firstUseNotification", "zh", { provider: "示例服务商" });
+
+        expect(en).toContain("allowed note excerpts");
+        expect(en).toContain("Example AI");
+        expect(en).toContain("API credits");
+        expect(en).toContain("Settings");
+        expect(zh).toContain("允许范围内的笔记摘录");
+        expect(zh).toContain("示例服务商");
+        expect(zh).toContain("API 额度");
+        expect(zh).toContain("设置");
+    });
+
+    it("describes background caps as actual AI calls rather than preparation cycles", () => {
+        const en = pageletT("pagelet.settings.preloadPerHourCap.desc", "en");
+        const zh = pageletT("pagelet.settings.preloadPerHourCap.desc", "zh");
+
+        expect(en).toContain("AI calls");
+        expect(en).toContain("generic background preparation");
+        expect(en).toContain("rolling hour");
+        expect(en).toContain("Range 1–2");
+        expect(en).not.toContain("preparation cycles");
+        expect(zh).toContain("后台审阅准备");
+        expect(zh).toContain("AI 调用次数");
+        expect(zh).toContain("滚动小时");
+        expect(zh).toContain("范围 1–2");
+        expect(zh).not.toContain("准备周期数");
+    });
 });
 
 describe("makePageletTranslator", () => {

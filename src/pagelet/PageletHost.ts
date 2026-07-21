@@ -15,6 +15,8 @@ import type { App, EventRef } from "obsidian";
 
 import type { PetCorner } from "./pet/types";
 import type { AnalyzeCallback } from "./preload/types";
+import type { PreloadBudgetStorage } from "./preload/PreloadBudget";
+import type { ChangeDetectorStorage } from "./scope/ChangeDetector";
 import type { GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
 import type { PageletDetailPayload } from "./tab/types";
@@ -41,8 +43,6 @@ import type {
     ScopeRecapAttemptStatus,
     ScopeRecapPreparationResult,
 } from "../pa";
-
-export type ScopeRecapAuthorizationChoice = "run" | "adjust" | "cancel";
 
 export interface PageletFeatureRateLimitUsage {
     hourlyUsed: number;
@@ -113,7 +113,6 @@ export interface PageletHost {
             quietRecallExplained: boolean;
             quietAcknowledged: boolean;
             pageletProviderFirstUseNotified: boolean;
-            quietRecallMode: "off" | "on";
         };
         contextPager: {
             enabled: boolean;
@@ -143,6 +142,12 @@ export interface PageletHost {
      * The host MUST enforce `allowWrite=false` on the returned callback.
      */
     createPreloadAnalyzeCallback(): AnalyzeCallback;
+
+    /** Per-vault persistent call-count storage for generic background preparation. */
+    createPreloadBudgetStorage?(): PreloadBudgetStorage;
+
+    /** Per-vault content-free watermarks for the changed-only background lane. */
+    createPreloadChangeDetectorStorage?(): ChangeDetectorStorage;
 
     /** Factory for the LLM callback used by foreground review commands. */
     createForegroundAnalyzeCallback(): AnalyzeCallback;
@@ -245,14 +250,6 @@ export interface PageletHost {
 
     /** Current Data Boundary fingerprint used to invalidate derived Recaps. */
     getScopeRecapDataBoundarySnapshotId(): string;
-
-    /**
-     * @deprecated SG-06: Modal authorization removed. Settings default ON + non-blocking notification.
-     * Kept for interface compatibility; implementation returns "run" immediately.
-     */
-    requestScopeRecapBackgroundAuthorization(
-        overview: ScopeRecapLocalOverview,
-    ): Promise<ScopeRecapAuthorizationChoice>;
 
     /** Run one bounded Scope Recap provider attempt. */
     runScopeRecap(options: {

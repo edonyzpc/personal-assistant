@@ -885,6 +885,65 @@ describe("PageletReviewModel — B4 cost ceiling (D018)", () => {
 });
 
 describe("PageletReviewModel — B4 rate limiting (D020)", () => {
+    it("runs shared provider admission after rate reservation and immediately around invocation", async () => {
+        const limiter = new PageletRateLimiter({
+            config: { hourlyCap: 10, dailyCap: 100 },
+            now: () => 1_000,
+            nextLocalMidnight: (now) => now + 12 * 60 * 60 * 1000,
+        });
+        const order: string[] = [];
+        jest.spyOn(limiter, "reserve").mockImplementation(async () => {
+            order.push("reserve");
+            return { ok: true };
+        });
+        const harness = makeStructuredModel([{ kind: "ok", payload: validResultPayload() }]);
+
+        const outcome = await reviewNote(harness.factory, defaultInput(), {
+            rateLimiter: limiter,
+            executeProviderCall: async (invoke) => {
+                order.push("admit");
+                const result = await invoke();
+                order.push("invoke");
+                return result;
+            },
+        });
+
+        expect(outcome.status).toBe("ok");
+        expect(order).toEqual(["reserve", "admit", "invoke"]);
+        expect(harness.structuredInvocations).toBe(1);
+    });
+
+    it("does not enter shared admission when the request aborts at the rate gate", async () => {
+        const controller = new AbortController();
+        const limiter = new PageletRateLimiter({
+            config: { hourlyCap: 10, dailyCap: 100 },
+            now: () => 1_000,
+            nextLocalMidnight: (now) => now + 12 * 60 * 60 * 1000,
+        });
+        jest.spyOn(limiter, "reserve").mockImplementation(async () => {
+            controller.abort();
+            return { ok: true };
+        });
+        let executeProviderCallCount = 0;
+        const executeProviderCall = async <TResult>(invoke: () => Promise<TResult>): Promise<TResult> => {
+            executeProviderCallCount += 1;
+            return invoke();
+        };
+        const harness = makeStructuredModel([{ kind: "ok", payload: validResultPayload() }]);
+
+        const outcome = await reviewNote(
+            harness.factory,
+            defaultInput(),
+            { rateLimiter: limiter, executeProviderCall },
+            controller.signal,
+        );
+
+        expect(outcome.status).toBe("error");
+        if (outcome.status === "error") expect(outcome.errorCode).toBe("timeout");
+        expect(executeProviderCallCount).toBe(0);
+        expect(harness.structuredInvocations).toBe(0);
+    });
+
     it("rejects with rate_limit_hourly when the limiter is already at the hourly cap (factory never called)", async () => {
         // Pre-seed the storage so the limiter sees 10 recent calls inside the
         // 1-hour window. The next `reserve()` returns ok=false with reason=hr-cap.

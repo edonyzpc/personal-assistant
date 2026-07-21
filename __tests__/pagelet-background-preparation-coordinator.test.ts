@@ -7,7 +7,6 @@ function makeCoordinator() {
     const callbacks = {
         onPetTransition: jest.fn(),
         onPetFlashError: jest.fn(),
-        onInsightsReady: jest.fn(() => true),
     };
     const coordinator = new BackgroundPreparationCoordinator(
         { log: jest.fn(), settings: { pagelet: {} } } as never,
@@ -41,14 +40,12 @@ describe("BackgroundPreparationCoordinator", () => {
             result: preloadResult([]),
         });
 
-        expect(callbacks.onInsightsReady).not.toHaveBeenCalled();
         expect(callbacks.onPetTransition).toHaveBeenCalledWith("analysis-done");
         expect(callbacks.onPetTransition).not.toHaveBeenCalledWith("insights-ready");
     });
 
-    it("falls back to analysis-done when findings exist but onInsightsReady returns false", () => {
+    it("keeps raw findings explicit-only instead of creating a proactive nudge", () => {
         const { callbacks, internals } = makeCoordinator();
-        callbacks.onInsightsReady.mockReturnValue(false);
 
         internals.handleEvent({
             type: "cycle-complete",
@@ -59,24 +56,7 @@ describe("BackgroundPreparationCoordinator", () => {
             }]),
         });
 
-        expect(callbacks.onInsightsReady).toHaveBeenCalledTimes(1);
         expect(callbacks.onPetTransition).toHaveBeenCalledWith("analysis-done");
         expect(callbacks.onPetTransition).not.toHaveBeenCalledWith("insights-ready");
-    });
-
-    it("enters insights-ready only when findings exist and proactive hints accept them", () => {
-        const { callbacks, internals } = makeCoordinator();
-
-        internals.handleEvent({
-            type: "cycle-complete",
-            result: preloadResult([{
-                text: "Prepared finding",
-                sourceFile: "notes/current.md",
-                sourceTitle: "current",
-            }]),
-        });
-
-        expect(callbacks.onInsightsReady).toHaveBeenCalledTimes(1);
-        expect(callbacks.onPetTransition).toHaveBeenCalledWith("insights-ready");
     });
 });

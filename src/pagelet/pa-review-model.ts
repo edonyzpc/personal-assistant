@@ -76,6 +76,7 @@ import {
 import { pageletT, type PageletLocale } from "../locales/pagelet";
 import { toError } from "../error-utils";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
+import { PageletProviderCallControlError } from "./provider-call-admission";
 
 // ---------------------------------------------------------------------------
 // Minimal LangChain model surface.
@@ -265,6 +266,21 @@ export interface PageletReviewModelOptions {
      */
     providerForPricing?: string;
     modelForPricing?: string;
+    /**
+     * Wrap every actual provider invocation after cost/rate admission.
+     * Production uses this to share Pagelet first-use disclosure across
+     * foreground Review and the other provider-backed Pagelet paths.
+     */
+    executeProviderCall?: <TResult>(
+        invoke: () => Promise<TResult>,
+        options: { signal: AbortSignal },
+    ) => Promise<TResult>;
+    /**
+     * Declares that `executeProviderCall` performs the one rate-limit commit
+     * for each actual invocation. Callers using this mode must omit
+     * `rateLimiter`; otherwise one provider attempt could be double-counted.
+     */
+    providerCallOwnsRateLimitReservation?: boolean;
     /** Production wall-clock timeout for reviewNote. Omitted keeps legacy tests unbounded. */
     reviewTimeoutMs?: number;
     /** Emits user-visible progress hooks and testable progress telemetry. */
@@ -370,6 +386,11 @@ export class PageletReviewModel {
         // "provider_error" later.
         const parsedInput = PageletReviewInputSchema.parse(rawInput);
         const effectiveOpts = { ...DEFAULT_OPTIONS, ...this.options };
+        if (effectiveOpts.providerCallOwnsRateLimitReservation && effectiveOpts.rateLimiter) {
+            throw new Error(
+                "Pagelet provider-call wrapper and model cannot both own rate-limit reservation",
+            );
+        }
         const now = this.options.now ?? Date.now;
         const reviewStartedAt = now();
 
@@ -690,13 +711,21 @@ export class PageletReviewModel {
             const started = now();
             let raw: unknown;
             try {
-                raw = await deadline.race(
-                    structured.invoke(
+                const invoke = () => {
+                    if (deadline.signal.aborted) return Promise.reject(createPageletAbortError());
+                    return structured.invoke(
                         buildMessages(systemPrompt, currentUserPrompt),
                         { signal: deadline.signal },
-                    ),
+                    );
+                };
+                if (deadline.signal.aborted) throw createPageletAbortError();
+                raw = await deadline.race(
+                    opts.executeProviderCall
+                        ? opts.executeProviderCall(invoke, { signal: deadline.signal })
+                        : invoke(),
                 );
             } catch (err) {
+                if (err instanceof PageletProviderCallControlError) throw err;
                 const elapsedMs = Math.max(0, now() - started);
                 diagnostics.elapsedMs += elapsedMs;
                 if (deadline.isDeadlineError(err) || isAbortError(err)) {
@@ -791,13 +820,21 @@ export class PageletReviewModel {
             const started = now();
             let response: { content: unknown };
             try {
-                response = await deadline.race(
-                    model.invoke(
+                const invoke = () => {
+                    if (deadline.signal.aborted) return Promise.reject(createPageletAbortError());
+                    return model.invoke(
                         buildMessages(augmentedSystem, currentUserPrompt),
                         { signal: deadline.signal },
-                    ),
+                    );
+                };
+                if (deadline.signal.aborted) throw createPageletAbortError();
+                response = await deadline.race(
+                    opts.executeProviderCall
+                        ? opts.executeProviderCall(invoke, { signal: deadline.signal })
+                        : invoke(),
                 );
             } catch (err) {
+                if (err instanceof PageletProviderCallControlError) throw err;
                 const elapsedMs = Math.max(0, now() - started);
                 diagnostics.elapsedMs += elapsedMs;
                 if (deadline.isDeadlineError(err) || isAbortError(err)) {

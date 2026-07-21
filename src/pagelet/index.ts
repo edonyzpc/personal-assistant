@@ -195,18 +195,36 @@ export type { PetState, PetTaskKind, PetCorner, PetEvent, PetCallbacks, PetRende
 export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent, buildIntentionallyQuietContent, buildPreparedRecapDeliveryContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent } from "./bubble";
 export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCard, BubbleCallbacks, BubbleQuickAccessCallbacks, BubbleStateCallbacks, BubbleViewOptions, BubbleExplanationState, DeliveryCandidate, DeliveryCandidateKind, DeliveryCandidateRoute, DeliveryCandidateSourceRef, DeliveryCandidateStaleStatus, InlineContextHint } from "./bubble";
 
-export { PreloadEngine, PreloadCache, PreloadBudget } from "./preload";
+export {
+    PreloadEngine,
+    PreloadCache,
+    PreloadBudget,
+    InMemoryPreloadBudgetStorage,
+    LocalStoragePreloadBudgetStorage,
+} from "./preload";
 export type { PreloadFinding, PreloadResult, PreloadCacheEntry, PreloadConfig, PreloadErrorCategory, PreloadEvent, AnalyzeCallback } from "./preload";
 
-export { ScopeResolver, ChangeDetector } from "./scope/index";
-export type { ScopeCandidate, ExclusionReason, ScopeResult, ScopeConfig } from "./scope/index";
+export {
+    ScopeResolver,
+    ChangeDetector,
+    InMemoryChangeDetectorStorage,
+    LocalStorageChangeDetectorStorage,
+} from "./scope/index";
+export type {
+    ChangeDetectorState,
+    ChangeDetectorStorage,
+    ScopeCandidate,
+    ExclusionReason,
+    ScopeResult,
+    ScopeConfig,
+} from "./scope/index";
 
 export { ProactiveHints } from "./hints";
 export type { ProactiveHintsConfig } from "./hints";
 
 export type { GeneratedReviewNote, WriteResult } from "./output";
 
-export { registerPageletCommands, PAGELET_OPEN_PANEL_COMMAND_ID, PAGELET_REVIEW_CURRENT_COMMAND_ID, PAGELET_QUICK_REVIEW_COMMAND_ID, PAGELET_DISCOVER_COMMAND_ID, PAGELET_MAINTENANCE_REVIEW_COMMAND_ID, PAGELET_QUIET_RECALL_COMMAND_ID, PAGELET_GRAPH_DISCOVERY_COMMAND_ID, PAGELET_SCOPE_RECAP_COMMAND_ID, PAGELET_TOGGLE_HINTS_COMMAND_ID, PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID, PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID, PAGELET_MOVE_PET_COMMAND_ID, PAGELET_TOGGLE_PET_COMMAND_ID } from "./commands";
+export { registerPageletCommands, PAGELET_OPEN_PANEL_COMMAND_ID, PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID, PAGELET_REVIEW_CURRENT_COMMAND_ID, PAGELET_QUICK_REVIEW_COMMAND_ID, PAGELET_DISCOVER_COMMAND_ID, PAGELET_MAINTENANCE_REVIEW_COMMAND_ID, PAGELET_QUIET_RECALL_COMMAND_ID, PAGELET_GRAPH_DISCOVERY_COMMAND_ID, PAGELET_SCOPE_RECAP_COMMAND_ID, PAGELET_TOGGLE_HINTS_COMMAND_ID, PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID, PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID, PAGELET_MOVE_PET_COMMAND_ID, PAGELET_TOGGLE_PET_COMMAND_ID } from "./commands";
 export type { PageletCommandCallbacks } from "./commands";
 
 export { PageletOrchestrator } from "./orchestrator";

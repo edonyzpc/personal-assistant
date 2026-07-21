@@ -87,6 +87,20 @@ describe("ProactiveHints", () => {
         });
     });
 
+    describe("configuration updates", () => {
+        it("clears pending shared work when disabled through updateConfig", () => {
+            const h = makeHints({ enabled: true });
+            expect(h.onInsightsReady()).toBe(true);
+            expect(h.hasPendingHint).toBe(true);
+
+            h.updateConfig({ enabled: false });
+
+            expect(h.enabled).toBe(false);
+            expect(h.hasPendingHint).toBe(false);
+            expect(h.delayUntilEligibleMs()).toBeNull();
+        });
+    });
+
     describe("onHintViewed", () => {
         it("clears pending flag", () => {
             const h = makeHints();
@@ -102,6 +116,18 @@ describe("ProactiveHints", () => {
             expect(h.onInsightsReady()).toBe(true);
             h.onHintViewed(); // sets lastHintAt = Date.now()
             // Second insight should fail because cooldown is 999 min
+            expect(h.onInsightsReady()).toBe(false);
+        });
+
+        it("records presentation even after a generic toggle cleared pending ownership", () => {
+            const h = makeHints({ enabled: true, cooldownMinutes: 60 });
+            expect(h.onInsightsReady()).toBe(true);
+            h.updateConfig({ enabled: false });
+            expect(h.hasPendingHint).toBe(false);
+
+            h.recordHintPresented();
+            h.updateConfig({ enabled: true });
+
             expect(h.onInsightsReady()).toBe(false);
         });
     });

@@ -62,6 +62,8 @@ export interface QuietRecallRunResult {
     currentPath?: string;
     /** Stable identity of the normalized source file stats used for this run. */
     sourceSnapshotId?: string;
+    /** Complete source path set represented by sourceSnapshotId. */
+    sourcePaths?: string[];
     /** Data Boundary identity used while collecting and evaluating sources. */
     dataBoundarySnapshotId?: string;
     /** Provider/model/locale/policy identity captured for this evaluation round. */

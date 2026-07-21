@@ -121,11 +121,11 @@ export interface PageletSettings {
     preloadTokenBudget: { input: number; output: number };
 
     // ── Scope Recap preparation ───────────────────────────────────
-    /** Prepare current/high-intent Scope Recaps after affirmative disclosure. */
+    /** Prepare current/high-intent Scope Recaps; persisted capability opt-out. */
     scopeRecapPreparationEnabled: boolean;
-    /** Persisted, versioned first-run provider-read authorization. */
+    /** @deprecated Legacy first-run metadata retained for data.json compatibility. */
     scopeRecapBackgroundAuthorization: ScopeRecapBackgroundAuthorization;
-    /** Hashed provider/model/policy envelope covered by the current authorization. */
+    /** @deprecated Legacy authorization context retained for data.json compatibility. */
     scopeRecapAuthorizationContextId: string | null;
     /** Allow high-value Recap nudges without enabling unrelated hint families. */
     scopeRecapHighValueHints: boolean;
@@ -177,11 +177,6 @@ export interface PageletSettings {
      * don't re-notify for other surfaces.
      */
     pageletProviderFirstUseNotified: boolean;
-    /**
-     * SG-01: User-facing Quiet Recall Off/On toggle.
-     * Mirrors QuietRecallSettings.quietRecallMode for Settings UI convenience.
-     */
-    quietRecallMode: "off" | "on";
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +229,6 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     quietRecallExplained: false,
     quietAcknowledged: false,
     pageletProviderFirstUseNotified: false,
-    quietRecallMode: "off",
 });
 
 /**
@@ -252,15 +246,18 @@ export const PAGELET_BOUNDS = Object.freeze({
     // Pet, background preparation, review, and foreground limits
     proactiveHintsCooldown: { min: 1, max: 120 },
     preloadInterval: { min: 5, max: 240 },
-    preloadPerHourCap: { min: 1, max: 20 },
-    preloadPerDayCap: { min: 1, max: 200 },
+    // DEC-023 unattended generic-preload envelope. Users may lower these
+    // limits, but Settings must never imply that a broader background mode is
+    // available without a separate product contract.
+    preloadPerHourCap: { min: 1, max: 2 },
+    preloadPerDayCap: { min: 1, max: 20 },
     foregroundPerHourCap: { min: 1, max: 60 },
     foregroundPerDayCap: { min: 1, max: 500 },
 });
 
 export const PAGELET_PRELOAD_TOKEN_BOUNDS = Object.freeze({
-    input: { min: 1000, max: 8000 },
-    output: { min: 500, max: 2000 },
+    input: { min: 1000, max: 4000 },
+    output: { min: 500, max: 1000 },
 });
 
 /**
@@ -358,9 +355,21 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
     const scopeRecapAuthorizationContextId = scopeRecapBackgroundAuthorization === "authorized-v1"
         ? requestedScopeRecapAuthorizationContextId
         : null;
-    const scopeRecapPreparationEnabled = scopeRecapBackgroundAuthorization === "authorized-v1"
-        && scopeRecapAuthorizationContextId !== null
-        && raw.scopeRecapPreparationEnabled === true;
+    const hasScopeRecapPreparationSetting = Object.prototype.hasOwnProperty.call(
+        raw,
+        "scopeRecapPreparationEnabled",
+    );
+    // DEC-023 migration: either explicit opt-out signal wins. The Settings UI
+    // clears a legacy decline before persisting a new explicit opt-in, so a
+    // contradictory declined+true payload remains safely disabled. Otherwise
+    // the capability boolean is independent of the legacy authorization tuple.
+    const scopeRecapPreparationEnabled = scopeRecapBackgroundAuthorization === "declined-v1"
+        ? false
+        : hasScopeRecapPreparationSetting
+            ? typeof raw.scopeRecapPreparationEnabled === "boolean"
+                ? raw.scopeRecapPreparationEnabled
+                : false
+            : PAGELET_DEFAULTS.scopeRecapPreparationEnabled;
     return {
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : PAGELET_DEFAULTS.enabled,
         petVisible: typeof raw.petVisible === "boolean" ? raw.petVisible : PAGELET_DEFAULTS.petVisible,
@@ -395,8 +404,8 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         preloadPerHourCap: normalizeBoundedInt(raw.preloadPerHourCap, PAGELET_DEFAULTS.preloadPerHourCap, PAGELET_BOUNDS.preloadPerHourCap.min, PAGELET_BOUNDS.preloadPerHourCap.max),
         preloadPerDayCap: normalizeBoundedInt(raw.preloadPerDayCap, PAGELET_DEFAULTS.preloadPerDayCap, PAGELET_BOUNDS.preloadPerDayCap.min, PAGELET_BOUNDS.preloadPerDayCap.max),
         preloadTokenBudget: normalizeTokenBudget(raw.preloadTokenBudget, PAGELET_DEFAULTS.preloadTokenBudget),
-        // Scope Recap preparation. Legacy installs start pending and make no
-        // provider-backed background call until the v1 disclosure is accepted.
+        // Scope Recap preparation. DEC-023 treats the legacy authorization
+        // tuple as migration metadata rather than a capability gate.
         scopeRecapPreparationEnabled,
         scopeRecapBackgroundAuthorization,
         scopeRecapAuthorizationContextId,
@@ -426,9 +435,6 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         quietRecallExplained: typeof raw.quietRecallExplained === "boolean" ? raw.quietRecallExplained : PAGELET_DEFAULTS.quietRecallExplained,
         quietAcknowledged: typeof raw.quietAcknowledged === "boolean" ? raw.quietAcknowledged : PAGELET_DEFAULTS.quietAcknowledged,
         pageletProviderFirstUseNotified: typeof raw.pageletProviderFirstUseNotified === "boolean" ? raw.pageletProviderFirstUseNotified : PAGELET_DEFAULTS.pageletProviderFirstUseNotified,
-        quietRecallMode: raw.quietRecallMode === "on" || raw.quietRecallMode === "off"
-            ? raw.quietRecallMode
-            : PAGELET_DEFAULTS.quietRecallMode,
     };
 }
 
@@ -735,6 +741,12 @@ function normalizeQuietRecallLastDiagnostics(
     const candidateCount = normalizeDiagnosticInteger(value.candidateCount, null);
     const evaluatedCandidateCount = normalizeDiagnosticInteger(value.evaluatedCandidateCount, null);
     const providerCalls = normalizeDiagnosticInteger(value.providerCalls, null);
+    const semanticRetrievalCalls = value.semanticRetrievalCalls === undefined
+        ? undefined
+        : normalizeDiagnosticInteger(value.semanticRetrievalCalls, null);
+    const totalProviderCalls = value.totalProviderCalls === undefined
+        ? undefined
+        : normalizeDiagnosticInteger(value.totalProviderCalls, null);
     const initialCalls = normalizeDiagnosticInteger(value.initialCalls, null);
     const languageRetryCalls = normalizeDiagnosticInteger(value.languageRetryCalls, null);
     const cacheHits = normalizeDiagnosticInteger(value.cacheHits, null);
@@ -750,6 +762,8 @@ function normalizeQuietRecallLastDiagnostics(
         || candidateCount === null
         || evaluatedCandidateCount === null
         || providerCalls === null
+        || semanticRetrievalCalls === null
+        || totalProviderCalls === null
         || initialCalls === null
         || languageRetryCalls === null
         || cacheHits === null
@@ -770,6 +784,8 @@ function normalizeQuietRecallLastDiagnostics(
         candidateCount,
         evaluatedCandidateCount,
         providerCalls,
+        ...(semanticRetrievalCalls !== undefined ? { semanticRetrievalCalls } : {}),
+        ...(totalProviderCalls !== undefined ? { totalProviderCalls } : {}),
         initialCalls,
         languageRetryCalls,
         cacheHits,
@@ -1015,7 +1031,11 @@ const REVIEWS_FOLDER_ERROR_I18N_KEY: Record<PageletReviewsFolderError, string> =
  */
 export interface PageletSettingsHost {
     app: App;
-    settings: { pagelet: PageletSettings };
+    settings: {
+        pagelet: PageletSettings;
+        /** Canonical Quiet Recall capability state consumed by runtime. */
+        quietRecall: { quietRecallMode: "off" | "on" };
+    };
     saveSettings(): Promise<void> | void;
     /**
      * Optional logger. Renders without verbosity if absent so consumers
@@ -1457,11 +1477,10 @@ export function renderPageletSection(
         .setName(t("pagelet.settings.quietRecallMode.name"))
         .setDesc(t("pagelet.settings.quietRecallMode.desc"))
         .addToggle((toggle) => {
-            const mode = settings.quietRecallMode ?? PAGELET_DEFAULTS.quietRecallMode;
             toggle
-                .setValue(mode === "on")
+                .setValue(host.settings.quietRecall.quietRecallMode === "on")
                 .onChange((value) => saveOnChange(() => {
-                    settings.quietRecallMode = value ? "on" : "off";
+                    host.settings.quietRecall.quietRecallMode = value ? "on" : "off";
                 }));
         });
 

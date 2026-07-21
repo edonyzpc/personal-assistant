@@ -26,14 +26,44 @@ class HoldMenuFakeElement {
     className = "";
     textContent: string | null = null;
     readonly children: HoldMenuFakeElement[] = [];
+    readonly ownerDocument: HoldMenuFakeDocument | null;
     private readonly listeners = new Map<string, HoldMenuListener[]>();
     private readonly attributes = new Map<string, string>();
     private parent: HoldMenuFakeElement | null = null;
+
+    constructor(ownerDocument: HoldMenuFakeDocument | null = null) {
+        this.ownerDocument = ownerDocument;
+    }
 
     appendChild(child: HoldMenuFakeElement): HoldMenuFakeElement {
         child.parent = this;
         this.children.push(child);
         return child;
+    }
+
+    insertBefore(child: HoldMenuFakeElement, reference: HoldMenuFakeElement | null): HoldMenuFakeElement {
+        child.parent = this;
+        const index = reference ? this.children.indexOf(reference) : -1;
+        if (index < 0) this.children.push(child);
+        else this.children.splice(index, 0, child);
+        return child;
+    }
+
+    removeChild(child: HoldMenuFakeElement): HoldMenuFakeElement {
+        const index = this.children.indexOf(child);
+        if (index >= 0) this.children.splice(index, 1);
+        child.parent = null;
+        return child;
+    }
+
+    get firstChild(): HoldMenuFakeElement | null {
+        return this.children[0] ?? null;
+    }
+
+    get nextSibling(): HoldMenuFakeElement | null {
+        if (!this.parent) return null;
+        const index = this.parent.children.indexOf(this);
+        return this.parent.children[index + 1] ?? null;
     }
 
     setAttribute(name: string, value: string): void {
@@ -42,6 +72,10 @@ class HoldMenuFakeElement {
 
     removeAttribute(name: string): void {
         this.attributes.delete(name);
+    }
+
+    getAttribute(name: string): string | null {
+        return this.attributes.get(name) ?? null;
     }
 
     addEventListener(type: string, listener: HoldMenuListener, _options?: AddEventListenerOptions | boolean): void {
@@ -54,32 +88,69 @@ class HoldMenuFakeElement {
         this.listeners.set(type, (this.listeners.get(type) ?? []).filter((item) => item !== listener));
     }
 
-    get classList(): { contains: (name: string) => boolean } {
-        const cn = this.className;
-        return { contains: (name: string) => cn.split(/\s+/).includes(name) };
+    get classList(): {
+        contains: (name: string) => boolean;
+        add: (...names: string[]) => void;
+        remove: (...names: string[]) => void;
+    } {
+        return {
+            contains: (name: string) => this.className.split(/\s+/).includes(name),
+            add: (...names: string[]) => {
+                const current = new Set(this.className.split(/\s+/).filter(Boolean));
+                names.forEach((name) => current.add(name));
+                this.className = [...current].join(" ");
+            },
+            remove: (...names: string[]) => {
+                const removed = new Set(names);
+                this.className = this.className
+                    .split(/\s+/)
+                    .filter((name) => name && !removed.has(name))
+                    .join(" ");
+            },
+        };
     }
 
-    dispatch(type: string, extra?: Partial<Event & TouchEvent>): void {
-        const self = this;
+    dispatch(type: string, extra?: Partial<Event & TouchEvent & MouseEvent & KeyboardEvent>): Event {
+        const path: HoldMenuFakeElement[] = [];
+        let node: HoldMenuFakeElement | null = this;
+        while (node) {
+            path.push(node);
+            node = node.parent;
+        }
+        let propagationStopped = false;
+        let defaultPrevented = false;
         const event = {
             target: this,
             type,
-            stopPropagation: jest.fn(),
-            preventDefault: jest.fn(),
-            composedPath: () => {
-                const path: HoldMenuFakeElement[] = [];
-                let node: HoldMenuFakeElement | null = self;
-                while (node) { path.push(node); node = node.parent; }
-                return path;
-            },
+            stopPropagation: jest.fn(() => { propagationStopped = true; }),
+            preventDefault: jest.fn(() => { defaultPrevented = true; }),
+            composedPath: () => path,
             touches: [],
             changedTouches: [],
             ...extra,
-        } as unknown as Event;
-        for (const listener of this.listeners.get(type) ?? []) {
-            if (typeof listener === "function") listener(event);
-            else listener.handleEvent(event);
+        } as unknown as Event & { currentTarget: HoldMenuFakeElement; defaultPrevented: boolean };
+        Object.defineProperty(event, "defaultPrevented", {
+            configurable: true,
+            get: () => defaultPrevented,
+        });
+        this.ownerDocument?.dispatchCapturedEvent(type, event);
+        for (const currentTarget of path) {
+            event.currentTarget = currentTarget as unknown as EventTarget & HoldMenuFakeElement;
+            for (const listener of currentTarget.listeners.get(type) ?? []) {
+                if (typeof listener === "function") listener(event);
+                else listener.handleEvent(event);
+            }
+            if (propagationStopped) break;
         }
+        return event;
+    }
+
+    closest(): HoldMenuFakeElement | null {
+        return null;
+    }
+
+    querySelector(): HoldMenuFakeElement | null {
+        return null;
     }
 
     contains(target: Node | null): boolean {
@@ -97,9 +168,21 @@ class HoldMenuFakeElement {
 
 class HoldMenuFakeDocument {
     private readonly listeners = new Map<string, HoldMenuListener[]>();
+    readonly body: HoldMenuFakeElement;
+    readonly documentElement: HoldMenuFakeElement;
+    readonly defaultView = { innerWidth: 1440, innerHeight: 900 };
+
+    constructor() {
+        this.body = new HoldMenuFakeElement(this);
+        this.documentElement = new HoldMenuFakeElement(this);
+    }
 
     createElement(): HoldMenuFakeElement {
-        return new HoldMenuFakeElement();
+        return new HoldMenuFakeElement(this);
+    }
+
+    createElementNS(): HoldMenuFakeElement {
+        return new HoldMenuFakeElement(this);
     }
 
     addEventListener(type: string, listener: HoldMenuListener): void {
@@ -115,6 +198,27 @@ class HoldMenuFakeDocument {
     listenerCount(type: string): number {
         return (this.listeners.get(type) ?? []).length;
     }
+
+    dispatchCapturedEvent(type: string, event: Event): void {
+        for (const listener of [...(this.listeners.get(type) ?? [])]) {
+            if (typeof listener === "function") listener(event);
+            else listener.handleEvent(event);
+        }
+    }
+
+    dispatch(type: string, target: HoldMenuFakeElement): void {
+        const event = {
+            target,
+            type,
+            composedPath: () => [target],
+            stopPropagation: jest.fn(),
+            preventDefault: jest.fn(),
+        } as unknown as Event;
+        for (const listener of [...(this.listeners.get(type) ?? [])]) {
+            if (typeof listener === "function") listener(event);
+            else listener.handleEvent(event);
+        }
+    }
 }
 
 function withHoldMenuDocument(run: (doc: HoldMenuFakeDocument) => void): void {
@@ -124,6 +228,8 @@ function withHoldMenuDocument(run: (doc: HoldMenuFakeDocument) => void): void {
     };
     const originalActiveDocument = globals.activeDocument;
     const originalDocument = globals.document;
+    const originalHTMLElement = globalThis.HTMLElement;
+    const originalMutationObserver = globalThis.MutationObserver;
     const doc = new HoldMenuFakeDocument();
     Object.defineProperty(globals, "activeDocument", {
         configurable: true,
@@ -134,6 +240,19 @@ function withHoldMenuDocument(run: (doc: HoldMenuFakeDocument) => void): void {
         configurable: true,
         writable: true,
         value: doc as unknown as Document,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+        configurable: true,
+        writable: true,
+        value: HoldMenuFakeElement,
+    });
+    Object.defineProperty(globalThis, "MutationObserver", {
+        configurable: true,
+        writable: true,
+        value: class {
+            observe(): void { /* no-op */ }
+            disconnect(): void { /* no-op */ }
+        },
     });
     try {
         run(doc);
@@ -148,7 +267,65 @@ function withHoldMenuDocument(run: (doc: HoldMenuFakeDocument) => void): void {
             writable: true,
             value: originalDocument,
         });
+        Object.defineProperty(globalThis, "HTMLElement", {
+            configurable: true,
+            writable: true,
+            value: originalHTMLElement,
+        });
+        Object.defineProperty(globalThis, "MutationObserver", {
+            configurable: true,
+            writable: true,
+            value: originalMutationObserver,
+        });
     }
+}
+
+type MountedHoldMenuFixture = {
+    doc: HoldMenuFakeDocument;
+    view: PetView;
+    root: HoldMenuFakeElement;
+    menu: HoldMenuFakeElement;
+    items: HoldMenuFakeElement[];
+    onToggleBubble: jest.Mock;
+    targetCallbacks: jest.Mock[];
+};
+
+function withMountedHoldMenu(run: (fixture: MountedHoldMenuFixture) => void): void {
+    jest.useFakeTimers();
+    withHoldMenuDocument((doc) => {
+        const onToggleBubble = jest.fn();
+        const targetCallbacks = [jest.fn(), jest.fn(), jest.fn()];
+        const view = new PetView({
+            callbacks: {
+                onToggleBubble,
+                onQuickCaptureOpen: targetCallbacks[0],
+                onReviewCurrentNote: targetCallbacks[1],
+                onDiscoverConnections: targetCallbacks[2],
+            },
+            getLocale: () => "en",
+        });
+        const container = doc.createElement();
+        view.mount(container as unknown as HTMLElement);
+        const root = container.children[0];
+        root.dispatch("mousedown", { button: 0 });
+        jest.advanceTimersByTime(520);
+        const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+        if (!menu) throw new Error("Expected the Pet hold menu to open after 520ms.");
+
+        try {
+            run({
+                doc,
+                view,
+                root,
+                menu,
+                items: [...menu.children],
+                onToggleBubble,
+                targetCallbacks,
+            });
+        } finally {
+            view.destroy();
+        }
+    });
 }
 
 describe("PetStateMachine", () => {
@@ -671,6 +848,197 @@ describe("PetView task kind", () => {
             expect(doc.listenerCount("pointerdown")).toBe(0);
             expect(internals._quickCaptureHoldTriggered).toBe(false);
             expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+});
+
+describe("PetView hold-menu input boundary", () => {
+    const expectNoAction = (fixture: MountedHoldMenuFixture): void => {
+        fixture.targetCallbacks.forEach((callback) => expect(callback).not.toHaveBeenCalled());
+        expect(fixture.onToggleBubble).not.toHaveBeenCalled();
+    };
+    const expectNoGlobalTouchTracking = (doc: HoldMenuFakeDocument): void => {
+        expect(doc.listenerCount("touchstart")).toBe(0);
+        expect(doc.listenerCount("touchmove")).toBe(0);
+        expect(doc.listenerCount("touchend")).toBe(0);
+        expect(doc.listenerCount("touchcancel")).toBe(0);
+    };
+
+    it("fails closed when a menu touch starts with more than one finger", () => {
+        withMountedHoldMenu((fixture) => {
+            const first = { clientX: 100, clientY: 100 };
+            const second = { clientX: 120, clientY: 100 };
+            const capture = fixture.items[0];
+
+            capture.dispatch("touchstart", { touches: [first, second] } as never);
+            capture.dispatch("touchend", { touches: [], changedTouches: [first] } as never);
+            capture.dispatch("click");
+
+            expectNoAction(fixture);
+            expect(fixture.root.children).toContain(fixture.menu);
+            expectNoGlobalTouchTracking(fixture.doc);
+        });
+    });
+
+    it("keeps a cancelled menu touch invalid through touchend and synthetic click", () => {
+        withMountedHoldMenu((fixture) => {
+            const touch = { clientX: 100, clientY: 100 };
+            const capture = fixture.items[0];
+
+            capture.dispatch("touchstart", { touches: [touch] } as never);
+            capture.dispatch("touchcancel");
+            capture.dispatch("touchend", { touches: [], changedTouches: [touch] } as never);
+            capture.dispatch("click");
+
+            expectNoAction(fixture);
+            expect(fixture.root.children).toContain(fixture.menu);
+            expectNoGlobalTouchTracking(fixture.doc);
+        });
+    });
+
+    it("fails closed after the touch trajectory crosses 12px even if it returns before touchend", () => {
+        withMountedHoldMenu((fixture) => {
+            const capture = fixture.items[0];
+            const start = { clientX: 100, clientY: 100 };
+            const outsideThreshold = { clientX: 113, clientY: 100 };
+            const returnedInside = { clientX: 101, clientY: 100 };
+
+            capture.dispatch("touchstart", {
+                touches: [start],
+            } as never);
+            capture.dispatch("touchmove", {
+                touches: [outsideThreshold],
+            } as never);
+            capture.dispatch("touchmove", {
+                touches: [returnedInside],
+            } as never);
+            capture.dispatch("touchend", {
+                touches: [],
+                changedTouches: [returnedInside],
+            } as never);
+            capture.dispatch("click");
+
+            expectNoAction(fixture);
+            expect(fixture.root.children).toContain(fixture.menu);
+        });
+    });
+
+    it("fails closed when a second finger appears during the touch trajectory", () => {
+        withMountedHoldMenu((fixture) => {
+            const capture = fixture.items[0];
+            const first = { clientX: 100, clientY: 100 };
+            const second = { clientX: 104, clientY: 100 };
+
+            capture.dispatch("touchstart", { touches: [first] } as never);
+            capture.dispatch("touchmove", { touches: [first, second] } as never);
+            capture.dispatch("touchmove", { touches: [first] } as never);
+            capture.dispatch("touchend", { touches: [], changedTouches: [first] } as never);
+            capture.dispatch("click");
+
+            expectNoAction(fixture);
+            expect(fixture.root.children).toContain(fixture.menu);
+        });
+    });
+
+    it("fails closed when a second finger lands on another menu item", () => {
+        withMountedHoldMenu((fixture) => {
+            const capture = fixture.items[0];
+            const review = fixture.items[1];
+            const first = { clientX: 100, clientY: 100 };
+            const second = { clientX: 104, clientY: 100 };
+
+            capture.dispatch("touchstart", { touches: [first] } as never);
+            review.dispatch("touchstart", { touches: [first, second] } as never);
+            review.dispatch("touchend", { touches: [first], changedTouches: [second] } as never);
+            capture.dispatch("touchend", { touches: [], changedTouches: [first] } as never);
+            capture.dispatch("click");
+
+            expectNoAction(fixture);
+            expect(fixture.root.children).toContain(fixture.menu);
+            expectNoGlobalTouchTracking(fixture.doc);
+        });
+    });
+
+    it("executes an all-within-threshold touch trajectory exactly once", () => {
+        withMountedHoldMenu((fixture) => {
+            const capture = fixture.items[0];
+            const start = { clientX: 100, clientY: 100 };
+            const moved = { clientX: 106, clientY: 106 };
+            const end = { clientX: 108, clientY: 104 };
+
+            capture.dispatch("touchstart", { touches: [start] } as never);
+            capture.dispatch("touchmove", { touches: [moved] } as never);
+            capture.dispatch("touchend", { touches: [], changedTouches: [end] } as never);
+            capture.dispatch("click");
+
+            expect(fixture.targetCallbacks[0]).toHaveBeenCalledTimes(1);
+            expect(fixture.targetCallbacks[1]).not.toHaveBeenCalled();
+            expect(fixture.targetCallbacks[2]).not.toHaveBeenCalled();
+            expect(fixture.onToggleBubble).not.toHaveBeenCalled();
+            expect(fixture.root.children).not.toContain(fixture.menu);
+        });
+    });
+
+    it("executes a focused menu item once on Space without toggling the Pet root", () => {
+        withMountedHoldMenu((fixture) => {
+            const keydown = fixture.items[0].dispatch("keydown", { key: " " });
+            fixture.items[0].dispatch("click");
+
+            expect(keydown.defaultPrevented).toBe(true);
+            expect(fixture.targetCallbacks[0]).toHaveBeenCalledTimes(1);
+            expect(fixture.targetCallbacks[1]).not.toHaveBeenCalled();
+            expect(fixture.targetCallbacks[2]).not.toHaveBeenCalled();
+            expect(fixture.onToggleBubble).not.toHaveBeenCalled();
+            expect(fixture.root.children).not.toContain(fixture.menu);
+        });
+    });
+
+    it("dismisses the menu after 3s without executing any action", () => {
+        withMountedHoldMenu((fixture) => {
+            jest.advanceTimersByTime(2999);
+            expect(fixture.root.children).toContain(fixture.menu);
+            expect(fixture.doc.listenerCount("pointerdown")).toBe(1);
+
+            jest.advanceTimersByTime(1);
+
+            expect(fixture.root.children).not.toContain(fixture.menu);
+            expect(fixture.doc.listenerCount("pointerdown")).toBe(0);
+            expectNoAction(fixture);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+
+    it("dismisses on an outside pointer without executing any action", () => {
+        withMountedHoldMenu((fixture) => {
+            const outside = fixture.doc.createElement();
+
+            fixture.items[0].dispatch("touchstart", {
+                touches: [{ clientX: 100, clientY: 100 }],
+            } as never);
+            expect(fixture.doc.listenerCount("touchstart")).toBe(1);
+
+            fixture.doc.dispatch("pointerdown", outside);
+
+            expect(fixture.root.children).not.toContain(fixture.menu);
+            expect(fixture.doc.listenerCount("pointerdown")).toBe(0);
+            expectNoGlobalTouchTracking(fixture.doc);
+            expectNoAction(fixture);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+
+    it("cleans active global touch tracking when destroyed", () => {
+        withMountedHoldMenu((fixture) => {
+            fixture.items[0].dispatch("touchstart", {
+                touches: [{ clientX: 100, clientY: 100 }],
+            } as never);
+            expect(fixture.doc.listenerCount("touchstart")).toBe(1);
+
+            fixture.view.destroy();
+
+            expectNoGlobalTouchTracking(fixture.doc);
+            expect(fixture.root.children).not.toContain(fixture.menu);
+            expectNoAction(fixture);
         });
     });
 });

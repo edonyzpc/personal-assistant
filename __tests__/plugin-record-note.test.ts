@@ -97,6 +97,31 @@ jest.mock('obsidian', () => {
             const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/g, '');
             return normalized === '' && path === '/' ? '/' : normalized;
         },
+        getFrontMatterInfo: (markdown: string) => {
+            const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
+            if (!match) return { exists: false, contentStart: 0, frontmatter: '', from: 0, to: 0 };
+            return {
+                exists: true,
+                contentStart: match[0].length,
+                frontmatter: match[1] ?? '',
+                from: 4,
+                to: 4 + (match[1]?.length ?? 0),
+            };
+        },
+        parseYaml: (yaml: string) => Object.fromEntries(yaml
+            .split(/\r?\n/)
+            .flatMap((line): Array<[string, unknown]> => {
+                const match = /^\s*([^:#]+):\s*(.*?)\s*$/.exec(line);
+                if (!match) return [];
+                const key = match[1]!.trim();
+                const raw = match[2]!.trim();
+                if (raw === 'true') return [[key, true]];
+                if (raw === 'false') return [[key, false]];
+                if (raw.startsWith('[') && raw.endsWith(']')) {
+                    return [[key, raw.slice(1, -1).split(',').map((part) => part.trim())]];
+                }
+                return [[key, raw.replace(/^['"]|['"]$/g, '')]];
+            })),
         addIcon: jest.fn(),
         setIcon: jest.fn(),
         debounce: <T extends unknown[], V>(callback: (...args: T) => V) => callback,
@@ -4297,8 +4322,32 @@ describe('Scope Recap production adapter data boundary', () => {
             sourceNoteTitles: ['Alpha', 'Beta'],
             section: 'tension',
         }]));
-        let reserveImpl = async () => ({ ok: true as const });
+        let reserveImpl: () => Promise<
+            { ok: true } | { ok: false; reason: 'hr-cap' }
+        > = async () => ({ ok: true as const });
         const reserve = jest.fn(() => reserveImpl());
+        const reserveIf = jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => {
+            const decision = await reserve();
+            if (!decision.ok) return decision;
+            return await canCommit()
+                ? decision
+                : { ok: false as const, reason: 'condition' as const };
+        });
+        const leaseCommit = jest.fn();
+        const leaseRollback = jest.fn(async () => undefined);
+        const reserveLeaseIf = jest.fn(async (
+            canCommit: () => boolean | PromiseLike<boolean>,
+        ) => {
+            const decision = await reserve();
+            if (!decision.ok) return decision;
+            if (!await canCommit()) {
+                return { ok: false as const, reason: 'condition' as const };
+            }
+            return {
+                ok: true as const,
+                reservation: { commit: leaseCommit, rollback: leaseRollback },
+            };
+        });
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.unloading = false;
         plugin.settings = {
@@ -4309,11 +4358,13 @@ describe('Scope Recap production adapter data boundary', () => {
                 enabled: true,
                 temperature: 0.2,
                 maxOutputTokens: 2_000,
-                scopeRecapBackgroundAuthorization: 'authorized-v1',
+                scopeRecapBackgroundAuthorization: 'pending',
                 scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: 'scope-recap-auth:test',
+                scopeRecapAuthorizationContextId: null,
+                pageletProviderFirstUseNotified: false,
             },
         };
+        plugin.saveSettings = jest.fn(async () => undefined);
         plugin.collectScopeRecapSourceNotes = jest.fn(async () => notes());
         plugin.scopeRecapBuildOptions = jest.fn((currentNotes: Array<{ path: string }>) => ({
             now: new Date('2026-07-18T12:00:00.000Z'),
@@ -4330,6 +4381,8 @@ describe('Scope Recap production adapter data boundary', () => {
         plugin.createChatModel = jest.fn(async () => ({ invoke }));
         plugin.getScopeRecapRateLimiter = jest.fn(() => ({
             reserve,
+            reserveIf,
+            reserveLeaseIf,
         }));
         plugin.pageletCostTracker = {
             record: jest.fn(() => ({
@@ -4345,10 +4398,92 @@ describe('Scope Recap production adapter data boundary', () => {
             plugin,
             invoke,
             reserve,
+            reserveLeaseIf,
+            leaseCommit,
+            leaseRollback,
             setAlphaContent(value: string) { alphaContent = value; },
-            setReserve(fn: () => Promise<{ ok: true }>) { reserveImpl = fn; },
+            setReserve(fn: () => Promise<{ ok: true } | { ok: false; reason: 'hr-cap' }>) {
+                reserveImpl = fn;
+            },
         };
     }
+
+    it('shows the shared notice only at the first actual Recap invocation and keeps the run non-blocking', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createScopeRecapGuardHarness();
+
+        const first = await harness.plugin.runScopeRecap({ mode: 'background' });
+        const second = await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(first.status).toBe('ready');
+        expect(second.status).toBe('ready');
+        expect(harness.invoke).toHaveBeenCalledTimes(2);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not show or persist the shared notice when Recap is blocked before invocation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createScopeRecapGuardHarness();
+        harness.setReserve(async () => ({ ok: false, reason: 'hr-cap' }));
+
+        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(result.status).toBe('no_reliable_insight');
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('shares one first-use notice from Recap into the Quiet Recall invocation seam', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createScopeRecapGuardHarness();
+        const recallInvoke = jest.fn(async () => JSON.stringify({
+            isConvincing: false,
+            whyNow: '',
+        }));
+
+        await harness.plugin.runScopeRecap({ mode: 'background' });
+        await harness.plugin.evaluateQuietRecallProviderAttempt(
+            { invoke: recallInvoke },
+            'Evaluate this local candidate.',
+            'Current note body.',
+            'initial',
+            { provider: 'openai', model: 'gpt-4o-mini' },
+            () => true,
+        );
+
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(recallInvoke).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares one first-use notice from Quiet Recall into the later Recap seam', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createScopeRecapGuardHarness();
+        const recallInvoke = jest.fn(async () => JSON.stringify({
+            isConvincing: false,
+            whyNow: '',
+        }));
+
+        await harness.plugin.evaluateQuietRecallProviderAttempt(
+            { invoke: recallInvoke },
+            'Evaluate this local candidate.',
+            'Current note body.',
+            'initial',
+            { provider: 'openai', model: 'gpt-4o-mini' },
+            () => true,
+        );
+        await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(recallInvoke).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
 
     it('does not read or send Pagelet- or Data Boundary-excluded sources', async () => {
         const createScopeFile = (path: string, mtime: number) => {
@@ -4420,6 +4555,17 @@ describe('Scope Recap production adapter data boundary', () => {
         plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
         plugin.getScopeRecapRateLimiter = jest.fn(() => ({
             reserve: jest.fn(async () => ({ ok: true as const })),
+            reserveLeaseIf: jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => (
+                await canCommit()
+                    ? {
+                        ok: true as const,
+                        reservation: {
+                            commit: jest.fn(),
+                            rollback: jest.fn(async () => undefined),
+                        },
+                    }
+                    : { ok: false as const, reason: 'condition' as const }
+            )),
         }));
         plugin.pageletCostTracker = {
             record: jest.fn(() => ({
@@ -4436,6 +4582,10 @@ describe('Scope Recap production adapter data boundary', () => {
 
         expect(result.status).toBe('ready');
         expect(cachedRead.mock.calls.map(([file]) => file.path)).toEqual([
+            activeFile.path,
+            allowedFile.path,
+            activeFile.path,
+            allowedFile.path,
             activeFile.path,
             allowedFile.path,
             activeFile.path,
@@ -4523,6 +4673,17 @@ describe('Scope Recap production adapter data boundary', () => {
         plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:test');
         plugin.getScopeRecapRateLimiter = jest.fn(() => ({
             reserve: jest.fn(async () => ({ ok: true as const })),
+            reserveLeaseIf: jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => (
+                await canCommit()
+                    ? {
+                        ok: true as const,
+                        reservation: {
+                            commit: jest.fn(),
+                            rollback: jest.fn(async () => undefined),
+                        },
+                    }
+                    : { ok: false as const, reason: 'condition' as const }
+            )),
         }));
         plugin.pageletCostTracker = {
             record: jest.fn(() => ({
@@ -4552,7 +4713,7 @@ describe('Scope Recap production adapter data boundary', () => {
         if (result.status === 'ready') {
             expect(result.artifact.sourceRefs).toHaveLength(12);
         }
-        expect(cachedRead).toHaveBeenCalledTimes(24);
+        expect(cachedRead).toHaveBeenCalledTimes(48);
         const readPaths = new Set(cachedRead.mock.calls.map(([file]) => file.path));
         expect(readPaths).toEqual(new Set([
             activeFile.path,
@@ -4609,7 +4770,24 @@ describe('Scope Recap production adapter data boundary', () => {
         plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:current');
         plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'scope-recap-auth:current');
         plugin.createChatModel = createChatModel;
-        plugin.getScopeRecapRateLimiter = jest.fn(() => ({ reserve }));
+        plugin.getScopeRecapRateLimiter = jest.fn(() => ({
+            reserve,
+            reserveLeaseIf: jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => {
+                if (!await canCommit()) {
+                    return { ok: false as const, reason: 'condition' as const };
+                }
+                const decision = await reserve();
+                return decision.ok
+                    ? {
+                        ok: true as const,
+                        reservation: {
+                            commit: jest.fn(),
+                            rollback: jest.fn(async () => undefined),
+                        },
+                    }
+                    : decision;
+            }),
+        }));
         plugin.pageletCostTracker = { record: jest.fn() };
         plugin.log = jest.fn();
 
@@ -4683,7 +4861,33 @@ describe('Scope Recap production adapter data boundary', () => {
         expect(result.status).toBe('no_reliable_insight');
         expect(result.attempt.providerCallMade).toBe(false);
         expect(harness.invoke).not.toHaveBeenCalled();
-        expect(harness.plugin.collectScopeRecapSourceNotes).toHaveBeenCalledTimes(2);
+        expect(harness.plugin.collectScopeRecapSourceNotes).toHaveBeenCalledTimes(3);
+    });
+
+    it('rolls back a provisional Recap slot when the source drifts after reservation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createScopeRecapGuardHarness();
+        harness.reserveLeaseIf.mockImplementationOnce(async (canCommit) => {
+            expect(await canCommit()).toBe(true);
+            harness.setAlphaContent('Alpha changes after the provisional slot is persisted.');
+            return {
+                ok: true as const,
+                reservation: {
+                    commit: harness.leaseCommit,
+                    rollback: harness.leaseRollback,
+                },
+            };
+        });
+
+        const result = await harness.plugin.runScopeRecap({ mode: 'background' });
+
+        expect(result.status).toBe('no_reliable_insight');
+        expect(result.attempt.providerCallMade).toBe(false);
+        expect(harness.leaseRollback).toHaveBeenCalledTimes(1);
+        expect(harness.leaseCommit).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
     });
 
     it('attributes Recap cost to the provider/model snapshot captured at call start', async () => {
@@ -4780,12 +4984,16 @@ describe('Scope Recap production adapter data boundary', () => {
         ['provider preset', (settings: Record<string, unknown>) => {
             settings.aiProviderPreset = 'custom';
         }],
+        ['embedding model', (settings: Record<string, unknown>) => {
+            settings.embeddingModelName = 'text-embedding-4-large';
+        }],
     ] as const)('changes the Recap authorization context when the %s changes', (_label, mutate) => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
             aiProvider: 'openai',
             aiProviderPreset: 'openai',
             chatModelName: 'gpt-4o-mini',
+            embeddingModelName: 'text-embedding-3-small',
             baseURL: 'https://api.openai.com/v1/',
         };
         plugin.getPageletSettingsWithDataBoundary = jest.fn(() => ({
@@ -4803,7 +5011,1297 @@ describe('Scope Recap production adapter data boundary', () => {
     });
 });
 
-describe('Scope Recap and Quiet Recall production rate-limit storage', () => {
+describe('Pagelet onboarding nudge production', () => {
+    const createOnboardingHarness = (noteCount = 0) => {
+        const setOnboardingNudge = jest.fn();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.unloading = false;
+        plugin.settings = {
+            focusMode: false,
+            pagelet: {
+                enabled: true,
+                proactiveHints: true,
+                maintenanceScanSuggested: false,
+                quickCaptureExplained: false,
+            },
+        };
+        plugin.app = {
+            vault: {
+                getMarkdownFiles: jest.fn(() => Array.from({ length: noteCount }, (_, index) => ({
+                    path: `notes/${index}.md`,
+                }))),
+            },
+        };
+        plugin.pageletOrchestrator = { setOnboardingNudge };
+        plugin.syncPageletRuntime = jest.fn();
+        plugin.saveSettings = jest.fn(async () => undefined);
+        return { plugin, setOnboardingNudge };
+    };
+
+    it('does not commit maintenance onboarding state when only signaling the orchestrator', async () => {
+        const { plugin, setOnboardingNudge } = createOnboardingHarness(51);
+
+        await plugin.maybeShowMaintenanceScanOnboardingNudge();
+
+        expect(setOnboardingNudge).toHaveBeenCalledWith('maintenance_scan');
+        expect(plugin.settings.pagelet.maintenanceScanSuggested).toBe(false);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('does not commit quick-capture onboarding state when only signaling the orchestrator', async () => {
+        const { plugin, setOnboardingNudge } = createOnboardingHarness();
+
+        await plugin.maybeShowQuickCaptureOnboardingNudge();
+
+        expect(plugin.syncPageletRuntime).toHaveBeenCalledTimes(1);
+        expect(setOnboardingNudge).toHaveBeenCalledWith('quick_capture');
+        expect(plugin.settings.pagelet.quickCaptureExplained).toBe(false);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
+});
+
+describe('Pagelet Discover provider first-use admission', () => {
+    it('keeps the production Pagelet host wired to provider-admitted Discover retrieval', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            pagelet: {},
+            contextPager: {},
+            quietRecall: {},
+            focusMode: false,
+            confirmedMemoryCount: 0,
+        };
+        plugin.findPageletRelatedNotes = jest.fn(async () => []);
+
+        const host = plugin.createPageletHost();
+        await host.findRelatedNotes(
+            'notes/current.md',
+            [{ path: 'notes/current.md', content: 'Current note.' }],
+            ['notes/current.md'],
+        );
+
+        expect(plugin.findPageletRelatedNotes).toHaveBeenCalledWith(
+            'notes/current.md',
+            [{ path: 'notes/current.md', content: 'Current note.' }],
+            ['notes/current.md'],
+            { limit: 6 },
+        );
+    });
+
+    function createDiscoveryHarness(options: { allowed?: boolean; notified?: boolean } = {}) {
+        const currentFile = createTFileWithStat('notes/current.md', { mtime: 1_000, size: 100 });
+        const relatedFile = createTFileWithStat('notes/related.md', { mtime: 900, size: 90 });
+        let relatedAvailable = true;
+        let currentContent = 'SAFE CURRENT NOTE';
+        let relatedContent = 'SAFE LIVE RELATED NOTE';
+        let providerPolicyIdentity = 'provider-policy:test';
+        const invoke = jest.fn(async (_prompt: string) => JSON.stringify({
+            findings: [{
+                text: 'These notes share a release constraint.',
+                sourceFile: relatedFile.path,
+                sourceTitle: 'related',
+                category: 'connection',
+            }],
+        }));
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.unloading = false;
+        plugin.settings = {
+            aiProvider: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            baseURL: 'https://api.openai.com/v1',
+            pagelet: {
+                enabled: true,
+                maxInputTokens: 8_000,
+                maxOutputTokens: 2_000,
+                pageletProviderFirstUseNotified: options.notified ?? false,
+                reviewsFolder: '.pagelet',
+                excludedFolders: [],
+                excludedTags: [],
+                excludedPatterns: [],
+            },
+            dataBoundary: {
+                excludedFolders: [],
+                excludedTags: [],
+                generatedNotePolicy: 'exclude-generated',
+            },
+        };
+        plugin.app = {
+            workspace: { getActiveFile: jest.fn(() => currentFile) },
+            vault: {
+                getAbstractFileByPath: jest.fn((path: string) => {
+                    if (path === currentFile.path) return currentFile;
+                    if (path === relatedFile.path && relatedAvailable) return relatedFile;
+                    return null;
+                }),
+                cachedRead: jest.fn(async (file: TFile) => (
+                    file.path === currentFile.path ? currentContent : relatedContent
+                )),
+            },
+            metadataCache: { getFileCache: jest.fn(() => null) },
+        };
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => options.allowed ?? true);
+        plugin.isDataBoundaryAllowedFile = jest.fn(() => options.allowed ?? true);
+        plugin.createChatModel = jest.fn(async () => ({ invoke }));
+        plugin.pageletCostTracker = { record: jest.fn() };
+        plugin.getScopeRecapAuthorizationContextId = jest.fn(() => providerPolicyIdentity);
+        plugin.reservePageletRateLimitSlot = jest.fn(async () => ({
+            commit: jest.fn(),
+            rollback: jest.fn(async () => undefined),
+        }));
+        plugin.saveSettings = jest.fn(async () => undefined);
+        plugin.log = jest.fn();
+        return {
+            plugin,
+            invoke,
+            currentFile,
+            relatedFile,
+            setRelatedAvailable(value: boolean) { relatedAvailable = value; },
+            setCurrentContent(value: string) { currentContent = value; },
+            setRelatedContent(value: string) { relatedContent = value; },
+            setProviderPolicyIdentity(value: string) { providerPolicyIdentity = value; },
+        };
+    }
+
+    it('notifies once at the first actual Discover generation call and stays silent later', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        const currentNote = { path: harness.currentFile.path, content: 'Current note body.' };
+        const relatedNotes = [{ path: harness.relatedFile.path, content: 'Related note body.' }];
+
+        await harness.plugin.runDiscoveryAnalysis(currentNote, relatedNotes);
+        await harness.plugin.runDiscoveryAnalysis(currentNote, relatedNotes);
+
+        expect(harness.invoke).toHaveBeenCalledTimes(2);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares one first-use notice from Discover into the later Quiet Recall seam', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        const recallInvoke = jest.fn(async () => JSON.stringify({
+            isConvincing: false,
+            whyNow: '',
+        }));
+
+        await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note body.' },
+            [{ path: harness.relatedFile.path, content: 'Related note body.' }],
+        );
+        await harness.plugin.evaluateQuietRecallProviderAttempt(
+            { invoke: recallInvoke },
+            'Evaluate this local candidate.',
+            'Current note body.',
+            'initial',
+            { provider: 'openai', model: 'gpt-4o-mini' },
+            () => true,
+        );
+
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(recallInvoke).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a Data Boundary-denied Discover run at zero call and zero notice', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness({ allowed: false });
+
+        const result = await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'PRIVATE CURRENT' },
+            [{ path: harness.relatedFile.path, content: 'PRIVATE RELATED' }],
+        );
+
+        expect(result).toBeNull();
+        expect(harness.plugin.createChatModel).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('keeps a deleted related source at zero generation call and zero first-use mutation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.setRelatedAvailable(false);
+
+        const result = await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'STALE CURRENT' },
+            [{ path: harness.relatedFile.path, content: 'STALE RELATED' }],
+        );
+
+        expect(result).toBeNull();
+        expect(harness.plugin.createChatModel).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('fails closed instead of treating an out-of-envelope Discover input as standard', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        const relatedNotes = Array.from({ length: 7 }, (_, index) => ({
+            path: `notes/related-${index}.md`,
+            content: `Related ${index}`,
+        }));
+
+        const result = await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note.' },
+            relatedNotes,
+        );
+
+        expect(result).toBeNull();
+        expect(harness.plugin.createChatModel).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('keeps a Discover budget rejection before generation notice and invocation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.plugin.reservePageletRateLimitSlot.mockRejectedValue(new Error('budget exhausted'));
+
+        const result = await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note.' },
+            [{ path: harness.relatedFile.path, content: 'Related note.' }],
+        );
+
+        expect(result).toBeNull();
+        expect(harness.plugin.reservePageletRateLimitSlot).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the provider policy changes while Discover creates its model', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.plugin.createChatModel.mockImplementation(async () => {
+            harness.setProviderPolicyIdentity('provider-policy:changed');
+            return { invoke: harness.invoke };
+        });
+
+        const result = await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note.' },
+            [{ path: harness.relatedFile.path, content: 'Related note.' }],
+        );
+
+        expect(result).toBeNull();
+        expect(harness.plugin.reservePageletRateLimitSlot).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('drops a Discover result that becomes stale during invocation and attributes cost to the admitted provider', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.invoke.mockImplementation(async () => {
+            harness.plugin.settings.aiProvider = 'custom';
+            harness.plugin.settings.chatModelName = 'replacement-model';
+            harness.setProviderPolicyIdentity('provider-policy:changed');
+            return JSON.stringify({ findings: [{
+                text: 'Stale finding.',
+                sourceFile: harness.relatedFile.path,
+                sourceTitle: 'related',
+                category: 'connection',
+            }] });
+        });
+
+        const result = await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note.' },
+            [{ path: harness.relatedFile.path, content: 'Related note.' }],
+        );
+
+        expect(result).toBeNull();
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
+            provider: 'openai',
+            model: 'gpt-4o-mini',
+        }));
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+    });
+
+    it('drops a Discover result when a live source disappears during invocation', async () => {
+        const harness = createDiscoveryHarness({ notified: true });
+        harness.invoke.mockImplementation(async () => {
+            harness.setRelatedAvailable(false);
+            return JSON.stringify({ findings: [{
+                text: 'Stale finding.',
+                sourceFile: harness.relatedFile.path,
+                sourceTitle: 'related',
+                category: 'connection',
+            }] });
+        });
+
+        const result = await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note.' },
+            [{ path: harness.relatedFile.path, content: 'Related note.' }],
+        );
+
+        expect(result).toBeNull();
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails closed before Discover embedding when the provider policy changes', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.plugin.settings.retrievalHabitProfile = { enabled: false, state: { aggregates: [] } };
+        harness.plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+        const embedInvoke = jest.fn(async () => [0.1, 0.2]);
+        harness.plugin.vss = {
+            searchHybrid: jest.fn(async (
+                _query: string,
+                options?: {
+                    executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+                },
+            ) => {
+                harness.setProviderPolicyIdentity('provider-policy:changed');
+                await options?.executeEmbeddingInvoke?.(embedInvoke);
+                return [];
+            }),
+        };
+
+        const result = await harness.plugin.findPageletRelatedNotes(
+            harness.currentFile.path,
+            [{ path: harness.currentFile.path, content: 'Current note.' }],
+            [harness.currentFile.path],
+            { limit: 6 },
+        );
+
+        expect(result).toEqual([]);
+        expect(harness.plugin.reservePageletRateLimitSlot).not.toHaveBeenCalled();
+        expect(embedInvoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it.each([
+        ['#no-ai', '# Current\n\nLATEST-PRIVATE-CURRENT #no-ai', null],
+        ['#no-review', '# Current\n\nLATEST-PRIVATE-CURRENT #no-review', { tags: [] }],
+        ['configured exclusion tag', '# Current\n\nLATEST-PRIVATE-CURRENT #private', { tags: [] }],
+        ['pagelet-generated frontmatter', '---\npagelet: true\n---\nLATEST-PRIVATE-CURRENT', null],
+        ['malformed leading frontmatter', '---\ntags: [safe\nLATEST-PRIVATE-CURRENT', { frontmatter: {} }],
+    ])('blocks cold Discover embedding from stale/null metadata when the latest body has %s', async (
+        _label,
+        latestBody,
+        staleMetadata,
+    ) => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.plugin.settings.pagelet.excludedTags = ['private'];
+        harness.plugin.settings.retrievalHabitProfile = { enabled: false, state: { aggregates: [] } };
+        harness.plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+        harness.plugin.app.metadataCache.getFileCache = jest.fn(() => staleMetadata);
+        harness.setCurrentContent(latestBody);
+        const embedInvoke = jest.fn(async () => [0.1, 0.2]);
+        const searchHybrid = jest.fn(async (
+            _query: string,
+            options?: {
+                executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+            },
+        ) => {
+            await options?.executeEmbeddingInvoke?.(embedInvoke);
+            return [];
+        });
+        harness.plugin.vss = { searchHybrid };
+
+        const result = await harness.plugin.findPageletRelatedNotes(
+            harness.currentFile.path,
+            [{ path: harness.currentFile.path, content: 'STALE SAFE CURRENT BODY' }],
+            [harness.currentFile.path],
+            { limit: 6 },
+        );
+
+        expect(result).toEqual([]);
+        expect(embedInvoke).not.toHaveBeenCalled();
+        expect(harness.plugin.reservePageletRateLimitSlot).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it.each([
+        ['Data Boundary folder', 'private/current.md', ['private'], []],
+        ['Pagelet path pattern', 'notes/secret-current.md', [], ['secret-']],
+        ['Pagelet output folder', '.pagelet/current.md', [], []],
+    ])('applies the unified path rule before the Discover provider seam for %s', async (
+        _label,
+        path,
+        excludedFolders,
+        excludedPatterns,
+    ) => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.currentFile.path = path;
+        harness.plugin.settings.dataBoundary.excludedFolders = excludedFolders;
+        harness.plugin.settings.pagelet.excludedPatterns = excludedPatterns;
+        harness.plugin.settings.retrievalHabitProfile = { enabled: false, state: { aggregates: [] } };
+        harness.plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+        const searchHybrid = jest.fn();
+        harness.plugin.vss = { searchHybrid };
+
+        const result = await harness.plugin.findPageletRelatedNotes(
+            path,
+            [{ path, content: 'PRIVATE-PATH-SENTINEL' }],
+            [path],
+            { limit: 6 },
+        );
+
+        expect(result).toEqual([]);
+        expect(searchHybrid).not.toHaveBeenCalled();
+        expect(harness.plugin.reservePageletRateLimitSlot).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('fails closed when Discover retrieval times out while its provider budget is pending', async () => {
+        jest.useFakeTimers();
+        try {
+            mockNoticeMessages.length = 0;
+            const harness = createDiscoveryHarness();
+            harness.plugin.settings.retrievalHabitProfile = { enabled: false, state: { aggregates: [] } };
+            harness.plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+            const embedInvoke = jest.fn(async () => [0.1, 0.2]);
+            let releaseBudget!: () => void;
+            harness.plugin.reservePageletRateLimitSlot.mockImplementation(() => (
+                new Promise<void>((resolve) => { releaseBudget = resolve; })
+            ));
+            harness.plugin.vss = {
+                searchHybrid: jest.fn(async (
+                    _query: string,
+                    options?: {
+                        executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+                    },
+                ) => {
+                    await options?.executeEmbeddingInvoke?.(embedInvoke);
+                    return [];
+                }),
+            };
+
+            const resultPromise = harness.plugin.findPageletRelatedNotes(
+                harness.currentFile.path,
+                [{ path: harness.currentFile.path, content: 'Current note.' }],
+                [harness.currentFile.path],
+                { limit: 6 },
+            );
+            await jest.advanceTimersByTimeAsync(0);
+            expect(harness.plugin.reservePageletRateLimitSlot).toHaveBeenCalledTimes(1);
+
+            await jest.advanceTimersByTimeAsync(8_000);
+            releaseBudget();
+
+            await expect(resultPromise).resolves.toEqual([]);
+            expect(embedInvoke).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).toEqual([]);
+            expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('shares the first-use admission from Discover query embedding into generation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.plugin.settings.retrievalHabitProfile = { enabled: false, state: { aggregates: [] } };
+        harness.plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+        const searchHybrid = jest.fn(async (
+            _query: string,
+            options?: {
+                executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+            },
+        ) => {
+            await options?.executeEmbeddingInvoke?.(async () => [0.1, 0.2]);
+            return [{
+                score: 0.92,
+                doc: {
+                    pageContent: 'STALE VSS PRIVATE CONTENT',
+                    metadata: { path: harness.relatedFile.path },
+                },
+            }];
+        });
+        harness.plugin.vss = { searchHybrid };
+
+        const relatedNotes = await harness.plugin.findPageletRelatedNotes(
+            harness.currentFile.path,
+            [{ path: harness.currentFile.path, content: 'Current note body.' }],
+            [harness.currentFile.path],
+            { limit: 6 },
+        );
+        await harness.plugin.runDiscoveryAnalysis(
+            { path: harness.currentFile.path, content: 'Current note body.' },
+            relatedNotes,
+        );
+
+        expect(searchHybrid).toHaveBeenCalledTimes(1);
+        expect(relatedNotes).toEqual([
+            expect.objectContaining({
+                path: harness.relatedFile.path,
+                content: 'SAFE LIVE RELATED NOTE',
+            }),
+        ]);
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.plugin.reservePageletRateLimitSlot).toHaveBeenCalledTimes(2);
+        const prompt = harness.invoke.mock.calls[0]?.[0] as string;
+        expect(prompt).toContain('SAFE CURRENT NOTE');
+        expect(prompt).toContain('SAFE LIVE RELATED NOTE');
+        expect(prompt).not.toContain('STALE VSS PRIVATE CONTENT');
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops a cached semantic-search result when the primary source changes during local search', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createDiscoveryHarness();
+        harness.plugin.settings.retrievalHabitProfile = { enabled: false, state: { aggregates: [] } };
+        harness.plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+        harness.plugin.vss = {
+            searchHybrid: jest.fn(async () => {
+                harness.currentFile.stat.mtime += 1;
+                return [{
+                    score: 0.92,
+                    doc: {
+                        pageContent: 'cached index result',
+                        metadata: { path: harness.relatedFile.path },
+                    },
+                }];
+            }),
+        };
+
+        const relatedNotes = await harness.plugin.findPageletRelatedNotes(
+            harness.currentFile.path,
+            [{ path: harness.currentFile.path, content: 'Current note body.' }],
+            [harness.currentFile.path],
+            { limit: 6 },
+        );
+
+        expect(relatedNotes).toEqual([]);
+        expect(harness.plugin.reservePageletRateLimitSlot).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+});
+
+describe('Pagelet Review and preload provider first-use admission', () => {
+    function createAnalyzeHarness() {
+        const currentFile = createTFileWithStat('notes/current.md', { mtime: Date.now(), size: 100 }) as TFile & {
+            basename: string;
+        };
+        currentFile.basename = 'current';
+        let currentAvailable = true;
+        let currentContent = 'Current Pagelet review note.';
+        const extraFiles = new Map<string, TFile & { basename: string }>();
+        const extraContents = new Map<string, string>();
+        let providerPolicyIdentity = 'pagelet-provider-policy:test';
+        const structuredInvoke = jest.fn(async () => ({
+            schema_version: 1,
+            detected_language: 'en',
+            suggestions: [],
+        }));
+        const invoke = jest.fn(async () => ({ content: JSON.stringify({ findings: [] }) }));
+        const findPageletRelatedNotes = jest.fn(async (
+            _primarySourcePath: string,
+            _noteContents: Array<{ path: string; content: string }>,
+            _sourcePaths: readonly string[],
+            _options?: {
+                limit?: number;
+                executeProviderCall?: <TResult>(
+                    invoke: () => Promise<TResult>,
+                    options: { signal: AbortSignal },
+                ) => Promise<TResult>;
+            },
+        ): Promise<Array<{
+            path: string;
+            content: string;
+            mtime: number;
+            size: number;
+        }>> => []);
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.unloading = false;
+        plugin.settings = {
+            aiProvider: 'openai',
+            aiProviderPreset: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            embeddingModelName: 'text-embedding-3-small',
+            baseURL: 'https://api.openai.com/v1',
+            contextPager: { enabled: false },
+            quietRecall: { enabled: false },
+            focusMode: false,
+            confirmedMemoryCount: 0,
+            pagelet: {
+                enabled: true,
+                preloadEnabled: true,
+                preloadPerHourCap: 2,
+                preloadPerDayCap: 20,
+                preloadTokenBudget: { input: 4_000, output: 1_000 },
+                temperature: 0.2,
+                maxInputTokens: 8_000,
+                maxOutputTokens: 2_000,
+                outputLanguage: 'auto',
+                foregroundPerHourCap: 10,
+                foregroundPerDayCap: 100,
+                pageletProviderFirstUseNotified: false,
+            },
+        };
+        plugin.app = {
+            workspace: { getActiveFile: jest.fn(() => currentAvailable ? currentFile : null) },
+            vault: {
+                getAbstractFileByPath: jest.fn((path: string) => (
+                    currentAvailable && path === currentFile.path
+                        ? currentFile
+                        : extraFiles.get(path) ?? null
+                )),
+                cachedRead: jest.fn(async (file: TFile) => (
+                    file.path === currentFile.path
+                        ? currentContent
+                        : extraContents.get(file.path) ?? ''
+                )),
+            },
+        };
+        plugin.getPageletSettingsWithDataBoundary = jest.fn(() => ({
+            ...plugin.settings.pagelet,
+            reviewsFolder: '.pagelet',
+            excludedFolders: [],
+            excludedTags: [],
+            excludedPatterns: [],
+        }));
+        plugin.getPageletLocale = jest.fn(() => 'en');
+        plugin.isDataBoundaryAllowedFile = jest.fn(() => true);
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+        plugin.getScopeRecapAuthorizationContextId = jest.fn(() => providerPolicyIdentity);
+        plugin.getScopeRecapProviderInfo = jest.fn(() => ({
+            provider: 'openai',
+            model: 'gpt-4o-mini',
+            endpoint: 'https://api.openai.com/v1',
+        }));
+        plugin.findPageletRelatedNotes = findPageletRelatedNotes;
+        plugin.createChatModel = jest.fn(async () => ({
+            invoke,
+            withStructuredOutput: () => ({ invoke: structuredInvoke }),
+        }));
+        const reserve = jest.fn(async () => ({ ok: true }));
+        const rateLimiter = {
+            peek: jest.fn(async () => ({ ok: true })),
+            reserve,
+            reserveIf: jest.fn(async (predicate: () => boolean | PromiseLike<boolean>) => (
+                await predicate() ? reserve() : { ok: false as const, reason: 'condition' as const }
+            )),
+            reserveLeaseIf: jest.fn(async (predicate: () => boolean | PromiseLike<boolean>) => {
+                if (!await predicate()) return { ok: false as const, reason: 'condition' as const };
+                const decision = await reserve();
+                if (!decision.ok) return decision;
+                let committed = false;
+                return {
+                    ok: true as const,
+                    reservation: {
+                        commit: () => { committed = true; },
+                        rollback: jest.fn(async () => { if (!committed) committed = true; }),
+                    },
+                };
+            }),
+        };
+        plugin.getPageletRateLimiter = jest.fn(() => rateLimiter);
+        plugin.pageletCostTracker = {
+            record: jest.fn((entry: Record<string, unknown>) => ({
+                ...entry,
+                estimatedCost: 0.001,
+                currency: 'USD',
+                pricingKnown: true,
+            })),
+        };
+        plugin.saveSettings = jest.fn(async () => undefined);
+        plugin.log = jest.fn();
+        return {
+            plugin,
+            currentFile,
+            structuredInvoke,
+            invoke,
+            findPageletRelatedNotes,
+            rateLimiter,
+            setCurrentAvailable(value: boolean) { currentAvailable = value; },
+            setCurrentContent(value: string) { currentContent = value; },
+            setProviderPolicyIdentity(value: string) { providerPolicyIdentity = value; },
+            addSourceFile(path: string, content: string) {
+                const file = createTFileWithStat(path, { mtime: Date.now(), size: content.length }) as TFile & {
+                    basename: string;
+                };
+                file.basename = path.split('/').pop()?.replace(/\.md$/, '') ?? path;
+                extraFiles.set(path, file);
+                extraContents.set(path, content);
+                return file;
+            },
+        };
+    }
+
+    const config = {
+        enabled: true,
+        intervalMinutes: 30,
+        perHourCap: 2,
+        perDayCap: 20,
+        tokenBudget: { input: 8_000, output: 2_000 },
+        range: 'current' as const,
+    };
+    const preloadConfig = {
+        enabled: true,
+        intervalMinutes: 30,
+        perHourCap: 2,
+        perDayCap: 20,
+        tokenBudget: { input: 4_000, output: 1_000 },
+        range: 'last7' as const,
+    };
+    const backgroundEnvelope = {
+        kind: 'generic-changed-only' as const,
+        rangeDays: 7 as const,
+        allowWrite: false as const,
+        wholeVault: false as const,
+        excludedScopeOverride: false as const,
+    };
+
+    it('wires foreground Review generation through the shared first-use seam', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()([harness.currentFile], config);
+
+        expect(harness.findPageletRelatedNotes).toHaveBeenCalledWith(
+            harness.currentFile.path,
+            [expect.objectContaining({ path: harness.currentFile.path, content: 'Current Pagelet review note.' })],
+            [harness.currentFile.path],
+            expect.objectContaining({
+                limit: 6,
+                additionalCurrentCheck: expect.any(Function),
+                executeProviderCall: expect.any(Function),
+            }),
+        );
+        expect(harness.structuredInvoke).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+    });
+
+    it('keeps a foreground Review rate rejection at zero notice and zero provider call', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        harness.plugin.getPageletRateLimiter = jest.fn(() => ({
+            peek: jest.fn(async () => ({ ok: true })),
+            reserve: jest.fn(async () => ({
+                ok: false,
+                reason: 'hr-cap',
+                resumeAt: Date.now() + 60_000,
+            })),
+            reserveIf: jest.fn(async () => ({
+                ok: false,
+                reason: 'hr-cap',
+                resumeAt: Date.now() + 60_000,
+            })),
+            reserveLeaseIf: jest.fn(async () => ({
+                ok: false,
+                reason: 'hr-cap',
+                resumeAt: Date.now() + 60_000,
+            })),
+        }));
+        const host = harness.plugin.createPageletHost();
+
+        await expect(host.createForegroundAnalyzeCallback()([harness.currentFile], config))
+            .rejects.toThrow();
+
+        expect(harness.structuredInvoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('drops a foreground Review result when its source changes during invocation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        harness.structuredInvoke.mockImplementation(async () => {
+            harness.currentFile.stat.mtime += 1;
+            return { schema_version: 1, detected_language: 'en', suggestions: [] };
+        });
+        const host = harness.plugin.createPageletHost();
+
+        await expect(host.createForegroundAnalyzeCallback()([harness.currentFile], config))
+            .rejects.toThrow('became stale');
+
+        expect(harness.structuredInvoke).toHaveBeenCalledTimes(1);
+        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+    });
+
+    it('confirms a multi-note Review before reservation and skips scope-expanding enrichment', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const secondFile = harness.addSourceFile('notes/second.md', 'Second Pagelet review note.');
+        const order: string[] = [];
+        harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async () => {
+            order.push('decision:run');
+            return 'run';
+        });
+        harness.rateLimiter.reserve.mockImplementation(async () => {
+            order.push('reserve');
+            return { ok: true };
+        });
+        harness.structuredInvoke.mockImplementation(async () => {
+            order.push('generation');
+            return { schema_version: 1, detected_language: 'en', suggestions: [] };
+        });
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()(
+            [harness.currentFile, secondFile],
+            { ...config, range: 'last7' },
+        );
+
+        expect(order).toEqual([
+            'decision:run',
+            'reserve',
+            'generation',
+        ]);
+        expect(harness.findPageletRelatedNotes).not.toHaveBeenCalled();
+        expect(harness.plugin.requestForegroundReviewHighRiskDecision).toHaveBeenCalledTimes(1);
+        expect(harness.rateLimiter.reserve).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(0);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+    });
+
+    it.each(['cancel', 'adjust'] as const)(
+        'keeps a multi-note Review %s at zero reservation and zero provider call',
+        async (choice) => {
+            mockNoticeMessages.length = 0;
+            const harness = createAnalyzeHarness();
+            const secondFile = harness.addSourceFile('notes/second.md', 'Second Pagelet review note.');
+            harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async () => choice);
+            const retrievalInvoke = jest.fn(async () => [0.1, 0.2]);
+            harness.findPageletRelatedNotes.mockImplementation(async (...args: unknown[]) => {
+                const options = args[3] as {
+                    executeProviderCall?: <TResult>(
+                        invoke: () => Promise<TResult>,
+                        callOptions: { signal: AbortSignal },
+                    ) => Promise<TResult>;
+                };
+                await options.executeProviderCall?.(
+                    retrievalInvoke,
+                    { signal: new AbortController().signal },
+                );
+                return [];
+            });
+            const host = harness.plugin.createPageletHost();
+
+            const result = await host.createForegroundAnalyzeCallback()(
+                [harness.currentFile, secondFile],
+                { ...config, range: 'last7' },
+            );
+
+            expect(result.findings).toEqual([]);
+            expect(harness.rateLimiter.reserve).not.toHaveBeenCalled();
+            expect(retrievalInvoke).not.toHaveBeenCalled();
+            expect(harness.structuredInvoke).not.toHaveBeenCalled();
+            expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+            if (choice === 'adjust') {
+                expect(mockNoticeMessages).toContain(
+                    'Review stopped safely. Adjust the selected notes in the Review panel, then run it again.',
+                );
+            }
+        },
+    );
+
+    it('classifies by bundle sources when multi-file input fits only one actual source', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const secondFile = harness.addSourceFile('notes/second.md', 'Second Pagelet review note.');
+        harness.plugin.getPageletSettingsWithDataBoundary = jest.fn(() => ({
+            ...harness.plugin.settings.pagelet,
+            maxInputTokens: 10,
+            reviewsFolder: '.pagelet',
+            excludedFolders: [],
+            excludedTags: [],
+            excludedPatterns: [],
+        }));
+        harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async () => 'run');
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()(
+            [harness.currentFile, secondFile],
+            { ...config, range: 'last7' },
+        );
+
+        expect(harness.plugin.requestForegroundReviewHighRiskDecision).not.toHaveBeenCalled();
+        expect(harness.findPageletRelatedNotes).toHaveBeenCalledWith(
+            harness.currentFile.path,
+            [expect.objectContaining({ path: harness.currentFile.path })],
+            [harness.currentFile.path],
+            expect.objectContaining({ executeProviderCall: expect.any(Function) }),
+        );
+        expect(harness.rateLimiter.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.structuredInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('reconfirms the exact expanded source set before generation after one-note retrieval', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const relatedFile = harness.addSourceFile('notes/related.md', 'Live related note.');
+        const order: string[] = [];
+        harness.rateLimiter.reserve.mockImplementation(async () => {
+            order.push('reserve');
+            return { ok: true };
+        });
+        harness.findPageletRelatedNotes.mockImplementation(async (...args: unknown[]) => {
+            const options = args[3] as {
+                executeProviderCall?: <TResult>(
+                    invoke: () => Promise<TResult>,
+                    callOptions: { signal: AbortSignal },
+                ) => Promise<TResult>;
+                onProviderInvoke?: () => void;
+            };
+            await options.executeProviderCall?.(async () => {
+                options.onProviderInvoke?.();
+                order.push('retrieval');
+                return [0.1, 0.2];
+            }, { signal: new AbortController().signal });
+            return [{
+                path: relatedFile.path,
+                content: 'Live related note.',
+                mtime: relatedFile.stat.mtime,
+                size: relatedFile.stat.size,
+            }];
+        });
+        harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async (summary: { includedSourceCount: number }) => {
+            order.push(`decision:${summary.includedSourceCount}`);
+            return 'run';
+        });
+        harness.structuredInvoke.mockImplementation(async () => {
+            order.push('generation');
+            return { schema_version: 1, detected_language: 'en', suggestions: [] };
+        });
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()([harness.currentFile], config);
+
+        expect(order).toEqual([
+            'reserve',
+            'retrieval',
+            'decision:2',
+            'reserve',
+            'generation',
+        ]);
+        expect(harness.plugin.requestForegroundReviewHighRiskDecision).toHaveBeenCalledTimes(1);
+        expect(harness.rateLimiter.reserve).toHaveBeenCalledTimes(2);
+        expect(harness.plugin.pageletCostTracker.record).toHaveBeenCalledWith(expect.objectContaining({
+            feature: 'foreground-review',
+            attemptKind: 'semantic-retrieval',
+            model: 'text-embedding-3-small',
+        }));
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+    });
+
+    it('fails closed without committing or invoking when sources drift inside conditional reservation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const secondFile = harness.addSourceFile('notes/second.md', 'Second Pagelet review note.');
+        harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async () => 'run');
+        harness.rateLimiter.reserveLeaseIf.mockImplementation(async () => {
+            harness.currentFile.stat.mtime += 1;
+            return { ok: false, reason: 'condition' };
+        });
+        const host = harness.plugin.createPageletHost();
+
+        await expect(host.createForegroundAnalyzeCallback()(
+            [harness.currentFile, secondFile],
+            { ...config, range: 'last7' },
+        )).rejects.toThrow('became stale');
+
+        expect(harness.rateLimiter.reserve).not.toHaveBeenCalled();
+        expect(harness.structuredInvoke).not.toHaveBeenCalled();
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(mockNoticeMessages).toEqual([]);
+    });
+
+    it('reserves exactly one slot per high-risk structured retry without repeating confirmation', async () => {
+        const harness = createAnalyzeHarness();
+        const secondFile = harness.addSourceFile('notes/second.md', 'Second Pagelet review note.');
+        harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async () => 'run');
+        harness.structuredInvoke
+            .mockRejectedValueOnce(new Error('schema mismatch'))
+            .mockResolvedValueOnce({ schema_version: 1, detected_language: 'en', suggestions: [] });
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()(
+            [harness.currentFile, secondFile],
+            { ...config, range: 'last7' },
+        );
+
+        expect(harness.structuredInvoke).toHaveBeenCalledTimes(2);
+        expect(harness.rateLimiter.reserve).toHaveBeenCalledTimes(2);
+        expect(harness.plugin.requestForegroundReviewHighRiskDecision).toHaveBeenCalledTimes(1);
+    });
+
+    it('reserves exactly one slot per high-risk JSON-mode attempt', async () => {
+        const harness = createAnalyzeHarness();
+        const secondFile = harness.addSourceFile('notes/second.md', 'Second Pagelet review note.');
+        harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async () => 'run');
+        harness.invoke
+            .mockResolvedValueOnce({ content: 'not json' })
+            .mockResolvedValueOnce({ content: JSON.stringify({
+                schema_version: 1,
+                detected_language: 'en',
+                suggestions: [],
+            }) });
+        harness.plugin.createChatModel = jest.fn(async () => ({ invoke: harness.invoke }));
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()(
+            [harness.currentFile, secondFile],
+            { ...config, range: 'last7' },
+        );
+
+        expect(harness.invoke).toHaveBeenCalledTimes(2);
+        expect(harness.rateLimiter.reserve).toHaveBeenCalledTimes(2);
+        expect(harness.plugin.requestForegroundReviewHighRiskDecision).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps requested last7 standard when only one allowed note is actually included', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        harness.plugin.requestForegroundReviewHighRiskDecision = jest.fn(async () => 'run');
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()(
+            [harness.currentFile],
+            { ...config, range: 'last7' },
+        );
+
+        expect(harness.plugin.requestForegroundReviewHighRiskDecision).not.toHaveBeenCalled();
+        expect(harness.rateLimiter.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.structuredInvoke).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+    });
+
+    it('preserves one background slot for generation when preload capacity is one', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const reserveProviderCall = jest.fn(() => true);
+        const host = harness.plugin.createPageletHost();
+
+        await host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
+            reserveProviderCall,
+            remainingProviderCalls: () => ({ hourly: 1, daily: 1 }),
+            backgroundEnvelope,
+        });
+
+        expect(harness.findPageletRelatedNotes).not.toHaveBeenCalled();
+        expect(reserveProviderCall).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+    });
+
+    it.each([
+        ['hard no-ai tag', '# Current\n\n#no-ai\nNew private detail.', []],
+        ['configured excluded tag', '# Current\n\n#private\nNew private detail.', ['private']],
+    ])('fails closed on a latest-body %s while MetadataCache still allows it', async (
+        _label,
+        content,
+        excludedTags,
+    ) => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        harness.setCurrentContent(content);
+        harness.plugin.settings.dataBoundary = {
+            excludedFolders: [],
+            excludedTags,
+            generatedNotePolicy: 'exclude-generated',
+        };
+        const reserveProviderCall = jest.fn(() => true);
+        const host = harness.plugin.createPageletHost();
+
+        const result = await host.createPreloadAnalyzeCallback()(
+            [harness.currentFile],
+            preloadConfig,
+            {
+                reserveProviderCall,
+                remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
+                backgroundEnvelope,
+            },
+        );
+
+        expect(result).toMatchObject({ findings: [], analyzedFiles: [] });
+        expect(reserveProviderCall).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('rolls back background quota when the source drifts after provisional reservation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        let usedSlots = 0;
+        const commit = jest.fn();
+        const rollback = jest.fn(async () => { usedSlots -= 1; });
+        const reserveProviderCall = jest.fn(() => {
+            usedSlots += 1;
+            harness.currentFile.stat.mtime += 1;
+            return { commit, rollback };
+        });
+        const host = harness.plugin.createPageletHost();
+
+        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
+            reserveProviderCall,
+            remainingProviderCalls: () => ({ hourly: 2 - usedSlots, daily: 20 - usedSlots }),
+            backgroundEnvelope,
+        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
+
+        expect(usedSlots).toBe(0);
+        expect(rollback).toHaveBeenCalledTimes(1);
+        expect(commit).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('does not add a recent but unchanged related note to generic preload', async () => {
+        const harness = createAnalyzeHarness();
+        const unchanged = harness.addSourceFile('notes/unchanged-related.md', 'UNCHANGED_SENTINEL');
+        harness.findPageletRelatedNotes.mockResolvedValue([{
+            path: unchanged.path,
+            content: 'UNCHANGED_SENTINEL',
+            mtime: unchanged.stat.mtime,
+            size: unchanged.stat.size,
+        }]);
+        const host = harness.plugin.createPageletHost();
+
+        await host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
+            reserveProviderCall: () => true,
+            remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
+            backgroundEnvelope,
+        });
+
+        expect(harness.findPageletRelatedNotes).not.toHaveBeenCalled();
+        const invokedPrompt = (harness.invoke.mock.calls as unknown as unknown[][])[0]?.[0];
+        expect(String(invokedPrompt)).not.toContain('UNCHANGED_SENTINEL');
+        expect(harness.plugin.pageletCostTracker.record).not.toHaveBeenCalledWith(
+            expect.objectContaining({ attemptKind: 'semantic-retrieval' }),
+        );
+    });
+
+    it('drops preload findings that cite a source outside the actual allowed input', async () => {
+        const harness = createAnalyzeHarness();
+        harness.invoke.mockResolvedValueOnce({
+            content: JSON.stringify({
+                findings: [{
+                    text: 'Supported by the current note.',
+                    sourceFile: harness.currentFile.path,
+                    sourceTitle: 'Current',
+                }, {
+                    text: 'Hallucinated private source.',
+                    sourceFile: 'private/excluded.md',
+                    sourceTitle: 'Excluded',
+                }],
+            }),
+        });
+        const host = harness.plugin.createPageletHost();
+
+        const result = await host.createPreloadAnalyzeCallback()(
+            [harness.currentFile],
+            preloadConfig,
+            {
+                reserveProviderCall: () => true,
+                remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
+                backgroundEnvelope,
+            },
+        );
+
+        expect(result.findings).toEqual([{
+            text: 'Supported by the current note.',
+            sourceFile: harness.currentFile.path,
+            sourceTitle: 'Current',
+        }]);
+    });
+
+    it('keeps preload capability-off during setup at zero notice and zero provider call', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        harness.plugin.createChatModel.mockImplementation(async () => {
+            harness.plugin.settings.pagelet.preloadEnabled = false;
+            return {
+                invoke: harness.invoke,
+                withStructuredOutput: () => ({ invoke: harness.structuredInvoke }),
+            };
+        });
+        const reserveProviderCall = jest.fn(() => true);
+        const host = harness.plugin.createPageletHost();
+
+        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
+            reserveProviderCall,
+            remainingProviderCalls: () => ({ hourly: 1, daily: 1 }),
+            backgroundEnvelope,
+        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
+
+        expect(reserveProviderCall).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it.each([
+        ['missing engine proof', undefined],
+        ['whole-vault override', { ...backgroundEnvelope, wholeVault: true as const }],
+    ])('fails closed for preload %s before budget reservation', async (_label, envelope) => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const reserveProviderCall = jest.fn(() => true);
+        const host = harness.plugin.createPageletHost();
+
+        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
+            reserveProviderCall,
+            remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
+            ...(envelope ? { backgroundEnvelope: envelope } : {}),
+        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
+
+        expect(reserveProviderCall).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+    });
+
+    it('fails closed when persisted preload caps exceed the 2/hour standard envelope', async () => {
+        const harness = createAnalyzeHarness();
+        harness.plugin.settings.pagelet.preloadPerHourCap = 3;
+        const reserveProviderCall = jest.fn(() => true);
+        const host = harness.plugin.createPageletHost();
+
+        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
+            reserveProviderCall,
+            remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
+            backgroundEnvelope,
+        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
+
+        expect(reserveProviderCall).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+    });
+
+    it('shares one notice across foreground Review and later preload generation', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createAnalyzeHarness();
+        const host = harness.plugin.createPageletHost();
+
+        await host.createForegroundAnalyzeCallback()([harness.currentFile], config);
+        await host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
+            reserveProviderCall: () => true,
+            remainingProviderCalls: () => ({ hourly: 1, daily: 1 }),
+            backgroundEnvelope,
+        });
+
+        expect(harness.structuredInvoke).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Pagelet production rate-limit storage', () => {
     const buckets = ['scope-recap', 'quiet-recall'] as const;
     const featureCaps = [
         { bucket: 'scope-recap' as const, hourly: 2, daily: 10 },
@@ -4816,12 +6314,86 @@ describe('Scope Recap and Quiet Recall production rate-limit storage', () => {
             vault: {
                 configDir: '.obsidian-test',
                 getName: jest.fn(() => 'adapter-test-vault'),
+                adapter: {
+                    getBasePath: jest.fn(() => '/vaults/adapter-test-vault'),
+                },
             },
         };
         plugin.scopeRecapRateLimiterInstance = null;
         plugin.quietRecallRateLimiterInstance = null;
         return plugin;
     }
+
+    it('isolates persisted quotas and watermarks for different same-name vaults', () => {
+        const first = createRateLimitHarness();
+        const second = createRateLimitHarness();
+        first.app.vault.adapter.getBasePath.mockReturnValue('/vaults/one/shared-name');
+        second.app.vault.adapter.getBasePath.mockReturnValue('/vaults/two/shared-name');
+        first.app.vault.getName.mockReturnValue('shared-name');
+        second.app.vault.getName.mockReturnValue('shared-name');
+
+        expect(first.pageletRateLimitStorageKey('scope-recap'))
+            .not.toBe(second.pageletRateLimitStorageKey('scope-recap'));
+        expect(first.pageletRateLimitStorageKey('background-review'))
+            .not.toBe(second.pageletRateLimitStorageKey('background-review'));
+        expect(first.pageletChangeWatermarkStorageKey())
+            .not.toBe(second.pageletChangeWatermarkStorageKey());
+    });
+
+    it.each(buckets)('fails %s closed when stable vault identity is unavailable', async (bucket) => {
+        const localStorage = installMockWindowLocalStorage();
+        try {
+            const plugin = createRateLimitHarness();
+            delete plugin.app.vault.adapter.getBasePath;
+
+            await expect(getLimiter(plugin, bucket).reserve()).rejects.toThrow(
+                `${bucket} rate-limit vault identity unavailable`,
+            );
+            expect(localStorage.storage.getItem).not.toHaveBeenCalled();
+            expect(localStorage.storage.setItem).not.toHaveBeenCalled();
+        } finally {
+            localStorage.restore();
+        }
+    });
+
+    it('keeps foreground Review quota session-local when stable vault identity is unavailable', async () => {
+        const unavailableKey = 'pa-pagelet-rate-limit:foreground-review:unavailable';
+        const localStorage = installMockWindowLocalStorage({
+            [unavailableKey]: JSON.stringify({
+                hourlyTimestamps: [Date.now()],
+                dailyCount: 1,
+                dailyResetAt: Date.now() + 86_400_000,
+            }),
+        });
+        try {
+            const createForegroundHarness = () => {
+                const plugin = createRateLimitHarness();
+                delete plugin.app.vault.adapter.getBasePath;
+                plugin.settings = {
+                    pagelet: {
+                        foregroundPerHourCap: 1,
+                        foregroundPerDayCap: 1,
+                    },
+                };
+                plugin.pageletRateLimiterInstance = null;
+                return plugin;
+            };
+            const firstVault = createForegroundHarness();
+            const secondVault = createForegroundHarness();
+
+            await expect(firstVault.getPageletRateLimiter().reserve()).resolves.toEqual({ ok: true });
+            await expect(firstVault.getPageletRateLimiter().reserve()).resolves.toEqual(expect.objectContaining({
+                ok: false,
+                reason: 'hr-cap',
+            }));
+            await expect(secondVault.getPageletRateLimiter().reserve()).resolves.toEqual({ ok: true });
+
+            expect(localStorage.storage.getItem).not.toHaveBeenCalled();
+            expect(localStorage.storage.setItem).not.toHaveBeenCalled();
+        } finally {
+            localStorage.restore();
+        }
+    });
 
     function getLimiter(
         plugin: any, // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -5031,6 +6603,24 @@ describe('Quiet Recall DEC-020 production adapter', () => {
             whyNow: 'Your current cache question is answered by the older Redis benchmark.',
         })));
         const reserve = jest.fn(options.reserve ?? (async () => ({ ok: true as const })));
+        const reserveIf = jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => (
+            await canCommit()
+                ? reserve()
+                : { ok: false as const, reason: 'condition' as const }
+        ));
+        const reserveLeaseIf = jest.fn(async (canCommit: () => boolean | PromiseLike<boolean>) => {
+            if (!await canCommit()) return { ok: false as const, reason: 'condition' as const };
+            const decision = await reserve();
+            if (!decision.ok) return decision;
+            let committed = false;
+            return {
+                ok: true as const,
+                reservation: {
+                    commit: () => { committed = true; },
+                    rollback: jest.fn(async () => { if (!committed) committed = true; }),
+                },
+            };
+        });
         const recordCost = jest.fn();
         const createChatModel = jest.fn(async () => ({ invoke }));
         const getAISetupIssue = jest.fn(() => options.setupIssue ?? null);
@@ -5038,24 +6628,41 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         plugin.unloading = false;
         plugin.settings = {
             quietRecall: { enabled: true },
-            pagelet: { enabled: true, temperature: 0.2 },
+            pagelet: {
+                enabled: true,
+                temperature: 0.2,
+                pageletProviderFirstUseNotified: false,
+                reviewsFolder: '.pagelet',
+                excludedFolders: [],
+                excludedTags: [],
+                excludedPatterns: [],
+            },
             retrievalHabitProfile: { enabled: false, state: { aggregates: [] } },
             savedInsights: { items: options.savedInsights ?? [] },
             aiProvider: 'openai',
             aiProviderPreset: 'openai',
             baseURL: 'https://api.openai.com/v1',
             chatModelName: 'gpt-4o-mini',
+            dataBoundary: {
+                excludedFolders: [],
+                excludedTags: [],
+                generatedNotePolicy: 'exclude-generated',
+            },
         };
         plugin.app = {
             workspace: { getActiveFile: jest.fn(() => activeFile) },
             vault: {
                 cachedRead: jest.fn(async () => currentContent),
+                read: jest.fn(async (file: TFile) => (
+                    file.path === activeFile.path ? currentContent : candidateContent
+                )),
                 getAbstractFileByPath: jest.fn((path: string) => {
                     if (path === activeFile.path) return activeFile;
                     if (path === candidateFile.path && candidateAvailable) return candidateFile;
                     return null;
                 }),
             },
+            metadataCache: { getFileCache: jest.fn(() => null) },
         };
         plugin.getPageletLocale = jest.fn(() => 'en');
         plugin.isDataBoundaryAllowedFile = jest.fn(() => true);
@@ -5071,38 +6678,326 @@ describe('Quiet Recall DEC-020 production adapter', () => {
                         content: candidateContent,
                         modifiedAt: '2026-07-01T00:00:00.000Z',
                     }],
+                    sourceSnapshots: [{
+                        path: candidateFile.path,
+                        mtime: candidateFile.stat.mtime,
+                        size: candidateFile.stat.size,
+                    }],
+                    retrievalMode: 'semantic',
                 }
         ));
-        plugin.listDataBoundaryAllowedSavedInsights = jest.fn(() => options.savedInsights ?? []);
         plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'data_boundary:test');
         plugin.getAISetupIssue = getAISetupIssue;
         plugin.createChatModel = createChatModel;
-        plugin.getQuietRecallRateLimiter = jest.fn(() => ({ reserve }));
+        plugin.getQuietRecallRateLimiter = jest.fn(() => ({
+            reserve,
+            reserveIf,
+            reserveLeaseIf,
+        }));
         plugin.pageletCostTracker = { record: recordCost };
+        plugin.saveSettings = jest.fn(async () => undefined);
         plugin.log = jest.fn();
         plugin._lastRecallLlmEvalAt = 0;
         plugin.quietRecallRoundAdmissionTail = Promise.resolve();
         plugin.quietRecallEvaluationCoordinatorInstance = null;
         return {
             plugin,
+            activeFile,
+            candidateFile,
             invoke,
             reserve,
+            reserveIf,
+            reserveLeaseIf,
             recordCost,
             createChatModel,
             getAISetupIssue,
             setCurrentContent: (value: string) => { currentContent = value; },
             setCandidateContent: (value: string) => { candidateContent = value; },
             setCandidateAvailable: (value: boolean) => { candidateAvailable = value; },
+            getCurrentContent: () => currentContent,
+            getCandidateContent: () => candidateContent,
         };
+    }
+
+    function enableSemanticCollector(
+        harness: ReturnType<typeof createRuntimeHarness>,
+        options: { includeEvidence?: boolean } = {},
+    ) {
+        delete harness.plugin.collectQuietRecallVaultNotes;
+        harness.plugin.app.vault.cachedRead = jest.fn(async (file: TFile) => (
+            file.path === harness.activeFile.path
+                ? harness.getCurrentContent()
+                : harness.getCandidateContent()
+        ));
+        harness.plugin.app.vault.getMarkdownFiles = jest.fn(() => [
+            harness.activeFile,
+            harness.candidateFile,
+        ]);
+        harness.plugin.app.metadataCache = { resolvedLinks: {} };
+        harness.plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+        harness.plugin.getScopeRecapAuthorizationContextId = jest.fn(() => 'provider-policy:test');
+        harness.plugin.getDataBoundaryTags = jest.fn(() => []);
+        harness.plugin.getGraphDiscoveryLinks = jest.fn(() => []);
+        harness.plugin.getResolvedOutgoingLinks = jest.fn(() => []);
+        harness.plugin.buildGraphDiscoveryBacklinkMap = jest.fn(() => new Map());
+        const embedInvoke = jest.fn(async () => [0.1, 0.2]);
+        const searchHybrid = jest.fn(async (
+            _query: string,
+            searchOptions?: {
+                executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+            },
+        ) => {
+            await searchOptions?.executeEmbeddingInvoke?.(embedInvoke);
+            return options.includeEvidence === false
+                ? []
+                : [{
+                    score: 0.95,
+                    doc: {
+                        pageContent: 'STALE INDEX BODY MUST NOT REACH THE EVALUATOR',
+                        metadata: { path: harness.candidateFile.path },
+                    },
+                }];
+        });
+        harness.plugin.vss = { searchHybrid };
+        return { embedInvoke, searchHybrid };
     }
 
     afterEach(() => {
         jest.useRealTimers();
     });
 
+    it('uses semantic retrieval when the local index is ready', async () => {
+        const activeFile = createTFileWithStat('notes/current.md', { mtime: 1_000, size: 100 });
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const semanticCollection = {
+            relatedNotes: [{ path: 'notes/related.md', score: 0.8 }],
+            vaultNotes: [{ path: 'notes/related.md', content: 'Local related note.' }],
+            sourceSnapshots: [{ path: 'notes/related.md', mtime: 900, size: 80 }],
+            retrievalMode: 'semantic',
+        };
+        const relatedNotes = [{
+            path: 'notes/related.md',
+            content: 'Local related note.',
+            score: 0.8,
+            mtime: 900,
+            size: 80,
+        }];
+        plugin.isPageletMemorySearchReady = jest.fn(async () => true);
+        plugin.findPageletRelatedNotes = jest.fn(async (
+            _path: string,
+            _contents: Array<{ path: string; content: string }>,
+            _excluded: string[],
+            options: { onSearchOutcome?: (outcome: 'completed' | 'failed') => void },
+        ) => {
+            options.onSearchOutcome?.('completed');
+            return relatedNotes;
+        });
+        plugin.collectQuietRecallVaultNotesFromRelatedNotes = jest.fn(async () => semanticCollection);
+        plugin.collectQuietRecallVaultNotesFromMetadata = jest.fn();
+        const reserveProviderCall = jest.fn(async () => undefined);
+        const additionalCurrentCheck = jest.fn(() => true);
+
+        await expect(plugin.collectQuietRecallVaultNotes(
+            activeFile,
+            'Current semantic topic.',
+            { reserveProviderCall, additionalCurrentCheck },
+        )).resolves.toBe(semanticCollection);
+
+        expect(plugin.findPageletRelatedNotes).toHaveBeenCalledWith(
+            activeFile.path,
+            [{ path: activeFile.path, content: 'Current semantic topic.' }],
+            [activeFile.path],
+            expect.objectContaining({
+                limit: 40,
+                requireActivePrimary: true,
+                reserveProviderCall,
+                additionalCurrentCheck,
+            }),
+        );
+        expect(plugin.collectQuietRecallVaultNotesFromRelatedNotes).toHaveBeenCalledWith(relatedNotes);
+        expect(plugin.collectQuietRecallVaultNotesFromMetadata).not.toHaveBeenCalled();
+    });
+
+    it('keeps metadata candidates as a local fallback when the index is unavailable', async () => {
+        const activeFile = createTFileWithStat('notes/current.md', { mtime: 1_000, size: 100 });
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const localCollection = {
+            relatedNotes: [{ path: 'notes/related.md', score: 0.8 }],
+            vaultNotes: [{ path: 'notes/related.md', content: 'Local related note.' }],
+            sourceSnapshots: [{ path: 'notes/related.md', mtime: 900, size: 80 }],
+            retrievalMode: 'metadata',
+        };
+        plugin.isPageletMemorySearchReady = jest.fn(async () => false);
+        plugin.findPageletRelatedNotes = jest.fn();
+        plugin.collectQuietRecallVaultNotesFromMetadata = jest.fn(async () => localCollection);
+
+        await expect(plugin.collectQuietRecallVaultNotes(
+            activeFile,
+            'Current semantic topic.',
+            {
+                reserveProviderCall: jest.fn(async () => undefined),
+                additionalCurrentCheck: jest.fn(() => true),
+            },
+        )).resolves.toBe(localCollection);
+
+        expect(plugin.findPageletRelatedNotes).not.toHaveBeenCalled();
+        expect(plugin.collectQuietRecallVaultNotesFromMetadata).toHaveBeenCalledWith(activeFile);
+    });
+
+    it('discovers a pure-semantic candidate through the budgeted shared provider seam', async () => {
+        mockNoticeMessages.length = 0;
+        const events: string[] = [];
+        const harness = createRuntimeHarness({
+            reserve: async () => {
+                events.push('reserve');
+                return { ok: true };
+            },
+            invoke: async () => {
+                events.push('evaluate');
+                return JSON.stringify({
+                    isConvincing: true,
+                    whyNow: 'The older benchmark directly informs the current cache decision.',
+                });
+            },
+        });
+        const semantic = enableSemanticCollector(harness);
+        semantic.embedInvoke.mockImplementation(async () => {
+            events.push('embed');
+            return [0.1, 0.2];
+        });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(events).toEqual(['reserve', 'embed', 'reserve', 'evaluate']);
+        expect(semantic.embedInvoke).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.invoke.mock.calls[0]?.[0]).toContain(
+            'The previous benchmark supports keeping Redis.',
+        );
+        expect(harness.invoke.mock.calls[0]?.[0]).not.toContain('STALE INDEX BODY');
+        expect(result.candidates).toHaveLength(1);
+        expect(result.evaluationDiagnostics).toEqual(expect.objectContaining({
+            providerCalls: 1,
+            semanticRetrievalCalls: 1,
+            totalProviderCalls: 2,
+            initialCalls: 1,
+        }));
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+    });
+
+    it('spends one disclosed retrieval call and zero evaluator calls when cold semantic search is empty', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createRuntimeHarness();
+        const semantic = enableSemanticCollector(harness, { includeEvidence: false });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(semantic.embedInvoke).toHaveBeenCalledTimes(1);
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+        expect(harness.createChatModel).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(result.candidates).toEqual([]);
+        expect(result.evaluationDiagnostics).toEqual(expect.objectContaining({
+            providerCalls: 0,
+            semanticRetrievalCalls: 1,
+            totalProviderCalls: 1,
+            evaluatedCandidateCount: 0,
+        }));
+        expect(harness.recordCost).toHaveBeenCalledWith(expect.objectContaining({
+            feature: 'quiet-recall',
+            attemptKind: 'semantic-retrieval',
+            outputTokens: 0,
+        }));
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+    });
+
+    it('retains the real retrieval diagnostic when the active source drifts after embedding', async () => {
+        const harness = createRuntimeHarness();
+        const semantic = enableSemanticCollector(harness);
+        semantic.embedInvoke.mockImplementation(async () => {
+            harness.activeFile.stat.mtime += 1;
+            return [0.1, 0.2];
+        });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(semantic.embedInvoke).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(result.candidates).toEqual([]);
+        expect(result.evaluationDiagnostics).toEqual(expect.objectContaining({
+            providerCalls: 0,
+            semanticRetrievalCalls: 1,
+            totalProviderCalls: 1,
+            blockedReason: 'invalid_context',
+        }));
+    });
+
+    it.each([
+        ['provider unavailable', (harness: ReturnType<typeof createRuntimeHarness>) => {
+            harness.getAISetupIssue.mockReturnValue('provider missing');
+        }],
+        ['cooldown active', (harness: ReturnType<typeof createRuntimeHarness>) => {
+            harness.plugin._lastRecallLlmEvalAt = Date.now();
+        }],
+    ])('keeps cold semantic retrieval at zero provider calls when %s', async (_label, arrange) => {
+        mockNoticeMessages.length = 0;
+        const harness = createRuntimeHarness();
+        const semantic = enableSemanticCollector(harness);
+        arrange(harness);
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(semantic.embedInvoke).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(result.candidates).toEqual([]);
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('keeps a cold semantic budget rejection before embedding and first-use disclosure', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createRuntimeHarness({
+            reserve: async () => ({ ok: false, reason: 'hr-cap' }),
+        });
+        const semantic = enableSemanticCollector(harness);
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+        expect(semantic.embedInvoke).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(result.candidates).toEqual([]);
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
+    it('does not commit a Quiet Recall slot when the source changes while reservation is queued', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createRuntimeHarness();
+        const semantic = enableSemanticCollector(harness);
+        harness.reserveLeaseIf.mockImplementationOnce(async (canCommit) => {
+            harness.activeFile.stat.mtime += 1;
+            await canCommit();
+            return { ok: false as const, reason: 'condition' as const };
+        });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(result.candidates).toEqual([]);
+        expect(harness.reserveLeaseIf).toHaveBeenCalledTimes(1);
+        expect(harness.reserve).not.toHaveBeenCalled();
+        expect(semantic.embedInvoke).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+    });
+
     it('reserves every actual call, retries a wrong-language result once, and reuses the exact cache during cooldown', async () => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
+        mockNoticeMessages.length = 0;
         const events: string[] = [];
         const harness = createRuntimeHarness({
             reserve: async () => {
@@ -5153,9 +7048,52 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         expect(harness.recordCost.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             feature: 'quiet-recall',
         }));
+        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(true);
+        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
         const initialCost = harness.recordCost.mock.calls[0]?.[0] as { inputTokens: number };
         const retryCost = harness.recordCost.mock.calls[1]?.[0] as { inputTokens: number };
         expect(retryCost.inputTokens).toBeGreaterThan(initialCost.inputTokens);
+    });
+
+    it('keeps no-candidate Quiet Recall provider-free without mutating first-use state', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createRuntimeHarness({ includeCandidate: false });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(result.candidates).toEqual([]);
+        expect(harness.reserve).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('fails closed before evaluation when a candidate has no captured live source snapshot', async () => {
+        mockNoticeMessages.length = 0;
+        const harness = createRuntimeHarness();
+        harness.plugin.collectQuietRecallVaultNotes.mockResolvedValue({
+            relatedNotes: [{ path: harness.candidateFile.path, score: 0.95 }],
+            vaultNotes: [{
+                path: harness.candidateFile.path,
+                title: 'Redis decision',
+                content: harness.getCandidateContent(),
+                modifiedAt: '2026-07-01T00:00:00.000Z',
+            }],
+            sourceSnapshots: [],
+            retrievalMode: 'semantic',
+        });
+
+        const result = await harness.plugin.runQuietRecall();
+
+        expect(result.candidates).toEqual([]);
+        expect(result.discoverCandidates).toEqual([]);
+        expect(harness.createChatModel).not.toHaveBeenCalled();
+        expect(harness.reserve).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
     });
 
     it('invalidates cache reuse when the actual candidate digest changes and lets cooldown block the miss', async () => {
@@ -5234,6 +7172,98 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         expect(harness.plugin.isQuietRecallRunCurrent(result)).toBe(false);
     });
 
+    it('live-reads every Saved Insight source and excludes the whole insight when any ref is denied or unreadable', async () => {
+        const now = new Date().toISOString();
+        const deniedInsight = {
+            id: 'ins-denied-multi-ref',
+            type: 'decision',
+            text: 'DENIED-SAVED-INSIGHT-SENTINEL',
+            origin: 'pa-generated',
+            sourceRefs: [
+                { path: 'notes/current.md', evidenceStrength: 'strong' },
+                { path: 'notes/denied.md', evidenceStrength: 'strong' },
+                { path: 'notes/denied-companion.md', evidenceStrength: 'medium' },
+            ],
+            whyShown: [],
+            scope: { kind: 'current_note', paths: ['notes/current.md'] },
+            status: 'active',
+            influencePolicy: 'weak-only',
+            createdAt: now,
+            updatedAt: now,
+        };
+        const unreadableInsight = {
+            ...deniedInsight,
+            id: 'ins-unreadable-multi-ref',
+            text: 'UNREADABLE-SAVED-INSIGHT-SENTINEL',
+            sourceRefs: [
+                { path: 'notes/current.md', evidenceStrength: 'strong' },
+                { path: 'notes/read-fails.md', evidenceStrength: 'strong' },
+                { path: 'notes/read-fails-companion.md', evidenceStrength: 'medium' },
+            ],
+        };
+        const safeInsight = {
+            ...deniedInsight,
+            id: 'ins-safe-multi-ref',
+            text: 'SAFE-SAVED-INSIGHT-SENTINEL',
+            sourceRefs: [
+                { path: 'notes/current.md', evidenceStrength: 'strong' },
+                { path: 'notes/safe-a.md', evidenceStrength: 'strong' },
+                { path: 'notes/safe-b.md', evidenceStrength: 'medium' },
+            ],
+        };
+        const harness = createRuntimeHarness({
+            includeCandidate: false,
+            savedInsights: [deniedInsight, unreadableInsight, safeInsight],
+        });
+        const extraFiles = [
+            'notes/denied.md',
+            'notes/denied-companion.md',
+            'notes/read-fails.md',
+            'notes/read-fails-companion.md',
+            'notes/safe-a.md',
+            'notes/safe-b.md',
+        ].map((path, index) => createTFileWithStat(path, {
+            mtime: 800 - index,
+            size: 80 + index,
+        }));
+        const filesByPath = new Map<string, TFile>([
+            [harness.activeFile.path, harness.activeFile],
+            ...extraFiles.map((file) => [file.path, file] as const),
+        ]);
+        const contentByPath = new Map<string, string>([
+            [harness.activeFile.path, harness.getCurrentContent()],
+            ['notes/denied.md', '# Denied\n\nPRIVATE-SOURCE #no-ai'],
+            ['notes/denied-companion.md', '# Companion\n\nMUST-STILL-BE-LIVE-READ'],
+            ['notes/read-fails-companion.md', '# Companion\n\nMUST-ALSO-BE-LIVE-READ'],
+            ['notes/safe-a.md', '# Safe A\n\nSAFE-SOURCE-A'],
+            ['notes/safe-b.md', '# Safe B\n\nSAFE-SOURCE-B'],
+        ]);
+        harness.plugin.app.vault.getAbstractFileByPath = jest.fn((path: string) => (
+            filesByPath.get(path) ?? null
+        ));
+        const liveRead = jest.fn(async (file: TFile) => {
+            if (file.path === 'notes/read-fails.md') throw new Error('read denied');
+            return contentByPath.get(file.path) ?? '';
+        });
+        harness.plugin.app.vault.read = liveRead;
+
+        const result = await harness.plugin.runQuietRecall();
+
+        const prompt = harness.invoke.mock.calls[0]?.[0] as string;
+        expect(prompt).toContain('SAFE-SAVED-INSIGHT-SENTINEL');
+        expect(prompt).not.toContain('DENIED-SAVED-INSIGHT-SENTINEL');
+        expect(prompt).not.toContain('UNREADABLE-SAVED-INSIGHT-SENTINEL');
+        expect(result.candidates).toHaveLength(1);
+        expect(result.candidates[0]).toEqual(expect.objectContaining({
+            sourceInsightId: 'ins-safe-multi-ref',
+        }));
+        const readPaths = new Set(liveRead.mock.calls.map(([file]) => file.path));
+        expect(readPaths).toEqual(new Set([
+            harness.activeFile.path,
+            ...extraFiles.map((file) => file.path),
+        ]));
+    });
+
     it('attributes a completed provider call to the provider and model captured at call start', async () => {
         let resolveInvoke!: (value: unknown) => void;
         let markInvokeStarted!: () => void;
@@ -5278,6 +7308,9 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         ['source deleted', (harness: ReturnType<typeof createRuntimeHarness>) => {
             harness.setCandidateAvailable(false);
         }],
+        ['active note switched', (harness: ReturnType<typeof createRuntimeHarness>) => {
+            harness.plugin.app.workspace.getActiveFile.mockReturnValue(harness.candidateFile);
+        }],
     ])('does not invoke Quiet Recall after limiter wait when %s', async (_label, mutate) => {
         let markReserveEntered = (): void => undefined;
         const reserveEntered = new Promise<void>((resolve) => { markReserveEntered = resolve; });
@@ -5308,7 +7341,7 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         }));
     });
 
-    it('re-reads VSS-ranked notes from the live vault and rejects a note changed during the read', async () => {
+    it('re-reads locally ranked notes from the live vault and rejects a note changed during the read', async () => {
         const candidateFile = createTFileWithStat('notes/redis.md', { mtime: 900, size: 120 }) as TFile & {
             basename: string;
         };
@@ -5327,20 +7360,21 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         };
         plugin.buildGraphDiscoveryBacklinkMap = jest.fn(() => new Map());
         plugin.isDataBoundaryAllowedFile = jest.fn(() => true);
+        plugin.isPageletProviderSourceAllowedFile = jest.fn(() => true);
         plugin.getDataBoundaryTags = jest.fn(() => []);
         plugin.getGraphDiscoveryLinks = jest.fn(() => []);
         plugin.log = jest.fn();
 
-        const live = await plugin.collectQuietRecallVaultNotesFromRelatedNotes([{
-            path: candidateFile.path,
-            content: 'STALE-VSS-CONTENT',
-            score: 0.95,
-        }]);
+        const live = await plugin.readQuietRecallVaultNote(candidateFile, new Map());
 
-        expect(live.vaultNotes).toEqual([
-            expect.objectContaining({ content: 'LIVE-VAULT-CONTENT' }),
-        ]);
-        expect(JSON.stringify(live)).not.toContain('STALE-VSS-CONTENT');
+        expect(live).toEqual({
+            note: expect.objectContaining({ content: 'LIVE-VAULT-CONTENT' }),
+            snapshot: {
+                path: candidateFile.path,
+                mtime: 900,
+                size: 120,
+            },
+        });
         expect(read).toHaveBeenCalledWith(candidateFile);
         expect(cachedRead).not.toHaveBeenCalled();
 
@@ -5348,12 +7382,51 @@ describe('Quiet Recall DEC-020 production adapter', () => {
             candidateFile.stat.mtime += 1;
             return 'CHANGED-DURING-READ';
         });
-        const changed = await plugin.collectQuietRecallVaultNotesFromRelatedNotes([{
-            path: candidateFile.path,
-            content: 'STALE-VSS-CONTENT',
-            score: 0.95,
-        }]);
-        expect(changed).toEqual({ vaultNotes: [], relatedNotes: [] });
+        const changed = await plugin.readQuietRecallVaultNote(candidateFile, new Map());
+        expect(changed).toBeNull();
+    });
+
+    it('rejects the whole semantic collection when an earlier source changes during a later read', async () => {
+        const firstFile = createTFileWithStat('notes/first.md', { mtime: 900, size: 120 }) as TFile & {
+            basename: string;
+        };
+        const secondFile = createTFileWithStat('notes/second.md', { mtime: 800, size: 110 }) as TFile & {
+            basename: string;
+        };
+        firstFile.basename = 'first';
+        secondFile.basename = 'second';
+        const files = new Map([
+            [firstFile.path, firstFile],
+            [secondFile.path, secondFile],
+        ]);
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            vault: {
+                read: jest.fn(async (file: TFile) => {
+                    if (file.path === secondFile.path) firstFile.stat.mtime += 1;
+                    return `LIVE ${file.path}`;
+                }),
+                getAbstractFileByPath: jest.fn((path: string) => files.get(path) ?? null),
+            },
+        };
+        plugin.buildGraphDiscoveryBacklinkMap = jest.fn(() => new Map());
+        plugin.isDataBoundaryAllowedFile = jest.fn(() => true);
+        plugin.isPageletProviderSourceAllowedFile = jest.fn(() => true);
+        plugin.getDataBoundaryTags = jest.fn(() => []);
+        plugin.getGraphDiscoveryLinks = jest.fn(() => []);
+        plugin.log = jest.fn();
+
+        const result = await plugin.collectQuietRecallVaultNotesFromRelatedNotes([
+            { path: firstFile.path, content: 'index first', score: 0.95 },
+            { path: secondFile.path, content: 'index second', score: 0.9 },
+        ]);
+
+        expect(result).toEqual({
+            vaultNotes: [],
+            relatedNotes: [],
+            sourceSnapshots: [],
+            retrievalMode: 'semantic',
+        });
     });
 
     it('rejects a completed run after a source is deleted or its evaluation policy changes', async () => {
@@ -5368,6 +7441,28 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         harness.setCandidateAvailable(true);
         harness.plugin.settings.aiProviderPreset = 'custom';
         expect(harness.plugin.isQuietRecallRunCurrent(result)).toBe(false);
+    });
+
+    it('revalidates every captured source even when one did not become a displayed candidate', async () => {
+        const harness = createRuntimeHarness();
+        const result = await harness.plugin.runQuietRecall();
+        const unusedFile = createTFileWithStat('notes/unused.md', { mtime: 700, size: 60 });
+        const originalLookup = harness.plugin.app.vault.getAbstractFileByPath;
+        harness.plugin.app.vault.getAbstractFileByPath = jest.fn((path: string) => (
+            path === unusedFile.path ? unusedFile : originalLookup(path)
+        ));
+        const sourcePaths = [...(result.sourcePaths ?? []), unusedFile.path];
+        const sourceSnapshotId = harness.plugin.buildQuietRecallRunSourceSnapshotId(
+            result.currentPath,
+            result.discoverCandidates ?? result.candidates,
+            sourcePaths,
+        );
+        const expandedResult = { ...result, sourcePaths, sourceSnapshotId };
+
+        expect(harness.plugin.isQuietRecallRunCurrent(expandedResult)).toBe(true);
+
+        unusedFile.stat.mtime += 1;
+        expect(harness.plugin.isQuietRecallRunCurrent(expandedResult)).toBe(false);
     });
 
     it('clears the evaluation coordinator across policy A-to-B-to-A transitions', () => {
@@ -5392,7 +7487,6 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => dataBoundarySnapshotId);
         plugin.registerPageletCommandsOnce = jest.fn();
         plugin.registerPageletFocusCommandOnce = jest.fn();
-        plugin.surfacePageletBackgroundPreparationNotice = jest.fn();
         plugin.pageletOrchestrator = { syncSettings: jest.fn() };
         plugin.quietRecallEvaluationCoordinatorInstance = coordinatorA;
         plugin.quietRecallEvaluationPolicyIdentitySnapshot = null;
@@ -5430,7 +7524,55 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         await expect(plugin.acquireQuietRecallRoundAdmission()).resolves.toBe(true);
     });
 
+    it('holds a concurrent first-round claim until commit, then applies cooldown', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
+        const harness = createRuntimeHarness();
+        const first = await harness.plugin.reserveQuietRecallProviderCall({
+            roundStarted: false,
+            revalidate: () => true,
+        });
+        expect(first.ok).toBe(true);
+        let secondSettled = false;
+        const secondPending = harness.plugin.reserveQuietRecallProviderCall({
+            roundStarted: false,
+            revalidate: () => true,
+        }).then((decision: unknown) => {
+            secondSettled = true;
+            return decision;
+        });
+
+        await Promise.resolve();
+        expect(secondSettled).toBe(false);
+        if (first.ok) first.reservation.commit();
+        await expect(secondPending).resolves.toEqual({ ok: false, reason: 'cooldown' });
+        expect(harness.plugin._lastRecallLlmEvalAt).toBe(Date.now());
+        expect(harness.reserve).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases a concurrent first-round claim on rollback and lets the waiter recheck', async () => {
+        const harness = createRuntimeHarness();
+        const first = await harness.plugin.reserveQuietRecallProviderCall({
+            roundStarted: false,
+            revalidate: () => true,
+        });
+        expect(first.ok).toBe(true);
+        const secondPending = harness.plugin.reserveQuietRecallProviderCall({
+            roundStarted: false,
+            revalidate: () => true,
+        });
+
+        if (first.ok) await first.reservation.rollback();
+        const second = await secondPending;
+
+        expect(second.ok).toBe(true);
+        expect(harness.plugin._lastRecallLlmEvalAt).toBe(0);
+        expect(harness.reserve).toHaveBeenCalledTimes(2);
+        if (second.ok) await second.reservation.rollback();
+    });
+
     it('does not start model or limiter work without a configured provider or eligible candidate', async () => {
+        mockNoticeMessages.length = 0;
         const missingProvider = createRuntimeHarness({ setupIssue: 'provider missing' });
         const missingProviderResult = await missingProvider.plugin.runQuietRecall();
 
@@ -5439,6 +7581,9 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         expect(missingProvider.createChatModel).not.toHaveBeenCalled();
         expect(missingProvider.reserve).not.toHaveBeenCalled();
         expect(missingProvider.invoke).not.toHaveBeenCalled();
+        expect(missingProvider.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(missingProvider.plugin.saveSettings).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
 
         const empty = createRuntimeHarness({ includeCandidate: false });
         const emptyResult = await empty.plugin.runQuietRecall();
@@ -5446,9 +7591,14 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         expect(empty.getAISetupIssue).not.toHaveBeenCalled();
         expect(empty.createChatModel).not.toHaveBeenCalled();
         expect(empty.reserve).not.toHaveBeenCalled();
+        expect(empty.invoke).not.toHaveBeenCalled();
+        expect(empty.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(empty.plugin.saveSettings).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
     });
 
     it('blocks provider invocation when the persisted Quiet Recall bucket is exhausted', async () => {
+        mockNoticeMessages.length = 0;
         const harness = createRuntimeHarness({
             reserve: async () => ({ ok: false, reason: 'hr-cap' }),
         });
@@ -5461,6 +7611,9 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         expect(harness.reserve).toHaveBeenCalledTimes(1);
         expect(harness.invoke).not.toHaveBeenCalled();
         expect(harness.recordCost).not.toHaveBeenCalled();
+        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
+        expect(harness.plugin.saveSettings).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
     });
 
     it('times out a reserved provider call at twenty seconds and records its feature cost', async () => {

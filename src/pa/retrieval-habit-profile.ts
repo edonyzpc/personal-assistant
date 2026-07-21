@@ -18,6 +18,7 @@ export const RETRIEVAL_HABIT_FEEDBACK_KINDS = [
 export type RetrievalHabitFeedbackKind = typeof RETRIEVAL_HABIT_FEEDBACK_KINDS[number];
 
 export const RETRIEVAL_HABIT_SIGNAL_KINDS = [
+    "quiet_recall_candidate",
     "quiet_recall_relation",
     "quiet_recall_source",
     "quiet_recall_strength",
@@ -144,6 +145,9 @@ function normalizeCounts(value: unknown): Partial<Record<RetrievalHabitFeedbackK
 }
 
 function aggregateKeyIsSafe(signal: RetrievalHabitSignalKind, key: string): boolean {
+    if (signal === "quiet_recall_candidate") {
+        return /^candidate:[0-9a-f]{8}$/.test(key);
+    }
     if (signal === "quiet_recall_relation") {
         return key === "relation:current" || key === "relation:related" || key === "relation:far";
     }
@@ -256,7 +260,7 @@ function sourceSignalKey(ref: PersistedSourceRef): { key: string; sourceId?: str
     };
 }
 
-function signalKeysForCandidate(candidate: QuietRecallCandidate): Array<{
+function aggregateSignalKeysForCandidate(candidate: QuietRecallCandidate): Array<{
     key: string;
     signal: RetrievalHabitSignalKind;
     sourceId?: string;
@@ -273,6 +277,17 @@ function signalKeysForCandidate(candidate: QuietRecallCandidate): Array<{
         });
     }
     return signals;
+}
+
+function exactCandidateSignal(candidate: QuietRecallCandidate): RetrievalHabitSignalInput {
+    return {
+        key: `candidate:${stableHash(candidate.id)}`,
+        signal: "quiet_recall_candidate",
+    };
+}
+
+function scoringSignalKeysForCandidate(candidate: QuietRecallCandidate): RetrievalHabitSignalInput[] {
+    return [exactCandidateSignal(candidate), ...aggregateSignalKeysForCandidate(candidate)];
 }
 
 function candidateSourceRefsAreSafe(candidate: QuietRecallCandidate): boolean {
@@ -403,7 +418,10 @@ export class RetrievalHabitProfileStore {
         candidate: QuietRecallCandidate,
         feedback: RetrievalHabitFeedbackKind,
     ): Promise<RetrievalHabitProfileRecordResult> {
-        return this.recordSignals(signalKeysForCandidate(candidate), feedback, candidate.sourceRefs);
+        const signals = feedback === "dismiss"
+            ? [exactCandidateSignal(candidate)]
+            : aggregateSignalKeysForCandidate(candidate);
+        return this.recordSignals(signals, feedback, candidate.sourceRefs);
     }
 
     async recordSignals(
@@ -504,7 +522,7 @@ export function applyRetrievalHabitProfileToRecallCandidates(
     return candidates
         .map((candidate) => {
             const habitBonus = candidateSourceRefsAreSafe(candidate)
-                ? scoreBonusForSignals(signalKeysForCandidate(candidate), normalized, now)
+                ? scoreBonusForSignals(scoringSignalKeysForCandidate(candidate), normalized, now)
                 : 0;
             const scaledHabitBonus = scaleHabitBonusForScore(candidate.score, habitBonus);
             const whyNow = habitBonus > 0

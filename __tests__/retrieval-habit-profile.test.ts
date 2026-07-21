@@ -46,6 +46,48 @@ describe("RetrievalHabitProfileStore", () => {
         expect(persist).not.toHaveBeenCalled();
     });
 
+    it("keeps dismiss as a weak exact-candidate signal without source or relation generalization", async () => {
+        const settings: RetrievalHabitProfileSettings = {
+            enabled: true,
+            state: { aggregates: [] },
+        };
+        const store = new RetrievalHabitProfileStore({
+            settings,
+            now: new Date("2026-06-29T12:00:00.000Z"),
+        });
+        const dismissed = makeCandidate({
+            id: "qr-ins-dismissed",
+            title: "Recall: Dismissed",
+            score: 48,
+        });
+        const similar = makeCandidate({
+            id: "qr-ins-similar",
+            title: "Recall: Similar",
+            score: 48,
+        });
+
+        const result = await store.recordRecallFeedback(dismissed, "dismiss");
+
+        expect(result.ok).toBe(true);
+        expect(settings.state.aggregates).toHaveLength(1);
+        expect(settings.state.aggregates[0]).toEqual(expect.objectContaining({
+            signal: "quiet_recall_candidate",
+            key: expect.stringMatching(/^candidate:[0-9a-f]{8}$/),
+            counts: { dismiss: 1 },
+        }));
+        expect(settings.state.aggregates).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ signal: "quiet_recall_relation" }),
+            expect.objectContaining({ signal: "quiet_recall_source" }),
+            expect.objectContaining({ signal: "quiet_recall_strength" }),
+        ]));
+        expect(JSON.stringify(settings.state)).not.toContain(dismissed.id);
+
+        const ranked = applyRetrievalHabitProfileToRecallCandidates([dismissed, similar], settings);
+        expect(ranked[0].id).toBe(similar.id);
+        expect(ranked.find((candidate) => candidate.id === similar.id)?.score).toBe(similar.score);
+        expect(ranked.find((candidate) => candidate.id === dismissed.id)?.score).toBeLessThan(dismissed.score);
+    });
+
     it("stores enabled recall feedback as aggregate-only local signals", async () => {
         const settings: RetrievalHabitProfileSettings = {
             enabled: true,
@@ -79,6 +121,9 @@ describe("RetrievalHabitProfileStore", () => {
                 counts: { view: 1 },
                 windowStart: "2026-06-29",
             }),
+        ]));
+        expect(settings.state.aggregates).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ signal: "quiet_recall_candidate" }),
         ]));
         const serialized = JSON.stringify(settings.state);
         expect(serialized).not.toContain("Projects/Alpha.md");

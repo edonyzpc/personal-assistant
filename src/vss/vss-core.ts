@@ -34,6 +34,7 @@ import { buildFtsQuery } from './fts-query-builder';
 import { throwIfAborted } from '../ai-services/chat-utils';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { createHeadingAwareMarkdownChunks } from './markdown-chunker';
+import { stableHash } from '../pa/helpers';
 import {
     EMBEDDING_RETRY_DELAYS_MS,
     QWEN_TEXT_EMBEDDING_SAFE_TPM,
@@ -241,6 +242,8 @@ export class VSS {
     private lastErrorCode: string | undefined;
     private sqliteRecoveryPromise: Promise<void> | null = null;
     private nextSqliteRecoveryAt = 0;
+    private readonly pageletQueryEmbeddingCache = new Map<string, number[]>();
+    private readonly pageletQueryEmbeddingInFlight = new Map<string, Promise<number[]>>();
 
     constructor(
         host: MemoryHost,
@@ -367,6 +370,8 @@ export class VSS {
         this.initializationPromise = null;
         this.ensureIndexPromise = null;
         this.sqliteRecoveryPromise = null;
+        this.pageletQueryEmbeddingCache.clear();
+        this.pageletQueryEmbeddingInFlight.clear();
         this.disposePromise = this.disposeUnlocked([
             pendingInitialization,
             pendingEnsureIndex,
@@ -1635,6 +1640,10 @@ export class VSS {
             temporalFilter?: { since?: number; until?: number };
             temporalFilterPromise?: Promise<{ since?: number; until?: number } | null>;
             signal?: AbortSignal;
+            /** Pagelet-only wrapper that admits and immediately invokes query embedding. */
+            executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+            /** Current-run proof required before a successful Pagelet embedding is cached. */
+            canCacheEmbeddingResult?: () => boolean;
         },
     ) {
         const safeOverridePromise: Promise<string | null> = options?.ftsQueryOverridePromise
@@ -1665,14 +1674,25 @@ export class VSS {
 
         const profile = this.profile ?? this.createEmbeddingProfile();
         const profileSignature = getEmbeddingProfileSignature(profile);
-        const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
+        const queryEmbeddingPromise = (async () => {
+            throwIfAborted(signal);
+            const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
+            const invoke = () => embeddings.embedQuery(prompt);
+            if (!options?.executeEmbeddingInvoke) return invoke();
+            const cacheKey = stableHash(`${profileSignature}\u0000${prompt}`);
+            return this.getOrCreatePageletQueryEmbedding(
+                cacheKey,
+                () => options.executeEmbeddingInvoke!(invoke),
+                () => !signal?.aborted && (options.canCacheEmbeddingResult?.() ?? true),
+            );
+        })();
         // Parallel: kick off both rewrite override and embed; tolerate rewrite failures.
         // Precedence: when both ftsQueryOverridePromise and ftsQueryOverride are passed,
         // the promise wins (caller explicitly opted into parallel rewrite).
         const [ftsOverride, temporalFilter, queryEmbedding] = await waitForAbortablePromise(Promise.all([
             safeOverridePromise,
             safeTemporalPromise,
-            embeddings.embedQuery(prompt),
+            queryEmbeddingPromise,
         ]), signal);
         const ftsQuery = ftsOverride != null
             ? buildFtsQuery(ftsOverride)
@@ -2715,6 +2735,8 @@ export class VSS {
         const previousSignature = this.profile ? getEmbeddingProfileSignature(this.profile) : null;
 
         if (previousSignature && previousSignature !== profileSignature) {
+            this.pageletQueryEmbeddingCache.clear();
+            this.pageletQueryEmbeddingInFlight.clear();
             if (this.index) {
                 await this.disposeIndex(this.index, "Failed to dispose stale VSS index");
                 this.index = null;
@@ -2724,6 +2746,44 @@ export class VSS {
 
         this.profile = profile;
         return { profile, profileSignature };
+    }
+
+    private getOrCreatePageletQueryEmbedding(
+        cacheKey: string,
+        invoke: () => Promise<number[]>,
+        canCache: () => boolean,
+    ): Promise<number[]> {
+        const cached = this.pageletQueryEmbeddingCache.get(cacheKey);
+        if (cached) {
+            // Refresh insertion order so the bounded map behaves as an LRU.
+            this.pageletQueryEmbeddingCache.delete(cacheKey);
+            this.pageletQueryEmbeddingCache.set(cacheKey, cached);
+            return Promise.resolve(cached);
+        }
+        const inFlight = this.pageletQueryEmbeddingInFlight.get(cacheKey);
+        if (inFlight) return inFlight;
+
+        // The provider work and its successful cache entry are shared. A
+        // caller's AbortSignal is applied by searchHybrid while it waits, so
+        // one stale waiter cannot reject the operation for other current ones.
+        const operation = (async () => {
+            const embedding = await invoke();
+            if (!this.disposed && canCache()) {
+                this.pageletQueryEmbeddingCache.set(cacheKey, embedding);
+                while (this.pageletQueryEmbeddingCache.size > 16) {
+                    const oldest = this.pageletQueryEmbeddingCache.keys().next().value as string | undefined;
+                    if (!oldest) break;
+                    this.pageletQueryEmbeddingCache.delete(oldest);
+                }
+            }
+            return embedding;
+        })().finally(() => {
+            if (this.pageletQueryEmbeddingInFlight.get(cacheKey) === operation) {
+                this.pageletQueryEmbeddingInFlight.delete(cacheKey);
+            }
+        });
+        this.pageletQueryEmbeddingInFlight.set(cacheKey, operation);
+        return operation;
     }
 
     private async requestPersistentStorage(): Promise<StoragePersistenceStatus> {

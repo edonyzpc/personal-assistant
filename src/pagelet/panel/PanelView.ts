@@ -143,6 +143,8 @@ export class PanelView {
     private bodyEl: HTMLDivElement | null = null;
     private titleEl: HTMLHeadingElement | null = null;
     private saveBtnEl: HTMLButtonElement | null = null;
+    private headerExpandBtnEl: HTMLButtonElement | null = null;
+    private footerExpandBtnEl: HTMLButtonElement | null = null;
     private containerEl: HTMLElement | null = null;
     private _isOpen = false;
     private currentLayout: PanelLayoutType | null = null;
@@ -273,6 +275,7 @@ export class PanelView {
             layoutType === "summary" || this.canSaveCurrentContent(visibleFindings),
             extra?.scope,
         );
+        this.updatePreparedReadOnlyControls(Boolean(extra?.preparedReadOnly));
         this.titleEl.textContent =
             pageletT(LAYOUT_TITLE_KEYS[layoutType], this.getLocale()) || layoutType;
 
@@ -407,6 +410,8 @@ export class PanelView {
         this.bodyEl = null;
         this.titleEl = null;
         this.saveBtnEl = null;
+        this.headerExpandBtnEl = null;
+        this.footerExpandBtnEl = null;
         this.containerEl = null;
         this._isOpen = false;
         this.currentLayout = null;
@@ -1038,8 +1043,10 @@ export class PanelView {
         appendIconButtonLabel(expandBtn, "↗", expandLabel);
         expandBtn.addEventListener("click", (e) => {
             e.stopPropagation();
+            if (this.currentExtra?.preparedReadOnly) return;
             this.options.callbacks.onExpandToTab();
         });
+        this.headerExpandBtnEl = expandBtn;
         actions.appendChild(expandBtn);
 
         // Close button
@@ -1086,8 +1093,10 @@ export class PanelView {
             pageletT("pagelet.panel.expandToTab", this.getLocale());
         expandTabBtn.addEventListener("click", (e) => {
             e.stopPropagation();
+            if (this.currentExtra?.preparedReadOnly) return;
             this.options.callbacks.onExpandToTab();
         });
+        this.footerExpandBtnEl = expandTabBtn;
         footer.appendChild(expandTabBtn);
         root.appendChild(footer);
 
@@ -1095,6 +1104,7 @@ export class PanelView {
     }
 
     private async handlePrimaryButtonClick(saveBtn: HTMLButtonElement): Promise<void> {
+        if (this.currentExtra?.preparedReadOnly) return;
         if (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected") {
             const run = this.primaryButtonMode === "run-selected"
                 ? this.options.callbacks.onRunSelectedReview
@@ -1298,6 +1308,32 @@ export class PanelView {
         this.saveBtnEl.setAttribute("aria-disabled", String(!saveEnabled));
         this.saveBtnEl.textContent = pageletT("pagelet.panel.save", this.getLocale());
         this.saveBtnEl.removeAttribute("title");
+    }
+
+    private updatePreparedReadOnlyControls(preparedReadOnly: boolean): void {
+        const setHidden = (button: HTMLButtonElement | null): void => {
+            if (!button) return;
+            button.disabled = preparedReadOnly;
+            if (preparedReadOnly) {
+                button.setAttribute("hidden", "");
+                button.setAttribute("aria-hidden", "true");
+            } else {
+                button.removeAttribute("hidden");
+                button.removeAttribute("aria-hidden");
+            }
+        };
+        setHidden(this.headerExpandBtnEl);
+        setHidden(this.footerExpandBtnEl);
+        if (this.saveBtnEl) {
+            if (preparedReadOnly) this.saveBtnEl.disabled = true;
+            if (preparedReadOnly) {
+                this.saveBtnEl.setAttribute("hidden", "");
+                this.saveBtnEl.setAttribute("aria-hidden", "true");
+            } else {
+                this.saveBtnEl.removeAttribute("hidden");
+                this.saveBtnEl.removeAttribute("aria-hidden");
+            }
+        }
     }
 
     private onKeydown(e: KeyboardEvent): void {

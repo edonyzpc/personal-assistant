@@ -356,7 +356,7 @@ export interface PageletCostEntry {
     /** Product path responsible for the provider call. */
     feature?: "foreground-review" | "background-review" | "scope-recap" | "quiet-recall";
     /** Per-call phase for features that may retry. */
-    attemptKind?: "single" | "initial" | "language-retry";
+    attemptKind?: "single" | "semantic-retrieval" | "initial" | "language-retry";
     /** Content-free terminal classification for this actual provider call. */
     outcome?: "success" | "accepted" | "rejected" | "empty" | "malformed" | "quality-rejected" | "timeout" | "provider-error";
     /** Recorded via the injected `now()` clock so tests are deterministic. */

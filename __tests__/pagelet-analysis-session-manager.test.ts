@@ -146,6 +146,15 @@ describe("AnalysisSessionManager", () => {
             expect(manager.beginForegroundReviewRun()).toBe(false);
             expect(manager.isForegroundRunInProgress).toBe(false);
         });
+
+        it("can acquire only the Review concurrency guard without reserving budget", () => {
+            const budget = new PreloadBudget(0, 0);
+            const { manager } = makeManager({}, budget);
+
+            expect(manager.beginForegroundReviewRun({ reserveBudget: false })).toBe(true);
+            expect(budget.remaining()).toEqual({ hourly: 0, daily: 0 });
+            expect(manager.isForegroundRunInProgress).toBe(true);
+        });
     });
 
     describe("analyzeFiles stale detection", () => {

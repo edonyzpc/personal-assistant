@@ -176,6 +176,8 @@ export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
 export type PanelPatternDetectionState = PatternDetectionResult;
 
 export interface PanelOpenExtra {
+    /** Raw background cache is visible here only; it cannot be saved or expanded to Tab. */
+    preparedReadOnly?: boolean;
     connections?: NoteConnection[];
     markdown?: string;
     scope?: PanelScopeState;

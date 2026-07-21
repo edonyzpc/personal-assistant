@@ -3293,6 +3293,53 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(buttons[0]?.querySelector(".pa-sr-only")?.textContent).toBe("Hints: On");
     });
 
+    it("keeps prepared cache strictly read-only and Panel-only", async () => {
+        const expandToTab = jest.fn();
+        const saveAsReviewNote = jest.fn(async () => undefined);
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: expandToTab,
+                onSaveAsReviewNote: saveAsReviewNote,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+        const finding = {
+            title: "prepared",
+            description: "Cached background finding.",
+            sourceFile: "notes/prepared.md",
+        };
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("review", [finding], { preparedReadOnly: true });
+
+        const saveButton = container.querySelector(".pa-pagelet-panel-save-btn");
+        const headerExpand = container.querySelector(".pa-pagelet-panel-header-expand-btn");
+        const footerExpand = container.querySelector(".pa-pagelet-panel-expand-btn");
+        for (const button of [saveButton, headerExpand, footerExpand]) {
+            expect(button?.getAttribute("hidden")).toBe("");
+            expect(button?.getAttribute("aria-hidden")).toBe("true");
+            expect(button?.disabled).toBe(true);
+            await button?.click();
+        }
+        expect(saveAsReviewNote).not.toHaveBeenCalled();
+        expect(expandToTab).not.toHaveBeenCalled();
+
+        panel.open("review", [finding]);
+
+        for (const button of [saveButton, headerExpand, footerExpand]) {
+            expect(button?.getAttribute("hidden")).toBeNull();
+            expect(button?.getAttribute("aria-hidden")).toBeNull();
+            expect(button?.disabled).toBe(false);
+            await button?.click();
+        }
+        expect(saveAsReviewNote).toHaveBeenCalledTimes(1);
+        expect(expandToTab).toHaveBeenCalledTimes(2);
+    });
+
     it("wires review scope controls to Review selected and candidate callbacks", async () => {
         const runSelected = jest.fn(async () => undefined);
         const rangeChange = jest.fn();

@@ -106,6 +106,7 @@ export class PetView implements PetRenderer {
     private _holdMenuEl: HTMLElement | null = null;
     private _holdMenuDismissTimer: PlatformTimeoutHandle | null = null;
     private _holdMenuOutsideListener: ((e: Event) => void) | null = null;
+    private _holdMenuTouchCleanup: (() => void) | null = null;
     private _themeObserver: MutationObserver | null = null;
     private readonly _getLocale: () => PageletLocale;
 
@@ -169,14 +170,8 @@ export class PetView implements PetRenderer {
         this._handleTouchend = (e: TouchEvent) => {
             if (this.isHoldMenuEvent(e)) return;
             e.preventDefault();
-            this._recentTouch = true;
             const holdTriggered = this.consumeQuickCaptureHold();
-            this.clearTouchSuppression();
-            this._touchSuppressTimer = setPlatformTimeout(() => {
-                this._touchSuppressTimer = null;
-                if (this._destroyed) return;
-                this._recentTouch = false;
-            }, 400);
+            this.suppressClicksAfterTouch();
             if (holdTriggered) return;
             this._callbacks.onToggleBubble();
         };
@@ -392,6 +387,16 @@ export class PetView implements PetRenderer {
         }
     }
 
+    private suppressClicksAfterTouch(): void {
+        this._recentTouch = true;
+        this.clearTouchSuppression();
+        this._touchSuppressTimer = setPlatformTimeout(() => {
+            this._touchSuppressTimer = null;
+            if (this._destroyed) return;
+            this._recentTouch = false;
+        }, 400);
+    }
+
     private clearQuickCaptureHoldTimer(): void {
         if (this._quickCaptureHoldTimer !== null) {
             clearPlatformTimeout(this._quickCaptureHoldTimer);
@@ -438,6 +443,71 @@ export class PetView implements PetRenderer {
         menu.className = "pa-pagelet-pet-hold-menu";
         const labels = getPetHoldMenuLabels(this._getLocale());
 
+        type ActiveMenuTouch = {
+            target: HTMLButtonElement;
+            valid: boolean;
+            startX: number;
+            startY: number;
+        };
+        let activeMenuTouch: ActiveMenuTouch | null = null;
+        const isWithinTouchMoveThreshold = (gesture: ActiveMenuTouch, touch: Touch): boolean => {
+            const dx = touch.clientX - gesture.startX;
+            const dy = touch.clientY - gesture.startY;
+            return dx * dx + dy * dy <= 12 * 12;
+        };
+        const stopMenuTouchTracking = () => {
+            doc.removeEventListener("touchstart", handleDocumentTouchChange, true);
+            doc.removeEventListener("touchmove", handleDocumentTouchChange, true);
+            doc.removeEventListener("touchend", handleDocumentTouchEnd, true);
+            doc.removeEventListener("touchcancel", handleDocumentTouchCancel, true);
+            activeMenuTouch = null;
+            if (this._holdMenuTouchCleanup === stopMenuTouchTracking) {
+                this._holdMenuTouchCleanup = null;
+            }
+        };
+        const handleDocumentTouchChange = (e: TouchEvent) => {
+            if (!activeMenuTouch) return;
+            if (
+                e.touches.length !== 1
+                || !isWithinTouchMoveThreshold(activeMenuTouch, e.touches[0])
+            ) {
+                activeMenuTouch.valid = false;
+            }
+        };
+        const handleDocumentTouchEnd = (e: TouchEvent) => {
+            if (!activeMenuTouch) return;
+            if (e.touches.length > 0 || e.changedTouches.length !== 1) {
+                activeMenuTouch.valid = false;
+            }
+            if (
+                e.touches.length === 0
+                && !activeMenuTouch.target.contains(e.target as Node | null)
+            ) {
+                stopMenuTouchTracking();
+            }
+        };
+        const handleDocumentTouchCancel = () => {
+            stopMenuTouchTracking();
+        };
+        const startMenuTouchTracking = (target: HTMLButtonElement, e: TouchEvent) => {
+            if (activeMenuTouch) {
+                activeMenuTouch.valid = false;
+                return;
+            }
+            const touch = e.touches[0];
+            activeMenuTouch = {
+                target,
+                valid: e.touches.length === 1 && touch !== undefined,
+                startX: touch?.clientX ?? 0,
+                startY: touch?.clientY ?? 0,
+            };
+            doc.addEventListener("touchstart", handleDocumentTouchChange, true);
+            doc.addEventListener("touchmove", handleDocumentTouchChange, true);
+            doc.addEventListener("touchend", handleDocumentTouchEnd, true);
+            doc.addEventListener("touchcancel", handleDocumentTouchCancel, true);
+            this._holdMenuTouchCleanup = stopMenuTouchTracking;
+        };
+
         const items: Array<{ label: string; callback: (() => void) | undefined }> = [
             { label: labels.capture, callback: this._callbacks.onQuickCaptureOpen },
             { label: labels.review, callback: this._callbacks.onReviewCurrentNote },
@@ -451,49 +521,55 @@ export class PetView implements PetRenderer {
             btn.setAttribute("type", "button");
             btn.textContent = item.label;
             const cb = item.callback;
-            let touchFired = false;
-            let touchStartX = 0;
-            let touchStartY = 0;
+            let actionExecuted = false;
+            const executeAction = () => {
+                if (actionExecuted) return;
+                actionExecuted = true;
+                this.dismissHoldMenu();
+                cb();
+            };
             btn.addEventListener("touchstart", (e) => {
                 e.stopPropagation();
-                touchFired = false;
-                const touch = e.touches[0];
-                if (touch) {
-                    touchStartX = touch.clientX;
-                    touchStartY = touch.clientY;
+                startMenuTouchTracking(btn, e);
+            }, { passive: true });
+            btn.addEventListener("touchmove", (e) => {
+                e.stopPropagation();
+                if (!activeMenuTouch || activeMenuTouch.target !== btn) return;
+                if (
+                    e.touches.length !== 1
+                    || !isWithinTouchMoveThreshold(activeMenuTouch, e.touches[0])
+                ) {
+                    activeMenuTouch.valid = false;
                 }
             }, { passive: true });
             btn.addEventListener("touchend", (e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                if (e.touches.length > 0) return;
+                this.suppressClicksAfterTouch();
+                if (!activeMenuTouch || activeMenuTouch.target !== btn) return;
+                const gesture = activeMenuTouch;
+                const gestureValid = gesture.valid;
+                stopMenuTouchTracking();
+                if (!gestureValid || e.touches.length > 0 || e.changedTouches.length !== 1) return;
                 const changedTouch = e.changedTouches[0];
-                if (changedTouch) {
-                    const dx = changedTouch.clientX - touchStartX;
-                    const dy = changedTouch.clientY - touchStartY;
-                    if (Math.sqrt(dx * dx + dy * dy) > 12) return;
-                }
-                if (touchFired) return;
-                touchFired = true;
-                this.dismissHoldMenu();
-                cb();
+                if (!isWithinTouchMoveThreshold(gesture, changedTouch)) return;
+                executeAction();
             });
             btn.addEventListener("touchcancel", (e) => {
                 e.stopPropagation();
-                touchFired = false;
+                this.suppressClicksAfterTouch();
+                stopMenuTouchTracking();
             });
             btn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                if (touchFired) { touchFired = false; return; }
-                this.dismissHoldMenu();
-                cb();
+                if (this._recentTouch) return;
+                executeAction();
             });
             btn.addEventListener("keydown", (e) => {
                 if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     e.stopPropagation();
-                    this.dismissHoldMenu();
-                    cb();
+                    executeAction();
                 }
             });
             menu.appendChild(btn);
@@ -515,6 +591,7 @@ export class PetView implements PetRenderer {
     }
 
     private dismissHoldMenu(): void {
+        this._holdMenuTouchCleanup?.();
         if (this._holdMenuDismissTimer !== null) {
             clearPlatformTimeout(this._holdMenuDismissTimer);
             this._holdMenuDismissTimer = null;

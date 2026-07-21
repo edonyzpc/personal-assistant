@@ -11,6 +11,8 @@
  *   - F-10: Provider first-use shared notification
  */
 
+import { readFileSync } from "node:fs";
+
 import {
     buildPreparedRecapDeliveryContent,
     buildQuietRecallNudgeContent,
@@ -21,7 +23,24 @@ import {
     mergePageletSettings,
     PAGELET_DEFAULTS,
 } from "../src/settings/pagelet/index";
-import { mergeQuietRecallSettings } from "../src/settings";
+import { mergeLoadedSettings, mergeQuietRecallSettings } from "../src/settings";
+
+function getCssBlock(source: string, marker: string, fromIndex = 0): string {
+    const markerIndex = source.indexOf(marker, fromIndex);
+    expect(markerIndex).toBeGreaterThanOrEqual(0);
+
+    const openBraceIndex = source.indexOf("{", markerIndex);
+    expect(openBraceIndex).toBeGreaterThan(markerIndex);
+
+    let depth = 0;
+    for (let index = openBraceIndex; index < source.length; index += 1) {
+        if (source[index] === "{") depth += 1;
+        if (source[index] === "}") depth -= 1;
+        if (depth === 0) return source.slice(openBraceIndex + 1, index);
+    }
+
+    throw new Error(`Unclosed CSS block for ${marker}`);
+}
 
 // ---------------------------------------------------------------------------
 // F-02: Recap Bubble Content
@@ -76,7 +95,7 @@ describe("F-02 Recap Bubble Content", () => {
             onLater: jest.fn(),
         });
 
-        expect(content.findings[0]?.sourceTitle).toBe("Single Note");
+        expect(content.findings[0]?.sourceTitle).toBe("Weekly Changes · Single Note");
     });
 
     it("preserves whyNow as inline hint", () => {
@@ -116,11 +135,9 @@ describe("F-03 No Modal Authorization", () => {
         expect(PAGELET_DEFAULTS.pageletProviderFirstUseNotified).toBe(false);
     });
 
-    it("merge starts scopeRecapPreparationEnabled=false for fresh installs; orchestrator auto-enables on first run", () => {
-        // The merge function is fail-closed: empty data.json → false.
-        // The orchestrator's ensureScopeRecapBackgroundAuthorization auto-enables.
+    it("merge starts scopeRecapPreparationEnabled=true for fresh installs", () => {
         const result = mergePageletSettings({});
-        expect(result.scopeRecapPreparationEnabled).toBe(false);
+        expect(result.scopeRecapPreparationEnabled).toBe(true);
     });
 
     it("merge preserves pageletProviderFirstUseNotified from data.json", () => {
@@ -136,6 +153,32 @@ describe("F-03 No Modal Authorization", () => {
             scopeRecapAuthorizationContextId: "test-id",
         });
         expect(result.scopeRecapPreparationEnabled).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// F-04: Reduced Motion
+// ---------------------------------------------------------------------------
+
+describe("F-04 Reduced Motion", () => {
+    it("disables every animated Pet child required by Slice D", () => {
+        const css = readFileSync("src/custom.pcss", "utf8");
+        const mascotSectionStart = css.indexOf("Pagelet (Review Assistant) — mascot visual tokens");
+        const reducedMotionCss = getCssBlock(
+            css,
+            "@media (prefers-reduced-motion: reduce)",
+            mascotSectionStart,
+        );
+
+        expect(reducedMotionCss).toMatch(
+            /\.pa-pagelet-pet\[data-state=idle\] \.pa-pagelet-pet-blink-group,\s*\.pa-pagelet-pet\[data-state=nudge\] \.pa-pagelet-pet-blink-group\s*{\s*animation:\s*none;\s*}/,
+        );
+        expect(reducedMotionCss).toMatch(
+            /\.pa-pagelet-pet\[data-state=working\] \.pa-pagelet-pet-dot-1,\s*\.pa-pagelet-pet\[data-state=working\] \.pa-pagelet-pet-dot-2,\s*\.pa-pagelet-pet\[data-state=working\] \.pa-pagelet-pet-dot-3\s*{\s*animation:\s*none;\s*}/,
+        );
+        expect(reducedMotionCss).toMatch(
+            /\.pa-pagelet-pet\[data-state=resting\] \.pa-pagelet-pet-zzz1,\s*\.pa-pagelet-pet\[data-state=resting\] \.pa-pagelet-pet-zzz2\s*{\s*animation:\s*none;\s*}/,
+        );
     });
 });
 
@@ -182,7 +225,8 @@ describe("F-05 Quiet Recall Nudge Content", () => {
 
 describe("F-07 quietRecallMode Settings", () => {
     it("defaults to 'off'", () => {
-        expect(PAGELET_DEFAULTS.quietRecallMode).toBe("off");
+        expect(mergeLoadedSettings({}).quietRecall.quietRecallMode).toBe("off");
+        expect(PAGELET_DEFAULTS).not.toHaveProperty("quietRecallMode");
     });
 
     it("QuietRecall merge defaults to 'off'", () => {
@@ -231,16 +275,61 @@ describe("F-07 quietRecallMode Settings", () => {
         expect(result.quietRecallMode).toBe("off");
     });
 
-    it("changing quietRecallMode does not affect Scope Recap settings", () => {
-        const pagelet = mergePageletSettings({
-            scopeRecapPreparationEnabled: true,
-            scopeRecapBackgroundAuthorization: "authorized-v1",
-            scopeRecapAuthorizationContextId: "test-id",
-            quietRecallMode: "on",
+    it("migrates the stale Pagelet mirror only when canonical mode is absent", () => {
+        const migrated = mergeLoadedSettings({
+            pagelet: { quietRecallMode: "on" },
+            quietRecall: {
+                enabled: true,
+                bubbleNudgesEnabled: false,
+            },
         });
-        // Scope Recap remains independent
-        expect(pagelet.scopeRecapPreparationEnabled).toBe(true);
-        expect(pagelet.quietRecallMode).toBe("on");
+
+        expect(migrated.quietRecall.quietRecallMode).toBe("on");
+        expect(migrated.pagelet).not.toHaveProperty("quietRecallMode");
+
+        const reloaded = mergeLoadedSettings(JSON.parse(JSON.stringify(migrated)));
+        expect(reloaded.quietRecall.quietRecallMode).toBe("on");
+        expect(reloaded.pagelet).not.toHaveProperty("quietRecallMode");
+    });
+
+    it("keeps an explicit canonical opt-out ahead of a conflicting stale mirror", () => {
+        const result = mergeLoadedSettings({
+            pagelet: { quietRecallMode: "on" },
+            quietRecall: {
+                enabled: true,
+                bubbleNudgesEnabled: true,
+                quietRecallMode: "off",
+            },
+        });
+
+        expect(result.quietRecall.quietRecallMode).toBe("off");
+        expect(result.pagelet).not.toHaveProperty("quietRecallMode");
+    });
+
+    it("keeps Quiet Recall independent from generic hints, Recap, and RHP", () => {
+        const result = mergeLoadedSettings({
+            pagelet: {
+                quietRecallMode: "on",
+                proactiveHints: false,
+                scopeRecapPreparationEnabled: false,
+                scopeRecapHighValueHints: true,
+            },
+            retrievalHabitProfile: {
+                enabled: false,
+                state: { aggregates: [] },
+            },
+        });
+
+        expect(result.quietRecall.quietRecallMode).toBe("on");
+        expect(result.pagelet).toMatchObject({
+            proactiveHints: false,
+            scopeRecapPreparationEnabled: false,
+            scopeRecapHighValueHints: true,
+        });
+        expect(result.retrievalHabitProfile).toEqual({
+            enabled: false,
+            state: { aggregates: [] },
+        });
     });
 });
 

@@ -212,7 +212,31 @@ export const normalizePath = (p: string) => p;
 export const moment = () => ({
     format: (format: string) => format === 'YYYY-MM-DD' ? '2026-05-18' : '',
 });
-export const getFrontMatterInfo = () => ({ exists: false, contentStart: 0, frontmatter: '', from: 0, to: 0 });
+export const getFrontMatterInfo = (markdown: string) => {
+    const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
+    if (!match) return { exists: false, contentStart: 0, frontmatter: '', from: 0, to: 0 };
+    return {
+        exists: true,
+        contentStart: match[0].length,
+        frontmatter: match[1] ?? '',
+        from: 4,
+        to: 4 + (match[1]?.length ?? 0),
+    };
+};
+export const parseYaml = (yaml: string): Record<string, unknown> => Object.fromEntries(yaml
+    .split(/\r?\n/)
+    .flatMap((line): Array<[string, unknown]> => {
+        const match = /^\s*([^:#]+):\s*(.*?)\s*$/.exec(line);
+        if (!match) return [];
+        const key = match[1]!.trim();
+        const raw = match[2]!.trim();
+        if (raw === 'true') return [[key, true]];
+        if (raw === 'false') return [[key, false]];
+        if (raw.startsWith('[') && raw.endsWith(']')) {
+            return [[key, raw.slice(1, -1).split(',').map((part) => part.trim())]];
+        }
+        return [[key, raw.replace(/^['"]|['"]$/g, '')]];
+    }));
 export const Platform = { isDesktop: true, isMobile: false };
 export function debounce<T extends unknown[], V>(cb: (...args: [...T]) => V, timeout = 0, resetTimer = true) {
     let timer: ReturnType<typeof setTimeout> | null = null;

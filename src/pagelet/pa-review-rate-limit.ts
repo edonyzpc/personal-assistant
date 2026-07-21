@@ -64,6 +64,25 @@ export type RateLimitDecision =
     | { ok: true }
     | { ok: false; reason: "hr-cap" | "day-cap"; resumeAt: number };
 
+export type ConditionalRateLimitDecision =
+    | RateLimitDecision
+    | { ok: false; reason: "condition" };
+
+/**
+ * A persisted slot that has not yet been paired with an actual provider
+ * invocation. Callers must either commit it immediately around invocation or
+ * roll it back when a final source/deadline check fails.
+ */
+export interface PageletRateLimitReservation {
+    commit(): void;
+    rollback(): Promise<void>;
+}
+
+export type ConditionalRateLimitLeaseDecision =
+    | { ok: true; reservation: PageletRateLimitReservation }
+    | { ok: false; reason: "hr-cap" | "day-cap"; resumeAt: number }
+    | { ok: false; reason: "condition" };
+
 /**
  * Storage seam. Implementations may be synchronous (in-memory test storage)
  * or asynchronous (Obsidian's plugin.data API). The limiter awaits both
@@ -214,17 +233,51 @@ export class PageletRateLimiter {
      * so by calling `reserve()` more than once per `reviewNote()`.
      */
     reserve(): Promise<RateLimitDecision> {
+        return this.enqueueReservation() as Promise<RateLimitDecision>;
+    }
+
+    /**
+     * Atomically re-check caller-owned source/policy state inside the same
+     * serialized critical section that commits the slot. A false (or thrown)
+     * predicate never mutates or persists the limiter state.
+     */
+    reserveIf(
+        canCommit: () => boolean | PromiseLike<boolean>,
+    ): Promise<ConditionalRateLimitDecision> {
+        return this.enqueueReservation(canCommit);
+    }
+
+    /**
+     * Persist a provisional slot that can be rolled back if an AbortSignal or
+     * source identity changes while storage is still pending. This keeps the
+     * persisted cross-instance hard cap while preventing no-call reservations.
+     */
+    reserveLeaseIf(
+        canCommit: () => boolean | PromiseLike<boolean>,
+    ): Promise<ConditionalRateLimitLeaseDecision> {
+        return this.enqueueSerialized(() => this.reserveLeaseOnce(canCommit));
+    }
+
+    private enqueueReservation(
+        canCommit?: () => boolean | PromiseLike<boolean>,
+    ): Promise<ConditionalRateLimitDecision> {
+        return this.enqueueSerialized(() => this.reserveOnce(canCommit));
+    }
+
+    private enqueueSerialized<TResult>(
+        operation: () => Promise<TResult>,
+    ): Promise<TResult> {
         if (this.coordinationKey) {
             const tails = getSharedReserveTails();
             const previous = tails.get(this.coordinationKey) ?? Promise.resolve();
-            const operation = previous.then(() => {
+            const result = previous.then(() => {
                 // A previous plugin instance may have committed while this
                 // instance was waiting. Reload inside the shared critical
                 // section before every check-and-save.
                 this.invalidate();
-                return this.reserveOnce();
+                return operation();
             });
-            const tail = operation.then(
+            const tail = result.then(
                 () => undefined,
                 () => undefined,
             );
@@ -234,26 +287,80 @@ export class PageletRateLimiter {
                     tails.delete(this.coordinationKey!);
                 }
             });
-            return operation;
+            return result;
         }
-        const operation = this.reserveTail.then(() => this.reserveOnce());
-        this.reserveTail = operation.then(
+        const result = this.reserveTail.then(operation);
+        this.reserveTail = result.then(
             () => undefined,
             () => undefined,
         );
-        return operation;
+        return result;
     }
 
-    private async reserveOnce(): Promise<RateLimitDecision> {
+    private async reserveOnce(
+        canCommit?: () => boolean | PromiseLike<boolean>,
+    ): Promise<ConditionalRateLimitDecision> {
         const state = await this.loadAndPrune();
         const now = this.now();
         const decision = decide(state, this.hourlyCap, this.dailyCap, now);
         if (!decision.ok) return decision;
+        if (canCommit && !await canCommit()) {
+            return { ok: false, reason: "condition" };
+        }
         state.hourlyTimestamps.push(now);
         state.dailyCount += 1;
         this.cached = state;
         await Promise.resolve(this.storage.save(cloneState(state)));
         return decision;
+    }
+
+    private async reserveLeaseOnce(
+        canCommit: () => boolean | PromiseLike<boolean>,
+    ): Promise<ConditionalRateLimitLeaseDecision> {
+        const state = await this.loadAndPrune();
+        const now = this.now();
+        const decision = decide(state, this.hourlyCap, this.dailyCap, now);
+        if (!decision.ok) return decision;
+        if (!await canCommit()) return { ok: false, reason: "condition" };
+
+        const dailyResetAt = state.dailyResetAt;
+        state.hourlyTimestamps.push(now);
+        state.dailyCount += 1;
+        this.cached = state;
+        await Promise.resolve(this.storage.save(cloneState(state)));
+
+        let settled = false;
+        return {
+            ok: true,
+            reservation: {
+                commit: () => {
+                    settled = true;
+                },
+                rollback: async () => {
+                    if (settled) return;
+                    settled = true;
+                    await this.enqueueSerialized(() => (
+                        this.rollbackReservationOnce(now, dailyResetAt)
+                    ));
+                },
+            },
+        };
+    }
+
+    private async rollbackReservationOnce(
+        reservedAt: number,
+        reservedDailyResetAt: number,
+    ): Promise<void> {
+        const state = await this.loadAndPrune();
+        const timestampIndex = state.hourlyTimestamps.lastIndexOf(reservedAt);
+        if (timestampIndex >= 0) state.hourlyTimestamps.splice(timestampIndex, 1);
+
+        const sameDailyWindow = state.dailyResetAt === reservedDailyResetAt;
+        if (sameDailyWindow && state.dailyCount > 0) state.dailyCount -= 1;
+        if (timestampIndex < 0 && !sameDailyWindow) return;
+
+        this.cached = state;
+        await Promise.resolve(this.storage.save(cloneState(state)));
     }
 
     /**

@@ -7,6 +7,21 @@ import {
     parseRecapInsightsResponse,
     parseRecallRelevanceResponse,
 } from "../src/pa";
+import { buildPreloadPrompt } from "../src/pagelet/llm";
+import { estimateTokens } from "../src/pagelet/pa-review-cost";
+
+describe("buildPreloadPrompt", () => {
+    it("keeps a long CJK prompt inside the actual input-token envelope", () => {
+        const prompt = buildPreloadPrompt([{
+            path: "notes/中文长笔记.md",
+            content: "中".repeat(20_000),
+        }], { input: 4_000, output: 1_000 });
+        const fullPrompt = `${prompt.systemPrompt}\n\n${prompt.userPrompt}`;
+
+        expect(estimateTokens(fullPrompt)).toBeLessThanOrEqual(4_000);
+        expect(fullPrompt).toContain("[...truncated]");
+    });
+});
 
 describe("buildRecapInsightsPrompt", () => {
     it("includes all note digests in output", () => {

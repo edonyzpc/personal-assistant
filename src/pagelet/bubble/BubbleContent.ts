@@ -41,7 +41,6 @@ export interface QuietRecallNudgeOptions {
 
 export interface QuietRecallNudgeCallbacks {
     onView(candidate: QuietRecallBubbleNudge): void;
-    onLink?(candidate: QuietRecallBubbleNudge): void;
     onDismiss(candidate: QuietRecallBubbleNudge): void;
     onLater(candidate: QuietRecallBubbleNudge): void;
 }
@@ -221,27 +220,43 @@ export function buildQuietRecallNudgeContent(
                 ? [{ text: pageletT("pagelet.onboarding.quietRecall", locale) }]
                 : []),
         ],
-        actions: [
-            {
-                label: pageletT("pagelet.bubble.quietRecall.view", locale),
-                description: pageletT("pagelet.bubble.quietRecall.viewDescription", locale),
-                icon: "panel-right-open",
-                primary: true,
-                callback: () => callbacks.onView(candidate),
-            },
-            ...(callbacks.onLink ? [{
-                label: pageletT("pagelet.bubble.quietRecall.link", locale),
-                description: pageletT("pagelet.bubble.quietRecall.linkDescription", locale),
-                icon: "link",
-                callback: () => callbacks.onLink?.(candidate),
-            }] satisfies BubbleAction[] : []),
-            {
-                label: pageletT("pagelet.bubble.later", locale),
-                variant: "compact",
-                callback: () => callbacks.onLater(candidate),
-            },
-        ],
+        actions: proactiveRecallActions({
+            onView: () => callbacks.onView(candidate),
+            onLater: () => callbacks.onLater(candidate),
+            onDismiss: () => callbacks.onDismiss(candidate),
+        }, locale),
     };
+}
+
+interface ProactiveRecallActionCallbacks {
+    onView(): void;
+    onLater(): void;
+    onDismiss(): void;
+}
+
+function proactiveRecallActions(
+    callbacks: ProactiveRecallActionCallbacks,
+    locale: PageletLocale,
+): BubbleAction[] {
+    return [
+        {
+            label: pageletT("pagelet.bubble.quietRecall.view", locale),
+            description: pageletT("pagelet.bubble.quietRecall.viewDescription", locale),
+            icon: "panel-right-open",
+            primary: true,
+            callback: callbacks.onView,
+        },
+        {
+            label: pageletT("pagelet.bubble.later", locale),
+            variant: "compact",
+            callback: callbacks.onLater,
+        },
+        {
+            label: pageletT("pagelet.bubble.quietRecall.dismiss", locale),
+            variant: "compact",
+            callback: callbacks.onDismiss,
+        },
+    ];
 }
 
 export interface DeliveryCandidateCallbacks {
@@ -298,6 +313,30 @@ export function buildRecallDeliveryContent(
                 callback: () => callbacks.onLater(candidate),
             },
         ],
+    };
+}
+
+/** Proactive Recall keeps Link/Save in the Detail Tab. */
+export function buildProactiveRecallDeliveryContent(
+    candidate: DeliveryCandidate & { kind: "recall" },
+    callbacks: {
+        onView(candidate: DeliveryCandidate & { kind: "recall" }): void;
+        onLater(candidate: DeliveryCandidate & { kind: "recall" }): void;
+        onDismiss(candidate: DeliveryCandidate & { kind: "recall" }): void;
+    },
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "recall-delivery",
+        findings: [deliveryCandidateFinding(candidate)],
+        inlineHint: candidate.whyNow[0]
+            ? { text: candidate.whyNow[0], icon: "info" }
+            : undefined,
+        actions: proactiveRecallActions({
+            onView: () => callbacks.onView(candidate),
+            onLater: () => callbacks.onLater(candidate),
+            onDismiss: () => callbacks.onDismiss(candidate),
+        }, locale),
     };
 }
 
@@ -375,15 +414,19 @@ export function buildPreparedRecapDeliveryContent(
 ): BubbleContent {
     const sourceCount = candidate.sourceRefs.length;
     const firstSource = candidate.sourceRefs[0];
+    const sourceMetadata = sourceCount > 1
+        ? pageletT("pagelet.bubble.recapDelivery.sourceCount", locale, { count: sourceCount })
+        : firstSource?.title ?? firstSource?.path;
+    const secondaryMetadata = [candidate.title.trim(), sourceMetadata]
+        .filter((value): value is string => Boolean(value))
+        .join(" · ");
     return {
         type: "recap-delivery",
         findings: [
             {
                 text: candidate.body,
                 sourceLink: firstSource?.path,
-                sourceTitle: sourceCount > 1
-                    ? pageletT("pagelet.bubble.recapDelivery.sourceCount", locale, { count: sourceCount })
-                    : firstSource?.title ?? firstSource?.path,
+                sourceTitle: secondaryMetadata || undefined,
             },
         ],
         inlineHint: candidate.whyNow[0]

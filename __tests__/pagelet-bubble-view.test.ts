@@ -577,6 +577,30 @@ describe("Pagelet BubbleView", () => {
         view.destroy();
     });
 
+    it("emits one close lifecycle callback for each visible close", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const onClose = jest.fn();
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+            onClose,
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({ type: "empty", findings: [], actions: [] }, anchor as unknown as HTMLElement);
+        view.close();
+        view.close();
+
+        expect(onClose).toHaveBeenCalledTimes(1);
+        view.destroy();
+    });
+
     it("keeps the close icon accessible without creating an Obsidian aria-label tooltip", () => {
         const container = new FakeElement("div");
         container.isConnected = true;

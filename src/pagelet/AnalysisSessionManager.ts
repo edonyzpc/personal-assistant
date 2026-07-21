@@ -107,12 +107,12 @@ export class AnalysisSessionManager {
     // Foreground run lifecycle
     // ======================================================================
 
-    beginForegroundReviewRun(): boolean {
+    beginForegroundReviewRun(options: { reserveBudget?: boolean } = {}): boolean {
         if (this.foregroundRunInProgress) {
             new Notice(this.t("pagelet.notice.alreadyReviewing"), 4000);
             return false;
         }
-        if (!this.reserveForegroundCall()) return false;
+        if (options.reserveBudget !== false && !this.reserveForegroundCall()) return false;
         this.foregroundRunInProgress = true;
         return true;
     }

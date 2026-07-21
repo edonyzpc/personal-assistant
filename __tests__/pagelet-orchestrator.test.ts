@@ -30,9 +30,12 @@ jest.mock("obsidian", () => {
 import { Notice, TFile } from "obsidian";
 
 import { PageletOrchestrator, type PageletHost } from "../src/pagelet/orchestrator";
+import { NudgeOwner, type NudgeTicket } from "../src/pagelet/BubbleCoordinator";
+import type { OnboardingNudge } from "../src/pagelet/bubble/BubbleContent";
 import type { PageletDetailPayload } from "../src/pagelet/tab/types";
 import type {
     ConfirmedMemoryRecord,
+    PatternDetectionResult,
     QuietRecallBubbleNudge,
     QuietRecallCandidate,
     QuietRecallEvaluationDiagnostics,
@@ -124,7 +127,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 quietRecallExplained: false,
                 quietAcknowledged: false,
                 pageletProviderFirstUseNotified: false,
-                quietRecallMode: "off",
             },
             contextPager: {
                 enabled: true,
@@ -211,7 +213,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         }),
         getScopeRecapAuthorizationContextId: () => "scope-recap-auth-test",
         getScopeRecapDataBoundarySnapshotId: () => "data_boundary:scope_recap",
-        requestScopeRecapBackgroundAuthorization: async () => "run",
         runScopeRecap: async () => {
             const generatedAt = new Date().toISOString();
             const sourceRefs = [
@@ -289,6 +290,33 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         ...overrides,
     };
     return host;
+}
+
+function makePetWorkProbe() {
+    const transitions: string[] = [];
+    const stateMachine = {
+        state: "idle" as "idle" | "working" | "nudge" | "resting",
+        proactiveHintsEnabled: true,
+        transition: jest.fn((event: "analysis-start" | "analysis-done" | "insights-ready") => {
+            transitions.push(event);
+            if (event === "analysis-start") stateMachine.state = "working";
+            if (event === "analysis-done") stateMachine.state = "idle";
+            if (event === "insights-ready") stateMachine.state = "nudge";
+        }),
+        forceState: jest.fn((state: "idle" | "working" | "nudge" | "resting") => {
+            stateMachine.state = state;
+        }),
+    };
+    const petView = {
+        rootEl: {} as HTMLElement,
+        taskKind: "review" as "review" | "connection" | "summary" | "background",
+        setTaskKind: jest.fn((taskKind: "review" | "connection" | "summary" | "background") => {
+            petView.taskKind = taskKind;
+        }),
+        stateMachine,
+        destroy: jest.fn(),
+    };
+    return { petView, stateMachine, transitions };
 }
 
 function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): ReviewQueueItem {
@@ -787,6 +815,24 @@ describe("PageletOrchestrator pet task visuals", () => {
 });
 
 describe("PageletOrchestrator detail expansion", () => {
+    it("reconciles pending tickets immediately when generic proactive hints are disabled", () => {
+        const host = makeHost();
+        host.settings.pagelet.proactiveHints = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            bubbleCoordinator: { reconcileNudge: (...args: unknown[]) => void };
+            petView: { stateMachine: { proactiveHintsEnabled: boolean } } | null;
+        };
+        const reconcileNudge = jest.spyOn(internals.bubbleCoordinator, "reconcileNudge");
+        internals.petView = { stateMachine: { proactiveHintsEnabled: true } };
+
+        orchestrator.getCommandCallbacks().onToggleProactiveHints();
+
+        expect(internals.petView.stateMachine.proactiveHintsEnabled).toBe(false);
+        expect(host.updatePageletSetting).toHaveBeenCalledWith("proactiveHints", false);
+        expect(reconcileNudge).toHaveBeenCalledTimes(1);
+    });
+
     it("maps Recap themes and tensions to insight and comparison card styles", async () => {
         const host = makeHost();
         const preparation = await host.runScopeRecap({ mode: "foreground-retry" });
@@ -1321,14 +1367,13 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
     });
 
-    it("resets a mismatched Recap authorization context and makes no provider call without a new Run choice", async () => {
+    it("clears mismatched legacy Recap metadata without disabling the capability", async () => {
         jest.useFakeTimers();
-        const providerRun = jest.fn(async () => {
-            throw new Error("provider must stay gated");
-        });
+        const providerRun = jest.fn(makeHost().runScopeRecap);
         const clearScopeRecapDetailSessionCache = jest.fn();
         const host = makeHost({
             getScopeRecapAuthorizationContextId: () => "scope-recap-auth-new",
+            isScopeRecapProviderConfigured: () => false,
             runScopeRecap: providerRun,
             clearScopeRecapDetailSessionCache,
         });
@@ -1343,21 +1388,21 @@ describe("PageletOrchestrator detail expansion", () => {
 
         expect(host.settings.pagelet).toMatchObject({
             scopeRecapBackgroundAuthorization: "pending",
-            scopeRecapPreparationEnabled: false,
+            scopeRecapPreparationEnabled: true,
             scopeRecapAuthorizationContextId: null,
         });
         expect(updatePageletSetting).toHaveBeenCalledWith(
             "scopeRecapBackgroundAuthorization",
             "pending",
         );
-        expect(updatePageletSetting).toHaveBeenCalledWith("scopeRecapPreparationEnabled", false);
+        expect(updatePageletSetting).not.toHaveBeenCalledWith("scopeRecapPreparationEnabled", false);
         expect(updatePageletSetting).toHaveBeenCalledWith("scopeRecapAuthorizationContextId", null);
         expect(providerRun).not.toHaveBeenCalled();
-        expect(clearScopeRecapDetailSessionCache).toHaveBeenCalled();
+        expect(clearScopeRecapDetailSessionCache).not.toHaveBeenCalled();
         orchestrator.destroy();
     });
 
-    it("persists the current Recap authorization context before the Run choice reaches the provider", async () => {
+    it("runs standard bounded Recap without persisting the legacy authorization tuple", async () => {
         const host = makeHost();
         host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
         host.settings.pagelet.scopeRecapPreparationEnabled = true;
@@ -1376,11 +1421,11 @@ describe("PageletOrchestrator detail expansion", () => {
         await internals.prepareRecapDelivery("pagelet-open");
 
         expect(host.settings.pagelet).toMatchObject({
-            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapBackgroundAuthorization: "pending",
             scopeRecapPreparationEnabled: true,
-            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
+            scopeRecapAuthorizationContextId: null,
         });
-        expect(saveSettings).toHaveBeenCalledTimes(1);
+        expect(saveSettings).not.toHaveBeenCalled();
         expect(providerRun).toHaveBeenCalledTimes(1);
         expect(providerRun).toHaveBeenCalledWith(expect.objectContaining({
             mode: "background",
@@ -1388,6 +1433,166 @@ describe("PageletOrchestrator detail expansion", () => {
             expectedDataBoundarySnapshotId: "data_boundary:scope_recap",
             expectedAuthorizationContextId: "scope-recap-auth-test",
         }));
+    });
+
+    it("shows summary working only while a background Recap provider call is active", async () => {
+        const ready = await makeHost().runScopeRecap({ mode: "background" });
+        const noInsight: ScopeRecapPreparationResult = {
+            status: "no_reliable_insight",
+            artifact: null,
+            localOverview: ready.localOverview,
+            attempt: { ...ready.attempt, outcome: "empty" },
+        };
+        let resolveProvider!: (result: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const host = makeHost({ runScopeRecap: () => providerGate });
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+        };
+        internals.petView = probe.petView;
+
+        const inFlight = internals.prepareRecapDelivery("idle");
+        await flushAsyncWork();
+
+        expect(probe.petView.setTaskKind).toHaveBeenCalledWith("summary");
+        expect(probe.stateMachine.state).toBe("working");
+        expect(probe.transitions).toEqual(["analysis-start"]);
+
+        resolveProvider(noInsight);
+        await inFlight;
+
+        expect(probe.stateMachine.state).toBe("idle");
+        expect(probe.transitions).toEqual(["analysis-start", "analysis-done"]);
+    });
+
+    it("does not let background Recap preparation preempt an existing nudge", async () => {
+        const host = makeHost();
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        probe.stateMachine.state = "nudge";
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+            preparedRecapArtifact: ScopeRecapRunResult | null;
+            preparedRecapNudgeFingerprint: string | null;
+        };
+        internals.petView = probe.petView;
+
+        await internals.prepareRecapDelivery("idle");
+
+        expect(internals.preparedRecapArtifact).not.toBeNull();
+        expect(internals.preparedRecapNudgeFingerprint).toMatch(/^recap-insight-/);
+        expect(probe.transitions).toEqual([]);
+        expect(probe.stateMachine.forceState).not.toHaveBeenCalled();
+        expect(probe.stateMachine.state).toBe("nudge");
+    });
+
+    it("settles background Recap working immediately when its scope is invalidated", async () => {
+        const ready = await makeHost().runScopeRecap({ mode: "background" });
+        let resolveProvider!: (result: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const host = makeHost({ runScopeRecap: () => providerGate });
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            prepareRecapDelivery(reason: "note-activity"): Promise<void>;
+            invalidatePreparedRecapScope(): void;
+        };
+        internals.petView = probe.petView;
+
+        const inFlight = internals.prepareRecapDelivery("note-activity");
+        await flushAsyncWork();
+        expect(probe.stateMachine.state).toBe("working");
+
+        internals.invalidatePreparedRecapScope();
+        expect(probe.stateMachine.state).toBe("idle");
+
+        resolveProvider(ready);
+        await inFlight;
+        expect(probe.transitions).toEqual(["analysis-start", "analysis-done"]);
+    });
+
+    it("settles background Recap working before Pagelet teardown", async () => {
+        const ready = await makeHost().runScopeRecap({ mode: "background" });
+        let resolveProvider!: (result: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const host = makeHost({ runScopeRecap: () => providerGate });
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+        };
+        internals.petView = probe.petView;
+
+        const inFlight = internals.prepareRecapDelivery("idle");
+        await flushAsyncWork();
+        expect(probe.stateMachine.state).toBe("working");
+
+        orchestrator.destroy();
+        expect(probe.stateMachine.state).toBe("idle");
+        expect(probe.petView.destroy).toHaveBeenCalledTimes(1);
+
+        resolveProvider(ready);
+        await inFlight;
+        expect(probe.transitions).toEqual(["analysis-start", "analysis-done"]);
+    });
+
+    it("settles background Recap working when provider preparation throws", async () => {
+        const host = makeHost({
+            runScopeRecap: async () => { throw new Error("provider failed"); },
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+        };
+        internals.petView = probe.petView;
+
+        await internals.prepareRecapDelivery("idle");
+
+        expect(probe.stateMachine.state).toBe("idle");
+        expect(probe.transitions).toEqual(["analysis-start", "analysis-done"]);
+    });
+
+    it.each([
+        ["provider missing", (host: PageletHost) => {
+            host.isScopeRecapProviderConfigured = () => false;
+        }],
+        ["Focus Mode", (host: PageletHost) => {
+            host.settings.focusMode = true;
+        }],
+        ["Pagelet disabled", (host: PageletHost) => {
+            host.settings.pagelet.enabled = false;
+        }],
+    ] as const)("does not claim Recap working when %s blocks provider work", async (_label, configure) => {
+        const runScopeRecap = jest.fn(makeHost().runScopeRecap);
+        const host = makeHost({ runScopeRecap });
+        configure(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+        };
+        internals.petView = probe.petView;
+
+        await internals.prepareRecapDelivery("idle");
+
+        expect(runScopeRecap).not.toHaveBeenCalled();
+        expect(probe.transitions).toEqual([]);
+        expect(probe.stateMachine.state).toBe("idle");
     });
 
     it("surfaces a high-value nudge through the actual background preparation path", async () => {
@@ -1401,11 +1606,16 @@ describe("PageletOrchestrator detail expansion", () => {
         const internals = orchestrator as unknown as {
             prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
             petView: {
+                rootEl: HTMLElement;
                 stateMachine: { forceState: (state: string) => void };
                 destroy(): void;
             };
         };
-        internals.petView = { stateMachine: { forceState }, destroy: jest.fn() };
+        internals.petView = {
+            rootEl: {} as HTMLElement,
+            stateMachine: { forceState },
+            destroy: jest.fn(),
+        };
 
         await internals.prepareRecapDelivery("pagelet-open");
         await internals.prepareRecapDelivery("pagelet-open");
@@ -1414,12 +1624,7 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(runScopeRecap).toHaveBeenCalledWith(expect.objectContaining({ mode: "background" }));
         expect(forceState).toHaveBeenCalledTimes(1);
         expect(forceState).toHaveBeenCalledWith("nudge");
-        expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([
-            expect.objectContaining({
-                fingerprint: expect.stringMatching(/^recap-insight-/),
-                shownAt: expect.any(Number),
-            }),
-        ]);
+        expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([]);
         orchestrator.destroy();
     });
 
@@ -1514,66 +1719,12 @@ describe("PageletOrchestrator detail expansion", () => {
         orchestrator.destroy();
     });
 
-    it("does not call the Recap provider when the disclosed scope changes before Run", async () => {
-        let resolveChoice!: (choice: "run") => void;
-        const choiceGate = new Promise<"run">((resolve) => { resolveChoice = resolve; });
-        let snapshotId = "scope-snapshot-a";
-        const buildScopeRecapLocalOverview = jest.fn(async (): Promise<ScopeRecapLocalOverview> => ({
-            kind: "local_scope_overview",
-            generatedAt: new Date().toISOString(),
-            scope: { kind: "folder", paths: ["notes/current.md", "notes/related.md"] },
-            sourceSnapshotId: snapshotId,
-            dataBoundarySnapshotId: "data_boundary:scope_recap",
-            sourceCoverage: {
-                totalSourceCount: 2,
-                includedSourceCount: 2,
-                skippedSourceCount: 0,
-                coverageRatio: 1,
-            },
-            includedSources: [
-                { path: "notes/current.md", title: "current", changed: false },
-                { path: "notes/related.md", title: "related", changed: false },
-            ],
-            skippedSources: [],
-        }));
-        const providerRun = jest.fn(makeHost().runScopeRecap);
-        const host = makeHost({
-            buildScopeRecapLocalOverview,
-            requestScopeRecapBackgroundAuthorization: () => choiceGate,
-            runScopeRecap: providerRun,
-        });
-        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
-        host.settings.pagelet.scopeRecapPreparationEnabled = false;
-        host.settings.pagelet.scopeRecapAuthorizationContextId = null;
-        persistPageletSettingUpdates(host);
-        const orchestrator = new PageletOrchestrator(host);
-        const internals = orchestrator as unknown as {
-            prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
-        };
-
-        const preparation = internals.prepareRecapDelivery("pagelet-open");
-        await flushAsyncWork();
-        snapshotId = "scope-snapshot-b";
-        resolveChoice("run");
-        await preparation;
-
-        expect(providerRun).not.toHaveBeenCalled();
-        expect(host.settings.pagelet).toMatchObject({
-            scopeRecapBackgroundAuthorization: "pending",
-            scopeRecapPreparationEnabled: false,
-            scopeRecapAuthorizationContextId: null,
-        });
-        orchestrator.destroy();
-    });
-
-    it("auto-authorizes Scope Recap without a modal and persists authorization on first use", async () => {
-        jest.useFakeTimers();
+    it("checks standard bounded Recap eligibility without mutating legacy authorization metadata", async () => {
         const host = makeHost();
-        host.settings.pagelet.preloadEnabled = false;
         host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
         host.settings.pagelet.scopeRecapPreparationEnabled = true;
         host.settings.pagelet.scopeRecapAuthorizationContextId = null;
-        persistPageletSettingUpdates(host);
+        const updatePageletSetting = persistPageletSettingUpdates(host);
         const saveSettings = jest.fn(async () => undefined);
         host.saveSettings = saveSettings;
         const orchestrator = new PageletOrchestrator(host);
@@ -1585,14 +1736,17 @@ describe("PageletOrchestrator detail expansion", () => {
             expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
         );
         expect(host.settings.pagelet).toMatchObject({
-            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapBackgroundAuthorization: "pending",
             scopeRecapPreparationEnabled: true,
-            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
+            scopeRecapAuthorizationContextId: null,
         });
-        expect(saveSettings).toHaveBeenCalledTimes(1);
+        expect(updatePageletSetting).not.toHaveBeenCalledWith(
+            "scopeRecapBackgroundAuthorization",
+            "authorized-v1",
+        );
+        expect(saveSettings).not.toHaveBeenCalled();
 
-        // Second call reuses existing authorization without re-saving
-        saveSettings.mockClear();
+        // Re-checking eligibility remains side-effect free.
         await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
             expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
         );
@@ -1600,57 +1754,18 @@ describe("PageletOrchestrator detail expansion", () => {
         orchestrator.destroy();
     });
 
-    it("auto-authorizes from pending state and persists authorization context across later checks", async () => {
-        const defaultHost = makeHost();
-        const providerRun = jest.fn(defaultHost.runScopeRecap);
-        const host = makeHost({
-            runScopeRecap: providerRun,
-        });
-        host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
-        host.settings.pagelet.scopeRecapPreparationEnabled = true;
-        host.settings.pagelet.scopeRecapAuthorizationContextId = null;
-        persistPageletSettingUpdates(host);
-        const saveSettings = jest.fn(async () => undefined);
-        host.saveSettings = saveSettings;
-        const orchestrator = new PageletOrchestrator(host);
-        const internals = orchestrator as unknown as {
-            ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null>;
-        };
-
-        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
-            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
-        );
-        await expect(internals.ensureScopeRecapBackgroundAuthorization()).resolves.toEqual(
-            expect.objectContaining({ sourceSnapshotId: "scope-snapshot-test" }),
-        );
-
-        expect(host.settings.pagelet).toMatchObject({
-            scopeRecapBackgroundAuthorization: "authorized-v1",
-            scopeRecapPreparationEnabled: true,
-            scopeRecapAuthorizationContextId: "scope-recap-auth-test",
-        });
-        expect(saveSettings).toHaveBeenCalledTimes(1);
-        expect(providerRun).not.toHaveBeenCalled();
-    });
-
     it.each([
-        ["run"],
-        ["adjust"],
-        ["cancel"],
+        ["explicit false", "pending", false],
+        ["legacy decline", "declined-v1", true],
     ] as const)(
-        "auto-authorizes on first preparation and re-authorizes after settings reset (variant %s)",
-        async () => {
-            jest.useFakeTimers();
-            const defaultHost = makeHost();
-            const providerRun = jest.fn(defaultHost.runScopeRecap);
-            const host = makeHost({
-                runScopeRecap: providerRun,
-            });
-            host.settings.pagelet.preloadEnabled = false;
-            host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
-            host.settings.pagelet.scopeRecapPreparationEnabled = true;
-            host.settings.pagelet.scopeRecapAuthorizationContextId = null;
-            persistPageletSettingUpdates(host);
+        "keeps the %s opt-out ahead of overview and provider work",
+        async (_label, authorization, preparationEnabled) => {
+            const buildScopeRecapLocalOverview = jest.fn(makeHost().buildScopeRecapLocalOverview);
+            const providerRun = jest.fn(makeHost().runScopeRecap);
+            const host = makeHost({ buildScopeRecapLocalOverview, runScopeRecap: providerRun });
+            host.settings.pagelet.scopeRecapBackgroundAuthorization = authorization;
+            host.settings.pagelet.scopeRecapPreparationEnabled = preparationEnabled;
+            const updatePageletSetting = persistPageletSettingUpdates(host);
             const orchestrator = new PageletOrchestrator(host);
             const internals = orchestrator as unknown as {
                 prepareRecapDelivery(reason: "pagelet-open"): Promise<void>;
@@ -1658,27 +1773,12 @@ describe("PageletOrchestrator detail expansion", () => {
 
             await internals.prepareRecapDelivery("pagelet-open");
 
-            expect(providerRun).toHaveBeenCalledTimes(1);
-            expect(host.settings.pagelet).toMatchObject({
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: "scope-recap-auth-test",
-            });
-
-            // Simulate a settings reset (e.g., user toggles off then on again).
-            host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
-            host.settings.pagelet.scopeRecapPreparationEnabled = true;
-            orchestrator.syncSettings();
-
-            jest.runOnlyPendingTimers();
-            await flushAsyncWork();
-
-            expect(providerRun).toHaveBeenCalledTimes(2);
-            expect(host.settings.pagelet).toMatchObject({
-                scopeRecapBackgroundAuthorization: "authorized-v1",
-                scopeRecapPreparationEnabled: true,
-                scopeRecapAuthorizationContextId: "scope-recap-auth-test",
-            });
+            expect(buildScopeRecapLocalOverview).not.toHaveBeenCalled();
+            expect(providerRun).not.toHaveBeenCalled();
+            expect(updatePageletSetting).not.toHaveBeenCalledWith(
+                "pageletProviderFirstUseNotified",
+                expect.anything(),
+            );
             orchestrator.destroy();
         },
     );
@@ -1808,6 +1908,45 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(host.updatePageletSetting).not.toHaveBeenCalled();
     });
 
+    it("settles foreground Recap Retry when the active note changes before delivery", async () => {
+        const firstFile = makeTFile("notes/current.md", { mtime: 100, size: 100 });
+        const secondFile = makeTFile("notes/next.md", { mtime: 200, size: 120 });
+        let activeFile: TFile | null = firstFile;
+        const ready = await makeHost().runScopeRecap({ mode: "foreground-retry" });
+        let resolveProvider!: (result: ScopeRecapPreparationResult) => void;
+        const providerGate = new Promise<ScopeRecapPreparationResult>((resolve) => {
+            resolveProvider = resolve;
+        });
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({
+            app: {
+                workspace: { getActiveFile: jest.fn(() => activeFile) },
+            } as unknown as PageletHost["app"],
+            runScopeRecap: () => providerGate,
+            openPageletDetailView,
+        });
+        const overview = await host.buildScopeRecapLocalOverview();
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            retryScopeRecap(overview: ScopeRecapLocalOverview): Promise<void>;
+        };
+        internals.petView = probe.petView;
+
+        const inFlight = internals.retryScopeRecap(overview);
+        await flushAsyncWork();
+        expect(probe.stateMachine.state).toBe("working");
+
+        activeFile = secondFile;
+        resolveProvider(ready);
+        await inFlight;
+
+        expect(openPageletDetailView).toHaveBeenCalledTimes(1);
+        expect(probe.transitions).toEqual(["analysis-start", "analysis-done"]);
+        expect(probe.stateMachine.state).toBe("idle");
+    });
+
     it("renders recent source and time-range facts in the local Recap fallback without a provider call", async () => {
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
         const runScopeRecap = jest.fn(makeHost().runScopeRecap);
@@ -1885,6 +2024,8 @@ describe("PageletOrchestrator detail expansion", () => {
             candidateCount: 1,
             evaluatedCandidateCount: 1,
             providerCalls: 1,
+            semanticRetrievalCalls: 1,
+            totalProviderCalls: 2,
             initialCalls: 1,
             languageRetryCalls: 0,
             cacheHits: 0,
@@ -2101,9 +2242,9 @@ describe("PageletOrchestrator detail expansion", () => {
                 options: { allowNudge?: boolean },
                 scopeKey: string | null,
             ): PageletDetailPayload;
-            petView: { stateMachine: { forceState: (state: string) => void } };
+            petView: { rootEl: HTMLElement; stateMachine: { forceState: (state: string) => void } };
         };
-        internals.petView = { stateMachine: { forceState } };
+        internals.petView = { rootEl: {} as HTMLElement, stateMachine: { forceState } };
 
         internals.storePreparedRecap(
             preparation.artifact,
@@ -2120,12 +2261,412 @@ describe("PageletOrchestrator detail expansion", () => {
 
         expect(forceState).toHaveBeenCalledTimes(1);
         expect(forceState).toHaveBeenCalledWith("nudge");
+        expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([]);
+    });
+
+    it("accounts an admitted Recap shown through Quick Review as the actual presentation", async () => {
+        const host = makeHost();
+        persistPageletSettingUpdates(host);
+        const preparation = await host.runScopeRecap({ mode: "background" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const orchestrator = new PageletOrchestrator(host);
+        const stateMachine = {
+            state: "idle",
+            forceState: jest.fn((state: string) => { stateMachine.state = state; }),
+            transition: jest.fn(),
+        };
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(() => { bubbleView.bubbleState = "visible"; }),
+            close: jest.fn(() => { bubbleView.bubbleState = "hidden"; }),
+        };
+        const internals = orchestrator as unknown as {
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            preparedRecapNudgeFingerprint: string | null;
+            petView: { rootEl: HTMLElement; stateMachine: typeof stateMachine };
+            bubbleView: typeof bubbleView;
+        };
+        internals.petView = { rootEl: {} as HTMLElement, stateMachine };
+        internals.bubbleView = bubbleView;
+        internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+        expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([]);
+
+        orchestrator.openQuickReview();
+
+        const [content] = bubbleView.show.mock.calls[0] as unknown as [{ type: string }];
+        expect(content.type).toBe("recap-delivery");
+        expect(internals.preparedRecapNudgeFingerprint).toBeNull();
         expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([
-            expect.objectContaining({
-                fingerprint: expect.stringMatching(/^recap-insight-/),
-                shownAt: expect.any(Number),
-            }),
+            expect.objectContaining({ fingerprint: expect.stringMatching(/^recap-insight-/) }),
         ]);
+    });
+
+    it("keeps a Recap produced during the existing shared cooldown silent", async () => {
+        const host = makeHost();
+        const preparation = await host.runScopeRecap({ mode: "background" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const forceState = jest.fn();
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            petView: { stateMachine: { forceState: (state: string) => void } };
+            proactiveHints: { onInsightsReady(options?: { enabled?: boolean }): boolean; onHintViewed(): void };
+            preparedRecapNudgeFingerprint: string | null;
+        };
+        internals.petView = { stateMachine: { forceState } };
+        expect(internals.proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+        internals.proactiveHints.onHintViewed();
+
+        internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+
+        expect(internals.preparedRecapNudgeFingerprint).toBeNull();
+        expect(forceState).not.toHaveBeenCalled();
+    });
+
+    it("commits Recap and Quiet Recall one-shot state only from presentation callbacks", () => {
+        const host = makeHost();
+        const updatePageletSetting = persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            preparedRecapNudgeFingerprint: string | null;
+            handleNudgePresented(ticket: NudgeTicket): void;
+        };
+        const recapTicket: NudgeTicket = {
+            key: "prepared-recap:recap-presented",
+            owner: NudgeOwner.PreparedRecap,
+            candidate: {
+                id: "recap-presented",
+                kind: "recap",
+                title: "Presented recap",
+                body: "A recap that actually reached the Bubble.",
+                sourceRefs: [{ path: "notes/recap.md" }],
+                whyNow: ["Ready now."],
+                preparedAt: "2026-07-05T12:00:00.000Z",
+                route: { surface: "tab", payloadType: "scope-recap" },
+            },
+        };
+        internals.preparedRecapNudgeFingerprint = recapTicket.candidate.id;
+
+        internals.handleNudgePresented(recapTicket);
+
+        expect(internals.preparedRecapNudgeFingerprint).toBeNull();
+        expect(updatePageletSetting).toHaveBeenCalledWith(
+            "scopeRecapNudgeSuppressions",
+            [expect.objectContaining({ fingerprint: "recap-presented" })],
+        );
+
+        const quietRecallCandidate: QuietRecallCandidate = {
+            id: "recall-presented",
+            title: "Recall: Presented",
+            summary: "A recall that actually reached the Bubble.",
+            sourceRefs: [{ path: "notes/recall.md", evidenceStrength: "medium" }],
+            whyNow: ["It is relevant to the current note."],
+            nextAction: "Open the source when useful.",
+            relation: "related",
+            score: 80,
+            generatedAt: "2026-07-05T12:01:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-recall-presented",
+        };
+        internals.handleNudgePresented({
+            key: "quiet-recall:recall-presented:2026-07-05T12:01:00.000Z",
+            owner: NudgeOwner.QuietRecall,
+            candidate: quietRecallCandidate,
+            deliveryCandidate: {
+                id: quietRecallCandidate.id,
+                kind: "recall",
+                title: quietRecallCandidate.title,
+                body: quietRecallCandidate.summary,
+                sourceRefs: [{ path: "notes/recall.md" }],
+                whyNow: quietRecallCandidate.whyNow,
+                preparedAt: quietRecallCandidate.generatedAt,
+                route: { surface: "tab", payloadType: "quiet-recall" },
+            },
+            nudge: {
+                candidateId: quietRecallCandidate.id,
+                currentPath: "notes/current.md",
+                relation: "related",
+                generatedAt: quietRecallCandidate.generatedAt,
+                onboardingExplanation: true,
+            },
+        });
+
+        expect(updatePageletSetting).toHaveBeenCalledWith("quietRecallExplained", true);
+    });
+
+    it.each([
+        ["maintenance_scan", "maintenanceScanSuggested"],
+        ["quick_capture", "quickCaptureExplained"],
+    ] as const)("commits %s onboarding only after a visible regular Bubble presentation", (kind, settingKey) => {
+        const host = makeHost();
+        host.settings.pagelet.proactiveHints = true;
+        const updatePageletSetting = persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const stateMachine = {
+            state: "idle",
+            proactiveHintsEnabled: true,
+            forceState: jest.fn((state: string) => { stateMachine.state = state; }),
+            transition: jest.fn(),
+        };
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(() => { bubbleView.bubbleState = "visible"; }),
+            close: jest.fn(() => { bubbleView.bubbleState = "hidden"; }),
+        };
+        const internals = orchestrator as unknown as {
+            petView: { rootEl: HTMLElement; stateMachine: typeof stateMachine };
+            bubbleView: typeof bubbleView;
+            onboardingNudge: OnboardingNudge | null;
+        };
+        internals.petView = { rootEl: {} as HTMLElement, stateMachine };
+        internals.bubbleView = bubbleView;
+
+        expect(orchestrator.setOnboardingNudge(kind)).toBe(true);
+        expect(updatePageletSetting).not.toHaveBeenCalledWith(settingKey, true);
+
+        orchestrator.openQuickReview();
+
+        const [firstContent] = bubbleView.show.mock.calls[0] as unknown as [{ type: string }];
+        expect(firstContent.type).toBe("nudge");
+        expect(updatePageletSetting).toHaveBeenCalledWith(settingKey, true);
+        expect(internals.onboardingNudge).toBeNull();
+
+        bubbleView.bubbleState = "hidden";
+        orchestrator.openQuickReview();
+        const [secondContent] = bubbleView.show.mock.calls[1] as unknown as [{ type: string }];
+        expect(secondContent.type).not.toBe("nudge");
+        expect(updatePageletSetting.mock.calls.filter(([key]) => key === settingKey)).toHaveLength(1);
+    });
+
+    it("does not re-admit rejected Pattern or Onboarding payloads after cooldown or re-enable", () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-07-05T12:00:00.000Z"));
+        const host = makeHost();
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.pagelet.proactiveHintsCooldown = 60;
+        persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const stateMachine = {
+            state: "idle",
+            proactiveHintsEnabled: true,
+            forceState: jest.fn(),
+        };
+        const destroyPet = jest.fn();
+        const pattern: PatternDetectionResult = {
+            generatedAt: "2026-07-05T12:01:00.000Z",
+            totalCount: 1,
+            patterns: [],
+        };
+        const internals = orchestrator as unknown as {
+            petView: { rootEl: HTMLElement; stateMachine: typeof stateMachine; destroy: typeof destroyPet };
+            proactiveHints: {
+                onInsightsReady(): boolean;
+                recordHintPresented(): void;
+            };
+            currentAdmittedNudgeTickets(): NudgeTicket[];
+            patternDetectionNudge: PatternDetectionResult | null;
+            onboardingNudge: OnboardingNudge | null;
+        };
+        internals.petView = { rootEl: {} as HTMLElement, stateMachine, destroy: destroyPet };
+        try {
+            expect(internals.proactiveHints.onInsightsReady()).toBe(true);
+            internals.proactiveHints.recordHintPresented();
+
+            orchestrator.setPatternDetectionNudge(pattern);
+            expect(orchestrator.setOnboardingNudge("quick_capture")).toBe(false);
+            expect(internals.patternDetectionNudge).toEqual(pattern);
+            expect(internals.onboardingNudge?.kind).toBe("quick_capture");
+            expect(internals.currentAdmittedNudgeTickets()).toEqual([]);
+
+            jest.advanceTimersByTime(60 * 60 * 1000);
+            orchestrator.getCommandCallbacks().onToggleProactiveHints();
+            orchestrator.getCommandCallbacks().onToggleProactiveHints();
+            orchestrator.setPatternDetectionNudge(pattern);
+            expect(orchestrator.setOnboardingNudge("quick_capture")).toBe(false);
+
+            expect(internals.currentAdmittedNudgeTickets()).toEqual([]);
+            expect(stateMachine.forceState).not.toHaveBeenCalledWith("nudge");
+        } finally {
+            orchestrator.destroy();
+            jest.useRealTimers();
+        }
+    });
+
+    it("clears only generic admissions when proactive hints are disabled", () => {
+        const host = makeHost();
+        host.settings.pagelet.proactiveHints = true;
+        persistPageletSettingUpdates(host);
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            preparedRecapNudgeFingerprint: string | null;
+            patternDetectionNudgeAdmissionKey: string | null;
+            onboardingNudgeAdmissionKey: string | null;
+        };
+        internals.preparedRecapNudgeFingerprint = "recap-admission";
+        internals.patternDetectionNudgeAdmissionKey = "pattern:admitted";
+        internals.onboardingNudgeAdmissionKey = "onboarding:admitted";
+
+        orchestrator.getCommandCallbacks().onToggleProactiveHints();
+
+        expect(internals.patternDetectionNudgeAdmissionKey).toBeNull();
+        expect(internals.onboardingNudgeAdmissionKey).toBeNull();
+        expect(internals.preparedRecapNudgeFingerprint).toBe("recap-admission");
+        orchestrator.destroy();
+    });
+
+    it("keeps the Quiet Recall ticket key stable when only generatedAt changes", () => {
+        const host = makeHost();
+        const orchestrator = new PageletOrchestrator(host);
+        const candidate: QuietRecallCandidate = {
+            id: "recall-stable-key",
+            title: "Recall: Stable identity",
+            summary: "The same evaluated candidate was regenerated.",
+            sourceRefs: [{ path: "notes/stable.md", evidenceStrength: "medium" }],
+            whyNow: ["It remains relevant."],
+            nextAction: "Open the source when useful.",
+            relation: "related",
+            score: 80,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-stable-key",
+        };
+        const nudge: QuietRecallBubbleNudge = {
+            candidateId: candidate.id,
+            currentPath: "notes/current.md",
+            relation: candidate.relation,
+            generatedAt: candidate.generatedAt,
+        };
+        const internals = orchestrator as unknown as {
+            quietRecallNudgeCandidate: QuietRecallCandidate | null;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            currentAdmittedNudgeTickets(): NudgeTicket[];
+        };
+        internals.quietRecallNudgeCandidate = candidate;
+        internals.quietRecallBubbleNudge = nudge;
+        const first = internals.currentAdmittedNudgeTickets().find(
+            (ticket) => ticket.owner === NudgeOwner.QuietRecall,
+        );
+
+        internals.quietRecallNudgeCandidate = {
+            ...candidate,
+            generatedAt: "2026-07-05T12:05:00.000Z",
+        };
+        internals.quietRecallBubbleNudge = {
+            ...nudge,
+            generatedAt: "2026-07-05T12:05:00.000Z",
+        };
+        const second = internals.currentAdmittedNudgeTickets().find(
+            (ticket) => ticket.owner === NudgeOwner.QuietRecall,
+        );
+
+        expect(first?.key).toBe(`${NudgeOwner.QuietRecall}:eval-stable-key`);
+        expect(second?.key).toBe(first?.key);
+        orchestrator.destroy();
+    });
+
+    it("clears a Recap-only Pet nudge when its source scope is invalidated", async () => {
+        const host = makeHost();
+        const preparation = await host.runScopeRecap({ mode: "background" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            invalidatePreparedRecapScope(): void;
+        };
+        internals.petView = probe.petView;
+        internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+        expect(probe.stateMachine.state).toBe("nudge");
+
+        internals.invalidatePreparedRecapScope();
+
+        expect(probe.stateMachine.state).toBe("idle");
+        orchestrator.destroy();
+    });
+
+    it("clears a Quiet Recall nudge even when an unadmitted raw Pattern remains", () => {
+        const host = makeHost();
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.quietRecallMode = "on";
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const candidate: QuietRecallCandidate = {
+            id: "recall-invalidated-with-raw-pattern",
+            title: "Recall: Invalidated",
+            summary: "This candidate will be invalidated before presentation.",
+            sourceRefs: [{ path: "notes/invalidated.md", evidenceStrength: "medium" }],
+            whyNow: ["It was relevant before the source changed."],
+            nextAction: "Open the source when useful.",
+            relation: "related",
+            score: 80,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-invalidated-with-raw-pattern",
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof probe.petView;
+            quietRecallNudgeCandidate: QuietRecallCandidate | null;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            patternDetectionNudge: PatternDetectionResult | null;
+            patternDetectionNudgeAdmissionKey: string | null;
+            reconcilePetNudge(): void;
+            clearQuietRecallBubbleNudge(): void;
+        };
+        internals.petView = probe.petView;
+        internals.quietRecallNudgeCandidate = candidate;
+        internals.quietRecallBubbleNudge = {
+            candidateId: candidate.id,
+            currentPath: "notes/current.md",
+            relation: candidate.relation,
+            generatedAt: candidate.generatedAt,
+        };
+        internals.patternDetectionNudge = {
+            generatedAt: "2026-07-05T12:01:00.000Z",
+            totalCount: 1,
+            patterns: [],
+        };
+        internals.patternDetectionNudgeAdmissionKey = null;
+        internals.reconcilePetNudge();
+        expect(probe.stateMachine.state).toBe("nudge");
+
+        internals.clearQuietRecallBubbleNudge();
+
+        expect(probe.stateMachine.state).toBe("idle");
+        orchestrator.destroy();
     });
 
     it.each([
@@ -2664,7 +3205,7 @@ describe("PageletOrchestrator detail expansion", () => {
         orchestrator.destroy();
     });
 
-    it("prepares a Quiet Recall Bubble nudge after opening a markdown note", async () => {
+    it("prepares a Quiet Recall Bubble nudge when generic proactive hints are off", async () => {
         jest.useFakeTimers();
         const candidate: QuietRecallCandidate = {
             id: "qr-vault-beta",
@@ -2686,16 +3227,17 @@ describe("PageletOrchestrator detail expansion", () => {
             candidates: [candidate],
         }));
         const host = makeHost({ runQuietRecall });
-        host.settings.pagelet.proactiveHints = true;
+        host.settings.pagelet.proactiveHints = false;
         host.settings.quietRecall.bubbleNudgesEnabled = true;
         host.settings.quietRecall.quietRecallMode = "on";
         const orchestrator = new PageletOrchestrator(host);
         const petView = {
+            rootEl: {} as HTMLElement,
             unmount: jest.fn(),
             mount: jest.fn(),
             destroy: jest.fn(),
             stateMachine: {
-                proactiveHintsEnabled: true,
+                proactiveHintsEnabled: false,
                 forceState: jest.fn(),
                 transition: jest.fn(),
             },
@@ -2730,7 +3272,119 @@ describe("PageletOrchestrator detail expansion", () => {
             onboardingExplanation: true,
         });
         expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
-        expect(host.updatePageletSetting).toHaveBeenCalledWith("quietRecallExplained", true);
+        expect(host.updatePageletSetting).not.toHaveBeenCalledWith("quietRecallExplained", true);
+    });
+
+    it("does not let the generic hint cooldown suppress Quiet Recall", async () => {
+        const candidate: QuietRecallCandidate = {
+            id: "qr-independent-from-generic-cooldown",
+            title: "Recall: Independent",
+            summary: "Quiet Recall follows its own delivery gates.",
+            sourceRefs: [{ path: "notes/independent.md", evidenceStrength: "medium" }],
+            whyNow: ["This older note is directly relevant to the current note."],
+            nextAction: "Open the source when useful.",
+            relation: "related",
+            score: 70,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-independent-from-generic-cooldown",
+        };
+        const host = makeHost({
+            runQuietRecall: async () => ({
+                generatedAt: candidate.generatedAt,
+                currentPath: "notes/current.md",
+                totalCount: 1,
+                candidates: [candidate],
+            }),
+        });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.pagelet.proactiveHintsCooldown = 60;
+        host.settings.quietRecall.quietRecallMode = "on";
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            rootEl: {} as HTMLElement,
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+            destroy: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            proactiveHints: {
+                onInsightsReady(): boolean;
+                onHintViewed(): void;
+            };
+            prepareQuietRecallBubbleNudge(): Promise<void>;
+        };
+        internals.petView = petView;
+
+        expect(internals.proactiveHints.onInsightsReady()).toBe(true);
+        internals.proactiveHints.onHintViewed();
+        expect(internals.proactiveHints.onInsightsReady()).toBe(false);
+
+        await internals.prepareQuietRecallBubbleNudge();
+
+        expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
+        orchestrator.destroy();
+    });
+
+    it("does not consume the generic hint cooldown when Quiet Recall nudges", async () => {
+        const candidate: QuietRecallCandidate = {
+            id: "qr-does-not-consume-generic-cooldown",
+            title: "Recall: Separate clock",
+            summary: "Quiet Recall does not mutate generic hint state.",
+            sourceRefs: [{ path: "notes/separate-clock.md", evidenceStrength: "medium" }],
+            whyNow: ["This older note is directly relevant to the current note."],
+            nextAction: "Open the source when useful.",
+            relation: "related",
+            score: 70,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-qr-does-not-consume-generic-cooldown",
+        };
+        const host = makeHost({
+            runQuietRecall: async () => ({
+                generatedAt: candidate.generatedAt,
+                currentPath: "notes/current.md",
+                totalCount: 1,
+                candidates: [candidate],
+            }),
+        });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.pagelet.proactiveHintsCooldown = 60;
+        host.settings.quietRecall.quietRecallMode = "on";
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            rootEl: {} as HTMLElement,
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+            destroy: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            proactiveHints: {
+                hasPendingHint: boolean;
+                onInsightsReady(): boolean;
+                onHintViewed(): void;
+            };
+            prepareQuietRecallBubbleNudge(): Promise<void>;
+        };
+        internals.petView = petView;
+
+        await internals.prepareQuietRecallBubbleNudge();
+
+        expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
+        expect(internals.proactiveHints.hasPendingHint).toBe(false);
+        internals.proactiveHints.onHintViewed();
+        expect(internals.proactiveHints.onInsightsReady()).toBe(true);
+        orchestrator.destroy();
     });
 
     it("keeps proactive Quiet Recall quiet below the Bubble score threshold", async () => {
@@ -3188,6 +3842,8 @@ describe("PageletOrchestrator detail expansion", () => {
             candidateCount: 1,
             evaluatedCandidateCount: 1,
             providerCalls: 1,
+            semanticRetrievalCalls: 1,
+            totalProviderCalls: 2,
             initialCalls: 1,
             languageRetryCalls: 0,
             cacheHits: 0,
@@ -3211,10 +3867,11 @@ describe("PageletOrchestrator detail expansion", () => {
 
         expect(getPageletFeatureRateLimitStatus).toHaveBeenCalledTimes(1);
         const message = jest.mocked(Notice).mock.calls.at(-1)?.[0] as string;
-        expect(message).toContain("Scope Recap preparation: Stopped");
+        expect(message).toContain("Scope Recap preparation: Running");
         expect(message).toContain("actual AI call yes");
         expect(message).toContain("estimated cost $0.001000");
         expect(message).toContain("Quiet Recall evaluation: round round-12");
+        expect(message).toContain("2 actual call(s)");
         expect(message).toContain("estimated cost $0.002000");
         expect(message).toContain("Scope Recap 1/2 this hour and 4/10 today");
         expect(message).toContain("Quiet Recall 3/10 this hour and 8/50 today");
@@ -3222,18 +3879,164 @@ describe("PageletOrchestrator detail expansion", () => {
 });
 
 describe("PageletOrchestrator review panel scope flow", () => {
-    it("does not open an empty prepared-findings panel", () => {
-        const host = makeHost();
+    it.each(["discover", "summary"] as const)(
+        "keeps the existing %s Panel, Bubble, layout, and pending summary unchanged when prepared cache is empty",
+        (existingLayout) => {
+            const foregroundAnalyze = jest.fn(async () => ({
+                findings: [],
+                analyzedFiles: [],
+                analyzedAt: Date.now(),
+                tokenCost: { input: 0, output: 0 },
+            }));
+            const preloadAnalyze = jest.fn(async () => ({
+                findings: [],
+                analyzedFiles: [],
+                analyzedAt: Date.now(),
+                tokenCost: { input: 0, output: 0 },
+            }));
+            const host = makeHost({
+                createForegroundAnalyzeCallback: () => foregroundAnalyze,
+                createPreloadAnalyzeCallback: () => preloadAnalyze,
+            });
+            const orchestrator = new PageletOrchestrator(host);
+            const panelView = { open: jest.fn(), close: jest.fn(), isOpen: true };
+            const bubbleView = { close: jest.fn() };
+            const pendingNote = {
+                fileName: "pagelet-scope-recap.md",
+                markdown: "# Existing recap",
+                targetFolder: ".pagelet",
+                targetPath: ".pagelet/pagelet-scope-recap.md",
+                sources: ["notes/current.md"],
+                tokenCost: { input: 1, output: 2 },
+            };
+            const internals = orchestrator as unknown as {
+                panelView: typeof panelView;
+                bubbleView: typeof bubbleView;
+                currentPanelLayout: "discover" | "summary" | null;
+                saveFlow: {
+                    pending: typeof pendingNote | null;
+                    setPending(note: typeof pendingNote): void;
+                };
+            };
+            internals.panelView = panelView;
+            internals.bubbleView = bubbleView;
+            internals.currentPanelLayout = existingLayout;
+            internals.saveFlow.setPending(pendingNote);
+
+            orchestrator.getCommandCallbacks().onOpenPreparedReview();
+
+            expect(panelView.open).not.toHaveBeenCalled();
+            expect(panelView.close).not.toHaveBeenCalled();
+            expect(panelView.isOpen).toBe(true);
+            expect(bubbleView.close).not.toHaveBeenCalled();
+            expect(internals.currentPanelLayout).toBe(existingLayout);
+            expect(internals.saveFlow.pending).toBe(pendingNote);
+            expect(foregroundAnalyze).not.toHaveBeenCalled();
+            expect(preloadAnalyze).not.toHaveBeenCalled();
+            expect(Notice).toHaveBeenCalledWith("No background suggestions are available yet.", 4000);
+        },
+    );
+
+    it("opens cached prepared findings as read-only Panel content without provider work or current-analysis promotion", async () => {
+        const foregroundAnalyze = jest.fn(async () => ({
+            findings: [],
+            analyzedFiles: [],
+            analyzedAt: Date.now(),
+            tokenCost: { input: 0, output: 0 },
+        }));
+        const preloadAnalyze = jest.fn(async () => ({
+            findings: [],
+            analyzedFiles: [],
+            analyzedAt: Date.now(),
+            tokenCost: { input: 0, output: 0 },
+        }));
+        const writeReviewNote = jest.fn(async () => ({
+            success: true as const,
+            filePath: ".pagelet/unexpected.md",
+        }));
+        const openPageletDetailView = jest.fn((_payload: PageletDetailPayload): void => undefined);
+        const host = makeHost({
+            createForegroundAnalyzeCallback: () => foregroundAnalyze,
+            createPreloadAnalyzeCallback: () => preloadAnalyze,
+            writeReviewNote,
+            openPageletDetailView,
+        });
         const orchestrator = new PageletOrchestrator(host);
-        const panelView = { open: jest.fn() };
-        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+        const panelView = {
+            open: jest.fn(),
+            close: jest.fn(),
+            currentLayoutType: "review" as const,
+            currentVisibleFindings: [],
+            currentPanelExtra: { preparedReadOnly: true },
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            preloadCache: {
+                set(result: {
+                    findings: Array<{ text: string; sourceFile: string; sourceTitle: string }>;
+                    analyzedFiles: string[];
+                    analyzedAt: number;
+                    tokenCost: { input: number; output: number };
+                    usedGovernedMemoryClaimIds?: string[];
+                }): void;
+            };
+            sessionManager: {
+                currentAnalysisFindings(): unknown[];
+                analysisSourcePath: string | null;
+            };
+            saveFlow: { pending: unknown };
+            currentPanelLayout: string | null;
+        };
+        internals.panelView = panelView;
+        internals.preloadCache.set({
+            findings: [{
+                text: "Cached background finding.",
+                sourceFile: "notes/prepared.md",
+                sourceTitle: "prepared",
+            }],
+            analyzedFiles: ["notes/prepared.md"],
+            analyzedAt: Date.now(),
+            tokenCost: { input: 10, output: 5 },
+            usedGovernedMemoryClaimIds: ["memory-claim-1"],
+        });
 
-        (orchestrator as unknown as {
-            handleExpandPanel(type?: string): void;
-        }).handleExpandPanel("prepared");
+        orchestrator.getCommandCallbacks().onOpenPreparedReview();
 
-        expect(panelView.open).not.toHaveBeenCalled();
-        expect(Notice).toHaveBeenCalledWith("No background suggestions are available yet.", 4000);
+        expect(foregroundAnalyze).not.toHaveBeenCalled();
+        expect(preloadAnalyze).not.toHaveBeenCalled();
+        expect(internals.currentPanelLayout).toBe("review");
+        expect(internals.sessionManager.currentAnalysisFindings()).toEqual([]);
+        expect(internals.sessionManager.analysisSourcePath).toBeNull();
+        expect(internals.saveFlow.pending).toBeNull();
+        expect(panelView.open).toHaveBeenCalledWith(
+            "review",
+            [{
+                title: "prepared",
+                description: "Cached background finding.",
+                sourceFile: "notes/prepared.md",
+                sourceTitle: "prepared",
+                sourceId: undefined,
+                suggestion: undefined,
+                insightText: undefined,
+                diagnostics: undefined,
+            }],
+            {
+                preparedReadOnly: true,
+                usedGovernedMemoryClaimIds: ["memory-claim-1"],
+            },
+        );
+
+        (orchestrator as unknown as { expandPanelToTab(): void }).expandPanelToTab();
+        await (orchestrator as unknown as {
+            saveFindingsAsReviewNote(findings: Array<{ title: string; description: string }>): Promise<void>;
+        }).saveFindingsAsReviewNote([{
+            title: "prepared",
+            description: "Cached background finding.",
+        }]);
+
+        expect(panelView.close).not.toHaveBeenCalled();
+        expect(openPageletDetailView).not.toHaveBeenCalled();
+        expect(writeReviewNote).not.toHaveBeenCalled();
     });
 
     it("opens the review panel without treating preload findings as saveable review output", () => {
@@ -3476,6 +4279,57 @@ describe("PageletOrchestrator review panel scope flow", () => {
 });
 
 describe("PageletOrchestrator connection discovery", () => {
+    it("does not pre-reserve the legacy generic budget before Discover reaches a provider seam", async () => {
+        const currentFile = makeTFile("notes/current.md");
+        const cachedRead = jest.fn(async () => "Current note body");
+        const findRelatedNotes = jest.fn<PageletHost["findRelatedNotes"]>(async () => []);
+        const discoverConnections = jest.fn<PageletHost["discoverConnections"]>(async () => null);
+        const host = makeHost({
+            app: {
+                workspace: { getActiveFile: jest.fn(() => currentFile) },
+                vault: { cachedRead },
+                metadataCache: { getFileCache: jest.fn(() => null) },
+            } as unknown as PageletHost["app"],
+            findRelatedNotes,
+            discoverConnections,
+        });
+        host.settings.pagelet.foregroundPerHourCap = 0;
+        const orchestrator = new PageletOrchestrator(host);
+
+        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+
+        expect(cachedRead).toHaveBeenCalled();
+        expect(findRelatedNotes).toHaveBeenCalled();
+        expect(discoverConnections).not.toHaveBeenCalled();
+        orchestrator.destroy();
+    });
+
+    it("fails closed before reading or calling a provider when the active note is outside Data Boundary", async () => {
+        const currentFile = makeTFile("private/current.md");
+        const cachedRead = jest.fn(async () => "PRIVATE-CONTENT");
+        const findRelatedNotes = jest.fn<PageletHost["findRelatedNotes"]>(async () => []);
+        const discoverConnections = jest.fn<PageletHost["discoverConnections"]>(async () => null);
+        const panelView = { open: jest.fn() };
+        const host = makeHost({
+            app: {
+                workspace: { getActiveFile: jest.fn(() => currentFile) },
+                vault: { cachedRead },
+            } as unknown as PageletHost["app"],
+            isPathAllowedForPagelet: () => false,
+            findRelatedNotes,
+            discoverConnections,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+
+        expect(cachedRead).not.toHaveBeenCalled();
+        expect(findRelatedNotes).not.toHaveBeenCalled();
+        expect(discoverConnections).not.toHaveBeenCalled();
+        expect(panelView.open).not.toHaveBeenCalled();
+    });
+
     it("shows the Memory-not-ready empty state when related-note search is unavailable", async () => {
         const panelView = { open: jest.fn() };
         const discoverConnections = jest.fn(async () => null);
@@ -3507,7 +4361,7 @@ describe("PageletOrchestrator connection discovery", () => {
         );
     });
 
-    it("uses explicit wikilinks as Discovery connections when Memory related-note search is unavailable", async () => {
+    it("keeps explicit wikilinks as fallback while still attempting Memory and AI enrichment", async () => {
         const currentFile = makeTFile("notes/current.md");
         const linkedFile = makeTFile("notes/linked.md");
         const panelView = { open: jest.fn() };
@@ -3546,23 +4400,21 @@ describe("PageletOrchestrator connection discovery", () => {
             isMemoryReadyForPageletDiscovery: async () => false,
             discoverConnections,
         });
+        host.settings.pagelet.foregroundPerHourCap = 1;
+        host.settings.pagelet.foregroundPerDayCap = 1;
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
         await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
 
-        expect(findRelatedNotes).toHaveBeenCalledWith(
-            "notes/current.md",
-            [{ path: "notes/current.md", content: "Current note body with [[linked]]" }],
-            ["notes/current.md", "notes/linked.md"],
-        );
+        expect(findRelatedNotes).toHaveBeenCalledTimes(1);
         expect(discoverConnections).toHaveBeenCalledWith(
-            { path: "notes/current.md", content: "Current note body with [[linked]]" },
-            [{ path: "notes/linked.md", content: "Linked note body" }],
+            { path: currentFile.path, content: "Current note body with [[linked]]" },
+            [{ path: linkedFile.path, content: "Linked note body" }],
         );
-        expect(discoverConnections.mock.invocationCallOrder[0]).toBeLessThan(
-            panelView.open.mock.invocationCallOrder[0],
-        );
+        expect((orchestrator as unknown as {
+            sessionManager: { reserveForegroundCall(): boolean };
+        }).sessionManager.reserveForegroundCall()).toBe(true);
         expect(panelView.open).toHaveBeenCalledWith(
             "discover",
             [expect.objectContaining({
@@ -3582,7 +4434,7 @@ describe("PageletOrchestrator connection discovery", () => {
         );
     });
 
-    it("keeps explicit wikilink Discovery visible when AI enrichment fails", async () => {
+    it("falls back to explicit wikilinks only after AI enrichment fails", async () => {
         const currentFile = makeTFile("notes/current.md");
         const linkedFile = makeTFile("notes/linked.md");
         const panelView = { open: jest.fn() };
@@ -3631,9 +4483,6 @@ describe("PageletOrchestrator connection discovery", () => {
         ).resolves.toBeUndefined();
 
         expect(discoverConnections).toHaveBeenCalledTimes(1);
-        expect(discoverConnections.mock.invocationCallOrder[0]).toBeLessThan(
-            panelView.open.mock.invocationCallOrder[0],
-        );
         expect(panelView.open).toHaveBeenCalledTimes(1);
         expect(panelView.open).toHaveBeenCalledWith(
             "discover",
@@ -3651,7 +4500,10 @@ describe("PageletOrchestrator connection discovery", () => {
                 sourcePath: "notes/current.md",
             }),
         );
-        expect(log).toHaveBeenCalledWith("Discovery AI analysis failed; showing explicit wikilinks", expect.any(Error));
+        expect(log).toHaveBeenCalledWith(
+            "Discovery AI analysis failed; showing explicit wikilinks",
+            expect.any(Error),
+        );
     });
 
     it("allows Discovery AI enrichment to run past the old 60s foreground ceiling", async () => {
@@ -3684,26 +4536,18 @@ describe("PageletOrchestrator connection discovery", () => {
                         cachedRead: jest.fn(async (file: TFile) => (
                             file.path === linkedFile.path
                                 ? "Linked note body"
-                                : "Current note body with [[linked]]"
+                            : "Current note body"
                         )),
                         getAbstractFileByPath: jest.fn((path: string) => (
                             [currentFile, linkedFile].find((file) => file.path === path) ?? null
                         )),
                     },
                     metadataCache: {
-                        getFileCache: jest.fn((file: TFile) => (
-                            file.path === currentFile.path
-                                ? { links: [{ link: "linked", original: "[[linked]]" }] }
-                                : null
-                        )),
-                        getFirstLinkpathDest: jest.fn((linkpath: string, sourcePath: string) => (
-                            linkpath === "linked" && sourcePath === currentFile.path
-                                ? linkedFile
-                                : null
-                        )),
+                        getFileCache: jest.fn(() => null),
+                        getFirstLinkpathDest: jest.fn(() => null),
                     },
                 } as unknown as PageletHost["app"],
-                findRelatedNotes: async () => [],
+                findRelatedNotes: async () => [{ path: linkedFile.path, content: "Linked note body" }],
                 log,
                 discoverConnections,
             });
@@ -4007,7 +4851,44 @@ describe("PageletOrchestrator connection discovery", () => {
         }));
     });
 
-    it("keeps Quiet Recall Bubble dismiss and later as local UI state", () => {
+    it("opens an honest empty Recall tab without re-running the provider when a Bubble candidate is stale", async () => {
+        const runQuietRecall = jest.fn(makeHost().runQuietRecall);
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({ runQuietRecall, openPageletDetailView });
+        const orchestrator = new PageletOrchestrator(host);
+        const bubbleView = { close: jest.fn() };
+        const nudge: QuietRecallBubbleNudge = {
+            candidateId: "missing-candidate",
+            currentPath: "notes/current.md",
+            relation: "related",
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const internals = orchestrator as unknown as {
+            bubbleView: typeof bubbleView;
+            quietRecallNudgeCandidate: QuietRecallCandidate | null;
+            quietRecallDiscoverFallback: QuietRecallRunResult | null;
+            handleQuietRecallBubbleView(nudge: QuietRecallBubbleNudge): Promise<void>;
+        };
+        internals.bubbleView = bubbleView;
+        internals.quietRecallNudgeCandidate = null;
+        internals.quietRecallDiscoverFallback = null;
+
+        await internals.handleQuietRecallBubbleView(nudge);
+
+        expect(runQuietRecall).not.toHaveBeenCalled();
+        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
+            entryReason: "quiet-recall",
+            extra: {
+                quietRecall: expect.objectContaining({
+                    currentPath: "notes/current.md",
+                    candidates: [],
+                    totalCount: 0,
+                }),
+            },
+        }));
+    });
+
+    it("keeps Quiet Recall Bubble dismiss and successful Later as explicit local actions", async () => {
         const recordQuietRecallFeedback = jest.fn(async (
             _candidate: QuietRecallCandidate,
             _feedback: "view" | "accept" | "dismiss" | "later" | "not_relevant",
@@ -4017,7 +4898,10 @@ describe("PageletOrchestrator connection discovery", () => {
             reason: "not_configured",
             message: "not configured",
         }));
-        const createReviewQueueItem = jest.fn(async () => ({ ok: false as const, reason: "not_configured" }));
+        let resolveQueue!: (result: { ok: true; value: ReviewQueueItem }) => void;
+        const createReviewQueueItem = jest.fn(() => new Promise<{ ok: true; value: ReviewQueueItem }>((resolve) => {
+            resolveQueue = resolve;
+        }));
         const candidate: QuietRecallCandidate = {
             id: "qr-ins-local",
             title: "Recall: Local",
@@ -4048,7 +4932,7 @@ describe("PageletOrchestrator connection discovery", () => {
             quietRecallNudgeCandidate: QuietRecallCandidate | null;
             quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
             handleQuietRecallBubbleDismiss(nudge: QuietRecallBubbleNudge): void;
-            handleQuietRecallBubbleLater(nudge: QuietRecallBubbleNudge): void;
+            handleQuietRecallBubbleLater(nudge: QuietRecallBubbleNudge): Promise<void>;
             isQuietRecallCandidateSuppressed(candidateId: string, now?: number): boolean;
         };
 
@@ -4066,12 +4950,82 @@ describe("PageletOrchestrator connection discovery", () => {
 
         internals.quietRecallNudgeCandidate = candidate;
         internals.quietRecallBubbleNudge = nudge;
-        internals.handleQuietRecallBubbleLater(nudge);
+        const laterAction = internals.handleQuietRecallBubbleLater(nudge);
+
+        expect(internals.quietRecallNudgeCandidate).toBe(candidate);
+        expect(internals.quietRecallBubbleNudge).toBe(nudge);
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+        expect(recordQuietRecallFeedback).not.toHaveBeenCalledWith(candidate, "later");
+
+        resolveQueue({
+            ok: true,
+            value: makeReviewQueueItem({ type: "recall_suggestion" }),
+        });
+        await laterAction;
 
         expect(internals.isQuietRecallCandidateSuppressed(candidate.id)).toBe(true);
+        expect(internals.quietRecallNudgeCandidate).toBeNull();
+        expect(internals.quietRecallBubbleNudge).toBeNull();
         expect(recordQuietRecallFeedback).toHaveBeenCalledWith(candidate, "later");
         expect(saveQuietRecallAsInsight).not.toHaveBeenCalled();
         expect(createReviewQueueItem).toHaveBeenCalledTimes(1);
+        expect(bubbleView.close).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        ["returns ok:false", "resolved"],
+        ["rejects", "rejected"],
+    ] as const)("keeps Quiet Recall Later available when Review Queue %s", async (_label, mode) => {
+        jest.mocked(Notice).mockClear();
+        const candidate: QuietRecallCandidate = {
+            id: `qr-later-${mode}`,
+            title: "Recall: Keep intent",
+            summary: "The candidate must remain available when queue persistence fails.",
+            sourceRefs: [{ path: "notes/related.md", evidenceStrength: "medium" }],
+            whyNow: ["This note is relevant to the current context."],
+            nextAction: "Return to it later.",
+            relation: "related",
+            score: 88,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const nudge: QuietRecallBubbleNudge = {
+            candidateId: candidate.id,
+            currentPath: "notes/current.md",
+            relation: candidate.relation,
+            generatedAt: candidate.generatedAt,
+        };
+        const createReviewQueueItem = jest.fn(async () => {
+            if (mode === "rejected") throw new Error("queue persistence failed");
+            return { ok: false as const, reason: "disabled" };
+        });
+        const recordQuietRecallFeedback = jest.fn(async () => ({
+            ok: false as const,
+            reason: "disabled" as const,
+        }));
+        const host = makeHost({ createReviewQueueItem, recordQuietRecallFeedback });
+        const orchestrator = new PageletOrchestrator(host);
+        const bubbleView = { close: jest.fn() };
+        const internals = orchestrator as unknown as {
+            bubbleView: typeof bubbleView;
+            quietRecallNudgeCandidate: QuietRecallCandidate | null;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            handleQuietRecallBubbleLater(nudge: QuietRecallBubbleNudge): Promise<void>;
+        };
+        internals.bubbleView = bubbleView;
+        internals.quietRecallNudgeCandidate = candidate;
+        internals.quietRecallBubbleNudge = nudge;
+
+        await internals.handleQuietRecallBubbleLater(nudge);
+
+        expect(internals.quietRecallNudgeCandidate).toBe(candidate);
+        expect(internals.quietRecallBubbleNudge).toBe(nudge);
+        expect(bubbleView.close).not.toHaveBeenCalled();
+        expect(recordQuietRecallFeedback).not.toHaveBeenCalled();
+        expect(host.log).toHaveBeenCalledWith(
+            "Quiet Recall Later → Review Queue failed",
+            expect.objectContaining({ candidateId: candidate.id }),
+        );
+        expect(Notice).toHaveBeenLastCalledWith("Action failed", 4000);
     });
 
     it("links Quiet Recall Bubble candidates only when the active note still matches the nudge source", async () => {

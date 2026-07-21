@@ -147,7 +147,10 @@ function makeStubFactory(): { factory: PageletSettingFactory; rows: StubSetting[
     return { factory, rows };
 }
 
-function makeHost(overrides?: Partial<PageletSettings>): {
+function makeHost(
+    overrides?: Partial<PageletSettings>,
+    quietRecallMode: "off" | "on" = "off",
+): {
     host: PageletSettingsHost;
     save: jest.Mock;
 } {
@@ -157,7 +160,10 @@ function makeHost(overrides?: Partial<PageletSettings>): {
         // Cast: tests don't need a real Obsidian App and we don't want to
         // depend on Obsidian here.
         app: {} as unknown as PageletSettingsHost["app"],
-        settings: { pagelet: settings },
+        settings: {
+            pagelet: settings,
+            quietRecall: { quietRecallMode },
+        },
         saveSettings: save,
     };
     return { host, save };
@@ -180,7 +186,6 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS.maxOutputTokens).toBe(2000);     // D018
         expect(PAGELET_DEFAULTS.preloadEnabled).toBe(false);     // background prep is explicit opt-in
         expect(PAGELET_DEFAULTS.pageletProviderFirstUseNotified).toBe(false);
-        expect(PAGELET_DEFAULTS.quietRecallMode).toBe("off");
         expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(true);
         expect(PAGELET_DEFAULTS.scopeRecapBackgroundAuthorization).toBe("pending");
         expect(PAGELET_DEFAULTS.scopeRecapHighValueHints).toBe(true);
@@ -201,10 +206,12 @@ describe("PAGELET_BOUNDS", () => {
         expect(PAGELET_BOUNDS.maxOutputTokens).toEqual({ min: 1, max: 4000 });
     });
 
-    it("keeps background preparation token budgets below foreground review caps", () => {
+    it("caps generic background preparation at the DEC-023 unattended envelope", () => {
+        expect(PAGELET_BOUNDS.preloadPerHourCap).toEqual({ min: 1, max: 2 });
+        expect(PAGELET_BOUNDS.preloadPerDayCap).toEqual({ min: 1, max: 20 });
         expect(PAGELET_PRELOAD_TOKEN_BOUNDS).toEqual({
-            input: { min: 1000, max: 8000 },
-            output: { min: 500, max: 2000 },
+            input: { min: 1000, max: 4000 },
+            output: { min: 500, max: 1000 },
         });
     });
 });
@@ -228,18 +235,14 @@ describe("PAGELET_FIXED_CALL_LIMITS", () => {
 
 describe("mergePageletSettings", () => {
     it("returns defaults when input is undefined / null", () => {
-        // scopeRecapPreparationEnabled is force-normalized to false when
-        // authorization is not authorized-v1 — even though the default is true.
-        const expected = { ...PAGELET_DEFAULTS, scopeRecapPreparationEnabled: false };
-        expect(mergePageletSettings(undefined)).toEqual(expected);
-        expect(mergePageletSettings(null)).toEqual(expected);
+        expect(mergePageletSettings(undefined)).toEqual(PAGELET_DEFAULTS);
+        expect(mergePageletSettings(null)).toEqual(PAGELET_DEFAULTS);
     });
 
     it("returns defaults when input is not an object", () => {
-        const expected = { ...PAGELET_DEFAULTS, scopeRecapPreparationEnabled: false };
-        expect(mergePageletSettings("garbage")).toEqual(expected);
-        expect(mergePageletSettings(42)).toEqual(expected);
-        expect(mergePageletSettings([{ enabled: false }])).toEqual(expected);
+        expect(mergePageletSettings("garbage")).toEqual(PAGELET_DEFAULTS);
+        expect(mergePageletSettings(42)).toEqual(PAGELET_DEFAULTS);
+        expect(mergePageletSettings([{ enabled: false }])).toEqual(PAGELET_DEFAULTS);
     });
 
     it("preserves well-formed values", () => {
@@ -309,7 +312,6 @@ describe("mergePageletSettings", () => {
             quietRecallExplained: true,
             quietAcknowledged: true,
             pageletProviderFirstUseNotified: false,
-            quietRecallMode: "off",
         };
         expect(mergePageletSettings(persisted)).toEqual(persisted);
     });
@@ -333,7 +335,7 @@ describe("mergePageletSettings", () => {
             },
             {
                 scopeRecapBackgroundAuthorization: "pending",
-                scopeRecapPreparationEnabled: false,
+                scopeRecapPreparationEnabled: true,
                 scopeRecapAuthorizationContextId: null,
             },
         ],
@@ -346,7 +348,7 @@ describe("mergePageletSettings", () => {
             },
             {
                 scopeRecapBackgroundAuthorization: "pending",
-                scopeRecapPreparationEnabled: false,
+                scopeRecapPreparationEnabled: true,
                 scopeRecapAuthorizationContextId: null,
             },
         ],
@@ -372,7 +374,7 @@ describe("mergePageletSettings", () => {
             },
             {
                 scopeRecapBackgroundAuthorization: "pending",
-                scopeRecapPreparationEnabled: false,
+                scopeRecapPreparationEnabled: true,
                 scopeRecapAuthorizationContextId: null,
             },
         ],
@@ -391,6 +393,77 @@ describe("mergePageletSettings", () => {
         ],
     ])("normalizes the Recap authorization tuple: %s", (_label, input, expected) => {
         expect(mergePageletSettings(input)).toMatchObject(expected);
+    });
+
+    it.each([
+        ["fresh install", {}, true],
+        ["legacy pending metadata", { scopeRecapBackgroundAuthorization: "pending" }, true],
+        [
+            "legacy authorized metadata",
+            {
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapAuthorizationContextId: "legacy-context",
+            },
+            true,
+        ],
+        [
+            "explicit opt-out",
+            {
+                scopeRecapPreparationEnabled: false,
+                scopeRecapBackgroundAuthorization: "authorized-v1",
+                scopeRecapAuthorizationContextId: "legacy-context",
+            },
+            false,
+        ],
+        [
+            "explicit opt-in without authorization metadata",
+            { scopeRecapPreparationEnabled: true },
+            true,
+        ],
+        [
+            "legacy decline without capability field",
+            { scopeRecapBackgroundAuthorization: "declined-v1" },
+            false,
+        ],
+        [
+            "legacy decline remains an opt-out until Settings clears it",
+            {
+                scopeRecapPreparationEnabled: true,
+                scopeRecapBackgroundAuthorization: "declined-v1",
+            },
+            false,
+        ],
+    ])("reconciles the Scope Recap capability truth table: %s", (_label, input, expected) => {
+        expect(mergePageletSettings(input).scopeRecapPreparationEnabled).toBe(expected);
+    });
+
+    it.each([undefined, null, "false", 0, {}, []])(
+        "fails closed when the persisted capability field exists but is not boolean: %p",
+        (malformed) => {
+            expect(mergePageletSettings({
+                scopeRecapPreparationEnabled: malformed,
+                scopeRecapBackgroundAuthorization: "pending",
+            }).scopeRecapPreparationEnabled).toBe(false);
+        },
+    );
+
+    it("preserves explicit and migrated opt-outs across a serialized reload", () => {
+        const explicitOptOut = mergePageletSettings({
+            scopeRecapPreparationEnabled: false,
+            scopeRecapBackgroundAuthorization: "authorized-v1",
+            scopeRecapAuthorizationContextId: "legacy-context",
+        });
+        const migratedDecline = mergePageletSettings({
+            scopeRecapBackgroundAuthorization: "declined-v1",
+        });
+
+        expect(mergePageletSettings(JSON.parse(JSON.stringify(explicitOptOut)))
+            .scopeRecapPreparationEnabled).toBe(false);
+        expect(mergePageletSettings(JSON.parse(JSON.stringify(migratedDecline))))
+            .toMatchObject({
+                scopeRecapPreparationEnabled: false,
+                scopeRecapBackgroundAuthorization: "declined-v1",
+            });
     });
 
     it("normalizes, deduplicates, and caps the persisted Recap suppression ledger", () => {
@@ -536,6 +609,8 @@ describe("mergePageletSettings", () => {
                 candidateCount: Number.MAX_SAFE_INTEGER,
                 evaluatedCandidateCount: 25,
                 providerCalls: 25,
+                semanticRetrievalCalls: 1,
+                totalProviderCalls: 26,
                 initialCalls: 25,
                 languageRetryCalls: 0,
                 cacheHits: 0,
@@ -561,6 +636,8 @@ describe("mergePageletSettings", () => {
         expect(diagnostics.quietRecallLastDiagnostics).toMatchObject({
             roundId: "round-1",
             candidateCount: 1_000_000,
+            semanticRetrievalCalls: 1,
+            totalProviderCalls: 26,
             estimatedCost: 1_000_000,
             blockedReason: "cooldown",
         });
@@ -720,6 +797,18 @@ describe("mergePageletSettings", () => {
             input: PAGELET_PRELOAD_TOKEN_BOUNDS.input.max,
             output: PAGELET_PRELOAD_TOKEN_BOUNDS.output.max,
         });
+    });
+
+    it("migrates legacy generic-preload caps into the unattended standard envelope", () => {
+        const merged = mergePageletSettings({
+            preloadPerHourCap: 20,
+            preloadPerDayCap: 200,
+            preloadTokenBudget: { input: 8000, output: 2000 },
+        });
+
+        expect(merged.preloadPerHourCap).toBe(2);
+        expect(merged.preloadPerDayCap).toBe(20);
+        expect(merged.preloadTokenBudget).toEqual({ input: 4000, output: 1000 });
     });
 });
 
@@ -1077,8 +1166,8 @@ describe("renderPageletSection", () => {
             // Background review preparation
             "Prepare reviews in the background",
             "Preparation interval (minutes)",
-            "Per-hour preparation cap",
-            "Per-day preparation cap",
+            "Background AI calls per hour",
+            "Background AI calls per day",
             "Preparation input token budget",
             "Preparation output token budget",
             // Scope Recap preparation (independent from generic preload)
@@ -1190,6 +1279,52 @@ describe("renderPageletSection", () => {
         await rows[0].toggleOnChange!(false);
 
         expect(host.settings.pagelet.enabled).toBe(false);
+        expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads and writes Quiet Recall through the canonical runtime setting", async () => {
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host, save } = makeHost({
+            proactiveHints: true,
+            scopeRecapPreparationEnabled: false,
+            scopeRecapHighValueHints: false,
+        }, "on");
+
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        const quietRecall = rows.find((row) => row.name === "Quiet Recall");
+
+        expect(quietRecall?.toggleValue).toBe(true);
+        await quietRecall?.toggleOnChange?.(false);
+
+        expect(host.settings.quietRecall.quietRecallMode).toBe("off");
+        expect(host.settings.pagelet).not.toHaveProperty("quietRecallMode");
+        expect(host.settings.pagelet).toMatchObject({
+            proactiveHints: true,
+            scopeRecapPreparationEnabled: false,
+            scopeRecapHighValueHints: false,
+        });
+        expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears a migrated Recap decline only when the user actively enables preparation", async () => {
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host, save } = makeHost({
+            scopeRecapPreparationEnabled: false,
+            scopeRecapBackgroundAuthorization: "declined-v1",
+            scopeRecapAuthorizationContextId: null,
+        });
+
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        const recapPreparation = rows.find((row) => row.name === "Prepare Scope Recap in the background");
+        await recapPreparation?.toggleOnChange?.(true);
+
+        expect(host.settings.pagelet).toMatchObject({
+            scopeRecapPreparationEnabled: true,
+            scopeRecapBackgroundAuthorization: "pending",
+            scopeRecapAuthorizationContextId: null,
+        });
         expect(save).toHaveBeenCalledTimes(1);
     });
 
@@ -1316,13 +1451,13 @@ describe("renderPageletSection", () => {
         await rows[14].textOnChange!("32000"); // preloadTokenBudget.input
         expect(host.settings.pagelet.preloadTokenBudget.input).toBe(PAGELET_DEFAULTS.preloadTokenBudget.input);
 
-        await rows[14].textOnChange!("8000");
+        await rows[14].textOnChange!("4000");
         expect(host.settings.pagelet.preloadTokenBudget.input).toBe(PAGELET_PRELOAD_TOKEN_BOUNDS.input.max);
 
         await rows[15].textOnChange!("4000"); // preloadTokenBudget.output
         expect(host.settings.pagelet.preloadTokenBudget.output).toBe(PAGELET_DEFAULTS.preloadTokenBudget.output);
 
-        await rows[15].textOnChange!("2000");
+        await rows[15].textOnChange!("1000");
         expect(host.settings.pagelet.preloadTokenBudget.output).toBe(PAGELET_PRELOAD_TOKEN_BOUNDS.output.max);
     });
 });

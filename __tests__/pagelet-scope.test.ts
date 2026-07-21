@@ -10,6 +10,7 @@ import {
     type PageletScopeFileLike,
 } from "../src/pagelet/scope";
 import { PAGELET_DEFAULT_TARGET_SUGGESTIONS } from "../src/pagelet/pa-review-schemas";
+import { ScopeResolver } from "../src/pagelet/scope/ScopeResolver";
 
 function file(path: string, mtime: string): PageletScopeFileLike {
     const ms = new Date(mtime).getTime();
@@ -187,6 +188,53 @@ describe("buildPageletScopePlan", () => {
             .toMatchObject({ included: false, locked: true, skippedReason: "excluded-tag" });
         expect(plan.candidates.find((candidate) => candidate.path === "notes/vendor-draft.md"))
             .toMatchObject({ included: false, locked: true, skippedReason: "excluded-pattern" });
+    });
+
+    it("keeps preview inclusion aligned with runtime hard exclusions", () => {
+        const now = new Date();
+        const files = [
+            file("notes/active.md", now.toISOString()),
+            { ...file("notes/at-limit.md", now.toISOString()), stat: { mtime: now.getTime(), ctime: now.getTime(), size: 100 * 1024 } },
+            file("Templates/daily.md", now.toISOString()),
+            file("node_modules/package/readme.md", now.toISOString()),
+            { ...file("notes/too-large.md", now.toISOString()), stat: { mtime: now.getTime(), ctime: now.getTime(), size: 100 * 1024 + 1 } },
+        ];
+        const app = {
+            vault: {
+                configDir: ".obsidian",
+                getMarkdownFiles: () => files,
+            },
+            metadataCache: { getFileCache: () => null },
+        };
+        const resolver = new ScopeResolver(app as never, {
+            excludedFolders: [],
+            excludedTags: [],
+            excludedPatterns: [],
+            maxFileSizeBytes: 100 * 1024,
+            reviewsFolder: ".pagelet",
+        });
+        const plan = buildPageletScopePlan({
+            files,
+            activePath: "notes/active.md",
+            range: "last7",
+            reviewsFolder: ".pagelet",
+            now,
+        });
+
+        const previewPaths = selectPageletScope(plan).paths.slice().sort();
+        const runtime = resolver.resolveTimeRange(7);
+        const runtimePaths = runtime.included.map((candidate) => candidate.file.path).sort();
+
+        expect(previewPaths).toEqual(runtimePaths);
+        expect(previewPaths).toEqual(["notes/active.md", "notes/at-limit.md"]);
+        expect(runtime.excluded.map(({ file: excludedFile, reason }) => [excludedFile.path, reason]))
+            .toEqual([
+                ["Templates/daily.md", "template"],
+                ["node_modules/package/readme.md", "plugin-generated"],
+                ["notes/too-large.md", "too-large"],
+            ]);
+        expect(plan.candidates.find((candidate) => candidate.path === "notes/too-large.md"))
+            .toMatchObject({ included: false, locked: true, skippedReason: "overflow" });
     });
 
     it("includes notes modified yesterday and excludes today and day-before", () => {

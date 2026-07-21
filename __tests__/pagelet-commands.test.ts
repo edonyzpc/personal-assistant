@@ -4,6 +4,7 @@ import {
     PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
     PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
     PAGELET_OPEN_PANEL_COMMAND_ID,
+    PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
     PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
     PAGELET_QUIET_RECALL_COMMAND_ID,
     PAGELET_REVIEW_CURRENT_COMMAND_ID,
@@ -31,6 +32,7 @@ function makeHost(): { registered: RegisteredCommand[]; addCommand: (command: Re
 function makeCallbacks(): PageletCommandCallbacks {
     return {
         onOpenPanel: jest.fn(),
+        onOpenPreparedReview: jest.fn(),
         onReviewCurrent: jest.fn(),
         onQuickReview: jest.fn(),
         onDiscoverConnections: jest.fn(),
@@ -55,6 +57,7 @@ describe("registerPageletCommands", () => {
 
         expect(host.registered.map((command) => command.id)).toEqual(expect.arrayContaining([
             PAGELET_OPEN_PANEL_COMMAND_ID,
+            PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
             PAGELET_REVIEW_CURRENT_COMMAND_ID,
             PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
             PAGELET_QUIET_RECALL_COMMAND_ID,
@@ -77,6 +80,7 @@ describe("registerPageletCommands", () => {
 
         registerPageletCommands(host, callbacks);
         host.registered.find((command) => command.id === PAGELET_OPEN_PANEL_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_REVIEW_CURRENT_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_MAINTENANCE_REVIEW_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_QUIET_RECALL_COMMAND_ID)?.callback();
@@ -87,6 +91,7 @@ describe("registerPageletCommands", () => {
         host.registered.find((command) => command.id === PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID)?.callback();
 
         expect(callbacks.onOpenPanel).toHaveBeenCalledTimes(1);
+        expect(callbacks.onOpenPreparedReview).toHaveBeenCalledTimes(1);
         expect(callbacks.onReviewCurrent).toHaveBeenCalledTimes(1);
         expect(callbacks.onMaintenanceReview).toHaveBeenCalledTimes(1);
         expect(callbacks.onQuietRecall).toHaveBeenCalledTimes(1);
@@ -94,5 +99,20 @@ describe("registerPageletCommands", () => {
         expect(callbacks.onScopeRecap).toHaveBeenCalledTimes(1);
         expect(callbacks.onClearScopeRecapCache).toHaveBeenCalledTimes(1);
         expect(callbacks.onShowBackgroundPreparationStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it("registers the prepared review command with localized production copy", () => {
+        const englishHost = makeHost();
+        const chineseHost = makeHost();
+
+        registerPageletCommands(englishHost, makeCallbacks(), "en");
+        registerPageletCommands(chineseHost, makeCallbacks(), "zh");
+
+        expect(englishHost.registered.find(
+            (command) => command.id === PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
+        )?.name).toBe("Pagelet: Open prepared review");
+        expect(chineseHost.registered.find(
+            (command) => command.id === PAGELET_OPEN_PREPARED_REVIEW_COMMAND_ID,
+        )?.name).toBe("拾页：打开已准备的审阅");
     });
 });

@@ -4,6 +4,7 @@ import {
     buildDiscoveryContent,
     buildEmptyContent,
     buildPreparedRecapDeliveryContent,
+    buildProactiveRecallDeliveryContent,
     buildRecallDeliveryContent,
     buildNudgeContent,
     buildOnboardingNudgeContent,
@@ -359,7 +360,6 @@ describe("Pagelet Bubble quick access content", () => {
         };
         const recallCallbacks = {
             onView: jest.fn(),
-            onLink: jest.fn(),
             onDismiss: jest.fn(),
             onLater: jest.fn(),
         };
@@ -418,8 +418,8 @@ describe("Pagelet Bubble quick access content", () => {
         expect(content?.type).toBe("recall-delivery");
         expect(content?.actions.map((action) => action.label)).toEqual([
             "View",
-            "Link",
             "Later",
+            "Dismiss",
         ]);
 
         content?.actions[0].callback();
@@ -427,8 +427,8 @@ describe("Pagelet Bubble quick access content", () => {
         content?.actions[2].callback();
 
         expect(recallCallbacks.onView).toHaveBeenCalledWith(candidate);
-        expect(recallCallbacks.onLink).toHaveBeenCalledWith(candidate);
         expect(recallCallbacks.onLater).toHaveBeenCalledWith(candidate);
+        expect(recallCallbacks.onDismiss).toHaveBeenCalledWith(candidate);
     });
 
     it("builds source-backed Recall Delivery content from a delivery candidate", () => {
@@ -472,13 +472,50 @@ describe("Pagelet Bubble quick access content", () => {
         expect(callbacks.onLater).toHaveBeenCalledWith(candidate);
     });
 
+    it("keeps proactive Recall Delivery actions to View, Later, and Dismiss", () => {
+        const candidate = {
+            id: "recall-proactive-1",
+            kind: "recall" as const,
+            title: "Old project decision",
+            body: "This note may connect to an older decision.",
+            sourceRefs: [{ path: "Projects/Decision.md", title: "Decision" }],
+            whyNow: ["The current note mentions the same project."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            route: { surface: "tab" as const, payloadType: "quiet-recall" },
+        };
+        const callbacks = {
+            onView: jest.fn(),
+            onLater: jest.fn(),
+            onDismiss: jest.fn(),
+        };
+
+        const content = buildProactiveRecallDeliveryContent(candidate, callbacks, "en");
+
+        expect(content.actions.map((action) => action.label)).toEqual([
+            "View",
+            "Later",
+            "Dismiss",
+        ]);
+        expect(content.actions.map((action) => action.label)).not.toContain("Link");
+        expect(content.actions.map((action) => action.label)).not.toContain("Save");
+
+        content.actions.forEach((action) => action.callback());
+
+        expect(callbacks.onView).toHaveBeenCalledWith(candidate);
+        expect(callbacks.onLater).toHaveBeenCalledWith(candidate);
+        expect(callbacks.onDismiss).toHaveBeenCalledWith(candidate);
+    });
+
     it("builds prepared Recap Delivery without foreground generation copy", () => {
         const candidate = {
             id: "recap-1",
             kind: "recap" as const,
             title: "Project recap",
             body: "Project notes changed this week.",
-            sourceRefs: [{ path: "Projects/A.md", title: "A" }],
+            sourceRefs: [
+                { path: "Projects/A.md", title: "A" },
+                { path: "Projects/B.md", title: "B" },
+            ],
             whyNow: ["5 source notes changed in this scope."],
             preparedAt: "2026-07-05T12:00:00.000Z",
             staleStatus: "fresh" as const,
@@ -493,6 +530,10 @@ describe("Pagelet Bubble quick access content", () => {
 
         expect(content.type).toBe("recap-delivery");
         expect(content.findings[0]?.text).toBe("Project notes changed this week.");
+        expect(content.findings[0]).toEqual(expect.objectContaining({
+            sourceLink: "Projects/A.md",
+            sourceTitle: "Project recap · 2 sources",
+        }));
         expect(JSON.stringify(content)).not.toContain("Generate summary");
         expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
 
@@ -518,7 +559,6 @@ describe("Pagelet Bubble quick access content", () => {
             candidate,
         }, {
             onView: jest.fn(),
-            onLink: jest.fn(),
             onDismiss: jest.fn(),
             onLater: jest.fn(),
         }, "en");

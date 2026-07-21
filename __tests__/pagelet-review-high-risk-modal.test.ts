@@ -44,9 +44,7 @@ jest.mock("obsidian", () => {
                 element.createEl("div", childOptions)
             )),
             addEventListener: jest.fn((type: string, listener: () => void) => {
-                const current = listeners.get(type) ?? [];
-                current.push(listener);
-                listeners.set(type, current);
+                listeners.set(type, [...(listeners.get(type) ?? []), listener]);
             }),
             dispatchEvent: jest.fn((type: string) => {
                 for (const listener of listeners.get(type) ?? []) listener();
@@ -75,20 +73,20 @@ jest.mock("obsidian", () => {
 });
 
 import {
-    requestScopeRecapAuthorization,
-    type ScopeRecapAuthorizationChoice,
-    type ScopeRecapAuthorizationSummary,
-} from "../src/pagelet/recap/ScopeRecapAuthorizationModal";
+    requestPageletReviewHighRiskDecision,
+    type PageletReviewHighRiskChoice,
+    type PageletReviewHighRiskSummary,
+} from "../src/pagelet/ReviewHighRiskModal";
 
-const summary: ScopeRecapAuthorizationSummary = {
-    scopeLabel: "Last 7 days",
-    includedSourceCount: 12,
-    skippedSourceCount: 3,
-    provider: "DashScope",
-    model: "qwen3.7-max-preview",
-    endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    hourlyCap: 2,
-    dailyCap: 10,
+const summary: PageletReviewHighRiskSummary = {
+    scopeLabel: "Last 7 days · 3 notes",
+    includedSourceCount: 3,
+    skippedSourceCount: 2,
+    provider: "OpenAI",
+    model: "gpt-4o-mini",
+    endpoint: "https://api.openai.com/v1",
+    hourlyCap: 10,
+    dailyCap: 100,
 };
 
 function allElements(root: MockElement): MockElement[] {
@@ -100,34 +98,34 @@ function openedModal(): MockModalInstance {
     return mockModalInstances[0];
 }
 
-describe("requestScopeRecapAuthorization", () => {
+describe("requestPageletReviewHighRiskDecision", () => {
     beforeEach(() => {
         mockModalInstances.length = 0;
     });
 
-    it("discloses scope, provider destination, data sending, bounded cost, and local safety", () => {
-        requestScopeRecapAuthorization({} as App, summary, "en");
-        const modal = openedModal();
-        const text = allElements(modal.contentEl)
+    it("discloses multi-note scope, provider destination, bounded cost, and no source mutation", () => {
+        void requestPageletReviewHighRiskDecision({} as App, summary, "en");
+        const text = allElements(openedModal().contentEl)
             .map((element) => element.textContent)
             .filter(Boolean);
 
         expect(text).toEqual(expect.arrayContaining([
-            "Prepare useful Recaps before you open them?",
-            "Pagelet can quietly prepare a source-backed Recap for the scope you are working in, so opening it does not make you wait.",
-            "Current scope: Last 7 days. 12 note(s) included; 3 skipped by your data boundary.",
-            "AI provider: DashScope · qwen3.7-max-preview. Endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1. Included note text may be sent there.",
-            "Bounded usage: at most 2 preparation call(s) per hour and 10 per day. Calls may use AI credits.",
-            "Your source notes are never modified. Prepared Recaps are local derived cache and can be cleared.",
+            "Review multiple notes with AI?",
+            "This Review includes more than one allowed note. Confirm this scope before any AI call or usage is reserved.",
+            "Current scope: Last 7 days · 3 notes. 3 note(s) included; 2 selected note(s) skipped by your data boundary or input limit.",
+            "AI provider: OpenAI · gpt-4o-mini. Endpoint: https://api.openai.com/v1. Included note excerpts may be sent there.",
+            "Bounded usage: at most 10 foreground call(s) per hour and 100 per day. Calls may use AI credits.",
+            "Your source notes are not modified. You can adjust the Review scope before running again.",
+            "You can turn Review off in Settings at any time.",
         ]));
     });
 
-    it.each<[string, ScopeRecapAuthorizationChoice]>([
+    it.each<[string, PageletReviewHighRiskChoice]>([
         ["Run", "run"],
-        ["Adjust settings", "adjust"],
+        ["Adjust scope", "adjust"],
         ["Cancel", "cancel"],
     ])("resolves %s to %s", async (label, expectedChoice) => {
-        const choice = requestScopeRecapAuthorization({} as App, summary, "en");
+        const choice = requestPageletReviewHighRiskDecision({} as App, summary, "en");
         const button = allElements(openedModal().contentEl)
             .find((element) => element.tagName === "button" && element.textContent === label);
 
@@ -137,11 +135,27 @@ describe("requestScopeRecapAuthorization", () => {
         await expect(choice).resolves.toBe(expectedChoice);
     });
 
-    it("resolves a direct close without a selection to adjust", async () => {
-        const choice = requestScopeRecapAuthorization({} as App, summary, "en");
+    it("treats passive close as closed and never as Run", async () => {
+        const choice = requestPageletReviewHighRiskDecision({} as App, summary, "en");
 
         openedModal().close();
 
-        await expect(choice).resolves.toBe("adjust");
+        await expect(choice).resolves.toBe("closed");
+    });
+
+    it("closes and resolves safely when the provider deadline aborts", async () => {
+        const controller = new AbortController();
+        const choice = requestPageletReviewHighRiskDecision(
+            {} as App,
+            summary,
+            "en",
+            controller.signal,
+        );
+        const modal = openedModal();
+
+        controller.abort();
+
+        await expect(choice).resolves.toBe("closed");
+        expect(modal.contentEl.children).toEqual([]);
     });
 });

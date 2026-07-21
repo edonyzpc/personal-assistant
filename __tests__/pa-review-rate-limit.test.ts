@@ -224,6 +224,96 @@ describe("PageletRateLimiter.reserve (atomic check + commit)", () => {
         expect(cell.persisted?.hourlyTimestamps).toHaveLength(1);
     });
 
+    it("does not persist a conditional reservation when its source changes while queued", async () => {
+        let releaseFirstSave = (): void => undefined;
+        const firstSaveGate = new Promise<void>((resolve) => { releaseFirstSave = resolve; });
+        let saveCount = 0;
+        const cell: { persisted: PageletRateLimitState | null } = { persisted: null };
+        const storage: PageletRateLimitStorage = {
+            load() {
+                return cell.persisted
+                    ? { ...cell.persisted, hourlyTimestamps: [...cell.persisted.hourlyTimestamps] }
+                    : null;
+            },
+            async save(state) {
+                saveCount += 1;
+                if (saveCount === 1) await firstSaveGate;
+                cell.persisted = {
+                    ...state,
+                    hourlyTimestamps: [...state.hourlyTimestamps],
+                };
+            },
+        };
+        const limiter = new PageletRateLimiter({
+            storage,
+            config: { hourlyCap: 10, dailyCap: 10 },
+            now: () => 1_000,
+            nextLocalMidnight: midnightAfter,
+        });
+        let sourceIsCurrent = true;
+
+        const first = limiter.reserve();
+        const conditional = limiter.reserveIf(() => sourceIsCurrent);
+        sourceIsCurrent = false;
+        releaseFirstSave();
+
+        await expect(first).resolves.toEqual({ ok: true });
+        await expect(conditional).resolves.toEqual({ ok: false, reason: "condition" });
+        expect(saveCount).toBe(1);
+        expect(cell.persisted?.dailyCount).toBe(1);
+        expect(cell.persisted?.hourlyTimestamps).toEqual([1_000]);
+    });
+
+    it("rolls back a provisional slot when source or deadline changes during storage save", async () => {
+        let markSaveStarted = (): void => undefined;
+        const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
+        let releaseSave = (): void => undefined;
+        const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+        const cell: { persisted: PageletRateLimitState | null } = { persisted: null };
+        let saveCount = 0;
+        const storage: PageletRateLimitStorage = {
+            load: () => cell.persisted
+                ? { ...cell.persisted, hourlyTimestamps: [...cell.persisted.hourlyTimestamps] }
+                : null,
+            async save(state) {
+                saveCount += 1;
+                if (saveCount === 1) {
+                    markSaveStarted();
+                    await saveGate;
+                }
+                cell.persisted = {
+                    ...state,
+                    hourlyTimestamps: [...state.hourlyTimestamps],
+                };
+            },
+        };
+        const limiter = new PageletRateLimiter({
+            storage,
+            coordinationKey: "vault:test:lease-rollback",
+            config: { hourlyCap: 1, dailyCap: 1 },
+            now: () => 1_000,
+            nextLocalMidnight: midnightAfter,
+        });
+        let requestIsCurrent = true;
+
+        const pending = limiter.reserveLeaseIf(() => requestIsCurrent);
+        await saveStarted;
+        requestIsCurrent = false;
+        releaseSave();
+        const decision = await pending;
+        expect(decision.ok).toBe(true);
+        if (!decision.ok) return;
+        await decision.reservation.rollback();
+
+        expect(cell.persisted).toEqual({
+            hourlyTimestamps: [],
+            dailyCount: 0,
+            dailyResetAt: 1_000 + 12 * HOUR,
+        });
+        expect(saveCount).toBe(2);
+        await expect(limiter.reserve()).resolves.toEqual({ ok: true });
+    });
+
     it("serializes separate hot-reload instances that share a persisted bucket", async () => {
         let releaseFirstLoad = (): void => undefined;
         const firstLoadGate = new Promise<void>((resolve) => { releaseFirstLoad = resolve; });

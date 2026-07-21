@@ -2,7 +2,10 @@
 
 import { describe, expect, it, beforeEach } from "@jest/globals";
 
-import { ChangeDetector } from "../src/pagelet/scope/ChangeDetector";
+import {
+    ChangeDetector,
+    InMemoryChangeDetectorStorage,
+} from "../src/pagelet/scope/ChangeDetector";
 
 /** Create a minimal TFile-like mock with the fields ChangeDetector reads. */
 const mockFile = (path: string, mtime: number) =>
@@ -122,6 +125,32 @@ describe("ChangeDetector", () => {
 
             detector.clear();
             expect(detector.getChangedFiles(files)).toEqual(files);
+        });
+    });
+
+    describe("persistent changed-only watermarks", () => {
+        it("restores per-path mtimes after reload", () => {
+            const storage = new InMemoryChangeDetectorStorage();
+            const first = new ChangeDetector(storage);
+            first.markAnalyzed("a.md", 100);
+
+            const reloaded = new ChangeDetector(storage);
+
+            expect(reloaded.getChangedFiles([mockFile("a.md", 100)])).toEqual([]);
+            expect(reloaded.getChangedFiles([mockFile("a.md", 101)])).toHaveLength(1);
+        });
+
+        it.each([
+            { version: 1, analyzedMtimes: { "a.md": "bad" } },
+            { version: 1, analyzedMtimes: [123] },
+        ])("fails closed when persisted state is malformed", (malformedState) => {
+            const malformedStorage = {
+                load: () => malformedState,
+                save: () => undefined,
+            };
+            const persisted = new ChangeDetector(malformedStorage as never);
+
+            expect(persisted.getChangedFiles([mockFile("a.md", 100)])).toEqual([]);
         });
     });
 });

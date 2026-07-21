@@ -299,6 +299,7 @@ export class BubbleView {
         if (options.restoreFocus !== false) {
             this.restoreFocus(focusRestoreEl);
         }
+        if (wasVisible) this.options.onClose?.();
     }
 
     /** Get current state. */

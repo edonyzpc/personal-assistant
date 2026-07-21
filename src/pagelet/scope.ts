@@ -13,6 +13,11 @@ import {
     type PageletReviewInput,
     type PageletSegment,
 } from "./pa-review-schemas";
+import {
+    classifyScopeExclusion,
+    DEFAULT_MAX_FILE_SIZE_BYTES,
+} from "./scope/ScopeResolver";
+import type { ExclusionReason } from "./scope/types";
 
 export type PageletReviewRange = "current" | "yesterday" | "last3" | "last7";
 
@@ -96,6 +101,7 @@ export interface BuildPageletScopePlanOptions {
     excludedFolders?: readonly string[];
     excludedTags?: readonly string[];
     excludedPatterns?: readonly string[];
+    maxFileSizeBytes?: number;
     now?: Date;
     maxIncluded?: number;
     reviewOutputCount?: number;
@@ -140,15 +146,18 @@ export function buildPageletScopePlan(options: BuildPageletScopePlanOptions): Pa
         const modifiedAt = finiteNumber(file.stat?.mtime) ?? 0;
         const createdAt = finiteNumber(file.stat?.ctime) ?? modifiedAt;
         const reason = chooseCandidateReason(path, activePath, modifiedAt, startMs, endMs);
-        const skippedReason = scopeExcludedReason({
+        const runtimeExclusionReason = classifyScopeExclusion({
             path,
-            reviewFolder,
+            extension: file.extension,
+            size: finiteNumber(file.stat?.size) ?? undefined,
+            reviewsFolder: reviewFolder,
             excludedFolders: options.excludedFolders ?? [],
             excludedTags: options.excludedTags ?? [],
             excludedPatterns: options.excludedPatterns ?? [],
-            size: finiteNumber(file.stat?.size),
+            maxFileSizeBytes: options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES,
             metadata: options.getMetadata?.(path),
         });
+        const skippedReason = scopeSkippedReasonForExclusion(runtimeExclusionReason);
         if (skippedReason) {
             if (skippedReason === "review-output") {
                 if (reason) visibleReviewOutputCount += 1;
@@ -349,38 +358,31 @@ export function skippedReasonLabel(reason: PageletScopeSkippedReason, locale: Pa
     return pageletT(`pagelet.panel.scope.skipped.${reason}`, locale);
 }
 
-function scopeExcludedReason(options: {
-    path: string;
-    reviewFolder: string;
-    excludedFolders: readonly string[];
-    excludedTags: readonly string[];
-    excludedPatterns: readonly string[];
-    size: number | null;
-    metadata?: PageletScopeMetadataLike;
-}): PageletScopeSkippedReason | null {
-    if (isUnderFolder(options.path, options.reviewFolder)) return "review-output";
-    if (options.size === 0) return "empty-note";
-    if (hasHiddenOrSystemSegment(options.path)) return "hidden-folder";
-    if (isUnderAnyFolder(options.path, options.excludedFolders)) return "excluded-folder";
-    if (isPageletFrontmatter(options.metadata?.frontmatter)) return "excluded-frontmatter";
-    if (hasExcludedTag(options.metadata, options.excludedTags)) return "excluded-tag";
-    if (matchesExcludedPattern(options.path, options.excludedPatterns)) return "excluded-pattern";
-    return null;
-}
-
-function isUnderAnyFolder(path: string, folders: readonly string[]): boolean {
-    for (const folder of folders) {
-        const normalized = normalizeFolderPrefix(folder);
-        if (normalized && isUnderFolder(path, normalized)) return true;
+function scopeSkippedReasonForExclusion(
+    reason: ExclusionReason | null,
+): PageletScopeSkippedReason | null {
+    switch (reason) {
+        case null:
+            return null;
+        case "pagelet-output":
+            return "review-output";
+        case "empty":
+            return "empty-note";
+        case "too-large":
+            return "overflow";
+        case "pagelet-frontmatter":
+            return "excluded-frontmatter";
+        case "excluded-folder":
+        case "excluded-tag":
+        case "excluded-pattern":
+            return reason;
+        case "trash":
+        case "hidden-folder":
+        case "template":
+        case "plugin-generated":
+        case "non-markdown":
+            return "hidden-folder";
     }
-    return false;
-}
-
-function matchesExcludedPattern(path: string, patterns: readonly string[]): boolean {
-    for (const pattern of patterns) {
-        if (pattern && path.includes(pattern)) return true;
-    }
-    return false;
 }
 
 function chooseCandidateReason(
@@ -433,56 +435,6 @@ function extractDailyDateMs(path: string): number | null {
 
 function normalizeFolderPrefix(folder: string): string {
     return normalizePath(folder || ".pagelet").replace(/^\/+|\/+$/g, "");
-}
-
-function isUnderFolder(path: string, folder: string): boolean {
-    if (folder.length === 0) return false;
-    return path === folder || path.startsWith(`${folder}/`);
-}
-
-function hasHiddenOrSystemSegment(path: string): boolean {
-    return path
-        .split("/")
-        .some((segment) => segment.startsWith(".") && segment.length > 1);
-}
-
-function isPageletFrontmatter(frontmatter: Record<string, unknown> | undefined): boolean {
-    const value = frontmatter?.pagelet;
-    return value === true || value === "true";
-}
-
-function hasExcludedTag(
-    metadata: PageletScopeMetadataLike | undefined,
-    excludedTags: readonly string[],
-): boolean {
-    const tags = new Set<string>();
-    for (const tag of metadata?.tags ?? []) {
-        const raw = typeof tag === "string" ? tag : tag.tag;
-        if (raw) tags.add(normalizeTag(raw));
-    }
-    const frontmatter = metadata?.frontmatter;
-    collectFrontmatterTags(frontmatter?.tags, tags);
-    collectFrontmatterTags(frontmatter?.tag, tags);
-    if (tags.has("#no-ai") || tags.has("#no-review")) return true;
-    return excludedTags.some((tag) => tags.has(normalizeTag(tag)));
-}
-
-function collectFrontmatterTags(value: unknown, tags: Set<string>): void {
-    if (typeof value === "string") {
-        for (const part of value.split(/[,\s]+/)) {
-            if (part.trim()) tags.add(normalizeTag(part));
-        }
-        return;
-    }
-    if (Array.isArray(value)) {
-        for (const item of value) collectFrontmatterTags(item, tags);
-    }
-}
-
-function normalizeTag(tag: string): string {
-    const trimmed = tag.trim().toLowerCase();
-    if (!trimmed) return "";
-    return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
 }
 
 function isMarkdownPath(path: string, extension?: string): boolean {

@@ -5,7 +5,7 @@
  *
  * Each builder returns a {@link PromptBuildResult} with system prompt, user
  * prompt, and max output tokens. Note content is truncated to fit the
- * provided token budget using a chars/4 approximation.
+ * provided token budget using Pagelet's conservative token estimator.
  *
  * Design references:
  *  - `docs/product/pagelet-product-design.md` §Scenario descriptions
@@ -14,21 +14,39 @@
  */
 
 import type { PromptBuildResult } from "./types";
+import { estimateTokens } from "../pa-review-cost";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Approximate max chars from token budget (1 token ~ 4 chars). */
-
 /**
- * Truncate a string to stay within a token budget (chars/4 approximation).
+ * Truncate a string to stay within a token budget.
  * Returns the truncated string and whether truncation occurred.
  */
 function truncateToTokenBudget(text: string, tokenBudget: number): string {
-    const charBudget = tokenBudget * 4;
-    if (text.length <= charBudget) return text;
-    return text.slice(0, charBudget) + "\n[...truncated]";
+    const budget = Math.max(0, Math.floor(tokenBudget));
+    if (estimateTokens(text) <= budget) return text;
+    if (budget === 0) return "";
+
+    const suffix = "\n[...truncated]";
+    const suffixTokens = estimateTokens(suffix);
+    const contentBudget = Math.max(0, budget - suffixTokens);
+    let low = 0;
+    let high = text.length;
+    while (low < high) {
+        const midpoint = Math.ceil((low + high) / 2);
+        const candidate = trimDanglingHighSurrogate(text.slice(0, midpoint));
+        if (estimateTokens(candidate) <= contentBudget) low = midpoint;
+        else high = midpoint - 1;
+    }
+    const prefix = trimDanglingHighSurrogate(text.slice(0, low));
+    return prefix ? `${prefix}${suffix}` : suffix.trimStart();
+}
+
+function trimDanglingHighSurrogate(value: string): string {
+    const last = value.charCodeAt(value.length - 1);
+    return last >= 0xD800 && last <= 0xDBFF ? value.slice(0, -1) : value;
 }
 
 /**
@@ -105,9 +123,6 @@ export function buildPreloadPrompt(
     noteContents: Array<{ path: string; content: string }>,
     budget: { input: number; output: number },
 ): PromptBuildResult {
-    const systemOverhead = 300; // ~300 tokens for system prompt
-    const truncated = distributeNotesBudget(noteContents, budget.input, systemOverhead);
-
     const systemPrompt = [
         SYSTEM_PROMPT_BASE,
         "",
@@ -119,13 +134,21 @@ export function buildPreloadPrompt(
         STRUCTURED_OUTPUT_SCHEMA,
     ].join("\n");
 
-    const userPrompt = [
+    const buildUserPrompt = (notes: ReadonlyArray<{ path: string; content: string }>): string => [
         `Analyze these ${noteContents.length} note(s) and produce 2-3 brief insights:`,
         "",
-        formatNotes(truncated),
+        formatNotes(notes),
         "",
         "Produce the JSON output now.",
     ].join("\n");
+    const emptyNotes = noteContents.map(({ path }) => ({ path, content: "" }));
+    const fixedInputTokens = estimateTokens(`${systemPrompt}\n\n${buildUserPrompt(emptyNotes)}`);
+    // `estimateTokens` rounds each ASCII run up. Reserve a small per-note margin
+    // so composing separately-truncated contents can never exceed the envelope.
+    const compositionMargin = noteContents.length + 2;
+    const contentBudget = Math.max(0, budget.input - fixedInputTokens - compositionMargin);
+    const truncated = distributeNotesBudget(noteContents, contentBudget, 0);
+    const userPrompt = buildUserPrompt(truncated);
 
     return { systemPrompt, userPrompt, maxOutputTokens: Math.min(budget.output, 512) };
 }

@@ -4447,7 +4447,7 @@ body.is-mobile .pa-pagelet-bubble-stack-dot {
 
 body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-items li {
 	padding: 10px 12px;
-	font-size: var(--font-ui-medium);
+	font-size: max(var(--font-ui-medium), 12px);
 }
 
 body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-source-link {
@@ -4455,7 +4455,7 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-source-link {
 	align-items: center;
 	box-sizing: border-box;
 	min-height: 44px;
-	font-size: var(--font-ui-smaller);
+	font-size: max(var(--font-ui-smaller), 12px);
 	padding: 8px 12px;
 	touch-action: manipulation;
 }
@@ -4463,7 +4463,7 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-source-link {
 body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-btn {
 	min-height: 44px;
 	padding: 10px 18px;
-	font-size: var(--font-ui-small);
+	font-size: max(var(--font-ui-small), 12px);
 }
 
 body.is-mobile .pa-pagelet-bubble-context-action-btn {
@@ -6995,11 +6995,20 @@ body.is-mobile .pa-pagelet-tab-nav-item {
 		animation: none;
 	}
 	/* F-04: Pet idle/nudge blink groups */
+	.pa-pagelet-pet[data-state=idle] .pa-pagelet-pet-blink-group,
+	.pa-pagelet-pet[data-state=nudge] .pa-pagelet-pet-blink-group {
+		animation: none;
+	}
 	.pa-pagelet-pet[data-state=idle] .pa-pagelet-pet-svg-wrap,
 	.pa-pagelet-pet[data-state=nudge] .pa-pagelet-pet-svg-wrap {
 		animation: none;
 	}
 	/* F-04: Working dots */
+	.pa-pagelet-pet[data-state=working] .pa-pagelet-pet-dot-1,
+	.pa-pagelet-pet[data-state=working] .pa-pagelet-pet-dot-2,
+	.pa-pagelet-pet[data-state=working] .pa-pagelet-pet-dot-3 {
+		animation: none;
+	}
 	.pa-pagelet-pet[data-state=working] .pa-pagelet-pet-svg-wrap,
 	.pa-pagelet-pet[data-state=working] .pa-pagelet-pet-wrapper::before {
 		animation: none;
@@ -7012,6 +7021,10 @@ body.is-mobile .pa-pagelet-tab-nav-item {
 	}
 	/* F-04: Resting breathe */
 	.pa-pagelet-pet[data-state=resting] .pa-pagelet-pet-svg-wrap {
+		animation: none;
+	}
+	.pa-pagelet-pet[data-state=resting] .pa-pagelet-pet-zzz1,
+	.pa-pagelet-pet[data-state=resting] .pa-pagelet-pet-zzz2 {
 		animation: none;
 	}
 	/* F-04: Capture hold ring */

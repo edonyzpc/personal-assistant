@@ -114,9 +114,14 @@ describe("ActiveVaultIndexer", () => {
     });
 
     it("adapts Pagelet related-note retrieval through RetrievalOutcome metadata", async () => {
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
         const searchHybrid = jest.fn(async (
             _query: string,
-            _options?: { ftsQueryOverride?: string | null; signal?: AbortSignal },
+            _options?: {
+                ftsQueryOverride?: string | null;
+                signal?: AbortSignal;
+                executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
+            },
         ) => [
             {
                 score: 0.9,
@@ -135,11 +140,13 @@ describe("ActiveVaultIndexer", () => {
             scope: "pagelet-current",
             excludedPaths: ["notes/current.md"],
             ftsQueryOverride: null,
+            executeEmbeddingInvoke,
             limit: 6,
         });
 
         expect(searchHybrid).toHaveBeenCalledWith("related query", expect.objectContaining({
             ftsQueryOverride: null,
+            executeEmbeddingInvoke,
         }));
         expect(result.outcome).toMatchObject({
             id: "avi-pagelet",

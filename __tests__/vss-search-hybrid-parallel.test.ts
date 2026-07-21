@@ -261,6 +261,202 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         vss.dispose();
     });
 
+    it('lets Pagelet admission wrap and immediately invoke embedQuery', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+        const embedCallsObservedByAdmission: number[] = [];
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => {
+            embedCallsObservedByAdmission.push(embedQueryCalls.count);
+            return invoke();
+        });
+
+        await vss.searchHybrid('raw prompt', { executeEmbeddingInvoke });
+
+        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
+        expect(embedCallsObservedByAdmission).toEqual([0]);
+        expect(embedQueryCalls.count).toBe(1);
+
+        vss.dispose();
+    });
+
+    it('reuses an exact Pagelet query embedding while rerunning local search', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+
+        await vss.searchHybrid('same semantic query', { executeEmbeddingInvoke });
+        await vss.searchHybrid('same semantic query', { executeEmbeddingInvoke });
+
+        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(1);
+        expect(index.search).toHaveBeenCalledTimes(2);
+
+        vss.dispose();
+    });
+
+    it('misses the Pagelet query cache when the embedding profile changes', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        (vss as any).ensureIndex = jest.fn(async () => undefined);
+        /* eslint-enable @typescript-eslint/no-explicit-any */
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+
+        await vss.searchHybrid('same semantic query', { executeEmbeddingInvoke });
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        (vss as any).profile = { ...(vss as any).profile, model: 'model-2' };
+        /* eslint-enable @typescript-eslint/no-explicit-any */
+        await vss.searchHybrid('same semantic query', { executeEmbeddingInvoke });
+
+        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(2);
+        expect(embedQueryCalls.count).toBe(2);
+
+        vss.dispose();
+    });
+
+    it('does not cache rejected or waiter-aborted Pagelet query attempts', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+        const rejected = jest.fn(async (_invoke: () => Promise<number[]>) => {
+            throw new Error('admission rejected');
+        });
+
+        await expect(vss.searchHybrid('retryable semantic query', {
+            executeEmbeddingInvoke: rejected,
+        })).rejects.toThrow('admission rejected');
+
+        const retry = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+        await vss.searchHybrid('retryable semantic query', { executeEmbeddingInvoke: retry });
+        expect(rejected).toHaveBeenCalledTimes(1);
+        expect(retry).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(1);
+
+        const abortedController = new AbortController();
+        const aborting = jest.fn(async (invoke: () => Promise<number[]>) => {
+            const embedding = await invoke();
+            abortedController.abort();
+            return embedding;
+        });
+        await expect(vss.searchHybrid('aborted semantic query', {
+            signal: abortedController.signal,
+            executeEmbeddingInvoke: aborting,
+        })).rejects.toThrow();
+
+        const afterAbort = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+        await vss.searchHybrid('aborted semantic query', { executeEmbeddingInvoke: afterAbort });
+        expect(aborting).toHaveBeenCalledTimes(1);
+        expect(afterAbort).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(3);
+
+        vss.dispose();
+    });
+
+    it('deduplicates concurrent Pagelet query embedding calls', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+        embedDelayHolder.current = 10;
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+
+        await Promise.all([
+            vss.searchHybrid('concurrent semantic query', { executeEmbeddingInvoke }),
+            vss.searchHybrid('concurrent semantic query', { executeEmbeddingInvoke }),
+        ]);
+
+        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(1);
+
+        vss.dispose();
+    });
+
+    it('does not let the first waiter abort poison a concurrent current waiter', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        embedDelayHolder.current = 10;
+        const firstController = new AbortController();
+        let resolveOwnerStarted!: () => void;
+        const ownerStarted = new Promise<void>((resolve) => {
+            resolveOwnerStarted = resolve;
+        });
+        const firstAdmission = jest.fn(async (invoke: () => Promise<number[]>) => {
+            const operation = invoke();
+            firstController.abort();
+            resolveOwnerStarted();
+            return operation;
+        });
+        const secondAdmission = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+
+        const first = vss.searchHybrid('shared semantic query', {
+            signal: firstController.signal,
+            executeEmbeddingInvoke: firstAdmission,
+        });
+        const firstOutcome = expect(first).rejects.toThrow();
+        await ownerStarted;
+        const second = vss.searchHybrid('shared semantic query', {
+            executeEmbeddingInvoke: secondAdmission,
+        });
+
+        await firstOutcome;
+        await expect(second).resolves.toEqual([]);
+
+        expect(firstAdmission).toHaveBeenCalledTimes(1);
+        expect(secondAdmission).not.toHaveBeenCalled();
+        expect(embedQueryCalls.count).toBe(1);
+        expect(index.search).toHaveBeenCalledTimes(1);
+
+        const cachedAdmission = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+        await vss.searchHybrid('shared semantic query', { executeEmbeddingInvoke: cachedAdmission });
+        expect(cachedAdmission).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(2);
+
+        vss.dispose();
+    });
+
+    it('does not call embedQuery when the Pagelet admission wrapper rejects', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+        const executeEmbeddingInvoke = jest.fn(async (_invoke: () => Promise<number[]>) => {
+            throw new Error('admission rejected');
+        });
+
+        await expect(vss.searchHybrid('raw prompt', { executeEmbeddingInvoke }))
+            .rejects.toThrow('admission rejected');
+
+        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(0);
+
+        vss.dispose();
+    });
+
+    it('has no abort gate between a successful Pagelet admission and embedQuery', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+        const controller = new AbortController();
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => {
+            controller.abort();
+            return invoke();
+        });
+
+        await expect(vss.searchHybrid('raw prompt', {
+            signal: controller.signal,
+            executeEmbeddingInvoke,
+        })).rejects.toThrow();
+
+        expect(executeEmbeddingInvoke).toHaveBeenCalledTimes(1);
+        expect(embedQueryCalls.count).toBe(1);
+
+        vss.dispose();
+    });
+
     it('falls back to raw prompt when the override promise rejects (no rethrow)', async () => {
         const { plugin } = createPlugin();
         const vss = new VSS(plugin, 'cache');
@@ -337,10 +533,16 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         /* eslint-enable @typescript-eslint/no-explicit-any */
 
         const ftsQueryOverridePromise = Promise.reject(new Error('rewrite blew up early'));
-        const result = await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+        const executeEmbeddingInvoke = jest.fn(async (invoke: () => Promise<number[]>) => invoke());
+        const result = await vss.searchHybrid('raw prompt', {
+            ftsQueryOverridePromise,
+            executeEmbeddingInvoke,
+        });
 
         expect(result).toEqual([]);
         expect(buildFtsQueryMock).not.toHaveBeenCalled();
+        expect(executeEmbeddingInvoke).not.toHaveBeenCalled();
+        expect(embedQueryCalls.count).toBe(0);
 
         vss.dispose();
     });

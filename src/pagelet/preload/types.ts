@@ -1,6 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 import type { TFile } from "obsidian";
+import type { PreloadBudgetReservation } from "./PreloadBudget";
 import type { PageletReviewDiagnostics } from "../pa-review-model";
 import type { PageletSuggestion } from "../pa-review-schemas";
 import type { PageletReviewRange } from "../scope";
@@ -53,9 +54,28 @@ export type PreloadErrorCategory = "network" | "auth" | "rate-limit" | "parse" |
 export type PreloadEvent =
     | { type: "cycle-start" }
     | { type: "cycle-complete"; result: PreloadResult }
-    | { type: "cycle-skip"; reason: "no-changes" | "budget-exceeded" | "disabled" }
+    | { type: "cycle-skip"; reason: "no-changes" | "budget-exceeded" | "disabled" | "outside-standard-envelope" }
     | { type: "cycle-error"; error: Error; category: PreloadErrorCategory }
     | { type: "circuit-breaker"; backoffMs: number; consecutiveErrors: number };
 
+export interface AnalyzeCallContext {
+    /** Reserve one background actual-provider-call slot immediately before invocation. */
+    reserveProviderCall(): boolean | PreloadBudgetReservation;
+    /** Read remaining background actual-provider-call capacity for optional enrichment. */
+    remainingProviderCalls(): { hourly: number; daily: number };
+    /** Runtime proof that this call came from the narrow generic background lane. */
+    backgroundEnvelope?: {
+        kind: "generic-changed-only";
+        rangeDays: 7;
+        allowWrite: false;
+        wholeVault: false;
+        excludedScopeOverride: false;
+    };
+}
+
 /** Callback type for LLM analysis — injected by the caller */
-export type AnalyzeCallback = (files: TFile[], config: PreloadConfig) => Promise<PreloadResult>;
+export type AnalyzeCallback = (
+    files: TFile[],
+    config: PreloadConfig,
+    context?: AnalyzeCallContext,
+) => Promise<PreloadResult>;

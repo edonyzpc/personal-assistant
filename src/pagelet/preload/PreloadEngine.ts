@@ -18,6 +18,10 @@ import type { AnalyzeCallback, PreloadConfig, PreloadErrorCategory, PreloadEvent
 export class PreloadEngine {
     private static readonly MAX_FILES_PER_CYCLE = 20;
     private static readonly MIN_TOKENS_PER_FILE = 100;
+    private static readonly STANDARD_MAX_INPUT_TOKENS = 4_000;
+    private static readonly STANDARD_MAX_OUTPUT_TOKENS = 1_000;
+    private static readonly STANDARD_MAX_CALLS_PER_HOUR = 2;
+    private static readonly STANDARD_MAX_CALLS_PER_DAY = 20;
     private timer: PlatformTimeoutHandle | null = null;
     private listeners: Set<(event: PreloadEvent) => void> = new Set();
     private lastCycleAt: number | null = null;
@@ -103,6 +107,11 @@ export class PreloadEngine {
             return;
         }
 
+        if (!this.isStandardBackgroundEnvelope()) {
+            this.emit({ type: "cycle-skip", reason: "outside-standard-envelope" });
+            return;
+        }
+
         if (!this.budget.canPreload()) {
             this.emit({ type: "cycle-skip", reason: "budget-exceeded" });
             return;
@@ -121,7 +130,12 @@ export class PreloadEngine {
             Math.floor(Math.max(1, this.config.tokenBudget.input) / PreloadEngine.MIN_TOKENS_PER_FILE),
         );
         const filesToAnalyze = changedFiles
-            .slice(0, Math.min(PreloadEngine.MAX_FILES_PER_CYCLE, maxFilesByBudget))
+            .slice(0, Math.min(PreloadEngine.MAX_FILES_PER_CYCLE, maxFilesByBudget));
+        const sourceSnapshots = filesToAnalyze.map((file) => ({
+            path: file.path,
+            mtime: file.stat.mtime,
+            size: file.stat.size,
+        }));
 
         if (filesToAnalyze.length === 0) {
             this.emit({ type: "cycle-skip", reason: "no-changes" });
@@ -134,15 +148,45 @@ export class PreloadEngine {
         // failures in recordCall / markAnalyzed / cache.set don't produce
         // unhandled rejections from the fire-and-forget runCycle() call.
         try {
-            const result = await this.analyzeCallback(filesToAnalyze, this.config);
+            const result = await this.analyzeCallback(filesToAnalyze, this.config, {
+                reserveProviderCall: () => this.budget.reserveCallLease(),
+                remainingProviderCalls: () => this.budget.remaining(),
+                backgroundEnvelope: {
+                    kind: "generic-changed-only",
+                    rangeDays: 7,
+                    allowWrite: false,
+                    wholeVault: false,
+                    excludedScopeOverride: false,
+                },
+            });
 
-            this.budget.recordCall();
             const now = Date.now();
-            for (const file of filesToAnalyze) {
-                this.changeDetector.markAnalyzed(file.path, now);
+            const analyzedPaths = new Set(result.analyzedFiles);
+            const analyzedSnapshots = sourceSnapshots.filter((snapshot) => (
+                analyzedPaths.has(snapshot.path)
+            ));
+            if (analyzedPaths.size > 0) {
+                const liveScope = this.scopeResolver.resolveTimeRange(7);
+                const liveFiles = new Map(liveScope.included.map((candidate) => (
+                    [candidate.file.path, candidate.file]
+                )));
+                const sourcesAreCurrent = analyzedPaths.size === analyzedSnapshots.length
+                    && analyzedSnapshots.every((snapshot) => {
+                        const current = liveFiles.get(snapshot.path);
+                        return current?.stat.mtime === snapshot.mtime
+                            && current.stat.size === snapshot.size;
+                    });
+                if (!sourcesAreCurrent) {
+                    throw new Error("Pagelet preload sources changed after analysis");
+                }
             }
-            this.cache.set(result);
-            this.lastCycleAt = now;
+            this.changeDetector.markAnalyzedFiles(analyzedSnapshots);
+            // A silent fail-closed/no-call result is not a valid replacement
+            // for the last prepared review and must remain retryable.
+            if (analyzedPaths.size > 0) {
+                this.cache.set(result);
+                this.lastCycleAt = now;
+            }
 
             // Circuit breaker: track successes, reset errors after threshold
             this.consecutiveSuccesses++;
@@ -236,7 +280,6 @@ export class PreloadEngine {
     destroy(): void {
         this.stop();
         this.cache.clear();
-        this.changeDetector.clear();
         this.listeners.clear();
     }
 
@@ -254,6 +297,19 @@ export class PreloadEngine {
             return Math.min(4 * 60 * 60 * 1000, base * 2);
         }
         return base;
+    }
+
+    private isStandardBackgroundEnvelope(): boolean {
+        return this.config.enabled === true
+            && (this.config.range === undefined || this.config.range === "last7")
+            && this.config.tokenBudget.input > 0
+            && this.config.tokenBudget.input <= PreloadEngine.STANDARD_MAX_INPUT_TOKENS
+            && this.config.tokenBudget.output > 0
+            && this.config.tokenBudget.output <= PreloadEngine.STANDARD_MAX_OUTPUT_TOKENS
+            && this.config.perHourCap > 0
+            && this.config.perHourCap <= PreloadEngine.STANDARD_MAX_CALLS_PER_HOUR
+            && this.config.perDayCap > 0
+            && this.config.perDayCap <= PreloadEngine.STANDARD_MAX_CALLS_PER_DAY;
     }
 
     // ── Circuit breaker ─────────────────────────────────────────────

@@ -25,6 +25,7 @@ import { isObsidianModalOpen } from "./dom-utils";
 
 import { BubbleView } from "./bubble/BubbleView";
 import { scopeRecapToDeliveryCandidate } from "./bubble/recap-card";
+import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";
 import type { DeliveryCandidate } from "./bubble/types";
 import type { OnboardingNudge, OnboardingNudgeKind } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
@@ -55,7 +56,7 @@ import { ResearchManager } from "./research";
 
 import { AnalysisSessionManager } from "./AnalysisSessionManager";
 import { BackgroundPreparationCoordinator } from "./BackgroundPreparationCoordinator";
-import { BubbleCoordinator } from "./BubbleCoordinator";
+import { BubbleCoordinator, NudgeOwner, type NudgeTicket } from "./BubbleCoordinator";
 import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
 import { resolveRelatedMarkdownNote } from "./related-note";
@@ -135,14 +136,13 @@ export class PageletOrchestrator {
     private preparedRecapNudgeFingerprint: string | null = null;
     private readonly shownRecapNudgeFingerprints = new Map<string, number>();
     private readonly snoozedRecapNudgeFingerprints = new Map<string, number>();
-    private recapAuthorizationPromptedThisSession = false;
-    private observedRecapAuthorization: PageletHost["settings"]["pagelet"]["scopeRecapBackgroundAuthorization"];
-    private recapAuthorizationAwaitingAdjustment = false;
     private recapPreparationTimer: PlatformTimeoutHandle | null = null;
     private recapPreparationInFlight = false;
     private recapPreparationPendingReason: "pagelet-open" | "note-activity" | "idle" | null = null;
     private recapPreparationPromise: Promise<ScopeRecapPreparationResult> | null = null;
     private recapPreparationPromiseScopeKey: string | null = null;
+    private recapPetWorkToken = 0;
+    private activeRecapPetWork: { token: number; claimedPet: boolean } | null = null;
     private lastRecapPreparationAttemptAt = 0;
     private lastRecapPreparationScopeKey: string | null = null;
     private recapBackgroundFailureCount = 0;
@@ -150,8 +150,10 @@ export class PageletOrchestrator {
     private recapScopeRevision = 0;
     private recapRuntimeGateIdentity: string;
     private onboardingNudge: OnboardingNudge | null = null;
+    private onboardingNudgeAdmissionKey: string | null = null;
     get hasActiveOnboardingNudge(): boolean { return this.onboardingNudge !== null; }
     private patternDetectionNudge: PatternDetectionResult | null = null;
+    private patternDetectionNudgeAdmissionKey: string | null = null;
     private quietRecallNudgeRunId = 0;
     private quietRecallRuntimePolicyIdentity: string | null;
     private quietRecallNudgeInFlight = false;
@@ -191,7 +193,6 @@ export class PageletOrchestrator {
         this.lastRecapAttempt = s.scopeRecapLastAttempt;
         this.lastQuietRecallDiagnostics = s.quietRecallLastDiagnostics;
         this.lastQuietRecallAcceptedCount = s.quietRecallLastAcceptedCount;
-        this.observedRecapAuthorization = s.scopeRecapBackgroundAuthorization;
         this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
         this.quietRecallRuntimePolicyIdentity = host.getQuietRecallEvaluationPolicySnapshotId?.() ?? null;
         for (const entry of s.scopeRecapNudgeSuppressions) {
@@ -206,12 +207,14 @@ export class PageletOrchestrator {
         this.preloadBudget = new PreloadBudget(
             s.preloadPerHourCap,
             s.preloadPerDayCap,
+            Date.now,
+            host.createPreloadBudgetStorage?.(),
         );
         const foregroundBudget = new PreloadBudget(
             s.foregroundPerHourCap,
             s.foregroundPerDayCap,
         );
-        this.changeDetector = new ChangeDetector();
+        this.changeDetector = new ChangeDetector(host.createPreloadChangeDetectorStorage?.());
         this.scopeResolver = new ScopeResolver(host.app, {
             excludedFolders: [...s.excludedFolders],
             excludedTags: [...s.excludedTags],
@@ -245,12 +248,11 @@ export class PageletOrchestrator {
             {
                 onPetTransition: (event) => this.transitionPet(event, "background"),
                 onPetFlashError: () => this.petView?.flashError(),
-                onInsightsReady: () => this.proactiveHints.onInsightsReady(),
             },
         );
 
         // Delegate: bubble coordinator (after proactiveHints)
-        this.bubbleCoordinator = new BubbleCoordinator(host, this.preloadCache, this.proactiveHints, {
+        this.bubbleCoordinator = new BubbleCoordinator(host, this.proactiveHints, {
             onExpandPanel: (type) => this.handleExpandPanel(type),
             onSourceClick: (link) => this.handleSourceClick(link),
             onDismiss: () => this.handleBubbleDismiss(),
@@ -269,9 +271,10 @@ export class PageletOrchestrator {
             onPatternDetectionView: (result) => { void this.handlePatternDetectionBubbleView(result); },
             onPatternDetectionDismiss: (result) => this.handlePatternDetectionBubbleDismiss(result),
             getPreparedRecapCandidate: () => this.currentPreparedRecapCandidate(),
-            getPreparedRecapNudgeCandidate: () => this.currentPreparedRecapNudgeCandidate(),
+            getAdmittedNudgeTickets: () => this.currentAdmittedNudgeTickets(),
             onPreparedRecapView: () => { void this.openPreparedRecapDelivery(); },
             onPreparedRecapLater: () => this.snoozePreparedRecapNudge(),
+            onNudgePresented: (ticket) => this.handleNudgePresented(ticket),
             getUnconvincingRecallCount: () => this.unconvincingRecallCount,
         });
 
@@ -335,6 +338,7 @@ export class PageletOrchestrator {
         // 1a. Create BubbleView (lazy-mounted on first show)
         this.bubbleView = new BubbleView({
             getLocale: getPageletUiLanguage,
+            onClose: () => this.bubbleCoordinator.handleBubbleClosed(this.bubbleView, this.petView),
             callbacks: {
                 onExpandPanel: (type) => this.handleExpandPanel(type),
                 onSourceClick: (link) => this.handleSourceClick(link),
@@ -474,13 +478,13 @@ export class PageletOrchestrator {
         this.escapeListenerDocument?.removeEventListener("keydown", this.handleEscape, true);
         this.escapeListenerDocument?.removeEventListener("keydown", this.handleQuietRecallShortcut, true);
         this.escapeListenerDocument = null;
+        this.cancelRecapPetWork();
         this.backgroundPrep.destroy();
         this.bubbleCoordinator.destroy();
         this.petView?.destroy();
         this.bubbleView?.destroy();
         this.panelView?.destroy();
         this.preloadCache.clear();
-        this.changeDetector.clear();
 
         this.petView = null;
         this.bubbleView = null;
@@ -491,33 +495,15 @@ export class PageletOrchestrator {
     syncSettings(): void {
         if (this.destroyed) return;
         const s = this.host.settings.pagelet;
-        let recapAuthorization = s.scopeRecapBackgroundAuthorization;
-        let recapPreparationEnabled = s.scopeRecapPreparationEnabled;
-        if (
-            this.observedRecapAuthorization === "declined-v1"
-            && recapAuthorization === "pending"
-            && recapPreparationEnabled
-        ) {
-            this.recapAuthorizationPromptedThisSession = false;
-        }
         const currentAuthorizationContextId = this.host.getScopeRecapAuthorizationContextId();
         if (
-            recapAuthorization === "authorized-v1"
+            s.scopeRecapBackgroundAuthorization === "authorized-v1"
             && s.scopeRecapAuthorizationContextId !== currentAuthorizationContextId
         ) {
-            recapAuthorization = "pending";
-            recapPreparationEnabled = false;
             this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "pending");
-            this.host.updatePageletSetting("scopeRecapPreparationEnabled", false);
             this.host.updatePageletSetting("scopeRecapAuthorizationContextId", null);
-            this.recapAuthorizationPromptedThisSession = false;
             this.clearPreparedRecapDelivery();
         }
-        if (recapAuthorization === "pending" && this.recapAuthorizationAwaitingAdjustment) {
-            this.recapAuthorizationAwaitingAdjustment = false;
-            this.recapAuthorizationPromptedThisSession = false;
-        }
-        this.observedRecapAuthorization = recapAuthorization;
         const recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
         if (recapRuntimeGateIdentity !== this.recapRuntimeGateIdentity) {
             this.recapRuntimeGateIdentity = recapRuntimeGateIdentity;
@@ -545,6 +531,7 @@ export class PageletOrchestrator {
             cooldownMinutes: s.proactiveHintsCooldown,
             quietHours: s.proactiveHintsQuietHours,
         });
+        if (!s.proactiveHints) this.clearGenericNudgeAdmissions();
         if (
             this.preparedRecapArtifact
             && this.preparedRecapArtifact.dataBoundarySnapshotId
@@ -566,9 +553,8 @@ export class PageletOrchestrator {
             }
         }
         if (
-            recapAuthorization === "pending"
-            || (recapAuthorization === "authorized-v1"
-                && recapPreparationEnabled)
+            s.scopeRecapPreparationEnabled
+            && s.scopeRecapBackgroundAuthorization !== "declined-v1"
         ) {
             this.schedulePreparedRecap("pagelet-open", 0);
         }
@@ -582,6 +568,7 @@ export class PageletOrchestrator {
         this.syncPetVisibility();
 
         this.backgroundPrep.syncConfig();
+        this.reconcilePetNudge();
     }
 
     // ======================================================================
@@ -591,6 +578,7 @@ export class PageletOrchestrator {
     getCommandCallbacks(): PageletCommandCallbacks {
         return {
             onOpenPanel: () => this.openPanel(),
+            onOpenPreparedReview: () => this.openPreparedReview(),
             onReviewCurrent: () => this.reviewCurrentNote(),
             onQuickReview: () => this.openQuickReview(),
             onDiscoverConnections: async () => {
@@ -616,6 +604,10 @@ export class PageletOrchestrator {
 
     openPanel(): void {
         this.handleExpandPanel("review");
+    }
+
+    openPreparedReview(): void {
+        this.handleExpandPanel("prepared");
     }
 
     openQuickReview(): void {
@@ -677,8 +669,6 @@ export class PageletOrchestrator {
         });
         if (routeToken === null) return;
         try {
-            // SG-05: Shared first-use non-blocking notification
-            this.showProviderFirstUseNotificationIfNeeded();
             const quietRecall = await this.withForegroundTimeout(this.host.runQuietRecall());
             this.recordQuietRecallDiagnostics(quietRecall);
             if (!this.isCurrentForegroundRoute(routeToken)) return;
@@ -777,22 +767,56 @@ export class PageletOrchestrator {
     }
 
     setPatternDetectionNudge(result: PatternDetectionResult | null): void {
-        this.patternDetectionNudge = result && result.totalCount > 0 ? result : null;
-        if (this.patternDetectionNudge && this.proactiveHints.onInsightsReady()) {
-            this.petView?.stateMachine.forceState("nudge");
+        const next = result && result.totalCount > 0 ? result : null;
+        if (next && this.patternDetectionNudge?.generatedAt === next.generatedAt) {
+            this.patternDetectionNudge = next;
+            this.reconcilePetNudge();
+            return;
         }
+        this.patternDetectionNudge = next;
+        this.patternDetectionNudgeAdmissionKey = null;
+        if (this.patternDetectionNudge && this.canAdmitGenericNudge()) {
+            const key = `${NudgeOwner.Pattern}:${this.patternDetectionNudge.generatedAt}`;
+            if (this.proactiveHints.onInsightsReady()) {
+                this.patternDetectionNudgeAdmissionKey = key;
+            }
+        }
+        this.reconcilePetNudge();
     }
 
     setOnboardingNudge(kind: OnboardingNudgeKind | null): boolean {
-        this.onboardingNudge = kind
-            ? { kind, generatedAt: new Date().toISOString() }
-            : null;
-        if (this.onboardingNudge && this.proactiveHints.onInsightsReady()) {
-            this.petView?.stateMachine.forceState("nudge");
-            return Boolean(this.petView);
+        if (!kind) {
+            this.onboardingNudge = null;
+            this.onboardingNudgeAdmissionKey = null;
+            this.reconcilePetNudge();
+            return true;
         }
-        if (!this.onboardingNudge) return true;
-        return false;
+        if (this.onboardingNudge?.kind === kind) {
+            this.reconcilePetNudge();
+            return this.onboardingNudgeAdmissionKey !== null;
+        }
+        this.onboardingNudge = { kind, generatedAt: new Date().toISOString() };
+        this.onboardingNudgeAdmissionKey = null;
+        if (this.canAdmitGenericNudge() && this.proactiveHints.onInsightsReady()) {
+            this.onboardingNudgeAdmissionKey = `${NudgeOwner.Onboarding}:${kind}:${this.onboardingNudge.generatedAt}`;
+        }
+        this.reconcilePetNudge();
+        return this.onboardingNudgeAdmissionKey !== null;
+    }
+
+    private canAdmitGenericNudge(): boolean {
+        return Boolean(
+            this.host.settings.pagelet.enabled
+            && this.host.settings.pagelet.petVisible
+            && this.host.settings.pagelet.proactiveHints
+            && !this.host.settings.focusMode
+            && this.petView,
+        );
+    }
+
+    private clearGenericNudgeAdmissions(): void {
+        this.patternDetectionNudgeAdmissionKey = null;
+        this.onboardingNudgeAdmissionKey = null;
     }
 
     async runScopeRecap(): Promise<void> {
@@ -864,6 +888,7 @@ export class PageletOrchestrator {
             ));
             new Notice(this.t("pagelet.recap.retryFailed"), 5000);
         } finally {
+            this.settleForForegroundOwner(routeToken);
             this.sessionManager.finishForegroundReviewRun();
         }
     }
@@ -926,13 +951,12 @@ export class PageletOrchestrator {
         }
         if (
             this.shownRecapNudgeFingerprints.has(quality.fingerprint)
+            || this.preparedRecapNudgeFingerprint === quality.fingerprint
             || (snoozedUntil !== undefined && snoozedUntil > now)
         ) return;
         if (!this.proactiveHints.onInsightsReady({ enabled: true })) return;
-        this.shownRecapNudgeFingerprints.set(quality.fingerprint, now);
         this.preparedRecapNudgeFingerprint = quality.fingerprint;
-        this.persistScopeRecapNudgeSuppressions();
-        this.petView.stateMachine.forceState("nudge");
+        this.reconcilePetNudge();
     }
 
     private snoozePreparedRecapNudge(): void {
@@ -974,6 +998,57 @@ export class PageletOrchestrator {
         return candidate && candidate.id === this.preparedRecapNudgeFingerprint
             ? candidate
             : null;
+    }
+
+    private currentAdmittedNudgeTickets(): NudgeTicket[] {
+        const tickets: NudgeTicket[] = [];
+        const preparedRecap = this.currentPreparedRecapNudgeCandidate();
+        if (preparedRecap) {
+            tickets.push({
+                key: `${NudgeOwner.PreparedRecap}:${preparedRecap.id}`,
+                owner: NudgeOwner.PreparedRecap,
+                candidate: preparedRecap,
+            });
+        }
+
+        const quietRecallCandidate = this.quietRecallNudgeCandidate;
+        const quietRecallNudge = this.quietRecallBubbleNudge;
+        const quietRecallDelivery = quietRecallCandidate
+            ? quietRecallCandidateToDeliveryCandidate(quietRecallCandidate)
+            : null;
+        if (
+            quietRecallCandidate
+            && quietRecallNudge
+            && quietRecallDelivery
+            && quietRecallCandidate.id === quietRecallNudge.candidateId
+        ) {
+            const stableIdentity = quietRecallCandidate.evaluationFingerprint?.trim()
+                || quietRecallCandidate.id;
+            tickets.push({
+                key: `${NudgeOwner.QuietRecall}:${stableIdentity}`,
+                owner: NudgeOwner.QuietRecall,
+                candidate: quietRecallCandidate,
+                deliveryCandidate: quietRecallDelivery,
+                nudge: quietRecallNudge,
+            });
+        }
+
+        const pattern = this.patternDetectionNudge;
+        if (pattern) {
+            const key = `${NudgeOwner.Pattern}:${pattern.generatedAt}`;
+            if (this.patternDetectionNudgeAdmissionKey === key) {
+                tickets.push({ key, owner: NudgeOwner.Pattern, result: pattern });
+            }
+        }
+
+        const onboarding = this.onboardingNudge;
+        if (onboarding) {
+            const key = `${NudgeOwner.Onboarding}:${onboarding.kind}:${onboarding.generatedAt}`;
+            if (this.onboardingNudgeAdmissionKey === key) {
+                tickets.push({ key, owner: NudgeOwner.Onboarding, nudge: onboarding });
+            }
+        }
+        return tickets;
     }
 
     private preparedRecapIsCurrent(): boolean {
@@ -1152,10 +1227,7 @@ export class PageletOrchestrator {
         if (!this.host.settings.pagelet.enabled) return;
         const settings = this.host.settings.pagelet;
         if (settings.scopeRecapBackgroundAuthorization === "declined-v1") return;
-        if (
-            settings.scopeRecapBackgroundAuthorization === "authorized-v1"
-            && !settings.scopeRecapPreparationEnabled
-        ) return;
+        if (!settings.scopeRecapPreparationEnabled) return;
         this.clearRecapPreparationTimer();
         this.recapPreparationTimer = setPlatformTimeout(() => {
             this.recapPreparationTimer = null;
@@ -1171,7 +1243,12 @@ export class PageletOrchestrator {
         }
         const authorizedOverview = await this.ensureScopeRecapBackgroundAuthorization();
         if (!authorizedOverview) return;
-        if (!this.host.settings.pagelet.scopeRecapPreparationEnabled) return;
+        if (
+            !this.host.settings.pagelet.enabled
+            || !this.host.settings.pagelet.scopeRecapPreparationEnabled
+            || this.host.settings.focusMode
+            || !this.host.isScopeRecapProviderConfigured()
+        ) return;
         const scopeKey = this.currentRecapScopeKey();
         if (!scopeKey) return;
         if (this.preparedRecapMatchesOverview(authorizedOverview, scopeKey)) {
@@ -1185,6 +1262,7 @@ export class PageletOrchestrator {
         this.lastRecapPreparationAttemptAt = now;
         this.lastRecapPreparationScopeKey = scopeKey;
         this.recapPreparationInFlight = true;
+        const petWorkToken = this.beginRecapPetWork();
         try {
             const result = await this.runScopeRecapPreparation(scopeKey, "background", authorizedOverview);
             this.recordScopeRecapAttempt(result.attempt);
@@ -1200,6 +1278,7 @@ export class PageletOrchestrator {
             this.host.log(`Pagelet prepared recap skipped (${reason})`, error);
             this.recordScopeRecapBackgroundFailure();
         } finally {
+            this.settleRecapPetWork(petWorkToken);
             this.recapPreparationInFlight = false;
             const pendingReason = this.recapPreparationPendingReason;
             this.recapPreparationPendingReason = null;
@@ -1209,52 +1288,18 @@ export class PageletOrchestrator {
         }
     }
 
-    /**
-     * SG-06: Modal removed. Scope Recap is enabled by default via settings.
-     * On first use, show a non-blocking notification (shared SG-05 first-use).
-     * No modal prompt, no blocking authorization flow.
-     */
+    /** SG-06: standard bounded Recap uses the capability toggle directly. */
     private async ensureScopeRecapBackgroundAuthorization(): Promise<ScopeRecapLocalOverview | null> {
         const settings = this.host.settings.pagelet;
+        if (!settings.enabled || this.host.settings.focusMode) return null;
         if (!this.host.isScopeRecapProviderConfigured()) return null;
         if (!settings.scopeRecapPreparationEnabled) return null;
+        if (settings.scopeRecapBackgroundAuthorization === "declined-v1") return null;
 
         const overview = await this.host.buildScopeRecapLocalOverview();
         this.lastRecapLocalOverview = overview;
         if (overview.sourceCoverage.includedSourceCount < 2) return null;
-
-        // SG-05: Shared first-use non-blocking notification
-        this.showProviderFirstUseNotificationIfNeeded();
-
-        // Auto-authorize on first run (no modal)
-        if (settings.scopeRecapBackgroundAuthorization !== "authorized-v1") {
-            this.host.updatePageletSetting("scopeRecapBackgroundAuthorization", "authorized-v1");
-            this.host.updatePageletSetting(
-                "scopeRecapAuthorizationContextId",
-                this.host.getScopeRecapAuthorizationContextId(),
-            );
-            this.observedRecapAuthorization = "authorized-v1";
-            this.recapRuntimeGateIdentity = this.currentRecapRuntimeGateIdentity();
-            await Promise.resolve(this.host.saveSettings());
-        }
         return overview;
-    }
-
-    /**
-     * SG-05: Show a non-blocking notification on first Pagelet provider use.
-     * Shared across all provider paths (Recap, Recall, Discover).
-     */
-    private showProviderFirstUseNotificationIfNeeded(): void {
-        if (this.host.settings.pagelet.pageletProviderFirstUseNotified) return;
-        this.host.updatePageletSetting("pageletProviderFirstUseNotified", true);
-        const provider = this.host.getScopeRecapProviderInfo();
-        const locale = getPageletUiLanguage();
-        new Notice(
-            pageletT("pagelet.provider.firstUseNotification", locale, {
-                provider: provider.provider,
-            }),
-            6000,
-        );
     }
 
     private recordScopeRecapBackgroundFailure(): void {
@@ -1277,8 +1322,7 @@ export class PageletOrchestrator {
         const settings = this.host.settings.pagelet;
         return JSON.stringify({
             pageletEnabled: settings.enabled,
-            authorization: settings.scopeRecapBackgroundAuthorization,
-            authorizationContextId: settings.scopeRecapAuthorizationContextId,
+            focusMode: this.host.settings.focusMode,
             currentAuthorizationContextId: this.host.getScopeRecapAuthorizationContextId(),
             preparationEnabled: settings.scopeRecapPreparationEnabled,
         });
@@ -1311,8 +1355,10 @@ export class PageletOrchestrator {
 
     private invalidatePreparedRecapScope(options: { resetOperationalState?: boolean } = {}): void {
         this.recapScopeRevision += 1;
+        this.cancelRecapPetWork();
         this.clearPreparedRecapDelivery(options);
         this.host.clearScopeRecapDetailSessionCache?.();
+        this.reconcilePetNudge();
     }
 
     private runScopeRecapPreparation(
@@ -1362,6 +1408,11 @@ export class PageletOrchestrator {
         result: ScopeRecapPreparationResult,
         scopeKey: string | null,
     ): Promise<boolean> {
+        if (
+            !this.host.settings.pagelet.enabled
+            || !this.host.settings.pagelet.scopeRecapPreparationEnabled
+            || this.host.settings.focusMode
+        ) return false;
         if (this.destroyed || !scopeKey || scopeKey !== this.currentRecapScopeKey()) return false;
         const currentOverview = await this.host.buildScopeRecapLocalOverview();
         if (this.destroyed || scopeKey !== this.currentRecapScopeKey()) return false;
@@ -1417,6 +1468,51 @@ export class PageletOrchestrator {
         this.petView?.setTaskKind?.(taskKind);
     }
 
+    /** A background Recap owns the Pet only when no task or nudge already owns it. */
+    private beginRecapPetWork(): number {
+        const token = ++this.recapPetWorkToken;
+        const canTransition = typeof (this.petView?.stateMachine as { transition?: unknown } | undefined)?.transition === "function";
+        const claimedPet = Boolean(
+            this.petView
+            && canTransition
+            && !this.sessionManager.isForegroundRunInProgress
+            && this.petView.stateMachine.state !== "working"
+            && this.petView.stateMachine.state !== "nudge",
+        );
+        this.activeRecapPetWork = { token, claimedPet };
+        if (claimedPet) this.transitionPet("analysis-start", "summary");
+        return token;
+    }
+
+    private settleRecapPetWork(token: number): void {
+        const owner = this.activeRecapPetWork;
+        if (!owner || owner.token !== token) return;
+        this.activeRecapPetWork = null;
+        if (
+            owner.claimedPet
+            && !this.sessionManager.isForegroundRunInProgress
+            && this.petView?.stateMachine.state === "working"
+            && this.petView.taskKind === "summary"
+        ) {
+            this.transitionPet("analysis-done");
+        }
+    }
+
+    private cancelRecapPetWork(): void {
+        const owner = this.activeRecapPetWork;
+        if (!owner) return;
+        this.activeRecapPetWork = null;
+        this.recapPetWorkToken += 1;
+        if (
+            owner.claimedPet
+            && !this.sessionManager.isForegroundRunInProgress
+            && this.petView?.stateMachine.state === "working"
+            && this.petView.taskKind === "summary"
+        ) {
+            this.transitionPet("analysis-done");
+        }
+    }
+
     private beginForegroundRoute(
         layout: "summary" | "discover" | "current" | "review",
         taskKind: PetTaskKind,
@@ -1446,7 +1542,7 @@ export class PageletOrchestrator {
      */
     private settleForForegroundOwner(routeToken: number): void {
         if (!this.isCurrentForegroundRoute(routeToken)) return;
-        if (this.petView?.stateMachine.state === "working") {
+        if (this.petView?.stateMachine?.state === "working") {
             this.transitionPet("analysis-done");
         }
     }
@@ -1469,6 +1565,11 @@ export class PageletOrchestrator {
             this.setPetTaskKind(taskKind);
         }
         this.petView?.stateMachine.transition(event);
+        if (event !== "analysis-start") this.reconcilePetNudge();
+    }
+
+    private reconcilePetNudge(): void {
+        this.bubbleCoordinator.reconcileNudge(this.bubbleView, this.petView);
     }
 
     private async reviewSelectedScope(): Promise<void> {
@@ -1721,8 +1822,11 @@ export class PageletOrchestrator {
     private async discoverConnections(): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
+        if (!this.host.isPathAllowedForPagelet(activeFile.path)) return;
         const expectedActivePath = activeFile.path;
-        if (!this.sessionManager.beginForegroundReviewRun()) return;
+        // Local explicit-link results must remain zero-cost. Provider-backed
+        // retrieval/generation reserve only at their actual invocation seams.
+        if (!this.sessionManager.beginForegroundReviewRun({ reserveBudget: false })) return;
         const routeToken = ++this.foregroundRouteToken;
 
         let petFinished = false;
@@ -1735,20 +1839,33 @@ export class PageletOrchestrator {
 
         try {
             const content = await this.host.app.vault.cachedRead(activeFile);
+            if (
+                !this.activePathStillMatches(expectedActivePath, routeToken)
+                || !this.host.isPathAllowedForPagelet(activeFile.path)
+            ) return;
             const currentNote = { path: activeFile.path, content };
             const noteContents = [{ path: activeFile.path, content }];
 
             const explicitRelatedNotes = await this.findExplicitLinkedNotes(activeFile, [activeFile.path]);
-            const relatedNotes = [
-                ...explicitRelatedNotes,
-                ...await this.host.findRelatedNotes(
+            const explicitConnections = this.buildExplicitLinkConnections(activeFile.path, explicitRelatedNotes);
+            let memoryRelatedNotes: Awaited<ReturnType<PageletHost["findRelatedNotes"]>>;
+            try {
+                memoryRelatedNotes = await this.host.findRelatedNotes(
                     activeFile.path,
                     noteContents,
-                    [activeFile.path, ...explicitRelatedNotes.map((note) => note.path)],
-                ),
-            ];
-
-            const explicitConnections = this.buildExplicitLinkConnections(activeFile.path, explicitRelatedNotes);
+                    [activeFile.path],
+                );
+            } catch (error) {
+                if (explicitConnections.length === 0) throw error;
+                finishPet();
+                this.host.log("Discovery Memory retrieval failed; showing explicit wikilinks", error);
+                if (!this.activePathStillMatches(expectedActivePath, routeToken)) return;
+                this.openDiscoveryResult(activeFile.path, explicitConnections);
+                return;
+            }
+            const relatedNotes = [...new Map(
+                [...explicitRelatedNotes, ...memoryRelatedNotes].map((note) => [note.path, note]),
+            ).values()];
 
             if (relatedNotes.length === 0) {
                 const locale = getPageletUiLanguage();
@@ -1772,14 +1889,21 @@ export class PageletOrchestrator {
                 return;
             }
 
-            let result: DiscoveryResult | null = null;
+            if (
+                !this.activePathStillMatches(expectedActivePath, routeToken)
+                || !this.host.isPathAllowedForPagelet(activeFile.path)
+                || relatedNotes.some((note) => !this.host.isPathAllowedForPagelet(note.path))
+            ) return;
+            let result: DiscoveryResult | null;
             try {
-                result = await this.withForegroundTimeout(this.host.discoverConnections(currentNote, relatedNotes));
+                result = await this.withForegroundTimeout(
+                    this.host.discoverConnections(currentNote, relatedNotes),
+                );
             } catch (error) {
                 if (explicitConnections.length === 0) throw error;
                 finishPet();
-                if (!this.activePathStillMatches(expectedActivePath, routeToken)) return;
                 this.host.log("Discovery AI analysis failed; showing explicit wikilinks", error);
+                if (!this.activePathStillMatches(expectedActivePath, routeToken)) return;
                 this.openDiscoveryResult(activeFile.path, explicitConnections);
                 return;
             }
@@ -1858,6 +1982,7 @@ export class PageletOrchestrator {
             if (!file) continue;
             const path = normalizePath(file.path);
             if (excluded.has(path) || seen.has(path)) continue;
+            if (!this.host.isPathAllowedForPagelet(path)) continue;
             const scopeResult = this.scopeResolver.resolveCurrentNote(file);
             if (scopeResult.included.length === 0) continue;
             seen.add(path);
@@ -1900,7 +2025,9 @@ export class PageletOrchestrator {
         },
     ): Promise<void> {
         if (files.length === 0) return;
-        if (!this.sessionManager.beginForegroundReviewRun()) return;
+        // Review provider-call budgets are reserved at the actual invocation
+        // seam, after any multi-note per-run confirmation.
+        if (!this.sessionManager.beginForegroundReviewRun({ reserveBudget: false })) return;
         ++this.foregroundRouteToken;
 
         this.transitionPet("analysis-start", "review");
@@ -1960,6 +2087,7 @@ export class PageletOrchestrator {
             this.petView?.destroy();
             this.petView = null;
             this.bubbleView?.close();
+            this.reconcilePetNudge();
             return;
         }
 
@@ -2067,10 +2195,12 @@ export class PageletOrchestrator {
 
     private toggleProactiveHints(): void {
         const newState = this.proactiveHints.toggle();
+        if (!newState) this.clearGenericNudgeAdmissions();
         if (this.petView) {
             this.petView.stateMachine.proactiveHintsEnabled = newState;
         }
         this.host.updatePageletSetting("proactiveHints", newState);
+        this.reconcilePetNudge();
     }
 
     /** Toggle Pet visibility (persisted). */
@@ -2080,12 +2210,14 @@ export class PageletOrchestrator {
             this.petView = null;
             this.bubbleView?.close();
             this.host.updatePageletSetting("petVisible", false);
+            this.reconcilePetNudge();
         } else {
             this.host.updatePageletSetting("petVisible", true);
             const activeLeaf = this.getCurrentWorkspaceLeaf();
             if (activeLeaf) {
                 this.handleLeafChange(activeLeaf);
             }
+            this.reconcilePetNudge();
         }
     }
 
@@ -2109,10 +2241,8 @@ export class PageletOrchestrator {
             : this.lastRecapAttempt
                 ? this.t("pagelet.recap.status.notReady")
                 : this.t("pagelet.recap.status.never");
-        const recapOperationallyEnabled = this.host.settings.pagelet.scopeRecapBackgroundAuthorization === "authorized-v1"
+        const recapOperationallyEnabled = this.host.settings.pagelet.scopeRecapBackgroundAuthorization !== "declined-v1"
             && this.host.settings.pagelet.scopeRecapPreparationEnabled
-            && this.host.settings.pagelet.scopeRecapAuthorizationContextId
-                === this.host.getScopeRecapAuthorizationContextId()
             && this.host.isScopeRecapProviderConfigured();
         const recapCost = this.lastRecapAttempt?.cost;
         const recapLine = this.t("pagelet.recap.status.notice", {
@@ -2143,7 +2273,9 @@ export class PageletOrchestrator {
             startedAt: recallDiagnostics
                 ? new Date(recallDiagnostics.startedAt).toLocaleTimeString()
                 : this.t("pagelet.status.none"),
-            calls: recallDiagnostics?.providerCalls ?? 0,
+            calls: recallDiagnostics?.totalProviderCalls
+                ?? recallDiagnostics?.providerCalls
+                ?? 0,
             accepted: this.lastQuietRecallAcceptedCount,
             outcome: recallDiagnostics?.blockedReason ?? this.t("pagelet.status.none"),
             cost: recallDiagnostics
@@ -2181,6 +2313,53 @@ export class PageletOrchestrator {
     // Bubble / Panel callbacks
     // ======================================================================
 
+    private handleNudgePresented(ticket: NudgeTicket): void {
+        switch (ticket.owner) {
+            case NudgeOwner.PreparedRecap:
+                if (this.preparedRecapNudgeFingerprint === ticket.candidate.id) {
+                    this.preparedRecapNudgeFingerprint = null;
+                }
+                this.shownRecapNudgeFingerprints.set(ticket.candidate.id, Date.now());
+                this.persistScopeRecapNudgeSuppressions();
+                return;
+            case NudgeOwner.QuietRecall:
+                if (
+                    ticket.nudge.onboardingExplanation
+                    && !this.host.settings.pagelet.quietRecallExplained
+                ) {
+                    this.host.updatePageletSetting("quietRecallExplained", true);
+                }
+                return;
+            case NudgeOwner.Pattern:
+                if (this.patternDetectionNudgeAdmissionKey === ticket.key) {
+                    this.patternDetectionNudgeAdmissionKey = null;
+                    if (this.patternDetectionNudge?.generatedAt === ticket.result.generatedAt) {
+                        this.patternDetectionNudge = null;
+                    }
+                }
+                return;
+            case NudgeOwner.Onboarding:
+                if (this.onboardingNudgeAdmissionKey === ticket.key) {
+                    this.onboardingNudgeAdmissionKey = null;
+                    if (this.onboardingNudge?.generatedAt === ticket.nudge.generatedAt) {
+                        this.onboardingNudge = null;
+                    }
+                }
+                if (
+                    ticket.nudge.kind === "maintenance_scan"
+                    && !this.host.settings.pagelet.maintenanceScanSuggested
+                ) {
+                    this.host.updatePageletSetting("maintenanceScanSuggested", true);
+                }
+                if (
+                    ticket.nudge.kind === "quick_capture"
+                    && !this.host.settings.pagelet.quickCaptureExplained
+                ) {
+                    this.host.updatePageletSetting("quickCaptureExplained", true);
+                }
+        }
+    }
+
     /**
      * F-07 / SG-01: simplified to check quietRecallMode === "on".
      * Quality gate, quiet hours, Focus Mode, per-candidate-once remain.
@@ -2217,23 +2396,13 @@ export class PageletOrchestrator {
     private clearQuietRecallBubbleNudge(
         options: { preserveDiscoverFallback?: boolean } = {},
     ): void {
-        const hadNudge = this.quietRecallBubbleNudge !== null;
         this.quietRecallNudgeCandidate = null;
         this.quietRecallBubbleNudge = null;
         if (!options.preserveDiscoverFallback) {
             this.quietRecallDiscoverFallback = null;
             this.unconvincingRecallCount = 0;
         }
-        // F-06: Reset Pet from nudge to idle when cleared nudge was the only active payload
-        if (
-            hadNudge
-            && this.petView?.stateMachine.state === "nudge"
-            && !this.onboardingNudge
-            && !this.patternDetectionNudge
-            && !this.preparedRecapNudgeFingerprint
-        ) {
-            this.petView.stateMachine.forceState("idle");
-        }
+        this.reconcilePetNudge();
     }
 
     private invalidateQuietRecallBubbleNudge(): void {
@@ -2267,8 +2436,6 @@ export class PageletOrchestrator {
         }
         this.quietRecallNudgeInFlight = true;
         try {
-            // SG-05: Shared first-use non-blocking notification
-            this.showProviderFirstUseNotificationIfNeeded();
             const recall = await this.host.runQuietRecall();
             this.recordQuietRecallDiagnostics(recall);
             if (runId !== this.quietRecallNudgeRunId || this.destroyed) return;
@@ -2311,11 +2478,11 @@ export class PageletOrchestrator {
                 ...quietRecallCandidateToBubbleNudge(candidate, { currentPath: recall.currentPath }),
                 ...(showOnboardingExplanation ? { onboardingExplanation: true } : {}),
             };
-            if (this.proactiveHints.onInsightsReady()) {
-                this.petView?.stateMachine.forceState("nudge");
-                if (showOnboardingExplanation) {
-                    this.host.updatePageletSetting("quietRecallExplained", true);
-                }
+            // Quiet Recall owns its quality and per-candidate gates. Reuse only
+            // the shared quiet-hours schedule; generic hint cooldown/pending
+            // state must not suppress or be consumed by this nudge.
+            if (!this.proactiveHints.quietHoursActive) {
+                this.reconcilePetNudge();
             }
         } catch (error) {
             if (runId === this.quietRecallNudgeRunId) {
@@ -2407,13 +2574,6 @@ export class PageletOrchestrator {
             ? [candidate, ...(discoverFallback?.candidates ?? []).filter((c) => c.id !== candidate.id)]
             : discoverFallback?.candidates ?? [];
 
-        if (existingCandidates.length === 0) {
-            // Fallback: if no candidates available, open Tab with empty state
-            this.clearQuietRecallBubbleNudge();
-            await this.runQuietRecall();
-            return;
-        }
-
         const locale = getPageletUiLanguage();
         const recall: QuietRecallRunResult = {
             generatedAt: new Date().toISOString(),
@@ -2475,27 +2635,58 @@ export class PageletOrchestrator {
     /**
      * F-05 / SG-04: Later = enter Review Queue instead of 24h snooze.
      */
-    private handleQuietRecallBubbleLater(nudge: QuietRecallBubbleNudge): void {
+    private async handleQuietRecallBubbleLater(nudge: QuietRecallBubbleNudge): Promise<void> {
         const candidate = this.quietRecallCandidateForNudge(nudge);
-        this.clearQuietRecallBubbleNudge();
-        this.bubbleView?.close();
-        this.recordQuietRecallFeedback(candidate, "later");
-        if (candidate) {
-            void this.host.createReviewQueueItem(
+        if (!candidate) {
+            this.host.log("Quiet Recall Later → Review Queue failed", {
+                candidateId: nudge.candidateId,
+                reason: "candidate_unavailable",
+            });
+            new Notice(this.t("pagelet.panel.status.actionFailed"), 4000);
+            return;
+        }
+
+        try {
+            const result = await this.host.createReviewQueueItem(
                 quietRecallCandidateToReviewQueueInput(candidate, {
                     admissionReason: "user_kept_for_later",
                 }),
-            ).catch((error) => {
-                this.host.log("Quiet Recall Later → Review Queue failed", error);
+            );
+            if (!result.ok) {
+                this.host.log("Quiet Recall Later → Review Queue failed", {
+                    candidateId: candidate.id,
+                    reason: result.reason,
+                });
+                new Notice(this.t("pagelet.panel.status.actionFailed"), 4000);
+                return;
+            }
+
+            if (this.quietRecallCandidateForNudge(nudge) === candidate) {
+                this.clearQuietRecallBubbleNudge();
+                this.bubbleView?.close();
+            }
+            this.recordQuietRecallFeedback(candidate, "later");
+        } catch (error) {
+            this.host.log("Quiet Recall Later → Review Queue failed", {
+                candidateId: candidate.id,
+                error,
             });
+            new Notice(this.t("pagelet.panel.status.actionFailed"), 4000);
         }
     }
 
     /** Expand Bubble -> Panel. */
     private handleExpandPanel(type?: string): void {
-        this.bubbleView?.close();
         const requestedType = type === "writing" ? "current" : type;
         const usePreparedFindings = requestedType === "prepared";
+        // An explicit cache miss is informational only. Preflight before
+        // closing or mutating any currently visible Bubble/Panel session.
+        if (usePreparedFindings && this.preloadCache.getFindings().length === 0) {
+            new Notice(this.t("pagelet.preload.status.noCachedFindings"), 4000);
+            return;
+        }
+
+        this.bubbleView?.close();
         const isKnownLayout = requestedType === "review"
             || requestedType === "current"
             || requestedType === "discover"
@@ -2508,14 +2699,6 @@ export class PageletOrchestrator {
         if (layoutType !== "summary") {
             this.saveFlow.clearPending();
         }
-        // Prepared findings come from the background cache and may not belong
-        // to the active note. Keep them in the generic review layout rather
-        // than presenting them as current-note analysis.
-        if (usePreparedFindings && this.preloadCache.getFindings().length === 0) {
-            new Notice(this.t("pagelet.preload.status.noCachedFindings"), 4000);
-            return;
-        }
-
         let panelFindings = usePreparedFindings
             ? []
             : this.sessionManager.currentAnalysisFindings();
@@ -2528,6 +2711,7 @@ export class PageletOrchestrator {
             panelFindings,
             usePreparedFindings
                 ? {
+                    preparedReadOnly: true,
                     usedGovernedMemoryClaimIds: this.preloadCache
                         .getUsedGovernedMemoryClaimIds(),
                 }
@@ -2537,6 +2721,7 @@ export class PageletOrchestrator {
 
     /** Expand Panel -> Tab. */
     private expandPanelToTab(): void {
+        if (this.panelView?.currentPanelExtra?.preparedReadOnly) return;
         const layoutType = this.panelView?.currentLayoutType ?? this.currentPanelLayout ?? "review";
         const panelFindings = this.panelView?.currentVisibleFindings ?? [];
         const panelExtra = this.panelView?.currentPanelExtra;
@@ -2719,6 +2904,7 @@ export class PageletOrchestrator {
 
     /** Save Panel findings as review note. */
     private async saveFindingsAsReviewNote(findings: PanelFinding[]): Promise<void> {
+        if (this.panelView?.currentPanelExtra?.preparedReadOnly) return;
         await this.saveFlow.saveFindingsAsReviewNote(findings, this.currentPanelLayout);
     }
 
@@ -2770,6 +2956,7 @@ export class PageletOrchestrator {
 
     private async handlePatternDetectionBubbleView(result: PatternDetectionResult): Promise<void> {
         this.patternDetectionNudge = null;
+        this.patternDetectionNudgeAdmissionKey = null;
         const locale = getPageletUiLanguage();
         const payload: PageletDetailPayload = {
             title: pageletT("pagelet.tab.patterns.title", locale),
@@ -2785,12 +2972,14 @@ export class PageletOrchestrator {
     private handlePatternDetectionBubbleDismiss(result: PatternDetectionResult): void {
         if (!this.patternDetectionNudge || this.patternDetectionNudge.generatedAt === result.generatedAt) {
             this.patternDetectionNudge = null;
+            this.patternDetectionNudgeAdmissionKey = null;
         }
     }
 
     private handleOnboardingNudgeDismiss(nudge: OnboardingNudge): void {
         if (!this.onboardingNudge || this.onboardingNudge.generatedAt === nudge.generatedAt) {
             this.onboardingNudge = null;
+            this.onboardingNudgeAdmissionKey = null;
         }
     }
 

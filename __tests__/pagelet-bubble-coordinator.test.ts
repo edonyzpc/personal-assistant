@@ -1,12 +1,12 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
-import { BubbleCoordinator } from "../src/pagelet/BubbleCoordinator";
-import type { BubbleContent } from "../src/pagelet/bubble/types";
+import { BubbleCoordinator, NudgeOwner, type NudgeTicket } from "../src/pagelet/BubbleCoordinator";
+import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
+import type { BubbleContent, DeliveryCandidate } from "../src/pagelet/bubble/types";
 import type { BubbleView } from "../src/pagelet/bubble/BubbleView";
 import type { PageletHost } from "../src/pagelet/PageletHost";
 import type { PetView } from "../src/pagelet/pet/PetView";
 import { ProactiveHints } from "../src/pagelet/hints/ProactiveHints";
-import { PreloadCache } from "../src/pagelet/preload/PreloadCache";
 import type { ReviewQueueListFilter, ReviewQueueItem } from "../src/pa";
 
 function makeHost(
@@ -65,20 +65,104 @@ function makeBubbleView(): BubbleView {
 }
 
 function makePetView(): PetView {
+    const stateMachine = {
+        state: "idle",
+        transition: jest.fn((event: string) => {
+            if (event === "user-interact") stateMachine.state = "idle";
+        }),
+        forceState: jest.fn((state: string) => { stateMachine.state = state; }),
+    };
     return {
         rootEl: {} as HTMLElement,
+        stateMachine,
     } as unknown as PetView;
+}
+
+function makeNudgePetView(): PetView {
+    const stateMachine = {
+        state: "nudge",
+        transition: jest.fn(() => { stateMachine.state = "idle"; }),
+        forceState: jest.fn((state: string) => { stateMachine.state = state; }),
+    };
+    return {
+        rootEl: {} as HTMLElement,
+        stateMachine,
+    } as unknown as PetView;
+}
+
+function makeQuietRecallFixture() {
+    const candidate = {
+        id: "recall-arbitration",
+        title: "Recall: Current decision",
+        summary: "An older decision is relevant again.",
+        sourceRefs: [{ path: "notes/older.md", evidenceStrength: "medium" as const }],
+        whyNow: ["It directly informs the note currently open."],
+        nextAction: "Open the source when useful.",
+        relation: "related" as const,
+        score: 90,
+        generatedAt: "2026-07-05T12:00:00.000Z",
+        evaluationProvenance: "ai" as const,
+        evaluationFingerprint: "eval-recall-arbitration",
+    };
+    return {
+        candidate,
+        nudge: {
+            candidateId: candidate.id,
+            currentPath: "notes/current.md",
+            relation: candidate.relation,
+            generatedAt: candidate.generatedAt,
+        },
+    };
+}
+
+function makeQuietRecallTicket(
+    candidate: ReturnType<typeof makeQuietRecallFixture>["candidate"],
+    nudge: ReturnType<typeof makeQuietRecallFixture>["nudge"],
+): NudgeTicket {
+    const deliveryCandidate = quietRecallCandidateToDeliveryCandidate(candidate);
+    if (!deliveryCandidate) throw new Error("expected delivery candidate");
+    return {
+        key: `${NudgeOwner.QuietRecall}:${candidate.evaluationFingerprint}`,
+        owner: NudgeOwner.QuietRecall,
+        candidate,
+        deliveryCandidate,
+        nudge,
+    };
+}
+
+function makeRecapTicket(candidate: DeliveryCandidate & { kind: "recap" }): NudgeTicket {
+    return {
+        key: `${NudgeOwner.PreparedRecap}:${candidate.id}`,
+        owner: NudgeOwner.PreparedRecap,
+        candidate,
+    };
+}
+
+function makePatternTicket(result: { generatedAt: string; totalCount: number; patterns: [] }): NudgeTicket {
+    return {
+        key: `${NudgeOwner.Pattern}:${result.generatedAt}`,
+        owner: NudgeOwner.Pattern,
+        result,
+    };
+}
+
+function makeOnboardingTicket(nudge: { kind: "quick_capture" | "maintenance_scan"; generatedAt: string }): NudgeTicket {
+    return {
+        key: `${NudgeOwner.Onboarding}:${nudge.kind}:${nudge.generatedAt}`,
+        owner: NudgeOwner.Onboarding,
+        nudge,
+    };
 }
 
 function makeCoordinator(
     listReviewQueueItems: (filter?: ReviewQueueListFilter) => ReviewQueueItem[],
     hostOverrides: Partial<PageletHost> = {},
-    overrides: Partial<ConstructorParameters<typeof BubbleCoordinator>[3]> = {},
+    overrides: Partial<ConstructorParameters<typeof BubbleCoordinator>[2]> = {},
+    proactiveHints?: ProactiveHints,
 ): BubbleCoordinator {
     return new BubbleCoordinator(
         makeHost(listReviewQueueItems, hostOverrides),
-        new PreloadCache(),
-        new ProactiveHints({
+        proactiveHints ?? new ProactiveHints({
             enabled: true,
             cooldownMinutes: 30,
             quietHours: { enabled: false, start: "22:00", end: "08:00" },
@@ -101,9 +185,10 @@ function makeCoordinator(
             onPatternDetectionView: jest.fn(),
             onPatternDetectionDismiss: jest.fn(),
             getPreparedRecapCandidate: () => null,
-            getPreparedRecapNudgeCandidate: () => null,
+            getAdmittedNudgeTickets: () => [],
             onPreparedRecapView: jest.fn(),
             onPreparedRecapLater: jest.fn(),
+            onNudgePresented: jest.fn(),
             getUnconvincingRecallCount: () => 0,
             ...overrides,
             onQuietRecallDiscoverOnly: overrides.onQuietRecallDiscoverOnly ?? jest.fn(),
@@ -116,7 +201,561 @@ function shownContent(bubbleView: BubbleView): BubbleContent {
     return show.mock.calls[show.mock.calls.length - 1][0] as BubbleContent;
 }
 
+async function flushAsyncWork(): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await Promise.resolve();
+}
+
 describe("BubbleCoordinator Review Queue reminders", () => {
+    it("shows Quiet Recall before onboarding, then signals onboarding only after close", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady()).toBe(true);
+        const { candidate, nudge } = makeQuietRecallFixture();
+        const onboarding = {
+            kind: "quick_capture" as const,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+        };
+        const onNudgePresented = jest.fn();
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: {
+                    enabled: true,
+                    onboardingShown: true,
+                    proactiveHints: true,
+                    quietAcknowledged: false,
+                },
+                quietRecall: {
+                    enabled: true,
+                    bubbleNudgesEnabled: true,
+                    quietRecallMode: "on",
+                },
+            } as PageletHost["settings"],
+        }, {
+            getOnboardingNudge: () => onboarding,
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [
+                makeQuietRecallTicket(candidate, nudge),
+                {
+                    key: `${NudgeOwner.Onboarding}:${onboarding.kind}:${onboarding.generatedAt}`,
+                    owner: NudgeOwner.Onboarding,
+                    nudge: onboarding,
+                },
+            ],
+            onNudgePresented,
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makeNudgePetView();
+
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(shownContent(bubbleView).type).toBe("recall-delivery");
+        expect(proactiveHints.hasPendingHint).toBe(true);
+        expect(onNudgePresented).toHaveBeenCalledWith(expect.objectContaining({
+            owner: "quiet-recall",
+        }));
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+
+        bubbleView.close();
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+        coordinator.handleBubbleClosed(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(shownContent(bubbleView).type).toBe("nudge");
+        expect(proactiveHints.hasPendingHint).toBe(false);
+        expect(proactiveHints.onInsightsReady()).toBe(false);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows Prepared Recap on the shared clock before re-signalling Quiet Recall", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady()).toBe(true);
+        const { candidate, nudge } = makeQuietRecallFixture();
+        const recap = {
+            id: "recap-arbitration",
+            kind: "recap" as const,
+            title: "Projects/PA",
+            body: "A high-value recap is ready.",
+            sourceRefs: [{ path: "Projects/PA/A.md", title: "A" }],
+            whyNow: ["A concrete cross-note insight is ready."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            staleStatus: "fresh" as const,
+            route: { surface: "tab" as const, payloadType: "scope-recap" },
+        };
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: {
+                    enabled: true,
+                    onboardingShown: true,
+                    proactiveHints: true,
+                    quietAcknowledged: false,
+                },
+                quietRecall: {
+                    enabled: true,
+                    bubbleNudgesEnabled: true,
+                    quietRecallMode: "on",
+                },
+            } as PageletHost["settings"],
+        }, {
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [
+                makeRecapTicket(recap),
+                makeQuietRecallTicket(candidate, nudge),
+            ],
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makeNudgePetView();
+
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(shownContent(bubbleView).type).toBe("recap-delivery");
+        expect(proactiveHints.hasPendingHint).toBe(false);
+        expect(proactiveHints.onInsightsReady()).toBe(false);
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+
+        bubbleView.close();
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+        coordinator.handleBubbleClosed(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(shownContent(bubbleView).type).toBe("recall-delivery");
+        expect(proactiveHints.hasPendingHint).toBe(false);
+        expect(proactiveHints.onInsightsReady()).toBe(false);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets Quiet Recall win when a generic payload exists without shared ownership", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        const { candidate, nudge } = makeQuietRecallFixture();
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: {
+                    enabled: true,
+                    onboardingShown: true,
+                    proactiveHints: true,
+                    quietAcknowledged: false,
+                },
+                quietRecall: {
+                    enabled: true,
+                    bubbleNudgesEnabled: true,
+                    quietRecallMode: "on",
+                },
+            } as PageletHost["settings"],
+        }, {
+            getOnboardingNudge: () => ({
+                kind: "quick_capture",
+                generatedAt: "2026-07-05T12:00:00.000Z",
+            }),
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [makeQuietRecallTicket(candidate, nudge)],
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makeNudgePetView();
+
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(shownContent(bubbleView).type).toBe("recall-delivery");
+        expect(proactiveHints.hasPendingHint).toBe(false);
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+    });
+
+    it("keeps an existing Quiet Recall ticket ahead of a later Recap, then surfaces Recap", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        const { candidate, nudge } = makeQuietRecallFixture();
+        let recap: (DeliveryCandidate & { kind: "recap" }) | null = null;
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: { enabled: true, proactiveHints: true },
+                quietRecall: { enabled: true, quietRecallMode: "on" },
+            } as PageletHost["settings"],
+        }, {
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [
+                makeQuietRecallTicket(candidate, nudge),
+                ...(recap ? [makeRecapTicket(recap)] : []),
+            ],
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makePetView();
+
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+        recap = {
+            id: "recap-deferred",
+            kind: "recap",
+            title: "Deferred recap",
+            body: "This recap arrived after the existing ticket.",
+            sourceRefs: [{ path: "notes/recap.md" }],
+            whyNow: ["A high-value cross-note result is ready."],
+            preparedAt: "2026-07-05T12:01:00.000Z",
+            route: { surface: "tab", payloadType: "scope-recap" },
+        };
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+
+        coordinator.handlePetClick(bubbleView, petView);
+        expect(shownContent(bubbleView).type).toBe("recall-delivery");
+
+        bubbleView.close();
+        coordinator.handleBubbleClosed(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(2);
+        coordinator.handlePetClick(bubbleView, petView);
+        expect(shownContent(bubbleView).type).toBe("recap-delivery");
+    });
+
+    it("holds a ticket during working and signals it once work settles", () => {
+        const { candidate, nudge } = makeQuietRecallFixture();
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: { enabled: true, proactiveHints: true },
+                quietRecall: { enabled: true, quietRecallMode: "on" },
+            } as PageletHost["settings"],
+        }, {
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [makeQuietRecallTicket(candidate, nudge)],
+        });
+        const bubbleView = makeBubbleView();
+        const petView = makePetView();
+        petView.stateMachine.forceState("working");
+        jest.mocked(petView.stateMachine.forceState).mockClear();
+
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+
+        petView.stateMachine.forceState("idle");
+        jest.mocked(petView.stateMachine.forceState).mockClear();
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
+    });
+
+    it("does not consume the shared clock when a queued Recap becomes stale", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+        let recap: (DeliveryCandidate & { kind: "recap" }) | null = {
+            id: "recap-stale",
+            kind: "recap",
+            title: "Stale recap",
+            body: "This should never render.",
+            sourceRefs: [{ path: "notes/stale.md" }],
+            whyNow: ["Was once current."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            route: { surface: "tab", payloadType: "scope-recap" },
+        };
+        const onNudgePresented = jest.fn();
+        const coordinator = makeCoordinator(() => [], {}, {
+            getAdmittedNudgeTickets: () => recap ? [makeRecapTicket(recap)] : [],
+            onNudgePresented,
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makePetView();
+        coordinator.reconcileNudge(bubbleView, petView);
+        recap = null;
+
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(bubbleView.show).not.toHaveBeenCalled();
+        expect(onNudgePresented).not.toHaveBeenCalled();
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+    });
+
+    it("keeps a valid ticket signalled when Bubble.show does not become visible", () => {
+        const { candidate, nudge } = makeQuietRecallFixture();
+        const onNudgePresented = jest.fn();
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: { enabled: true, proactiveHints: true },
+                quietRecall: { enabled: true, quietRecallMode: "on" },
+            } as PageletHost["settings"],
+        }, {
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [makeQuietRecallTicket(candidate, nudge)],
+            onNudgePresented,
+        });
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        } as unknown as BubbleView;
+        const petView = makeNudgePetView();
+
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(bubbleView.show).toHaveBeenCalledTimes(1);
+        expect(onNudgePresented).not.toHaveBeenCalled();
+        expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
+    });
+
+    it("does not re-nudge the same Quiet Recall evaluation when generatedAt changes", () => {
+        const fixture = makeQuietRecallFixture();
+        let candidate = { ...fixture.candidate };
+        let nudge = { ...fixture.nudge };
+        const onNudgePresented = jest.fn();
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: { enabled: true, petVisible: true, proactiveHints: true },
+                quietRecall: { enabled: true, quietRecallMode: "on" },
+                focusMode: false,
+            } as PageletHost["settings"],
+        }, {
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [makeQuietRecallTicket(candidate, nudge)],
+            onNudgePresented,
+        });
+        const bubbleView = makeBubbleView();
+        const petView = makePetView();
+
+        coordinator.reconcileNudge(bubbleView, petView);
+        coordinator.handlePetClick(bubbleView, petView);
+        expect(onNudgePresented).toHaveBeenCalledTimes(1);
+
+        bubbleView.close();
+        coordinator.handleBubbleClosed(bubbleView, petView);
+        jest.mocked(petView.stateMachine.forceState).mockClear();
+        candidate = { ...candidate, generatedAt: "2026-07-05T12:05:00.000Z" };
+        nudge = { ...nudge, generatedAt: "2026-07-05T12:05:00.000Z" };
+
+        coordinator.reconcileNudge(bubbleView, petView);
+
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalledWith("nudge");
+        expect(onNudgePresented).toHaveBeenCalledTimes(1);
+    });
+
+    it("wakes one deferred shared ticket at cooldown expiry and cancels cleanly", () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-07-05T12:00:00.000Z"));
+        try {
+            const proactiveHints = new ProactiveHints({
+                enabled: true,
+                cooldownMinutes: 60,
+                quietHours: { enabled: false, start: "22:00", end: "08:00" },
+            });
+            expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+            const recap: DeliveryCandidate & { kind: "recap" } = {
+                id: "recap-before-pattern",
+                kind: "recap",
+                title: "Recap before pattern",
+                body: "The first shared ticket.",
+                sourceRefs: [{ path: "notes/recap.md" }],
+                whyNow: ["Ready now."],
+                preparedAt: "2026-07-05T12:00:00.000Z",
+                route: { surface: "tab", payloadType: "scope-recap" },
+            };
+            const pattern = {
+                generatedAt: "2026-07-05T12:01:00.000Z",
+                totalCount: 1,
+                patterns: [],
+            };
+            const coordinator = makeCoordinator(() => [], {}, {
+                getPatternDetectionNudge: () => pattern,
+                getAdmittedNudgeTickets: () => [
+                    makeRecapTicket(recap),
+                    {
+                        key: `${NudgeOwner.Pattern}:${pattern.generatedAt}`,
+                        owner: NudgeOwner.Pattern,
+                        result: pattern,
+                    },
+                ],
+            }, proactiveHints);
+            const bubbleView = makeBubbleView();
+            const petView = makeNudgePetView();
+
+            coordinator.handlePetClick(bubbleView, petView);
+            expect(shownContent(bubbleView).type).toBe("recap-delivery");
+            bubbleView.close();
+            coordinator.handleBubbleClosed(bubbleView, petView);
+
+            expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+            expect(jest.getTimerCount()).toBe(1);
+            proactiveHints.updateConfig({ enabled: false });
+            coordinator.reconcileNudge(bubbleView, petView);
+            expect(jest.getTimerCount()).toBe(0);
+
+            proactiveHints.updateConfig({ enabled: true });
+            coordinator.reconcileNudge(bubbleView, petView);
+            expect(jest.getTimerCount()).toBe(1);
+            jest.advanceTimersByTime(60 * 60 * 1000);
+            expect(petView.stateMachine.forceState).toHaveBeenCalledTimes(1);
+            expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
+
+            coordinator.destroy();
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("never promotes raw Pattern or Onboarding payloads that failed admission", () => {
+        jest.useFakeTimers();
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady()).toBe(true);
+        proactiveHints.recordHintPresented();
+        const pattern = {
+            generatedAt: "2026-07-05T12:01:00.000Z",
+            totalCount: 1,
+            patterns: [] as [],
+        };
+        const onboarding = {
+            kind: "quick_capture" as const,
+            generatedAt: "2026-07-05T12:02:00.000Z",
+        };
+        const coordinator = makeCoordinator(() => [], {}, {
+            getPatternDetectionNudge: () => pattern,
+            getOnboardingNudge: () => onboarding,
+            getAdmittedNudgeTickets: () => [],
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makePetView();
+        try {
+            coordinator.reconcileNudge(bubbleView, petView);
+
+            expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+            expect(jest.getTimerCount()).toBe(0);
+            jest.advanceTimersByTime(60 * 60 * 1000);
+            expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+        } finally {
+            coordinator.destroy();
+            jest.useRealTimers();
+        }
+    });
+
+    it("presents an admitted Recap after generic pending was cleared and still advances cooldown", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+        proactiveHints.updateConfig({ enabled: false });
+        expect(proactiveHints.hasPendingHint).toBe(false);
+        const recap: DeliveryCandidate & { kind: "recap" } = {
+            id: "recap-survives-generic-off",
+            kind: "recap",
+            title: "Independent recap",
+            body: "This Recap was admitted before generic hints were disabled.",
+            sourceRefs: [{ path: "notes/recap.md" }],
+            whyNow: ["Ready now."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            route: { surface: "tab", payloadType: "scope-recap" },
+        };
+        const coordinator = makeCoordinator(() => [], {}, {
+            getAdmittedNudgeTickets: () => [makeRecapTicket(recap)],
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+
+        coordinator.handlePetClick(bubbleView, makeNudgePetView());
+
+        expect(shownContent(bubbleView).type).toBe("recap-delivery");
+        proactiveHints.updateConfig({ enabled: true });
+        expect(proactiveHints.onInsightsReady()).toBe(false);
+    });
+
+    it("cancels a deferred wake without touching a destroyed Pet state machine", () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-07-05T12:00:00.000Z"));
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+        const recap: DeliveryCandidate & { kind: "recap" } = {
+            id: "recap-before-hide",
+            kind: "recap",
+            title: "Recap before hide",
+            body: "First shared ticket.",
+            sourceRefs: [{ path: "notes/recap.md" }],
+            whyNow: ["Ready now."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            route: { surface: "tab", payloadType: "scope-recap" },
+        };
+        const pattern = {
+            generatedAt: "2026-07-05T12:01:00.000Z",
+            totalCount: 1,
+            patterns: [] as [],
+        };
+        const coordinator = makeCoordinator(() => [], {}, {
+            getAdmittedNudgeTickets: () => [makeRecapTicket(recap), makePatternTicket(pattern)],
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makeNudgePetView();
+        try {
+            coordinator.handlePetClick(bubbleView, petView);
+            bubbleView.close();
+            coordinator.handleBubbleClosed(bubbleView, petView);
+            expect(jest.getTimerCount()).toBe(1);
+            jest.mocked(petView.stateMachine.forceState).mockClear();
+
+            coordinator.reconcileNudge(bubbleView, null);
+            jest.advanceTimersByTime(60 * 60 * 1000);
+
+            expect(jest.getTimerCount()).toBe(0);
+            expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+        } finally {
+            coordinator.destroy();
+            jest.useRealTimers();
+        }
+    });
+
+    it("clears a live nudge and its wake timer while Focus Mode is active", () => {
+        const settings = {
+            pagelet: { enabled: true, petVisible: true, proactiveHints: true },
+            quietRecall: { enabled: true, quietRecallMode: "on" },
+            focusMode: false,
+        } as PageletHost["settings"];
+        const pattern = {
+            generatedAt: "2026-07-05T12:01:00.000Z",
+            totalCount: 1,
+            patterns: [] as [],
+        };
+        const coordinator = makeCoordinator(() => [], { settings }, {
+            getAdmittedNudgeTickets: () => [makePatternTicket(pattern)],
+        });
+        const bubbleView = makeBubbleView();
+        const petView = makePetView();
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenLastCalledWith("nudge");
+
+        settings.focusMode = true;
+        coordinator.reconcileNudge(bubbleView, petView);
+
+        expect(petView.stateMachine.forceState).toHaveBeenLastCalledWith("idle");
+    });
+
     it("routes a Discover-only context action to Quiet Recall local candidates", () => {
         const onDiscoverConnections = jest.fn();
         const onQuietRecallDiscoverOnly = jest.fn();
@@ -158,7 +797,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const bubbleView = makeBubbleView();
 
         coordinator.showBubble(bubbleView, makePetView());
-        await Promise.resolve();
+        await flushAsyncWork();
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("ready-empty");
@@ -226,6 +865,11 @@ describe("BubbleCoordinator Review Queue reminders", () => {
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("recap-delivery");
+        expect(content.findings[0]).toEqual(expect.objectContaining({
+            text: "The scope has a prepared recap.",
+            sourceLink: "Projects/PA/A.md",
+            sourceTitle: "Projects/PA · A",
+        }));
         expect(JSON.stringify(content)).not.toContain("Generate summary");
         expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
 
@@ -234,6 +878,12 @@ describe("BubbleCoordinator Review Queue reminders", () => {
     });
 
     it("shows a prepared Recap from the nudge path only when its high-value nudge is pending", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: true,
+            cooldownMinutes: 30,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        proactiveHints.onInsightsReady();
         const candidate = {
             id: "recap-nudge-1",
             kind: "recap" as const,
@@ -250,8 +900,8 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         };
         const coordinator = makeCoordinator(() => [], {}, {
             getPreparedRecapCandidate: () => candidate,
-            getPreparedRecapNudgeCandidate: () => candidate,
-        });
+            getAdmittedNudgeTickets: () => [makeRecapTicket(candidate)],
+        }, proactiveHints);
         const bubbleView = makeBubbleView();
 
         coordinator.showNudgeBubble(bubbleView, makePetView());
@@ -494,14 +1144,14 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const bubbleView = makeBubbleView();
 
         coordinator.showBubble(bubbleView, makePetView());
-        await Promise.resolve();
+        await flushAsyncWork();
 
         const ready = shownContent(bubbleView);
         expect(ready.type).toBe("ready-empty");
         ready.actions[0].callback();
 
         expect(shownContent(bubbleView).findings[0]?.text).toContain("Looking for old notes");
-        await Promise.resolve();
+        await flushAsyncWork();
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("recall-delivery");
@@ -549,11 +1199,10 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const bubbleView = makeBubbleView();
 
         coordinator.showBubble(bubbleView, makePetView());
-        await Promise.resolve();
+        await flushAsyncWork();
         preparationActive = true;
         shownContent(bubbleView).actions[0].callback();
-        await Promise.resolve();
-        await Promise.resolve();
+        await flushAsyncWork();
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("discovery");
@@ -572,15 +1221,15 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(onSourceClick).toHaveBeenCalledWith("notes/local.md");
     });
 
-    it("hides proactive Quiet Recall Link when no distinct source exists", () => {
+    it("keeps proactive Quiet Recall to View, Later, and Dismiss even with a distinct source", () => {
         const candidate = {
-            id: "recall-current",
-            title: "Recall: Current",
-            summary: "The current note backed this saved insight.",
-            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" as const }],
-            whyNow: ["Source matches the note you are looking at."],
+            id: "recall-related",
+            title: "Recall: Related",
+            summary: "An older note may matter again.",
+            sourceRefs: [{ path: "notes/older.md", evidenceStrength: "medium" as const }],
+            whyNow: ["Source matches the topic you are writing about."],
             nextAction: "Compare it.",
-            relation: "current" as const,
+            relation: "related" as const,
             score: 90,
             generatedAt: "2026-07-05T12:00:00.000Z",
             evaluationProvenance: "ai" as const,
@@ -592,7 +1241,10 @@ describe("BubbleCoordinator Review Queue reminders", () => {
             relation: candidate.relation,
             generatedAt: candidate.generatedAt,
         };
+        const onQuietRecallView = jest.fn();
         const onQuietRecallLink = jest.fn();
+        const onQuietRecallLater = jest.fn();
+        const onQuietRecallDismiss = jest.fn();
         const coordinator = makeCoordinator(() => [], {
             settings: {
                 pagelet: {
@@ -608,9 +1260,16 @@ describe("BubbleCoordinator Review Queue reminders", () => {
                 },
             } as PageletHost["settings"],
         }, {
+            getOnboardingNudge: () => ({
+                kind: "quick_capture",
+                generatedAt: "2026-07-05T11:59:00.000Z",
+            }),
             getQuietRecallNudge: () => nudge,
             getQuietRecallCandidate: () => candidate,
+            onQuietRecallView,
             onQuietRecallLink,
+            onQuietRecallLater,
+            onQuietRecallDismiss,
         });
         const bubbleView = makeBubbleView();
 
@@ -618,7 +1277,25 @@ describe("BubbleCoordinator Review Queue reminders", () => {
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("recall-delivery");
-        expect(content.actions.map((action) => action.label)).not.toContain("Link");
+        expect(content.actions.map((action) => action.label)).toEqual([
+            "View",
+            "Later",
+            "Dismiss",
+        ]);
+
+        content.actions[0].callback();
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+
+        jest.mocked(bubbleView.close).mockClear();
+        content.actions[1].callback();
+        expect(bubbleView.close).not.toHaveBeenCalled();
+
+        content.actions[2].callback();
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+
+        expect(onQuietRecallView).toHaveBeenCalledWith(nudge);
+        expect(onQuietRecallLater).toHaveBeenCalledWith(nudge);
+        expect(onQuietRecallDismiss).toHaveBeenCalledWith(nudge);
         expect(onQuietRecallLink).not.toHaveBeenCalled();
     });
 });

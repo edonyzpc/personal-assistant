@@ -506,6 +506,7 @@ export function normalizeConfirmedMemoryCount(value: unknown): number {
  */
 export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     const loadedObject = isRecord(loaded) ? loaded : {};
+    const loadedPagelet = isRecord(loadedObject.pagelet) ? loadedObject.pagelet : {};
     const merged = Object.assign({}, DEFAULT_SETTINGS, loadedObject) as PluginManagerSettings;
     const loadedLocalGraph = isRecord(loadedObject.localGraph)
         ? loadedObject.localGraph as Partial<typeof DEFAULT_SETTINGS.localGraph>
@@ -541,7 +542,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     // Pagelet has its own per-field normalizer (8 fields, mixed types).
     // Delegating keeps the legacy merge focused on settings that predate
     // Pagelet and avoids polluting this file with Pagelet-specific bounds.
-    merged.pagelet = mergePageletSettings(loadedObject.pagelet);
+    merged.pagelet = mergePageletSettings(loadedPagelet);
     merged.quickCapture = mergeQuickCaptureSettings(loadedObject.quickCapture);
     merged.dataBoundary = mergeDataBoundarySettings(loadedObject.dataBoundary);
     merged.reviewQueue = mergeReviewQueueSettings(loadedObject.reviewQueue);
@@ -550,7 +551,20 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.memoryGovernance = mergeMemoryGovernanceSettings(loadedObject.memoryGovernance);
     merged.maintenanceReview = mergeMaintenanceReviewSettings(loadedObject.maintenanceReview);
     merged.weeklyReview = mergeWeeklyReviewSettings(loadedObject.weeklyReview);
-    merged.quietRecall = mergeQuietRecallSettings(loadedObject.quietRecall);
+    // A short-lived B-118 settings shape persisted the visible toggle under
+    // `pagelet.quietRecallMode` while runtime consumed `quietRecall` instead.
+    // An explicit canonical mode is authoritative. When that field is absent,
+    // absorb the stale mirror before falling back to the older boolean
+    // migration. `mergePageletSettings` deliberately drops the mirror, so the
+    // next save leaves a single persisted source of truth.
+    const migratedPageletQuietRecallMode = loadedPagelet.quietRecallMode === "on"
+        || loadedPagelet.quietRecallMode === "off"
+        ? loadedPagelet.quietRecallMode
+        : undefined;
+    merged.quietRecall = mergeQuietRecallSettings(
+        loadedObject.quietRecall,
+        migratedPageletQuietRecallMode,
+    );
     merged.lastPatternDetectionAt = typeof loadedObject.lastPatternDetectionAt === "string"
         && loadedObject.lastPatternDetectionAt.trim()
         ? loadedObject.lastPatternDetectionAt.trim()
@@ -791,17 +805,26 @@ export function mergeWeeklyReviewSettings(loaded: unknown): WeeklyReviewSettings
     };
 }
 
-export function mergeQuietRecallSettings(loaded: unknown): QuietRecallSettings {
+export function mergeQuietRecallSettings(
+    loaded: unknown,
+    legacyPageletMode?: QuietRecallMode,
+): QuietRecallSettings {
     const loadedObject = isRecord(loaded) ? loaded : {};
-    const bubbleNudgesEnabled = typeof loadedObject.bubbleNudgesEnabled === "boolean"
+    const legacyBubbleNudgesEnabled = typeof loadedObject.bubbleNudgesEnabled === "boolean"
         ? loadedObject.bubbleNudgesEnabled
-        : QUIET_RECALL_DEFAULTS.bubbleNudgesEnabled;
+        : undefined;
+    const bubbleNudgesEnabled = legacyBubbleNudgesEnabled
+        ?? QUIET_RECALL_DEFAULTS.bubbleNudgesEnabled;
     // SG-01 migration: old bubbleNudgesEnabled: true → "on"; false/missing → "off"
     let quietRecallMode: QuietRecallMode;
     if (loadedObject.quietRecallMode === "on" || loadedObject.quietRecallMode === "off") {
         quietRecallMode = loadedObject.quietRecallMode;
+    } else if (legacyPageletMode === "on" || legacyPageletMode === "off") {
+        quietRecallMode = legacyPageletMode;
+    } else if (legacyBubbleNudgesEnabled !== undefined) {
+        quietRecallMode = legacyBubbleNudgesEnabled ? "on" : "off";
     } else {
-        quietRecallMode = bubbleNudgesEnabled ? "on" : "off";
+        quietRecallMode = QUIET_RECALL_DEFAULTS.quietRecallMode;
     }
     return {
         enabled: typeof loadedObject.enabled === "boolean"
