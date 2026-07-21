@@ -1,45 +1,27 @@
 # <Feature> Development Track
 
 Document status: Current
-Delivery status: Planned
-Design status: Not started
 Updated: YYYY-MM-DD
 Work item: B-xxx
-Authority: 本 track 的一页式状态、artifact routing 与下一步。
-Decision: replace with an Accepted repo-local Decision link
-Product spec: replace with an Approved repo-local Product Spec link
-Governance contract: replace with a Current GOV-xxx link for L2G; delete for Product track
+Authority: 本 track 的简短入口与 owning contract 路由。
+Decision: <Product lane only: Accepted Decision link>
+Product spec: <Product lane only: Approved Product Spec link>
+Governance contract: <L2G only: Current GOV-xxx link>
 Tracker: [Development Tracker](./tracker.md)
+
+只保留一种 authority lane。
 
 ## Outcome And Boundary
 
 - Outcome:
 - Delivery class: L2 / L3 / L2G
-- Current phase:
-- Target release / no release commitment:
 - Explicit non-goals:
 
-## Artifact Map
+## Artifacts
 
-- Plan: [Delivery Plan](./plan.md)
-- SDD: create and link `./sdd.md` when Design status becomes Draft
 - Tracker: [Development Tracker](./tracker.md)
+- Plan: <link only when phased/risky delivery needs `plan.md`>
+- SDD: <link only when complex design needs `sdd.md`>
 - Current Product/Architecture/Governance contract:
-- Tests / smoke surface:
-- Closeout: created only when the track is closed or cancelled
 
-## Traceability Snapshot
-
-| Requirement / AC | Design | Tracker evidence | State |
-| --- | --- | --- | --- |
-| B-xxx/REQ-01 / B-xxx/AC-01 | SDD section after design starts | [Tracker](./tracker.md) validation row | Planned |
-
-## Current Stop Point
-
-- Next action:
-- User decision needed:
-- Blocker:
-
-## Closeout Destination
-
-`docs/archive/<year>/<feature>/`
+执行状态、下一步、finding 与验证证据只写 Tracker，不在本页镜像。

@@ -8,6 +8,8 @@ Product spec: <repo-local product spec path>
 Governance contract: <Current GOV-xxx path for L2G; delete Product spec line>
 Tracker: [Development Tracker](./tracker.md)
 
+仅在多阶段、依赖、风险、回滚或跨会话交付需要独立计划时创建本文件。
+
 ## Goal And Non-goals
 
 ## Dependencies And Source Surface

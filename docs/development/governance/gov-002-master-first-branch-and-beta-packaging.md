@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-002
-Updated: 2026-07-19
+Updated: 2026-07-21
 Work item: B-117
 Authority: PA 仓库的代码、测试、研究/设计文档、工程治理与 BRAT beta 分支来源规则；不定义 PA runtime 或用户产品行为。
 
@@ -48,18 +48,25 @@ flowchart LR
 
 | Requirement / AC | Design | Delivery evidence |
 | --- | --- | --- |
-| B-117/REQ-01 + B-117/REQ-05 / B-117/AC-01 | [SDD — Authority flow](../active/master-first-branch-management/sdd.md#authority-flow) | [Tracker T-01](../active/master-first-branch-management/tracker.md#work) |
-| B-117/REQ-02 / B-117/AC-02 | [SDD — Release preflight](../active/master-first-branch-management/sdd.md#release-and-publish-gates) | [Tracker T-02](../active/master-first-branch-management/tracker.md#work) |
-| B-117/REQ-03 + B-117/REQ-04 / B-117/AC-03 + B-117/AC-04 | [SDD — Publish and workflow gates](../active/master-first-branch-management/sdd.md#release-and-publish-gates) | [Tracker T-03](../active/master-first-branch-management/tracker.md#work) |
-| B-117/AC-05 | [SDD — Compatibility](../active/master-first-branch-management/sdd.md#compatibility-migration-and-rollback) | [Tracker T-04](../active/master-first-branch-management/tracker.md#work) |
+| B-117/REQ-01 + B-117/REQ-05 / B-117/AC-01 | [Release Process](../../operations/release-process.md) + [BRAT process](../../operations/brat-beta-testing.md) | Current repo instructions and docs gate |
+| B-117/REQ-02 / B-117/AC-02 | [`release.mjs`](../../../scripts/release.mjs) source gate | [`release-script.test.ts`](../../../__tests__/release-script.test.ts) |
+| B-117/REQ-03 + B-117/REQ-04 / B-117/AC-03 + B-117/AC-04 | [`publish-release.mjs`](../../../scripts/publish-release.mjs) + [release workflow](../../../.github/workflows/release.yml) | [`publish-release-script.test.ts`](../../../__tests__/publish-release-script.test.ts) |
+| B-117/AC-05 | Current release/changelog behavior | [`changelog-script.test.ts`](../../../__tests__/changelog-script.test.ts) |
 
 ## Authority And Change Boundary
 
 - Current governance authority: 本文件；操作细节由 [BRAT Beta Testing Process](../../operations/brat-beta-testing.md) 与 [Release Process](../../operations/release-process.md) 实现。
-- Delivery authority: [B-117 Active Package](../active/master-first-branch-management/README.md) 与 [Tracker](../active/master-first-branch-management/tracker.md)。
+- Delivery authority: current release tooling, workflow, operations docs and focused tests listed above。B-117 已于 2026-07-19 完成验证并于 2026-07-21 closeout。
 - Product escalation: 若实现会改变 PA runtime、数据/隐私边界、Obsidian UI 或用户行为，停止 governance-only lane，建立 Product Decision + Product Spec。
 - Revisit trigger and successor rule: 只有 master-first 阻断无法通过 PR/direct commit 恢复、或发布平台要求不同 immutable source model 时，才通过 successor `GOV-xxx` 修订。
 
 ## Terminal Disposition
 
-- 交付关闭后，本 contract 保持 `Document status: Current`；完整 B-117 package 进入年度 Archive。
+- 本 contract 保持 `Document status: Current`。B-117 的 Feature Home、Plan、SDD 与 Tracker 已将稳定规则和验证证据吸收到本 contract、release tooling、operations docs 与 focused tests，因此 closeout 后删除，不复制进 Archive。
+
+## Delivery Closeout Evidence
+
+- 2026-07-19：release/publish/changelog 3 个 focused suites 共 21 tests 通过，覆盖 beta-only commit 拒绝、实时 `origin/master` drift、metadata/file-set gate、原子 beta+tag push 与 sibling beta changelog。
+- TypeScript、ESLint、Node syntax、workflow YAML、docs check 与 `git diff --check` 通过；独立 review 无 P0/P1/P2。
+- 本 track 不改变 PA runtime 或 Obsidian UI，因此无需 app smoke。
+- 无剩余工作进入 Backlog；push、tag、publish 与 release 权限仍保持独立。

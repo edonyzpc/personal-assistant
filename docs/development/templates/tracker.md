@@ -4,11 +4,13 @@ Document status: Current
 Delivery status: Planned
 Updated: YYYY-MM-DD
 Work item: B-xxx
-Authority: 本 track 的唯一执行状态、finding lifecycle、验证证据与 closeout readiness。
-Product spec: <repo-local product spec path>
-Governance contract: <Current GOV-xxx path for L2G; delete Product spec line>
-Plan: [Delivery Plan](./plan.md)
-SDD: create and link `./sdd.md` when Design status becomes Draft
+Authority: 本 track 的唯一执行状态、finding、验证证据与 closeout readiness。
+Product spec: <Product lane only: repo-local Product Spec>
+Governance contract: <L2G only: Current GOV-xxx>
+Plan: <optional link; delete when no plan.md>
+SDD: <optional link; delete when no sdd.md>
+
+只保留一种 authority lane，并删除不存在 artifact 的 metadata。
 
 ## Current Snapshot
 
@@ -35,18 +37,10 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | Date | Requirement / AC | Check | Result | Evidence / residual risk |
 | --- | --- | --- | --- | --- |
 
-## Decision Log
-
-只链接正式 Decision Record；不要在 Tracker 复制完整 rationale。
-
-| Date | Decision | Impact |
-| --- | --- | --- |
-
 ## Closeout Readiness
 
-- [ ] Owning Product Spec 或 Governance Contract 与实际行为一致。
-- [ ] Architecture 与实际行为一致。
+- [ ] Owning contract 与实际行为一致。
 - [ ] Required review/smoke/release evidence 已记录。
 - [ ] 未完成项已进入 Backlog。
-- [ ] `closeout.md` 已记录信息 disposition。
-- [ ] Active Registry 与 Archive index 更新方案明确。
+- [ ] 稳定结论已吸收到 current contract/tests。
+- [ ] 过程文档已标记 delete-after-absorption 或 unique archive evidence。

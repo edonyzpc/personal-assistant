@@ -31,14 +31,14 @@
 
 ## Active
 
-当前状态见 [Active Registry](./active/README.md)。新 Product feature 获得批准，或 L2G governance/tooling contract 进入跨会话执行后，在 `active/<feature>/` 创建：
+当前状态见 [Active Registry](./active/README.md)。新 Product feature 获得批准，或 L2G governance/tooling contract 进入跨会话执行后，在 `active/<feature>/` 创建最小包：
 
 ```text
 docs/development/active/<feature>/
   README.md
-  plan.md
   tracker.md
-  sdd.md      # SDD phase 创建；实现前必须 Approved
+  plan.md     # 可选：多阶段、依赖、风险或回滚需要时
+  sdd.md      # 可选：复杂设计或多模块/数据/生命周期变更时
 ```
 
-完成或取消时再创建 `closeout.md`，然后把整个包移动到 `docs/archive/<year>/<feature>/`。不要长期保留 Closed/Cancelled 的 active package。
+Tracker 是唯一执行状态。完成或取消时，将稳定结论吸收到 Product/Governance/Architecture、Backlog 或 tests，再默认删除过程包；只有当前文档仍需引用的独有证据才放入 Archive。

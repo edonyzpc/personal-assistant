@@ -41,22 +41,22 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 - B-115/AC-01: 前向 contract test 同时证明 REQ-01 与 REQ-02：casual idea 零 repo 写入；明确记录或 promotion 场景只创建/复用最小 repo Backlog ID；项目内不存在 Linear Skill 路由。
 - B-115/AC-02: review-only/no-file-changes 路由测试证明 repo、Archive 与外部系统均为零写入。
 - B-115/AC-03: plan-and-implement、缺失 Plan/SDD bootstrap、零/多 Active Package continue 场景都有唯一模式与 stop point；archive collision fail closed。
-- B-115/AC-04: checker 对失效 HTML 资源、无关 basename、外部 disposition、`T-xxx` 删除、不完整 Closeout 和无 baseline tag release fail closed；Skill forward test 证明模板、Archive 和全量索引不会在例行 turn 被默认预读。
-- B-115/AC-05: B-115 继续可从 docs index → Development index → Governance index/GOV-001 → Archived Package/Tracker/Closeout 定位，且不伪造 Product Decision 或 Product Spec provenance。
+- B-115/AC-04: checker 对失效当前链接、无关 basename、外部 disposition、无 current 入链 Archive、`T-xxx` 删除和无 baseline tag release fail closed；Skill forward test 证明模板、Archive 和全量索引不会在例行 turn 被默认预读。
+- B-115/AC-05: B-115 可从 docs index → Development index → Governance index/GOV-001 定位；Tracker 独占执行状态，Plan/SDD 按复杂度创建，过程 artifact 吸收后默认删除，且不伪造 Product Decision/Product Spec provenance。
 
 ## Traceability
 
 | Requirement / AC | Design | Delivery evidence |
 | --- | --- | --- |
 | B-115/REQ-01 + B-115/REQ-02 / B-115/AC-01 | [Documentation Workflow — Capture](../documentation-workflow.md#1-capture-与-backlog) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
-| B-115/REQ-03 / B-115/AC-02 | [SDD — Authorization](../../archive/2026/agent-managed-docs-lifecycle/sdd.md#authorization-and-target-resolution) | [Tracker T-02](../../archive/2026/agent-managed-docs-lifecycle/tracker.md#work) |
-| B-115/REQ-04 / B-115/AC-03 | [SDD — Authorization](../../archive/2026/agent-managed-docs-lifecycle/sdd.md#authorization-and-target-resolution) | [Tracker T-03](../../archive/2026/agent-managed-docs-lifecycle/tracker.md#work) |
-| B-115/REQ-05 / B-115/AC-04 | [SDD — Integrity gates](../../archive/2026/agent-managed-docs-lifecycle/sdd.md#documentation-integrity-gates) | [Tracker T-04](../../archive/2026/agent-managed-docs-lifecycle/tracker.md#work)、[`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
-| Engineering bootstrap / B-115/AC-05 | [Authority ownership](../../archive/2026/agent-managed-docs-lifecycle/sdd.md#authority-ownership) | [Tracker T-05](../../archive/2026/agent-managed-docs-lifecycle/tracker.md#work) |
+| B-115/REQ-03 / B-115/AC-02 | [Documentation Workflow — authorization](../documentation-workflow.md#自然语言入口与授权) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
+| B-115/REQ-04 / B-115/AC-03 | [Documentation Workflow — Active Package](../documentation-workflow.md#3-active-package) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
+| B-115/REQ-05 / B-115/AC-04 | [Documentation Workflow — validation](../documentation-workflow.md#验证门) | [`check-docs-script.test.ts`](../../../__tests__/check-docs-script.test.ts)、[`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
+| Engineering bootstrap / B-115/AC-05 | [Documentation Workflow](../documentation-workflow.md) | Current Governance index + focused contract tests |
 
 ## Authority And Change Boundary
 
 - Current governance authority: 本文件与 [Documentation Workflow](../documentation-workflow.md)。两者冲突时先修复 drift，不由 Product Decision Register 接管。
-- Delivery authority: [B-115 Archived Package](../../archive/2026/agent-managed-docs-lifecycle/README.md)、[Tracker](../../archive/2026/agent-managed-docs-lifecycle/tracker.md) 与 [Closeout](../../archive/2026/agent-managed-docs-lifecycle/closeout.md) 保存原始交付证据；2026-07-21 repo-only 修订由本 contract、Documentation Workflow、Skill forward test 与 docs gate 证明。
+- Delivery authority: 本 contract、Documentation Workflow、当前 Skills、checker 与 focused contract tests；已吸收的 B-115 过程包不再作为 authority 保留。
 - Product escalation: 任何实现若改变 PA runtime、用户行为、数据/隐私边界或 Obsidian UI，必须停止 governance-only lane，并进入 Accepted Product Decision + Approved Product Spec。
 - Revisit trigger: 只有用户明确确认 repo-only intake 无法满足真实 planning/capture 需求时，才评估可选外部工具；它不得重新成为默认 gate。若 future change 改变 GOV-001 的 lifecycle authority，再建立 successor `GOV-xxx`。

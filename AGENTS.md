@@ -227,6 +227,17 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 - Use `docs/development/templates/` for new lifecycle artifacts. Preserve stable
   `B-xxx`, `DEC-xxx`, `B-xxx/REQ-xx`, and `B-xxx/AC-xx` traceability across
   closeout.
+- Keep Tracker as the only delivery-status authority. Active Registry and
+  Feature Home are link-only; do not mirror phase, date, target, or validation
+  status across them.
+- Start cross-session execution with only Feature Home + Tracker. Add Plan for
+  phased/risky delivery and SDD for complex design, data/lifecycle/
+  compatibility, or multi-module changes.
+- At closeout, absorb stable outcomes into current contracts, Backlog, or
+  tests, then delete process artifacts by default. Archive only unique
+  rationale, migration/release/incident, or validation evidence still linked
+  from current source or documentation; do not preserve a complete package by
+  default.
 - Use Mermaid diagrams inside Markdown for architecture and flow visualizations unless the user explicitly asks for image assets.
 - Keep architecture docs separate from implementation trackers when both are needed.
 - Make docs match actual commands and behavior; do not document aspirational flows as current behavior.
@@ -312,23 +323,21 @@ Current entry points:
   `docs/product/active-decisions.md`, and
   `docs/product/decisions/README.md`.
 - Active feature execution packages start with
-  `docs/development/active/<feature>/{README,plan,tracker}.md`; add `sdd.md`
-  during the SDD phase and require it before implementation.
-- Completed/cancelled package closeout:
-  create `closeout.md`, then move the full package to
-  `docs/archive/<year>/<feature>/` and update the disposition/index records.
+  `docs/development/active/<feature>/{README,tracker}.md`; add `plan.md` or
+  `sdd.md` only when delivery/design complexity requires them.
+- Completed/cancelled closeout absorbs durable outcomes into current
+  authorities and deletes process artifacts by default. Retain only compact,
+  current-linked historical evidence in `docs/archive/`.
 - Pagelet feature delivery: `docs/development/workflows/pagelet-sdd-guide.md`.
 - Write/action boundary: `docs/architecture/write-action-framework-sdd.md`,
   `docs/development/proposals/operations-agent/operations-agent-plan.md`, and `docs/development/proposals/operations-agent/operations-agent-mode-sdd.md`.
 - Reusable repo-scale refactor workflow: `docs/development/workflows/refactor-workflow.md`.
 
-Historical trackers and research are retained under `docs/archive/`, including
-`docs/archive/v2-post-release-spec-driven-development.md`,
-`docs/archive/agent-context-management-research.md`, and
-`docs/archive/agent-memory-extraction-research.md`. Treat archived documents as
-evidence/provenance, not as current approval gates unless a current Product
-Spec, Architecture doc, active Tracker, or Backlog item explicitly points to
-them.
+Archive is opt-in historical evidence, not a complete process log. Treat an
+archived document as provenance only when a current Product Spec, Architecture
+doc, Governance Contract, Active Tracker, Backlog, or Roadmap explicitly links
+it; otherwise prefer deletion after absorption. Archive never supplies current
+approval or execution status.
 
 ## Final Checklist For Agents
 

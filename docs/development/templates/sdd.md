@@ -6,8 +6,10 @@ Work item: B-xxx
 Authority: 本 track 的 source-verified implementation design、兼容性、风险与 test matrix。
 Product spec: <repo-local product spec path>
 Governance contract: <Current GOV-xxx path for L2G; delete Product spec line>
-Plan: [Delivery Plan](./plan.md)
+Plan: <optional Delivery Plan link; delete when no plan.md>
 Tracker: [Development Tracker](./tracker.md)
+
+仅在多模块设计、共享基础设施、行为/数据/隐私/生命周期、兼容性或迁移复杂度需要 source-verified design 时创建本文件。
 
 ## Current Source Baseline
 

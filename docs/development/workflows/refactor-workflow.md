@@ -28,21 +28,20 @@ Do not mark a phase done just because code compiles. A phase is done only when t
 Create or update these artifacts at the start:
 
 - `docs/development/active/<feature>/README.md` as the one-page track home.
-- `docs/development/active/<feature>/plan.md`.
 - `docs/development/active/<feature>/tracker.md`.
 - `docs/backlog.md` for follow-up items that should not reopen the active tracker.
 
-Create `sdd.md` only when entering the SDD phase. A plan-only or pre-SDD cancelled refactor must not fabricate an empty SDD; implementation cannot start until both Plan and SDD are approved.
+Repo-scale refactors normally justify `plan.md` because delivery is phased/risky and `sdd.md` because module/lifecycle/compatibility design is non-trivial；若实际范围不满足这些条件，不为形式完整补造文件。存在 SDD 时，实现前必须 Approved。
 
 Use the canonical [documentation templates](../templates/README.md) and register the package in [Active Development Registry](../active/README.md). Do not create new plan/tracker files in the `docs/` root.
 
 Keep roles separate:
 
 - Product Spec: source of truth for user behavior, product scope and acceptance criteria.
-- Feature Home: source of truth for track routing, derived status snapshot and current stop point.
+- Feature Home: owning contract 与 Tracker 的简短路由入口，不复制状态。
 - Plan doc: source of truth for boundaries, phased delivery and validation strategy.
 - SDD: source of truth for this implementation design, compatibility, rollback and test matrix.
-- Tracker doc: the only delivery/execution status authority, plus test evidence, review findings, smoke results, risks, and decisions. Feature Home and Active Registry are derived mirrors checked for consistency.
+- Tracker doc: the only delivery/execution status authority, plus test evidence, review findings, smoke results, risks, and decisions. Feature Home and Active Registry are link-only.
 - Backlog: deferred cleanup or future milestones outside the active implementation track.
 - Archive docs: historical evidence only, never the current source of truth.
 
@@ -78,7 +77,7 @@ Avoid leaving `[~]` in historical evidence rows after the overall track is compl
 4. Prefer existing module boundaries and helper APIs.
 5. Update tests with the implementation, not after the fact.
 6. Run focused tests first.
-7. Update Feature Home/plan/SDD/tracker to match the implementation only after behavior is verified.
+7. Update Tracker and any affected Plan/SDD to match verified behavior；Feature Home only changes when routing or scope boundary changes.
 
 For risky paths, keep fallback behavior working before enabling the new path by default.
 
@@ -229,9 +228,10 @@ Before declaring a refactor done:
 - Obsidian smoke is recorded or explicitly skipped with reason.
 - Risk table matches the final behavior.
 - Open decisions are updated.
-- Product Spec, Architecture, Feature Home, Plan, SDD, Tracker and Backlog do not contradict each other.
-- `closeout.md` maps every unique process artifact to durable contract, Backlog, Archive or delete-after-absorption.
-- The complete package has moved to `docs/archive/<year>/<feature>/` and no Closed/Cancelled package remains under `active/`.
+- Product Spec, Architecture, Tracker, any existing Plan/SDD and Backlog do not contradict each other.
+- Stable outcomes are absorbed into current contracts/tests；unresolved work is in Backlog.
+- Feature Home、Tracker、Plan/SDD、handoff 与过程日志默认 delete-after-absorption；只有当前 authority 仍引用的独有证据进入 Archive。
+- No Closed/Cancelled process package remains under `active/`.
 - Worktree is clean or remaining changes are clearly named.
 - Release status is clear if a release was requested.
 
@@ -245,7 +245,7 @@ Use this prompt to start the next refactor:
 要求：
 - 每个 phase 按 dev -> test -> review -> fix -> Obsidian smoke test -> fix 循环推进。
 - 使用 subagents 做 phase review。
-- 先更新 Feature Home/tracker 状态，再做实现；实现后同步 Product Spec/Architecture/SDD/tracker/风险/验证记录。
+- 只在 Tracker 更新执行状态；实现后同步受影响的 Product Spec/Architecture、按需 Plan/SDD、风险与验证记录。
 - Runtime/UI 变化必须 make deploy 后在 test vault smoke。
-- Closeout 用模板记录信息 disposition，未完成项进入 Backlog；提交时拆分 docs、runtime/test、Backlog/future milestone、release commit。
+- Closeout 把稳定结论吸收到 current authority/tests，未完成项进入 Backlog，过程文档默认删除；提交时拆分 docs、runtime/test、Backlog/future milestone、release commit。
 ```

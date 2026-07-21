@@ -73,7 +73,8 @@ function collectLocalTarget(file, rawTarget, targets) {
     checkedLinks += 1;
     const resolved = resolveTarget(file, target);
     targets.add(resolved);
-    if (!existsSync(resolved)) errors.push(`${relative(file)} -> ${rawTarget}`);
+    const sourceIsArchive = relative(file).startsWith("docs/archive/");
+    if (!sourceIsArchive && !existsSync(resolved)) errors.push(`${relative(file)} -> ${rawTarget}`);
 }
 
 function collectMarkdownLinks(file, rawMarkdown) {
@@ -310,13 +311,42 @@ function collectReachable(start, allowed) {
 const archivePrefix = `${index("archive")}${path.sep}`;
 const currentReachableDocs = collectReachable(index("index.md"), (file) =>
     file.startsWith(`${docsRoot}${path.sep}`) && !file.startsWith(archivePrefix));
-const archiveReachableDocs = collectReachable(index("archive/README.md"), (file) =>
-    file === index("archive/README.md") || file.startsWith(archivePrefix));
-const reachableDocs = new Set([...currentReachableDocs, ...archiveReachableDocs]);
+const archiveIndexFile = index("archive/README.md");
+const dispositionLogFile = index("archive/disposition-log.md");
+const currentLinkedArchiveDocs = new Set();
+for (const [source, targets] of resolvedLinksByFile) {
+    if (source.startsWith(archivePrefix)) continue;
+    for (const target of targets) {
+        if (target.startsWith(archivePrefix) && target.endsWith(".md") && existsSync(target)) {
+            currentLinkedArchiveDocs.add(target);
+        }
+    }
+}
+for (const source of textFiles) {
+    if (relative(source).startsWith("docs/archive/")) continue;
+    if (relative(source) === "__tests__/check-docs-script.test.ts") continue;
+    const raw = readFileSync(source, "utf8");
+    for (const match of raw.matchAll(/(?:^|[^A-Za-z0-9_.\/-])(docs\/archive\/[A-Za-z0-9_.\/-]+\.md)/g)) {
+        const target = path.join(repoRoot, match[1]);
+        if (existsSync(target)) currentLinkedArchiveDocs.add(target);
+    }
+}
+const reachableDocs = new Set([
+    ...currentReachableDocs,
+    archiveIndexFile,
+    dispositionLogFile,
+    ...currentLinkedArchiveDocs,
+]);
 for (const file of walkMarkdown(docsRoot)) {
-    const expectedReachable = file.startsWith(archivePrefix) ? archiveReachableDocs : currentReachableDocs;
-    const sourceIndex = file.startsWith(archivePrefix) ? "docs/archive/README.md" : "docs/index.md without traversing archive";
-    if (!expectedReachable.has(file)) errors.push(`Orphan documentation is not reachable from ${sourceIndex}: ${relative(file)}`);
+    if (!file.startsWith(archivePrefix)) {
+        if (!currentReachableDocs.has(file)) {
+            errors.push(`Orphan documentation is not reachable from docs/index.md without traversing archive: ${relative(file)}`);
+        }
+        continue;
+    }
+    if (![archiveIndexFile, dispositionLogFile].includes(file) && !currentLinkedArchiveDocs.has(file)) {
+        errors.push(`Archive evidence has no inbound link from current documentation or source: ${relative(file)}`);
+    }
 }
 
 for (const file of proposalFiles) {
@@ -443,7 +473,7 @@ for (const entry of activeDirectories) {
     const planFile = path.join(packageRoot, "plan.md");
     const trackerFile = path.join(packageRoot, "tracker.md");
     const sddFile = path.join(packageRoot, "sdd.md");
-    const required = [homeFile, planFile, trackerFile];
+    const required = [homeFile, trackerFile];
     for (const file of required) {
         if (!existsSync(file)) errors.push(`Incomplete active package ${entry.name}: missing ${path.basename(file)}`);
     }
@@ -452,57 +482,55 @@ for (const entry of activeDirectories) {
         errors.push(`Unregistered active package or tracker: ${relative(homeFile)}`);
     }
 
-    const home = requireFields(homeFile, ["Document status", "Delivery status", "Design status", "Updated", "Work item", "Authority", "Tracker"]);
+    const home = requireFields(homeFile, ["Document status", "Updated", "Work item", "Authority", "Tracker"]);
     const packageAuthority = resolvePackageAuthority(homeFile, home);
     const workItem = field(home, "Work item");
-    const deliveryStatus = field(home, "Delivery status");
-    const designStatus = field(home, "Design status");
     validateDocumentStatus(homeFile, home, ["Current"]);
     if (!/^B-\d{3}$/u.test(workItem ?? "")) errors.push(`${relative(homeFile)} -> invalid Work item ${workItem ?? ""}`);
-    if (!activeDeliveryStatuses.has(deliveryStatus)) errors.push(`${relative(homeFile)} -> terminal or invalid active Delivery status ${deliveryStatus ?? ""}`);
-    if (!["Not started", "Draft", "Approved"].includes(designStatus)) errors.push(`${relative(homeFile)} -> invalid Design status ${designStatus ?? ""}`);
-    if (["Draft", "Approved"].includes(designStatus) && !existsSync(sddFile)) errors.push(`${relative(homeFile)} -> Design status ${designStatus} requires sdd.md`);
-    if (designStatus === "Not started" && existsSync(sddFile)) errors.push(`${relative(homeFile)} -> sdd.md exists while Design status is Not started`);
-    if (["Implementing", "Validating", "Validated"].includes(deliveryStatus) && designStatus !== "Approved") {
-        errors.push(`${relative(homeFile)} -> ${deliveryStatus} requires Approved design`);
-    }
 
     const registryRow = tableRowLinking(activeIndex, homeFile);
-    if (!registryRow || registryRow[1] !== workItem || registryRow[2] !== deliveryStatus) {
-        errors.push(`${relative(homeFile)} -> Active Registry Work item/status mirror is missing or stale`);
+    if (!registryRow || registryRow[1] !== workItem) {
+        errors.push(`${relative(homeFile)} -> Active Registry Work item/link is missing or stale`);
     }
 
-    requireLinks(homeFile, [planFile, trackerFile], "active artifact");
+    requireLinks(homeFile, [trackerFile], "tracker");
+    if (existsSync(planFile)) requireLinks(homeFile, [planFile], "Plan");
     if (existsSync(sddFile)) requireLinks(homeFile, [sddFile], "SDD");
 
-    const plan = requireFields(planFile, ["Document status", "Updated", "Work item", "Authority", "Tracker"]);
-    requireConsistentArtifactAuthority(planFile, plan, packageAuthority);
-    const trackerLabels = ["Document status", "Delivery status", "Updated", "Work item", "Authority", "Plan"];
+    let plan;
+    if (existsSync(planFile)) {
+        plan = requireFields(planFile, ["Document status", "Updated", "Work item", "Authority", "Tracker"]);
+        requireConsistentArtifactAuthority(planFile, plan, packageAuthority);
+        validateDocumentStatus(planFile, plan, ["Draft", "Approved", "Current"]);
+        if (field(plan, "Work item") !== workItem) errors.push(`${relative(planFile)} -> Work item differs from Feature Home`);
+        requireLinks(planFile, [trackerFile], "tracker");
+    }
+    const trackerLabels = ["Document status", "Delivery status", "Updated", "Work item", "Authority"];
+    if (existsSync(planFile)) trackerLabels.push("Plan");
     if (existsSync(sddFile)) trackerLabels.push("SDD");
     const tracker = requireFields(trackerFile, trackerLabels);
     requireConsistentArtifactAuthority(trackerFile, tracker, packageAuthority);
-    validateDocumentStatus(planFile, plan, ["Draft", "Approved", "Current"]);
     validateDocumentStatus(trackerFile, tracker, ["Current"]);
-    if ((designStatus === "Approved" || deliveryStatus !== "Planned") && field(plan, "Document status") !== "Approved") {
-        errors.push(`${relative(planFile)} -> ${deliveryStatus}/${designStatus} requires an Approved Plan`);
-    }
-    if (field(plan, "Work item") !== workItem || field(tracker, "Work item") !== workItem) {
+    const deliveryStatus = field(tracker, "Delivery status");
+    if (!activeDeliveryStatuses.has(deliveryStatus)) errors.push(`${relative(trackerFile)} -> terminal or invalid active Delivery status ${deliveryStatus ?? ""}`);
+    if (field(tracker, "Work item") !== workItem) {
         errors.push(`${relative(homeFile)} -> Active artifact Work item mismatch`);
     }
-    if (field(tracker, "Delivery status") !== deliveryStatus) {
-        errors.push(`${relative(homeFile)} -> Feature Home and Tracker Delivery status differ`);
-    }
-    requireLinks(planFile, [trackerFile], "tracker");
-    requireLinks(trackerFile, [planFile], "plan");
+    if (existsSync(planFile)) requireLinks(trackerFile, [planFile], "Plan");
 
     let sdd;
     if (existsSync(sddFile)) {
-        sdd = requireFields(sddFile, ["Document status", "Updated", "Work item", "Authority", "Plan", "Tracker"]);
+        const sddLabels = ["Document status", "Updated", "Work item", "Authority", "Tracker"];
+        if (existsSync(planFile)) sddLabels.push("Plan");
+        sdd = requireFields(sddFile, sddLabels);
         requireConsistentArtifactAuthority(sddFile, sdd, packageAuthority);
         validateDocumentStatus(sddFile, sdd, ["Draft", "Approved"]);
         if (field(sdd, "Work item") !== workItem) errors.push(`${relative(sddFile)} -> Work item differs from Feature Home`);
-        if (designStatus === "Approved" && field(sdd, "Document status") !== "Approved") errors.push(`${relative(sddFile)} -> approved design requires Document status Approved`);
-        requireLinks(sddFile, [planFile, trackerFile], "plan/tracker");
+        if (["Implementing", "Validating", "Validated"].includes(deliveryStatus) && field(sdd, "Document status") !== "Approved") {
+            errors.push(`${relative(sddFile)} -> ${deliveryStatus} requires an Approved SDD`);
+        }
+        requireLinks(sddFile, [trackerFile], "tracker");
+        if (existsSync(planFile)) requireLinks(sddFile, [planFile], "Plan");
         requireLinks(trackerFile, [sddFile], "SDD");
     }
 
@@ -660,252 +688,17 @@ for (const file of directMarkdown(index("product/specs"))) {
 }
 
 const archiveRoot = index("archive");
-const archiveIndex = index("archive/README.md");
 const closedWorkItems = new Set();
-const annualGovernanceRecords = new Map();
-const archivedGovernanceIds = new Set();
-const annualDirectories = readdirSync(archiveRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && /^\d{4}$/u.test(entry.name));
-requireIndexed(archiveIndex, [
-    ...directMarkdown(archiveRoot),
-    ...annualDirectories.map((entry) => path.join(archiveRoot, entry.name, "README.md")),
-], "archive entry");
-
-for (const annual of annualDirectories) {
-    const annualRoot = path.join(archiveRoot, annual.name);
-    const annualIndex = path.join(annualRoot, "README.md");
-    const trackDirectories = readdirSync(annualRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
-    const annualRecords = directMarkdown(annualRoot);
-    if (trackDirectories.length > 0 && readFileSync(annualIndex, "utf8").includes("当前没有使用新 package 结构归档的 track")) {
-        errors.push(`${relative(annualIndex)} -> index still claims there are no structured tracks`);
-    }
-    requireIndexed(annualIndex, [
-        ...annualRecords,
-        ...trackDirectories.map((entry) => path.join(annualRoot, entry.name, "README.md")),
-    ], `${annual.name} archive entry`);
-
-    for (const file of annualRecords) {
-        const content = requireFields(file, ["Document status", "Updated", "Work item", "Authority"]);
-        validateDocumentStatus(file, content, ["Archived"]);
-        const deliveryStatus = field(content, "Delivery status");
-        const decisionStatus = field(content, "Status");
-        const governanceId = field(content, "Governance ID");
-        if (deliveryStatus === "Closed") {
-            errors.push(`${relative(file)} -> Closed work requires a structured archive package with closeout.md`);
-        } else if (deliveryStatus && !["Rejected", "Cancelled", "Superseded"].includes(deliveryStatus)) {
-            errors.push(`${relative(file)} -> annual archive record has non-terminal Delivery status`);
-        }
-        if (decisionStatus && !["Rejected", "Superseded"].includes(decisionStatus)) {
-            errors.push(`${relative(file)} -> annual archive decision has non-historical Status`);
-        }
-        if (!deliveryStatus && !decisionStatus) errors.push(`${relative(file)} -> annual archive record needs a terminal Delivery status or Decision Status`);
-        if (governanceId) {
-            requireFields(file, ["Governance ID", "Delivery status"]);
-            const workItem = field(content, "Work item");
-            if (!/^GOV-\d{3}$/u.test(governanceId)) errors.push(`${relative(file)} -> invalid archived Governance ID ${governanceId}`);
-            if (governanceIds.has(governanceId)) errors.push(`${relative(file)} -> archived Governance ID ${governanceId} still exists as current authority`);
-            if (archivedGovernanceIds.has(governanceId)) errors.push(`Duplicate archived Governance ID: ${governanceId}`);
-            archivedGovernanceIds.add(governanceId);
-            if (!/^B-\d{3}$/u.test(workItem ?? "")) errors.push(`${relative(file)} -> invalid archived Governance Work item ${workItem ?? ""}`);
-            if (!["Cancelled", "Superseded"].includes(deliveryStatus)) {
-                errors.push(`${relative(file)} -> archived Governance record must be Cancelled or Superseded`);
-            }
-            const ids = requireNamespacedTraceability(file, content, workItem, "Archived Governance record");
-            const successorValue = field(content, "Successor governance");
-            let successorTarget;
-            if (deliveryStatus === "Superseded") {
-                if (!successorValue) {
-                    errors.push(`${relative(file)} -> Superseded Governance record requires Successor governance`);
-                } else {
-                    successorTarget = linkedFieldTarget(file, content, "Successor governance");
-                    if (successorTarget && path.dirname(successorTarget) !== governanceRoot) {
-                        errors.push(`${relative(file)} -> Successor governance must target docs/development/governance/`);
-                    }
-                    const successor = governanceContracts.get(successorTarget);
-                    if (!successor) errors.push(`${relative(file)} -> Successor governance is not a registered current GOV document`);
-                    if (successor?.governanceId === governanceId) errors.push(`${relative(file)} -> Superseded Governance successor must use a new Governance ID`);
-                }
-            } else if (deliveryStatus === "Cancelled" && successorValue) {
-                errors.push(`${relative(file)} -> Cancelled Governance record must not declare Successor governance`);
-            }
-            annualGovernanceRecords.set(file, { deliveryStatus, governanceId, ids, successorTarget, workItem });
-        }
-        const terminalStandaloneRecord = ["Rejected", "Cancelled", "Superseded"].includes(deliveryStatus)
-            || ["Rejected", "Superseded"].includes(decisionStatus);
-        if (!governanceId && terminalStandaloneRecord && /^B-\d{3}$/u.test(field(content, "Work item") ?? "")) {
-            closedWorkItems.add(field(content, "Work item"));
-        }
-    }
-
-    for (const track of trackDirectories) {
-        const trackRoot = path.join(annualRoot, track.name);
-        const homeFile = path.join(trackRoot, "README.md");
-        const planFile = path.join(trackRoot, "plan.md");
-        const trackerFile = path.join(trackRoot, "tracker.md");
-        const closeoutFile = path.join(trackRoot, "closeout.md");
-        const sddFile = path.join(trackRoot, "sdd.md");
-        const required = [homeFile, planFile, trackerFile, closeoutFile];
-        for (const file of required) {
-            if (!existsSync(file)) errors.push(`Incomplete archived package ${annual.name}/${track.name}: missing ${path.basename(file)}`);
-        }
-        if (required.some((file) => !existsSync(file))) continue;
-        const home = requireFields(homeFile, ["Document status", "Delivery status", "Design status", "Updated", "Work item", "Authority", "Tracker"]);
-        const packageAuthority = resolvePackageAuthority(homeFile, home);
-        const workItem = field(home, "Work item");
-        const terminalStatus = field(home, "Delivery status");
-        const designStatus = field(home, "Design status");
-        if (!/^B-\d{3}$/u.test(workItem ?? "")) errors.push(`${relative(homeFile)} -> invalid archived Work item`);
-        if (!["Closed", "Cancelled", "Superseded"].includes(terminalStatus)) {
-            errors.push(`${relative(homeFile)} -> archived package has non-terminal Delivery status`);
-        }
-        if (!["Not started", "Draft", "Approved"].includes(designStatus)) errors.push(`${relative(homeFile)} -> invalid archived Design status`);
-        if (["Draft", "Approved"].includes(designStatus) && !existsSync(sddFile)) errors.push(`${relative(homeFile)} -> archived Design status requires sdd.md`);
-        if (designStatus === "Not started" && existsSync(sddFile)) errors.push(`${relative(homeFile)} -> plan-only archive must not contain an untracked SDD`);
-
-        const packageFiles = [...required, ...(existsSync(sddFile) ? [sddFile] : [])];
-        requireIndexed(homeFile, packageFiles.slice(1), `${track.name} archived artifact`);
-        for (const file of packageFiles) {
-            const content = requireFields(file, ["Document status", "Updated", "Work item", "Authority"]);
-            validateDocumentStatus(file, content, ["Archived"]);
-            if (field(content, "Work item") !== workItem) errors.push(`${relative(file)} -> archived Work item mismatch`);
-            if (/\b(?:B-xxx|DEC-xxx|GOV-xxx|YYYY-MM-DD)\b|replace with/iu.test(content)) errors.push(`${relative(file)} -> archived package contains template tokens`);
-        }
-
-        const plan = readFileSync(planFile, "utf8");
-        const tracker = requireFields(trackerFile, ["Delivery status", "Plan"]);
-        const closeout = requireFields(closeoutFile, ["Delivery status"]);
-        requireConsistentArtifactAuthority(planFile, plan, packageAuthority);
-        requireConsistentArtifactAuthority(trackerFile, tracker, packageAuthority);
-        if (existsSync(sddFile)) requireConsistentArtifactAuthority(sddFile, readFileSync(sddFile, "utf8"), packageAuthority);
-        requireConsistentArtifactAuthority(closeoutFile, closeout, packageAuthority, { includeDecision: true });
-        if (field(tracker, "Delivery status") !== terminalStatus || field(closeout, "Delivery status") !== terminalStatus) {
-            errors.push(`${relative(homeFile)} -> archived Home/Tracker/Closeout status mismatch`);
-        }
-        if (packageAuthority.kind === "product") {
-            const { decisionTarget, specTarget } = packageAuthority;
-            if (terminalStatus === "Closed") {
-                if (decisionTarget && path.dirname(decisionTarget) !== index("product/decisions")) {
-                    errors.push(`${relative(homeFile)} -> closed archive Decision must target docs/product/decisions/`);
-                }
-                if (decisionTarget) {
-                    const decision = requireFields(decisionTarget, ["Decision ID", "Status", "Updated", "Authority", "Work item"]);
-                    if (field(decision, "Status") !== "Accepted") errors.push(`${relative(homeFile)} -> archived authority Decision is not Accepted`);
-                    if (field(decision, "Work item") !== workItem) errors.push(`${relative(homeFile)} -> archived Decision Work item mismatch`);
-                }
-                if (specTarget && path.dirname(specTarget) !== index("product/specs")) {
-                    errors.push(`${relative(homeFile)} -> closed archive Product spec must target docs/product/specs/`);
-                }
-                if (specTarget) {
-                    const spec = requireFields(specTarget, ["Document status", "Updated", "Work item", "Decision", "Authority"]);
-                    validateDocumentStatus(specTarget, spec, ["Approved", "Current"]);
-                    if (field(spec, "Work item") !== workItem) errors.push(`${relative(homeFile)} -> archived Product Spec Work item mismatch`);
-                    if (linkedFieldTarget(specTarget, spec, "Decision") !== decisionTarget) errors.push(`${relative(homeFile)} -> archived Product Spec Decision mismatch`);
-                }
-            } else {
-                const expectedDecisionStatus = terminalStatus === "Cancelled" ? "Rejected" : "Superseded";
-                if (decisionTarget && path.dirname(decisionTarget) !== annualRoot) {
-                    errors.push(`${relative(homeFile)} -> ${terminalStatus} archive Decision must be a direct annual archive record`);
-                }
-                if (decisionTarget) {
-                    const decision = requireFields(decisionTarget, ["Document status", "Decision ID", "Status", "Updated", "Authority", "Work item"]);
-                    validateDocumentStatus(decisionTarget, decision, ["Archived"]);
-                    if (field(decision, "Status") !== expectedDecisionStatus) {
-                        errors.push(`${relative(homeFile)} -> ${terminalStatus} archive Decision must be ${expectedDecisionStatus}`);
-                    }
-                    if (field(decision, "Work item") !== workItem) errors.push(`${relative(homeFile)} -> archived Decision Work item mismatch`);
-                }
-                if (specTarget && path.dirname(specTarget) !== annualRoot) {
-                    errors.push(`${relative(homeFile)} -> ${terminalStatus} archive Product spec must be a direct annual archive record`);
-                }
-                if (specTarget) {
-                    const spec = requireFields(specTarget, ["Document status", "Delivery status", "Updated", "Work item", "Decision", "Authority"]);
-                    validateDocumentStatus(specTarget, spec, ["Archived"]);
-                    if (field(spec, "Delivery status") !== terminalStatus) {
-                        errors.push(`${relative(homeFile)} -> archived Product Spec Delivery status differs from package`);
-                    }
-                    if (field(spec, "Work item") !== workItem) errors.push(`${relative(homeFile)} -> archived Product Spec Work item mismatch`);
-                    if (linkedFieldTarget(specTarget, spec, "Decision") !== decisionTarget) errors.push(`${relative(homeFile)} -> archived Product Spec Decision mismatch`);
-                }
-            }
-        } else if (packageAuthority.kind === "governance") {
-            const governanceTarget = packageAuthority.governanceTarget;
-            let governance;
-            if (terminalStatus === "Closed") {
-                if (governanceTarget && path.dirname(governanceTarget) !== governanceRoot) {
-                    errors.push(`${relative(homeFile)} -> Closed Governance contract must target docs/development/governance/`);
-                }
-                governance = governanceContracts.get(governanceTarget);
-                if (!governance) errors.push(`${relative(homeFile)} -> Closed Governance contract is not a registered current GOV document`);
-            } else {
-                if (governanceTarget && path.dirname(governanceTarget) !== annualRoot) {
-                    errors.push(`${relative(homeFile)} -> ${terminalStatus} Governance contract must be a direct annual archive record`);
-                }
-                governance = annualGovernanceRecords.get(governanceTarget);
-                if (!governance) {
-                    errors.push(`${relative(homeFile)} -> ${terminalStatus} Governance contract is not a registered annual Archived Governance record`);
-                } else if (governance.deliveryStatus !== terminalStatus) {
-                    errors.push(`${relative(homeFile)} -> archived Governance record Delivery status differs from package`);
-                }
-            }
-            if (governance) {
-                if (governance.workItem !== workItem) errors.push(`${relative(homeFile)} -> archived Governance contract Work item mismatch`);
-                for (const id of governance.ids) {
-                    if (!tracker.includes(id)) errors.push(`${relative(trackerFile)} -> missing Governance contract traceability ID ${id}`);
-                    if (existsSync(sddFile) && !readFileSync(sddFile, "utf8").includes(id)) {
-                        errors.push(`${relative(sddFile)} -> missing Governance contract traceability ID ${id}`);
-                    }
-                }
-            }
-        }
-        const dispositionSection = closeout.split(/^## Information Disposition\s*$/mu)[1] ?? "";
-        const allowedDispositions = new Set(["durable contract", "backlog", "archive", "delete-after-absorption"]);
-        const dispositionArtifacts = packageFiles.filter((file) => file !== closeoutFile);
-        const coveredPackageArtifacts = new Set();
-        let completedDispositionRows = 0;
-        for (const line of dispositionSection.split("\n")) {
-            if (!line.trimStart().startsWith("|")) continue;
-            const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
-            if (cells.every((cell) => /^:?-{3,}:?$/u.test(cell)) || /^Source(?: artifact| information)?/iu.test(cells[0] ?? "")) continue;
-            const disposition = cells[3] ?? "";
-            if (!allowedDispositions.has(disposition)) {
-                errors.push(`${relative(closeoutFile)} -> unknown Information Disposition ${disposition || "<empty>"}`);
-                continue;
-            }
-            completedDispositionRows += 1;
-            const complete = Boolean(cells[0] && cells[1] && cells[2] && cells[4]);
-            if (!complete) errors.push(`${relative(closeoutFile)} -> incomplete Information Disposition row`);
-            const localDestination = hasRepoLocalMarkdownLink(closeoutFile, cells[2] ?? "");
-            if (!localDestination) errors.push(`${relative(closeoutFile)} -> disposition destination must be an existing repo-local Markdown file`);
-            if (complete && localDestination) {
-                const sourceReferences = new Set([
-                    ...repoLocalMarkdownTargets(closeoutFile, cells[0]),
-                    ...[...cells[0].matchAll(/(?:`|\()((?:docs\/|\.\.?\/)?[A-Za-z0-9_.\/-]+\.md)(?:`|\))/g)].map((match) => {
-                        const reference = match[1];
-                        return reference.startsWith("docs/")
-                            ? path.join(repoRoot, reference)
-                            : path.resolve(path.dirname(closeoutFile), reference);
-                    }),
-                    ...(/^\.?\/?[A-Za-z0-9_.-]+\.md$/u.test(cells[0])
-                        ? [path.resolve(path.dirname(closeoutFile), cells[0])]
-                        : []),
-                ]);
-                for (const artifact of dispositionArtifacts) {
-                    if (sourceReferences.has(artifact)) coveredPackageArtifacts.add(artifact);
-                }
-            }
-        }
-        if (completedDispositionRows === 0) {
-            errors.push(`${relative(closeoutFile)} -> Information Disposition has no completed disposition row`);
-        }
-        for (const artifact of dispositionArtifacts) {
-            if (!coveredPackageArtifacts.has(artifact)) {
-                errors.push(`${relative(closeoutFile)} -> Information Disposition omits package artifact ${path.basename(artifact)}`);
-            }
-        }
+for (const file of walkMarkdown(archiveRoot)) {
+    if ([archiveIndexFile, dispositionLogFile].includes(file)) continue;
+    const content = readFileSync(file, "utf8");
+    const workItem = field(content, "Work item");
+    const terminalStatus = field(content, "Delivery status") ?? field(content, "Status");
+    if (/^B-\d{3}$/u.test(workItem ?? "")
+        && ["Closed", "Cancelled", "Superseded", "Rejected"].includes(terminalStatus)) {
         closedWorkItems.add(workItem);
     }
 }
-
 const dispositionLog = readFileSync(index("archive/disposition-log.md"), "utf8");
 const dispositionPaths = [];
 for (const line of dispositionLog.split("\n")) {
@@ -1054,14 +847,6 @@ try {
                 errors.push(`Rename changes Markdown file type: ${source ?? ""} -> ${destination ?? ""}`);
                 continue;
             }
-            const activeSource = source?.match(/^docs\/development\/active\/([^/]+)\/([^/]+\.md)$/u);
-            if (activeSource) {
-                const [, feature, filename] = activeSource;
-                const expectedDestination = new RegExp(`^docs/archive/\\d{4}/${escapeRegExp(feature)}/${escapeRegExp(filename)}$`, "u");
-                if (!expectedDestination.test(destination ?? "")) {
-                    errors.push(`Active Package rename must preserve feature/file path in annual Archive: ${source} -> ${destination ?? ""}`);
-                }
-            }
             const destinationFile = path.join(repoRoot, destination ?? "");
             if (!destination?.startsWith("docs/") || !existsSync(destinationFile) || !reachableDocs.has(destinationFile)) {
                 errors.push(`Renamed Markdown destination is outside the indexed docs schema: ${destination ?? ""}`);
@@ -1074,6 +859,7 @@ try {
         if (status !== "D") continue;
         const deletedPath = parts[1];
         if (!deletedPath?.endsWith(".md")) continue;
+        if (deletedPath.startsWith("docs/archive/")) continue;
         if (hasContentContinuousMoveTarget(deletedPath, diffBase)) continue;
         if (!hasDispositionFor(deletedPath)) {
             errors.push(`Deleted Markdown lacks content-continuous move target or disposition record: ${deletedPath}`);
