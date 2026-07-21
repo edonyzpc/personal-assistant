@@ -3198,7 +3198,7 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s*{[\s\S]*?appearance:\s*none;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?background:\s*transparent;[\s\S]*?flex:\s*0 0 28px;[\s\S]*?min-width:\s*28px;[\s\S]*?min-height:\s*28px;[\s\S]*?max-width:\s*28px;[\s\S]*?max-height:\s*28px;[\s\S]*?box-shadow:\s*none;/);
         expect(css).toMatch(/\.llm-view\s+button\.message-action-button:focus\s*{[\s\S]*?outline:\s*none;/);
         expect(css).toMatch(/\.llm-view\s+button\.message-action-button:focus-visible:not\(:disabled\)\s*{[\s\S]*?box-shadow:\s*inset 0 0 0 1px var\(--interactive-accent\);/);
-        expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s+svg\s*{[\s\S]*?display:\s*block;[\s\S]*?flex:\s*0 0 auto;[\s\S]*?width:\s*16px;[\s\S]*?height:\s*16px;/);
+        expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s+svg\s*{[\s\S]*?display:\s*block;[\s\S]*?flex:\s*0 0 auto;[\s\S]*?width:\s*var\(--pa-chat-button-icon-size\);[\s\S]*?height:\s*var\(--pa-chat-button-icon-size\);/);
         expect(css).toMatch(/\.llm-view\s+button\.message-action-button:hover:not\(:disabled\),[\s\S]*?\.llm-view\s+button\.message-action-button:focus-visible:not\(:disabled\)\s*{/);
         expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+button\.message-action-button\s*{[\s\S]*?flex-basis:\s*44px;[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/);
     });
@@ -3230,11 +3230,11 @@ describe('LLMView turn lifecycle', () => {
         const assistantIdenticonModel = getChatRoleIdenticonModel('assistant');
         const identiconBlock = getCssRuleBlock(css, '.llm-view .pa-chat-role-identicon');
 
-        expect(css).toMatch(/\.llm-view\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*22px;[\s\S]*?--pa-chat-role-icon-padding:\s*2px;[\s\S]*?gap:\s*6px;/);
+        expect(css).toMatch(/\.llm-view\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*20px;[\s\S]*?--pa-chat-role-icon-padding:\s*2px;[\s\S]*?gap:\s*6px;/);
         expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon\s*{[\s\S]*?flex:\s*0 0 var\(--pa-chat-role-icon-size\);[\s\S]*?width:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?height:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?padding:\s*var\(--pa-chat-role-icon-padding\);/);
         expect(identiconBlock).toContain('border-radius: 8px;');
         expect(identiconBlock).not.toContain('border-radius: 50%;');
-        expect(css).toMatch(/\.llm-view\.is-compact\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*24px;[\s\S]*?gap:\s*7px;/);
+        expect(css).toMatch(/\.llm-view\.is-compact\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*22px;[\s\S]*?gap:\s*7px;/);
         expect(assistantIdenticonModel.viewBox).toBe('-3 -3 26 26');
         expect(assistantIdenticonModel.cellSize).toBe(4);
     });
@@ -3337,7 +3337,6 @@ describe('LLMView turn lifecycle', () => {
         const cancelButtonBlock = getCssRuleBlock(css, '.llm-buttons button.cancel-button');
         const mobileIconButtonBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button');
         const mobileIconButtonHitAreaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button::before');
-        const mobileIconButtonSvgBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button svg');
         const mobileCompactInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-compact .llm-input');
         const mobileCompactTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-compact .llm-input textarea');
         const mobileKeyboardInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .llm-input');
@@ -3354,12 +3353,13 @@ describe('LLMView turn lifecycle', () => {
         const mobileKeyboardSpacerBlock = getCssRuleBlock(css, 'body.is-mobile .pa-chat-keyboard-spacer');
         const mobileOpenKeyboardSpacerBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .pa-chat-keyboard-spacer');
 
-        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-accessory-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-offset:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?--pa-chat-keyboard-motion:\s*180ms cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
+        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-accessory-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-offset:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?--pa-chat-button-icon-size:\s*14px;[\s\S]*?--pa-chat-keyboard-motion:\s*180ms cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
         expect(css).not.toMatch(/\.llm-view\s*{[^}]*transition:\s*padding-bottom/);
         expect(css).not.toMatch(/\.llm-view\.is-keyboard-open\s*{[\s\S]*?padding-bottom:\s*0;/);
         expect(drawerInnerBlock).toContain('padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));');
         expect(mobileDrawerInnerBlock).toContain('--pa-chat-drawer-top-clearance: clamp(10px, calc(env(safe-area-inset-top, 0px) - 24px), 24px);');
         expect(mobileDrawerInnerBlock).toContain('padding-top: var(--pa-chat-drawer-top-clearance);');
+        expect(mobileViewBlock).toContain('--pa-chat-button-icon-size: 12px;');
         expect(mobileViewBlock).toContain('padding-bottom: 0;');
         expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
         expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;/);
@@ -3386,14 +3386,14 @@ describe('LLMView turn lifecycle', () => {
         expect(iconButtonBlock).toContain('height: 30px;');
         expect(iconButtonBlock).toContain('flex: 0 0 30px;');
         expect(iconButtonBlock).toContain('border-radius: 7px;');
-        expect(iconButtonSvgBlock).toContain('width: 15px;');
-        expect(iconButtonSvgBlock).toContain('height: 15px;');
+        expect(iconButtonSvgBlock).toContain('width: var(--pa-chat-button-icon-size);');
+        expect(iconButtonSvgBlock).toContain('height: var(--pa-chat-button-icon-size);');
         expect(memoryChipBlock).toContain('width: 30px;');
         expect(memoryChipBlock).toContain('height: 30px;');
         expect(memoryChipBlock).toContain('flex: 0 0 30px;');
         expect(memoryChipBlock).toContain('border-radius: 7px;');
-        expect(memoryChipSvgBlock).toContain('width: 15px;');
-        expect(memoryChipSvgBlock).toContain('height: 15px;');
+        expect(memoryChipSvgBlock).toContain('width: var(--pa-chat-button-icon-size);');
+        expect(memoryChipSvgBlock).toContain('height: var(--pa-chat-button-icon-size);');
         expect(cancelButtonBlock).toContain('width: 30px;');
         expect(cancelButtonBlock).toContain('height: 30px;');
         expect(cancelButtonBlock).toContain('border-radius: 7px;');
@@ -3404,8 +3404,6 @@ describe('LLMView turn lifecycle', () => {
         expect(mobileIconButtonHitAreaBlock).toContain('content: "";');
         expect(mobileIconButtonHitAreaBlock).toContain('inset: -8px;');
         expect(mobileIconButtonHitAreaBlock).toContain('border-radius: 14px;');
-        expect(mobileIconButtonSvgBlock).toContain('width: 13px;');
-        expect(mobileIconButtonSvgBlock).toContain('height: 13px;');
         expect(mobileCompactInputBlock).toContain('padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));');
         expect(mobileCompactTextareaBlock).toContain('height: 66px;');
         expect(mobileCompactTextareaBlock).toContain('min-height: 66px;');

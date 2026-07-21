@@ -643,6 +643,7 @@ body.is-mobile .pa-chat-history-modal-shell {
 	--pa-chat-keyboard-accessory-clearance: 0px;
 	--pa-chat-keyboard-offset: 0px;
 	--pa-chat-composer-height: 0px;
+	--pa-chat-button-icon-size: 14px;
 	--pa-chat-keyboard-motion: 180ms cubic-bezier(0.22, 1, 0.36, 1);
 	box-sizing: border-box;
 	display: flex;
@@ -656,6 +657,7 @@ body.is-mobile .pa-chat-history-modal-shell {
 }
 
 body.is-mobile .llm-view {
+	--pa-chat-button-icon-size: 12px;
 	padding-bottom: 0;
 }
 
@@ -982,8 +984,8 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 .llm-view button.message-action-button svg {
 	display: block;
 	flex: 0 0 auto;
-	width: 16px;
-	height: 16px;
+	width: var(--pa-chat-button-icon-size);
+	height: var(--pa-chat-button-icon-size);
 }
 
 @media (hover: none) {
@@ -1009,7 +1011,7 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 }
 
 .llm-view .message-role {
-	--pa-chat-role-icon-size: 22px;
+	--pa-chat-role-icon-size: 20px;
 	--pa-chat-role-icon-padding: 2px;
 	display: inline-flex;
 	align-items: center;
@@ -1842,8 +1844,8 @@ body.is-mobile .llm-buttons {
 
 .pa-chat-icon-button svg,
 .llm-buttons button.pa-chat-icon-button svg {
-	width: 15px;
-	height: 15px;
+	width: var(--pa-chat-button-icon-size);
+	height: var(--pa-chat-button-icon-size);
 }
 
 .pa-chat-memory-control,
@@ -1878,8 +1880,8 @@ body.is-mobile .llm-buttons {
 
 .pa-chat-memory-chip svg,
 .llm-buttons button.pa-chat-memory-chip svg {
-	width: 15px;
-	height: 15px;
+	width: var(--pa-chat-button-icon-size);
+	height: var(--pa-chat-button-icon-size);
 }
 
 body.is-mobile .llm-buttons button.pa-chat-icon-button {
@@ -1895,11 +1897,6 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 	position: absolute;
 	inset: -8px;
 	border-radius: 14px;
-}
-
-body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
-	width: 13px;
-	height: 13px;
 }
 
 .pa-chat-composer-hint,
@@ -2285,7 +2282,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 }
 
 .llm-view.is-compact .message-role {
-	--pa-chat-role-icon-size: 24px;
+	--pa-chat-role-icon-size: 22px;
 	gap: 7px;
 }
 
