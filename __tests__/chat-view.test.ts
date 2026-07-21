@@ -3219,6 +3219,14 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.message-content\s+pre\s*>\s*button\.copy-code-button\s*{[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/);
     });
 
+    it('allows selecting rendered message text', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        const messageContentBlock = getCssRuleBlock(css, '.llm-view .message-content');
+
+        expect(messageContentBlock).toContain('-webkit-user-select: text;');
+        expect(messageContentBlock).toContain('user-select: text;');
+    });
+
     it('opens message overflow menus upward from the bottom toolbar', () => {
         const css = readFileSync('src/custom.pcss', 'utf8');
         const sharedMenuItemBlock = getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item');
