@@ -2,9 +2,10 @@
 
 Decision ID: DEC-020
 Status: Accepted
-Updated: 2026-07-19
+Updated: 2026-07-21
 Authority: 用户于 2026-07-18 在 Pagelet v2.9 正式验证后的逐项产品讨论中选择方案 A
 Work item: B-108
+Scoped amendment: [DEC-024 — Quiet Recall 冷语义检索计入既有实际调用预算](./dec-024-quiet-recall-cold-semantic-retrieval.md)
 
 ## Context
 
@@ -33,14 +34,18 @@ provider call 只判断一个候选；单个候选的失败、拒绝或语言重
 
 正式边界：
 
-- 候选生成与排序继续在本地完成。每个 eligible evaluation round 最多取排名最高的
-  5 个候选进入 AI 质量判断。
+- 候选检索与排序继续在本地 index/runtime 完成。根据 DEC-024，冷 semantic query
+  可能先用一次受控 provider call 生成 query embedding，再在本地 index 检索；这次
+  retrieval attempt 不是 evaluator，也不能由 metadata-only 结果冒充。每个 eligible
+  evaluation round 最多取排名最高的 5 个候选进入 AI 质量判断。
 - 每个候选只有在 AI 返回具体、可信、与当前上下文相关且有来源支撑的 why-now 后，
   才能成为主动 Recall Delivery。相似度或规则模板本身只表示“可发现”，不表示
   “现在值得提醒”。
 - 每个候选最多进行 1 次初始调用；仅在 why-now 语言不匹配时允许再重试 1 次。
-  因此单轮硬上限为 5 次初始调用、5 次语言重试，合计最多 10 次实际 provider call。
-- 小时/日限额必须按实际 provider call（含语言重试）计数，而不是按 round 计数。
+  因此 evaluator 阶段硬上限为 5 次初始调用、5 次语言重试。DEC-024 的冷 query
+  embedding 另属 retrieval stage，但不得获得额外小时/日额度。
+- 小时/日限额必须按全部实际 Quiet Recall provider call（冷 query embedding、初始
+  evaluator 与语言重试）计数，而不是按 round 计数。
   精确额度、退避、并发与 timeout 由 B-108 SDD 在不改变逐候选语义的前提下固化；
   预算不足时按本地排名顺序评估，未评估候选保持静默，不用模板 why-now 补位。
 - 60 秒 cooldown 是 evaluation round 的最低间隔，不替代实际 call 计数、小时/日
@@ -57,8 +62,9 @@ provider call 只判断一个候选；单个候选的失败、拒绝或语言重
 
 - Product behavior: 用户看到的主动 Recall 保持高质量、具体且来源可核验；预算或
   provider 不可用时宁可安静，也不显示模板关联。
-- Architecture / data / safety: runtime 需要为每次 Recall provider call（含语言重试）
-  接入有界 limiter/cost tracker，并将“本地候选存在”与“已通过 AI why-now 门”分开。
+- Architecture / data / safety: runtime 需要为每次 Recall provider call（含冷 query
+  embedding 与语言重试）接入同一个有界 limiter/cost tracker，并将“semantic candidate
+  exists”“metadata-only local clue”与“已通过 AI why-now 门”分开。
 - Compatibility / migration: 当前逐候选主路径可以保留；cooldown 下回退规则候选并
   继续 nudge、以及 Recall 只有 60 秒 round cooldown 而没有小时/日 hard cap 的行为
   不符合完整目标。
@@ -77,6 +83,7 @@ provider call 只判断一个候选；单个候选的失败、拒绝或语言重
 ## Traceability
 
 - Product Spec: [PA Quiet Recall And Insight Timing](../specs/pa-quiet-recall-insight-timing-product-spec.md)
+- Scoped retrieval decision: [DEC-024](./dec-024-quiet-recall-cold-semantic-retrieval.md)
 - Bubble contract: [Pagelet Bubble Readiness & Recall](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)
 - Product analysis: [Pagelet v2.9 dogfooding analysis](../../archive/2026/pagelet-b108-dogfood-followup/pagelet-v29-dogfooding-analysis.md)
 - Validation source: [Pagelet v2.9 validation handoff](../../archive/2026/pagelet-b108-dogfood-followup/handoff-pagelet-v29-validation.md)

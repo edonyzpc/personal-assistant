@@ -2,7 +2,7 @@
 
 > [!note] Current authority is this design together with the
 > [PA Product North Star](./pa-product-north-star.md), [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
-> through [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md),
+> through [DEC-024](./decisions/dec-024-quiet-recall-cold-semantic-retrieval.md),
 > and the [B-108 owning Scope Recap spec](./specs/pa-scope-recap-theme-summary-product-spec.md).
 > Archive discussions are provenance only, never the current baseline.
 
@@ -13,7 +13,7 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; automated/deploy gates, desktop/iPhone BRAT smoke, user-operated desktop/iPhone physical long-press, real Obsidian Review/Discover semantics, Scope Recap provider smoke and the correctly prepared user-owned 3-Second Value Test pass. Most B-118 repair slices have automation evidence, but DEC-023 F-03/F-10 runtime reconciliation and final current-surface desktop/iPhone smoke remain pending; stable release remains separate |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. Current portrait/long-press manual checks passed; landscape is `NOT TESTED / accepted waiver`, post-F-13 owner paths did not add a new live smoke, and stable release remains separate |
 | Last revised | 2026-07-21 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
@@ -21,7 +21,7 @@
 | Background preparation engine | Optional timed polling with rate-limited generic background review preparation (D032); disabled by default and enabled explicitly by the user |
 | Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup when the capability is enabled and sources are allowed, bounded to high-intent scope, and persistently disableable. The first actual Pagelet provider call uses one shared non-blocking notice; high-risk runs still block before any call ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md)) |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
-| Current decisions | D001-D039 as reconciled in this document, with DEC-017 through DEC-023 and the owning Scope Recap spec taking precedence for B-108 |
+| Current decisions | D001-D039 as reconciled in this document, with DEC-017 through DEC-024 and the owning Scope Recap/Quiet Recall specs taking precedence for B-108/B-118 |
 | Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
 | Technical design | See [pagelet-sdd-guide.md](../development/workflows/pagelet-sdd-guide.md); [review-assistant-sdd.md](../archive/review-assistant-sdd.md) is preserved as historical implementation context |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
@@ -305,8 +305,8 @@ not “Nudge mode”.
 | --- | --- |
 | 高价值回顾提醒 ON (default for an eligible bounded Recap path) | Only a new, fresh, specific Recap insight backed by at least two notes may transition Pet to `nudge`; click immediately shows the strongest observation. |
 | 高价值回顾提醒 OFF | Prepared Scope Recap stays silent and cached; click remains instant when a fresh artifact exists. |
-| 其他主动提示 ON | Opt-in Quiet Recall, Pattern, or review hints use their existing gates and the shared Pet nudge treatment. |
-| 其他主动提示 OFF (default) | Non-Recap hints remain quiet; this does not disable high-value Recap hints or background preparation. |
+| 其他主动提示 ON | Pattern and onboarding hints use their existing generic gates and the shared Pet nudge treatment; a future qualified Review adapter may join only after its own eligibility gate. Quiet Recall keeps its separate Off/On control. |
+| 其他主动提示 OFF (default) | Pattern/onboarding admissions remain quiet; this does not disable high-value Recap, Quiet Recall, or background preparation. |
 
 ### Proactive Hints Control Placement — [NEW]
 
@@ -331,8 +331,14 @@ Proactive hints behavior constraints:
 - Proactive hints never play a sound.
 - Proactive hints never move focus away from the editor.
 - Visual change is subtle (green notification dot + gentle bounce, respects `prefers-reduced-motion`).
-- After the user views the Bubble, the hint clears. It does not re-signal for the same insight set.
-- Cooldown: at most once per configurable interval (default 30 minutes).
+- Admission and presentation are separate: only a Bubble that actually becomes
+  visible acknowledges the exact owning ticket; show failure consumes nothing.
+  Passive close adds no feedback/dismiss/queue side effect, but the same ticket
+  does not re-signal after its successful presentation.
+- Prepared Recap、Pattern and onboarding share the configurable presentation
+  cooldown (default 30 minutes). Quiet Recall keeps its independent per-candidate
+  once gate and shares only quiet hours. Turning generic hints off clears only
+  Pattern/onboarding admissions, never a Recap or Quiet Recall ticket.
 - Prepared Scope Recap additionally requires a concrete structured insight,
   at least two distinct source notes, current/fresh scope, and a new artifact
   fingerprint. Summary/coverage-only candidates never nudge.
@@ -401,7 +407,13 @@ a current Pagelet success contract.
 
 **Key property**: "看完就走." Zero output, zero friction, under 10 seconds.
 
-**AI source**: Cached background preparation result. If no cached result exists, Bubble shows "还没有新发现" with an option to trigger immediate analysis.
+**AI source**: Already-valid Recall、Recap or Pattern delivery candidates. Raw
+generic background `PreloadFinding[]` remains available through the explicit
+`Open prepared review` command → read-only Prepared Panel route. It cannot be
+saved, expanded to Tab, or treated as current analysis, and never enters Bubble
+or triggers `nudge` without a
+separately approved Review-candidate adapter. If no Bubble candidate exists,
+Bubble shows the applicable readiness explanation and one honest next action.
 
 #### Scenario 2: Writing Assistance (写作辅助) — [NEW]
 
@@ -413,10 +425,13 @@ a current Pagelet success contract.
 3. User can click a suggestion to open the referenced note, or dismiss.
 
 **Flow (proactive-hint-initiated, requires 主动提示 ON)**:
-1. User is editing a note. Background preparation engine detects a signal (e.g., current note mentions a topic that appears in recent vault notes).
+1. User is editing a note. An owning Recall、Recap、Pattern or qualified Review
+   path produces a renderable, current, source-backed signal and receives its own
+   admission ticket. Raw generic preload cache completion is not a signal.
 2. Pet transitions to `nudge` state (green notification dot).
 3. User notices and clicks Pet.
-4. Bubble shows the AI-generated suggestion.
+4. Bubble shows the source-backed suggestion; only successful visible
+   presentation acknowledges that exact owner and its applicable once/cooldown.
 5. User reads and dismisses, or clicks "展开" for more detail in the Panel.
 
 **Key property**: Both user-initiated and proactive-hint paths converge on the same Bubble surface.
@@ -427,7 +442,7 @@ a current Pagelet success contract.
 
 **Current beta flow**:
 1. User uses command palette `Pagelet: Discover connections`.
-2. Pagelet reads the current note and builds related-note context from prepared Memory search when available plus explicit wikilinks / embeds found in the current note.
+2. Pagelet reads the current note and builds related-note context from prepared Memory search when available plus explicit wikilinks / embeds found in the current note. Separately, when this surface reuses the Quiet Recall candidate pipeline, its cold semantic query follows DEC-024: one provider-backed embedding through DEC-023 admission before local vector search, charged to the existing Quiet Recall 10/hour、50/day total call budget.
 3. Pagelet sends the current note and selected related-note context through the normal foreground AI provider path, then opens the discovery Panel layout with connections and gaps.
 4. User can optionally save findings as a review note.
 
@@ -435,6 +450,8 @@ If provider evaluation is unavailable or rejected, explicit Discover may still
 show a source-backed local match, but only as `Local related clue` /
 `本地关联线索`. It contains no AI why-now, does not use proactive Recall styling,
 does not mix into a Recall stack, and cannot trigger `nudge`.
+When the Memory index is unavailable, metadata-only relations are limited to
+this local Discover fallback and must not be described as semantic relevance.
 
 **Future direction**:
 - Show a Bubble preview such as "Found 5 related notes and 2 potential themes."
@@ -460,7 +477,13 @@ completion and has no current success criterion or command contract here.
 
 historical design prohibited all background analysis. Pagelet introduces a **background preparation engine** — a performance optimization that makes valid review insight instant when available and lets DEC-019 return honest local orientation when it is not, rather than forcing an AI wait after every explicit open.
 
-> Background review preparation makes valid insights ready the instant the user asks. When no reliable Scope Recap insight exists, explicit open immediately returns honest local scope/source orientation instead. The reviewer stays quiet until called — background preparation is a performance optimization, not a behavior change. Generic proactive hints (主动提示) are an independent opt-in feature that piggybacks on background preparation results; DEC-018 adds one scoped default-on exception for high-value Scope Recap insights.
+> Background review preparation makes bounded observations ready in the explicit
+> Prepared Panel when the user asks. When no reliable Scope Recap insight exists,
+> explicit open immediately returns honest local scope/source orientation instead.
+> The reviewer stays quiet until called — background preparation is a performance
+> optimization, not a behavior change. Generic proactive hints need their own
+> qualified Review `DeliveryCandidate`; raw preload completion cannot piggyback
+> into Pet/Bubble. DEC-018 separately governs high-value Scope Recap insights.
 
 **Critical constraint**: There is NO local preprocessing, no regex-based TODO detection, no rule-based scanning in the background insight path. **AI does ALL intelligence.** DEC-019 permits only a locally derived scope/source orientation as an explanation state; it is not an insight fallback. The background preparation system is a simple timer + change detector + AI call + cache.
 
@@ -475,6 +498,15 @@ governs the shared first-use notice and high-risk blocking boundary. When the
 first actual call is itself high risk, an affirmative blocking disclosure that
 contains the full first-use transparency content also completes the shared
 notice at the provider seam; PA does not stack a second non-blocking notice.
+For generic review preload, standard bounded additionally means explicit opt-in,
+changed-only sources from the recent 7 days, actual provider input `<=4K`, no
+more than 1K requested output, no more than 2 actual calls per rolling hour and 20 per local day,
+`allowWrite=false`, every actual source passing the user's explicit shared Data
+Boundary rules, and no whole-vault or excluded-scope override. “No sensitive
+source” is derived from those folder/tag/generated-source decisions; runtime
+does not infer content sensitivity or trust a caller-provided `false` flag.
+Any single breach silently skips the cycle without a blocking prompt or quota/
+cost reservation. “Broad/weekly scan” does not include this narrow envelope.
 
 ### Trigger Mechanism
 
@@ -484,7 +516,7 @@ flowchart TD
   Changed{"Notes changed<br/>since last check?"}
   Budget{"Background preparation budget<br/>remaining?"}
   Analyze["AI prepares review context<br/>from changed notes<br/>(runKind=background)"]
-  Cache["Cache result"]
+  Cache["Cache raw result<br/>for explicit Prepared Panel"]
   Skip["Skip this cycle"]
 
   Timer --> Changed
@@ -493,13 +525,39 @@ flowchart TD
   Budget -- no --> Skip
   Budget -- yes --> Analyze
   Analyze --> Cache
-  Cache --> |"Pet state update<br/>(if 主动提示 ON)"| NudgeCheck["Pet -> nudge state"]
+  Cache --> |"No Bubble adapter in current contract"| Quiet["Pet settles to idle"]
 ```
 
 - **Polling interval**: configurable, default every 30 minutes. Range: 5 minutes to 4 hours.
-- **Change detection**: compare vault's file modification timestamps against last-analyzed timestamps. Only notes that changed since the last background preparation run are candidates.
+- **Change detection**: compare vault file modification timestamps against
+  vault-scoped, per-path last-analyzed watermarks. The watermarks contain only
+  paths and mtimes, persist across plugin reload and Pagelet off/on, and advance
+  only for the exact source snapshots accepted after a successful provider run.
+  A no-call/fail-closed result does not mark files analyzed or replace the last
+  valid cache. Missing storage access or malformed persisted state fails closed;
+  an absent key on a fresh opt-in is a valid empty baseline.
+- **No source expansion**: generic preload sends only the eligible changed batch;
+  it does not use whole-index semantic lookup to append unchanged related notes.
 - **Scope**: same exclusion rules as foreground analysis (`.trash`, hidden folders, excluded tags, etc.).
+- **Admission envelope**: generic preload requires explicit opt-in and only the
+  changed notes from the recent 7 days; after filtering, actual provider input
+  must be `<=4K`, requested output must be `<=1K`, budget must remain under
+  2/hour and 20/day, write must stay
+  disabled, every actual source must pass the configured shared Data Boundary
+  without override, and whole-vault/excluded override must be absent. Unmarked
+  allowed notes are ordinary sources; no keyword/AI sensitivity inference runs.
+  Immediately before each provider invocation, runtime re-reads the exact
+  Markdown body and rechecks explicit body tags/frontmatter plus path policy;
+  stale or unavailable MetadataCache cannot make a newly excluded source
+  eligible, and an unparseable leading frontmatter block fails closed.
+  The 2/hour and 20/local-day counters are vault-scoped and persist across
+  plugin reload or Pagelet off/on; unavailable/malformed counter storage skips
+  the cycle. No note content is stored in this counter state.
+  Otherwise this cycle silently skips and never opens confirmation UI.
 - **Result**: cached in memory (not persisted to disk in Pagelet). Generic cache may be replaced after a successful new preparation run. Scope Recap follows the DEC-019 last-valid/attempt-status split below.
+- **Grounding**: every accepted finding must cite an exact path from the actual
+  allowed provider input. Missing, unknown, or hallucinated source paths are
+  discarded rather than attached to a nearby note.
 - **runKind**: `"background"` with hardcoded `allowWrite=false`. Lower token budget than foreground.
 
 Prepared Scope Recap adds a DEC-019 quality branch after analysis: unavailable,
@@ -515,20 +573,36 @@ Pagelet introduces separate rate limits for background preparation (background) 
 | Dimension | Background preparation (background) | Foreground (user-triggered) | historical design comparison |
 | --- | --- | --- | --- |
 | Per-call token budget | 4K input + 1K output (smaller) | 8K input + 2K output (default, same as historical design) | historical design: 8K+2K unified |
-| Hard ceiling | 8K input + 2K output per background preparation call | 36K total (same as historical design) | historical design: 36K unified |
-| Per-hour cap | 2 background preparation calls | 10 foreground calls | historical design: 10 unified |
-| Per-day cap | 20 background preparation calls | 100 foreground calls | historical design: 100 unified |
+| Hard ceiling | Current generic preparation: 4K input + 1K output; users may configure lower values only | 36K total (same as historical design) | historical design: 36K unified |
+| Per-hour cap | 2 actual background provider calls | 10 foreground calls | historical design: 10 unified |
+| Per-day cap | 20 actual background provider calls | 100 foreground calls | historical design: 100 unified |
 | On ceiling hit | Silently skip cycle | Show a foreground limit notice; user can adjust settings and retry | historical design: reject + override |
 
 **Key rule**: Foreground user-triggered calls are NOT constrained by background preparation quota. The two pools are independent.
+
+The historical 8K + 2K background ceiling is not exposed for generic preload.
+Actual generic preload input over 4K or requested output over 1K must skip. A
+future broader background analysis mode requires a new explicit contract; it
+cannot obtain authority through a legacy setting or a blocking dialog from a
+timer.
 
 Decisions D018-D023 are **preserved** for the foreground pool. Background preparation pool limits follow **D036** — Background preparation engine cost control.
 
 ### Result Caching
 
 - Background preparation results are cached in memory per vault.
-- When the user summons the Pet (click or hotkey), valid cached insights are displayed instantly in the Bubble — no wait. This is the core value of background preparation.
-- For generic review, if no cached result exists (first launch, cache cleared, all notes unchanged), the Bubble may show a brief "还没有新发现" message with an explicit foreground action. Explicit Scope Recap open follows DEC-019 instead: last valid artifact first, otherwise immediate local scope explanation plus Retry/View sources.
+- When the user summons the Pet (click or hotkey), cached artifacts that already
+  satisfy a current Bubble `DeliveryCandidate` contract are displayed instantly
+  — no wait. Raw generic `PreloadFinding[]` is transport/cache for the explicit
+  Prepared Panel only and cannot create a Pet nudge.
+- For generic review, the normal Bubble uses its readiness explanation and an
+  honest foreground action; `Pagelet: Open prepared review` explicitly opens the
+  read-only Prepared Panel with accepted cached raw findings and no new provider
+  call. Save and expand-to-Tab are unavailable, and the cache is not promoted to
+  current analysis.
+  Explicit Scope Recap open follows
+  DEC-019 instead: last valid artifact first, otherwise immediate local scope
+  explanation plus Retry/View sources.
 - Generic review cache is cleared when:
   - A new successful background preparation run completes (replaces old cache).
   - The user closes and reopens the vault.
@@ -895,11 +969,11 @@ Top-level Pagelet settings group inside PA settings:
 > **Not a setting:** Pet state (resting, idle, working, nudge) is system-driven. Users do not manually cycle states. See the "State transitions are automatic" note in Pet Design.
 
 **Background preparation** — [NEW]
-- Enable generic background review preparation: `on` / `off` (default: `off`). This remains an explicit opt-in for non-Recap review preparation.
+- Enable generic background review preparation: `on` / `off` (default: `off`). This remains an explicit opt-in for non-Recap review preparation and does not authorize work outside the DEC-023 changed-only/recent-7-day/4K/2-hour/20-day/read-only envelope.
 - Prepare Scope Recap in background: `on` / `off` (default: `on` after provider setup when the capability is enabled and sources are allowed). The first actual Pagelet provider call shows one shared non-blocking notice and continues; broad/sensitive/costly/whole-vault or excluded-override runs still require blocking confirmation. It pre-computes source-backed Recap items so they are ready instantly; an explicit user opt-out persists across reloads and upgrades. The UI must not label both controls simply as `preload`.
 - Polling interval: `5 min` / `15 min` / `30 min` / `1 hour` / `2 hours` / `4 hours` (default: `30 min`).
-- Background preparation per-hour cap (default 2, configurable).
-- Background preparation per-day cap (default 20, configurable).
+- Generic background preparation actual-provider-call cap per rolling hour (default 2; configuration cannot exceed the unattended standard envelope).
+- Generic background preparation actual-provider-call cap per local day (default 20; configuration cannot exceed the unattended standard envelope).
 
 **Storage** — [PRESERVED]
 - Review notes folder (default `.pagelet/`; configurable in advanced).
@@ -920,15 +994,16 @@ Top-level Pagelet settings group inside PA settings:
 - Foreground per-call token budget (default 8K + 2K, max 32K + 4K).
 - Foreground per-hour cap (default 10).
 - Foreground per-day cap (default 100).
-- Background preparation per-call token budget (default 4K + 1K, max 8K + 2K).
-- Background preparation per-hour cap (default 2).
-- Background preparation per-day cap (default 20).
+- Generic background preparation per-call token budget (default/max 4K + 1K; users may configure lower values only).
+- Generic background preparation actual-provider-call cap (2 per rolling hour).
+- Generic background preparation actual-provider-call cap (20 per local day).
 - Prepared Scope Recap calls/cost: separately attributable and bounded from generic preload; hard guardrail is 2 actual provider calls per rolling hour and 10 per local day. **[B-108]**
 - Quiet Recall why-now calls: independently evaluate at most 5 candidates, with
   at most one language retry per candidate and no more than 10 actual provider
-  calls per round. The independent hard guardrail is 10 actual provider calls
-  per rolling hour and 50 per local day; initial and language-retry calls both
-  count. **[DEC-020, B-108]**
+  calls in the evaluator stage. A cold semantic query embedding is also one
+  actual Quiet Recall call. Query embedding、initial evaluator 与 language retry
+  share the unchanged hard guardrail of 10 actual calls per rolling hour and 50
+  per local day; no retrieval-specific quota is added. **[DEC-020, DEC-024, B-108]**
 
 **Beta** — [PRESERVED]
 - Settings shows a Beta callout.
@@ -957,11 +1032,42 @@ Trust requirements:
 - Background review preparation results are cached in memory only, not persisted to disk. **[NEW]**
 - Background review preparation can be disabled entirely in settings. **[NEW]**
 - The first actual standard bounded Pagelet provider read shows one shared non-blocking notice and continues. Broad/sensitive/costly/whole-vault or excluded-override runs still require blocking `run / adjust / cancel` before any provider call or cost reservation. If that confirmed high-risk run is the first actual call, its complete disclosure counts as first use only after `Run`, at the provider seam, and no second notice is stacked; Cancel/close/unfinished Adjust leaves the shared flag unchanged. Provider trust does not grant Memory admission, write, Markdown, or external-action permission. **[DEC-023]**
+- Foreground Review risk is based on the post-filter, de-duplicated actual allowed
+  source set: `<=1` is standard bounded; `>1` requires per-run
+  `Run / Adjust / Cancel`, with zero quota/cost reservation before confirmation.
+  A requested `last7` Review with only one actual allowed source remains standard.
+  **[DEC-023]**
+- Generic background preload is standard bounded only with explicit opt-in,
+  changed-only sources from the recent 7 days, actual input `<=4K`, requested
+  output `<=1K`, actual calls `<=2/rolling-hour` and `<=20/local-day`,
+  `allowWrite=false`, and every actual source allowed by the user's explicit
+  shared Data Boundary without override. Any breach silently skips with no blocking UI、provider
+  call、quota/cost reservation or shared-flag mutation. The narrow envelope is
+  excluded from “broad/weekly scan high-risk”; content-free call timestamps
+  and per-path analyzed mtimes persist across reload/toggle. Provider-bound
+  sources are rechecked from the latest Markdown body, so MetadataCache lag or
+  malformed frontmatter fails closed; findings without an exact actual-input
+  source path are discarded. **[DEC-023]**
 - Prepared Scope Recap activity and cost are separately attributable from generic preload, even if internal runtime is shared; its fixed guardrail is 2 actual calls per rolling hour and 10 per local day. **[DEC-017, B-108]**
 - Scope Recap attempt status is stored separately from last valid artifact; failed/empty/rejected output creates no ready/nudge and ordinary UI uses an honest local explanation without provider jargon. **[DEC-019]**
 - Quiet Recall local candidates become proactive delivery only after independent
   AI why-now evaluation; provider/cooldown/budget gaps and candidate failures
   never fall back to a template nudge. **[DEC-020]**
+- Quiet Recall retains pure-semantic candidate discovery. A cold query embedding
+  is an actual call admitted through DEC-023 after all source/policy/index/
+  cooldown/budget/current-run gates and consumes the existing 10/hour、50/day
+  bucket. Empty retrieval performs no evaluator/generation calls. If the index
+  is unavailable, metadata-only matches remain explicit-Discover local clues
+  and never become semantic/proactive Recall. **[DEC-024]**
+- Every Pagelet provider-bound source uses one combined gate: the shared Data
+  Boundary plus Pagelet-local exclusions (trash/hidden/config/plugin/template/
+  generated output paths, configured exclusions, empty or oversized notes).
+  The primary note must pass a live-body check before a cold embedding; all
+  Review、preload、Scope Recap、Discover and Quiet Recall sources are checked
+  again from the exact body paired with a stable file snapshot. A Saved Insight
+  may enter a Quiet Recall evaluator only when every `sourceRef` is live-read
+  and allowed; one missing、unreadable、changed or excluded ref drops the entire
+  Insight, and its text is never sent. **[B-118/REQ-10]**
 - Background review preparation uses `runKind="background"` with `allowWrite=false` — it can NEVER trigger write operations. **[NEW]**
 - No hidden note reads before user action — **revised**: background preparation is transparent via the Pet state (`working` state visible when background preparation runs). **[CHANGED]**
 - No sending skipped note bodies to the model. **[PRESERVED]**
@@ -1000,7 +1106,15 @@ Background preparation transparency:
 
 New Pagelet commands (command palette, registered with `Pagelet:` prefix per D029):
 
-- `Pagelet: Quick review` — opens existing prepared findings in the Bubble without triggering a provider call; falls back to Panel when the Pet/Bubble anchor is unavailable.
+- `Pagelet: Quick review` — opens the normal Bubble without triggering a
+  provider call. Only valid DeliveryCandidates appear there; raw generic
+  prepared findings remain available through the explicit Prepared Panel command.
+  When the Pet/Bubble anchor is unavailable, the command falls back to Panel.
+- `Pagelet: Open prepared review` — explicitly opens cached generic background
+  findings in the Prepared Panel with zero additional provider calls; empty cache
+  stays closed, reports that no prepared suggestions are available, and preserves
+  any existing Bubble、Panel、layout and pending state. The Panel
+  is read-only and cannot save, expand to Tab, or become current analysis.
 - `Pagelet: Discover connections` — current beta runs current-note analysis and opens the discovery Panel layout; dedicated cross-note discovery is future work.
 - `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
 - `Pagelet: Show background preparation status` — shows background preparation engine diagnostics.
@@ -1127,7 +1241,10 @@ Pagelet considered successful if:
 - Pet persists its desktop/iPad corner choice; on iPhone it follows the active note toolbar.
 - Bubble opens in under 200ms when cached results exist.
 - Bubble closes on click-outside, X, and Escape.
-- Proactive hints correctly toggle and respect cooldown.
+- Proactive hints use exact-owner admission and acknowledge only successful
+  visible presentation; Recap/Pattern/onboarding respect the shared cooldown,
+  while Quiet Recall keeps its independent per-candidate gate and shares only
+  quiet hours.
 - Generic and Quiet Recall proactive hints are off by default; high-value Scope
   Recap uses the independent DEC-018 default and quality gate.
 - Bubble shows one highest-quality card by default; a 2-to-3-card stack appears
@@ -1137,13 +1254,17 @@ Pagelet considered successful if:
 **Background Preparation Engine (new)**:
 - Background preparation runs at the configured interval.
 - Background preparation respects all exclusion rules.
-- Background preparation stays within configured cost limits.
+- Generic background preload stays inside the exact DEC-023 standard envelope;
+  each individual envelope breach silently skips and cannot prompt for broader access.
 - Background preparation uses `runKind="background"` with `allowWrite=false`.
 - Background preparation can be fully disabled.
 - Pet shows `working` state during background preparation.
 
 **Foreground Analysis (preserved from historical design)**:
 - A review can be run for the current note, yesterday, last 3 days, and last 7 days.
+- After filtering and de-duplication, one actual allowed source remains standard
+  bounded regardless of requested range; two or more require per-run blocking
+  confirmation before any provider call or quota/cost reservation.
 - The Panel clearly shows what was read.
 - Output includes findings with source links.
 - Findings without valid sources are not shown as strong suggestions.
@@ -1256,7 +1377,7 @@ Pagelet considered successful if:
 | **D033** | Pet states (4 states) | 4 states: resting (#d0d0d0 gray), idle (#e8e8e8 gray), working (#7c9eff blue), nudge (#5dd39e green). Replaces earlier 6-state proposal. |
 | **D034** | Pet position | Desktop/iPad use a configurable corner (default bottom-right); iPhone follows the active note toolbar. The corner remains switchable via Settings or Command Palette. No drag, no pin, no double-click. |
 | **D035** | Historical Periodic Summary simplification | Superseded as a current contract. The broader product direction is a separately authorized Recap time-range mode, not an independent Periodic Summary flow. |
-| **D036** | Background preparation engine cost control | Separate rate limits and token budgets for background preparation vs foreground AI calls. When enabled, background preparation defaults to 4K+1K tokens, 2/hour, 20/day. |
+| **D036** | Background preparation engine cost control | Separate rate limits and token budgets for background preparation vs foreground AI calls. Generic preload is admitted only at actual input `<=4K` and no more than 2 actual provider calls/rolling hour、20/local day; output remains 1K and any envelope breach silently skips. |
 | **D037** | Progressive disclosure layers | Four-layer interaction model: Pet -> Bubble -> Panel -> Tab. Each layer is self-contained. Bubble closes on click-outside, X, and Escape. |
 | **D038** | Generic proactive hints (主动提示) design | Quiet Recall, Pattern, and generic review hints remain opt-in and OFF by default. When ON, Pet enters `nudge` only after their own quality gates. Cooldown, no sound, no modal, no focus steal. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet long-press menu is reserved for Capture / Review / Discover. |
@@ -1270,7 +1391,7 @@ Recap path when no reliable insight exists: retain any still-valid artifact;
 otherwise show an immediate local scope explanation only after explicit Recap
 open. It does not weaken D003 or create a proactive candidate.
 
-This current document plus DEC-017 through DEC-023 governs these decisions.
+This current document plus DEC-017 through DEC-024 governs these decisions.
 `docs/archive/review-assistant-decisions.md` is provenance only and must not be
 used to override current behavior.
 
@@ -1340,6 +1461,6 @@ Future product definition: [Pagelet Maintenance Review Product Spec](../archive/
 ---
 
 > Document ends. Subsequent revisions must synchronize with the current North
-> Star, DEC-017 through DEC-023, the owning Product Spec, and the current Pagelet
+> Star, DEC-017 through DEC-024, the owning Product Spec, and the current Pagelet
 > technical guide. Archive discussions and decision drafts remain provenance
 > only.

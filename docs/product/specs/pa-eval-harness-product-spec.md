@@ -1,13 +1,18 @@
 # PA Eval Harness Product Spec
 
-Updated: 2026-07-19
+Document status: Current
+Updated: 2026-07-21
+Work item: B-118
+Scope note: DEC-024 deterministic coverage is owned by B-118; the base cross-feature harness contract predates stable Backlog IDs.
+Scoped decision: [DEC-024 — Quiet Recall cold semantic retrieval](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+Authority: PA deterministic fixture、cross-spec blocking checks、optional judge layers 与 replay evaluation boundaries。
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product/engineering spec / current durable contract |
-| Status | Repo-local deterministic v1 harness implemented; optional semantic/user-outcome layers remain future |
+| Coverage status | Repo-local deterministic v1 harness implemented; B-118 passed the required DEC-024 Quiet Recall retrieval/source-race coverage. Optional semantic/user-outcome layers remain future. |
 | Feature family | Eval Harness / Replay Evaluation |
 | Primary scope | Retrieval, Memory, Maintenance action |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -174,12 +179,13 @@ when a product spec adds a new hard boundary.
 | Product IA / Review Queue | canonical queue type accepted; unknown type rejected; required shared fields present | Shared Review Queue data model |
 | Active Vault Indexer | sourceRefs resolve; excluded paths absent; retrieval outcome status matches fixture; replay source refs omit private excerpts | Retrieval substrate phase |
 | Data Boundary | excluded/generated/self-write sources do not reach provider/candidate paths; per-run override recorded; cleanup groups separate cache/user data | Any provider-backed broad scan or memory extraction |
+| Pagelet Review / generic preload admission | foreground Review uses the post-filter/de-duplicated actual allowed-source count: current=1 and requested `last7` reduced to 1 are standard, while `>1` blocks before any call/quota/cost reservation; generic background preload is standard only with explicit opt-in、changed-only、recent 7 days、input `<=4K`、output `<=1K`、calls `<=2/rolling-hour` and `<=20/local-day`、`allowWrite=false` and every actual source allowed by the explicit shared Data Boundary without override; violate each condition independently and assert silent skip with zero blocking UI/call/reservation/flag mutation; reconstruct the limiter、cross local midnight and corrupt storage to prove caps persist/fail closed; the narrow envelope is never classified high-risk merely as `weekly` | B-118 DEC-023 foreground Review and background preload runtime admission |
 | Context Pager | displayed used/skipped/dropped counts match retrieval/memory outcomes; why-dropped labels match actual decision reasons | Context transparency UI |
 | Pagelet Trust Layer | Memory Candidate has sourceRefs/type/scope/sensitivity; high-sensitivity inference suppressed; conflict creates review item | Memory admission flow |
 | Memory Type Taxonomy | candidate uses canonical memory type; archive/forget/export transitions preserve lifecycle contract; tombstone has no raw text | Memory panel / Confirmed Memory |
 | Maintenance Review | preview includes affected paths/diff/reason; forbidden action rejected; apply selected only; undo/recovery metadata present | Any source-note mutation |
 | Quick Capture | capture writes original user note; AI expansion separated; task/memory suggestions stay queue-only until confirmed | Quick Capture AI post-processing |
-| Quiet Recall | no nudge when evidence is weak or stale; bonus far association cannot outrank explicit current relevance; at most 5 candidates receive independent AI evaluation, one candidate failure cannot cancel siblings, and only a language mismatch may retry that candidate once; one round is bounded to 5 initial + 5 retry calls; provider/cooldown/budget absence never promotes a template why-now into proactive Recall; local matches may remain only as localized `Local related clue` Discover source lists without AI why-now, Recall stack or nudge, and accepted AI IDs cannot re-enter local fallback; hourly/daily guards count actual calls including retries | Recall nudges and B-108 DEC-020 cost/quality gate |
+| Quiet Recall | no nudge when evidence is weak/stale; a zero-metadata-overlap semantic fixture remains discoverable; at most 5 candidates receive independent evaluation and only language mismatch retries once, so 5 initial + 5 retry is the evaluator-stage ceiling; a cold query embedding passes DEC-023 admission after applicable zero-call gates/source revalidation, then embedding/evaluator/retry all consume the unchanged 10/hour、50/day total bucket; uncached empty retrieval is embedding=1 and evaluator/generation=0, while no source/query、index-not-ready、capability/provider/Data Boundary deny、pre-retrieval cooldown/budget deny or pre-invocation drift is total call=0; index-unavailable metadata appears only as explicit-Discover `Local related clue`, never semantic/proactive Recall; stale results are discarded; query/profile changes and failed attempts cannot reuse embedding cache, while a hit must rerun local search and revalidate current source/Data Boundary/run | Recall nudges, B-108 DEC-020 cost/quality gate, and [B-118 DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md) |
 | Saved Insight Ledger | PA-generated insight has sourceRefs; user-authored insight marked unsourced/user-authored; promotion creates explicit target item | Insight save/promotion |
 | Scope Recap / Theme Summary | important claim has sourceRefs; stale recap flagged; generated recap not used as source unless policy allows; failed/empty/rejected attempt creates no ready/delivery/nudge and preserves any still-valid artifact; explicit open without one returns only local scope/source explanation plus Retry/View sources; local overview cannot enter insight, DeliveryCandidate, or hint pools | Recap generation/write and B-108 prepared-delivery fallback |
 | Weekly Review | scope disclosure present; accepted-only items enter Markdown note; dismissed/unconfirmed items stay out | Weekly Review write |

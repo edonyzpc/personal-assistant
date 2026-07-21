@@ -9,15 +9,23 @@ Tracker: [Development Tracker](./tracker.md)
 Product spec: [Pagelet UI/UX Hardening Product Spec](../../../product/specs/pagelet-ui-ux-hardening-product-spec.md)
 Decision: [DEC-021 — evidence-led Pagelet UI/UX hardening](../../../product/decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Provider trust amendment: [DEC-023 — shared non-blocking Pagelet provider first-use](../../../product/decisions/dec-023-shared-pagelet-provider-first-use.md)
+Quiet Recall retrieval amendment: [DEC-024 — cold semantic retrieval uses the existing actual-call budget](../../../product/decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
 Evidence handoff: [Claude Code Handoff](./handoff-claude-code.md)
 
 ## Scope
 
-Fix 4 P1 + 5 P2 + 1 P3 confirmed by real desktop/iPhone evidence on 2026-07-19.
+Fix 6 P1 + 6 P2 + 1 P3 confirmed by real desktop/iPhone evidence and completion
+review, including the P2 Quiet Recall semantic/source-freshness drift confirmed
+during the 2026-07-21 B-118 runtime completion audit.
 Preserve existing positive baselines (mobile safe area, 44×44 targets, short tap,
 hold menu appearance). All SG-01~07 product decisions resolved 2026-07-20.
 DEC-023 on 2026-07-21 is the current authority for SG-05/SG-06 provider
-first-use behavior.
+first-use behavior. DEC-024 Option A on the same date is the current authority
+for Quiet Recall pure-semantic candidate generation, total actual-call budget,
+metadata fallback and the narrowed zero-call boundary.
+The same 2026-07-21 DEC-023 Option A classifies foreground Review by actual
+allowed sources and gives generic background preload one exact, silent-fail-
+closed standard envelope.
 
 ## Traceability Matrix
 
@@ -25,14 +33,14 @@ first-use behavior.
 | --- | --- | --- |
 | B-118/REQ-01 | B-118/AC-01 | Slice A — Pet touch ownership |
 | B-118/REQ-02 | B-118/AC-02 | Slice B — Recap first-screen value |
-| B-118/REQ-03 | B-118/AC-03 | Slice B/C — shared provider notice and old Modal removal |
+| B-118/REQ-03 | B-118/AC-03 | Slice B/C — shared provider notice, Review actual-source classification, and old Modal removal |
 | B-118/REQ-04 | B-118/AC-04 | Slice D — reduced motion |
 | B-118/REQ-05 | B-118/AC-05 | Slice E — Recall actions |
 | B-118/REQ-06 | B-118/AC-06 | Slice D — Pet lifecycle convergence |
 | B-118/REQ-07 | B-118/AC-07 | Slice E — Quiet Recall settings |
 | B-118/REQ-08 | B-118/AC-08 | Slice F — typography floor |
 | B-118/REQ-09 | B-118/AC-09 | Slice F — active-leaf placement |
-| B-118/REQ-10 | B-118/AC-10 | Slice C — shared Data Boundary/provider trust |
+| B-118/REQ-10 | B-118/AC-10 | Slice C — shared Data Boundary/provider trust + Review/preload classification + Quiet Recall semantic retrieval |
 
 ## Non-Goals
 
@@ -79,6 +87,55 @@ flag only after explicit `Run`, all gates pass, and invocation is immediately
 next. Cancel/passive close does not persist it. Adjust stays behind the blocking
 gate while still high-risk, or uses the ordinary shared notice after becoming
 standard bounded. The shared flag never suppresses later per-run high-risk gates.
+
+Foreground Review classification happens only after Data Boundary filtering and
+source de-duplication, using the actual source set that would be sent in this
+run. `actualAllowedSources.length <= 1` is standard bounded; `>1` is high-risk.
+The requested range is not the classifier, so `last7` with only one actual
+allowed source stays standard. A high-risk Review reserves no provider-call
+slot or cost before affirmative `Run`; `Adjust` rebuilds the eligible source set
+and reruns classification.
+
+Generic background preload is standard bounded only when all conditions are
+true: explicit opt-in, changed-only, sources from the recent 7 days, actual
+provider input `<=4K`, requested output `<=1K`, actual calls within 2 per rolling
+hour and 20 per local day, `allowWrite=false`, every actual source passes the user's explicit shared
+Data Boundary decisions, and no whole-vault or excluded-scope override. The
+runtime derives this from per-source folder/tag/generated-source decisions; it
+does not infer content sensitivity or trust a caller-owned `sensitive=false`.
+No related-note lookup may expand the prompt beyond the current changed batch;
+the current generic path therefore performs only its bounded generation call.
+Any failed condition returns a silent skip before shared notice,
+provider invocation, quota/cost reservation, or shared-flag mutation. It must
+not open the high-risk modal. The generic “broad/weekly scan” label explicitly
+excludes this complete narrow envelope.
+The background call counter persists content-free timestamps per vault so
+reload/toggle cannot reset either hard cap; unavailable or malformed storage is
+a fail-closed skip. Hourly is rolling, while daily resets at local midnight.
+The changed-only detector separately persists a content-free per-vault map of
+source path to last accepted mtime. Reload/toggle preserves it; only source
+snapshots from an accepted provider result advance it. A zero-call result does
+not mark a source analyzed or overwrite the cache. Missing storage access or a
+malformed state fails closed, while a missing key is the valid fresh baseline.
+
+For Quiet Recall, a cold semantic query embedding is itself an actual Pagelet
+provider call. It enters the same DEC-023 admission only after capability,
+provider, Data Boundary, eligible source/query, Memory index ready, cooldown,
+the existing Quiet Recall 10/hour、50/day total-call budget, and source/current-run
+revalidation pass. Query embedding、candidate evaluator 与 language retry use
+that one budget; no retrieval-specific quota or first-use state exists. An empty
+local vector search makes no downstream evaluator/generation call. Metadata-only
+matching is allowed only as an index-unavailable, explicit-Discover local clue.
+
+All Pagelet provider paths share one source classifier: shared Data Boundary AND
+Pagelet-local exclusions from `ScopeResolver`, followed by a live Markdown-body
+check tied to a pre/post-read mtime+size snapshot. This classifier covers Review,
+generic preload, Scope Recap, Discover retrieval/generation and Quiet Recall
+retrieval/evaluation. Cold retrieval validates the primary latest body before
+building or sending the query embedding. Quiet Recall Saved Insight collection
+deduplicates source paths, live-reads every `sourceRef`, and accepts the Insight
+all-or-nothing; any missing、unreadable、changed or denied ref suppresses its text.
+Only captured read-time snapshots may satisfy later evaluator revalidation.
 
 ---
 
@@ -215,12 +272,14 @@ Per SG-06: remove the Modal entirely. Replace with:
 
 ---
 
-## Slice C: Provider Fail-Closed + Shared First-Use (F-10 / REQ-10 / AC-10)
+## Slice C: Provider Fail-Closed + Review/Preload Classification + Semantic Retrieval (F-10/F-11/F-12 / REQ-10 / AC-10)
 
 ### Design
 
 **Files**: `src/plugin.ts`, `src/pagelet/orchestrator.ts`,
-`src/settings/pagelet/index.ts`
+`src/pagelet/ReviewHighRiskModal.ts`, `src/pagelet/preload/PreloadEngine.ts`,
+`src/pagelet/BackgroundPreparationCoordinator.ts`,
+`src/settings/pagelet/index.ts`, `src/vss/vss-core.ts`
 
 Per SG-05/SG-06 and DEC-023: shared first-use across all Pagelet provider paths;
 a complete high-risk blocking disclosure may satisfy first-use when the first
@@ -230,7 +289,7 @@ actual call itself is high-risk.
    default `false`; persisted values are preserved)
 
 2. Before the first actual standard-envelope Pagelet provider call (Recap,
-   Recall, Discover), check:
+   Quiet Recall query embedding/evaluator/retry, Discover retrieval/generation), check:
    - If `!pageletProviderFirstUseNotified`: show the shared non-blocking
      notification, persist the notice-shown flag only at the imminent invocation
      seam, then proceed
@@ -240,11 +299,70 @@ actual call itself is high-risk.
    - Provider not configured
    - Data Boundary excludes all source files
    - Feature is disabled in Settings
+   - Quiet Recall has no eligible source or valid query
+   - Memory/VSS index is not ready for semantic retrieval
+   - Quiet Recall cooldown or existing 10/hour、50/day total budget rejects
+     before cold-retrieval admission
+   - Source/current-run identity changes before invocation
 
-4. Pure local Discover clues: no provider call, no disclosure, use
-   "Local related clue / 本地关联线索" label
+4. Quiet Recall keeps a pure-semantic candidate lane:
+   - For an exact valid query-embedding cache miss and ready index, first check
+     existing Quiet Recall total-call capacity without committing cost/accounting,
+     revalidate source/current-run, and pass DEC-023 standard or high-risk
+     admission. Only at the imminent invocation seam may runtime atomically
+     commit one 10/50 slot and call the embedding provider, then run vector
+     search and mixed ranking locally. A high-risk path commits no slot before
+     affirmative `Run`, then repeats final capacity/source revalidation.
+     Capacity/admission serialization must ensure there is no awaitable or
+     fallible no-call gate between notice/flag, slot commit and invocation.
+   - Query embedding、initial candidate evaluator 与 language retry all commit
+     from the same 10/hour、50/day bucket. The evaluator stage stays at most 5
+     initial calls plus 5 language retries, but receives no extra capacity after
+     the retrieval call consumes a slot.
+   - If vector search returns no candidates, evaluator/generation calls are 0;
+     the embedding attempt and first-use notice remain consumed because a real
+     provider invocation occurred.
+   - Revalidate the captured source/query/Data Boundary/provider/model/current-run
+     identity before every provider seam and again before accepting results.
+     Post-call drift discards the result and creates no Recall/nudge.
 
-5. Broad/sensitive/costly/whole-vault/out-of-envelope/excluded-override runs
+5. Pure local Discover clues: when the Memory index is unavailable, metadata
+   relations may be used only after explicit Discover. They make no provider
+   call or disclosure, use "Local related clue / 本地关联线索", cannot claim
+   semantic relevance, and cannot enter proactive Recall or trigger `nudge`.
+
+6. Foreground Review builds the allowed source set first, after Data Boundary
+   filtering and path de-duplication. Its risk classifier is exactly:
+   `actualAllowedSources.length <= 1 ? standard : highRisk`. Requested range
+   labels do not override this result: `last7` with one actual allowed source is
+   standard. For `>1`, show per-run `Run / Adjust / Cancel` before reserving any
+   provider quota or cost. `Adjust` must rebuild and reclassify the actual set.
+
+7. Generic background preload runs only when the complete standard envelope is
+   true: explicit opt-in; changed-only; recent 7 days; actual provider input
+   `<=4K`; requested output `<=1K`; budget remains within 2 actual calls per rolling hour and 20 per local
+   day; `allowWrite=false`; every actual source has a current shared Data
+   Boundary `allow` decision; no whole-vault or excluded override. Do not use a
+   caller-supplied `sensitiveScope=false` or keyword/AI inference as proof.
+   Re-read every exact provider-bound Markdown body and deterministically
+   recheck explicit body tags/frontmatter and path policy at the provider seam;
+   MetadataCache lag cannot override the body, and malformed leading
+   frontmatter fails closed. Accept a finding only when its `sourceFile`
+   exactly matches an actual allowed input path.
+   Validate the full envelope before shared first-use admission or reservation.
+   Any breach returns a non-error silent skip with no blocking modal, provider
+   call, quota/cost reservation, or flag mutation. Do not classify the complete
+   narrow envelope as high-risk because its range is weekly/`last7`.
+
+7a. Before any Pagelet provider input is constructed, apply the shared Pagelet
+    source classifier to every actual source. For Discover/Quiet Recall cold
+    retrieval this includes the primary latest body before embedding. For a
+    Saved Insight, validate every distinct `sourceRef` by live read and stable
+    stat; reject the whole derived text when any ref fails. Revalidate the same
+    captured snapshots at admission/invocation and never synthesize a missing
+    body snapshot from a fresh stat.
+
+8. Other broad/sensitive/costly/whole-vault/out-of-envelope/excluded-override runs
    still require blocking per-use confirmation before provider call or cost
    reservation. For a first high-risk call, the blocking disclosure also
    satisfies shared first-use only when it covers allowed note excerpts/data,
@@ -254,7 +372,7 @@ actual call itself is high-risk.
    high-risk gate or, after reducing to standard bounded, uses the ordinary
    shared notice. Later high-risk runs remain per-use confirmed.
 
-6. The shared field is notification state only. It does not authorize Memory,
+9. The shared field is notification state only. It does not authorize Memory,
    Saved Insight, Review Queue, Markdown, vault writes, or external actions.
 
 ### Tests
@@ -266,6 +384,29 @@ actual call itself is high-risk.
 - Provider not configured: 0 calls
 - Feature disabled: 0 calls
 - Data Boundary excludes all files: 0 calls
+- Quiet Recall no source/query, index not ready, cooldown/budget reject, or
+  pre-invocation source drift: total provider calls=0, notice=0, flag unchanged
+- Pure-semantic fixture with zero tag/link/path overlap: cold embedding may
+  discover a candidate, which still requires independent evaluator quality gate
+- Uncached admitted semantic retrieval returns empty: embedding attempt=1,
+  evaluator/generation=0, one existing 10/50 slot consumed
+- Exact valid query-embedding cache hit: embedding call=0; local search and
+  downstream evaluator still obey source/current-run and budget gates
+- Exact query or embedding-profile/provider/model identity change misses the
+  embedding cache; failed/aborted/rejected embedding attempts are not cached.
+  A cache hit still reruns local search and separately revalidates current
+  source/Data Boundary/run identity before any downstream provider call or use
+- Source changes after embedding/evaluator returns: stale result dropped,
+  Recall/nudge=0; no reuse under the old source snapshot
+- Stale/null MetadataCache with a newly excluded primary body or malformed
+  leading frontmatter: cold embedding/provider reservation/notice/flag all 0
+- Saved Insight: all refs live-readable and allowed sends its exact text; one
+  denied/missing/read-failed/drifting ref suppresses the whole Insight text,
+  while another independently safe Insight can still be evaluated
+- Scope preview and runtime classify Templates、node_modules、Review output、
+  empty and `>100 KiB` notes consistently
+- Index unavailable metadata fallback: explicit Discover local clue only,
+  provider=0, semantic label=0, Recall/nudge=0
 - Local Discover: 0 provider calls, local label shown
 - Broad/sensitive/costly/whole-vault/out-of-envelope/excluded override:
   per-use confirmation required before provider call/cost reservation
@@ -275,6 +416,28 @@ actual call itself is high-risk.
 - High-risk Adjust: still high-risk repeats blocking gate with flag=false;
   reduced-to-standard uses ordinary shared notice
 - Already-notified high-risk run: blocking disclosure still appears every run
+- Foreground Review current actual=1 and requested `last7` actual=1: standard
+  admission; no high-risk modal
+- Foreground Review actual `>1`: modal before call/reservation; Cancel/passive
+  close leaves provider/quota/cost/flag mutation=0; Adjust rebuilds and
+  reclassifies; Run repeats final source/capacity checks before atomic reserve/call
+- Generic background preload complete envelope: standard admission; a
+  `weekly`/`last7` label alone does not make it high-risk
+- Generic preload single-condition matrix: opt-in off, not changed-only, source
+  older than 7 days, input `>4K`, output `>1K`, hourly cap hit, daily cap hit,
+  `allowWrite=true`, source outside the explicit shared Data Boundary,
+  whole-vault scope, and excluded override each produce silent skip with
+  blocking UI/provider/quota/cost/flag mutation=0
+- Generic preload budget survives plugin reconstruction and Pagelet off/on;
+  local midnight resets only the daily count, while calls from the previous day
+  still count in the rolling hour; unavailable/malformed storage fails closed
+- Generic changed-only watermarks survive plugin reconstruction and Pagelet
+  off/on; unchanged files stay excluded, a later mtime becomes eligible once,
+  zero-call results do not advance watermarks, and missing/malformed storage
+  access fails closed
+- Stale/null MetadataCache plus a latest-body `#no-ai`, configured excluded tag,
+  generated frontmatter, or malformed leading frontmatter produces zero
+  provider calls; parsed findings with empty/unknown source paths are discarded
 
 ---
 
@@ -336,6 +499,31 @@ Touch/click/hold timers remain unchanged.
    `working` only when no higher-priority foreground owner is active. Settle
    on completion/failure/stale/cancel.
 
+6. Pet keeps one visual `nudge` state, but runtime keeps an explicit ticket per
+   renderable owner. Recall、Recap and Pattern are the real-delivery tier;
+   until they share a normalized quality score, use the deterministic
+   compatibility fallback `Recap > Quiet Recall > Pattern` while preserving a
+   still-current claimed owner. Onboarding is lower than every real delivery.
+
+7. Admission and acknowledgement are separate. A source receives a ticket only
+   when its own setting、quality and quiet/focus gates pass; Recap、Pattern and
+   onboarding also pass the shared presentation clock, while Quiet Recall keeps
+   its independent per-candidate gate and shares only quiet hours. Bubble becoming
+   visible commits only that ticket's applicable once/cooldown state. Bubble close、
+   action completion、work settle、settings change and source invalidation call one
+   reconcile path; deferred shared tickets use one cleanup-safe wake timer.
+
+8. Raw generic `PreloadFinding[]` has no Bubble adapter in B-118. Background
+   completion caches it for the explicit Prepared Panel and always settles Pet
+   through `analysis-done`; it cannot call `insights-ready` or create a ticket.
+   Production exposes one explicit `Open prepared review` command that opens
+   the existing `prepared` Panel route from cache with zero additional provider
+   calls. The prepared route is read-only: Save and both expand-to-Tab controls
+   are unavailable, the orchestration seams reject either action, and the cache
+   is not promoted to current analysis. Empty cache reports no prepared
+   suggestions and does not open Panel；the preflight runs before closing Bubble、
+   replacing layout or clearing pending state, so an existing surface is preserved.
+
 ### Tests — F-04
 
 - Computed animation matrix for idle/working/nudge/resting/hold/capture-hold
@@ -354,6 +542,22 @@ Touch/click/hold timers remain unchanged.
 - Concurrent Recap nudge + Recall stale: Recap nudge preserved.
 - Destroy during in-flight: no state transition after destroy.
 - Background prep start/complete/fail/stale: Pet working → idle/nudge correctly.
+- Recap + Quiet Recall + Pattern + onboarding producer order does not change
+  the claimed owner; real delivery beats onboarding and active owner does not
+  churn when a later peer arrives.
+- Bubble show failure consumes no ticket; successful show commits exactly one
+  owner; no remaining ticket is re-signalled until Bubble closes.
+- A second already-admitted shared ticket wakes once after cooldown; new
+  cooldown/quiet-hours-rejected sources stay silent. Focus、generic Off、Pet hide
+  and destroy clear only the admissions/timers they own.
+- Same Quiet Recall candidate with a new run timestamp remains once-only.
+- Empty and non-empty raw preload cycles both settle to idle and never create a
+  Bubble ticket; the production command reaches the explicit Prepared Panel,
+  opens accepted cached data without a provider call, and keeps empty cache closed
+  without changing an existing Bubble、Discover/Summary Panel、layout or pending object.
+- Prepared Panel DOM hides and disables Save plus header/footer expand-to-Tab;
+  save/expand callbacks remain no-op, while reopening an ordinary Panel restores
+  its normal controls and behavior.
 
 ---
 
@@ -402,10 +606,16 @@ Per SG-01: Off/On two-tier, no frequency cap.
 1. Replace internal `bubbleNudgesEnabled: boolean` with a user-facing
    `quietRecallMode: "off" | "on"` setting.
 
-2. Default: `"off"` (fail closed).
+2. Canonical runtime/control source: `quietRecall.quietRecallMode` only.
+   `pagelet.quietRecallMode` is a short-lived stale mirror accepted only as
+   migration input and is dropped on the next save. The deprecated legacy
+   boolean may remain as compatibility data but never overrides an explicit
+   canonical mode or acts as a second runtime gate.
 
-3. Migration: old `bubbleNudgesEnabled: true` → `"on"`;
-   old `bubbleNudgesEnabled: false` or missing → `"off"`.
+3. Migration priority: explicit canonical mode > stale Pagelet mirror > old
+   `bubbleNudgesEnabled` boolean > default `"off"`. Thus legacy true maps to
+   `"on"`, false maps to `"off"`, and a fully missing/invalid shape maps to
+   `"off"`.
 
 4. Settings UI: single labeled toggle in Pagelet Settings section.
    Label: "Quiet Recall / 相关回顾" with description explaining that PA will
@@ -437,7 +647,9 @@ Per SG-01: Off/On two-tier, no frequency cap.
 - Setting "on": nudge preparation proceeds
 - Migration: old `{ bubbleNudgesEnabled: true }` → `quietRecallMode: "on"`
 - Migration: old `{ bubbleNudgesEnabled: false }` → `quietRecallMode: "off"`
-- Migration: missing field → `"off"`
+- Migration: stale `{ pagelet: { quietRecallMode } }` is absorbed only when the
+  canonical field is absent; explicit canonical wins on conflict
+- Migration: all fields missing/invalid → `"off"`; re-save drops the mirror
 - Settings UI: toggle visible, labeled, no jargon
 - Independent: changing Quiet Recall does not affect Scope Recap or generic hints
 
@@ -531,7 +743,8 @@ rg -n "createElement\([\"']style[\"']\)|\.innerHTML\s*=|\.outerHTML\s*=" src
 
 ### Desktop Smoke
 
-Per handoff section 9: Modal gone, Recap 3-second value, Pet touch/keyboard,
+Per handoff section 9: Modal gone, Recap 3-second value, foreground Review
+actual-source gate, silent background-preload skip, Pet touch/keyboard,
 typography matrix, sidebar placement, reduced motion, stale state convergence.
 
 ### iPhone Smoke
@@ -540,11 +753,15 @@ Per handoff section 10: `make deploy-icloud`, four-asset byte-match, WKWebView
 runtime identity, portrait touch (Capture/Review/Discover each once), landscape
 QuickTime visual + Inspector DOM, iOS Reduce Motion.
 
+Current B-118 execution disposition (2026-07-21): the user accepted landscape as
+`NOT TESTED / accepted waiver`; it must not be reported as PASS. Portrait and the
+remaining manual checks were user-confirmed as passing.
+
 ---
 
 ## Completion Criteria
 
-- All B-118/REQ-01..10 addressed (F-01 through F-10).
+- All B-118/REQ-01..10 addressed (F-01 through F-13).
 - All B-118/AC-01..10 satisfied with automated + real surface evidence.
 - SG-01~06 decisions implemented; SG-07a (Chinese label) implemented;
   SG-07b/c preserved/deferred.

@@ -1,11 +1,23 @@
 # Pagelet UI/UX 优化 — Claude Code 开发 Handoff
 
-Document status: Current
+Document status: Historical evidence (execution superseded by Tracker)
 Updated: 2026-07-21
 Work item: B-118
-Authority: 2026-07-19 当日 commits、源码/测试审查、真实 Obsidian 桌面界面、iPhone 15 实体触控、Safari Web Inspector 与 QuickTime 横屏证据的完整开发交接。
+Authority: 2026-07-19 当日 commits、源码/测试审查与真实界面证据的历史开发交接；
+当前执行状态、验证边界与下一步只以 [Tracker](./tracker.md) 为准。
 
-> [!important] 2026-07-21 provider trust resolution
+> [!important] 2026-07-21 当前结论
+> B-118 当前为 `Validated`。F-01..F-13 runtime、Prepared command → read-only Panel
+> 入口、自动化、独立复审、本地/iCloud 部署与三方资产身份已闭合；Prepared cache
+> 不可保存、不可展开到 Tab、不进入 current analysis，查看时不新增 provider call；
+> 空缓存只提示 unavailable，并在任何 surface/state mutation 前返回，保留已有
+> Panel、Bubble、layout 与 pending。生产命令注册和空缓存路径已由 CLI runtime 证明。
+> 用户确认竖屏与长按等本轮手动检查通过；浅横屏明确为
+> `NOT TESTED / accepted waiver`，不得沿用本 handoff 的 2026-07-19 QuickTime 历史
+> baseline 冒充本轮 PASS。真实 provider/high-risk 调用未获数据/成本授权。closeout、
+> commit、push、tag、release 仍需另行授权。
+
+> [!important] 2026-07-21 provider trust + Quiet Recall semantic resolution
 > 本 handoff 主体保留 2026-07-19 审查证据、当时未决的 SG-01..07 和旧 Modal
 > 复现，不再作为这些产品语义的现行权威。当前统一 provider 合同是
 > [DEC-023](../../../product/decisions/dec-023-shared-pagelet-provider-first-use.md)：
@@ -17,40 +29,57 @@ Authority: 2026-07-19 当日 commits、源码/测试审查、真实 Obsidian 桌
 > 若首次实际调用恰为高风险，完整阻断披露在用户 Run、全部 gate 通过且调用即将发生时
 > 同时完成 shared first-use，不追加第二条 notice；Cancel/close/未完成 Adjust 不写 flag。
 > provider 信任不授予 Memory、持久化、vault/Markdown 写入或外部 action 权限。
+> 同一 DEC-023 方案 A 还固定风险分类：foreground Review 先过滤、去重，实际允许
+> 来源 `<=1` 为 standard bounded、`>1` 才逐次阻断；请求 `last7` 但实际只有 1 个
+> 来源仍属 standard，确认前不预留 quota/cost。Generic background preload 只有在
+> 显式 opt-in、changed-only、最近 7 天、实际输入 `<=4K`、请求输出 `<=1K`、调用
+> `<=2/rolling-hour` 与 `<=20/local-day`、`allowWrite=false`、实际来源逐一通过用户
+> 显式 shared Data Boundary 且无 whole-vault/excluded override 时为
+> standard bounded；任一越界都 silent skip，不弹 blocking UI、不调用、不落账、
+> 不改 flag。敏感性不做内容猜测或调用方布尔自证，未命中显式边界的笔记按普通来源
+> 处理；content-free 调用时间戳跨 reload/toggle 持久，存储异常 fail closed。窄
+> changed-only envelope 不属于“broad/weekly scan high-risk”。
+> [DEC-024](../../../product/decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+> 进一步采用用户方案 A：保留 pure-semantic candidates；冷 query embedding 是一次
+> 真实调用，经过 DEC-023 admission 并与 evaluator/retry 共用既有 Quiet Recall
+> 10/hour、50/day 总实际调用预算，不新增额度。空检索只保证 downstream evaluator/
+> generation=0；index unavailable 时 metadata 只可作为 explicit Discover local clue，
+> 不得冒充 semantic relevance 或主动 Recall。每个 provider seam 与结果接纳前必须
+> 使用 read-time source identity 复验 current source/run。
 > SG-01..04、SG-07 的现行 resolution 见
 > [B-118 Product Spec](../../../product/specs/pagelet-ui-ux-hardening-product-spec.md) 与
 > [Approved SDD](./sdd.md)。后文凡与这些当前合同冲突的 `PRODUCT GATE`、
 > `Off / Quiet / Balanced`、旧 action table、首次阻断 Modal 或“SG 仍未决”措辞均只代表
 > 历史 finding/复现，不得继续驱动实现。
 >
-> 2026-07-21 只读源码复核同时确认：该产品合同尚未完整进入 runtime。fresh install
-> 仍被旧 authorization tuple 置为 Scope Recap preparation off；shared notice 的 actual-
-> call timing 与 Discover coverage 也未闭合。当前执行状态以 Tracker 的 F-03/F-10 为准，
-> 具体源码证据、最小修复边界、focused regression matrix 与 exit gate 见
-> [Tracker execution record](./tracker.md#dec-023-runtime-reconciliation-execution-record)。先修复并验证，
-> 不能从本 banner 推断“已实现”或直接进入 app smoke。
+> 2026-07-21 只读源码复核曾确认 fresh-install authorization、shared actual-call、
+> pure-semantic/source-freshness 与 Review/preload production admission 缺口；这些是
+> 本 handoff 保留的历史 reopening 证据，随后均已修复并由 Tracker 记录验证。不得把
+> 下文的“待修复”措辞重新解释为当前 runtime 状态。
 
 > [!important] 交付结论
-> 当前 Pagelet UI/UX **仍不是 OK**。SDD 已批准，多数 slice 已有实现与自动化证据，
-> 但 F-03/F-10 runtime reconciliation 重新打开，且修复后的桌面/iPhone 真实证据仍缺失。
-> 当前没有 SG 产品决策 blocker；后续只按 Product Spec、DEC-023、SDD 与 Tracker 实现和
-> 验证，不能用既有自动化或历史 smoke 冒充当前完成。
+> 本段原交付结论已由当前 Tracker 取代。Pagelet UI/UX 在 B-118 授权范围内为
+> `Validated`；仍需诚实保留浅横屏、iPad/Android、真实 provider/high-risk 调用与
+> 新 Prepared command 非空缓存人工操作未执行的证据边界。
 
 ## 0. 给 Claude Code 的直接指令
 
 1. 从仓库根目录读取 `AGENTS.md`、[PA Product North Star](../../../product/pa-product-north-star.md)、
    [DEC-021](../../../product/decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)、
+   [DEC-023](../../../product/decisions/dec-023-shared-pagelet-provider-first-use.md)、
+   [DEC-024](../../../product/decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、
    [B-118 Product Spec](../../../product/specs/pagelet-ui-ux-hardening-product-spec.md)、
    [Feature Home](./README.md)、[Plan](./plan.md) 与本 handoff。
 2. 先运行只读基线检查：`git status --short --branch`、`git diff --stat`，保护本
    handoff 和其他用户改动。审查时基线为 `master` / `39e99cd8`，当时与
    `origin/master` 一致且 worktree clean；本 handoff 创建后会有预期 docs 改动。
-3. 实现前创建 `sdd.md`，覆盖 B-118/REQ-01..10 与 B-118/AC-01..10；将 SDD、
-   Feature Home、Tracker 与 Active Registry 的状态同步后再改 runtime。
+3. 使用已批准的 `sdd.md`，覆盖 B-118/REQ-01..10、B-118/AC-01..10 与 F-11/F-12；若实现
+   发现合同变化，先同步 Product Spec/SDD/Tracker，不能从旧 handoff 猜测。
 4. 每个 slice 使用 `implement → focused test → review → fix → verify`。先修无需新
-   产品决定的 F-01/F-02、F-03 的 passive-close 安全部分，并为 F-10 建立
-   fail-closed 安全边界；遇到本文件
-   第 7.1 节的 `PRODUCT GATE` 立即停下记录 `BLOCKED`，不得把建议写成产品事实。
+   产品决定的 F-01/F-02、F-03 的 passive-close 安全部分，并按当前 Tracker 完成
+   F-10/F-11/F-12 fail-closed、Review/preload classification、semantic retrieval 与
+   source-race 边界；后文第 7.1 节旧
+   `PRODUCT GATE` 只作历史证据，现行结论以 DEC-023/DEC-024 与 Product Spec 为准。
    之后处理其余 P2，最后处理 F-09；不要顺手重构无关模块。
 5. CSS 只改 `src/custom.pcss` 并生成 `styles.css`；禁止 runtime `<style>`、
    `innerHTML` 或 `outerHTML` 注入。事件、timer、listener 必须在 teardown 清理。
@@ -977,26 +1006,29 @@ Inspector 记录 DOM/CSS/rect/overflow。至少复核：
 - `NOT-TESTED`：Android Pagelet parity；B-118 不把它设为完成 gate。
 - `SOURCE-ONLY`：provider-backed Quiet Recall 的本轮真实 navigation/feedback；应先用
   deterministic fixture，只有明确授权后才补真实 provider。
-- `SOURCE-ONLY`：F-10 首次 provider disclosure 缺口；当前没有用真实 note text
-  触发它。修复可先由 provider spy 证明 fail-closed；完整 UI 受 SG-05 阻断。
-- `ARTIFACT-MISSING`：本轮 desktop F-02/F-03/F-08/F-09、portrait rect 与 QuickTime
-  landscape 没有留下可追溯截图/JSON 路径；它们是复测基线，不是 closeout artifact。
-- `VISUAL/INSPECTOR ONLY`：iPhone 横屏已通过 QuickTime/Inspector，但 Mirroring 无法
-  提供横屏物理触控。
+- `SOURCE-ONLY`：F-10 首次 provider disclosure 与 F-12 Review/preload classifier 已由
+  provider/modal/quota spies 闭合；真实 provider/high-risk 路径未获数据/成本授权，
+  不冒充实调 PASS。
+- `ARTIFACT-MISSING`：desktop/portrait 的部分可见检查虽已人工确认，但没有为每一项
+  留下独立截图/JSON 路径；自动化、用户确认与 artifact 边界必须分开陈述。
+- `NOT-TESTED / accepted waiver`：本轮 iPhone 浅横屏未执行。2026-07-19 的历史
+  QuickTime/Inspector baseline 不能替代本轮检查，也不能写为 PASS。
 - VoiceOver 完整朗读顺序未做；修复不得破坏现有 role/aria/keyboard，若变更动作
   结构，应增加至少基础 screen-reader/keyboard 检查。
 - Desktop sidebar overlap 的 142px 是当前窗口组合的实测值，不应硬编码 142px；
   修复目标是可用区域约束。
-- SG-01..SG-07 均是显式产品 stop gate；prepared Recap 的 3 秒测试不能替代 Quiet
-  Recall 命名、Explicit Discover route 或普通 Intentionally Quiet Bubble 首屏价值。
+- SG-01..SG-07 的当前 disposition 已进入 Product Spec/Decision/Tracker；下文 stop-gate
+  表仅是历史过程证据。Prepared Recap 的 3 秒测试仍不能替代其他 surface 证据。
 
 ## 12. 完成定义
 
-B-118 只有同时满足以下条件才可进入 Validated/Closeout：
+以下是本 handoff 当时给出的历史 exit checklist；当前完成状态与 residual 只读
+[Tracker](./tracker.md)。B-118 只有同时满足以下条件才可进入 Validated/Closeout：
 
-- F-01/F-02/F-03 的 P1 已由自动化 + 对应真实 surface 关闭；其中 F-03 的 SG-06
+- F-01/F-02/F-03/F-12 的 P1 已由自动化 + 对应真实 surface 关闭；其中 F-03 的 SG-06
   已获得决定并完成。F-10 已证明所有未授权路径 fail closed，且 SG-05 已决定并
-  完成；任何仍属 B-118 scope 的 P1 不得仅以“延期”进入 Validated。
+  完成；F-12 已证明 actual-source Review 分类与 background silent-skip envelope；任何
+  仍属 B-118 scope 的 P1 不得仅以“延期”进入 Validated。
 - F-04/F-06/F-08 已关闭，无持续 motion、假状态或低可读性；F-05/F-07 先完成
   characterization，受 SG-01..04 影响的部分必须已决定并实现；
 - F-09 已完成，或由用户明确延期并进入 Backlog，不得静默跳过；
@@ -1008,7 +1040,8 @@ B-118 只有同时满足以下条件才可进入 Validated/Closeout：
 - focused gate、TypeScript、whitespace、community DOM scan、`make deploy` 通过；
 - iCloud 四条 `MATCH`、真实 WKWebView runtime identity、iPhone 三菜单 item 的用户
   手指触控与 Reduce Motion 复测完成；
-- portrait/真实横屏 safe area 没有回归，横屏物理触控证据边界诚实记录；
+- portrait safe area 没有回归；浅横屏未测时只记录显式 waiver，不从历史 baseline
+  推断 PASS；
 - Product Spec、Bubble/Quiet Recall/Pagelet 当前合同、Tracker 与实际行为一致；
 - 没有未清理 listener/timer、runtime style/HTML injection、自动写入、provider 扩权、
   Git/release 越权、临时 seam/counter、smoke 数据污染或无关 refactor。

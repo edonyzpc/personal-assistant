@@ -2,8 +2,8 @@
 
 Updated: 2026-07-21
 Status: **Implemented Phase 6 base plus B-108/DEC-017/DEC-018/DEC-019/DEC-020
-runtime contract; DEC-023 amends the current product contract while its B-118
-runtime reconciliation remains open** — supporting product narrative for the Pagelet Bubble
+runtime contract; DEC-023/DEC-024 and B-118 owner-admission reconciliation are
+implemented and validated within the recorded evidence boundary** — supporting product narrative for the Pagelet Bubble
 Readiness & Recall runtime. The owning B-108 behavior authority is the
 [Scope Recap Product Spec](./pa-scope-recap-theme-summary-product-spec.md);
 automated/deploy, bounded unlocked desktop/iPhone 15 evidence, and provider-free
@@ -28,7 +28,9 @@ of view, but they are implemented as separate product paths:
 This creates duplicated product identity and makes Bubble drift back toward an
 AI feature menu. The consolidation target is a single Pagelet Delivery
 Preparation layer that prepares source-backed delivery candidates for Bubble,
-Panel, and Tab.
+Panel, and Tab. Raw generic `PreloadFinding[]` is not such a candidate: it stays
+inside the explicit Prepared Panel path until a separately approved adapter can
+prove the full Review-candidate contract.
 
 ## North Star Fit
 
@@ -50,7 +52,7 @@ It should not answer:
 | --- | --- | --- | --- | --- |
 | Historical Periodic Summary | The standalone Bubble/command identity is retired from the current contract. | Its intentional time-range review intent remains useful. | Reintroducing it would duplicate Recap and revive Weekly Review burden. | Any future value belongs to a separately authorized Recap time-range mode, not an independent current capability. |
 | Scope Recap | Source-backed derived recap plus bounded prepared-Recap scheduling; a valid artifact opens immediately in Pagelet detail. | Best fit for "review/recap" because it is source-backed, scoped, stale-aware, derived, and can be ready before click. | B-108 resolved the prior disclosure, budget, delivery, failure-state, physical-gesture and downstream-routing ambiguity; the correctly prepared user-owned 3-Second Value Test passed. | Preserve the implemented DEC-017/018/019 behavior and its distinct user control. |
-| Background Preparation / Preload | Separate generic background engine, gated by `preloadEnabled`, prepares `PreloadFinding[]` review findings for Bubble/Panel. | Provides generic Pet/Bubble readiness. | Its setting and output do not govern the independent prepared Scope Recap scheduler; exposing both as `preload` is ambiguous. | Keep generic preload opt-in unless separately decided; internal reuse must preserve the distinct Scope Recap product contract. |
+| Background Preparation / Preload | Separate generic background engine, gated by `preloadEnabled`, caches raw `PreloadFinding[]` for the explicit `Open prepared review` command → Prepared Panel route. | Makes bounded background observations available on demand without another provider call. | Raw findings lack the stable identity、why-now、currentness、quality gate and route/action required by Bubble; treating cache readiness as a nudge creates a visible signal with no valid owner. | Keep generic preload opt-in and Panel-only. The explicit command is the only current delivery entry and reuses cache with zero provider call; this Prepared Panel is read-only, cannot save or expand to Tab, and does not become current analysis. Empty cache reports unavailable before changing an existing Bubble、Panel、layout or pending state. A future Bubble adapter needs separate product approval and must preserve the distinct Scope Recap contract. |
 
 ## Product Decisions Already Confirmed
 
@@ -177,7 +179,7 @@ The B-108 product choices are no longer open implementation questions:
 | --- | --- |
 | Prepared Recap storage | Local derived artifact, no Markdown auto-write, no raw provider output; source/currentness invalidation and clear controls apply. |
 | Recap preparation budget | Prepared Scope Recap is default-on after provider setup when the capability remains enabled and sources are allowed; the first actual standard Pagelet provider call uses the shared non-blocking notice from DEC-023, while a first high-risk call may satisfy the same transparency through its affirmative blocking disclosure without a duplicate notice. Generic review preload remains a separate opt-in; Recap has its own persisted opt-out and 2/hour, 10/day actual-call bucket. |
-| Recap hint gate | High-value Recap hints are independently disableable and default on for an eligible bounded Recap path; stable fingerprint, shown/dismiss/Later, quiet/focus, cooldown, and source-quality gates apply. Generic and Quiet Recall hints remain off by default. |
+| Recap hint gate | High-value Recap hints are independently disableable and default on for an eligible bounded Recap path; stable fingerprint, source quality, quiet/focus and shared presentation-clock gates apply. Admission is owned by an explicit Recap ticket, and only a successfully visible Bubble commits its exact once/cooldown state; show failure consumes nothing. Generic and Quiet Recall hints remain off by default, while Quiet Recall keeps its independent per-candidate gate and shares only quiet hours. |
 | Recap failure state | Last valid artifact and last attempt status remain separate; explicit open without a valid artifact returns local scope orientation plus Retry/View sources, never a rule-generated insight. |
 | Quiet Recall evaluation | Each candidate is independently AI-evaluated within the DEC-020 limiter/cache boundary; local-only matches stay explicit-Discover clues and never become proactive Recall. |
 

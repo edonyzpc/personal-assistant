@@ -1,17 +1,23 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
+Document status: Current
+Updated: 2026-07-21
+Work item: B-108
+Scoped work item: B-118
+Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delivery、empty-state 与 progressive-disclosure contract。
+
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product specification |
 | Scope | Pagelet Bubble empty-state redesign, Recall/Discover unification, readiness transparency, DeliveryCandidate contract |
-| Status | Phase 6/B-108 substrate has its recorded validation. Most B-118 repair slices have automation evidence, but DEC-023 provider-first-use runtime reconciliation and final current-surface desktop/iPhone smoke remain pending; prior evidence must not be reused as a current all-surface PASS. |
-| Updated | 2026-07-21 |
+| Delivery / validation status | Phase 6/B-108 substrate and B-118 repairs have recorded automated、review、deploy and bounded desktop/iPhone evidence. Post-F-13 owner admission、raw preload fail-closed and source-invalidation reconciliation pass fixtures、independent review and deployment identity; they did not add a new live owner-path smoke. Portrait/long-press manual checks passed, landscape is `NOT TESTED / accepted waiver`, and no unauthorized real provider/high-risk call is claimed. |
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
 | Design philosophy | 安静且可信 |
-| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md) |
+| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md) |
 | Historical provenance (non-authoritative) | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
@@ -62,7 +68,7 @@ setup — and they are left facing a feature menu instead of a recall doorway.
 ## 2. Product Principles
 
 Based on the current [PA North Star](../pa-product-north-star.md), the B-108
-owning Product Spec, and DEC-017 through DEC-023:
+owning Product Spec, and DEC-017 through DEC-024:
 
 1. **Bubble is PA's Delivery Surface, not a control panel or feature menu.**
    The Bubble exists to present PA-prepared findings. It should not read like a
@@ -152,6 +158,15 @@ render a list.
 Bridge hints never replace a real delivery. If a first-use explanation is useful
 while Recall or Recap is available, it becomes an inline hint on that delivery.
 
+Until Recall、Recap 与 Pattern share a normalized cross-type quality score,
+runtime may use the existing deterministic compatibility fallback
+`prepared Recap > Quiet Recall > Pattern` while preserving an already-claimed,
+still-current owner to avoid visible churn. This is an implementation tie-break,
+not a permanent feature priority. Onboarding remains below every real delivery.
+The exact owner is acknowledged only after the Bubble actually becomes visible;
+losing or stale candidates are not allowed to consume another owner's once or
+cooldown state.
+
 **A always beats B**: If delivery content exists, show it. Background info
 (e.g., Memory still preparing) becomes an inline context hint at the bottom of
 the delivery content.
@@ -231,7 +246,7 @@ relationship reasoning. The three layers are fused, not phased:
 
 | Layer | Mechanism | Role |
 | --- | --- | --- |
-| L1 (semantic similarity) | VSS retrieval finds candidates | Candidate generation — not shown to user |
+| L1 (semantic similarity) | VSS retrieval finds candidates; a cold query embedding is a real, DEC-023-admitted call in the unchanged Quiet Recall 10/hour、50/day budget under DEC-024 | Candidate generation — not shown to user |
 | L2 (topic + excerpt) | Extract shared topics and source excerpts | Evidence backing — shown as source excerpt |
 | L3 (relationship reasoning) | LLM analyzes why this old note matters NOW for the current note | Display-level explanation — shown as "why now" |
 
@@ -594,7 +609,7 @@ is not a single durable inbox of PA suggestions.
 | Recall | Reuse existing Quiet Recall state / in-memory delivery; create a queue item only after explicit Later | Recall can be recomputed; automatic queue storage creates debt. |
 | Recap | Local derived cache | Bubble can claim "prepared" only when a structured artifact already exists. |
 | Pattern | Short-term dedupe only | Prevent repeated nudges without creating a long-term review queue. |
-| Review | In-memory / existing preload cache | Generic review findings should not become a durable task list. |
+| Review | In-memory qualified candidate only | Generic review findings should not become a durable task list. Raw `PreloadFinding[]` remains Panel-only; a future adapter must produce a separately gated Review candidate before Bubble eligibility. |
 
 Dismiss may affect only the exact candidate through enabled RHP and never creates
 a queue item. Later is the explicit exception: it creates one existing Review
@@ -614,6 +629,15 @@ Bubble only when it is:
 Review candidates rank below Recall, Recap, and Pattern. `Review current note`
 remains a Needs Setup fallback or intentional Panel/Tab/Command action, not the
 default Bubble identity.
+
+`PreloadFinding[]` is a background transport/cache shape, not a Bubble
+`DeliveryCandidate`. Raw preload findings remain available through the explicit
+`Open prepared review` command → Prepared Panel route with zero additional
+provider calls. That Panel is read-only: it cannot save, expand to Tab, or become
+current analysis. Empty cache reports unavailable before changing any existing
+Bubble、Panel、layout or pending state. Raw findings cannot set Pet to `nudge` or enter Bubble until a
+separately approved adapter supplies stable identity, source-backed evidence,
+confidence, why-now, currentness, and a valid low-burden route/action.
 
 ### Discover Trigger Flow
 
@@ -811,7 +835,7 @@ This iteration does NOT include:
 | 17 | Generate Summary button must NOT appear in any B-type empty state | No B-type state includes "Generate summary" as an action. |
 | 18 | Review Current Note must NOT appear as primary action in Ready, Nothing Found | "Review current note" only appears as fallback in Needs Setup. |
 | 19 | No state should display VSS, RAG, OPFS, embedding, vector, backend, queue, schema, or provider error codes | All user-facing copy uses product language only. |
-| 20 | Passive close/ignore must stay neutral | Closing or ignoring produces no feedback, dismiss state, queue item, badge, or durable write. Dismiss is a separate explicit weak candidate action; Later is the separate explicit queue handoff. |
+| 20 | Passive close/ignore must stay neutral | Closing or ignoring produces no feedback, dismiss state, queue item, badge, or close-triggered durable write. It does not undo the exact-owner presentation acknowledgement already committed when the Bubble became visible. Dismiss is a separate explicit weak candidate action; Later is the separate explicit queue handoff. |
 | 21 | Local scope overview must never become Recap Delivery or nudge | Explanation-only facts are excluded from DeliveryCandidate and proactive hint pools. |
 | 22 | Discover-only local match must not look like proactive Recall | It remains in Panel, is labeled `Local related clue` / `本地关联线索`, contains no AI why-now, never enters a Recall stack, and cannot nudge. |
 | 23 | Recall Bubble action taxonomy | Only View / Later / Dismiss appear. View provider rerun = 0; Later creates one existing Review Queue item; Link/Save appear only in Tab. |

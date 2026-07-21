@@ -20,6 +20,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-020 | Independent AI evaluation for each Quiet Recall candidate | Accepted | Quiet Recall quality, failure isolation and provider-call budget boundary | [Record](./dec-020-independent-quiet-recall-evaluation.md) |
 | DEC-021 | Evidence-led Pagelet UI/UX hardening | Accepted | Staged repair scope, evidence boundaries and resolved SG dispositions | [Record](./dec-021-evidence-led-pagelet-ui-ux-hardening.md) |
 | DEC-022 | Bounded, source-backed Insight Enhancement Layer | Accepted | Graph、Pattern、Maintenance AI scope, provider budget and write boundary | [Record](./dec-022-bounded-insight-enhancement-layer.md) |
-| DEC-023 | Shared non-blocking first-use notice for bounded Pagelet provider paths | Accepted | Pagelet provider trust, high-risk-first-call disclosure, and capability opt-out boundary | [Record](./dec-023-shared-pagelet-provider-first-use.md) |
+| DEC-023 | Shared non-blocking first-use notice for bounded Pagelet provider paths | Accepted | Pagelet provider trust, foreground Review actual-source classification, narrow background preload envelope, high-risk-first-call disclosure, and capability opt-out boundary | [Record](./dec-023-shared-pagelet-provider-first-use.md) |
+| DEC-024 | Count cold Quiet Recall semantic retrieval in its existing actual-call budget | Accepted | Pure-semantic candidate discovery, zero-call boundary, and metadata fallback semantics | [Record](./dec-024-quiet-recall-cold-semantic-retrieval.md) |
 
 Accepted 记录必须出现在 Active Decision Register。Rejected/Superseded 记录如果只剩历史价值，应移动到年度 Archive 并在 successor/年度索引中可追溯。

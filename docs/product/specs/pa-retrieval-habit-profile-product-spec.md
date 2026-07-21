@@ -7,7 +7,7 @@ Updated: 2026-07-21
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Confirmed decision spec; M12 runtime implemented for local opt-in weak retrieval adaptation. B-118 narrows Quiet Recall Dismiss to an exact-candidate signal; runtime reconciliation and current-surface validation remain pending. |
+| Status | Confirmed decision spec; M12 runtime implemented for local opt-in weak retrieval adaptation. B-118 completed the Quiet Recall exact-candidate Dismiss boundary and validated it through focused side-effect tests plus the authorized current Pagelet/Settings surfaces. |
 | Feature family | Retrieval Habit Profile / Local retrieval adaptation |
 | Primary surfaces | Active Vault Indexer, Quiet Recall, Pagelet, Settings advanced data controls |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -23,8 +23,8 @@ The B-118 contract further narrows Quiet Recall Bubble feedback: only an
 explicit `Dismiss`, while Retrieval Habit Profile is enabled, may weakly affect
 the exact candidate. It must not downrank similar sources, topics, or candidates.
 The [B-118 Tracker](../../development/active/pagelet-ui-ux-optimization/tracker.md)
-owns the remaining runtime reconciliation and current-surface validation; this
-document does not claim that work is already complete.
+owns the completed runtime/current-surface evidence and its residual boundaries;
+this spec does not extend weak feedback beyond the exact candidate.
 
 The product definition:
 

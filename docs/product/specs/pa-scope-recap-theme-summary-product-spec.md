@@ -11,7 +11,7 @@ Authority: Scope Recap 及其 B-108 dogfood follow-up 的用户行为、Quiet Re
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Delivery status | B-108 shipped to BRAT `2.9.0-beta.2` with its recorded validation. DEC-023 resolves the provider first-use product contract, but B-118 runtime reconciliation remains open for fresh-install preparation and shared actual-call notice coverage; final current-surface desktop/iPhone smoke and stable release remain pending. |
+| Delivery status | B-108 shipped to BRAT `2.9.0-beta.2` with its recorded validation. B-118 completed the DEC-023 fresh-install preparation/shared actual-call reconciliation and authorized current-surface desktop/iPhone validation. Real high-risk provider calls、the accepted iPhone landscape waiver、iPad/Android and stable release remain outside that completion claim. |
 | Related decisions | [DEC-018 — quality-gated proactive hints](../decisions/dec-018-quality-gated-scope-recap-hints.md), [DEC-019 — honest layered failure fallback](../decisions/dec-019-honest-layered-recap-fallback.md), [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md) |
 | Archived delivery package | [B-108 Pagelet dogfood follow-up](../../archive/2026/pagelet-b108-dogfood-followup/README.md) |
 | Feature family | Scope Recap / Theme Summary / Derived map |
@@ -32,8 +32,8 @@ Recap real-provider token smoke passed after explicit bounded data-transfer and
 cost authorization. These behaviors were shipped through the `2.9.0-beta.2`
 BRAT prerelease, not the stable Obsidian community channel. The newer
 [B-118 hardening contract](./pagelet-ui-ux-hardening-product-spec.md) and tracker
-record the first-screen work, the open DEC-023 provider-boundary runtime
-reconciliation, and the remaining real current-surface smoke. Recap remains
+record the completed first-screen/DEC-023 runtime reconciliation and its current-
+surface validation evidence, including explicit residual boundaries. Recap remains
 derived, not source truth.
 
 The product definition:

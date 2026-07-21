@@ -1,26 +1,32 @@
 # PA Quiet Recall And Insight Timing Product Spec
 
+Document status: Current
+Updated: 2026-07-21
+Work item: B-108
+Scoped work item: B-118
+Decision: [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md)
+Scoped decisions: [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)、[DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+Authority: Quiet Recall 的候选、触发、质量、成本、数据、交付、反馈与无自动写入边界。
+
 > [!note] Current implementation includes the 2026-07-02 amendments: the
 > candidate pool spans the eligible vault and triggers are note open/switch,
 > save-after, and user-initiated shortcut. Current authority is this spec,
-> DEC-020, the B-108 owning Scope Recap spec, and the B-118/DEC-023 amendments;
+> DEC-020, the B-108 owning Scope Recap spec, and the B-118/DEC-023/DEC-024 amendments;
 > Archive links below are historical provenance only.
-
-Updated: 2026-07-21
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | DEC-020 evaluation/limiter/cache/provenance substrate is validated. B-118 fixes the current contract to Off/On plus View/Later/Dismiss; focused automation exists, while current-surface Settings/Recall validation and DEC-023 provider-first-use runtime reconciliation remain pending. |
+| Delivery / validation status | DEC-020 evaluation/limiter/cache/provenance substrate is validated. B-118 completed and validated Off/On、View/Later/Dismiss、DEC-023/DEC-024 actual-call admission、pure-semantic retrieval and source freshness through automated/review and authorized current-surface gates. Real provider/high-risk calls were not rerun for B-118. |
 | Feature family | Quiet Recall / Just-in-time insight / Cognitive scaffolding |
 | Primary surfaces | Pagelet Bubble, Pagelet Panel, optional Review Queue handoff |
-| Current authority | This spec, [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md), the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and the [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) |
+| Current authority | This spec, [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md), [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md), the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and the [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) |
 | Historical research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
 | Related current specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet doc | [Pagelet product design](../pagelet-product-design.md) |
-| Related decisions | [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021 — evidence-led Pagelet UI/UX hardening](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md) |
+| Related decisions | [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021 — evidence-led Pagelet UI/UX hardening](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md), [DEC-024 — cold semantic retrieval budget](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md) |
 | Product doctrine | [Low-Burden Review Product Principles](../pa-low-burden-review-product-principles.md) |
 
 This spec defines when and how PA proactively surfaces old notes, themes, and
@@ -39,7 +45,8 @@ confirmed on 2026-06-28 and the DEC-020/B-108/B-118 amendments through 2026-07-2
 [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) record current
 action, feedback, disclosure and settings semantics. DEC-023 is the current
 provider first-use authority and does not grant write, Memory, or external-action
-permission.
+permission. DEC-024 preserves pure-semantic candidates by treating a cold query
+embedding as one disclosed, budgeted Quiet Recall provider call.
 
 ## Confirmed Decisions
 
@@ -56,6 +63,7 @@ permission.
 | QR-D9 | Bubble shows only a line and why-shown; `View` navigates to or expands current evidence without rerunning the provider. | Recall detail lives in Tab; explicit Discover continues into Panel. |
 | QR-D10 | Recall is not a queue item by default. | Closing, ignoring, or dismissing creates no queue item. Only user-chosen `Later` expresses return intent and enters the existing Review Queue; Link/Save remain in Tab. |
 | QR-D11 | Each eligible Recall candidate receives an independent AI why-now evaluation. | Local ranking may nominate at most 5 candidates per round; each candidate fails independently, receives at most one language retry, and never falls back to a template proactive nudge. |
+| QR-D12 | Pure-semantic candidate discovery is retained; a cold query embedding is one real Quiet Recall provider call. | It passes DEC-023 admission and consumes the existing 10/hour、50/day bucket without increasing it. Empty retrieval makes no downstream evaluator/generation call; metadata-only fallback is explicit-Discover-only and never proactive Recall. |
 
 ## 1. Product Decision
 
@@ -168,19 +176,30 @@ consequence of these product gates:
 [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md) fixes the
 quality/cost tradeoff for provider-backed why-now evaluation:
 
+- when the Memory/VSS index is ready, semantic retrieval may generate at most
+  one cold query embedding through the configured provider, then execute vector
+  search and mixed ranking locally; an exact valid embedding cache hit skips the
+  provider call
+- the cold query embedding must pass capability/provider/Data Boundary,
+  eligible source/query, index-ready, cooldown, actual-call budget and
+  source/current-run revalidation before DEC-023 shared first-use admission at
+  the invocation seam
 - local retrieval and mixed ranking select at most 5 candidates per eligible
   evaluation round
 - each candidate is sent in its own initial provider call; one candidate's
   failure or rejection does not invalidate another candidate
 - only a why-now language mismatch permits one retry for that candidate
-- one round therefore has a hard ceiling of 5 initial calls plus 5 language
-  retries, or 10 actual provider calls
+- the evaluator stage has a hard ceiling of 5 initial calls plus 5 language
+  retries; the cold retrieval call is separate but receives no additional
+  quota and therefore reduces evaluator capacity when the same 10/hour bucket
+  would otherwise be exhausted
 - the current 60-second cooldown limits rounds, not calls; hour/day limits must
   count actual provider calls, including retries
-- Quiet Recall uses its own persisted actual-call bucket: 10 calls per rolling
-  hour and 50 calls per local day. Every initial call and language retry
-  reserves before invocation; failures, timeouts, malformed/rejected output,
-  and wrong-language calls consume the slot
+- Quiet Recall uses one persisted total actual-call bucket: 10 calls per rolling
+  hour and 50 calls per local day. Every cold query embedding, initial evaluator
+  call and language retry commits its slot at the imminent invocation seam after
+  applicable DEC-023 admission; high-risk `Run` precedes that commit. Failures, timeouts,
+  malformed/rejected output, and wrong-language calls consume the slot
 - Recap, generic preload, and foreground review have separate buckets and do
   not consume or replenish Quiet Recall capacity
 - a quality judgment may be reused only for an exact context-candidate key:
@@ -189,13 +208,22 @@ quality/cost tradeoff for provider-backed why-now evaluation:
 - availability, cooldown, budget, timeout, and transport failures are not
   cached as quality judgments; any cache-key component change requires a new
   evaluation when the call gates permit it
+- if cold semantic retrieval returns no candidates, downstream evaluator and
+  generation calls are 0; the embedding attempt remains counted and, if it was
+  the first actual Pagelet call, the DEC-023 first-use state remains notified
+- no eligible source/query, index not ready, capability/provider/Data Boundary
+  rejection, cooldown/budget rejection before cold-retrieval admission, or
+  pre-invocation source/current-run invalidation remains a strict zero-call path
 - these engineering guardrails may not change independent evaluation into
   shared/batch judgment
-- when provider, cooldown, or budget prevents evaluation, a local match may
-  remain available only after explicit Discover and must be labeled
+- when evaluator availability, cooldown, or remaining budget prevents why-now
+  evaluation after a valid semantic candidate already exists, that local match
+  may remain available only after explicit Discover and must be labeled
   `Local related clue` / `本地关联线索`; it has no AI why-now, does not use
   AI-evaluated Recall styling, never mixes into a proactive Recall stack, and
   cannot trigger a nudge
+- when the index is unavailable, metadata relations may use the same explicit-
+  Discover local-clue surface, but cannot claim semantic relevance
 
 ## 5. Recall Content
 
@@ -247,6 +275,14 @@ Default ranking signals:
 
 Semantic similarity should find candidates, but should not be the final ranking
 truth.
+
+Pure-semantic discovery is a required candidate lane, not a metadata alias.
+When the local Memory/VSS index is ready, a cold current-note query may require
+one provider-backed embedding before the vector search runs locally. That call
+follows DEC-024 and the existing Quiet Recall 10/hour、50/day total budget.
+Metadata such as tags, links, path and time can contribute mixed ranking, but an
+index-unavailable metadata-only result is only an explicit-Discover local clue;
+it cannot enter proactive Recall or be labeled semantically related.
 
 Problems with pure similarity:
 
@@ -514,6 +550,9 @@ Required behavior:
 - generated notes are excluded by default according to Data Boundary policy
 - DEC-023's shared non-blocking notice appears only before the first actual
   standard-bounded Pagelet provider call; no-call/local-only paths do not consume it
+- a cold Quiet Recall query embedding is an actual Pagelet provider call and
+  passes that shared admission only after capability/provider/Data Boundary,
+  source/query, index, cooldown, budget and source/current-run checks
 - broad/sensitive/costly/whole-vault runs and excluded-scope overrides keep
   per-use confirmation before provider call or cost reservation
 - provider trust does not grant Memory admission, vault write, Markdown, or
@@ -523,13 +562,17 @@ Required behavior:
 
 Provider usage should be minimized:
 
-- local metadata and existing index should handle candidate generation when
-  possible
+- the existing index performs semantic search locally, but a cold query
+  embedding may call the configured provider under DEC-024; an exact valid
+  embedding cache hit should avoid that call
+- metadata may supplement mixed ranking, but index-unavailable metadata-only
+  matching is limited to explicit Discover local clues and cannot stand in for
+  semantic candidate generation
 - provider-backed synthesis should be reserved for why-shown, theme summaries,
   or counterexample explanation when needed
-- provider-backed why-now follows DEC-020's per-candidate 5/10 round boundary;
-  every actual call and retry must be attributable in diagnostics and cost
-  accounting
+- provider-backed why-now follows DEC-020's per-candidate 5/10 evaluator-stage
+  boundary; cold query embedding, every evaluator call and retry must be
+  attributable in diagnostics and share the same 10/hour、50/day total budget
 
 ## 16. Data Model Notes
 
@@ -583,6 +626,11 @@ Suggested cases:
 | Five eligible candidates | Each candidate is evaluated independently; one failure does not cancel completed siblings |
 | Language mismatch | Only that candidate retries once; no third call is allowed |
 | Provider, cooldown, or budget unavailable | No template why-now enters proactive Recall; explicit Discover may show a clearly labeled local related clue with no AI why-now and no proactive Recall styling |
+| Pure-semantic note with no tag/link/path overlap | With index ready and all gates admitted, one cold query embedding may find it; the candidate still requires independent why-now evaluation before proactive delivery |
+| Cold semantic retrieval returns empty | Query embedding call is counted and may complete shared first-use; evaluator/generation calls remain 0 |
+| Semantic candidates found but evaluator has no remaining capacity | Retrieval call remains counted; explicit Discover may show a local related clue without AI why-now, but proactive Recall remains silent |
+| Index unavailable | No query embedding call; metadata-only relation may appear only as explicit-Discover `Local related clue`, never semantic/proactive Recall |
+| Source changes before embedding/evaluator invocation or before result use | Pre-invocation drift makes the path zero-call; post-call drift discards the stale result and creates no Recall/nudge |
 
 Deterministic checks:
 
@@ -600,11 +648,20 @@ Deterministic checks:
   quiet Bubble empty state
 - no vault writes occur without user action
 - no Confirmed Memory is created by recall alone
-- an evaluation round makes at most 5 initial calls and 5 language retries
+- an evaluator stage makes at most 5 initial calls and 5 language retries
 - actual provider calls, not rounds, are reserved before invocation and counted
-  against an independent 10-per-rolling-hour / 50-per-local-day budget
+  against one independent 10-per-rolling-hour / 50-per-local-day Quiet Recall
+  budget; cold query embeddings, initial evaluators and retries all consume it
 - failed calls and language retries consume capacity; Recap, generic preload,
   and foreground review do not share the Quiet Recall bucket
+- cold retrieval with zero candidates performs exactly one embedding attempt
+  when uncached and admitted, then zero evaluator/generation calls; all
+  pre-embedding no-source/query/index/provider/policy/cooldown/budget paths make
+  zero calls and leave first-use state untouched
+- an index-unavailable metadata fallback is explicit-Discover-only, local,
+  non-semantic and unable to trigger Recall/nudge
+- source/current-run identity is revalidated at every provider seam and before
+  use; stale results never become candidates or visible delivery
 - an exact context-candidate cache hit may reuse a quality judgment; any note,
   locale, provider/model, evaluator-version, or Data Boundary change misses
 - Bubble defaults to one visible card; a 2-to-3-card stack requires every card
@@ -685,6 +742,9 @@ The durable contract:
 - triggers follow explicit context changes
 - eligible candidates receive independent AI why-now evaluation under a
   5-initial / 5-language-retry per-round ceiling
+- pure-semantic retrieval is retained; a cold query embedding is one real call
+  in the unchanged 10/hour、50/day Quiet Recall budget, and an empty retrieval
+  makes no downstream evaluator/generation call
 - ranking uses mixed relevance, not pure similarity
 - one small remote-association candidate is allowed
 - Bubble defaults to one visible item and only exposes a 2-to-3-item stack when
@@ -695,6 +755,8 @@ The durable contract:
   the existing Review Queue, and Dismiss is candidate-specific and weak only when RHP is on
 - passive close/ignore is neutral; Link/Save remain Tab-only
 - Off by default, with one opt-in On mode independent from generic hints and Recap
+- metadata-only fallback is limited to explicit Discover and never impersonates
+  semantic or proactive Recall
 
 This lets PA help users rediscover their own thinking without interrupting the
 act of thinking.

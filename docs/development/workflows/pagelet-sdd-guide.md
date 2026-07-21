@@ -346,7 +346,7 @@ Pet State Update (eligible insight + relevant hint setting ON → nudge;
 | No local insight preprocessing | NO regex-based TODO detection, NO rule-based insight scanning. DEC-019 local scope/source overview is explanation-only and cannot become DeliveryCandidate or nudge. |
 | Security | `runKind="background"` with hardcoded `allowWrite=false`. Background path can NEVER trigger writes. |
 | Token budget | 4K input + 1K output default; configurable up to 8K input + 2K output. |
-| Hard ceiling | 8K input + 2K output per background preparation call. |
+| Hard ceiling | Current generic preparation is 4K input + 1K output; Settings may lower but not expand it. |
 | Per-hour cap | 2 background preparation calls (default). |
 | Per-day cap | 20 background preparation calls (default). |
 | On ceiling hit | Silently skip cycle (no user notification). |
@@ -739,7 +739,7 @@ interface PageletSettings {
   foregroundPerDayCap: number;         // default: 100
 
   // Cost — Background preparation (stored under preload* keys for migration compatibility)
-  preloadTokenBudget: { input: number; output: number }; // default: {4000, 1000}; max {8000, 2000}
+  preloadTokenBudget: { input: number; output: number }; // default/max: {4000, 1000}; user may lower only
 }
 ```
 
