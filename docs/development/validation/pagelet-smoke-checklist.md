@@ -625,10 +625,14 @@ NODE
 Interpretation:
 
 - `PASS`: expected product behavior was observed in the live app.
+- `BLOCKED`: a required external/runtime precondition prevented the assertion;
+  keep it out of `bugs`, state the unmet precondition, and do not call it PASS.
 - `FAIL`: likely regression or an open product/implementation gap; check the
   `detail` field before classifying severity.
-The runner intentionally avoids provider calls, so it currently records only
-`PASS` and `FAIL`.
+The runner intentionally avoids provider calls. Its legacy D6 settings probe
+must not write or attempt to roll back durable device-local Memory state; when
+that runtime is active, the probe records `BLOCKED` and the Pagelet shell checks
+continue.
 
 The runner writes `test/pagelet-smoke-runtime-result.json`; the file is ignored
 by git because the `test/` vault is local smoke state.

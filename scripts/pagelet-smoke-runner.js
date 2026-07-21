@@ -16,6 +16,7 @@
   const PLUGIN_ID = "personal-assistant";
   const COMMAND_IDS = [
     "pa-pagelet:open-panel",
+    "pa-pagelet:open-prepared-review",
     "pa-pagelet:review-current",
     "pa-pagelet:quick-review",
     "pa-pagelet:discover-connections",
@@ -115,6 +116,21 @@
   const runD6MemorySmoke = async (plugin, sourceFile) => {
     if (!plugin || typeof plugin.createReviewQueueItem !== "function") {
       record("D6 Memory runtime probe available", "FAIL", "createReviewQueueItem is not callable");
+      return;
+    }
+    // This probe predates device-local Memory governance and can only restore
+    // the legacy settings ledgers it mutates below. Once durable governance is
+    // active, creating a candidate may write protected IndexedDB state that
+    // this shell smoke cannot safely roll back. Keep the live vault read-only;
+    // the durable path is covered by repository/plugin integration tests.
+    if (plugin.deviceMemoryGovernanceRepository
+      || plugin.deviceMemoryReviewQueueRepository
+      || plugin.memoryAdmissionCoordinator) {
+      record(
+        "D6 Memory runtime probe",
+        "BLOCKED",
+        "durable device-local Memory governance requires an isolated fixture; protected Memory state was not mutated",
+      );
       return;
     }
     if (!sourceFile) {
