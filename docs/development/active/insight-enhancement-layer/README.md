@@ -22,7 +22,7 @@ Tracker: [Development Tracker](./tracker.md)
 - Target release / no release commitment: 无版本或 release commitment。
 - Explicit non-goals: Writing Insight / Statistics 语义分析；whole-vault 默认扫描；新增
   顶层 UI；AI 自动保存、Memory、Markdown、link、rename、create 或扩大 move 权限。
-- External mirror: [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；DEC-023 方案 A 已同步并保持 Backlog；后续 runtime-gap 明细因外部披露风险被 connector 拒绝，尚未写入。
+- Historical external source: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；仅保留既有来源链，不再读取、同步或写入；repo docs 是当前唯一权威。
 
 ## Artifact Map
 
@@ -57,9 +57,8 @@ Tracker: [Development Tracker](./tracker.md)
   reconciliation，并明确 B-118 F-03/F-10 shared actual-call gate 的修复/依赖顺序，
   创建并批准 `sdd.md`，再进入任何 TypeScript/UI 修改。
 - User decision needed: 无产品决定；是否开始实现仍需用户明确授权。
-- Blocker: runtime implementation authority 尚未授予，Approved SDD 尚不存在。Linear
-  runtime-gap 镜像还需用户在知悉“未提交源码审计结论将写入外部系统”后重新明确授权；
-  repo docs 已是当前权威，不因此失真。
+- Blocker: runtime implementation authority 尚未授予，Approved SDD 尚不存在；不存在
+  外部 mirror 或 connector 前置条件。
 
 ## Closeout Destination
 

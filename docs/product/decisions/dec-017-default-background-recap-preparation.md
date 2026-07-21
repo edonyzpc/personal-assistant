@@ -87,7 +87,7 @@ provider 调用按 [DEC-023](./dec-023-shared-pagelet-provider-first-use.md) 显
 
 ## Traceability
 
-- Source signal: [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/idea-%E9%87%8D%E6%96%B0%E8%AF%84%E5%AE%A1-insight-%E5%A6%82%E4%BD%95%E8%A7%A3%E5%86%B3-obsidian-%E4%BD%BF%E7%94%A8%E7%97%9B%E7%82%B9)
+- Historical external source signal: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/idea-%E9%87%8D%E6%96%B0%E8%AF%84%E5%AE%A1-insight-%E5%A6%82%E4%BD%95%E8%A7%A3%E5%86%B3-obsidian-%E4%BD%BF%E7%94%A8%E7%97%9B%E7%82%B9)；仅作来源记录，不再同步
 - First-use amendment: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
 - Product Spec: [PA Scope Recap And Theme Summary](../specs/pa-scope-recap-theme-summary-product-spec.md)
 - Follow-up decisions: [DEC-018](./dec-018-quality-gated-scope-recap-hints.md), [DEC-019](./dec-019-honest-layered-recap-fallback.md)

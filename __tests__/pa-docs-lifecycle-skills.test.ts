@@ -1,11 +1,10 @@
 import { describe, expect, it } from "@jest/globals";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = process.cwd();
 
 const docsSkill = read(".agents/skills/pa-docs-lifecycle-manager/SKILL.md");
-const linearSkill = read(".agents/skills/pa-linear-product-manager/SKILL.md");
 const sddSkill = read(".agents/skills/sdd-lifecycle/SKILL.md");
 const docsContract = normalize(docsSkill);
 const sddContract = normalize(sddSkill);
@@ -24,29 +23,30 @@ describe("PA lifecycle skill forward contracts", () => {
         }
 
         expect(docsSkill).toContain("This guard overrides implicit invocation");
-        expect(linearSkill).toContain("means **zero writes** here");
         expect(sddSkill).toContain("request means **zero writes**");
     });
 
-    it("captures raw ideas in Linear without B-xxx and promotes only at explicit gates", () => {
-        for (const content of [docsSkill, linearSkill]) {
-            expect(content).toContain("A raw idea starts in the Linear inbox and does not receive a `B-xxx`");
-            expect(content).toContain("product decision");
-            expect(content).toMatch(/version|current-iteration/u);
-            expect(content).toContain("cross-session research or execution");
-            expect(content).toContain("bidirectional links");
-        }
-
-        expect(linearSkill).toContain("Linear persistence by itself is not a promotion gate");
-        expect(docsContract).toContain("Do not create a fallback Backlog row when Linear capture fails");
+    it("keeps casual ideas local and persists only explicit capture or promotion", () => {
+        expect(docsSkill).toContain("A casually shared raw idea stays in the current conversation");
+        expect(docsSkill).toContain("Explicit “记录 / 保存” intent is itself a durable-capture gate");
+        expect(docsSkill).toContain("product decision");
+        expect(docsSkill).toMatch(/version or current-iteration/u);
+        expect(docsSkill).toContain("cross-session research or execution");
+        expect(docsSkill).toContain("one minimal `B-xxx` Backlog row");
     });
 
-    it("never reports a failed Linear write as captured or synchronized", () => {
-        expect(docsSkill).toContain("Never say the idea was recorded, captured, linked, or");
-        expect(docsSkill).toContain("when the corresponding Linear write did not succeed");
-        expect(linearSkill).toContain("Never claim the idea was recorded or captured");
-        expect(linearSkill).toContain("Never claim the item is linked or synchronized when that write failed");
-        expect(linearSkill).toContain("never upgrade a failed Linear write into a success label");
+    it("removes the project Linear skill and external synchronization route", () => {
+        expect(existsSync(join(repoRoot, ".agents/skills/pa-linear-product-manager/SKILL.md"))).toBe(false);
+        expect(existsSync(join(repoRoot, ".agents/skills/pa-linear-product-manager/agents/openai.yaml"))).toBe(false);
+        expect(docsSkill).not.toContain("`pa-linear-product-manager`");
+        expect(docsSkill).not.toContain("Linear inbox");
+        expect(docsSkill).toContain("Existing external links are historical");
+    });
+
+    it("uses progressive reads instead of preloading the documentation hierarchy", () => {
+        expect(docsSkill).toContain("Read the minimum current authority needed");
+        expect(docsSkill).toContain("Read a template only when creating that");
+        expect(docsSkill).toContain("Do not preload Roadmap, every index, every contract, templates, or Archive");
     });
 
     it("routes plan-and-implement through validation without implicit closeout", () => {
@@ -101,20 +101,15 @@ describe("PA lifecycle skill forward contracts", () => {
     it("asks one ordinary decision at a time and batches only after an explicit request", () => {
         expect(docsSkill).toContain("Ask at most one product or authorization question at a time");
         expect(docsSkill).toContain("explicit request for a decision queue; then return 3-5");
-        expect(linearSkill).toContain("Ask one product question at a time");
-        expect(linearSkill).toContain("3-5 decision cards only when the user explicitly asks");
-        expect(linearSkill).toContain("keep the operation read-only until the user answers");
+        expect(docsSkill).toContain("keep the request read-only until the user answers");
     });
 
     it("keeps the docs manager implicit and downstream skills explicitly routed", () => {
         const docsMetadata = read(".agents/skills/pa-docs-lifecycle-manager/agents/openai.yaml");
-        const linearMetadata = read(".agents/skills/pa-linear-product-manager/agents/openai.yaml");
         const sddMetadata = read(".agents/skills/sdd-lifecycle/agents/openai.yaml");
 
         expect(docsMetadata).toContain("$pa-docs-lifecycle-manager");
         expect(docsMetadata).toContain("allow_implicit_invocation: true");
-        expect(linearMetadata).toContain("$pa-linear-product-manager");
-        expect(linearMetadata).toContain("allow_implicit_invocation: false");
         expect(sddMetadata).toContain("$sdd-lifecycle");
         expect(sddMetadata).toContain("allow_implicit_invocation: false");
     });

@@ -166,6 +166,6 @@ VSS 不可用时结果仍可为 structural-only。若未来选择更广范围，
   [Saved Insight](./pa-saved-insight-ledger-product-spec.md)
 - Prior discovery: [Accepted Discovery Summary](../../development/active/insight-enhancement-layer/discovery.md)；
   原路径迁移见 [Disposition Log](../../archive/disposition-log.md)
-- External mirror: [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；已于 2026-07-21 同步当前决定和 plan-only 状态
+- Historical external source: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；仅作来源记录，不再同步
 - Release / rollout boundary: 当前仅建立计划型 Active Package；无 runtime、commit、
   push、tag、beta/stable release 授权。

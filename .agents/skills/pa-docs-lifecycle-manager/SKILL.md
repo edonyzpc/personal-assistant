@@ -1,6 +1,6 @@
 ---
 name: pa-docs-lifecycle-manager
-description: Automatically route Personal Assistant ideas, decisions, planning, implementation, continuation, status, closeout, and archive work from ordinary language with minimal management load. Use for phrases such as "记录一个 PA idea", "继续推进", "先规划并实现", "需要我决定什么", or "帮我收尾". Send raw ideas to the Linear inbox without a B-xxx, promote only decision/version/cross-session research or execution work into repo docs with bidirectional links, honor explicit review-only or no-file-changes requests as zero-write, route runtime delivery to sdd-lifecycle, and keep commit, push, tag, publish, and release authorization explicit.
+description: Automatically route Personal Assistant ideas, decisions, planning, implementation, continuation, status, closeout, and archive work from ordinary language with minimal management load. Use for phrases such as "记录一个 PA idea", "继续推进", "先规划并实现", "需要我决定什么", or "帮我收尾". Keep casual ideas conversation-local, create or reuse a minimal repo Backlog item only for explicit durable capture or decision/version/cross-session research or execution, honor explicit review-only or no-file-changes requests as zero-write, route runtime delivery to sdd-lifecycle, and keep commit, push, tag, publish, and release authorization explicit.
 ---
 
 # PA Docs Lifecycle Manager
@@ -21,7 +21,8 @@ The user owns:
 Own all mechanical work:
 
 - classify the request and choose the lightest valid lifecycle lane;
-- capture raw ideas in the Linear inbox and assign stable IDs only on promotion;
+- keep casual ideas conversation-local and assign stable IDs only for explicit
+  durable capture or promotion;
 - create, update, index, reconcile, close, and archive repo docs;
 - keep one authority for each state and remove stale mirrors;
 - run the required validation and report only material decisions or blockers.
@@ -33,29 +34,32 @@ which document to edit or which workflow phase to select.
 
 ## Read Current State
 
-Before writing, read:
+Read the minimum current authority needed for the selected route:
 
-1. `docs/index.md`, `docs/backlog.md`, `docs/development-roadmap.md`, and
-   `docs/development/active/README.md`;
-2. `docs/development/documentation-workflow.md` and the relevant canonical
-   templates;
-3. the North Star, matching Decisions, Product Specs or Governance Contract,
-   Architecture, Active Package, and nearby code/tests as required by the request;
-4. `git status --short` and focused diffs so unrelated work remains untouched.
+1. Always inspect `git status --short`, focused diffs, and search by stable ID,
+   feature slug, and product concept before creating anything.
+2. For capture or status, read only `docs/backlog.md` and the matching current
+   index or Tracker. Read `docs/index.md` only when routing is unclear.
+3. For product behavior, read the North Star plus matching Decision/Product
+   Spec; for repo governance, read the matching Governance Contract. Read the
+   Active Package and nearby code/tests only when the requested phase needs them.
+4. Read the relevant section of `docs/development/documentation-workflow.md`,
+   not the whole hierarchy by default. Read a template only when creating that
+   artifact.
 
-Search by stable ID, feature slug, and product concept before creating anything.
-Read Archive only when current authority links to it or historical rationale is
-needed. Before closeout, always inspect the annual Archive indexes and the exact
-destination path even when no current document links there.
+Do not preload Roadmap, every index, every contract, templates, or Archive for a
+routine turn. Read Archive only when current authority links to historical
+rationale. Before closeout, always inspect the annual Archive indexes and the
+exact destination path even when no current document links there.
 
 ## Highest-Priority No-Write Guard
 
 Explicit `review-only`, `analysis-only`, `read-only`, `no-file-changes`, “只分析”,
 “不要改文件”, “不要写入”, or equivalent language means **zero writes**. Do not
-create or update repo docs, Linear issues, runtime code, files, git state, or
-external systems. This guard overrides implicit invocation, capture and
-promotion rules, cross-session preservation, quoted keywords, and every route
-below. Return analysis or a proposed change list only.
+create or update repo docs, runtime code, files, git state, or external systems.
+This guard overrides implicit invocation, capture and promotion rules,
+cross-session preservation, quoted keywords, and every route below. Return
+analysis or a proposed change list only.
 
 Do not infer intent from quoted, hypothetical, historical, or negated phrases.
 For example, “分析为什么上次修复失败” is analysis, not implementation, and
@@ -65,10 +69,11 @@ For example, “分析为什么上次修复失败” is analysis, not implementa
 
 | User intent | Automatic route | Default stop point |
 | --- | --- | --- |
-| Shares or records a raw idea, feedback, requirement, or finding with no promotion gate | Deduplicate and capture/update it in the Linear inbox; do not create `B-xxx`, Discovery, Spec, or Active Package | Linear inbox captured, or an honest failure report |
+| Casually shares a raw idea, feedback, requirement, or finding without asking to preserve it | Discuss in the current conversation; do not create `B-xxx`, Discovery, Spec, or Active Package | Concise response; zero repo writes |
+| Explicitly says “记录 / 保存这个 idea” | Deduplicate, then create or reuse one minimal `B-xxx` Backlog row; do not create Discovery, Spec, or Active Package | Durable repo capture; no implementation |
 | Says “先看看 / 分析 / 讨论 / 调研” | Use read-only analysis for one-turn work; only promote when the user asks to preserve cross-session research and the no-write guard is absent | Concise findings or promoted Discovery |
-| The item needs a product decision, becomes a version/current-iteration candidate, or needs cross-session research or execution | Create/reuse one `B-xxx`, update the Linear issue, and add bidirectional links before further lifecycle work | Promoted and linked |
-| Says “我决定 / 选择 / 拒绝 / 延后” | Promote if needed, then record the Decision and synchronize Backlog, Product Spec, register, and Linear | Decision synchronized |
+| The item needs a product decision, becomes a version/current-iteration candidate, or needs cross-session research or execution | Create or reuse one `B-xxx` before further lifecycle work | Repo authority established |
+| Says “我决定 / 选择 / 拒绝 / 延后” | Promote if needed, then record the Decision and synchronize Backlog, Product Spec, and register | Repo authorities synchronized |
 | Says “先规划 / 设计一下 / 不要写代码” | Choose the authority lane, then create/update its contract and a plan-only Active Package when scope is approved | Stop before SDD/runtime edits |
 | Says “实现 / 落地 / 修复” | Use L0 for a narrow contract-restoring fix; otherwise route to `sdd-lifecycle` with implementation authority | Validated implementation; no commit |
 | Says “先规划并实现 / plan and implement / 把功能做完” without explicit closeout | Route to `sdd-lifecycle` `implement-approved-spec`; bootstrap missing Plan/SDD when product scope is approved | Validated implementation; no closeout or commit |
@@ -96,19 +101,20 @@ the target from whichever Tracker was edited most recently.
 
 ### Capture and discussion
 
-- A raw idea starts in the Linear inbox and does not receive a `B-xxx`. Do not
-  create a fallback Backlog row when Linear capture fails.
-- Promote only when the item needs a product decision, becomes a version or
-  current-iteration candidate, or requires cross-session research or execution.
-- On promotion, create or reuse one `B-xxx` and add both the Linear issue link to
-  the repo item and the `B-xxx`/repo link to Linear before claiming synchronization.
+- A casually shared raw idea stays in the current conversation and does not
+  receive a `B-xxx`.
+- Explicit “记录 / 保存” intent is itself a durable-capture gate: search for
+  duplicates, then create or reuse one minimal `B-xxx` Backlog row.
+- Otherwise promote only when the item needs a product decision, becomes a
+  version or current-iteration candidate, or requires cross-session research or
+  execution.
 - Create Discovery only for promoted cross-session research, option comparison,
   or preserved evidence; do not create an empty package.
 - Compress discussion into facts, options, decisions needed, and source links;
   do not preserve chat transcripts.
-- If a Linear search, create, or update fails, state the failed operation and
-  last confirmed state. Never say the idea was recorded, captured, linked, or
-  synchronized when the corresponding Linear write did not succeed.
+- Do not use Linear or another external tracker as PA's default intake, planning
+  mirror, or synchronization gate. Existing external links are historical
+  provenance only and do not authorize external writes.
 
 ### Decisions and product contract
 
@@ -128,8 +134,8 @@ the target from whichever Tracker was edited most recently.
   Product Spec merely to satisfy package metadata.
 - Promote product work only after product scope is approved. Start explicitly
   authorized governance work from its user request or confirmed engineering
-  finding; it does not need to pretend it passed through raw-idea Linear intake.
-  Create the minimum Active Package required by the selected phase.
+  finding; no external intake provenance is required. Create the minimum Active
+  Package required by the selected phase.
 - Approve technical Plan/SDD artifacts after source and review gates pass when
   no unresolved user-owned product/risk decision remains; do not ask for a
   ceremonial document approval.
@@ -183,11 +189,6 @@ the assumption instead of interrupting the user.
 - Use `sdd-lifecycle` for substantial plan, SDD, implementation, and closeout
   execution. This skill selects the route so the user does not have to name the
   SDD mode.
-- Use `pa-linear-product-manager` only for the Linear/version-planning mirror.
-  When both apply, this skill owns repo-doc routing and authority; the Linear
-  skill owns raw-idea intake plus external issue/project hygiene. Raw ideas have
-  no `B-xxx`; promoted work shares one `B-xxx` with bidirectional links and no
-  duplicate questions.
 - Use `personal-assistant-review` and
   `personal-assistant-review-followup` for implementation review and confirmed
   fixes.

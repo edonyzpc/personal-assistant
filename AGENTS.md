@@ -204,14 +204,18 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
   implementation, continuation, status, closeout, or archive intent in ordinary
   language. Infer the lane, IDs, artifacts, and status transitions; ask the user
   only for product judgment or explicit implementation/Git/release authority.
+- Do not use Linear or another external tracker as PA's default idea inbox,
+  planning mirror, or synchronization gate. Casual ideas stay conversation-local;
+  an explicit request to record/preserve an idea creates or reuses a minimal
+  repo Backlog item. Existing external links are historical provenance only.
 - For architecture or plan work, prefer durable docs in `docs/` over chat-only analysis when the user asks for a plan or design.
 - Follow `docs/development/documentation-workflow.md` for document roles,
   active-package placement, closeout, archive, Backlog extraction, and docs
   validation. Run `npm run docs:check` after moves or lifecycle cleanup.
-- Treat repo docs as the current authority: external chat, Linear, issues, or
-  machine-local memory may be intake/mirrors, but decisions and active product
-  work must be synchronized into Backlog, Discovery, Decision, Product Spec,
-  or an Active Package before they drive implementation.
+- Treat repo docs as the current authority: external chat, issues, email, or
+  machine-local memory may provide input, but decisions and active product work
+  must be recorded in Backlog, Discovery, Decision, Product Spec, or an Active
+  Package before they drive implementation.
 - Use `docs/development/governance/` for substantial repo-only documentation,
   checker, CI/release-tooling, or Agent-skill contracts that do not change PA
   runtime or user behavior. Do not create a Product Decision/Spec merely to

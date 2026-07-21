@@ -1,6 +1,6 @@
 # 项目文档导航
 
-`docs/` 是需求、讨论、决策、产品/技术契约、开发执行与历史证据的 repo-local system of record。仓库外工具可以作为输入或镜像，但不能替代这里的当前权威。已完成的计划、SDD、Tracker、审计与过程证据统一进入 [archive](./archive/README.md)。
+`docs/` 是需求、讨论、决策、产品/技术契约、开发执行与历史证据的 repo-local system of record。仓库外工具可以提供输入，但不承担 PA 的默认收件箱、规划镜像或当前权威。已完成的计划、SDD、Tracker、审计与过程证据统一进入 [archive](./archive/README.md)。
 
 ## 我现在要找什么
 
@@ -40,8 +40,8 @@
 
 ## Agent 更新规则
 
-1. 普通用户表达 idea、决定、规划、实现、继续或收尾意图时，默认由 [`pa-docs-lifecycle-manager`](../.agents/skills/pa-docs-lifecycle-manager/SKILL.md) 自动选择 lane、ID 与文档；raw PA idea 先进入 Linear inbox，只有达到 decision/version/cross-session research-or-execution promotion gate 后才创建 `B-xxx`。不要让用户操作目录结构。
-2. 先读 [Documentation Workflow](./development/documentation-workflow.md)，按 L0/L1/L2G/L2/L3 选择最轻但完整的 lane。
+1. 普通用户表达 idea、决定、规划、实现、继续或收尾意图时，默认由 [`pa-docs-lifecycle-manager`](../.agents/skills/pa-docs-lifecycle-manager/SKILL.md) 自动选择 lane、ID 与文档；随口 idea 留在当前对话，明确要求记录/保存，或达到 decision/version/cross-session research-or-execution gate 时，才创建或复用最小 `B-xxx`。不要让用户操作目录结构。
+2. 按任务只读 [Documentation Workflow](./development/documentation-workflow.md) 的相关段落和对应当前权威；不要为例行 turn 预载 Roadmap、全部索引、模板或 Archive。按 L0/L1/L2G/L2/L3 选择最轻但完整的 lane。
 3. 一个状态只能有一个权威来源：需求讨论看 Discovery，产品决定看 Decision，产品行为看 Product Spec，工程治理/tooling 看 Governance Contract，技术行为看 Architecture/SDD，执行进度看 Tracker，剩余工作看 Backlog。
 4. 新 Product feature 或 L2G governance/tooling track planning 时，在 `docs/development/active/<feature>/` 建立 Feature Home、plan、tracker；SDD phase 再创建 SDD，且实现前必须 Approved。Feature Home 必须链接 Product Spec 或 Governance Contract 之一，不得混用。不要把过程文档重新堆回 `docs/` 根目录。
 5. Closeout 必须写明每项信息进入 durable contract、Backlog、Archive 或 delete-after-absorption 的去向，再把完整 package 移入 `docs/archive/<year>/<feature>/`。

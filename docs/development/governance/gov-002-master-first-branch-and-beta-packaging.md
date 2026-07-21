@@ -6,7 +6,7 @@ Updated: 2026-07-19
 Work item: B-117
 Authority: PA 仓库的代码、测试、研究/设计文档、工程治理与 BRAT beta 分支来源规则；不定义 PA runtime 或用户产品行为。
 
-Bootstrap source: 用户于 2026-07-19 直接决定：所有代码修改与研究产物先通过 PR 或直接提交进入 `master`，BRAT beta 再从已验证的 `master` 创建专用包装分支。B-117 是直接 engineering authorization，不来自 Linear raw-idea promotion。
+Bootstrap source: 用户于 2026-07-19 直接决定：所有代码修改与研究产物先通过 PR 或直接提交进入 `master`，BRAT beta 再从已验证的 `master` 创建专用包装分支。B-117 是直接 engineering authorization，不要求外部 intake 来源。
 
 ## Context And Selected Governance Choice
 

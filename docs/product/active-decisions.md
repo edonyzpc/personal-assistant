@@ -4,7 +4,7 @@ Document status: Current
 Updated: 2026-07-21
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
-本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Linear、Claude/Codex Memory 或其他外部工具只能提供输入和镜像；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
+本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
 
 ## 使用规则
 

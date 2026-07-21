@@ -6,7 +6,7 @@ Updated: YYYY-MM-DD
 Work item: B-xxx
 Authority: <repo engineering governance/tooling boundary; explicitly exclude PA runtime and user behavior>
 
-Bootstrap source: <user authorization / Backlog / prior governance contract>. 不得伪造 Linear promotion；若为用户直接授权的 engineering bootstrap，明确写出。
+Bootstrap source: <user authorization / Backlog / prior governance contract>. 若为用户直接授权的 engineering bootstrap，明确写出；不要求外部 tracker 来源。
 
 ## Context And Selected Governance Choice
 

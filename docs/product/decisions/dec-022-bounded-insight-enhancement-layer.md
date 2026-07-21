@@ -30,7 +30,7 @@ UI、授权、持久化和派生结论耦合面，也会让与“让自己的笔
 - 当前 Maintenance runtime 只有 move proposal 可以在明确确认后 apply，并支持 undo；
   rename、link、create 等更宽写入没有因此获得授权。
 
-原始产品信号与当前外部状态镜像为 [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)。
+原始产品信号来自 [historical external source SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；当前不再维护外部状态镜像。
 
 ## Options Considered
 
@@ -92,5 +92,5 @@ UI、授权、持久化和派生结论耦合面，也会让与“让自己的笔
 - Active Package: [B-119 Feature Home](../../development/active/insight-enhancement-layer/README.md)
 - Architecture / SDD: 实现获授权后在 Active Package 创建 `sdd.md`
 - Backlog / successor decision: [B-120 Writing Insight](../../backlog.md)
-- External mirror: [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；已于 2026-07-21 同步当前决定、范围和授权边界
+- Historical external source: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；仅作来源记录，不再同步
 - Supersedes / superseded by: none

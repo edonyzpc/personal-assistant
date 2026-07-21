@@ -75,8 +75,9 @@ review and record approval automatically.
   placement.
 
 Do not create long plan/SDD packages for an unapproved idea. Return raw or
-unapproved intake to `pa-docs-lifecycle-manager`; raw ideas remain in the Linear
-inbox until a promotion gate is met.
+unapproved intake to `pa-docs-lifecycle-manager`; casual ideas remain
+conversation-local until explicit durable capture or another promotion gate is
+met.
 
 ## Phase 0: Plan
 

@@ -15,7 +15,7 @@ SDD: 获得 runtime 实现授权后创建并链接 `./sdd.md`
 - Next action: 等待用户明确授权实现；随后创建并批准 `sdd.md`，先处理 shared foundation。
 - Blocker / decision needed: 无产品决策；runtime implementation authority 与 Approved
   SDD 均尚不存在。B-118 F-03/F-10 shared-notice runtime gap 是实现依赖，不是新的
-  产品决定。Linear SLA-11 已同步，不构成 blocker。
+  产品决定；不存在外部 mirror 或 connector blocker。
 - Last verified behavior: 2026-07-20 仅复核当前源码入口和文档合同；没有修改或验证
   runtime，也没有 Obsidian/provider smoke 证据。
 
@@ -50,11 +50,11 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | Date | Requirement / AC | Check | Result | Evidence / residual risk |
 | --- | --- | --- | --- | --- |
 | 2026-07-20 | Planning baseline | Read-only source/contract audit | Pass for planning | Verified plugin integration points, shared notice field, RateLimiter constructor, UI clone/render surfaces and move-only apply/undo; no runtime claim |
-| 2026-07-21 | External mirror | Linear SLA-11 update + read-back | Pass | Title, decision summary, B-119/B-120 scope, repo paths, Backlog state and labels verified |
+| 2026-07-21 | Historical external mirror (retired) | SLA-11 update + read-back | Pass | 当时已验证 title、decision summary、B-119/B-120 scope、repo paths、Backlog state 与 labels；仅保留历史证据，不触发后续同步 |
 | 2026-07-21 | B-119/REQ-05 / F-06 | Provider trust contract reconciliation | Pass | DEC-023 Option A accepted；Scope Recap、Quiet Recall、Discover 与 B-119 standard bounded paths 共享非阻断首次通知；Memory admission/write 等独立 gate 未改变 |
-| 2026-07-21 | B-119/REQ-05 / F-06 | `npm run docs:check`、`git diff --check`、SLA-11 reconciliation read-back | Pass | 247 Markdown / 1710 local links；zero whitespace errors；Linear 保留 Backlog/Medium/PA 产品收件箱/原 labels，并包含 DEC-023 方案 A 与 repo path；无 runtime claim |
+| 2026-07-21 | B-119/REQ-05 / F-06 | `npm run docs:check`、`git diff --check`、historical SLA-11 read-back | Pass | 当时 247 Markdown / 1710 local links、zero whitespace errors；外部状态仅为历史证据；无 runtime claim |
 | 2026-07-21 | B-119/REQ-05 / F-07 | Read-only shared runtime dependency audit | Gap recorded | B-118 fresh-install preparation remains off behind legacy authorization tuple；notice is not yet a common first-actual-call gate；B-119 runtime remains untouched |
-| 2026-07-21 | External mirror | SLA-11 runtime-truth update + read-back | Rejected / unchanged | Connector rejected disclosure of unpublished workspace/source-audit detail；read-back confirms DEC-023 Option A remains synced, but B-118 F-03/F-10 runtime gap is not yet mirrored；renewed explicit disclosure authority required |
+| 2026-07-21 | Historical external mirror (retired) | SLA-11 runtime-truth update + read-back | Rejected / unchanged | 当时 connector 拒绝披露未提交 workspace/source-audit 明细；该记录不再构成待办、授权问题或同步要求 |
 
 ## Decision Log
 

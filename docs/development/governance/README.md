@@ -1,7 +1,7 @@
 # Engineering Governance
 
 Document status: Current
-Updated: 2026-07-19
+Updated: 2026-07-21
 Authority: PA 仓库的 engineering governance/tooling contract 索引；不定义 PA runtime 或用户产品行为。
 
 本目录保存跨文档生命周期、Agent 路由、repo checker、CI/release tooling 与工程授权边界的长期契约。它与 Product Decision/Product Spec 分离：只有改变 PA runtime、Obsidian UI 或用户可感知行为时，才进入 Product Decision/Spec 链。

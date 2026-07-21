@@ -99,5 +99,5 @@ Spec、B-118 Product Spec 与 Pagelet Product Design 仍保留旧授权条款，
 - Source decision package: [B-118 Tracker SG-05/SG-06](../../development/active/pagelet-ui-ux-optimization/tracker.md)
 - Current specs: [PA Data Boundary](../specs/pa-data-boundary-product-spec.md)、[Scope Recap](../specs/pa-scope-recap-theme-summary-product-spec.md)、[B-118 Product Spec](../specs/pagelet-ui-ux-hardening-product-spec.md)
 - B-119 adoption: [DEC-022](./dec-022-bounded-insight-enhancement-layer.md)、[B-119 Product Spec](../specs/pa-insight-enhancement-layer-product-spec.md)
-- External mirror: [Linear SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)
+- Historical external source: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；仅作来源记录，不再同步
 - Supersedes / superseded by: supersedes only DEC-017's original first-use blocking clause; none otherwise

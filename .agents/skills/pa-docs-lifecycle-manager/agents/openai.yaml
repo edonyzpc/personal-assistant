@@ -1,6 +1,6 @@
 interface:
   display_name: "PA Docs Lifecycle Manager"
   short_description: "PA 自然语言 intake、文档生命周期与安全授权路由"
-  default_prompt: "使用 $pa-docs-lifecycle-manager 接收 PA 自然语言请求，让 raw idea 先进入 Linear，并仅在明确授权边界内维护文档、实现和收尾。"
+  default_prompt: "使用 $pa-docs-lifecycle-manager 接收 PA 自然语言请求：随口 idea 留在当前对话，明确要求记录或达到晋升条件时才写入最小 repo Backlog，并仅在明确授权边界内维护文档、实现和收尾。"
 policy:
   allow_implicit_invocation: true
