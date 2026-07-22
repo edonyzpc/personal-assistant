@@ -19,15 +19,15 @@ releases.
 Source Availability
 -------------------
 
-For version 2.8.4, the exact corresponding source is available from the
+For version 2.9.0-beta.4, the exact corresponding source is available from the
 release tag:
 
-https://github.com/edonyzpc/personal-assistant/tree/2.8.4
+https://github.com/edonyzpc/personal-assistant/tree/2.9.0-beta.4
 
 Source archives for the same tag are available at:
 
-https://github.com/edonyzpc/personal-assistant/archive/refs/tags/2.8.4.zip
-https://github.com/edonyzpc/personal-assistant/archive/refs/tags/2.8.4.tar.gz
+https://github.com/edonyzpc/personal-assistant/archive/refs/tags/2.9.0-beta.4.zip
+https://github.com/edonyzpc/personal-assistant/archive/refs/tags/2.9.0-beta.4.tar.gz
 
 Formal GitHub Release assets include main.js, manifest.json, styles.css,
 LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md. Obsidian installs only the
@@ -54,7 +54,7 @@ The Personal Assistant name, plugin ID, plugin name, icons, logos, release
 identity, marketplace presentation, and related marks are reserved. See
 the exact-tag trademark policy for fork and redistribution requirements:
 
-https://github.com/edonyzpc/personal-assistant/blob/2.8.4/TRADEMARKS.md
+https://github.com/edonyzpc/personal-assistant/blob/2.9.0-beta.4/TRADEMARKS.md
 
 Third-Party Notices
 -------------------

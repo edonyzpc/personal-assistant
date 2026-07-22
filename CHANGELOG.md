@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.4](https://github.com/edonyzpc/personal-assistant/compare/2.9.0-beta.3...2.9.0-beta.4) (2026-07-22)
+
+### Features
+- pagelet: harden provider-first review and recall execution
+
+### Fix
+- pagelet: isolate Pet hold-menu touch ownership from root toggle (B-118/F-01)
+- pagelet: redesign Recap delivery, remove Modal, wire shared provider gate (B-118/F-02,F-03,F-05,F-06,F-07,F-10)
+- pagelet: complete reduced-motion coverage and typography floor (B-118/F-04,F-08)
+- chat: normalize chat icon sizes
+- chat: overlay code copy buttons
+- chat: allow selecting message text
+
+### Improvements
+- governance: remove Linear workflow
+- docs: slim lifecycle and archive management
+
+### Docs
+- product: add DEC-021 and B-118 hardening contracts
+- active: add B-118 Pagelet UI/UX handoff package
+- pagelet: add B-118 SDD, update tracker and North Star provider trust model
+- discovery: add B-119 Insight Enhancement Layer discovery brief, codex handoff, and backlog entry
+- docs: synchronize insight and pagelet docs packages
+- pagelet: update B-118 lifecycle, specs and decision records
+- archive: add disposition entries from 2.8.4 docs check
+
+### Tests
+- pagelet: add B-118 smoke runner and validation checklist
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
