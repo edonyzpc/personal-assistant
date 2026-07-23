@@ -76,6 +76,8 @@ export class ProgressBar {
             return;
         }
         this.notice = new Notice(this.noticeEl, 0);
+        this.notice.messageEl.addClass("pa-notice-shell");
+        this.notice.messageEl.parentElement?.addClass("pa-notice-shell");
         const progressBarGrid = getPlatformDocument().getElementById(this.gridID);
         progressBarGrid?.parentElement?.setAttribute("id", `progress-bar-${this.idNumber}`);
         progressBarGrid?.parentElement?.addClass('progress-bar-notice');
