@@ -55,7 +55,7 @@
   },
   "dependencies": {
     "@langchain/core": "1.1.41",
-    "@langchain/openai": "1.4.4",
+    "@langchain/openai": "1.5.5",
     "@langchain/textsplitters": "1.0.1",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "chart.js": "^4.4.4",
