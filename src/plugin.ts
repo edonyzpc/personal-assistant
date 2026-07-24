@@ -178,6 +178,7 @@ import {
     buildQuietRecallSourceSnapshotId,
     buildRecallRelevancePrompt,
     buildRecapInsightsPrompt,
+    resolveOutputLanguage,
     buildScopeRecapLocalOverview,
     extractRecallDigest,
     prepareScopeRecapWithLlm,
@@ -525,6 +526,7 @@ function quietRecallEvaluationMaterial(
     currentDigest: RecallNoteDigest,
     vaultNotes: readonly QuietRecallVaultNote[],
     now: Date,
+    language?: "zh" | "en",
 ): QuietRecallEvaluationMaterial {
     const candidatePaths = new Set(candidate.sourceRefs.map((ref) => normalizePath(ref.path)));
     const matchedNote = vaultNotes.find((note) => candidatePaths.has(normalizePath(note.path)));
@@ -557,7 +559,7 @@ function quietRecallEvaluationMaterial(
     return {
         candidateDigest,
         candidateAge,
-        prompt: buildRecallRelevancePrompt({ currentDigest, candidateDigest, candidateAge }),
+        prompt: buildRecallRelevancePrompt({ currentDigest, candidateDigest, candidateAge, language }),
         sourceSnapshots,
         relationInputs: {
             relation: candidate.relation,
@@ -759,10 +761,14 @@ const PAGELET_FOREGROUND_REVIEW_TIMEOUT_MS = 120_000;
 const SCOPE_RECAP_PROVIDER_TIMEOUT_MS = 60_000;
 const QUIET_RECALL_PROVIDER_TIMEOUT_MS = 20_000;
 const QUIET_RECALL_EVALUATOR_VERSION = "quiet-recall-why-now-v1";
-const QUIET_RECALL_LANGUAGE_RETRY_INSTRUCTION = [
-    "IMPORTANT: Your previous response used the wrong language.",
-    "Respond in the same language as the notes above and keep the same JSON-only format.",
-].join(" ");
+function buildQuietRecallLanguageRetryInstruction(language?: "zh" | "en"): string {
+    const langDirective = language === "zh"
+        ? "Respond in Simplified Chinese"
+        : language === "en"
+            ? "Respond in English"
+            : "Respond in the same language as the notes above";
+    return `IMPORTANT: Your previous response used the wrong language. ${langDirective} and keep the same JSON-only format.`;
+}
 const SCOPE_RECAP_CALL_LIMITS = Object.freeze({ hourly: 2, daily: 10 });
 const QUIET_RECALL_CALL_LIMITS = Object.freeze({ hourly: 10, daily: 50 });
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
@@ -2353,7 +2359,11 @@ export class PluginManager extends Plugin {
                         && expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
                         && this.pageletSourceSnapshotsAreCurrent(sourceSnapshots)
                     );
-                    const prompt = buildPreloadPrompt(enrichedContents, config.tokenBudget);
+                    const preloadLanguage = resolveOutputLanguage(
+                        this.settings.pagelet.outputLanguage,
+                        enrichedContents.map((n) => n.content).join("\n"),
+                    );
+                    const prompt = buildPreloadPrompt(enrichedContents, config.tokenBudget, preloadLanguage);
                     const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
                     const inputTokens = estimateTokens(fullPrompt);
                     if (inputTokens > PAGELET_BACKGROUND_STANDARD_LIMITS.inputTokens) {
@@ -3188,7 +3198,11 @@ export class PluginManager extends Plugin {
                     tags: note.tags.slice(0, 8).map((tag) => tag.slice(0, 40)),
                 })),
             };
-            const prompt = buildRecapInsightsPrompt(boundedInput);
+            const recapLanguage = resolveOutputLanguage(
+                this.settings.pagelet.outputLanguage,
+                boundedInput.noteDigests.map((n) => n.digest).join("\n"),
+            );
+            const prompt = buildRecapInsightsPrompt({ ...boundedInput, language: recapLanguage });
             attemptedPrompt = prompt;
             if (!requestIdentityIsCurrent()) {
                 requestBecameStale = true;
@@ -4365,11 +4379,12 @@ export class PluginManager extends Plugin {
         }
 
         const currentDigest = extractRecallDigest(baseInput.currentNote);
+        const recallLanguage = resolveOutputLanguage(this.settings.pagelet.outputLanguage, content);
         const evaluationMaterials = new Map<string, QuietRecallEvaluationMaterial>();
         for (const candidate of evaluationCandidates) {
             evaluationMaterials.set(
                 candidate.id,
-                quietRecallEvaluationMaterial(candidate, currentDigest, vaultNotes, runNow),
+                quietRecallEvaluationMaterial(candidate, currentDigest, vaultNotes, runNow, recallLanguage),
             );
         }
         const runIdentityIsCurrent = () => (
@@ -4444,7 +4459,7 @@ export class PluginManager extends Plugin {
                 if (!model) return { status: "rejected", reason: "provider_unavailable" };
                 if (!material) return { status: "rejected", reason: "malformed" };
                 const prompt = attempt.kind === "language_retry"
-                    ? `${material.prompt}\n\n${QUIET_RECALL_LANGUAGE_RETRY_INSTRUCTION}`
+                    ? `${material.prompt}\n\n${buildQuietRecallLanguageRetryInstruction(recallLanguage)}`
                     : material.prompt;
                 return this.evaluateQuietRecallProviderAttempt(
                     model,
@@ -7401,10 +7416,14 @@ export class PluginManager extends Plugin {
             relatedNotes.map((note) => note.path),
         );
         if (!liveSources) return null;
+        const discoveryLanguage = resolveOutputLanguage(
+            this.settings.pagelet.outputLanguage,
+            liveSources.currentNote.content,
+        );
         const prompt = buildDiscoveryPrompt(liveSources.currentNote, liveSources.relatedNotes, {
             input: this.settings.pagelet.maxInputTokens,
             output: this.settings.pagelet.maxOutputTokens,
-        });
+        }, discoveryLanguage);
         const model = await this.createChatModel(0.3, {
             maxTokens: prompt.maxOutputTokens,
         });

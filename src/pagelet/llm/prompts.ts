@@ -97,19 +97,26 @@ const STRUCTURED_OUTPUT_SCHEMA = [
 // System prompt base (shared across scenarios)
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT_BASE = [
-    "You are Pagelet, a quiet note-analysis assistant for an Obsidian vault.",
-    "You analyze the user's notes and produce structured findings.",
-    "",
-    "STRICT RULES:",
-    "- Respond with a JSON object that strictly conforms to the provided schema; no prose outside JSON.",
-    '- Every finding MUST include a "sourceFile" field set to the vault-relative path of the note it refers to.',
-    '- Every finding MUST include a "sourceTitle" field set to the display title (filename without extension) of the source note.',
-    '- "category" MUST be one of: insight, action, connection, gap.',
-    "- Write in the same language as the notes. If notes are in Chinese, respond in Chinese. If in English, respond in English.",
-    "- Return an empty findings array if there is nothing meaningful to say.",
-    "- NEVER fabricate information not present in the provided notes.",
-].join("\n");
+function buildSystemPromptBase(language?: "zh" | "en"): string {
+    const languageRule = language === "zh"
+        ? "- IMPORTANT: respond in Simplified Chinese."
+        : language === "en"
+            ? "- IMPORTANT: respond in English."
+            : "- Write in the same language as the notes. If notes are in Chinese, respond in Chinese. If in English, respond in English.";
+    return [
+        "You are Pagelet, a quiet note-analysis assistant for an Obsidian vault.",
+        "You analyze the user's notes and produce structured findings.",
+        "",
+        "STRICT RULES:",
+        "- Respond with a JSON object that strictly conforms to the provided schema; no prose outside JSON.",
+        '- Every finding MUST include a "sourceFile" field set to the vault-relative path of the note it refers to.',
+        '- Every finding MUST include a "sourceTitle" field set to the display title (filename without extension) of the source note.',
+        '- "category" MUST be one of: insight, action, connection, gap.',
+        languageRule,
+        "- Return an empty findings array if there is nothing meaningful to say.",
+        "- NEVER fabricate information not present in the provided notes.",
+    ].join("\n");
+}
 
 // ---------------------------------------------------------------------------
 // Prompt builders
@@ -122,9 +129,10 @@ const SYSTEM_PROMPT_BASE = [
 export function buildPreloadPrompt(
     noteContents: Array<{ path: string; content: string }>,
     budget: { input: number; output: number },
+    language?: "zh" | "en",
 ): PromptBuildResult {
     const systemPrompt = [
-        SYSTEM_PROMPT_BASE,
+        buildSystemPromptBase(language),
         "",
         "SCENARIO: Background review preparation.",
         "- Produce exactly 2-3 one-sentence insights. Be concise.",
@@ -161,6 +169,7 @@ export function buildDiscoveryPrompt(
     currentNote: { path: string; content: string },
     relatedNotes: Array<{ path: string; content: string }>,
     budget: { input: number; output: number },
+    language?: "zh" | "en",
 ): PromptBuildResult {
     const systemOverhead = 400;
     // Give the current note 40% of the budget, related notes share the rest.
@@ -174,7 +183,7 @@ export function buildDiscoveryPrompt(
     const truncatedRelated = distributeNotesBudget(relatedNotes, relatedBudget, 0);
 
     const systemPrompt = [
-        SYSTEM_PROMPT_BASE,
+        buildSystemPromptBase(language),
         "",
         "SCENARIO: Connection discovery between notes.",
         "- The user has a current note and a set of related notes from the vault.",

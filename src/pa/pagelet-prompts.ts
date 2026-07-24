@@ -1,6 +1,25 @@
 import type { RecallNoteDigest, RecallRelevanceResult } from "./quiet-recall";
 import type { RecapLlmInsight } from "./scope-recap";
 import type { ReviewQueueScope } from "./contracts";
+import { detectNoteLanguage } from "../locales/pagelet/language-detect";
+import type { PageletOutputLanguageSetting } from "../settings/pagelet/index";
+
+// ---------------------------------------------------------------------------
+// Language Resolution
+// ---------------------------------------------------------------------------
+
+export function resolveOutputLanguage(
+    setting: PageletOutputLanguageSetting,
+    noteContent: string,
+): "zh" | "en" {
+    return setting === "auto" ? detectNoteLanguage(noteContent) : setting;
+}
+
+function buildLanguageDirective(language: "zh" | "en"): string {
+    return language === "zh"
+        ? "IMPORTANT: respond in Simplified Chinese."
+        : "IMPORTANT: respond in English.";
+}
 
 // ---------------------------------------------------------------------------
 // Scope Recap Insights Prompt
@@ -9,6 +28,7 @@ import type { ReviewQueueScope } from "./contracts";
 export function buildRecapInsightsPrompt(input: {
     scope: ReviewQueueScope;
     noteDigests: Array<{ title: string; digest: string; tags: string[] }>;
+    language?: "zh" | "en";
 }): string {
     const notesBlock = input.noteDigests
         .map((n, i) => `Note ${i + 1}: "${n.title}"\nTags: ${n.tags.join(", ") || "none"}\n${n.digest}`)
@@ -35,7 +55,9 @@ Produce 2-4 insights about this set of notes. Each insight must:
 ## Output format (JSON array only, no markdown fences)
 [{"title":"short headline under 15 words","summary":"specific cross-note observation","whyItMatters":"one concrete consequence, decision, or unresolved question","sourceNoteTitles":["Note A title","Note B title"],"section":"theme"|"tension"|"open_question"}]
 
-Return [] if nothing genuinely insightful can be said.`;
+Return [] if nothing genuinely insightful can be said.
+
+${input.language ? buildLanguageDirective(input.language) : ""}`;
 }
 
 export function parseRecapInsightsResponse(text: string): RecapLlmInsight[] | null {
@@ -72,6 +94,7 @@ export function buildRecallRelevancePrompt(input: {
     currentDigest: RecallNoteDigest;
     candidateDigest: RecallNoteDigest;
     candidateAge: string;
+    language?: "zh" | "en";
 }): string {
     return `You are deciding whether to remind the user of an old note.
 
@@ -88,7 +111,7 @@ First paragraph: "${input.candidateDigest.firstParagraph}"
 ## Task
 Is there a SPECIFIC, CONCRETE reason this old note matters RIGHT NOW given what the user is currently looking at?
 
-Respond in the same language as the current note. If the two notes use different languages, the current note wins.
+${input.language ? buildLanguageDirective(input.language) : "Respond in the same language as the current note. If the two notes use different languages, the current note wins."}
 
 ## Quality standard
 - "Both notes mention topic X" is NOT sufficient. That's a search result, not a recall.
