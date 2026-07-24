@@ -54,7 +54,7 @@
     "typescript": "5.8.3"
   },
   "dependencies": {
-    "@langchain/core": "1.1.41",
+    "@langchain/core": "1.2.3",
     "@langchain/openai": "1.4.4",
     "@langchain/textsplitters": "1.0.1",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
