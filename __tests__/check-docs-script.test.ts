@@ -35,6 +35,40 @@ describe("scripts/check-docs.mjs", () => {
         expect(runCheck(repo)).toContain("Documentation check passed");
     });
 
+    it("rejects delivery-status mirrors in Feature Home", () => {
+        const repo = createFixture();
+        const home = join(repo, "docs/development/active/sample/README.md");
+        replace(home, "Document status: Current", "Document status: Current\nDelivery status: Implementing");
+
+        expect(expectCheckFailure(repo)).toContain("Feature Home must not mirror Delivery status");
+    });
+
+    it("enforces one Now package", () => {
+        const repo = createFixture();
+        addActivePackage(repo, "second", "B-002", "Implementing");
+
+        expect(expectCheckFailure(repo)).toContain("Active WIP limit exceeded: 2 Now packages");
+    });
+
+    it("enforces one planned Next package", () => {
+        const repo = createFixture();
+        replace(
+            join(repo, "docs/development/active/sample/tracker.md"),
+            "Delivery status: Implementing",
+            "Delivery status: Planned",
+        );
+        addActivePackage(repo, "second", "B-002", "Planned");
+
+        expect(expectCheckFailure(repo)).toContain("Active WIP limit exceeded: 2 Next packages");
+    });
+
+    it("rejects standalone Active handoff or closeout artifacts", () => {
+        const repo = createFixture();
+        write(repo, "docs/development/active/sample/handoff.md", "# Duplicate handoff\n");
+
+        expect(expectCheckFailure(repo)).toContain("Active Package must use Tracker Current Snapshot");
+    });
+
     it("requires an existing SDD to be approved once implementation starts", () => {
         const repo = createFixture({ designArtifacts: true });
         const sdd = join(repo, "docs/development/active/sample/sdd.md");
@@ -86,6 +120,20 @@ describe("scripts/check-docs.mjs", () => {
         append(repo, "docs/archive/disposition-log.md", "\n| 2026-07-21 | `docs/development/workflows/legacy.md` | deleted-after-absorption | [Workflow](../development/documentation-workflow.md) | current workflow absorbs the rule |\n");
 
         expect(runCheck(repo)).toContain("Documentation check passed");
+    });
+
+    it("allows pruning an unlinked process draft without a disposition row", () => {
+        const repo = createFixture({ unlinkedProcessDraft: true });
+        unlinkSync(join(repo, "docs/development/workflows/unlinked-draft.md"));
+
+        expect(runCheck(repo)).toContain("Documentation check passed");
+    });
+
+    it("still requires disposition for an unlinked process document with lifecycle metadata", () => {
+        const repo = createFixture({ unlinkedGovernedDoc: true });
+        unlinkSync(join(repo, "docs/development/workflows/unlinked-governed.md"));
+
+        expect(expectCheckFailure(repo)).toContain("Deleted Markdown lacks content-continuous move target or disposition record");
     });
 
     it("ignores broken links originating inside retained Archive evidence", () => {
@@ -163,6 +211,8 @@ function createFixture(options: {
     designArtifacts?: boolean;
     governance?: boolean;
     legacyWorkflow?: boolean;
+    unlinkedGovernedDoc?: boolean;
+    unlinkedProcessDraft?: boolean;
 } = {}): string {
     const repo = mkdtempSync(join(tmpdir(), "pa-docs-check-"));
     const packageAuthority = options.governance
@@ -271,6 +321,12 @@ B-001/AC-01
     }
     if (options.archiveEvidence) files["docs/archive/evidence.md"] = "# Evidence\n";
     if (options.legacyWorkflow) files["docs/development/workflows/legacy.md"] = legacyDocument();
+    if (options.unlinkedProcessDraft) {
+        files["docs/development/workflows/unlinked-draft.md"] = "# One-off analysis\n\nNo stable identity or inbound link.\n";
+    }
+    if (options.unlinkedGovernedDoc) {
+        files["docs/development/workflows/unlinked-governed.md"] = "# Governed\n\nDocument status: Current\nUpdated: 2026-07-21\nAuthority: Durable rule\n";
+    }
     for (const [file, content] of Object.entries(files)) write(repo, file, content);
 
     git(repo, ["init", "-b", "main"]);
@@ -302,6 +358,49 @@ Otherwise add an explicit disposition pointing to repo-local authority.
 
 The focused checker test verifies current-document continuity.
 `;
+}
+
+function addActivePackage(repo: string, slug: string, workItem: string, status: "Planned" | "Implementing"): void {
+    const ordinal = workItem.slice(2);
+    const decisionId = `DEC-${ordinal}`;
+    const decisionFile = `dec-${ordinal}.md`;
+    const specFile = `${slug}.md`;
+    write(
+        repo,
+        `docs/product/decisions/${decisionFile}`,
+        `# Decision\n\nDecision ID: ${decisionId}\nStatus: Accepted\nUpdated: 2026-07-21\nAuthority: Test\nWork item: ${workItem}\n`,
+    );
+    append(
+        repo,
+        "docs/product/decisions/README.md",
+        `| ${decisionId} | ${slug} | Accepted | Test | [Record](./${decisionFile}) |\n`,
+    );
+    append(
+        repo,
+        "docs/product/active-decisions.md",
+        `| ${decisionId} | ${slug} | Test | [Record](./decisions/${decisionFile}) | Change |\n`,
+    );
+    write(
+        repo,
+        `docs/product/specs/${specFile}`,
+        `# ${slug}\n\nDocument status: Approved\nUpdated: 2026-07-21\nWork item: ${workItem}\nDecision: [${decisionId}](../decisions/${decisionFile})\nAuthority: Product behavior\n\n## Requirements\n\n- ${workItem}/REQ-01\n- ${workItem}/AC-01\n`,
+    );
+    append(repo, "docs/product/README.md", `[${slug}](./specs/${specFile})\n`);
+    write(
+        repo,
+        `docs/development/active/${slug}/README.md`,
+        `# ${slug}\n\nDocument status: Current\nUpdated: 2026-07-21\nWork item: ${workItem}\nAuthority: Routing\nDecision: [${decisionId}](../../../product/decisions/${decisionFile})\nProduct spec: [Spec](../../../product/specs/${specFile})\nTracker: [Tracker](./tracker.md)\n\n[Tracker](./tracker.md)\n`,
+    );
+    write(
+        repo,
+        `docs/development/active/${slug}/tracker.md`,
+        `# Tracker\n\nDocument status: Current\nDelivery status: ${status}\nUpdated: 2026-07-21\nWork item: ${workItem}\nAuthority: Execution\nProduct spec: [Spec](../../../product/specs/${specFile})\n\n${workItem}/REQ-01\n${workItem}/AC-01\n`,
+    );
+    append(
+        repo,
+        "docs/development/active/README.md",
+        `| ${slug} | ${workItem} | [Home](./${slug}/README.md) | [Tracker](./${slug}/tracker.md) |\n`,
+    );
 }
 
 function write(repo: string, file: string, content: string): void {

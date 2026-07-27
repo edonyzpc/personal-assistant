@@ -461,6 +461,7 @@ const activeRoot = index("development/active");
 const activeIndex = index("development/active/README.md");
 const activeIndexTargets = resolvedLinksByFile.get(activeIndex) ?? new Set();
 const activeDeliveryStatuses = new Set(["Planned", "Implementing", "Validating", "Validated", "Blocked"]);
+const activePackageStatuses = [];
 const promotedWorkItems = new Set();
 const activeDirectories = readdirSync(activeRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
 const activeIndexContent = readFileSync(activeIndex, "utf8");
@@ -474,6 +475,11 @@ for (const entry of activeDirectories) {
     const trackerFile = path.join(packageRoot, "tracker.md");
     const sddFile = path.join(packageRoot, "sdd.md");
     const required = [homeFile, trackerFile];
+    const standaloneHandoffOrCloseout = readdirSync(packageRoot, { withFileTypes: true })
+        .filter((artifact) => artifact.isFile() && (/^handoff(?:-.+)?\.md$/u.test(artifact.name) || artifact.name === "closeout.md"));
+    for (const artifact of standaloneHandoffOrCloseout) {
+        errors.push(`${relative(path.join(packageRoot, artifact.name))} -> Active Package must use Tracker Current Snapshot instead of standalone handoff/closeout`);
+    }
     for (const file of required) {
         if (!existsSync(file)) errors.push(`Incomplete active package ${entry.name}: missing ${path.basename(file)}`);
     }
@@ -486,6 +492,9 @@ for (const entry of activeDirectories) {
     const packageAuthority = resolvePackageAuthority(homeFile, home);
     const workItem = field(home, "Work item");
     validateDocumentStatus(homeFile, home, ["Current"]);
+    for (const statusField of ["Delivery status", "Design status"]) {
+        if (field(home, statusField)) errors.push(`${relative(homeFile)} -> Feature Home must not mirror ${statusField}`);
+    }
     if (!/^B-\d{3}$/u.test(workItem ?? "")) errors.push(`${relative(homeFile)} -> invalid Work item ${workItem ?? ""}`);
 
     const registryRow = tableRowLinking(activeIndex, homeFile);
@@ -513,6 +522,7 @@ for (const entry of activeDirectories) {
     validateDocumentStatus(trackerFile, tracker, ["Current"]);
     const deliveryStatus = field(tracker, "Delivery status");
     if (!activeDeliveryStatuses.has(deliveryStatus)) errors.push(`${relative(trackerFile)} -> terminal or invalid active Delivery status ${deliveryStatus ?? ""}`);
+    if (activeDeliveryStatuses.has(deliveryStatus)) activePackageStatuses.push({ file: trackerFile, status: deliveryStatus });
     if (field(tracker, "Work item") !== workItem) {
         errors.push(`${relative(homeFile)} -> Active artifact Work item mismatch`);
     }
@@ -580,6 +590,14 @@ for (const entry of activeDirectories) {
         if (sdd && !sdd.includes(id)) errors.push(`${relative(sddFile)} -> missing ${authorityTraceabilityLabel} traceability ID ${id}`);
     }
     if (/^B-\d{3}$/u.test(workItem ?? "")) promotedWorkItems.add(workItem);
+}
+const nowPackages = activePackageStatuses.filter(({ status }) => ["Implementing", "Validating", "Blocked"].includes(status));
+const nextPackages = activePackageStatuses.filter(({ status }) => status === "Planned");
+if (nowPackages.length > 1) {
+    errors.push(`Active WIP limit exceeded: ${nowPackages.length} Now packages (${nowPackages.map(({ file }) => relative(file)).join(", ")})`);
+}
+if (nextPackages.length > 1) {
+    errors.push(`Active WIP limit exceeded: ${nextPackages.length} Next packages (${nextPackages.map(({ file }) => relative(file)).join(", ")})`);
 }
 
 const discoveryFiles = directMarkdown(index("development/discovery"));
@@ -816,6 +834,46 @@ function hasDispositionFor(source) {
         ? source.startsWith(entry.slice(0, -2))
         : source === entry);
 }
+
+const baseInboundCache = new Map();
+function baseHasCurrentMarkdownInbound(base, target) {
+    const cacheKey = `${base}\0${target}`;
+    if (baseInboundCache.has(cacheKey)) return baseInboundCache.get(cacheKey);
+    for (const source of basePathSet(base)) {
+        if (source === target || !source.endsWith(".md") || source.startsWith("docs/archive/")) continue;
+        const sourceContent = baseFileContent(base, source);
+        if (sourceContent === undefined) continue;
+        const markdown = withoutFencedCode(sourceContent);
+        const rawTargets = [
+            ...[...markdown.matchAll(/\]\(([^)]+)\)/g)].map((match) => match[1]),
+            ...[...markdown.matchAll(/<(?:a|img|video|source)\b[^>]*(?:href|src)\s*=\s*(["'])(.*?)\1[^>]*>/giu)]
+                .map((match) => match[2]),
+        ];
+        for (const rawTarget of rawTargets) {
+            if (isExternalTarget(rawTarget)) continue;
+            const normalized = normalizeTarget(rawTarget);
+            if (!normalized) continue;
+            const resolved = normalized.startsWith("/")
+                ? normalized.slice(1)
+                : path.posix.normalize(path.posix.join(path.posix.dirname(source), normalized));
+            if (resolved === target) {
+                baseInboundCache.set(cacheKey, true);
+                return true;
+            }
+        }
+    }
+    baseInboundCache.set(cacheKey, false);
+    return false;
+}
+
+function canPruneUnlinkedProcessDraft(source, base) {
+    if (!source.startsWith("docs/development/")) return false;
+    const sourceContent = baseFileContent(base, source);
+    if (sourceContent === undefined) return false;
+    if (/^(?:Document status|Delivery status|Decision ID|Governance ID|Work item|Authority|Updated):\s*\S+/imu.test(metadataBlock(sourceContent))) return false;
+    return !baseHasCurrentMarkdownInbound(base, source);
+}
+
 const explicitDiffBase = Boolean(process.env.DOCS_CHECK_BASE);
 const diffBase = process.env.DOCS_CHECK_BASE || "HEAD";
 try {
@@ -861,6 +919,7 @@ try {
         if (!deletedPath?.endsWith(".md")) continue;
         if (deletedPath.startsWith("docs/archive/")) continue;
         if (hasContentContinuousMoveTarget(deletedPath, diffBase)) continue;
+        if (canPruneUnlinkedProcessDraft(deletedPath, diffBase)) continue;
         if (!hasDispositionFor(deletedPath)) {
             errors.push(`Deleted Markdown lacks content-continuous move target or disposition record: ${deletedPath}`);
         }

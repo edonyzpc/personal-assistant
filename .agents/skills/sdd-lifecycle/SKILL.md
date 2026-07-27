@@ -41,6 +41,11 @@ Archive as historical evidence, not approval.
   privacy/lifecycle changes, compatibility, migration, or non-trivial UI state.
 - Tracker is the only execution status and validation log. Active Registry and
   Feature Home contain links, not status mirrors.
+- Enforce `1 Now + 1 Next`: at most one `Implementing | Validating | Blocked`
+  package plus one `Planned` package. Ask for closeout when a Tracker reaches
+  `Validated`.
+- Tracker `Current Snapshot` is the cross-session handoff. Never create
+  standalone `handoff*.md` or `closeout.md` in an Active Package.
 - Follow `docs/development/documentation-workflow.md` for exact lifecycle and
   retention rules; do not duplicate its templates inside this skill.
 
@@ -85,7 +90,8 @@ Enter only in `full-lifecycle` or after explicit close/archive intent.
 
 1. Reconcile actual behavior, current Product/Architecture/Governance contract,
    Tracker, and release state.
-2. Record final checks and residual risk; move unresolved work to Backlog.
+2. Record final checks, residual risk, and artifact disposition in Tracker;
+   move unresolved work to Backlog.
 3. Absorb durable outcomes into current contracts/tests.
 4. Delete Feature Home, Tracker, Plan, SDD, handoff, and round-by-round logs
    after absorption unless one contains unique evidence.

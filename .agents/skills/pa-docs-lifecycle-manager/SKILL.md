@@ -70,10 +70,16 @@ tracker as the default inbox, planning mirror, state authority, or sync gate.
 - Tracker is the only delivery-status and execution authority.
 - Active Registry is link-only. Feature Home is a short routing page; neither
   mirrors Tracker status.
+- Enforce `1 Now + 1 Next`: at most one `Implementing | Validating | Blocked`
+  package and at most one `Planned` package.
+- When a Tracker reaches `Validated`, ask one compact closeout question
+  immediately; do not leave it as indefinite active work.
 - An Active Package starts with `README.md` and `tracker.md`.
 - Add `plan.md` only for phased, risky, or cross-session delivery.
 - Add `sdd.md` only when source-verified design is needed for behavior, data,
   lifecycle, compatibility, or multi-module change.
+- Tracker `Current Snapshot` is the cross-session handoff. Do not create
+  standalone `handoff*.md` or `closeout.md` in an Active Package.
 - Route substantial implementation/review/smoke work to `sdd-lifecycle`.
 - Put out-of-scope findings in Backlog instead of silently expanding scope.
 
@@ -86,7 +92,8 @@ Close only against real validation evidence and explicit closeout authority.
 2. Move unresolved work to Backlog with a restart condition.
 3. Absorb final behavior, decisions, and validation into current durable
    contracts or focused tests.
-4. Delete process artifacts after absorption by default.
+4. Delete process artifacts after absorption by default; record disposition in
+   Tracker and do not create a separate closeout document.
 5. Archive only unique rationale, migration/release/incident evidence, or a
    compact final report that current source or documentation still cites. Do
    not archive a complete package merely because it existed.

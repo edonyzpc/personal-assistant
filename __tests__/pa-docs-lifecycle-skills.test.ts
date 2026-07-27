@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = process.cwd();
@@ -22,6 +22,7 @@ describe("PA lifecycle skill forward contracts", () => {
 
     it("keeps the removed project Linear route absent", () => {
         expect(existsSync(join(repoRoot, ".agents/skills/pa-linear-product-manager/SKILL.md"))).toBe(false);
+        expect(() => lstatSync(join(repoRoot, ".claude/skills/pa-linear-product-manager"))).toThrow();
         expect(docsSkill).not.toContain("`pa-linear-product-manager`");
         expect(docsSkill).toContain("Existing external tracker links are provenance only");
     });
@@ -39,6 +40,14 @@ describe("PA lifecycle skill forward contracts", () => {
         expect(docsSkill).toContain("Add `plan.md` only");
         expect(docsSkill).toContain("Add `sdd.md` only");
         expect(sddSkill).toContain("Baseline Active Package: `README.md` + `tracker.md`");
+    });
+
+    it("enforces one Now plus one Next and no standalone handoff or closeout", () => {
+        expect(docsSkill).toContain("Enforce `1 Now + 1 Next`");
+        expect(docsSkill).toContain("When a Tracker reaches `Validated`, ask one compact closeout question");
+        expect(docsSkill).toContain("Do not create\n  standalone `handoff*.md` or `closeout.md`");
+        expect(sddSkill).toContain("Enforce `1 Now + 1 Next`");
+        expect(sddSkill).toContain("Never create\n  standalone `handoff*.md` or `closeout.md`");
     });
 
     it("deletes absorbed process artifacts instead of archiving complete packages", () => {

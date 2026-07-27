@@ -13,9 +13,36 @@ description: Validate the personal-assistant Obsidian plugin in the repo-local t
 - Use `obsidian vault=test <command>` for every Obsidian CLI call. `vault=test` must precede the command.
 - Choose the lightest tier that covers the changed surface.
 
+## Scope Freeze And Evidence Reuse
+
+Before an expensive gate or app interaction:
+
+1. Classify the latest runtime delta as `code-only`, `runtime`, `visual/layout`,
+   `interaction/state`, or `release/broad`.
+2. Freeze the observable target. For screenshot-led UI work, state direction,
+   order, spacing, viewport, and interaction expectations in testable terms.
+   Ask one product question before deployment if the target is ambiguous.
+3. Map changed surfaces to the minimum evidence. Mark unaffected surfaces
+   `SKIP`; do not run full Pagelet, provider, or cross-surface flows for a
+   geometry-only change.
+4. Reuse fresh same-turn evidence only while runtime source, generated assets,
+   target vault, and deployed build remain unchanged. Docs/evidence-only edits
+   do not invalidate runtime smoke; TypeScript, CSS, build, or fixture changes
+   do.
+5. Freeze runtime files before `make deploy`. If they change afterward, rerun
+   only the affected validation gate and app proof.
+
+Stop when every frozen acceptance check has current deployed evidence. Do not
+add adjacent gestures, orientations, provider calls, or unrelated surfaces
+solely to strengthen an already sufficient proof.
+
 ## Validation Gate
 
-For every code, DOM, or CSS change, run the complete **Local Validation Gate** from repo-root `AGENTS.md` before app smoke. Run all commands currently listed there, including the runtime `<style>` / `innerHTML` / `outerHTML` source scan.
+Run the complete **Local Validation Gate** from repo-root `AGENTS.md` once per
+distinct code, DOM, or CSS state before app smoke. Run all commands currently
+listed there, including the runtime `<style>` / `innerHTML` / `outerHTML`
+source scan. Reuse a fresh same-turn PASS for an identical runtime state; do
+not rerun it after docs/evidence-only edits.
 
 Treat the source-scan `rg` exit code `1` with no output as PASS. Inspect every match manually. `make deploy` and the hosted community scan do not replace this local source scan.
 
@@ -33,9 +60,10 @@ Treat the source-scan `rg` exit code `1` with no output as PASS. Inspect every m
 ## Workflow
 
 1. Inspect `git status --short`, relevant diffs, and affected surfaces.
-2. Run the complete Local Validation Gate from `AGENTS.md`.
-3. Select the smoke tier.
-4. For app smoke, deploy and reload:
+2. Freeze the observable target and classify the runtime delta.
+3. Run or reuse the complete Local Validation Gate from `AGENTS.md`.
+4. Select the smoke tier.
+5. For app smoke, deploy and reload:
 
 ```bash
 make deploy
@@ -44,13 +72,16 @@ obsidian vault=test plugin:reload id=personal-assistant
 obsidian vault=test plugin id=personal-assistant
 ```
 
-5. Read only the references required by the changed surface:
+6. For visible changes, perform the cheapest visual target check immediately
+   after reload. Stop on a direction, order, clipping, or viewport mismatch
+   before deeper interactions.
+7. Read only the references required by the changed surface:
    - For any `app-runtime`, `full-ui`, or `release-gate` run, read [CLI runtime smoke](references/cli-runtime.md).
    - For visible UI/UX work, read [UI/UX interaction smoke](references/ui-ux-smoke.md).
    - For Pagelet work, read both CLI runtime smoke and [Pagelet smoke](references/pagelet-smoke.md).
-6. For historical fixtures, regression expectations, and prior evidence, consult the current [Pagelet smoke checklist](../../../docs/development/validation/pagelet-smoke-checklist.md). Treat its verification log as provenance, not current-run evidence.
-7. Record concrete `PASS`, `FAIL`, `BLOCKED`, or `SKIP` outcomes.
-8. Always restore debug/mobile state, including after failure or interruption:
+8. For historical fixtures, regression expectations, and prior evidence, consult the current [Pagelet smoke checklist](../../../docs/development/validation/pagelet-smoke-checklist.md). Treat its verification log as provenance, not current-run evidence.
+9. Record concrete `PASS`, `FAIL`, `BLOCKED`, or `SKIP` outcomes.
+10. Always restore debug/mobile state, including after failure or interruption:
 
 ```bash
 obsidian vault=test dev:debug off
@@ -70,10 +101,14 @@ obsidian vault=test dev:mobile off
 
 ```markdown
 Validation:
+- Runtime delta: `<code-only/runtime/visual-layout/interaction-state/release-broad>`
+- Frozen target: `<observable acceptance checks>`
+- Reused evidence: `<same-state evidence or none>`
 - PASS: `<check>` - `<observed result>`
 - FAIL: `<path>` - `<regression or product gap>`
 - BLOCKED: `<path>` - `<external blocker and residual risk>`
 - SKIP: `<path>` - `<why it was outside this tier>`
+- Stop point: `<why the selected tier is complete>`
 
 CLI runtime smoke:
 - Vault: `test/`
