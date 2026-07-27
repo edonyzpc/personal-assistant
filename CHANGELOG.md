@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.5](https://github.com/edonyzpc/personal-assistant/compare/2.9.0-beta.4...2.9.0-beta.5) (2026-07-27)
+
+### Features
+- pagelet: add explicit language resolution to all pagelet prompts
+- pagelet: add attention-aware delivery orchestration runtime
+
+### Fix
+- ui: remove black border around plugin update notification
+
+### Improvements
+- skills: refine docs lifecycle and smoke helper guidance
+
+### Docs
+- development: add process weight analysis for token/performance optimization
+- proposals: add Pagelet Agent and Operations capability proposals
+- pagelet: migrate docs to attention-aware delivery lifecycle
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
