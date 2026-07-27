@@ -1,10 +1,10 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-07-27
 Work item: B-108
-Scoped work item: B-118
-Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+Scoped work items: B-118, B-121
+Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
 Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delivery、empty-state 与 progressive-disclosure contract。
 
 ## Status
@@ -17,10 +17,11 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
 | Design philosophy | 安静且可信 |
-| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md) |
+| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md) |
 | Historical provenance (non-authoritative) | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
+| B-121 scoped amendment | [Attention-Aware Delivery Product Spec](./pagelet-attention-aware-delivery-product-spec.md) governs device-local seen suppression and the Pet Action Ring after acknowledged Ready Empty / Intentionally Quiet. The behavior is implemented locally and has passed automated、review、local/iCloud deployment、desktop smoke and iPhone portrait toolbar geometry/visual gates；the latest Ring is a 44px horizontal row, while physical landscape remains a declared residual rather than a claimed PASS. |
 | Implementation record | [Historical SDD](../../archive/pagelet-bubble-readiness-and-recall-sdd.md) and [redesign tracker](../../archive/pa-product-redesign-development-tracker.md) |
 
 ---
@@ -68,7 +69,7 @@ setup — and they are left facing a feature menu instead of a recall doorway.
 ## 2. Product Principles
 
 Based on the current [PA North Star](../pa-product-north-star.md), the B-108
-owning Product Spec, and DEC-017 through DEC-024:
+owning Product Spec, and DEC-017 through DEC-025:
 
 1. **Bubble is PA's Delivery Surface, not a control panel or feature menu.**
    The Bubble exists to present PA-prepared findings. It should not read like a
@@ -139,8 +140,8 @@ state.
 | --- | --- | --- |
 | Needs Setup | Memory not prepared | Explain + [Prepare Memory] + [Review this note] as fallback |
 | Preparing | Memory preparation in progress | Progress indication + optional count |
-| Ready, Nothing Found | Everything ready, no high-confidence results | Quiet empty + [Find related old notes] |
-| Intentionally Quiet | Generic proactive hints and Quiet Recall are both off and no prepared delivery is available | Minimal empty, no repeated explanation |
+| Ready, Nothing Found | Everything ready, no high-confidence results | First visible open: quiet explanation + [Find related old notes]; after acknowledgement, Pet short click opens Action Ring |
+| Intentionally Quiet | Generic proactive hints and Quiet Recall are both off and no prepared delivery is available | First visible open: minimal explanation; after acknowledgement, Pet short click opens Action Ring |
 | Context Limited | Current note too short / Data Boundary exclusion | Brief reason + alternative action |
 | Recap Needs Retry | User explicitly opened Recap, but no valid artifact exists after an unavailable/failed/empty/quality-rejected attempt | Honest status + local scope orientation + [Retry] + [View sources] |
 
@@ -165,7 +166,9 @@ still-current owner to avoid visible churn. This is an implementation tie-break,
 not a permanent feature priority. Onboarding remains below every real delivery.
 The exact owner is acknowledged only after the Bubble actually becomes visible;
 losing or stale candidates are not allowed to consume another owner's once or
-cooldown state.
+cooldown state. DEC-025 separately records the visible delivery fingerprint as
+seen; owner acknowledgement, seen state, Dismiss feedback, and Later intent are
+not interchangeable.
 
 **A always beats B**: If delivery content exists, show it. Background info
 (e.g., Memory still preparing) becomes an inline context hint at the bottom of
@@ -222,7 +225,7 @@ Recall and Discovery are one unified product line with two trigger modes:
 
 | Mode | Trigger | Entry |
 | --- | --- | --- |
-| User-initiated (Discover) | User clicks "Find related old notes" in empty state, or uses command palette `PA: Discover connections` | Explicit user action; results continue into Panel |
+| User-initiated (Discover) | User clicks "Find related old notes" in the first empty explanation, chooses Discover from Action Ring, or uses command palette `PA: Discover connections` | Explicit user action; results continue into Panel |
 | PA-initiated (Quiet Recall) | Triggered by note open/switch only when Quiet Recall is On | Background, automatic |
 
 The user-facing name remains `Quiet Recall` in English and is “相关回顾” in
@@ -444,7 +447,14 @@ No new findings yet.
 
 Notes:
 - This is the steady-state empty. It should feel calm, not broken.
-- "Find related old notes" triggers user-initiated Discover.
+- The explanation is shown only until this semantic/copy version has actually
+  become visible on the current device. "Find related old notes" triggers
+  user-initiated Discover from that first explanation.
+- After acknowledgement, Pet short click opens the B-121 Capture / Review /
+  Discover Action Ring instead of replaying this Bubble.
+- Explicit Quick Review/hotkey stays a Bubble entry; after acknowledgement it
+  shows a terse non-teaching empty result rather than replaying this explanation
+  or opening Ring.
 - Do NOT show "Review current note" or "Generate summary" buttons here.
 
 ### State: Intentionally Quiet
@@ -469,11 +479,14 @@ Notes:
 - Shown when default-off generic proactive hints and Quiet Recall are both off and
   the user opens Bubble manually, unless a prepared Recap or other eligible
   delivery is available.
-- If the user has already seen and acknowledged this state, do not re-explain.
-  Show minimal empty (just the action button, no explanation text).
-- "Find related old notes" triggers user-initiated Discover.
-- B-118 keeps this ordinary quiet empty state and copy unchanged; any redesign
-  remains deferred.
+- If the user has already seen and acknowledged this semantic/copy version on
+  the current device, do not re-explain. Pet short click opens the B-121 Action
+  Ring; explicit Quick Review/hotkey stays in Bubble but shows only a terse,
+  non-teaching empty result.
+- "Find related old notes" triggers user-initiated Discover only from the first
+  explanation; Discover in the Ring uses the same downstream route.
+- B-118 kept this state unchanged. DEC-025/B-121 now owns the successor design
+  without reopening B-118 delivery status.
 
 ### State: Recap Needs Retry
 
@@ -584,9 +597,10 @@ Notes:
 | --- | --- | --- |
 | Needs Setup | Prepare Memory | Review this note (fallback) |
 | Preparing | (none — informational) | (none) |
-| Ready, Nothing Found | Find related old notes | (none) |
-| Intentionally Quiet | Find related old notes | (none) |
+| Ready, Nothing Found | First explanation only: Find related old notes | After acknowledgement, Pet short click uses Action Ring instead of Bubble |
+| Intentionally Quiet | First explanation only: Find related old notes | After acknowledgement, Pet short click uses Action Ring instead of Bubble |
 | Context Limited | Capture a thought / weak View boundary settings | (none) |
+| Recap Needs Retry | Retry | View sources；仅显式 Recap 入口 eligible，当前 command 可在 Detail 渲染等价状态 |
 
 ### Action Constraints
 
@@ -606,8 +620,8 @@ is not a single durable inbox of PA suggestions.
 
 | Candidate kind | Persistence default | Product reason |
 | --- | --- | --- |
-| Recall | Reuse existing Quiet Recall state / in-memory delivery; create a queue item only after explicit Later | Recall can be recomputed; automatic queue storage creates debt. |
-| Recap | Local derived cache | Bubble can claim "prepared" only when a structured artifact already exists. |
+| Recall | Reuse existing Quiet Recall result; after actual Bubble/Detail visibility, store only its opaque device-local delivery fingerprint; create a queue item only after explicit Later | Recall can be recomputed, while seen state prevents repeated proactive delivery without creating debt. |
+| Recap | Local derived cache plus opaque device-local seen fingerprint after actual visibility | Bubble can claim "prepared" only when a structured artifact already exists; seen gate does not filter explicit routes, while artifact availability still follows its existing lifecycle. |
 | Pattern | Short-term dedupe only | Prevent repeated nudges without creating a long-term review queue. |
 | Review | In-memory qualified candidate only | Generic review findings should not become a durable task list. Raw `PreloadFinding[]` remains Panel-only; a future adapter must produce a separately gated Review candidate before Bubble eligibility. |
 
@@ -786,7 +800,7 @@ This iteration does NOT include:
 | --- | --- | --- | --- |
 | OD-1 | Pet visual states for Presence | Resolved for this round: no Pet state expansion | Keep only necessary existing state mapping; Pet redesign is not blocking Bubble work. |
 | OD-2 | Bubble card stack | Resolved: single-visible-card stack, max 3 cards | Default one; enable card switching only for multiple high-quality distinct candidates. |
-| OD-3 | "Intentionally Quiet" acknowledgment | Resolved: show once, then minimal | B-118 keeps the current ordinary quiet empty state; redesign remains deferred. |
+| OD-3 | "Intentionally Quiet" acknowledgment | Superseded by DEC-025/B-121: show the explanation once, then route Pet short click to Action Ring | B-118 remains Validated; the successor is implemented locally, with iPhone B-121 smoke still pending. |
 | OD-4 | Preparing state: show progress numbers? | Resolved: show numbers only for larger vaults | Use a threshold such as 20+ notes. Small vaults show simple preparing copy. |
 | OD-5 | Bridge hint content for first Recall | Resolved: real delivery first; bridge as inline hint | Onboarding annotates value moments, not replaces them. |
 | OD-6 | Discover trigger from empty state | Resolved: keep routing results into Panel | Bubble is only the trigger; results remain active-note-snapshot-bound in Panel. |
@@ -803,7 +817,7 @@ This iteration does NOT include:
 | --- | --- | --- |
 | 1 | Install + open Bubble | Should see **Needs Setup** state with "Prepare Memory" + "Review this note" fallback. NOT three feature buttons. |
 | 2 | After Prepare Memory starts | Should see **Preparing** state with progress. |
-| 3 | After Prepare Memory completes, open note | Should see **Ready, Nothing Found** with "Find related old notes". |
+| 3 | After Prepare Memory completes, first Pet open on this device | Should see **Ready, Nothing Found** with "Find related old notes" once; after it becomes visible, later ready-empty Pet short clicks open Action Ring. |
 | 4 | Click "Find related old notes" | Should open/update Panel and show an L3 result when AI evaluation passes; otherwise Panel may show a clearly labeled local related clue with no AI why-now. Bubble does not become the result surface. |
 
 ### Returning user scenarios
@@ -811,8 +825,8 @@ This iteration does NOT include:
 | # | Scenario | Expected Behavior |
 | --- | --- | --- |
 | 5 | Open note with Quiet Recall enabled, high-confidence match exists | Should see **Recall Delivery** with why-now card. NOT empty state. |
-| 6 | Open note, no match | Should see **Ready, Nothing Found**. NOT feature menu. |
-| 7 | Generic proactive hints off and Quiet Recall Off, no prepared Recap, open Bubble | Should see the existing **Intentionally Quiet** state. A fresh prepared Recap still takes delivery priority because the three controls are independent. |
+| 6 | Open note, no match | First explanation is **Ready, Nothing Found**; after acknowledgement, Pet short click opens Action Ring. Bubble remains a delivery/explanation surface, not a three-button feature menu. |
+| 7 | Generic proactive hints off and Quiet Recall Off, no prepared Recap, short-click Pet | First device-local explanation is **Intentionally Quiet**; after acknowledgement, short click opens Action Ring. A fresh unseen prepared Recap still takes delivery priority. |
 | 8 | Note is 2 lines long | Should see **Context Limited** (note too short). NOT generic empty. |
 | 9 | Note excluded by Data Boundary | Should see **Context Limited** (boundary variant). |
 
@@ -840,6 +854,8 @@ This iteration does NOT include:
 | 22 | Discover-only local match must not look like proactive Recall | It remains in Panel, is labeled `Local related clue` / `本地关联线索`, contains no AI why-now, never enters a Recall stack, and cannot nudge. |
 | 23 | Recall Bubble action taxonomy | Only View / Later / Dismiss appear. View provider rerun = 0; Later creates one existing Review Queue item; Link/Save appear only in Tab. |
 | 24 | Quiet Recall setting and migration | Only Off/On appears, default Off; legacy true -> On and false/missing/other -> Off. Generic hints and Recap remain unchanged when it toggles. |
+| 25 | Seen delivery suppression | A Recall/Recap card is recorded only after the card carrying its exact transient receipt becomes visible in Bubble, or that receipt's target successfully renders in Detail. The receipt itself is not persisted; while the corresponding device-local seen ledger entry is retained, the delivery cannot nudge or enter proactive Bubble again. Seen gate does not filter explicit Discover/Review/Recap/Detail or source navigation, but does not guarantee historical card recovery. |
+| 26 | Action Ring ownership | After empty acknowledgement, Pet short click opens Capture / Review / Discover exactly once per action; Bubble and Ring are mutually exclusive, and long press uses the same Ring. |
 
 ---
 

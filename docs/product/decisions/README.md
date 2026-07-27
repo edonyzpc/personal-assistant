@@ -1,7 +1,7 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-07-27
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
@@ -22,5 +22,6 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-022 | Bounded, source-backed Insight Enhancement Layer | Accepted | Graph、Pattern、Maintenance AI scope, provider budget and write boundary | [Record](./dec-022-bounded-insight-enhancement-layer.md) |
 | DEC-023 | Shared non-blocking first-use notice for bounded Pagelet provider paths | Accepted | Pagelet provider trust, foreground Review actual-source classification, narrow background preload envelope, high-risk-first-call disclosure, and capability opt-out boundary | [Record](./dec-023-shared-pagelet-provider-first-use.md) |
 | DEC-024 | Count cold Quiet Recall semantic retrieval in its existing actual-call budget | Accepted | Pure-semantic candidate discovery, zero-call boundary, and metadata fallback semantics | [Record](./dec-024-quiet-recall-cold-semantic-retrieval.md) |
+| DEC-025 | Consumption-aware Pagelet delivery and empty-state Action Ring | Accepted | Device-local seen suppression, explicit-access boundary, Pet short-click routing, and Action Ring | [Record](./dec-025-consumption-aware-pagelet-delivery.md) |
 
 Accepted 记录必须出现在 Active Decision Register。Rejected/Superseded 记录如果只剩历史价值，应移动到年度 Archive 并在 successor/年度索引中可追溯。

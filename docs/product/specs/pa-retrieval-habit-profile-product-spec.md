@@ -1,6 +1,6 @@
 # PA Retrieval Habit Profile Product Spec
 
-Updated: 2026-07-21
+Updated: 2026-07-27
 
 ## Status
 
@@ -22,9 +22,9 @@ near-tie influence through the Active Vault Indexer.
 The B-118 contract further narrows Quiet Recall Bubble feedback: only an
 explicit `Dismiss`, while Retrieval Habit Profile is enabled, may weakly affect
 the exact candidate. It must not downrank similar sources, topics, or candidates.
-The [B-118 Tracker](../../development/active/pagelet-ui-ux-optimization/tracker.md)
-owns the completed runtime/current-surface evidence and its residual boundaries;
-this spec does not extend weak feedback beyond the exact candidate.
+The [B-118 compact closeout](../../archive/2026/pagelet-b118-ui-ux-hardening-closeout.md)
+preserves the completed runtime/current-surface evidence and its residual
+boundaries; this spec does not extend weak feedback beyond the exact candidate.
 
 The product definition:
 

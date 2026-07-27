@@ -11,6 +11,7 @@ Plan: <optional link; delete when no plan.md>
 SDD: <optional link; delete when no sdd.md>
 
 只保留一种 authority lane，并删除不存在 artifact 的 metadata。
+`Current Snapshot` 同时承担跨会话 handoff；不要另建 `handoff*.md` 或 `closeout.md`。
 
 ## Current Snapshot
 

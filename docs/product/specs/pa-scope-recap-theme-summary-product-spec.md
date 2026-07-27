@@ -1,7 +1,7 @@
 # PA Scope Recap And Theme Summary Product Spec
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-07-27
 Work item: B-108
 Decision: [DEC-017 — default bounded background preparation](../decisions/dec-017-default-background-recap-preparation.md)
 Authority: Scope Recap 及其 B-108 dogfood follow-up 的用户行为、Quiet Recall 支撑边界、范围、非目标与验收标准。
@@ -12,13 +12,13 @@ Authority: Scope Recap 及其 B-108 dogfood follow-up 的用户行为、Quiet Re
 | --- | --- |
 | Document type | Product spec / current durable contract |
 | Delivery status | B-108 shipped to BRAT `2.9.0-beta.2` with its recorded validation. B-118 completed the DEC-023 fresh-install preparation/shared actual-call reconciliation and authorized current-surface desktop/iPhone validation. Real high-risk provider calls、the accepted iPhone landscape waiver、iPad/Android and stable release remain outside that completion claim. |
-| Related decisions | [DEC-018 — quality-gated proactive hints](../decisions/dec-018-quality-gated-scope-recap-hints.md), [DEC-019 — honest layered failure fallback](../decisions/dec-019-honest-layered-recap-fallback.md), [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md) |
+| Related decisions | [DEC-018 — quality-gated proactive hints](../decisions/dec-018-quality-gated-scope-recap-hints.md), [DEC-019 — honest layered failure fallback](../decisions/dec-019-honest-layered-recap-fallback.md), [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md), [DEC-025 — consumption-aware Pagelet delivery](../decisions/dec-025-consumption-aware-pagelet-delivery.md) |
 | Archived delivery package | [B-108 Pagelet dogfood follow-up](../../archive/2026/pagelet-b108-dogfood-followup/README.md) |
 | Feature family | Scope Recap / Theme Summary / Derived map |
 | Current B-108 surfaces | Pagelet Bubble, Pagelet Panel, Pagelet Tab |
 | Broader/future integrations | Weekly Review, saved scopes, Markdown export targets, and broader Chat use; none is a B-108 completion claim |
 | Historical research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
-| Related current specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
+| Related current specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Attention-Aware Delivery spec](./pagelet-attention-aware-delivery-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 
 This spec defines how PA summarizes a user-selected scope without assuming that
 the vault has a formal Project model. The base source-backed M12 flow,
@@ -210,7 +210,12 @@ scheduling infrastructure.
   modal/sound/focus-steal/count-pressure rules. The fingerprint must stay stable
   for the same substantive insight by using normalized scope, insight content,
   and source identity while excluding generation timestamps and per-run cache
-  IDs.
+  IDs. DEC-025/B-121 further requires that once the card carrying this delivery's
+  transient receipt is visible in Bubble, or that receipt's target successfully
+  renders in Detail, submitting it creates the device-local seen ledger entry.
+  While that entry is retained, later proactive/default Bubble delivery is
+  excluded. The seen gate does not filter explicit Recap/Review/Detail or source
+  navigation, but does not create a historical generated-card store.
 - B-108/REQ-12: Clicking a Recap nudge immediately shows the strongest concrete
   observation and routes to full source-backed detail. Disabling the hint keeps
   silent caching and instant click behavior intact. This Recap default must not
@@ -584,7 +589,7 @@ Suggested cases:
 | Background transparency | Last run, scope, cost usage, disable control, and cache clearing are inspectable |
 | High-value fresh cross-note insight | Pet emits one restrained nudge; click immediately shows the concrete observation and sources |
 | Generic summary or source-count-only output | Excluded from Recap artifact/delivery; only real local scope/source facts may appear in the explicit DEC-019 explanation state |
-| Same artifact repeats | No second proactive hint after shown/dismissed; Later suppresses it for the configured window |
+| Same visible artifact repeats | After the card carrying its exact transient receipt becomes visible in Bubble, or that receipt's target successfully renders in Detail, no second proactive hint or proactive Bubble occurs while the corresponding device-local seen ledger entry is retained; seen does not filter explicit Recap/Review/Detail or source navigation, but does not guarantee historical-card recovery |
 | Focus/quiet/cooldown suppression | No nudge, while the fresh prepared artifact remains immediately available on click |
 | Recap hint disabled | No Recap nudge; background preparation and click-to-view remain available; unrelated hint defaults do not change |
 | Provider unavailable or call fails | No ready candidate or nudge is created; a still-valid prior artifact remains available |

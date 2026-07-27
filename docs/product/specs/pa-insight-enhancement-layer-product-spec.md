@@ -1,7 +1,7 @@
 # PA Insight Enhancement Layer Product Spec
 
 Document status: Approved
-Updated: 2026-07-21
+Updated: 2026-07-27
 Work item: B-119
 Decision: [DEC-022 — 以有界、来源支持的 AI 层增强 Graph、Pattern 与 Maintenance](../decisions/dec-022-bounded-insight-enhancement-layer.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
@@ -156,16 +156,14 @@ VSS 不可用时结果仍可为 structural-only。若未来选择更广范围，
 无产品决策阻塞。精确小时/日 hard caps、模型调用 adapter、ephemeral DTO 和取消/并发
 协议属于实现 SDD；它们必须在 runtime coding 前批准，且不得弱化本文预算和信任上限。
 
-## Delivery Handoff
+## Future Delivery Boundary
 
-- Active Package: [B-119 Insight Enhancement Layer](../../development/active/insight-enhancement-layer/README.md)
-- Engineering handoff: [Codex Handoff](../../development/active/insight-enhancement-layer/handoff-codex.md)
+- Delivery state: [Backlog B-119](../../backlog.md)；当前没有 Active Package 或 runtime
+  实现授权。只有用户明确选择为唯一 `Next` 后，才按当前源码创建新的 Approved SDD。
 - Architecture contracts: [Pagelet Product Design](../pagelet-product-design.md),
   [PA Data Boundary](./pa-data-boundary-product-spec.md),
   [Lightweight Graph Discovery](./pa-lightweight-graph-discovery-product-spec.md),
   [Saved Insight](./pa-saved-insight-ledger-product-spec.md)
-- Prior discovery: [Accepted Discovery Summary](../../development/active/insight-enhancement-layer/discovery.md)；
-  原路径迁移见 [Disposition Log](../../archive/disposition-log.md)
+- Prior discovery: [Accepted Discovery Summary](../../archive/2026/pagelet-b119-insight-enhancement-discovery.md)
 - Historical external source: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；仅作来源记录，不再同步
-- Release / rollout boundary: 当前仅建立计划型 Active Package；无 runtime、commit、
-  push、tag、beta/stable release 授权。
+- Release / rollout boundary: 无 runtime、commit、push、tag、beta/stable release 授权。

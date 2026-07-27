@@ -2,7 +2,7 @@
 
 Decision ID: DEC-023
 Status: Accepted
-Updated: 2026-07-21
+Updated: 2026-07-27
 Authority: 用户于 2026-07-21 选择方案 A，确认 SG-05/SG-06、B-119 1A、“首次实际调用恰为高风险时由完整阻断披露同时完成共享首次告知”、本记录定义的 foreground Review / generic background preload 风险分类，以及 generic preload 的显式 Data Boundary 敏感性判定是现行统一规则
 Work item: B-118
 Related work item: B-119
@@ -17,7 +17,7 @@ Scope Recap 默认进行有界后台准备时，仍要求首次通过 `run / adj
 Pattern、Maintenance 规划采用后一个模型。2026-07-21 当日早期源码复核曾证明 B-118
 runtime 尚未完整对齐：fresh install 仍被旧 authorization tuple 置为 preparation off，
 shared notice 也尚未统一到每个 feature 的第一次实际 provider call；该缺口随后已按本
-决定完成修复、review 与验证，当前交付状态以 B-118 Tracker 为准。
+决定完成修复、review 与验证；B-118 已关闭，终态证据见 compact closeout。
 
 共享 first-use 还需要覆盖一个边界：第一次实际调用可能本身就是 broad、sensitive、
 costly、whole-vault、out-of-envelope 或 excluded-scope override。此时高风险阻断披露
@@ -164,7 +164,7 @@ runtime：用户请求 `last7` 不代表实际会发送多份来源，而一个�
 
 - North Star: [PA Product North Star](../pa-product-north-star.md)
 - Amended decision: [DEC-017](./dec-017-default-background-recap-preparation.md)
-- Source decision package: [B-118 Tracker SG-05/SG-06](../../development/active/pagelet-ui-ux-optimization/tracker.md)
+- Source delivery evidence: [B-118 compact closeout](../../archive/2026/pagelet-b118-ui-ux-hardening-closeout.md)
 - Current specs: [PA Data Boundary](../specs/pa-data-boundary-product-spec.md)、[Scope Recap](../specs/pa-scope-recap-theme-summary-product-spec.md)、[B-118 Product Spec](../specs/pagelet-ui-ux-hardening-product-spec.md)
 - B-119 adoption: [DEC-022](./dec-022-bounded-insight-enhancement-layer.md)、[B-119 Product Spec](../specs/pa-insight-enhancement-layer-product-spec.md)
 - Quiet Recall retrieval scope: [DEC-024](./dec-024-quiet-recall-cold-semantic-retrieval.md)

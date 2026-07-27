@@ -1,17 +1,17 @@
 # PA Quiet Recall And Insight Timing Product Spec
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-07-27
 Work item: B-108
-Scoped work item: B-118
+Scoped work items: B-118, B-121
 Decision: [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md)
-Scoped decisions: [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)、[DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+Scoped decisions: [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)、[DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
 Authority: Quiet Recall 的候选、触发、质量、成本、数据、交付、反馈与无自动写入边界。
 
 > [!note] Current implementation includes the 2026-07-02 amendments: the
 > candidate pool spans the eligible vault and triggers are note open/switch,
 > save-after, and user-initiated shortcut. Current authority is this spec,
-> DEC-020, the B-108 owning Scope Recap spec, and the B-118/DEC-023/DEC-024 amendments;
+> DEC-020, the B-108 owning Scope Recap spec, and the B-118/B-121 amendments;
 > Archive links below are historical provenance only.
 
 ## Status
@@ -22,11 +22,11 @@ Authority: Quiet Recall 的候选、触发、质量、成本、数据、交付�
 | Delivery / validation status | DEC-020 evaluation/limiter/cache/provenance substrate is validated. B-118 completed and validated Off/On、View/Later/Dismiss、DEC-023/DEC-024 actual-call admission、pure-semantic retrieval and source freshness through automated/review and authorized current-surface gates. Real provider/high-risk calls were not rerun for B-118. |
 | Feature family | Quiet Recall / Just-in-time insight / Cognitive scaffolding |
 | Primary surfaces | Pagelet Bubble, Pagelet Panel, optional Review Queue handoff |
-| Current authority | This spec, [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md), [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md), the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and the [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) |
+| Current authority | This spec, [DEC-020](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md), [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md), [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md), the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), the [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md), and the [B-121 Product Spec](./pagelet-attention-aware-delivery-product-spec.md) |
 | Historical research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
 | Related current specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet doc | [Pagelet product design](../pagelet-product-design.md) |
-| Related decisions | [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021 — evidence-led Pagelet UI/UX hardening](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md), [DEC-024 — cold semantic retrieval budget](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md) |
+| Related decisions | [DEC-020 — independent Quiet Recall evaluation](../decisions/dec-020-independent-quiet-recall-evaluation.md), [DEC-021 — evidence-led Pagelet UI/UX hardening](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md), [DEC-023 — shared Pagelet provider first-use](../decisions/dec-023-shared-pagelet-provider-first-use.md), [DEC-024 — cold semantic retrieval budget](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md), [DEC-025 — consumption-aware delivery](../decisions/dec-025-consumption-aware-pagelet-delivery.md) |
 | Product doctrine | [Low-Burden Review Product Principles](../pa-low-burden-review-product-principles.md) |
 
 This spec defines when and how PA proactively surfaces old notes, themes, and
@@ -40,7 +40,7 @@ Quiet Recall is PA's just-in-time cognitive scaffolding layer:
 > interruption.
 
 This document records the one-question-at-a-time product decisions initially
-confirmed on 2026-06-28 and the DEC-020/B-108/B-118 amendments through 2026-07-21.
+confirmed on 2026-06-28 and the DEC-020/B-108/B-118/B-121 amendments through 2026-07-27.
 [DEC-021](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md) and the
 [B-118 Product Spec](./pagelet-ui-ux-hardening-product-spec.md) record current
 action, feedback, disclosure and settings semantics. DEC-023 is the current
@@ -64,6 +64,7 @@ embedding as one disclosed, budgeted Quiet Recall provider call.
 | QR-D10 | Recall is not a queue item by default. | Closing, ignoring, or dismissing creates no queue item. Only user-chosen `Later` expresses return intent and enters the existing Review Queue; Link/Save remain in Tab. |
 | QR-D11 | Each eligible Recall candidate receives an independent AI why-now evaluation. | Local ranking may nominate at most 5 candidates per round; each candidate fails independently, receives at most one language retry, and never falls back to a template proactive nudge. |
 | QR-D12 | Pure-semantic candidate discovery is retained; a cold query embedding is one real Quiet Recall provider call. | It passes DEC-023 admission and consumes the existing 10/hour、50/day bucket without increasing it. Empty retrieval makes no downstream evaluator/generation call; metadata-only fallback is explicit-Discover-only and never proactive Recall. |
+| QR-D13 | A Recall card carrying its exact transient receipt becomes visible in Bubble, or that receipt's target successfully renders in Detail, before it is seen for proactive-delivery purposes on this device. | The receipt is submitted, not persisted; while the corresponding seen ledger entry is retained, the same normalized Recall cannot nudge or enter proactive Bubble again after reload/rerun. Seen stays separate from Dismiss/Later/RHP and does not filter explicit entry or source navigation; generated-card availability still follows its existing lifecycle. |
 
 ## 1. Product Decision
 
@@ -161,7 +162,10 @@ change generic proactive hints or Scope Recap preparation/hints.
 There is no separate display/context frequency tier or cap. Quietness remains a
 consequence of these product gates:
 
-- never show repeated nudges for the same note in a short window
+- after its transient receipt is submitted, never show the same seen delivery
+  proactively again while the corresponding device-local ledger entry is
+  retained; a distinct current-context/source/content fingerprint may still
+  qualify
 - default to one visible Bubble item; expose a 2-to-3-item stack only when all
   candidates independently pass the high quality gate and remain distinct
 - standard bounded first use follows DEC-023's shared non-blocking notice; only
@@ -169,7 +173,10 @@ consequence of these product gates:
 - standard proactive delivery never blocks editing
 - allow immediate dismiss
 - respect quiet hours and Focus Mode
-- show each candidate proactively at most once
+- record seen only after the specific receipt's card is actually visible in
+  Bubble or its Detail target is successfully rendered; hidden stack cards,
+  unrelated payload candidates and failed navigation do not consume their
+  opportunity
 
 ### 4.1 Independent Evaluation And Call Boundary
 
@@ -330,7 +337,8 @@ use the local label, show only verifiable local relation/source facts, omit the
 AI `why now`, and remain visually distinct from proactive Recall cards.
 
 Closing the Bubble without choosing an action is a valid completion. It should
-not count as an unhandled item.
+not count as an unhandled item or negative feedback. A card that was actually
+visible remains seen for DEC-025 proactive suppression; seen is not Dismiss.
 
 Example:
 
@@ -436,6 +444,8 @@ Closing with X/Escape/outside click, or simply ignoring the card, is neutral:
 - no feedback
 - no Review Queue item
 - no dismiss state
+- no reversal of the device-local seen ledger entry created after a card was
+  actually visible
 
 ### 10.3 Later
 

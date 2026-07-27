@@ -1,14 +1,16 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-07-21
+Updated: 2026-07-27
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
 Quiet Recall retrieval decision: [DEC-024 — 冷语义检索计入既有实际调用预算](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
 Authority: B-118 的已授权修复范围、证据边界、非目标与验收标准；现有 Scope Recap、Quiet Recall、Bubble、Data Boundary、Retrieval Habit Profile 与 Saved Insight 合同继续定义其余行为。
 Approval boundary: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
-解决，SG-07c 已延期且不阻断 B-118；SG-05/SG-06 仅以 DEC-023 为当前权威；
+解决，SG-07c 当时延期且不阻断 B-118；其后续已由独立的
+[DEC-025/B-121](./pagelet-attention-aware-delivery-product-spec.md) 接续，不重开
+B-118。SG-05/SG-06 仅以 DEC-023 为当前权威；
 用户于 2026-07-21 为 Quiet Recall 语义候选选择 DEC-024 方案 A，并为
 foreground Review / generic background preload 风险分类选择 DEC-023 方案 A。
 
@@ -136,9 +138,11 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 
 ### Pet 短点与长按
 
-短点在 Bubble 开/关之间稳定切换一次。长按约 520ms 后显示三项菜单，松手不打开
-Bubble。菜单项拥有自己的 touch/click 事件边界；选择、取消、超时、点外部和移动
-超阈值互不混淆。Pet 根切换计数为零，不表示 target downstream 不能呈现结果。
+本段保留 B-118 实施基线：当时短点在 Bubble 开/关之间稳定切换一次。DEC-025/B-121
+现已将短点分流为未看交付/必要解释 Bubble，或已确认空态后的 Action Ring。长按约
+520ms 后显示三项 Ring，松手不打开 Bubble。各 action 拥有自己的 touch/click 事件
+边界；选择、取消、超时、点外部和移动超阈值互不混淆。Pet 根切换计数为零，不表示
+target downstream 不能呈现结果。
 
 ### Prepared Recap
 
@@ -311,7 +315,7 @@ Reduce Motion 下保留静态状态差异，不持续闪烁、跳动、脉冲或
 | SG-04 | 2026-07-20 Resolved：Later 进入既有 Review Queue | 仅表达明确 return intent，不新增另一套 queue/snooze 模型 |
 | SG-07a | 2026-07-20 Resolved：英文保留 Quiet Recall，中文为“相关回顾” | 仅同步产品文案，不重命名英文概念 |
 | SG-07b | 2026-07-20 Resolved：Discover 保持进入 Panel | 不重做现有 IA |
-| SG-07c | 2026-07-20 Deferred：普通 Quiet Bubble empty state 保持现状并进入 Backlog | 不阻断 B-118，其 redesign 不在本 track 实现 |
+| SG-07c | 2026-07-20 Deferred；DEC-025/B-121 于 2026-07-22 启动独立决策并在 2026-07-27 定案 | 不阻断或重开 B-118；新设计/实现状态只看 [B-121 authority](./pagelet-attention-aware-delivery-product-spec.md) |
 
 SG-05 与 SG-06 已由
 [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md) 解决并保持独立
@@ -332,10 +336,9 @@ standard bounded，越界安静跳过而非弹出高风险确认。调用计数�
 采用方案 A，把冷 query embedding 作为已披露、受现有预算约束的真实调用；空检索只
 保证 downstream evaluator/generation 为 0，调用前拒绝路径仍保证总调用为 0。
 
-## Delivery Handoff
+## Delivery Evidence
 
-- Active Package: [B-118 Feature Home](../../development/active/pagelet-ui-ux-optimization/README.md)
-- Detailed evidence and execution brief: [Claude Code handoff](../../development/active/pagelet-ui-ux-optimization/handoff-claude-code.md)
+- Final delivery evidence: [B-118 compact closeout](../../archive/2026/pagelet-b118-ui-ux-hardening-closeout.md)
 - Architecture contracts: [Pagelet Product Design](../pagelet-product-design.md), [Scope Recap Spec](./pa-scope-recap-theme-summary-product-spec.md), [Quiet Recall Spec](./pa-quiet-recall-insight-timing-product-spec.md), [Bubble Spec](./pagelet-bubble-readiness-and-recall-product-spec.md), [Data Boundary](./pa-data-boundary-product-spec.md), [Retrieval Habit Profile](./pa-retrieval-habit-profile-product-spec.md), [Saved Insight](./pa-saved-insight-ledger-product-spec.md)
 - Release / rollout boundary: 本 spec 授权有界实现、测试、review 与本地/真机验证；
   不授权 commit、push、tag、beta/stable publish。

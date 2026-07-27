@@ -1,7 +1,7 @@
 # Archive
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-07-27
 Authority: 当前源码或文档仍直接引用的独有历史证据；不承担当前状态、规划或批准。
 
 Archive 是按需保留的 evidence store，不是完成文档的默认落点。
@@ -22,7 +22,9 @@ Feature Home、Plan、SDD、Tracker、逐轮 review/handoff 和重复 research �
 - 保留文件必须至少有一个当前源码或文档入链；无当前入链即为可清理噪声。
 - 历史文件内部可能提及已清理 companion，checker 不沿 Archive 内部链接扩张保留集合。
 - Archive 不能提供当前实现或 delivery status authority。
-- tracked 当前文档的吸收/删除记录见 [Disposition Log](./disposition-log.md)。Archive 内历史噪声无需逐文件回填。
+- 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown
+  吸收/删除记录见 [Disposition Log](./disposition-log.md)。无入链、无稳定身份的过程
+  草稿与 Archive 内历史噪声无需逐文件回填。
 
 2026-07-21 瘦身前的完整快照可从 Git commit `22940c94` 恢复，例如：
 

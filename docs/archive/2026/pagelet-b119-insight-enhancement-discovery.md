@@ -1,12 +1,12 @@
 # Insight Enhancement Layer Accepted Discovery Summary
 
-Document status: Current
+Document status: Archived
 Discovery outcome: Accepted
-Updated: 2026-07-21
+Updated: 2026-07-27
 Work item: B-119
 Authority: B-119 的问题、repo 证据和被替代方案 provenance；当前产品行为以 DEC-022 与 Approved Product Spec 为准。
-Decision: [DEC-022](../../../product/decisions/dec-022-bounded-insight-enhancement-layer.md)
-Product spec: [PA Insight Enhancement Layer Product Spec](../../../product/specs/pa-insight-enhancement-layer-product-spec.md)
+Decision: [DEC-022](../../product/decisions/dec-022-bounded-insight-enhancement-layer.md)
+Product spec: [PA Insight Enhancement Layer Product Spec](../../product/specs/pa-insight-enhancement-layer-product-spec.md)
 
 ## Problem And User Outcome
 
@@ -17,7 +17,7 @@ PA 的 Pattern Detection、Graph Discovery 与 Maintenance Review 已能从标�
 
 原始 Discovery 同时评估了 Writing Insight / Statistics 语义分析。最终决定认为它与
 “让自己的笔记自然浮现”的直接联系较弱，并会新增周级触发、持久状态与独立 UI，
-因此不进入 B-119；后续入口为 [Backlog B-120](../../../backlog.md)。
+因此不进入 B-119；后续入口为 [Backlog B-120](../../backlog.md)。
 
 ## Verified Evidence
 
@@ -67,9 +67,7 @@ PA 的 Pattern Detection、Graph Discovery 与 Maintenance Review 已能从标�
 
 ## Current Routing
 
-- Decision: [DEC-022](../../../product/decisions/dec-022-bounded-insight-enhancement-layer.md)
-- Product Spec: [B-119 Product Spec](../../../product/specs/pa-insight-enhancement-layer-product-spec.md)
-- Delivery Plan: [Plan](./plan.md)
-- Tracker: [Tracker](./tracker.md)
-- Engineering handoff: [Codex Handoff](./handoff-codex.md)
+- Decision: [DEC-022](../../product/decisions/dec-022-bounded-insight-enhancement-layer.md)
+- Product Spec: [B-119 Product Spec](../../product/specs/pa-insight-enhancement-layer-product-spec.md)
+- Restart condition: [Backlog B-119](../../backlog.md)
 - Historical external source: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；仅作来源记录，不再同步

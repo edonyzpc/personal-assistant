@@ -25,3 +25,4 @@ Tracker: [Development Tracker](./tracker.md)
 - Current Product/Architecture/Governance contract:
 
 执行状态、下一步、finding 与验证证据只写 Tracker，不在本页镜像。
+本页不得增加 `Delivery status`、`Design status` 或 handoff/closeout 内容。

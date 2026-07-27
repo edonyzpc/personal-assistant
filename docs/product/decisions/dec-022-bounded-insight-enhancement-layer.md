@@ -2,7 +2,7 @@
 
 Decision ID: DEC-022
 Status: Accepted
-Updated: 2026-07-21
+Updated: 2026-07-27
 Authority: 用户于 2026-07-20 明确选择 Graph + Pattern + Maintenance，延期 Writing Insight，并确认默认启用与 Maintenance 写入边界
 Work item: B-119
 Provider boundary: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
@@ -71,8 +71,9 @@ UI、授权、持久化和派生结论耦合面，也会让与“让自己的笔
   provider notice、成本记录和现有 move apply/undo。
 - Compatibility / migration: 三项能力默认开启但受父级 Pagelet/Pattern 触发条件约束；
   不迁移或重置现有 provider 通知、Review Queue、Graph edge 或 Maintenance action state。
-- Work created or removed: 创建 Approved Product Spec 与 plan-only Active Package；
-  Writing Insight 进入 B-120。本文不授权 runtime 修改、commit、push、tag 或 release。
+- Work created or removed: Approved Product Spec 保持当前；未获实现授权的 plan-only
+  Active Package 已移回 Backlog B-119。Writing Insight 保持 B-120。本文不授权
+  runtime 修改、commit、push、tag 或 release。
 
 ## Revisit Trigger
 
@@ -86,11 +87,11 @@ UI、授权、持久化和派生结论耦合面，也会让与“让自己的笔
 
 ## Traceability
 
-- Discovery: [Accepted Discovery Summary](../../development/active/insight-enhancement-layer/discovery.md)；原路径迁移见 [Disposition Log](../../archive/disposition-log.md)
+- Discovery: [Accepted Discovery Summary](../../archive/2026/pagelet-b119-insight-enhancement-discovery.md)
 - Product Spec: [Insight Enhancement Layer Product Spec](../specs/pa-insight-enhancement-layer-product-spec.md)
 - Shared provider boundary: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
-- Active Package: [B-119 Feature Home](../../development/active/insight-enhancement-layer/README.md)
-- Architecture / SDD: 实现获授权后在 Active Package 创建 `sdd.md`
+- Restart condition: [Backlog B-119](../../backlog.md)
+- Architecture / SDD: 用户明确选择 B-119 为 `Next` 并授权实现后，按当前源码重新核对并创建 `sdd.md`
 - Backlog / successor decision: [B-120 Writing Insight](../../backlog.md)
 - Historical external source: [SLA-11](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance)；仅作来源记录，不再同步
 - Supersedes / superseded by: none

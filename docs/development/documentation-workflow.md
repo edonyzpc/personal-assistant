@@ -1,7 +1,7 @@
 # Product Documentation Workflow
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-07-27
 Authority: PA 需求、决策、工程治理、开发状态、验证与历史证据的唯一文档治理规则。
 
 ## 目标
@@ -90,8 +90,14 @@ docs/development/active/<feature>/
 - [Active Registry](./active/README.md) 只登记 Work item、Feature Home 与 Tracker 链接。
 - Feature Home 不复制 delivery status、阶段 task 或验证日志。
 - Tracker 的 `Delivery status` 是唯一执行状态。
+- Active WIP 上限为 `1 Now + 1 Next`：`Implementing | Validating | Blocked` 合计最多
+  一条，`Planned` 最多一条。`Validated` 是待 closeout 状态，不占 Next；Agent 必须
+  立即向用户提出一个简短的 closeout 决定，不能把它长期当作活跃执行。
 - Plan 只有在其内容无法简洁放入 Tracker 时才创建。
 - SDD 只有在实现需要 source-verified design 时才创建；存在 SDD 且已进入实现时，必须为 `Approved`。
+- Tracker `Current Snapshot` 就是跨会话 handoff。Active Package 不创建独立
+  `handoff*.md` 或 `closeout.md`；需要长期保留的终态证据直接压缩到 Archive，并由
+  当前 authority 入链。
 - Product Package 只链接 Decision/Product Spec；Governance Package 只链接 `GOV-xxx`。
 - Tracker 映射 owning contract 的 REQ/AC；若存在 SDD，同步设计映射。
 
@@ -120,13 +126,19 @@ implement → focused validation → review → fix → verify
 4. 从 Active Registry 删除入口。
 5. 对每份过程文档选择 `delete-after-absorption` 或 `archive`；默认删除。
 
+Closeout 的信息处置直接记录在 Tracker，完成后删除 Tracker；不要为过程本身新建
+独立 closeout 文档。
+
 ### 默认删除
 
 - Feature Home、Tracker、已完成 Plan/SDD。
 - 逐轮 review/verification 日志、handoff、临时 baseline、重复 checklist。
 - 已被 Decision/Product Spec/Governance/Architecture 吸收的讨论和 research dump。
 
-当前文档删除需要在 [Disposition Log](../archive/disposition-log.md) 记录一条可审阅的路径或目录规则与吸收目标。无需为 Archive 内的历史噪声逐文件补写 disposition；Git 历史承担恢复。
+[Disposition Log](../archive/disposition-log.md) 只覆盖曾被当前文档入链/索引、带稳定
+身份，或无法证明内容连续移动的 tracked Markdown。未入链、未索引、无稳定身份的
+一次性分析/草稿可在 checker 确认 baseline 没有当前 Markdown 入链后直接删除，不为
+清理本身新增记录。Archive 内历史噪声也无需逐文件补写；Git 历史承担恢复。
 
 ### 仅在以下情况 Archive
 
@@ -163,4 +175,8 @@ npm run docs:check
 git diff --check
 ```
 
-`docs:check` 验证当前文档链接/路径、当前索引可达性、最小 Active Package、Tracker 状态、authority/traceability、当前文档删除连续性，以及 Archive 的当前源码/文档入链。它不要求 Archive 自成完整链接图，也不要求为历史清理回填整套 package。
+`docs:check` 验证当前文档链接/路径、当前索引可达性、最小 Active Package、
+`1 Now + 1 Next`、Feature Home/Tracker 状态边界、无独立 handoff/closeout、
+authority/traceability、当前文档删除连续性，以及 Archive 的当前源码/文档入链。
+它不要求 Archive 自成完整链接图，也不要求为无入链、无稳定身份的过程草稿或历史
+清理回填整套 package。

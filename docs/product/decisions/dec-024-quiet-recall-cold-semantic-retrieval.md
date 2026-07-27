@@ -2,7 +2,7 @@
 
 Decision ID: DEC-024
 Status: Accepted
-Updated: 2026-07-21
+Updated: 2026-07-27
 Authority: 用户于 2026-07-21 在 B-118 runtime 修复的逐项产品讨论中选择方案 A
 Work item: B-118
 
@@ -96,6 +96,6 @@ call 为 0，就无法在当前 API 下先发现纯语义候选。需要在保�
 - North Star: [PA Product North Star](../pa-product-north-star.md)
 - Related decisions: [DEC-020](./dec-020-independent-quiet-recall-evaluation.md)、[DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
 - Product Specs: [Quiet Recall](../specs/pa-quiet-recall-insight-timing-product-spec.md)、[Bubble](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)、[B-118](../specs/pagelet-ui-ux-hardening-product-spec.md)、[Data Boundary](../specs/pa-data-boundary-product-spec.md)、[Eval Harness](../specs/pa-eval-harness-product-spec.md)
-- Architecture / SDD: [Pagelet Product Design](../pagelet-product-design.md)、[B-118 SDD](../../development/active/pagelet-ui-ux-optimization/sdd.md)
-- Active Package: [B-118 Feature Home](../../development/active/pagelet-ui-ux-optimization/README.md)、[Tracker](../../development/active/pagelet-ui-ux-optimization/tracker.md)
+- Architecture: [Pagelet Product Design](../pagelet-product-design.md)
+- Final delivery evidence: [B-118 compact closeout](../../archive/2026/pagelet-b118-ui-ux-hardening-closeout.md)
 - Supersedes / superseded by: narrows B-118 `RR-05` only; none otherwise

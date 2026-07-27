@@ -5,10 +5,9 @@
 ## 必读 workflow
 
 - [Documentation Workflow](./documentation-workflow.md) — 文档创建、更新、归档与删除规则。
-- [Templates](./templates/README.md) — Discovery、Decision、Product Spec、Governance Contract、Feature Home、Plan、SDD、Tracker 与 Closeout 模板。
+- [Templates](./templates/README.md) — Discovery、Decision、Product Spec、Governance Contract、Feature Home、Plan、SDD 与 Tracker 模板。
 - [Reusable Refactor Workflow](./workflows/refactor-workflow.md) — repo-scale refactor 的 phase loop。
 - [Pagelet SDD Guide](./workflows/pagelet-sdd-guide.md) — Pagelet feature 的设计与交付规范。
-- [Post-implementation Review Checklist](./workflows/pa-spec-post-impl-review-checklist.md) — Spec 实现后校准。
 - [UI/UX Review Framework](./workflows/pa-ui-ux-review-framework.md) — 可复用 UI/UX 审计方法。
 
 ## 验证

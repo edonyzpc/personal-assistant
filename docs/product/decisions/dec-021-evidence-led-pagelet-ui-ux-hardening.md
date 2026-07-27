@@ -2,7 +2,7 @@
 
 Decision ID: DEC-021
 Status: Accepted
-Updated: 2026-07-21
+Updated: 2026-07-27
 Authority: 用户于 2026-07-19 要求把当日 UI/UX 审查与桌面/iPhone 实测完整交接给 Claude Code，并用于后续优化开发；2026-07-21 选择 DEC-023 方案 A，补齐 Review/preload 风险分类
 Work item: B-118
 Scoped resolution: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
@@ -132,8 +132,8 @@ DEC-021 最初将 SG-05/SG-06 记录为 stop gates 的文字属于 2026-07-19 �
 - Compatibility / migration: 已通过的移动布局和显式关闭偏好必须保留；旧
   `bubbleNudgesEnabled=true` 迁移为 On，false、缺失或其他状态迁移为 Off，且不得
   联动 generic hints、Recap 或 RHP。
-- Work created or removed: 创建 B-118 Product Spec、Active Package 与 Claude Code
-  handoff；用户已授权 B-118 runtime 修复与验证，commit、push、tag 与 release 仍按
+- Work created or removed: B-118 runtime 修复与验证已完成，过程包在结论吸收后
+  关闭并删除；独有终态证据见 compact closeout。commit、push、tag 与 release 仍按
   各自授权边界执行。
 
 ## Revisit Trigger
@@ -147,8 +147,7 @@ DEC-021 最初将 SG-05/SG-06 记录为 stop gates 的文字属于 2026-07-19 �
 ## Traceability
 
 - Product Spec: [Pagelet UI/UX Hardening Product Spec](../specs/pagelet-ui-ux-hardening-product-spec.md)
-- Active Package: [B-118 Feature Home](../../development/active/pagelet-ui-ux-optimization/README.md)
-- Implementation handoff: [Claude Code handoff](../../development/active/pagelet-ui-ux-optimization/handoff-claude-code.md)
+- Final delivery evidence: [B-118 compact closeout](../../archive/2026/pagelet-b118-ui-ux-hardening-closeout.md)
 - Preceding decisions: [DEC-017](./dec-017-default-background-recap-preparation.md), [DEC-018](./dec-018-quality-gated-scope-recap-hints.md), [DEC-020](./dec-020-independent-quiet-recall-evaluation.md)
 - Scoped provider resolution: [DEC-023](./dec-023-shared-pagelet-provider-first-use.md)
 - Scoped semantic resolution: [DEC-024](./dec-024-quiet-recall-cold-semantic-retrieval.md)

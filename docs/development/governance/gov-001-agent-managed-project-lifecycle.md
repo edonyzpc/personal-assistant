@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-07-21
+Updated: 2026-07-27
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
@@ -26,7 +26,11 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 - B-115/REQ-02: 用户明确要求持久记录，或事项需要产品决策、进入 Roadmap/版本候选、开始跨会话研究/执行时，必须创建或复用唯一 `B-xxx`；不要求外部 issue 或双向链接。
 - B-115/REQ-03: 显式 review-only、analysis-only 或 no-file-changes 必须成为全局零写入覆盖规则。
 - B-115/REQ-04: plan/implement、continue、closeout 与 archive 必须使用确定性的授权终点、目标解析和冲突 fail-closed 规则。
-- B-115/REQ-05: docs moves、deletions、Backlog removal、Closeout disposition 与 tag release 必须由可执行 gate 证明信息连续性；例行 turn 必须按任务读取最小当前 authority，不得默认预载或更新无变化的文档。
+- B-115/REQ-05: docs moves、authority deletion、Backlog removal、Closeout disposition
+  与 tag release 必须由可执行 gate 证明信息连续性；Active delivery 保持
+  `1 Now + 1 Next`、Feature Home link-only、Tracker-only status，且不创建独立
+  handoff/closeout 文档。未入链、未索引、无稳定身份的过程草稿可由 checker 证明后
+  直接删除；例行 turn 必须按任务读取最小当前 authority。
 
 ## Non-goals
 
@@ -41,8 +45,14 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 - B-115/AC-01: 前向 contract test 同时证明 REQ-01 与 REQ-02：casual idea 零 repo 写入；明确记录或 promotion 场景只创建/复用最小 repo Backlog ID；项目内不存在 Linear Skill 路由。
 - B-115/AC-02: review-only/no-file-changes 路由测试证明 repo、Archive 与外部系统均为零写入。
 - B-115/AC-03: plan-and-implement、缺失 Plan/SDD bootstrap、零/多 Active Package continue 场景都有唯一模式与 stop point；archive collision fail closed。
-- B-115/AC-04: checker 对失效当前链接、无关 basename、外部 disposition、无 current 入链 Archive、`T-xxx` 删除和无 baseline tag release fail closed；Skill forward test 证明模板、Archive 和全量索引不会在例行 turn 被默认预读。
-- B-115/AC-05: B-115 可从 docs index → Development index → Governance index/GOV-001 定位；Tracker 独占执行状态，Plan/SDD 按复杂度创建，过程 artifact 吸收后默认删除，且不伪造 Product Decision/Product Spec provenance。
+- B-115/AC-04: checker 对失效当前链接、无关 basename、外部 disposition、无 current
+  入链 Archive、超出 `1 Now + 1 Next`、Feature Home 状态镜像、Active
+  handoff/closeout、`T-xxx` 删除和无 baseline tag release fail closed；同时允许删除
+  baseline 无入链、无稳定身份的过程草稿。
+- B-115/AC-05: B-115 可从 docs index → Development index → Governance index/GOV-001
+  定位；Tracker 独占执行状态与跨会话 handoff，Plan/SDD 按复杂度创建，`Validated`
+  自动触发 closeout 询问，过程 artifact 吸收后默认删除，且不伪造 Product
+  Decision/Product Spec provenance。
 
 ## Traceability
 
