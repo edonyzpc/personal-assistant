@@ -279,6 +279,7 @@ export class BubbleView {
         }
 
         this.setState("visible");
+        this.notifyActiveDeliveryVisible();
         if (!options.preserveFocus) this.focusInitialControl();
         this.attachGlobalListeners();
     }
@@ -305,6 +306,13 @@ export class BubbleView {
     /** Get current state. */
     get bubbleState(): BubbleState {
         return this.state;
+    }
+
+    /** True only while this exact in-memory presentation still owns the visible Bubble. */
+    isShowingContent(content: BubbleContent): boolean {
+        return this.state === "visible"
+            && this.currentContent === content
+            && Boolean(this.rootEl?.isConnected);
     }
 
     /** Check if bubble has content (visible). */
@@ -592,6 +600,19 @@ export class BubbleView {
         return (content.cards ?? []).slice(0, 3);
     }
 
+    private notifyActiveDeliveryVisible(): void {
+        if (
+            this.state !== "visible"
+            || !this.rootEl?.isConnected
+            || !this.currentContent
+        ) return;
+        const cards = this.getCards(this.currentContent);
+        const receipt = cards.length > 0
+            ? cards[this.activeCardIndex]?.deliveryReceipt
+            : this.currentContent.deliveryReceipt;
+        if (receipt) this.options.onDeliveryVisible?.(receipt);
+    }
+
     private renderInlineHint(hint: BubbleContent["inlineHint"]): void {
         if (!this.rootEl) return;
         const hintEl = this.rootEl.querySelector<HTMLElement>(".pa-pagelet-bubble-inline-hint");
@@ -682,6 +703,7 @@ export class BubbleView {
         this.activeCardIndex = next;
         this.renderContent(this.currentContent);
         this.focusActiveStackDot();
+        this.notifyActiveDeliveryVisible();
     }
 
     private focusActiveStackDot(): void {

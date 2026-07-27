@@ -32,6 +32,9 @@ import { Notice, TFile } from "obsidian";
 import { PageletOrchestrator, type PageletHost } from "../src/pagelet/orchestrator";
 import { NudgeOwner, type NudgeTicket } from "../src/pagelet/BubbleCoordinator";
 import type { OnboardingNudge } from "../src/pagelet/bubble/BubbleContent";
+import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
+import { scopeRecapToDeliveryCandidate } from "../src/pagelet/bubble/recap-card";
+import type { DeliveryReceipt } from "../src/pagelet/attention";
 import type { PageletDetailPayload } from "../src/pagelet/tab/types";
 import type {
     ConfirmedMemoryRecord,
@@ -540,6 +543,197 @@ describe("PageletOrchestrator foreground review concurrency", () => {
     });
 });
 
+describe("PageletOrchestrator attention-aware delivery integration", () => {
+    it("filters a seen Recall from proactive tickets while explicit Recall still opens", async () => {
+        const candidate: QuietRecallCandidate = {
+            id: "qr-seen-explicit",
+            title: "Recall: explicit remains available",
+            summary: "The proactive copy was already visible.",
+            sourceRefs: [{ path: "notes/older.md", evidenceStrength: "medium" }],
+            whyNow: ["This older note directly informs the current note."],
+            nextAction: "Open the source when useful.",
+            relation: "related",
+            score: 91,
+            generatedAt: "2026-07-27T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-seen-explicit",
+        };
+        const nudge: QuietRecallBubbleNudge = {
+            candidateId: candidate.id,
+            currentPath: "notes/current.md",
+            relation: candidate.relation,
+            generatedAt: candidate.generatedAt,
+        };
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({
+            openPageletDetailView,
+            runQuietRecall: async () => ({
+                generatedAt: candidate.generatedAt,
+                currentPath: nudge.currentPath,
+                totalCount: 1,
+                candidates: [candidate],
+            }),
+        });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.quietRecall.quietRecallMode = "on";
+        const orchestrator = new PageletOrchestrator(host);
+        const delivery = quietRecallCandidateToDeliveryCandidate(candidate, "en", nudge.currentPath);
+        if (!delivery?.deliveryReceipt) throw new Error("expected Recall delivery receipt");
+        const internals = orchestrator as unknown as {
+            attentionStore: {
+                markSeen(receipt: DeliveryReceipt, surface: "bubble"): void;
+            };
+            quietRecallNudgeCandidate: QuietRecallCandidate | null;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            currentAdmittedNudgeTickets(): NudgeTicket[];
+        };
+        internals.attentionStore.markSeen(delivery.deliveryReceipt, "bubble");
+        internals.quietRecallNudgeCandidate = candidate;
+        internals.quietRecallBubbleNudge = nudge;
+
+        expect(internals.currentAdmittedNudgeTickets()).not.toEqual(
+            expect.arrayContaining([expect.objectContaining({ owner: NudgeOwner.QuietRecall })]),
+        );
+
+        await orchestrator.runQuietRecall();
+        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
+            entryReason: "quiet-recall",
+            extra: expect.objectContaining({
+                quietRecall: expect.objectContaining({
+                    candidates: [expect.objectContaining({ id: candidate.id })],
+                }),
+            }),
+        }));
+    });
+
+    it("filters a seen Recap from default Bubble/nudge but keeps explicit Recap available", async () => {
+        const seedHost = makeHost();
+        const preparation = await seedHost.runScopeRecap({ mode: "background" });
+        if (preparation.status !== "ready") throw new Error("expected ready Recap fixture");
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({ openPageletDetailView });
+        host.settings.pagelet.proactiveHints = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(() => { bubbleView.bubbleState = "visible"; }),
+            close: jest.fn(() => { bubbleView.bubbleState = "hidden"; }),
+        };
+        const internals = orchestrator as unknown as {
+            attentionStore: {
+                markSeen(receipt: NonNullable<PageletDetailPayload["deliveryTarget"]>["receipt"], surface: "bubble"): void;
+            };
+            bubbleCoordinator: { memoryReadySnapshot: boolean };
+            bubbleView: typeof bubbleView;
+            petView: { rootEl: HTMLElement };
+            currentRecapScopeKey(): string | null;
+            storePreparedRecap(
+                recap: typeof preparation.artifact,
+                overview: typeof preparation.localOverview,
+                options: { allowNudge?: boolean },
+                scopeKey: string | null,
+            ): PageletDetailPayload;
+            currentPreparedRecapCandidate(): unknown;
+            currentAdmittedNudgeTickets(): NudgeTicket[];
+            showBubble(): void;
+        };
+        const payload = internals.storePreparedRecap(
+            preparation.artifact,
+            preparation.localOverview,
+            { allowNudge: true },
+            internals.currentRecapScopeKey(),
+        );
+        if (!payload.deliveryTarget) throw new Error("expected Recap delivery target");
+        internals.attentionStore.markSeen(payload.deliveryTarget.receipt, "bubble");
+        internals.bubbleCoordinator.memoryReadySnapshot = true;
+        internals.bubbleView = bubbleView;
+        internals.petView = { rootEl: {} as HTMLElement };
+
+        expect(internals.currentPreparedRecapCandidate()).toBeNull();
+        expect(internals.currentAdmittedNudgeTickets()).not.toEqual(
+            expect.arrayContaining([expect.objectContaining({ owner: NudgeOwner.PreparedRecap })]),
+        );
+        internals.showBubble();
+        const shown = (
+            bubbleView.show.mock.calls as unknown as Array<[{ type?: string }]>
+        )[0]?.[0];
+        expect(shown?.type).toBe("ready-empty");
+
+        await orchestrator.runScopeRecap();
+        expect(openPageletDetailView).toHaveBeenCalledWith(payload);
+    });
+
+    it("reconciles a pending nudge after every Action Ring close, but never during teardown", () => {
+        const orchestrator = new PageletOrchestrator(makeHost());
+        const internals = orchestrator as unknown as {
+            bubbleCoordinator: {
+                reconcileNudge(bubbleView: unknown, petView: unknown): void;
+            };
+            handleActionRingClosed(): void;
+            reconcilePetNudge(): void;
+        };
+        const reconcile = jest.spyOn(internals.bubbleCoordinator, "reconcileNudge");
+
+        // PetView uses this same callback for both "passive" and "action"
+        // reasons, so Capture cannot strand a nudge that arrived while open.
+        internals.handleActionRingClosed();
+        expect(reconcile).toHaveBeenCalledTimes(1);
+
+        orchestrator.destroy();
+        reconcile.mockClear();
+        internals.reconcilePetNudge();
+        expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it("lets Escape dismiss an open Action Ring before an already open Panel", () => {
+        const orchestrator = new PageletOrchestrator(makeHost());
+        const dismissActionRingFromEscape = jest.fn();
+        const panelView = {
+            isOpen: true,
+            close: jest.fn(),
+        };
+        const petView = {
+            actionRingOpen: true,
+            dismissActionRingFromEscape,
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            panelView: typeof panelView;
+            handleEscape(event: KeyboardEvent): void;
+        };
+        internals.petView = petView;
+        internals.panelView = panelView;
+        const eventTarget = new EventTarget();
+        const competingDocumentCaptureListener = jest.fn(() => panelView.close());
+        eventTarget.addEventListener("keydown", internals.handleEscape as EventListener);
+        eventTarget.addEventListener("keydown", competingDocumentCaptureListener);
+        const firstEscape = new Event("keydown", {
+            cancelable: true,
+        }) as KeyboardEvent;
+        Object.defineProperty(firstEscape, "key", { value: "Escape" });
+
+        eventTarget.dispatchEvent(firstEscape);
+
+        expect(dismissActionRingFromEscape).toHaveBeenCalledTimes(1);
+        expect(firstEscape.defaultPrevented).toBe(true);
+        expect(competingDocumentCaptureListener).not.toHaveBeenCalled();
+        expect(panelView.close).not.toHaveBeenCalled();
+
+        petView.actionRingOpen = false;
+        const secondEscape = new Event("keydown", {
+            cancelable: true,
+        }) as KeyboardEvent;
+        Object.defineProperty(secondEscape, "key", { value: "Escape" });
+
+        eventTarget.dispatchEvent(secondEscape);
+
+        expect(panelView.close).toHaveBeenCalledTimes(1);
+        expect(secondEscape.defaultPrevented).toBe(true);
+        expect(competingDocumentCaptureListener).not.toHaveBeenCalled();
+    });
+});
+
 describe("PageletOrchestrator quick review command", () => {
     it("keeps cached generic findings out of Bubble without triggering a provider call", async () => {
         const foregroundAnalyze = jest.fn(async () => ({
@@ -561,7 +755,7 @@ describe("PageletOrchestrator quick review command", () => {
         const panelView = { open: jest.fn() };
 
         (orchestrator as unknown as {
-            petView: { rootEl: HTMLElement };
+            petView: { rootEl: HTMLElement; stateMachine: { state: "idle" } };
             bubbleView: typeof bubbleView;
             panelView: typeof panelView;
             preloadCache: {
@@ -572,7 +766,10 @@ describe("PageletOrchestrator quick review command", () => {
                     tokenCost: { input: number; output: number };
                 }): void;
             };
-        }).petView = { rootEl: {} as HTMLElement };
+        }).petView = {
+            rootEl: {} as HTMLElement,
+            stateMachine: { state: "idle" },
+        };
         (orchestrator as unknown as { bubbleView: typeof bubbleView }).bubbleView = bubbleView;
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
         (orchestrator as unknown as {
@@ -849,9 +1046,14 @@ describe("PageletOrchestrator detail expansion", () => {
             }],
         };
         const orchestrator = new PageletOrchestrator(host);
+        const candidate = scopeRecapToDeliveryCandidate(recap, "en");
+        if (!candidate) throw new Error("expected Recap delivery candidate");
         const payload = (orchestrator as unknown as {
-            buildPreparedRecapPayload(recap: ScopeRecapRunResult): PageletDetailPayload;
-        }).buildPreparedRecapPayload(recap);
+            buildPreparedRecapPayload(
+                recap: ScopeRecapRunResult,
+                candidate: NonNullable<ReturnType<typeof scopeRecapToDeliveryCandidate>>,
+            ): PageletDetailPayload;
+        }).buildPreparedRecapPayload(recap, candidate);
         const cards = payload.content.flatMap((section) => (
             "cards" in section ? section.cards : []
         ));
@@ -1566,6 +1768,57 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(probe.transitions).toEqual(["analysis-start", "analysis-done"]);
     });
 
+    it("keeps a background Recap failure silent in the ordinary Pet resolver", async () => {
+        const ready = await makeHost().runScopeRecap({ mode: "background" });
+        const noInsight: ScopeRecapPreparationResult = {
+            status: "no_reliable_insight",
+            artifact: null,
+            localOverview: ready.localOverview,
+            attempt: { ...ready.attempt, outcome: "quality_rejected" },
+        };
+        const runScopeRecap = jest.fn(async () => noInsight);
+        const host = makeHost({ runScopeRecap });
+        const orchestrator = new PageletOrchestrator(host);
+        const probe = makePetWorkProbe();
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn((content: { type: string }) => {
+                bubbleView.bubbleState = "visible";
+                return content;
+            }),
+            close: jest.fn(() => {
+                bubbleView.bubbleState = "hidden";
+            }),
+        };
+        const petView = Object.assign(probe.petView, {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            prepareRecapDelivery(reason: "idle"): Promise<void>;
+            bubbleCoordinator: {
+                memoryReadySnapshot: boolean;
+                handlePetClick(bubble: unknown, pet: unknown): void;
+            };
+            recapBackgroundFailureCount: number;
+        };
+        internals.petView = petView;
+
+        await internals.prepareRecapDelivery("idle");
+
+        expect(internals.recapBackgroundFailureCount).toBe(1);
+        internals.bubbleCoordinator.memoryReadySnapshot = true;
+        internals.bubbleCoordinator.handlePetClick(bubbleView, petView);
+        const shown = (
+            bubbleView.show.mock.calls as unknown as Array<[{ type: string }]>
+        )[0]?.[0];
+        expect(shown?.type).toBe("intentionally-quiet");
+        expect(petView.openActionRing).not.toHaveBeenCalled();
+        expect(runScopeRecap).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
         ["provider missing", (host: PageletHost) => {
             host.isScopeRecapProviderConfigured = () => false;
@@ -1808,8 +2061,25 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
 
         const explanationPayload = openPageletDetailView.mock.calls[0]?.[0];
-        const retryCard = explanationPayload?.content
+        const explanationCards = explanationPayload?.content
             .flatMap((section) => ("cards" in section ? section.cards : []))
+            ?? [];
+        expect(explanationCards).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                body: expect.stringContaining(
+                    "Pagelet can currently verify 2 source note(s), with 0 skipped",
+                ),
+            }),
+            expect.objectContaining({ actionLabel: "Retry" }),
+            expect.objectContaining({
+                sourceLinks: [
+                    { path: "notes/current.md", title: "current" },
+                    { path: "notes/related.md", title: "related" },
+                ],
+            }),
+            expect.objectContaining({ actionLabel: "View sources" }),
+        ]));
+        const retryCard = explanationCards
             .find((card) => card.actionLabel === "Retry");
         expect(retryCard?.actionCallback).toBeDefined();
         retryCard?.actionCallback?.();
@@ -1866,7 +2136,7 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
     });
 
-    it("routes Retry to provider settings without provider, duplicate detail, or write side effects", async () => {
+    it("shows a setup action without a provider and opens settings without write side effects", async () => {
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
         const openPageletSettings = jest.fn();
         const runScopeRecap = jest.fn(makeHost().runScopeRecap);
@@ -1888,19 +2158,25 @@ describe("PageletOrchestrator detail expansion", () => {
         await orchestrator.getCommandCallbacks().onScopeRecap();
 
         const explanationPayload = openPageletDetailView.mock.calls[0]?.[0];
-        const retryCard = explanationPayload?.content
+        const explanationCards = explanationPayload?.content
             .flatMap((section) => ("cards" in section ? section.cards : []))
-            .find((card) => card.actionLabel === "Retry");
-        expect(retryCard?.actionCallback).toBeDefined();
+            ?? [];
+        expect(explanationCards).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ actionLabel: "Retry" }),
+        ]));
+        const setupCard = explanationCards
+            .find((card) => card.actionLabel === "Open settings");
+        expect(setupCard).toEqual(expect.objectContaining({
+            title: "Set up AI before preparing a Recap",
+            body: expect.stringContaining("Choose an AI provider in Settings"),
+        }));
+        expect(setupCard?.actionCallback).toBeDefined();
 
-        retryCard?.actionCallback?.();
+        setupCard?.actionCallback?.();
         await flushAsyncWork();
 
         expect(openPageletSettings).toHaveBeenCalledTimes(1);
-        expect(Notice).toHaveBeenCalledWith(
-            "Set up an AI provider before retrying Scope Recap.",
-            5000,
-        );
+        expect(Notice).not.toHaveBeenCalled();
         expect(runScopeRecap).not.toHaveBeenCalled();
         expect(openPageletDetailView).toHaveBeenCalledTimes(1);
         expect(writeReviewNote).not.toHaveBeenCalled();

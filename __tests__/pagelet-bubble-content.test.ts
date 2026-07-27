@@ -6,6 +6,7 @@ import {
     buildPreparedRecapDeliveryContent,
     buildProactiveRecallDeliveryContent,
     buildRecallDeliveryContent,
+    buildRecallDeliveryStackContent,
     buildNudgeContent,
     buildOnboardingNudgeContent,
     buildPatternDetectionNudgeContent,
@@ -16,6 +17,8 @@ import {
     buildContextLimitedContent,
     buildIntentionallyQuietContent,
     buildLocalDiscoveryClueContent,
+    buildReadyEmptyContent,
+    buildTerseEmptyContent,
 } from "../src/pagelet/bubble/BubbleContent";
 import {
     quietRecallCandidateToDeliveryCandidate,
@@ -53,7 +56,11 @@ describe("Pagelet Bubble quick access content", () => {
             evaluationFingerprint: "recall-evaluation-1",
         };
 
-        expect(quietRecallCandidateToDeliveryCandidate(candidate)).toEqual({
+        expect(quietRecallCandidateToDeliveryCandidate(
+            candidate,
+            "zh",
+            "Projects/Current.md",
+        )).toMatchObject({
             id: "recall-1",
             kind: "recall",
             title: "Recall: Alpha",
@@ -63,8 +70,50 @@ describe("Pagelet Bubble quick access content", () => {
             preparedAt: "2026-07-05T12:00:00.000Z",
             staleStatus: "fresh",
             route: { surface: "tab", payloadType: "quiet-recall" },
+            deliveryReceipt: {
+                version: 1,
+                kind: "recall",
+                fingerprint: expect.stringMatching(/^v1:recall:/),
+            },
         });
         expect(quietRecallCandidateToDiscoveryCandidate(candidate)).toBeNull();
+    });
+
+    it("includes Recall locale and current-note identity in the transient receipt", () => {
+        const candidate = {
+            id: "recall-identity",
+            title: "Recall: Alpha",
+            summary: "Alpha may matter again.",
+            sourceRefs: [{ path: "Projects/Alpha.md" }],
+            whyNow: ["The current note revisits Alpha."],
+            nextAction: "Open the source note.",
+            relation: "related" as const,
+            score: 82,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            evaluationProvenance: "ai" as const,
+            evaluationFingerprint: "evaluation-cache-identity",
+        };
+
+        const baseline = quietRecallCandidateToDeliveryCandidate(
+            candidate,
+            "en",
+            "Projects/Current.md",
+        );
+        const localized = quietRecallCandidateToDeliveryCandidate(
+            candidate,
+            "zh",
+            "Projects/Current.md",
+        );
+        const otherCurrentNote = quietRecallCandidateToDeliveryCandidate(
+            candidate,
+            "en",
+            "Projects/Other.md",
+        );
+
+        expect(baseline?.deliveryReceipt?.fingerprint)
+            .not.toBe(localized?.deliveryReceipt?.fingerprint);
+        expect(baseline?.deliveryReceipt?.fingerprint)
+            .not.toBe(otherCurrentNote?.deliveryReceipt?.fingerprint);
     });
 
     it("fails closed when a Quiet Recall candidate has not passed AI evaluation", () => {
@@ -81,7 +130,7 @@ describe("Pagelet Bubble quick access content", () => {
             evaluationProvenance: "local" as const,
         };
 
-        expect(quietRecallCandidateToDeliveryCandidate(candidate)).toBeNull();
+        expect(quietRecallCandidateToDeliveryCandidate(candidate, "en")).toBeNull();
         expect(quietRecallCandidateToDiscoveryCandidate(candidate)).toEqual({
             id: "recall-local",
             sourceRefs: [{ path: "Projects/Local.md", title: "Local" }],
@@ -148,7 +197,7 @@ describe("Pagelet Bubble quick access content", () => {
             nextAction: "Open the source note.",
             generatedAt: "2026-07-05T12:00:00.000Z",
             evaluationProvenance: "ai",
-        })).toBeNull();
+        }, "en")).toBeNull();
     });
 
     it("adapts fresh ScopeRecap artifacts into Recap Delivery candidates", () => {
@@ -200,7 +249,7 @@ describe("Pagelet Bubble quick access content", () => {
             dataBoundarySnapshotId: "data_boundary:scope_recap",
         };
 
-        expect(scopeRecapToDeliveryCandidate(recap)).toMatchObject({
+        expect(scopeRecapToDeliveryCandidate(recap, "zh")).toMatchObject({
             id: expect.stringMatching(/^recap-insight-/),
             kind: "recap",
             title: "Delivery and menu designs conflict",
@@ -211,17 +260,22 @@ describe("Pagelet Bubble quick access content", () => {
             ],
             staleStatus: "fresh",
             route: { surface: "tab", payloadType: "scope-recap" },
+            deliveryReceipt: {
+                version: 1,
+                kind: "recap",
+                fingerprint: expect.stringMatching(/^v1:recap:/),
+            },
         });
 
         expect(scopeRecapToDeliveryCandidate({
             ...recap,
             staleStatus: "stale",
-        })).toBeNull();
+        }, "zh")).toBeNull();
 
         expect(scopeRecapToDeliveryCandidate({
             ...recap,
             tensions: [],
-        })).toBeNull();
+        }, "zh")).toBeNull();
 
         expect(scopeRecapToDeliveryCandidate({
             ...recap,
@@ -229,7 +283,7 @@ describe("Pagelet Bubble quick access content", () => {
                 ...recap.tensions[0],
                 sourceRefs: recap.tensions[0].sourceRefs.slice(0, 1),
             }],
-        })).toMatchObject({
+        }, "zh")).toMatchObject({
             kind: "recap",
             title: "Delivery and menu designs conflict",
             sourceRefs: [{ path: "Projects/PA/A.md", title: "A" }],
@@ -338,6 +392,21 @@ describe("Pagelet Bubble quick access content", () => {
         expect(later.actions.map((action) => action.label)).toEqual(["Find related old notes"]);
     });
 
+    it("separates the one-time Ready Empty teaching copy from terse explicit empty results", () => {
+        const callbacks = makeCallbacks();
+        const first = buildReadyEmptyContent(callbacks, "en");
+        const terse = buildTerseEmptyContent(callbacks, "en");
+
+        expect(first.type).toBe("ready-empty");
+        expect(first.findings).toHaveLength(2);
+        expect(terse).toMatchObject({
+            type: "ready-empty",
+            findings: [{ text: expect.any(String) }],
+        });
+        expect(terse.findings[0]?.text).not.toBe(first.findings[1]?.text);
+        expect(terse.actions.map((action) => action.label)).toEqual(["Find related old notes"]);
+    });
+
     it("does not offer prepared suggestions when a nudge has no findings", () => {
         const callbacks = makeCallbacks();
         const content = buildNudgeContent([], callbacks, "en");
@@ -441,6 +510,11 @@ describe("Pagelet Bubble quick access content", () => {
             whyNow: ["The current note mentions the same project."],
             preparedAt: "2026-07-05T12:00:00.000Z",
             route: { surface: "tab" as const, payloadType: "quiet-recall" },
+            deliveryReceipt: {
+                version: 1 as const,
+                kind: "recall" as const,
+                fingerprint: "v1:recall:delivery-one",
+            },
         };
         const callbacks = {
             onOpen: jest.fn(),
@@ -457,6 +531,7 @@ describe("Pagelet Bubble quick access content", () => {
             sourceTitle: "Decision",
         }]);
         expect(content.inlineHint?.text).toBe("The current note mentions the same project.");
+        expect(content.deliveryReceipt).toBe(candidate.deliveryReceipt);
         expect(content.actions.map((action) => action.label)).toEqual([
             "Open source note",
             "Link",
@@ -472,6 +547,36 @@ describe("Pagelet Bubble quick access content", () => {
         expect(callbacks.onLater).toHaveBeenCalledWith(candidate);
     });
 
+    it("keeps one transient receipt on each explicit Recall stack card", () => {
+        const callbacks = {
+            onOpen: jest.fn(),
+            onLater: jest.fn(),
+        };
+        const candidates = ["one", "two"].map((suffix) => ({
+            id: `recall-${suffix}`,
+            kind: "recall" as const,
+            title: `Recall ${suffix}`,
+            body: `Body ${suffix}`,
+            sourceRefs: [{ path: `Projects/${suffix}.md`, title: suffix }],
+            whyNow: [`Why ${suffix}`],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            route: { surface: "tab" as const, payloadType: "quiet-recall" },
+            deliveryReceipt: {
+                version: 1 as const,
+                kind: "recall" as const,
+                fingerprint: `v1:recall:${suffix}`,
+            },
+        }));
+
+        const content = buildRecallDeliveryStackContent(candidates, callbacks, "en");
+
+        expect(content.deliveryReceipt).toBe(candidates[0].deliveryReceipt);
+        expect(content.cards?.map((card) => card.deliveryReceipt)).toEqual([
+            candidates[0].deliveryReceipt,
+            candidates[1].deliveryReceipt,
+        ]);
+    });
+
     it("keeps proactive Recall Delivery actions to View, Later, and Dismiss", () => {
         const candidate = {
             id: "recall-proactive-1",
@@ -482,6 +587,11 @@ describe("Pagelet Bubble quick access content", () => {
             whyNow: ["The current note mentions the same project."],
             preparedAt: "2026-07-05T12:00:00.000Z",
             route: { surface: "tab" as const, payloadType: "quiet-recall" },
+            deliveryReceipt: {
+                version: 1 as const,
+                kind: "recall" as const,
+                fingerprint: "v1:recall:proactive-one",
+            },
         };
         const callbacks = {
             onView: jest.fn(),
@@ -498,6 +608,7 @@ describe("Pagelet Bubble quick access content", () => {
         ]);
         expect(content.actions.map((action) => action.label)).not.toContain("Link");
         expect(content.actions.map((action) => action.label)).not.toContain("Save");
+        expect(content.deliveryReceipt).toBe(candidate.deliveryReceipt);
 
         content.actions.forEach((action) => action.callback());
 
@@ -520,6 +631,11 @@ describe("Pagelet Bubble quick access content", () => {
             preparedAt: "2026-07-05T12:00:00.000Z",
             staleStatus: "fresh" as const,
             route: { surface: "tab" as const, payloadType: "scope-recap" },
+            deliveryReceipt: {
+                version: 1 as const,
+                kind: "recap" as const,
+                fingerprint: "v1:recap:delivery-one",
+            },
         };
         const callbacks = {
             onViewRecap: jest.fn(),
@@ -534,6 +650,7 @@ describe("Pagelet Bubble quick access content", () => {
             sourceLink: "Projects/A.md",
             sourceTitle: "Project recap · 2 sources",
         }));
+        expect(content.deliveryReceipt).toBe(candidate.deliveryReceipt);
         expect(JSON.stringify(content)).not.toContain("Generate summary");
         expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
 

@@ -247,6 +247,12 @@ import {
     createMemoryGovernanceOpaqueVaultKey,
 } from '../src/plugin';
 import { confirmUserAction } from '../src/confirm';
+import {
+    AttentionAwareDeliveryStore,
+    DELIVERY_FINGERPRINT_VERSION,
+    type AttentionDeliveryDiagnostic,
+    type DeliveryReceipt,
+} from '../src/pagelet/attention';
 import { PageletDetailView } from '../src/pagelet/tab';
 import type {
     ConfirmedMemoryRecord,
@@ -6338,6 +6344,171 @@ describe('Pagelet production rate-limit storage', () => {
             .not.toBe(second.pageletRateLimitStorageKey('background-review'));
         expect(first.pageletChangeWatermarkStorageKey())
             .not.toBe(second.pageletChangeWatermarkStorageKey());
+    });
+
+    describe('attention host storage integration', () => {
+        const testReceipt: DeliveryReceipt = {
+            version: DELIVERY_FINGERPRINT_VERSION,
+            kind: 'recall',
+            fingerprint: 'v1:recall:0000000000000001',
+        };
+
+        it('isolates device-local attention state for same-name vaults at different local paths', () => {
+            const localStorage = installMockWindowLocalStorage();
+            try {
+                const first = createRateLimitHarness();
+                const second = createRateLimitHarness();
+                first.app.vault.adapter.getBasePath.mockReturnValue('/vaults/one/shared-name');
+                second.app.vault.adapter.getBasePath.mockReturnValue('/vaults/two/shared-name');
+                first.app.vault.getName.mockReturnValue('shared-name');
+                second.app.vault.getName.mockReturnValue('shared-name');
+
+                const firstStorage = first.createPageletHost().createPageletAttentionStorage?.();
+                const secondStorage = second.createPageletHost().createPageletAttentionStorage?.();
+                if (!firstStorage || !secondStorage) {
+                    throw new Error('expected production Pagelet attention storage');
+                }
+
+                firstStorage.save('first-vault-state');
+                secondStorage.save('second-vault-state');
+
+                const [firstKey] = localStorage.storage.setItem.mock.calls[0]!;
+                const [secondKey] = localStorage.storage.setItem.mock.calls[1]!;
+                expect(firstKey).toMatch(/^pa-pagelet-attention:v1:/);
+                expect(secondKey).toMatch(/^pa-pagelet-attention:v1:/);
+                expect(firstKey).not.toBe(secondKey);
+                expect(firstStorage.load()).toBe('first-vault-state');
+                expect(secondStorage.load()).toBe('second-vault-state');
+            } finally {
+                localStorage.restore();
+            }
+        });
+
+        it('returns no host storage without stable vault identity and keeps the store session-only', () => {
+            const localStorage = installMockWindowLocalStorage();
+            try {
+                const plugin = createRateLimitHarness();
+                delete plugin.app.vault.adapter.getBasePath;
+                const diagnostics: AttentionDeliveryDiagnostic[] = [];
+
+                const storage = plugin.createPageletHost().createPageletAttentionStorage?.();
+                const store = new AttentionAwareDeliveryStore({
+                    storage,
+                    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+                });
+
+                expect(storage).toBeUndefined();
+                expect(store.mode()).toBe('session-only');
+                expect(diagnostics).toEqual([{
+                    mode: 'session-only',
+                    reason: 'storage-unavailable',
+                }]);
+                expect(localStorage.storage.getItem).not.toHaveBeenCalled();
+                expect(localStorage.storage.setItem).not.toHaveBeenCalled();
+            } finally {
+                localStorage.restore();
+            }
+        });
+
+        it('propagates localStorage read failures so the store falls back to session-only', () => {
+            const localStorage = installMockWindowLocalStorage();
+            try {
+                const plugin = createRateLimitHarness();
+                const diagnostics: AttentionDeliveryDiagnostic[] = [];
+                localStorage.storage.getItem.mockImplementation(() => {
+                    throw new Error('localStorage read denied');
+                });
+                const storage = plugin.createPageletHost().createPageletAttentionStorage?.();
+                if (!storage) throw new Error('expected production Pagelet attention storage');
+
+                const store = new AttentionAwareDeliveryStore({
+                    storage,
+                    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+                });
+
+                expect(store.mode()).toBe('session-only');
+                expect(diagnostics).toEqual([{
+                    mode: 'session-only',
+                    reason: 'storage-read-failed',
+                }]);
+                expect(localStorage.storage.getItem).toHaveBeenCalledTimes(1);
+                expect(localStorage.storage.setItem).not.toHaveBeenCalled();
+            } finally {
+                localStorage.restore();
+            }
+        });
+
+        it('propagates localStorage write failures while preserving current-session seen state', () => {
+            const localStorage = installMockWindowLocalStorage();
+            try {
+                const plugin = createRateLimitHarness();
+                const diagnostics: AttentionDeliveryDiagnostic[] = [];
+                localStorage.storage.setItem.mockImplementation(() => {
+                    throw new Error('localStorage quota denied');
+                });
+                const storage = plugin.createPageletHost().createPageletAttentionStorage?.();
+                if (!storage) throw new Error('expected production Pagelet attention storage');
+                const store = new AttentionAwareDeliveryStore({
+                    storage,
+                    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+                });
+
+                store.markSeen(testReceipt, 'bubble');
+
+                expect(store.mode()).toBe('session-only');
+                expect(store.isSeen(testReceipt)).toBe(true);
+                expect(diagnostics).toEqual([{
+                    mode: 'session-only',
+                    reason: 'storage-write-failed',
+                }]);
+                expect(localStorage.storage.setItem).toHaveBeenCalledTimes(1);
+            } finally {
+                localStorage.restore();
+            }
+        });
+
+        it('serializes attention state only to localStorage, never Vault notes or settings', () => {
+            const localStorage = installMockWindowLocalStorage();
+            try {
+                const plugin = createRateLimitHarness();
+                plugin.settings = { sentinel: 'must-not-be-written' };
+                plugin.saveSettings = jest.fn();
+                plugin.app.vault.create = jest.fn();
+                plugin.app.vault.modify = jest.fn();
+                plugin.app.vault.process = jest.fn();
+                plugin.app.vault.adapter.write = jest.fn();
+                const storage = plugin.createPageletHost().createPageletAttentionStorage?.();
+                if (!storage) throw new Error('expected production Pagelet attention storage');
+                const store = new AttentionAwareDeliveryStore({
+                    storage,
+                    now: () => 123,
+                });
+
+                store.markSeen(testReceipt, 'detail');
+
+                expect(localStorage.storage.setItem).toHaveBeenCalledTimes(1);
+                const [key, serialized] = localStorage.storage.setItem.mock.calls[0]!;
+                expect(key).toMatch(/^pa-pagelet-attention:v1:/);
+                expect(JSON.parse(serialized)).toEqual({
+                    schemaVersion: 1,
+                    fingerprintVersion: DELIVERY_FINGERPRINT_VERSION,
+                    seen: [{
+                        kind: 'recall',
+                        fingerprint: testReceipt.fingerprint,
+                        seenAt: 123,
+                        surface: 'detail',
+                    }],
+                    acknowledgements: [],
+                });
+                expect(plugin.app.vault.create).not.toHaveBeenCalled();
+                expect(plugin.app.vault.modify).not.toHaveBeenCalled();
+                expect(plugin.app.vault.process).not.toHaveBeenCalled();
+                expect(plugin.app.vault.adapter.write).not.toHaveBeenCalled();
+                expect(plugin.saveSettings).not.toHaveBeenCalled();
+            } finally {
+                localStorage.restore();
+            }
+        });
     });
 
     it.each(buckets)('fails %s closed when stable vault identity is unavailable', async (bucket) => {

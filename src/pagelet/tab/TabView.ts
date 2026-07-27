@@ -21,7 +21,13 @@ import { confirmUserAction } from "../../confirm";
 
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import type { PanelFinding, PanelMemoryRecentChange } from "../panel/types";
-import type { PageletDetailPayload, TabCard, TabEntryReason, TabSection } from "./types";
+import type {
+    PageletDetailDeliveryTarget,
+    PageletDetailPayload,
+    TabCard,
+    TabEntryReason,
+    TabSection,
+} from "./types";
 import {
     type ConfirmedMemoryRecord,
     type ContextPagerState,
@@ -74,7 +80,7 @@ export interface TabViewOptions {
     onOpenSettings?: () => void;
 }
 
-type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason">;
+type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget">;
 type DetailExtra = NonNullable<PageletDetailPayload["extra"]>;
 
 let tabLabelSequence = 0;
@@ -121,6 +127,7 @@ export class TabView {
     private memoryDigestDeferred = false;
     private actionStateGeneration = 0;
     private disposed = false;
+    private readonly committedDeliveryTargets = new WeakSet<object>();
 
     constructor(locale: PageletLocale = "en", options: TabViewOptions = {}) {
         this.locale = locale;
@@ -232,7 +239,11 @@ export class TabView {
         };
     }
 
-    private renderExtractedSection<T>(data: T | undefined, factory: (data: T) => TabSectionRenderer): boolean {
+    private renderExtractedSection<T>(
+        data: T | undefined,
+        factory: (data: T) => TabSectionRenderer,
+        afterAppend?: (renderer: TabSectionRenderer) => void,
+    ): boolean {
         if (!this.bodyEl || !data) return false;
         const renderer = factory(data);
         if (!renderer.hasContent()) {
@@ -243,7 +254,14 @@ export class TabView {
         renderer.render(wrapper);
         this.bodyEl.appendChild(wrapper);
         this.sectionRenderers.push(renderer);
+        afterAppend?.(renderer);
         return true;
+    }
+
+    private commitDeliveryTarget(target: PageletDetailDeliveryTarget | undefined): void {
+        if (!target || this.committedDeliveryTargets.has(target)) return;
+        this.committedDeliveryTargets.add(target);
+        target.onVisible(target.receipt);
     }
 
     private handleSectionRerender(): void {
@@ -418,13 +436,25 @@ export class TabView {
                     onUndo: this.options.onUndoMaintenanceAction,
                     onOpenSettings: this.options.onOpenSettings,
                 }, sectionCallbacks, this.maintenanceActionState)) },
-            { id: "quiet-recall", labelKey: "pagelet.tab.recall.title", render: () => this.renderExtractedSection(options.extra?.quietRecall, (data) =>
-                new QuietRecallSection(this.locale, data, {
+            { id: "quiet-recall", labelKey: "pagelet.tab.recall.title", render: () => this.renderExtractedSection(
+                options.extra?.quietRecall,
+                (data) => new QuietRecallSection(this.locale, data, {
                     onSave: this.options.onSaveQuietRecallAsInsight,
                     onLink: this.options.onLinkRecallCandidate,
                     onOpenSource: this.options.onOpenSource,
                     onOpenMemorySettings: this.options.onOpenMemorySettings,
-                }, sectionCallbacks, options.sourcePath, this.quietRecallSaveState, this.quietRecallLinkState)) },
+                }, sectionCallbacks, options.sourcePath, this.quietRecallSaveState, this.quietRecallLinkState),
+                (renderer) => {
+                    const target = options.deliveryTarget;
+                    if (
+                        target?.kind === "quiet-recall"
+                        && renderer instanceof QuietRecallSection
+                        && renderer.hasRenderedCandidate(target.candidateId)
+                    ) {
+                        this.commitDeliveryTarget(target);
+                    }
+                },
+            ) },
             { id: "graph-discovery", labelKey: "pagelet.tab.graphDiscovery.title", render: () => this.renderGraphDiscoveryContent(options.extra?.graphDiscovery) },
             { id: "pattern-detection", labelKey: "pagelet.tab.patterns.title", render: () => this.renderPatternDetectionContent(options.extra?.patternDetection) },
             { id: "saved-insights", labelKey: "pagelet.tab.savedInsights.title", render: () => this.renderSavedInsightContent(options.extra?.savedInsights) },
@@ -773,12 +803,22 @@ export class TabView {
         for (const section of sections) {
             const sectionEl = el("div", "pa-pagelet-tab-section");
             sectionEl.appendChild(el("h2", undefined, section.title));
+            let renderedTarget = false;
 
             for (const card of section.cards) {
                 sectionEl.appendChild(this.renderStyledCard(card));
+                if (
+                    this.currentOptions.deliveryTarget?.kind === "tab-card"
+                    && this.currentOptions.deliveryTarget.card === card
+                ) {
+                    renderedTarget = true;
+                }
             }
 
             this.bodyEl.appendChild(sectionEl);
+            if (renderedTarget) {
+                this.commitDeliveryTarget(this.currentOptions.deliveryTarget);
+            }
         }
     }
 

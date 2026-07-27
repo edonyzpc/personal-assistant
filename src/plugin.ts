@@ -774,6 +774,7 @@ const QUIET_RECALL_CALL_LIMITS = Object.freeze({ hourly: 10, daily: 50 });
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 const PAGELET_CHANGE_WATERMARK_STORAGE_KEY_PREFIX = "pa-pagelet-preload-changes";
+const PAGELET_ATTENTION_STORAGE_KEY_PREFIX = "pa-pagelet-attention";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
 const PAGELET_DISCOVERY_MAX_RELATED_NOTES = 6;
 const PAGELET_BACKGROUND_STANDARD_LIMITS = Object.freeze({
@@ -2315,6 +2316,7 @@ export class PluginManager extends Plugin {
                 () => this.pageletVaultStorageScope() ? getPlatformLocalStorage() : undefined,
                 this.pageletChangeWatermarkStorageKey(),
             ),
+            createPageletAttentionStorage: () => this.createPageletAttentionStorage(),
             openQuickCapture: () => this.openQuickCaptureModal(),
             createPreloadAnalyzeCallback: (): AnalyzeCallback => {
                 return async (files, config, callContext) => {
@@ -7010,6 +7012,24 @@ export class PluginManager extends Plugin {
             PAGELET_CHANGE_WATERMARK_STORAGE_KEY_PREFIX,
             this.pageletVaultStorageScope() ?? "unavailable",
         ].join(":");
+    }
+
+    private createPageletAttentionStorage(): import("./pagelet/attention").PageletAttentionStorage | undefined {
+        const vaultStorageScope = this.pageletVaultStorageScope();
+        if (!vaultStorageScope) return undefined;
+        const key = [PAGELET_ATTENTION_STORAGE_KEY_PREFIX, "v1", vaultStorageScope].join(":");
+        return {
+            load: (): string | null => {
+                const storage = getPlatformLocalStorage();
+                if (!storage) throw new Error("Pagelet attention storage unavailable");
+                return storage.getItem(key);
+            },
+            save: (serialized: string): void => {
+                const storage = getPlatformLocalStorage();
+                if (!storage) throw new Error("Pagelet attention storage unavailable");
+                storage.setItem(key, serialized);
+            },
+        };
     }
 
     /** Stable device-local identity prevents same-name vaults sharing quotas or watermarks. */

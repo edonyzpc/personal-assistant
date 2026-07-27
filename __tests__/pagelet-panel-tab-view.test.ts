@@ -3203,6 +3203,157 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(JSON.stringify(state)).not.toContain("diary thread");
     });
 
+    it("commits only the exact rendered Quiet Recall target", () => {
+        const candidate: QuietRecallCandidate = {
+            id: "qr-delivery-target",
+            title: "Recall: exact target",
+            summary: "Only this rendered card may acknowledge delivery.",
+            sourceRefs: [{ path: "notes/older.md", evidenceStrength: "medium" }],
+            whyNow: ["This older note informs the current note."],
+            nextAction: "Open it when useful.",
+            relation: "related",
+            score: 90,
+            generatedAt: "2026-07-27T12:00:00.000Z",
+            evaluationProvenance: "ai",
+            evaluationFingerprint: "eval-detail-target",
+        };
+        const receipt = {
+            version: 1 as const,
+            kind: "recall" as const,
+            fingerprint: "v1:recall:0000000000000001",
+        };
+        const onVisible = jest.fn();
+        const target = {
+            kind: "quiet-recall" as const,
+            candidateId: candidate.id,
+            receipt,
+            onVisible,
+        };
+        const options = {
+            layoutType: "current" as const,
+            entryReason: "quiet-recall" as const,
+            sourcePath: "notes/current.md",
+            extra: {
+                quietRecall: {
+                    generatedAt: candidate.generatedAt,
+                    currentPath: "notes/current.md",
+                    totalCount: 1,
+                    candidates: [candidate],
+                },
+            },
+            deliveryTarget: target,
+        };
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+        tab.mount(container as unknown as HTMLElement);
+
+        tab.open("Quiet Recall", [], options);
+        tab.open("Quiet Recall", [], options);
+        expect(onVisible).toHaveBeenCalledTimes(1);
+        expect(onVisible).toHaveBeenCalledWith(receipt);
+
+        const missingTarget = jest.fn();
+        const failedContainer = new FakeElement("div");
+        failedContainer.isConnected = true;
+        const failedTab = new TabView("en");
+        failedTab.mount(failedContainer as unknown as HTMLElement);
+        failedTab.open("Quiet Recall", [], {
+            ...options,
+            deliveryTarget: {
+                ...target,
+                candidateId: "qr-not-rendered",
+                onVisible: missingTarget,
+            },
+        });
+        expect(missingTarget).not.toHaveBeenCalled();
+    });
+
+    it("commits a Recap receipt only when the exact target TabCard is rendered", () => {
+        const targetCard = {
+            title: "Target insight",
+            body: "The exact Recap card.",
+            cardStyle: "insight" as const,
+        };
+        const otherCard = {
+            title: "Other insight",
+            body: "A different rendered card.",
+            cardStyle: "insight" as const,
+        };
+        const receipt = {
+            version: 1 as const,
+            kind: "recap" as const,
+            fingerprint: "v1:recap:0000000000000002",
+        };
+        const onVisible = jest.fn();
+        const deliveryTarget = {
+            kind: "tab-card" as const,
+            card: targetCard,
+            receipt,
+            onVisible,
+        };
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+        tab.mount(container as unknown as HTMLElement);
+
+        tab.open("Scope Recap", [{ title: "Observations", cards: [otherCard] }], {
+            deliveryTarget,
+        });
+        expect(onVisible).not.toHaveBeenCalled();
+
+        tab.open("Scope Recap", [{ title: "Observations", cards: [otherCard, targetCard] }], {
+            deliveryTarget,
+        });
+        tab.open("Scope Recap", [{ title: "Observations", cards: [targetCard] }], {
+            deliveryTarget,
+        });
+        expect(onVisible).toHaveBeenCalledTimes(1);
+        expect(onVisible).toHaveBeenCalledWith(receipt);
+    });
+
+    it("keeps deliveryTarget out of native view state and the detail session cache", async () => {
+        const targetCard = {
+            title: "Transient target",
+            body: "Visible only in the live delivery.",
+            cardStyle: "insight" as const,
+        };
+        const receipt = {
+            version: 1 as const,
+            kind: "recap" as const,
+            fingerprint: "v1:recap:0000000000000003",
+        };
+        const onVisible = jest.fn();
+        const view = new PageletDetailView({} as never, () => "en");
+        await view.onOpen();
+        view.setPayload({
+            title: "Scope Recap",
+            locale: "en",
+            layoutType: "review",
+            entryReason: "scope-recap",
+            content: [{ title: "Observations", cards: [targetCard] }],
+            deliveryTarget: {
+                kind: "tab-card",
+                card: targetCard,
+                receipt,
+                onVisible,
+            },
+        });
+        expect(onVisible).toHaveBeenCalledTimes(1);
+
+        const state = view.getState();
+        expect(JSON.stringify(state)).not.toContain("deliveryTarget");
+        expect(JSON.stringify(state)).not.toContain(receipt.fingerprint);
+
+        const restored = new PageletDetailView({} as never, () => "en");
+        await restored.onOpen();
+        await restored.setState(state, {} as never);
+        expect(onVisible).toHaveBeenCalledTimes(1);
+        expect((restored as unknown as {
+            payloadOptions: { deliveryTarget?: unknown };
+        }).payloadOptions.deliveryTarget).toBeUndefined();
+    });
+
     it("shows visible review progress and restores the panel after current-note review", async () => {
         let resolveReview = (): void => undefined;
         const reviewPromise = new Promise<void>((resolve) => {

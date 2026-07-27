@@ -17,6 +17,7 @@ import type { PetCorner } from "./pet/types";
 import type { AnalyzeCallback } from "./preload/types";
 import type { PreloadBudgetStorage } from "./preload/PreloadBudget";
 import type { ChangeDetectorStorage } from "./scope/ChangeDetector";
+import type { PageletAttentionStorage } from "./attention";
 import type { GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
 import type { PageletDetailPayload } from "./tab/types";
@@ -148,6 +149,9 @@ export interface PageletHost {
 
     /** Per-vault content-free watermarks for the changed-only background lane. */
     createPreloadChangeDetectorStorage?(): ChangeDetectorStorage;
+
+    /** Device-local, per-vault storage for content-free delivery seen/ack state. */
+    createPageletAttentionStorage?(): PageletAttentionStorage | undefined;
 
     /** Factory for the LLM callback used by foreground review commands. */
     createForegroundAnalyzeCallback(): AnalyzeCallback;

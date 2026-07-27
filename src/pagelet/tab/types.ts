@@ -14,6 +14,7 @@ import type {
 } from "../panel/types";
 import type { ContextPagerState } from "../../pa";
 import type { ScopeRecapRunResult } from "../../pa";
+import type { DeliveryReceipt } from "../attention";
 
 /**
  * Pagelet -- Tab component types.
@@ -40,6 +41,25 @@ export interface TabCard {
     actionLabel?: string;
     actionCallback?: () => void;
 }
+
+/**
+ * A one-shot, in-memory target used only to confirm that one exact delivery
+ * reached the rendered Detail DOM. It is deliberately excluded from view
+ * state and the Pagelet detail session cache.
+ */
+export type PageletDetailDeliveryTarget =
+    | {
+        kind: "quiet-recall";
+        candidateId: string;
+        receipt: DeliveryReceipt;
+        onVisible: (receipt: DeliveryReceipt) => void;
+    }
+    | {
+        kind: "tab-card";
+        card: TabCard;
+        receipt: DeliveryReceipt;
+        onVisible: (receipt: DeliveryReceipt) => void;
+    };
 
 export type PageletDetailContent = PanelFinding[] | TabSection[];
 export type PageletDetailLayoutType = "review" | "current" | "discover" | "summary";
@@ -80,4 +100,6 @@ export interface PageletDetailPayload {
     summarySaveNote?: GeneratedReviewNote;
     restoredFromState?: boolean;
     entryReason?: TabEntryReason;
+    /** Transient exact-target render acknowledgement; never persisted or cached. */
+    deliveryTarget?: PageletDetailDeliveryTarget;
 }

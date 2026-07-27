@@ -1,6 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 import type { PageletLocale } from "../../locales/pagelet";
+import type { DeliveryReceipt } from "../attention/types";
 
 /**
  * Pagelet — Bubble component types.
@@ -61,6 +62,8 @@ export interface DeliveryCandidate {
     preparedAt: string;
     staleStatus?: DeliveryCandidateStaleStatus;
     route: DeliveryCandidateRoute;
+    /** Transient proof that this exact delivery may be marked seen once visible. */
+    deliveryReceipt?: DeliveryReceipt;
 }
 
 export interface InlineContextHint {
@@ -79,6 +82,8 @@ export interface BubbleCard {
     findings: BubbleFinding[];
     actions: BubbleAction[];
     inlineHint?: InlineContextHint;
+    /** Receipt for this card only; hidden stack cards must not be submitted. */
+    deliveryReceipt?: DeliveryReceipt;
 }
 
 /** A single finding item displayed in the Bubble */
@@ -94,6 +99,8 @@ export interface BubbleContent {
     findings: BubbleFinding[];
     actions: BubbleAction[];
     inlineHint?: InlineContextHint;
+    /** Receipt for non-stack content; stack cards carry their own receipt. */
+    deliveryReceipt?: DeliveryReceipt;
     cards?: BubbleCard[];
     contextAction?: BubbleContextAction;
 }
@@ -134,6 +141,8 @@ export interface BubbleViewOptions {
     getLocale?: () => PageletLocale;
     /** Single lifecycle seam invoked once whenever a visible Bubble closes. */
     onClose?: () => void;
+    /** Commit only the currently visible content/card delivery receipt. */
+    onDeliveryVisible?: (receipt: DeliveryReceipt) => void;
     /**
      * F-09: Return the active Markdown leaf's content bounds for desktop
      * placement clamping. If absent or returns null, falls back to container.

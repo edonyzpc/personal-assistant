@@ -28,6 +28,10 @@ import { scopeRecapToDeliveryCandidate } from "./bubble/recap-card";
 import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";
 import type { DeliveryCandidate } from "./bubble/types";
 import type { OnboardingNudge, OnboardingNudgeKind } from "./bubble/BubbleContent";
+import {
+    AttentionAwareDeliveryStore,
+    type DeliveryReceipt,
+} from "./attention";
 import { PanelView } from "./panel/PanelView";
 import { buildContextualGovernedMemoryState } from "./contextual-memory";
 import type {
@@ -71,6 +75,7 @@ import {
     reviewQueueItemHasUserIntentOrDurableConsequence,
     evaluateScopeRecapProactiveQuality,
     evaluateScopeRecapArtifactCurrentness,
+    selectStrongestConcreteScopeRecapInsight,
     toReplaySourceRef,
     type ContextDropReason,
     type PersistedSourceRef,
@@ -112,6 +117,7 @@ export class PageletOrchestrator {
     private readonly sessionManager: AnalysisSessionManager;
     private readonly backgroundPrep: BackgroundPreparationCoordinator;
     private readonly bubbleCoordinator: BubbleCoordinator;
+    private readonly attentionStore: AttentionAwareDeliveryStore;
     private readonly saveFlow: ReviewNoteSaveFlow;
 
     /** Proxy for scope range -- kept for test compat. */
@@ -190,6 +196,12 @@ export class PageletOrchestrator {
 
     constructor(private readonly host: PageletHost) {
         const s = host.settings.pagelet;
+        this.attentionStore = new AttentionAwareDeliveryStore({
+            storage: host.createPageletAttentionStorage?.(),
+            onDiagnostic: (diagnostic) => {
+                host.log("Pagelet attention delivery storage fallback", diagnostic);
+            },
+        });
         this.lastRecapAttempt = s.scopeRecapLastAttempt;
         this.lastQuietRecallDiagnostics = s.quietRecallLastDiagnostics;
         this.lastQuietRecallAcceptedCount = s.quietRecallLastAcceptedCount;
@@ -276,6 +288,13 @@ export class PageletOrchestrator {
             onPreparedRecapLater: () => this.snoozePreparedRecapNudge(),
             onNudgePresented: (ticket) => this.handleNudgePresented(ticket),
             getUnconvincingRecallCount: () => this.unconvincingRecallCount,
+            isDeliverySeen: (receipt) => this.attentionStore.isSeen(receipt),
+            isExplanationAcknowledged: (kind, copyVersion) => (
+                this.attentionStore.isExplanationAcknowledged(kind, copyVersion)
+            ),
+            onExplanationVisible: (kind, copyVersion) => {
+                this.attentionStore.acknowledgeExplanation(kind, copyVersion);
+            },
         });
 
         this.researchManager = new ResearchManager(host.app, {
@@ -290,9 +309,16 @@ export class PageletOrchestrator {
         this.handleEscape = (e: KeyboardEvent) => {
             if (e.key !== "Escape") return;
             if (this.saveFlow.isSaveInProgress || isObsidianModalOpen(e)) return;
+            if (this.petView?.actionRingOpen) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                this.petView.dismissActionRingFromEscape();
+                return;
+            }
             if (this.panelView?.isOpen) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
                 this.panelView.close();
-                e.stopPropagation();
                 return;
             }
         };
@@ -339,6 +365,9 @@ export class PageletOrchestrator {
         this.bubbleView = new BubbleView({
             getLocale: getPageletUiLanguage,
             onClose: () => this.bubbleCoordinator.handleBubbleClosed(this.bubbleView, this.petView),
+            onDeliveryVisible: (receipt) => {
+                this.attentionStore.markSeen(receipt, "bubble");
+            },
             callbacks: {
                 onExpandPanel: (type) => this.handleExpandPanel(type),
                 onSourceClick: (link) => this.handleSourceClick(link),
@@ -612,7 +641,7 @@ export class PageletOrchestrator {
 
     openQuickReview(): void {
         if (this.petView?.rootEl && this.bubbleView) {
-            this.showBubble();
+            this.showBubble("quick-review");
             return;
         }
         this.openPanel();
@@ -911,11 +940,12 @@ export class PageletOrchestrator {
         options: { allowNudge?: boolean } = {},
         scopeKey = this.currentRecapScopeKey(),
     ): PageletDetailPayload {
-        const payload = this.buildPreparedRecapPayload(recap);
-        const candidate = scopeRecapToDeliveryCandidate(recap);
+        const locale = getPageletUiLanguage();
+        const candidate = scopeRecapToDeliveryCandidate(recap, locale);
         if (!candidate) {
             throw new Error("Scope Recap ready result did not pass the delivery quality gate");
         }
+        const payload = this.buildPreparedRecapPayload(recap, candidate);
         this.preparedRecapArtifact = recap;
         this.preparedRecapCandidate = candidate;
         this.preparedRecapPayload = payload;
@@ -932,6 +962,8 @@ export class PageletOrchestrator {
     ): PageletDetailPayload | null {
         this.lastRecapLocalOverview = result.localOverview;
         if (result.status !== "ready") return null;
+        this.recapBackgroundFailureCount = 0;
+        this.recapBackgroundRetryAt = 0;
         return this.storePreparedRecap(result.artifact, result.localOverview, { allowNudge }, scopeKey);
     }
 
@@ -944,6 +976,7 @@ export class PageletOrchestrator {
         ) return;
         const quality = evaluateScopeRecapProactiveQuality(recap);
         if (!quality.eligible) return;
+        if (this.deliveryCandidateIsSeen(this.preparedRecapCandidate)) return;
         const now = Date.now();
         const snoozedUntil = this.snoozedRecapNudgeFingerprints.get(quality.fingerprint);
         if (snoozedUntil !== undefined && snoozedUntil <= now) {
@@ -982,6 +1015,7 @@ export class PageletOrchestrator {
             return null;
         }
         const candidate = this.preparedRecapCandidate;
+        if (this.deliveryCandidateIsSeen(candidate)) return null;
         const snoozedUntil = candidate
             ? this.snoozedRecapNudgeFingerprints.get(candidate.id)
             : undefined;
@@ -991,6 +1025,16 @@ export class PageletOrchestrator {
             this.persistScopeRecapNudgeSuppressions();
         }
         return candidate;
+    }
+
+    private deliveryCandidateIsSeen(
+        candidate: Pick<DeliveryCandidate, "deliveryReceipt"> | null | undefined,
+    ): boolean {
+        return this.deliveryReceiptIsSeen(candidate?.deliveryReceipt);
+    }
+
+    private deliveryReceiptIsSeen(receipt: DeliveryReceipt | null | undefined): boolean {
+        return Boolean(receipt && this.attentionStore.isSeen(receipt));
     }
 
     private currentPreparedRecapNudgeCandidate(): (DeliveryCandidate & { kind: "recap" }) | null {
@@ -1014,13 +1058,18 @@ export class PageletOrchestrator {
         const quietRecallCandidate = this.quietRecallNudgeCandidate;
         const quietRecallNudge = this.quietRecallBubbleNudge;
         const quietRecallDelivery = quietRecallCandidate
-            ? quietRecallCandidateToDeliveryCandidate(quietRecallCandidate)
+            ? quietRecallCandidateToDeliveryCandidate(
+                quietRecallCandidate,
+                getPageletUiLanguage(),
+                quietRecallNudge?.currentPath,
+            )
             : null;
         if (
             quietRecallCandidate
             && quietRecallNudge
             && quietRecallDelivery
             && quietRecallCandidate.id === quietRecallNudge.candidateId
+            && !this.deliveryCandidateIsSeen(quietRecallDelivery)
         ) {
             const stableIdentity = quietRecallCandidate.evaluationFingerprint?.trim()
                 || quietRecallCandidate.id;
@@ -1073,9 +1122,14 @@ export class PageletOrchestrator {
             && Date.now() < generatedAt + ttlMs;
     }
 
-    private buildPreparedRecapPayload(recap: ScopeRecapRunResult): PageletDetailPayload {
+    private buildPreparedRecapPayload(
+        recap: ScopeRecapRunResult,
+        candidate: DeliveryCandidate & { kind: "recap" },
+    ): PageletDetailPayload {
         const locale = getPageletUiLanguage();
         const items = this.orderedScopeRecapItems(recap);
+        const targetInsight = selectStrongestConcreteScopeRecapInsight(recap, 1);
+        let targetCard: TabSection["cards"][number] | null = null;
         const dateFormatter = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en", {
             dateStyle: "medium",
             timeStyle: "short",
@@ -1085,14 +1139,18 @@ export class PageletOrchestrator {
         const content: TabSection[] = [
             {
                 title: pageletT("pagelet.recap.detail.observations", locale),
-                cards: items.map((item) => ({
-                    title: item.title,
-                    body: item.whyItMatters
-                        ? `${item.summary}\n\n${item.whyItMatters}`
-                        : item.summary,
-                    cardStyle: item.section === "tension" ? "comparison" : "insight",
-                    sourceLinks: item.sourceRefs.map((ref) => ({ path: ref.path })),
-                })),
+                cards: items.map((item) => {
+                    const card: TabSection["cards"][number] = {
+                        title: item.title,
+                        body: item.whyItMatters
+                            ? `${item.summary}\n\n${item.whyItMatters}`
+                            : item.summary,
+                        cardStyle: item.section === "tension" ? "comparison" : "insight",
+                        sourceLinks: item.sourceRefs.map((ref) => ({ path: ref.path })),
+                    };
+                    if (item === targetInsight) targetCard = card;
+                    return card;
+                }),
             },
             {
                 title: pageletT("pagelet.recap.detail.scope", locale),
@@ -1122,7 +1180,7 @@ export class PageletOrchestrator {
                 }],
             },
         ];
-        return {
+        const payload: PageletDetailPayload = {
             title: pageletT("pagelet.tab.scopeRecap.title", locale),
             content,
             locale,
@@ -1131,6 +1189,15 @@ export class PageletOrchestrator {
             sourcePath: recap.scope.paths?.[0],
             entryReason: "scope-recap",
         };
+        if (targetCard && candidate.deliveryReceipt) {
+            payload.deliveryTarget = {
+                kind: "tab-card",
+                card: targetCard,
+                receipt: candidate.deliveryReceipt,
+                onVisible: (receipt) => this.attentionStore.markSeen(receipt, "detail"),
+            };
+        }
+        return payload;
     }
 
     private orderedScopeRecapItems(recap: ScopeRecapRunResult): ScopeRecapItem[] {
@@ -1145,6 +1212,21 @@ export class PageletOrchestrator {
         const locale = getPageletUiLanguage();
         const firstSource = overview.includedSources[0];
         const changedSources = overview.includedSources.filter((source) => source.changed);
+        const preparationAction = this.host.isScopeRecapProviderConfigured()
+            ? {
+                title: pageletT("pagelet.recap.explanation.retryTitle", locale),
+                body: pageletT("pagelet.recap.explanation.retryBody", locale),
+                cardStyle: "action" as const,
+                actionLabel: pageletT("pagelet.recap.explanation.retry", locale),
+                actionCallback: () => { void this.retryScopeRecap(overview); },
+            }
+            : {
+                title: pageletT("pagelet.recap.explanation.setupTitle", locale),
+                body: pageletT("pagelet.recap.explanation.setupBody", locale),
+                cardStyle: "action" as const,
+                actionLabel: pageletT("pagelet.recap.explanation.setup", locale),
+                actionCallback: () => this.host.openPageletSettings(),
+            };
         const content: TabSection[] = [{
             title: pageletT("pagelet.recap.explanation.title", locale),
             cards: [{
@@ -1153,13 +1235,7 @@ export class PageletOrchestrator {
                     included: overview.sourceCoverage.includedSourceCount,
                     skipped: overview.sourceCoverage.skippedSourceCount,
                 }),
-            }, {
-                title: pageletT("pagelet.recap.explanation.retryTitle", locale),
-                body: pageletT("pagelet.recap.explanation.retryBody", locale),
-                cardStyle: "action",
-                actionLabel: pageletT("pagelet.recap.explanation.retry", locale),
-                actionCallback: () => { void this.retryScopeRecap(overview); },
-            }],
+            }, preparationAction],
         }];
         if (changedSources.length > 0) {
             const changedTimes = changedSources
@@ -1569,6 +1645,7 @@ export class PageletOrchestrator {
     }
 
     private reconcilePetNudge(): void {
+        if (this.destroyed) return;
         this.bubbleCoordinator.reconcileNudge(this.bubbleView, this.petView);
     }
 
@@ -1771,6 +1848,10 @@ export class PageletOrchestrator {
                     onQuickCaptureOpen: () => this.host.openQuickCapture(),
                     onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
                     onDiscoverConnections: () => { void this.discoverConnections(); },
+                    onActionRingWillOpen: () => {
+                        this.bubbleView?.close({ restoreFocus: false });
+                    },
+                    onActionRingClosed: () => this.handleActionRingClosed(),
                 },
             });
             // Sync proactive-hints flag into state machine
@@ -1800,10 +1881,17 @@ export class PageletOrchestrator {
         this.bubbleCoordinator.handlePetClick(this.bubbleView, this.petView);
     }
 
+    private handleActionRingClosed(): void {
+        // Closing never steals focus on the action path, but a delivery that
+        // arrived while the Ring was open must regain Pet ownership after
+        // both passive and action closes.
+        this.reconcilePetNudge();
+    }
+
     /** Show the Bubble via the BubbleCoordinator. Suppressed by Focus Mode. */
-    private showBubble(): void {
+    private showBubble(entry: "pet" | "quick-review" = "pet"): void {
         if (this.host.settings.focusMode) return;
-        this.bubbleCoordinator.showBubble(this.bubbleView, this.petView);
+        this.bubbleCoordinator.showBubble(this.bubbleView, this.petView, { entry });
     }
 
     /** Analyze the current note (Scenario 2: Writing Assistance). */
@@ -2444,11 +2532,15 @@ export class PageletOrchestrator {
                 return;
             }
             const now = Date.now();
+            const locale = getPageletUiLanguage();
             const candidate = recall.candidates.find((item) => (
                 item.evaluationProvenance === "ai"
                 && Boolean(item.evaluationFingerprint?.trim())
                 && item.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
                 && !this.isQuietRecallCandidateSuppressed(item.id, now)
+                && !this.deliveryCandidateIsSeen(
+                    quietRecallCandidateToDeliveryCandidate(item, locale, recall.currentPath),
+                )
             ));
             const acceptedCandidates = recall.candidates.filter(
                 (item) => (
@@ -2575,6 +2667,9 @@ export class PageletOrchestrator {
             : discoverFallback?.candidates ?? [];
 
         const locale = getPageletUiLanguage();
+        const deliveryCandidate = candidate
+            ? quietRecallCandidateToDeliveryCandidate(candidate, locale, nudge.currentPath)
+            : null;
         const recall: QuietRecallRunResult = {
             generatedAt: new Date().toISOString(),
             ...(discoverFallback ?? {}),
@@ -2591,6 +2686,14 @@ export class PageletOrchestrator {
             entryReason: "quiet-recall",
         };
         if (recall.currentPath) payload.sourcePath = recall.currentPath;
+        if (candidate && deliveryCandidate?.deliveryReceipt) {
+            payload.deliveryTarget = {
+                kind: "quiet-recall",
+                candidateId: candidate.id,
+                receipt: deliveryCandidate.deliveryReceipt,
+                onVisible: (receipt) => this.attentionStore.markSeen(receipt, "detail"),
+            };
+        }
         this.clearQuietRecallBubbleNudge();
         await Promise.resolve(this.host.openPageletDetailView(payload));
     }

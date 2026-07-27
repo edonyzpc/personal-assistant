@@ -1,6 +1,8 @@
 /* Copyright 2023 edonyzpc */
 
 import type { QuietRecallCandidate } from "../../pa";
+import type { PageletLocale } from "../../locales/pagelet";
+import { buildRecallDeliveryReceipt } from "../attention/fingerprint";
 import type { DeliveryCandidate } from "./types";
 
 export interface LocalDiscoveryCandidate {
@@ -17,6 +19,8 @@ function sourceTitle(path: string): string {
 
 export function quietRecallCandidateToDeliveryCandidate(
     candidate: QuietRecallCandidate,
+    locale: PageletLocale,
+    currentPath?: string,
 ): (DeliveryCandidate & { kind: "recall" }) | null {
     if (
         candidate.evaluationProvenance !== "ai"
@@ -24,7 +28,7 @@ export function quietRecallCandidateToDeliveryCandidate(
         || candidate.sourceRefs.length === 0
         || candidate.sourceRefs.some((ref) => !ref.path.trim())
     ) return null;
-    return quietRecallCandidateToCard(candidate);
+    return quietRecallCandidateToCard(candidate, locale, currentPath);
 }
 
 /** Explicit Discover may show local matches, but this adapter is never used for proactive delivery. */
@@ -49,6 +53,8 @@ export function quietRecallCandidateToDiscoveryCandidate(
 
 function quietRecallCandidateToCard(
     candidate: QuietRecallCandidate,
+    locale: PageletLocale,
+    currentPath?: string,
 ): DeliveryCandidate & { kind: "recall" } {
     return {
         id: candidate.id,
@@ -66,5 +72,13 @@ function quietRecallCandidateToCard(
             surface: "tab",
             payloadType: "quiet-recall",
         },
+        deliveryReceipt: buildRecallDeliveryReceipt({
+            locale,
+            title: candidate.title,
+            body: candidate.summary,
+            whyNow: candidate.whyNow,
+            currentSourceIdentity: currentPath,
+            recalledSourceIdentities: candidate.sourceRefs.map((ref) => ref.path),
+        }),
     };
 }

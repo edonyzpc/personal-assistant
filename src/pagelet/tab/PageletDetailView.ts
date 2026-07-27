@@ -415,7 +415,7 @@ export class PageletDetailView extends ItemView {
     private sessionId: string;
     private contextualMemoryClaimIds: string[] = [];
     private hasContextualMemoryState = false;
-    private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason"> = {};
+    private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason" | "deliveryTarget"> = {};
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -586,6 +586,7 @@ export class PageletDetailView extends ItemView {
             summarySaveNote: payload.summarySaveNote,
             restoredFromState: payload.restoredFromState,
             entryReason: payload.entryReason,
+            deliveryTarget: payload.deliveryTarget,
         };
         if (!payload.restoredFromState) {
             this.cacheCurrentPayload();

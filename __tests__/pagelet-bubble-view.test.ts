@@ -484,6 +484,17 @@ describe("Pagelet BubbleView", () => {
     it("renders one active Bubble card at a time and routes actions to the active card", async () => {
         const first = jest.fn();
         const second = jest.fn();
+        const onDeliveryVisible = jest.fn();
+        const firstReceipt = {
+            version: 1 as const,
+            kind: "recall" as const,
+            fingerprint: "v1:recall:first",
+        };
+        const secondReceipt = {
+            version: 1 as const,
+            kind: "recall" as const,
+            fingerprint: "v1:recall:second",
+        };
         const container = new FakeElement("div");
         container.isConnected = true;
         const anchor = new FakeElement("button");
@@ -494,6 +505,7 @@ describe("Pagelet BubbleView", () => {
                 onSourceClick: () => undefined,
             },
             getLocale: () => "en",
+            onDeliveryVisible,
         });
 
         view.mount(container as unknown as HTMLElement);
@@ -501,19 +513,28 @@ describe("Pagelet BubbleView", () => {
             type: "recall-delivery",
             findings: [],
             actions: [],
+            deliveryReceipt: {
+                version: 1,
+                kind: "recall",
+                fingerprint: "v1:recall:stack-root-must-not-win",
+            },
             cards: [{
                 id: "card-1",
                 findings: [{ text: "First recall" }],
                 actions: [{ label: "Open first", primary: true, callback: first }],
+                deliveryReceipt: firstReceipt,
             }, {
                 id: "card-2",
                 findings: [{ text: "Second recall" }],
                 inlineHint: { text: "Second why now", icon: "info" },
                 actions: [{ label: "Open second", primary: true, callback: second }],
+                deliveryReceipt: secondReceipt,
             }],
         }, anchor as unknown as HTMLElement);
 
         const bubble = container.querySelector(".pa-pagelet-bubble");
+        expect(onDeliveryVisible).toHaveBeenCalledTimes(1);
+        expect(onDeliveryVisible).toHaveBeenLastCalledWith(firstReceipt);
         expect(bubble?.querySelector(".pa-pagelet-bubble-text")?.textContent).toBe("First recall");
         expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-dot")).toHaveLength(2);
         expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-btn")[0]?.textContent).toContain("Previous card");
@@ -526,6 +547,11 @@ describe("Pagelet BubbleView", () => {
         expect(bubble?.querySelector(".pa-pagelet-bubble-text")?.textContent).toBe("Second recall");
         expect(bubble?.querySelector(".pa-pagelet-bubble-inline-hint-text")?.textContent).toBe("Second why now");
         expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-dot")[1]?.focusCalls).toBe(1);
+        expect(onDeliveryVisible).toHaveBeenCalledTimes(2);
+        expect(onDeliveryVisible).toHaveBeenLastCalledWith(secondReceipt);
+
+        await bubble?.querySelectorAll(".pa-pagelet-bubble-stack-dot")[1]?.click();
+        expect(onDeliveryVisible).toHaveBeenCalledTimes(2);
 
         const active = bubble?.querySelector(".pa-pagelet-bubble-btn");
         await active?.click();
@@ -533,6 +559,117 @@ describe("Pagelet BubbleView", () => {
         expect(first).not.toHaveBeenCalled();
         expect(second).toHaveBeenCalledTimes(1);
 
+        view.destroy();
+    });
+
+    it("commits a non-stack receipt only after its Bubble is visibly mounted", () => {
+        const onDeliveryVisible = jest.fn();
+        const receipt = {
+            version: 1 as const,
+            kind: "recap" as const,
+            fingerprint: "v1:recap:visible",
+        };
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            onDeliveryVisible,
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "recap-delivery",
+            findings: [{ text: "Visible recap" }],
+            actions: [],
+            deliveryReceipt: receipt,
+        }, anchor as unknown as HTMLElement);
+
+        expect(view.bubbleState).toBe("visible");
+        expect(onDeliveryVisible).toHaveBeenCalledTimes(1);
+        expect(onDeliveryVisible).toHaveBeenCalledWith(receipt);
+        view.destroy();
+    });
+
+    it("does not fall back to a stack root receipt when the active card has none", async () => {
+        const onDeliveryVisible = jest.fn();
+        const firstReceipt = {
+            version: 1 as const,
+            kind: "recall" as const,
+            fingerprint: "v1:recall:first-only",
+        };
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            onDeliveryVisible,
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "recall-delivery",
+            findings: [],
+            actions: [],
+            deliveryReceipt: {
+                version: 1,
+                kind: "recall",
+                fingerprint: "v1:recall:root",
+            },
+            cards: [{
+                id: "first",
+                findings: [{ text: "First" }],
+                actions: [],
+                deliveryReceipt: firstReceipt,
+            }, {
+                id: "ordinary-card",
+                findings: [{ text: "No receipt" }],
+                actions: [],
+            }],
+        }, new FakeElement("button") as unknown as HTMLElement);
+
+        await container.querySelectorAll(".pa-pagelet-bubble-stack-btn")[1]?.click();
+
+        expect(onDeliveryVisible).toHaveBeenCalledTimes(1);
+        expect(onDeliveryVisible).toHaveBeenCalledWith(firstReceipt);
+        view.destroy();
+    });
+
+    it("does not submit receipts for failed or disconnected mounts", () => {
+        const onDeliveryVisible = jest.fn();
+        const anchor = new FakeElement("button");
+        const content = {
+            type: "recall-delivery" as const,
+            findings: [{ text: "Not actually visible" }],
+            actions: [],
+            deliveryReceipt: {
+                version: 1 as const,
+                kind: "recall" as const,
+                fingerprint: "v1:recall:not-visible",
+            },
+        };
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            onDeliveryVisible,
+        });
+
+        view.show(content, anchor as unknown as HTMLElement);
+        const disconnectedContainer = new FakeElement("div");
+        view.mount(disconnectedContainer as unknown as HTMLElement);
+        view.show(content, anchor as unknown as HTMLElement);
+
+        expect(onDeliveryVisible).not.toHaveBeenCalled();
         view.destroy();
     });
 

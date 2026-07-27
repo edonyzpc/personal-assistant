@@ -41,6 +41,7 @@ export class QuietRecallSection implements TabSectionRenderer {
     private readonly ownsLinkState: boolean;
     private containerEl: HTMLElement | null = null;
     private pendingFocusKeys: string[] = [];
+    private readonly renderedCandidateIds = new Set<string>();
     private destroyed = false;
 
     constructor(
@@ -79,7 +80,13 @@ export class QuietRecallSection implements TabSectionRenderer {
         if (this.ownsSaveState) this.saveState.clear();
         if (this.ownsLinkState) this.linkState.clear();
         this.pendingFocusKeys = [];
+        this.renderedCandidateIds.clear();
         this.containerEl = null;
+    }
+
+    /** True only when the AI-evaluated candidate produced a Detail card in this render. */
+    hasRenderedCandidate(candidateId: string): boolean {
+        return this.renderedCandidateIds.has(candidateId);
     }
 
     private requestRerenderWithFocus(...focusKeys: string[]): void {
@@ -121,6 +128,7 @@ export class QuietRecallSection implements TabSectionRenderer {
 
     private renderInto(): void {
         if (!this.containerEl) return;
+        this.renderedCandidateIds.clear();
         const candidates = this.visibleCandidates().filter(hasValidSourceRefs);
         const recallCandidates = candidates.filter(isAiEvaluatedCandidate);
         const localCandidates = candidates.filter((candidate) => !isAiEvaluatedCandidate(candidate));
@@ -147,6 +155,7 @@ export class QuietRecallSection implements TabSectionRenderer {
                 pageletT("pagelet.tab.recall.summary", this.locale, { count: recallCandidates.length })));
             for (const candidate of recallCandidates) {
                 section.appendChild(this.renderRecallCard(candidate));
+                this.renderedCandidateIds.add(candidate.id);
             }
         }
 

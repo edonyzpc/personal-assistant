@@ -1,6 +1,12 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
-import { BubbleCoordinator, NudgeOwner, type NudgeTicket } from "../src/pagelet/BubbleCoordinator";
+import {
+    BubbleCoordinator,
+    INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION,
+    NudgeOwner,
+    READY_EMPTY_EXPLANATION_COPY_VERSION,
+    type NudgeTicket,
+} from "../src/pagelet/BubbleCoordinator";
 import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
 import type { BubbleContent, DeliveryCandidate } from "../src/pagelet/bubble/types";
 import type { BubbleView } from "../src/pagelet/bubble/BubbleView";
@@ -56,10 +62,20 @@ function makeHost(
 }
 
 function makeBubbleView(): BubbleView {
+    let currentContent: BubbleContent | null = null;
     const view = {
         bubbleState: "hidden",
-        show: jest.fn(() => { view.bubbleState = "visible"; }),
-        close: jest.fn(() => { view.bubbleState = "hidden"; }),
+        show: jest.fn((content: BubbleContent) => {
+            currentContent = content;
+            view.bubbleState = "visible";
+        }),
+        close: jest.fn(() => {
+            currentContent = null;
+            view.bubbleState = "hidden";
+        }),
+        isShowingContent: jest.fn((content: BubbleContent) => (
+            view.bubbleState === "visible" && currentContent === content
+        )),
     };
     return view as unknown as BubbleView;
 }
@@ -119,7 +135,11 @@ function makeQuietRecallTicket(
     candidate: ReturnType<typeof makeQuietRecallFixture>["candidate"],
     nudge: ReturnType<typeof makeQuietRecallFixture>["nudge"],
 ): NudgeTicket {
-    const deliveryCandidate = quietRecallCandidateToDeliveryCandidate(candidate);
+    const deliveryCandidate = quietRecallCandidateToDeliveryCandidate(
+        candidate,
+        "en",
+        nudge.currentPath,
+    );
     if (!deliveryCandidate) throw new Error("expected delivery candidate");
     return {
         key: `${NudgeOwner.QuietRecall}:${candidate.evaluationFingerprint}`,
@@ -476,12 +496,14 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         }, proactiveHints);
         const bubbleView = makeBubbleView();
         const petView = makePetView();
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
         coordinator.reconcileNudge(bubbleView, petView);
         recap = null;
 
         coordinator.handlePetClick(bubbleView, petView);
 
-        expect(bubbleView.show).not.toHaveBeenCalled();
+        expect(bubbleView.show).toHaveBeenCalledTimes(1);
+        expect(shownContent(bubbleView).type).toBe("ready-empty");
         expect(onNudgePresented).not.toHaveBeenCalled();
         expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
     });
@@ -820,6 +842,65 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const show = bubbleView.show as unknown as jest.Mock;
         expect(show).toHaveBeenCalledTimes(2);
         expect(show.mock.calls[1]?.[2]).toEqual({ preserveFocus: true });
+    });
+
+    it("repaints a stale ready-empty bubble when Memory becomes unavailable", async () => {
+        const coordinator = makeCoordinator(() => [], {
+            isMemoryReadyForPageletDiscovery: async () => false,
+        });
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+        expect(shownContent(bubbleView).type).toBe("ready-empty");
+        await flushAsyncWork();
+
+        expect(shownContent(bubbleView).type).toBe("needs-setup");
+        const show = bubbleView.show as unknown as jest.Mock;
+        expect(show).toHaveBeenCalledTimes(2);
+        expect(show.mock.calls[1]?.[2]).toEqual({ preserveFocus: true });
+    });
+
+    it("does not let readiness refresh replace a delivery that just became visible and seen", async () => {
+        let resolveReady: ((ready: boolean) => void) | undefined;
+        const readiness = new Promise<boolean>((resolve) => {
+            resolveReady = resolve;
+        });
+        let seen = false;
+        const recap: DeliveryCandidate & { kind: "recap" } = {
+            id: "recap-readiness-race",
+            kind: "recap",
+            title: "A current recap",
+            body: "This delivery must remain visible.",
+            sourceRefs: [{ path: "notes/recap.md" }],
+            whyNow: ["It just became visible."],
+            preparedAt: "2026-07-27T12:00:00.000Z",
+            route: { surface: "tab", payloadType: "scope-recap" },
+            deliveryReceipt: {
+                version: 1,
+                kind: "recap",
+                fingerprint: "v1:recap:0000000000000121",
+            },
+        };
+        const coordinator = makeCoordinator(() => [], {
+            isMemoryReadyForPageletDiscovery: () => readiness,
+        }, {
+            getPreparedRecapCandidate: () => seen ? null : recap,
+        });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+        expect(shownContent(bubbleView).type).toBe("recap-delivery");
+
+        // BubbleView's visibility receipt makes the candidate ineligible for
+        // future proactive delivery, but must not evict this current surface.
+        seen = true;
+        resolveReady?.(true);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(bubbleView.show).toHaveBeenCalledTimes(1);
+        expect(shownContent(bubbleView).type).toBe("recap-delivery");
     });
 
     it("does not show user-kept Review Queue states as pending Bubble work", async () => {
@@ -1297,5 +1378,354 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(onQuietRecallLater).toHaveBeenCalledWith(nudge);
         expect(onQuietRecallDismiss).toHaveBeenCalledWith(nudge);
         expect(onQuietRecallLink).not.toHaveBeenCalled();
+    });
+
+    it("filters seen Recall/Recap tickets and the default Recall Bubble", () => {
+        const { candidate, nudge } = makeQuietRecallFixture();
+        const recap = {
+            id: "recap-seen",
+            kind: "recap" as const,
+            title: "Projects/PA",
+            body: "Already delivered.",
+            sourceRefs: [{ path: "Projects/PA/A.md" }],
+            whyNow: ["The recap was already visible."],
+            preparedAt: "2026-07-27T12:00:00.000Z",
+            route: { surface: "tab" as const, payloadType: "scope-recap" },
+            deliveryReceipt: {
+                version: 1 as const,
+                kind: "recap" as const,
+                fingerprint: "v1:recap:0000000000000001",
+            },
+        };
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: {
+                    enabled: true,
+                    petVisible: true,
+                    onboardingShown: true,
+                    proactiveHints: true,
+                    quietAcknowledged: false,
+                    scopeRecapHighValueHints: true,
+                },
+                quietRecall: {
+                    enabled: true,
+                    bubbleNudgesEnabled: true,
+                    quietRecallMode: "on",
+                },
+            } as PageletHost["settings"],
+        }, {
+            getQuietRecallCandidate: () => candidate,
+            getQuietRecallNudge: () => nudge,
+            getAdmittedNudgeTickets: () => [
+                makeRecapTicket(recap),
+                makeQuietRecallTicket(candidate, nudge),
+            ],
+            isDeliverySeen: () => true,
+        });
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
+        const bubbleView = makeBubbleView();
+        const petView = makePetView();
+
+        coordinator.reconcileNudge(bubbleView, petView);
+        coordinator.showBubble(bubbleView, petView);
+
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+        expect(shownContent(bubbleView).type).toBe("ready-empty");
+    });
+
+    it.each([
+        ["ready-empty", true, READY_EMPTY_EXPLANATION_COPY_VERSION],
+        ["intentionally-quiet", false, INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION],
+    ] as const)("acknowledges %s only after visible, then routes Pet short click to Ring", (
+        kind,
+        proactiveHints,
+        copyVersion,
+    ) => {
+        const acknowledgements = new Set<string>();
+        const onExplanationVisible = jest.fn((nextKind: string, nextVersion: string) => {
+            acknowledgements.add(`${nextKind}:${nextVersion}`);
+        });
+        const updatePageletSetting = jest.fn();
+        const coordinator = makeCoordinator(() => [], {
+            updatePageletSetting,
+            settings: {
+                pagelet: {
+                    enabled: true,
+                    petVisible: true,
+                    onboardingShown: true,
+                    proactiveHints,
+                    quietAcknowledged: true,
+                },
+                quietRecall: {
+                    enabled: true,
+                    bubbleNudgesEnabled: false,
+                    quietRecallMode: "off",
+                },
+            } as PageletHost["settings"],
+        }, {
+            isExplanationAcknowledged: (nextKind, nextVersion) => (
+                acknowledgements.has(`${nextKind}:${nextVersion}`)
+            ),
+            onExplanationVisible,
+        });
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
+        const failedBubble = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        } as unknown as BubbleView;
+        const petView = Object.assign(makePetView(), {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        coordinator.handlePetClick(failedBubble, petView);
+        expect(onExplanationVisible).not.toHaveBeenCalled();
+
+        const visibleBubble = makeBubbleView();
+        coordinator.handlePetClick(visibleBubble, petView);
+        expect(shownContent(visibleBubble).type).toBe(kind);
+        expect(onExplanationVisible).toHaveBeenCalledWith(kind, copyVersion);
+        expect(updatePageletSetting).not.toHaveBeenCalled();
+
+        visibleBubble.close();
+        coordinator.handlePetClick(visibleBubble, petView);
+        expect(petView.openActionRing).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps unseen delivery and setup explanations ahead of acknowledged-empty Ring", () => {
+        const recap = {
+            id: "recap-unseen",
+            kind: "recap" as const,
+            title: "Projects/PA",
+            body: "A fresh recap.",
+            sourceRefs: [{ path: "Projects/PA/A.md" }],
+            whyNow: ["New source-backed value is ready."],
+            preparedAt: "2026-07-27T12:00:00.000Z",
+            route: { surface: "tab" as const, payloadType: "scope-recap" },
+        };
+        const acknowledged = () => true;
+        const deliveryCoordinator = makeCoordinator(() => [], {}, {
+            getPreparedRecapCandidate: () => recap,
+            isExplanationAcknowledged: acknowledged,
+        });
+        (deliveryCoordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
+        const deliveryBubble = makeBubbleView();
+        const deliveryPet = Object.assign(makePetView(), {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        deliveryCoordinator.handlePetClick(deliveryBubble, deliveryPet);
+        expect(shownContent(deliveryBubble).type).toBe("recap-delivery");
+        expect(deliveryPet.openActionRing).not.toHaveBeenCalled();
+
+        const setupCoordinator = makeCoordinator(() => [], {}, {
+            isExplanationAcknowledged: acknowledged,
+        });
+        (setupCoordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = false;
+        const setupBubble = makeBubbleView();
+        const setupPet = Object.assign(makePetView(), {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        setupCoordinator.handlePetClick(setupBubble, setupPet);
+        expect(shownContent(setupBubble).type).toBe("needs-setup");
+        expect(setupPet.openActionRing).not.toHaveBeenCalled();
+    });
+
+    it("keeps acknowledged Quick Review as terse Bubble instead of opening Ring", () => {
+        const onExplanationVisible = jest.fn();
+        const coordinator = makeCoordinator(() => [], {}, {
+            isExplanationAcknowledged: (kind, version) => (
+                kind === "ready-empty" && version === READY_EMPTY_EXPLANATION_COPY_VERSION
+            ),
+            onExplanationVisible,
+        });
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
+        const bubbleView = makeBubbleView();
+        const petView = Object.assign(makePetView(), {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
+
+        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
+            type: "ready-empty",
+            findings: [expect.any(Object)],
+        }));
+        expect(petView.openActionRing).not.toHaveBeenCalled();
+        expect(onExplanationVisible).not.toHaveBeenCalled();
+    });
+
+    it("keeps Quick Review in a terse Bubble when async readiness first resolves", async () => {
+        const coordinator = makeCoordinator(() => [], {
+            isMemoryReadyForPageletDiscovery: async () => true,
+        }, {
+            isExplanationAcknowledged: (kind, version) => (
+                kind === "ready-empty" && version === READY_EMPTY_EXPLANATION_COPY_VERSION
+            ),
+        });
+        const bubbleView = makeBubbleView();
+        const petView = Object.assign(makePetView(), {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
+        expect(shownContent(bubbleView).type).toBe("needs-setup");
+
+        await flushAsyncWork();
+
+        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
+            type: "ready-empty",
+            findings: [expect.any(Object)],
+        }));
+        expect(petView.openActionRing).not.toHaveBeenCalled();
+    });
+
+    it("rechecks the latest Quick Review presentation queued behind a Pet readiness probe", async () => {
+        let resolveFirst!: (ready: boolean) => void;
+        const firstReadiness = new Promise<boolean>((resolve) => {
+            resolveFirst = resolve;
+        });
+        const isMemoryReadyForPageletDiscovery = jest.fn<() => Promise<boolean>>()
+            .mockImplementationOnce(() => firstReadiness)
+            .mockResolvedValue(true);
+        const coordinator = makeCoordinator(() => [], {
+            isMemoryReadyForPageletDiscovery,
+        }, {
+            isExplanationAcknowledged: (kind, version) => (
+                kind === "ready-empty" && version === READY_EMPTY_EXPLANATION_COPY_VERSION
+            ),
+        });
+        const bubbleView = makeBubbleView();
+        const petView = Object.assign(makePetView(), {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        coordinator.showBubble(bubbleView, petView, { entry: "pet" });
+        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
+        expect(shownContent(bubbleView).type).toBe("needs-setup");
+
+        resolveFirst(true);
+        await flushAsyncWork();
+
+        expect(isMemoryReadyForPageletDiscovery).toHaveBeenCalledTimes(3);
+        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
+            type: "ready-empty",
+            findings: [expect.any(Object)],
+        }));
+        expect(petView.openActionRing).not.toHaveBeenCalled();
+    });
+
+    it("does not consume the unseen Ready Empty explanation from an Intentionally Quiet Quick Review", () => {
+        const acknowledgements = new Set([
+            `intentionally-quiet:${INTENTIONALLY_QUIET_EXPLANATION_COPY_VERSION}`,
+        ]);
+        const onExplanationVisible = jest.fn((kind: string, version: string) => {
+            acknowledgements.add(`${kind}:${version}`);
+        });
+        const settings = {
+            pagelet: {
+                enabled: true,
+                petVisible: true,
+                onboardingShown: true,
+                proactiveHints: false,
+                quietAcknowledged: true,
+            },
+            quietRecall: {
+                enabled: true,
+                bubbleNudgesEnabled: false,
+                quietRecallMode: "off",
+            },
+        } as PageletHost["settings"];
+        const coordinator = makeCoordinator(() => [], { settings }, {
+            isExplanationAcknowledged: (kind, version) => (
+                acknowledgements.has(`${kind}:${version}`)
+            ),
+            onExplanationVisible,
+        });
+        (coordinator as unknown as { memoryReadySnapshot: boolean }).memoryReadySnapshot = true;
+        const bubbleView = makeBubbleView();
+        const petView = Object.assign(makePetView(), {
+            actionRingOpen: false,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        coordinator.showBubble(bubbleView, petView, { entry: "quick-review" });
+
+        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
+            type: "ready-empty",
+            findings: [expect.any(Object)],
+        }));
+        expect(onExplanationVisible).not.toHaveBeenCalled();
+
+        bubbleView.close();
+        settings.pagelet.proactiveHints = true;
+        coordinator.handlePetClick(bubbleView, petView);
+
+        expect(shownContent(bubbleView)).toEqual(expect.objectContaining({
+            type: "ready-empty",
+            findings: [expect.any(Object), expect.any(Object)],
+        }));
+        expect(onExplanationVisible).toHaveBeenCalledWith(
+            "ready-empty",
+            READY_EMPTY_EXPLANATION_COPY_VERSION,
+        );
+    });
+
+    it("keeps a pending ticket quiet while Ring is open and restores it after passive close", () => {
+        const recap = {
+            id: "recap-pending-ring",
+            kind: "recap" as const,
+            title: "Projects/PA",
+            body: "Pending while the Ring is open.",
+            sourceRefs: [{ path: "Projects/PA/A.md" }],
+            whyNow: ["A fresh recap arrived."],
+            preparedAt: "2026-07-27T12:00:00.000Z",
+            route: { surface: "tab" as const, payloadType: "scope-recap" },
+        };
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: {
+                    enabled: true,
+                    petVisible: true,
+                    onboardingShown: true,
+                    proactiveHints: true,
+                    quietAcknowledged: false,
+                    scopeRecapHighValueHints: true,
+                },
+                quietRecall: { enabled: true, bubbleNudgesEnabled: false },
+            } as PageletHost["settings"],
+        }, {
+            getAdmittedNudgeTickets: () => [makeRecapTicket(recap)],
+        });
+        const bubbleView = makeBubbleView();
+        const petView = Object.assign(makePetView(), {
+            actionRingOpen: true,
+            openActionRing: jest.fn(),
+            closeActionRing: jest.fn(),
+        });
+
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+
+        petView.actionRingOpen = false;
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
+
+        coordinator.handlePetClick(bubbleView, petView);
+        expect(shownContent(bubbleView).type).toBe("recap-delivery");
     });
 });

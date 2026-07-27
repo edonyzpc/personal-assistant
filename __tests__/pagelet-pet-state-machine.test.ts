@@ -23,6 +23,7 @@ function getCssRuleBlock(css: string, selector: string): string {
 type HoldMenuListener = EventListenerOrEventListenerObject;
 
 class HoldMenuFakeElement {
+    id = "";
     className = "";
     textContent: string | null = null;
     readonly children: HoldMenuFakeElement[] = [];
@@ -149,7 +150,13 @@ class HoldMenuFakeElement {
         return null;
     }
 
-    querySelector(): HoldMenuFakeElement | null {
+    querySelector(selector?: string): HoldMenuFakeElement | null {
+        if (selector === "button:not([disabled])") {
+            return this.children.find((child) =>
+                child.getAttribute("type") === "button"
+                && child.getAttribute("disabled") === null
+            ) ?? null;
+        }
         return null;
     }
 
@@ -164,6 +171,10 @@ class HoldMenuFakeElement {
         if (index >= 0) this.parent.children.splice(index, 1);
         this.parent = null;
     }
+
+    focus(): void {
+        if (this.ownerDocument) this.ownerDocument.activeElement = this;
+    }
 }
 
 class HoldMenuFakeDocument {
@@ -171,6 +182,7 @@ class HoldMenuFakeDocument {
     readonly body: HoldMenuFakeElement;
     readonly documentElement: HoldMenuFakeElement;
     readonly defaultView = { innerWidth: 1440, innerHeight: 900 };
+    activeElement: HoldMenuFakeElement | null = null;
 
     constructor() {
         this.body = new HoldMenuFakeElement(this);
@@ -284,6 +296,7 @@ type MountedHoldMenuFixture = {
     doc: HoldMenuFakeDocument;
     view: PetView;
     root: HoldMenuFakeElement;
+    trigger: HoldMenuFakeElement;
     menu: HoldMenuFakeElement;
     items: HoldMenuFakeElement[];
     onToggleBubble: jest.Mock;
@@ -307,16 +320,31 @@ function withMountedHoldMenu(run: (fixture: MountedHoldMenuFixture) => void): vo
         const container = doc.createElement();
         view.mount(container as unknown as HTMLElement);
         const root = container.children[0];
-        root.dispatch("mousedown", { button: 0 });
+        const trigger = root.children[0];
+        root.dispatch("pointerdown", {
+            button: 0,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+            clientX: 0,
+            clientY: 0,
+        } as never);
         jest.advanceTimersByTime(520);
-        const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+        const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
         if (!menu) throw new Error("Expected the Pet hold menu to open after 520ms.");
+        root.dispatch("pointerup", {
+            pointerId: 1,
+            isPrimary: true,
+            clientX: 0,
+            clientY: 0,
+        } as never);
 
         try {
             run({
                 doc,
                 view,
                 root,
+                trigger,
                 menu,
                 items: [...menu.children],
                 onToggleBubble,
@@ -535,6 +563,17 @@ describe("PetView locale labels", () => {
 });
 
 describe("PetView task kind", () => {
+    it("keeps the native Pet trigger and Action Ring as non-nested siblings", () => {
+        withMountedHoldMenu(({ root, trigger, menu }) => {
+            expect(root.getAttribute("role")).toBeNull();
+            expect(trigger.getAttribute("type")).toBe("button");
+            expect(trigger.getAttribute("aria-controls")).toBe(menu.id);
+            expect(trigger.getAttribute("aria-expanded")).toBe("true");
+            expect(trigger.contains(menu as unknown as Node)).toBe(false);
+            expect(root.children).toEqual(expect.arrayContaining([trigger, menu]));
+        });
+    });
+
     it("defaults to review and can switch task kind before mounting", () => {
         const view = new PetView({
             callbacks: { onToggleBubble: () => undefined },
@@ -550,15 +589,15 @@ describe("PetView task kind", () => {
     it("defines a 520ms hold gesture for the three-action menu", () => {
         const source = readFileSync("src/pagelet/pet/PetView.ts", "utf8");
 
-        expect(source).toContain("const QUICK_CAPTURE_HOLD_MS = 520;");
+        expect(source).toContain("const ACTION_RING_HOLD_MS = 520;");
         expect(source).toContain("onQuickCaptureOpen");
         expect(source).toContain("onReviewCurrentNote");
         expect(source).toContain("onDiscoverConnections");
-        expect(source).toContain("this.showHoldMenu();");
-        expect(source).toContain("_handleMouseDown");
+        expect(source).toContain("this.openActionRing();");
+        expect(source).toContain("_handlePointerDown");
         expect(source).toContain("_handleTouchstart");
         expect(source).toContain("_handleTouchcancel");
-        expect(source).toContain("this.startQuickCaptureHold();");
+        expect(source).toContain("this.startPointerHold(e);");
         expect(source).toContain("if (this.consumeQuickCaptureHold()) return;");
         expect(source).not.toContain("pa-pagelet-pet-capture-form");
         expect(source).not.toContain("pagelet.pet.quickCapturePlaceholder");
@@ -609,7 +648,7 @@ describe("PetView task kind", () => {
             for (let index = 0; index < callbacks.length; index += 1) {
                 internals.startQuickCaptureHold();
                 jest.advanceTimersByTime(520);
-                const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+                const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
                 expect(menu?.children.map((item) => item.textContent)).toEqual([
                     "Capture",
                     "Review",
@@ -657,7 +696,7 @@ describe("PetView task kind", () => {
 
                 internals.startQuickCaptureHold();
                 jest.advanceTimersByTime(520);
-                const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+                const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
                 const btn = menu?.children[index];
                 expect(btn).toBeDefined();
 
@@ -670,7 +709,7 @@ describe("PetView task kind", () => {
 
                 expect(allCallbacks[index]).toHaveBeenCalledTimes(1);
                 expect(onToggleBubble).not.toHaveBeenCalled();
-                expect(root.children.filter((c) => c.className === "pa-pagelet-pet-hold-menu")).toHaveLength(0);
+                expect(root.children.filter((c) => c.className === "pa-pagelet-action-ring")).toHaveLength(0);
             }
             view.unmount();
         });
@@ -697,7 +736,7 @@ describe("PetView task kind", () => {
 
             internals.startQuickCaptureHold();
             jest.advanceTimersByTime(520);
-            const menu = root.children.find((child) => child.className === "pa-pagelet-pet-hold-menu");
+            const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
             const btn = menu?.children[0];
 
             const touch = { clientX: 100, clientY: 200 };
@@ -730,7 +769,7 @@ describe("PetView task kind", () => {
             internals.startQuickCaptureHold();
             jest.advanceTimersByTime(520);
             const btn = root.children
-                .find((c) => c.className === "pa-pagelet-pet-hold-menu")
+                .find((c) => c.className === "pa-pagelet-action-ring")
                 ?.children[0];
 
             btn!.dispatch("touchstart", { touches: [{ clientX: 0, clientY: 0 }] } as never);
@@ -761,7 +800,7 @@ describe("PetView task kind", () => {
             internals.startQuickCaptureHold();
             jest.advanceTimersByTime(520);
             const btn = root.children
-                .find((c) => c.className === "pa-pagelet-pet-hold-menu")
+                .find((c) => c.className === "pa-pagelet-action-ring")
                 ?.children[0];
 
             const start = { clientX: 100, clientY: 100 };
@@ -796,7 +835,7 @@ describe("PetView task kind", () => {
             internals.startQuickCaptureHold();
             jest.advanceTimersByTime(520);
             const btn = root.children
-                .find((c) => c.className === "pa-pagelet-pet-hold-menu")
+                .find((c) => c.className === "pa-pagelet-action-ring")
                 ?.children[0];
 
             btn!.dispatch("keydown", { key: "Enter" } as never);
@@ -840,7 +879,10 @@ describe("PetView task kind", () => {
             internals.startQuickCaptureHold();
             jest.advanceTimersByTime(520);
             expect(nextRoot.children).toHaveLength(1);
-            expect(doc.listenerCount("pointerdown")).toBe(1);
+            // The unmounted legacy seam has no pointerup. Both the active
+            // gesture guard and the visible Ring outside listener must exist
+            // until teardown.
+            expect(doc.listenerCount("pointerdown")).toBe(2);
 
             view.unmount();
 
@@ -1018,11 +1060,14 @@ describe("PetView hold-menu input boundary", () => {
             expect(fixture.doc.listenerCount("touchstart")).toBe(1);
 
             fixture.doc.dispatch("pointerdown", outside);
+            outside.focus();
+            jest.advanceTimersByTime(0);
 
             expect(fixture.root.children).not.toContain(fixture.menu);
             expect(fixture.doc.listenerCount("pointerdown")).toBe(0);
             expectNoGlobalTouchTracking(fixture.doc);
             expectNoAction(fixture);
+            expect(fixture.doc.activeElement).toBe(fixture.trigger);
             expect(jest.getTimerCount()).toBe(0);
         });
     });
@@ -1081,11 +1126,11 @@ describe("PetView touch suppression", () => {
         jest.advanceTimersByTime(399);
 
         internals._handleClick();
-        expect(onToggleBubble).toHaveBeenCalledTimes(2);
+        expect(onToggleBubble).not.toHaveBeenCalled();
 
         jest.advanceTimersByTime(1);
         internals._handleClick();
-        expect(onToggleBubble).toHaveBeenCalledTimes(3);
+        expect(onToggleBubble).toHaveBeenCalledTimes(1);
     });
 
     it("clears pending touch suppression timers on destroy", () => {
@@ -1317,22 +1362,22 @@ describe("PetView mobile positioning styles", () => {
         expect(pageletMotionCss).not.toContain("prefers-reduced-motion");
         expect(pageletMotionCss).not.toContain("transition-duration: .01s!important");
         expect(pageletMotionCss).not.toContain("animation: none!important");
-        expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pa-pagelet-pet-hold-menu \{[\s\S]*?animation:\s*none;/);
+        expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pa-pagelet-action-ring-item \{[\s\S]*?animation:\s*none;/);
     });
 
     it("places the phone hold menu below the toolbar and keeps every action touch-sized", () => {
         const css = readFileSync("src/custom.pcss", "utf8");
         const menuBlock = getCssRuleBlock(
             css,
-            "body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-pet-hold-menu",
+            "body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-action-ring",
         );
         const itemBlock = getCssRuleBlock(
             css,
-            "body.is-mobile .pa-pagelet-pet-hold-menu-item",
+            "body.is-mobile .pa-pagelet-action-ring-item",
         );
 
         expect(menuBlock).toContain("top: calc(100% + 8px);");
-        expect(menuBlock).toContain("bottom: auto;");
+        expect(menuBlock).toContain("env(safe-area-inset-bottom,0px)");
         expect(itemBlock).toContain("min-width: 44px;");
         expect(itemBlock).toContain("min-height: 44px;");
     });

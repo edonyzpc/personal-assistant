@@ -290,6 +290,7 @@ export function buildRecallDeliveryContent(
     return {
         type: "recall-delivery",
         findings: [deliveryCandidateFinding(candidate)],
+        deliveryReceipt: candidate.deliveryReceipt,
         inlineHint: candidate.whyNow[0]
             ? { text: candidate.whyNow[0], icon: "info" }
             : undefined,
@@ -329,6 +330,7 @@ export function buildProactiveRecallDeliveryContent(
     return {
         type: "recall-delivery",
         findings: [deliveryCandidateFinding(candidate)],
+        deliveryReceipt: candidate.deliveryReceipt,
         inlineHint: candidate.whyNow[0]
             ? { text: candidate.whyNow[0], icon: "info" }
             : undefined,
@@ -390,6 +392,7 @@ export function buildRecallDeliveryStackContent(
             findings: content.findings,
             actions: content.actions,
             inlineHint: content.inlineHint,
+            deliveryReceipt: content.deliveryReceipt,
         };
     });
     const firstCard = cards[0];
@@ -398,6 +401,7 @@ export function buildRecallDeliveryStackContent(
         findings: firstCard?.findings ?? [],
         actions: firstCard?.actions ?? [],
         inlineHint: firstCard?.inlineHint,
+        deliveryReceipt: firstCard?.deliveryReceipt,
         cards,
     };
 }
@@ -429,6 +433,7 @@ export function buildPreparedRecapDeliveryContent(
                 sourceTitle: secondaryMetadata || undefined,
             },
         ],
+        deliveryReceipt: candidate.deliveryReceipt,
         inlineHint: candidate.whyNow[0]
             ? { text: candidate.whyNow[0], icon: "calendar" }
             : undefined,
@@ -573,7 +578,22 @@ export function buildReadyEmptyContent(
 ): BubbleContent {
     return {
         type: "ready-empty",
-        findings: [{ text: pageletT("pagelet.bubble.readyEmpty", locale) }],
+        findings: [
+            { text: pageletT("pagelet.bubble.readyEmpty", locale) },
+            { text: pageletT("pagelet.bubble.readyEmptyTeaching", locale) },
+        ],
+        actions: [discoverRelatedAction(callbacks, locale)],
+    };
+}
+
+/** Build the explicit Quick Review empty result after the one-time explanation was seen. */
+export function buildTerseEmptyContent(
+    callbacks: BubbleStateCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "ready-empty",
+        findings: [{ text: pageletT("pagelet.bubble.terseEmpty", locale) }],
         actions: [discoverRelatedAction(callbacks, locale)],
     };
 }
