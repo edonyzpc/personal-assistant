@@ -179,6 +179,7 @@ export class BubbleCoordinator {
     private lastBubbleView: BubbleView | null = null;
     private lastPetView: PetView | null = null;
     private lastBubbleEntry: BubbleEntry = "pet";
+    private suppressNudgeStateForce = false;
 
     destroy(): void {
         this.memoryReadinessRefreshEpoch += 1;
@@ -225,16 +226,9 @@ export class BubbleCoordinator {
         if (petView?.stateMachine.state === "nudge") {
             const result = this.showNudgeBubble(bubbleView, petView);
             petView.stateMachine.transition("user-interact");
-            // A failed/no-op show must not lose the still-pending ticket when
-            // user-interact settles the Pet back to idle. Visible shows return
-            // without forcing, so this does not create an immediate re-nudge.
             this.reconcileNudge(bubbleView, petView);
             if (result.status === "unavailable") {
-                if (this.shouldOpenActionRing(bubbleView, petView)) {
-                    petView.openActionRing?.();
-                } else {
-                    this.showBubble(bubbleView, petView, { entry: "pet" });
-                }
+                this.showBubble(bubbleView, petView, { entry: "pet" });
             }
             return;
         }
@@ -924,21 +918,17 @@ export class BubbleCoordinator {
         petView?.closeActionRing?.(false, "action");
         this.invalidateDiscoverRun();
         this.lastAnchorEl = anchorEl;
-        this.reconcileNudge(bubbleView, petView);
+        this.suppressNudgeStateForce = true;
+        try { this.reconcileNudge(bubbleView, petView); }
+        finally { this.suppressNudgeStateForce = false; }
 
         const locale = getPageletUiLanguage();
         const stateCallbacks = this.buildStateCallbacks(bubbleView);
-        let ticket = this.pendingNudgeTicket;
-        if (!ticket || !this.currentNudgeTickets().some((candidate) => candidate.key === ticket?.key)) {
-            this.pendingNudgeTicket = null;
-            this.reconcileNudge(bubbleView, petView);
-            ticket = this.pendingNudgeTicket;
-        }
+        const ticket = this.pendingNudgeTicket;
         if (!ticket) return { status: "unavailable" };
         const content = this.buildTicketContent(ticket, bubbleView, stateCallbacks, locale);
         if (!content) {
             this.pendingNudgeTicket = null;
-            this.reconcileNudge(bubbleView, petView);
             return { status: "unavailable" };
         }
         this.applyInlineHint(content, locale);
@@ -1008,11 +998,15 @@ export class BubbleCoordinator {
             || petView.actionRingOpen
         ) return;
         if (!this.pendingNudgeTicket) {
-            if (petView.stateMachine.state === "nudge") petView.stateMachine.forceState("idle");
+            if (!this.suppressNudgeStateForce && petView.stateMachine.state === "nudge") {
+                petView.stateMachine.forceState("idle");
+            }
             return;
         }
         if (petView.stateMachine.state === "working") return;
-        if (petView.stateMachine.state !== "nudge") petView.stateMachine.forceState("nudge");
+        if (!this.suppressNudgeStateForce && petView.stateMachine.state !== "nudge") {
+            petView.stateMachine.forceState("nudge");
+        }
     }
 
     /** Called by BubbleView's single close seam after any visible close path. */

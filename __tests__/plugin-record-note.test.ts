@@ -400,11 +400,16 @@ function installMockWindowLocalStorage(initial: Record<string, string> = {}) {
 function installUnavailablePlatformLocalStorage() {
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
     const previousActiveWindow = Object.getOwnPropertyDescriptor(globalThis, 'activeWindow');
+    const previousSelf = Object.getOwnPropertyDescriptor(globalThis, 'self');
     Object.defineProperty(globalThis, 'window', {
         configurable: true,
         value: {},
     });
     Object.defineProperty(globalThis, 'activeWindow', {
+        configurable: true,
+        value: {},
+    });
+    Object.defineProperty(globalThis, 'self', {
         configurable: true,
         value: {},
     });
@@ -419,6 +424,11 @@ function installUnavailablePlatformLocalStorage() {
                 Object.defineProperty(globalThis, 'activeWindow', previousActiveWindow);
             } else {
                 delete (globalThis as { activeWindow?: Window }).activeWindow;
+            }
+            if (previousSelf) {
+                Object.defineProperty(globalThis, 'self', previousSelf);
+            } else {
+                delete (globalThis as { self?: unknown }).self;
             }
         },
     };

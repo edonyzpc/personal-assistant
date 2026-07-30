@@ -250,8 +250,9 @@ describe("RetrievalHabitProfileStore", () => {
             score: 46,
         });
 
+        const now = new Date("2026-06-29T12:00:00.000Z");
         await store.recordRecallFeedback(accepted, "accept");
-        const influenced = applyRetrievalHabitProfileToRecallCandidates([neutral, accepted], settings);
+        const influenced = applyRetrievalHabitProfileToRecallCandidates([neutral, accepted], settings, { now });
 
         expect(influenced[0].id).toBe("qr-ins-neutral");
         expect(influenced[0].sourceRefs[0].evidenceStrength).toBe("strong");
@@ -259,16 +260,16 @@ describe("RetrievalHabitProfileStore", () => {
         const nearTie = applyRetrievalHabitProfileToRecallCandidates([
             { ...neutral, sourceRefs: [{ path: "Archive/Neutral.md", evidenceStrength: "medium" }], score: 42.9 },
             accepted,
-        ], settings);
+        ], settings, { now });
         expect(nearTie[0].id).toBe("qr-ins-accepted");
         expect(nearTie[0].score - accepted.score).toBeLessThanOrEqual(0.75);
         expect(nearTie[0].whyNow).toContain("Shown slightly higher by local recall preferences.");
 
-        const outsideTieWindow = applyRetrievalHabitProfileToRecallCandidates([farBetter, accepted], settings);
+        const outsideTieWindow = applyRetrievalHabitProfileToRecallCandidates([farBetter, accepted], settings, { now });
         expect(outsideTieWindow[0].id).toBe("qr-ins-far-better");
 
         await store.clear();
-        const cleared = applyRetrievalHabitProfileToRecallCandidates([neutral, accepted], settings);
+        const cleared = applyRetrievalHabitProfileToRecallCandidates([neutral, accepted], settings, { now });
         expect(cleared[0].id).toBe("qr-ins-neutral");
 
         settings.enabled = false;
@@ -310,11 +311,12 @@ describe("RetrievalHabitProfileStore", () => {
             whyShown: ["Matched by content"],
         };
 
-        const nearTie = applyRetrievalHabitProfileToEvidence([neutral, favored], settings);
+        const now = new Date("2026-06-29T12:00:00.000Z");
+        const nearTie = applyRetrievalHabitProfileToEvidence([neutral, favored], settings, { now });
         expect(nearTie[0].sourceRef.path).toBe("Projects/Favored.md");
         expect(nearTie[0].whyShown).toContain("Shown slightly higher by local recall preferences.");
 
-        const evidenceCeiling = applyRetrievalHabitProfileToEvidence([favored, strong], settings);
+        const evidenceCeiling = applyRetrievalHabitProfileToEvidence([favored, strong], settings, { now });
         expect(evidenceCeiling[0].sourceRef.path).toBe("Projects/Strong.md");
     });
 

@@ -777,12 +777,8 @@ export class PetView implements PetRenderer {
         }
 
         const trigger = createHtmlElement("button");
-        trigger.className = "pa-pagelet-pet-wrapper pa-pagelet-pet-trigger";
+        trigger.className = "pa-pagelet-pet-wrapper pa-pagelet-pet-trigger clickable-icon";
         trigger.setAttribute("type", "button");
-        trigger.setAttribute(
-            "aria-label",
-            getPetAriaLabel(this._getLocale(), this._state, this._taskKind),
-        );
         trigger.setAttribute("aria-live", "polite");
         trigger.setAttribute("aria-controls", this._actionRingId);
         trigger.setAttribute("aria-expanded", "false");
@@ -792,6 +788,11 @@ export class PetView implements PetRenderer {
 
         const svgWrap = createHtmlElement("span");
         svgWrap.className = "pa-pagelet-pet-svg-wrap";
+        svgWrap.setAttribute("role", "img");
+        svgWrap.setAttribute(
+            "aria-label",
+            getPetAriaLabel(this._getLocale(), this._state, this._taskKind),
+        );
 
         const svgEl = createPetSvgElement(this._state, this._taskKind);
 
@@ -911,7 +912,7 @@ export class PetView implements PetRenderer {
         this._taskKind = taskKind;
         this._rootEl?.setAttribute("data-task", taskKind);
         if (this._state === "working") {
-            this.interactionElement()?.setAttribute(
+            this._svgWrapEl?.setAttribute(
                 "aria-label",
                 getPetAriaLabel(this._getLocale(), this._state, this._taskKind),
             );
@@ -1047,7 +1048,7 @@ export class PetView implements PetRenderer {
         if (!this._rootEl || !this._svgEl) return;
         this._rootEl.setAttribute("data-state", this._state);
         this._rootEl.setAttribute("data-task", this._taskKind);
-        this.interactionElement()?.setAttribute(
+        this._svgWrapEl?.setAttribute(
             "aria-label",
             getPetAriaLabel(this._getLocale(), this._state, this._taskKind),
         );

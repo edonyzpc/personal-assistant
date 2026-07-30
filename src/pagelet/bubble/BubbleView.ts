@@ -957,6 +957,8 @@ export class BubbleView {
     // Global event handlers
     // -----------------------------------------------------------------------
 
+    private static readonly OUTSIDE_CLICK_ATTACH_DELAY_MS = 150;
+
     private attachGlobalListeners(): void {
         this.attachTimerId = setPlatformTimeout(() => {
             this.attachTimerId = null;
@@ -965,7 +967,7 @@ export class BubbleView {
             this.globalListenerDocument = doc;
             doc.addEventListener("click", this.handleDocumentClick, true);
             doc.addEventListener("keydown", this.handleKeydown, true);
-        }, 0);
+        }, BubbleView.OUTSIDE_CLICK_ATTACH_DELAY_MS);
         const win = getOptionalPlatformWindow();
         this.resizeListenerWindow = win ?? null;
         win?.addEventListener("resize", this.handleResize);
@@ -992,12 +994,9 @@ export class BubbleView {
         const clickOnAnchor = this.anchorEl?.contains(target) ?? false;
 
         if (clickInsideBubble || clickOnAnchor) {
-            // Clicks inside the bubble or on the anchor are handled by
-            // their own listeners.
             return;
         }
 
-        // Click outside — close the bubble.
         if (this.state === "visible") {
             this.close({ restoreFocus: false });
             this.options.callbacks.onDismiss();
