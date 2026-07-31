@@ -804,7 +804,7 @@ function buildQuietRecallLanguageRetryInstruction(language?: "zh" | "en"): strin
 }
 const SCOPE_RECAP_CALL_LIMITS = Object.freeze({ hourly: 2, daily: 10 });
 const QUIET_RECALL_CALL_LIMITS = Object.freeze({ hourly: 10, daily: 50 });
-const DEEP_DISCOVER_CALL_LIMITS = Object.freeze({ hourly: 36, daily: 36 });
+const DEEP_DISCOVER_CALL_LIMITS = Object.freeze({ hourly: 12, daily: 36 });
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 const PAGELET_DEEP_DISCOVER_USAGE_STORAGE_KEY_PREFIX = "pa-pagelet-deep-discover-usage";
@@ -1205,6 +1205,7 @@ export class PluginManager extends Plugin {
     private scopeRecapRateLimiterInstance: PageletRateLimiter | null = null;
     private quietRecallRateLimiterInstance: PageletRateLimiter | null = null;
     private deepDiscoverRateLimiterInstance: PageletRateLimiter | null = null;
+    private deepDiscoverAttentionStoreInstance: AttentionAwareDeliveryStore | null = null;
     private deepDiscoverScheduler: PageletDeepDiscoverScheduler | null = null;
     private deepDiscoverControllerPolicyIdentitySnapshot: string | null = null;
     private deepDiscoverControllerInitialization: Promise<PageletDeepDiscoverScheduler | null> | null = null;
@@ -7163,7 +7164,7 @@ export class PluginManager extends Plugin {
         });
         return new PageletDeepDiscoverScheduler({
             controller,
-            delayMs: 0,
+            delayMs: 3_000,
         });
     }
 
@@ -7310,11 +7311,17 @@ export class PluginManager extends Plugin {
         input: {
             path: string;
             signal?: AbortSignal;
+            force?: boolean;
         },
     ): Promise<{ ok: true } | { ok: false; reason: "limit" | "unavailable" }> {
         if (input.signal?.aborted) throw createPageletProviderAbortError();
         if (!this.pageletDeepDiscoverAdmissionIsCurrent(expectedPolicyIdentity, input)) {
             return { ok: false, reason: "unavailable" };
+        }
+        if (input.force) {
+            await this.getPageletProviderCallAdmission().admitStandardCall();
+            if (input.signal?.aborted) throw createPageletProviderAbortError();
+            return { ok: true };
         }
 
         let decision: Awaited<ReturnType<PageletRateLimiter["reserveLeaseIf"]>>;
@@ -7431,9 +7438,12 @@ export class PluginManager extends Plugin {
         }, this.getPageletLocale());
         const receipt = candidate.deliveryReceipt;
         if (!receipt) return false;
-        return new AttentionAwareDeliveryStore({
-            storage: this.createPageletAttentionStorage(),
-        }).isSeen(receipt);
+        if (!this.deepDiscoverAttentionStoreInstance) {
+            const storage = this.createPageletAttentionStorage();
+            if (!storage) return false;
+            this.deepDiscoverAttentionStoreInstance = new AttentionAwareDeliveryStore({ storage });
+        }
+        return this.deepDiscoverAttentionStoreInstance.isSeen(receipt);
     }
 
     private handlePageletDeepDiscoverResult(

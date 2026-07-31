@@ -1918,6 +1918,7 @@ export class PageletOrchestrator {
         const existingCandidate = this.agentInsightCandidate;
         if (existingCandidate && this.agentInsightAnchorPath === path) {
             this.openAgentInsightPanel(existingCandidate);
+            return;
         }
         const routeToken = ++this.foregroundRouteToken;
         this.transitionPet("analysis-start", "connection");
