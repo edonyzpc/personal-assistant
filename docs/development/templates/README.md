@@ -1,7 +1,7 @@
 # Documentation Templates
 
 Document status: Current
-Updated: 2026-07-27
+Updated: 2026-07-31
 Authority: 新建需求、产品决策、Product/Governance contract 与最小 Active Package 的 canonical template set。
 
 按 [Documentation Workflow](../documentation-workflow.md) 选择最轻 lane；不要为了“完整”给 L0 修复创建空文档。
@@ -16,6 +16,7 @@ Authority: 新建需求、产品决策、Product/Governance contract 与最小 A
 | [Plan](./plan.md) | 多阶段、依赖、风险或回滚需要独立计划时 | 可选 `plan.md` |
 | [SDD](./sdd.md) | 复杂设计、数据/生命周期/兼容性或多模块变更时 | 可选 `sdd.md` |
 | [Tracker](./tracker.md) | 维护唯一执行状态与验证证据 | Active Package `tracker.md` |
+| [Codex task prompt](./codex-task-prompt.md) | 启动 owner-directed SDD → implementation → deploy → dogfood 任务 | 复制到新的 Codex task |
 创建文档时删除所有占位提示，填入 repo-local 精确链接，并同步相应 index。Product track 保留 `Decision:` + `Product spec:` metadata 并删除 `Governance contract:`；L2G track 只保留 `Governance contract:`，删除 Product metadata。
 
 Tracker `Current Snapshot` 同时承担跨会话 handoff；不创建独立 `handoff*.md` 或

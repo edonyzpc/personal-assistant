@@ -26,7 +26,7 @@
 
 ## Proposal
 
-- [Proposal Registry](./proposals/README.md) — 仅保存已形成完整边界、但尚未获准进入产品/runtime 的长期 proposal。
+- [Proposal Registry](./proposals/README.md) — 保存 owner 保留的长期方向、边界或尚待最终验收的交付文档。
 
 ## Active
 

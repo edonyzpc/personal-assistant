@@ -1,8 +1,11 @@
 # Agent Operations 能力层
 
-Document status: Draft (需求已明确)
+Document status: Current
+Delivery status: Blocked
 Updated: 2026-07-30
-Work item: B-101 (演进方向)
+Work item: B-101
+Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)、[DEC-014](../../../product/decisions/dec-014-defer-operations-agent.md) 与 [DEC-011](../../../product/decisions/dec-011-capability-policy-boundary.md)。
+Restart condition: Owner 明确启动 Step 2 后，先完成 focused Operations SDD、4 个 core tools、inline confirm / undo / content-free audit、安全验证与真实 Obsidian dogfood；runtime exposure 仍受 DEC-014 gate。
 
 > 定义 PA Agent 在 Obsidian vault 中的写操作能力。
 > 核心场景：Chat 对话结论落地到 vault + Pagelet insight 的推荐动作执行。

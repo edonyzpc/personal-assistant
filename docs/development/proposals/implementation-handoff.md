@@ -1,8 +1,13 @@
 # Implementation Handoff Brief
 
+Document status: Current
+Delivery status: Blocked
 Updated: 2026-07-30
+Work item: B-123
+Related work item: B-101
 Target: Codex (implementation advisor → designer → developer → tester)
-Authority: Project owner decision
+Authority: Project owner's staged Step 1 → 2 → 3 implementation sequence and completion criteria; B-123 is the current primary delivery and B-101 remains the Operations lane.
+Restart condition: Mac 解锁并启动 Obsidian、36/day 配额恢复后，完成修复版 20+ cases、同版本 baseline 盲评与 Bubble → Panel / Settings 可视验证；B-101 由 owner 明确启动 Step 2 后进入实现。
 
 ---
 
