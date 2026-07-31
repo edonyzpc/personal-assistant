@@ -5,6 +5,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
     buildRecallDeliveryReceipt,
     buildRecapDeliveryReceipt,
+    buildReviewDeliveryReceipt,
 } from "../src/pagelet/attention/fingerprint";
 
 describe("Pagelet delivery identity", () => {
@@ -218,6 +219,81 @@ describe("Pagelet delivery identity", () => {
         expect(recall.kind).toBe("recall");
         expect(recap.kind).toBe("recap");
         expect(recall.fingerprint).not.toBe(recap.fingerprint);
+    });
+
+    it("normalizes Deep Discover review identity and keeps it distinct", () => {
+        const first = buildReviewDeliveryReceipt({
+            locale: " ZH-CN ",
+            title: "一个  新洞察",
+            body: "证据 A\r\n证据 B",
+            whyNow: [" 离开笔记 "],
+            anchorSourceIdentity: "./Projects\\Anchor.md",
+            sourceIdentities: ["Sources/B.md", "./Sources//A.md"],
+        });
+        const second = buildReviewDeliveryReceipt({
+            locale: "zh-cn",
+            title: "一个 新洞察",
+            body: "证据 A 证据 B",
+            whyNow: "离开笔记",
+            anchorSourceIdentity: "Projects/Anchor.md",
+            sourceIdentities: ["Sources/A.md", "Sources/B.md"],
+        });
+
+        expect(first).toEqual(second);
+        expect(first).toEqual({
+            version: 1,
+            kind: "review",
+            fingerprint: expect.stringMatching(/^v1:review:[0-9a-f]{16}$/),
+        });
+        expect(first.fingerprint).not.toBe(buildRecallDeliveryReceipt({
+            locale: "zh-cn",
+            title: "一个 新洞察",
+            body: "证据 A 证据 B",
+            whyNow: "离开笔记",
+            currentSourceIdentity: "Projects/Anchor.md",
+            recalledSourceIdentities: ["Sources/A.md", "Sources/B.md"],
+        }).fingerprint);
+    });
+
+    it("keeps Deep Discover trigger metadata out of review identity", () => {
+        const stableFields = {
+            locale: "zh",
+            title: "发布策略存在风险缺口",
+            body: "两篇笔记的发布假设发生冲突。",
+            anchorSourceIdentity: "notes/anchor.md",
+            sourceIdentities: ["notes/anchor.md", "notes/related.md"],
+        };
+        const afterLeave = {
+            ...stableFields,
+            triggerReason: "leave-note",
+        };
+        const afterEdit = {
+            ...stableFields,
+            triggerReason: "edit-idle",
+        };
+
+        expect(buildReviewDeliveryReceipt(afterLeave))
+            .toEqual(buildReviewDeliveryReceipt(afterEdit));
+    });
+
+    it.each([
+        ["locale", { locale: "zh" }],
+        ["title", { title: "Changed title" }],
+        ["body", { body: "Changed body" }],
+        ["anchor", { anchorSourceIdentity: "Other/Anchor.md" }],
+        ["source", { sourceIdentities: ["Other/Source.md"] }],
+    ])("changes review identity when canonical %s changes", (_label, changed) => {
+        const base = {
+            locale: "en",
+            title: "Source-backed insight",
+            body: "Two decisions now conflict.",
+            whyNow: "The anchor changed.",
+            anchorSourceIdentity: "Projects/Anchor.md",
+            sourceIdentities: ["Projects/Decision.md"],
+        };
+
+        expect(buildReviewDeliveryReceipt({ ...base, ...changed }).fingerprint)
+            .not.toBe(buildReviewDeliveryReceipt(base).fingerprint);
     });
 
     it("returns only an opaque receipt without source or visible text", () => {

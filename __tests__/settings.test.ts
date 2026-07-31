@@ -2973,7 +2973,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h3:Model',
             'h3:Limits',
             'h3:Pet',
-            'h3:Background Review Preparation',
+            'h3:Deep Discover',
             'h3:Scope Recap',
             'h3:Reviews',
             'h3:Quiet Recall',

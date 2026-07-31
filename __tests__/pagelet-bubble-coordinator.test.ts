@@ -158,19 +158,43 @@ function makeRecapTicket(candidate: DeliveryCandidate & { kind: "recap" }): Nudg
     };
 }
 
+function makeAgentInsightCandidate(): DeliveryCandidate & { kind: "review" } {
+    return {
+        id: "agent-insight-1",
+        kind: "review",
+        title: "Two project decisions now conflict",
+        body: "The delivery decision and the older menu plan point in different directions.",
+        sourceRefs: [
+            { path: "Projects/Decision.md", title: "Decision" },
+            { path: "Projects/Menu.md", title: "Menu" },
+        ],
+        whyNow: ["This became visible after the anchor note changed."],
+        preparedAt: "2026-07-31T12:00:00.000Z",
+        staleStatus: "fresh",
+        route: { surface: "panel", payloadType: "agent-insight" },
+        deliveryReceipt: {
+            version: 1,
+            kind: "review",
+            fingerprint: "v1:review:0000000000000121",
+        },
+    };
+}
+
+function makeAgentInsightTicket(
+    candidate: DeliveryCandidate & { kind: "review" },
+): NudgeTicket {
+    return {
+        key: `${NudgeOwner.AgentInsight}:${candidate.id}`,
+        owner: NudgeOwner.AgentInsight,
+        candidate,
+    };
+}
+
 function makePatternTicket(result: { generatedAt: string; totalCount: number; patterns: [] }): NudgeTicket {
     return {
         key: `${NudgeOwner.Pattern}:${result.generatedAt}`,
         owner: NudgeOwner.Pattern,
         result,
-    };
-}
-
-function makeOnboardingTicket(nudge: { kind: "quick_capture" | "maintenance_scan"; generatedAt: string }): NudgeTicket {
-    return {
-        key: `${NudgeOwner.Onboarding}:${nudge.kind}:${nudge.generatedAt}`,
-        owner: NudgeOwner.Onboarding,
-        nudge,
     };
 }
 
@@ -227,6 +251,121 @@ async function flushAsyncWork(): Promise<void> {
 }
 
 describe("BubbleCoordinator Review Queue reminders", () => {
+    it("presents an admitted Agent insight through the shared nudge lifecycle", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: false,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+        const candidate = makeAgentInsightCandidate();
+        const onAgentInsightView = jest.fn();
+        const onAgentInsightLater = jest.fn();
+        const onNudgePresented = jest.fn();
+        const coordinator = makeCoordinator(() => [], {}, {
+            getAgentInsightCandidate: () => candidate,
+            getAdmittedNudgeTickets: () => [makeAgentInsightTicket(candidate)],
+            onAgentInsightView,
+            onAgentInsightLater,
+            onNudgePresented,
+        }, proactiveHints);
+        const bubbleView = makeBubbleView();
+        const petView = makeNudgePetView();
+
+        coordinator.handlePetClick(bubbleView, petView);
+
+        const content = shownContent(bubbleView);
+        expect(content.type).toBe("review-delivery");
+        expect(content.deliveryReceipt).toBe(candidate.deliveryReceipt);
+        expect(onNudgePresented).toHaveBeenCalledWith(expect.objectContaining({
+            owner: NudgeOwner.AgentInsight,
+            candidate,
+        }));
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(false);
+
+        content.actions[0]?.callback();
+        expect(onAgentInsightView).toHaveBeenCalledWith(candidate);
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+
+        jest.mocked(bubbleView.close).mockClear();
+        content.actions[1]?.callback();
+        expect(onAgentInsightLater).toHaveBeenCalledWith(candidate);
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not consume an Agent insight ticket when Bubble never becomes visible", () => {
+        const proactiveHints = new ProactiveHints({
+            enabled: false,
+            cooldownMinutes: 60,
+            quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        });
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+        const candidate = makeAgentInsightCandidate();
+        const onNudgePresented = jest.fn();
+        const coordinator = makeCoordinator(() => [], {}, {
+            getAdmittedNudgeTickets: () => [makeAgentInsightTicket(candidate)],
+            onNudgePresented,
+        }, proactiveHints);
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        } as unknown as BubbleView;
+        const petView = makePetView();
+
+        coordinator.reconcileNudge(bubbleView, petView);
+        expect(coordinator.showNudgeBubble(bubbleView, petView)).toEqual({
+            status: "not-visible",
+        });
+
+        expect(onNudgePresented).not.toHaveBeenCalled();
+        expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+    });
+
+    it.each([
+        ["seen", false, 0, true],
+        ["quiet hours", true, 0, false],
+        ["shared cooldown", false, 60, false],
+    ] as const)("keeps Agent insight proactive delivery gated by %s", (
+        _label,
+        quietHoursEnabled,
+        cooldownMinutes,
+        seen,
+    ) => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-07-31T12:00:00.000Z"));
+        try {
+            const proactiveHints = new ProactiveHints({
+                enabled: false,
+                cooldownMinutes: 60,
+                quietHours: quietHoursEnabled
+                    ? { enabled: true, start: "00:00", end: "23:59" }
+                    : { enabled: false, start: "22:00", end: "08:00" },
+            });
+            if (cooldownMinutes > 0) {
+                expect(proactiveHints.onInsightsReady({ enabled: true })).toBe(true);
+                proactiveHints.recordHintPresented();
+            }
+            const candidate = makeAgentInsightCandidate();
+            const coordinator = makeCoordinator(() => [], {}, {
+                getAdmittedNudgeTickets: () => [makeAgentInsightTicket(candidate)],
+                isDeliverySeen: () => seen,
+            }, proactiveHints);
+            const bubbleView = makeBubbleView();
+            const petView = makePetView();
+
+            coordinator.reconcileNudge(bubbleView, petView);
+
+            expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+            expect(coordinator.showNudgeBubble(bubbleView, petView)).toEqual({
+                status: "unavailable",
+            });
+            coordinator.destroy();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("shows Quiet Recall before onboarding, then signals onboarding only after close", () => {
         const proactiveHints = new ProactiveHints({
             enabled: true,
@@ -1017,289 +1156,26 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(content.actions.map((action) => action.label)).toEqual(["View boundary settings"]);
     });
 
-    it("does not display stale cards when an ordinary Bubble Discover run is no longer current", async () => {
-        const recall: Awaited<ReturnType<PageletHost["runQuietRecall"]>> = {
-            generatedAt: "2026-07-05T12:00:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 1,
-            candidates: [{
-                id: "recall-stale",
-                title: "Recall: Stale",
-                summary: "This stale candidate must not render.",
-                sourceRefs: [{ path: "notes/stale.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                whyNow: ["Its evaluation context has changed."],
-                nextAction: "Open it.",
-                relation: "related",
-                score: 80,
-                generatedAt: "2026-07-05T12:00:00.000Z",
-            }],
-        };
-        const runQuietRecall = jest.fn(async () => recall);
-        const isQuietRecallRunCurrent = jest.fn<(_result: typeof recall) => boolean>(() => false);
-        const onSourceClick = jest.fn();
-        const coordinator = makeCoordinator(() => [], {
-            runQuietRecall,
-            isQuietRecallRunCurrent,
-        }, { onSourceClick });
-        const bubbleView = makeBubbleView();
-
-        coordinator.showBubble(bubbleView, makePetView());
-        await Promise.resolve();
-        shownContent(bubbleView).actions[0].callback();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        const show = bubbleView.show as unknown as jest.Mock;
-        const shownTypes = show.mock.calls.map(([content]) => (content as BubbleContent).type);
-        expect(runQuietRecall).toHaveBeenCalledTimes(1);
-        expect(isQuietRecallRunCurrent).toHaveBeenCalledWith(recall);
-        expect(shownTypes).not.toContain("recall-delivery");
-        expect(JSON.stringify(show.mock.calls)).not.toContain("This stale candidate must not render.");
-        expect(bubbleView.close).toHaveBeenCalledTimes(1);
-        expect(bubbleView.bubbleState).toBe("hidden");
-        expect(onSourceClick).not.toHaveBeenCalled();
-    });
-
-    it("does not publish Bubble Discover results after the active note changes", async () => {
-        let activePath = "notes/current.md";
-        let resolveRecall = (): void => undefined;
-        const runQuietRecall = jest.fn(() => new Promise<Awaited<ReturnType<PageletHost["runQuietRecall"]>>>((resolve) => {
-            resolveRecall = () => resolve({
-                generatedAt: "2026-07-05T12:00:00.000Z",
-                currentPath: "notes/current.md",
-                totalCount: 1,
-                candidates: [{
-                    id: "recall-alpha",
-                    title: "Recall: Alpha",
-                    summary: "Alpha may matter again.",
-                    sourceRefs: [{ path: "notes/alpha.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                    whyNow: ["Source appears near the current note in Memory search."],
-                    nextAction: "Open it.",
-                    relation: "related" as const,
-                    score: 80,
-                    generatedAt: "2026-07-05T12:00:00.000Z",
-                }],
-            });
-        }));
-        const coordinator = makeCoordinator(() => [], {
-            app: {
-                workspace: {
-                    getActiveFile: () => ({
-                        path: activePath,
-                        extension: "md",
-                        stat: { size: 120 },
-                    }),
-                },
-            } as unknown as PageletHost["app"],
-            runQuietRecall,
-        });
-        const bubbleView = makeBubbleView();
-
-        coordinator.showBubble(bubbleView, makePetView());
-        await Promise.resolve();
-        shownContent(bubbleView).actions[0].callback();
-        expect(shownContent(bubbleView).findings[0]?.text).toContain("Looking for old notes");
-
-        activePath = "notes/other.md";
-        resolveRecall();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(runQuietRecall).toHaveBeenCalledTimes(1);
-        expect(bubbleView.close).toHaveBeenCalledTimes(1);
-        expect(shownContent(bubbleView).type).toBe("ready-empty");
-    });
-
-    it("deduplicates repeated Bubble Discover clicks while recall is in flight", async () => {
-        const runQuietRecall = jest.fn(() => new Promise<Awaited<ReturnType<PageletHost["runQuietRecall"]>>>(() => undefined));
-        const coordinator = makeCoordinator(() => [], { runQuietRecall });
-        const bubbleView = makeBubbleView();
-
-        coordinator.showBubble(bubbleView, makePetView());
-        await Promise.resolve();
-        const ready = shownContent(bubbleView);
-        ready.actions[0].callback();
-        ready.actions[0].callback();
-
-        expect(runQuietRecall).toHaveBeenCalledTimes(1);
-        expect(shownContent(bubbleView).findings[0]?.text).toContain("Looking for old notes");
-    });
-
-    it("does not publish a Discover result after the Bubble is closed and reopened", async () => {
-        let resolveRecall = (): void => undefined;
-        const runQuietRecall = jest.fn(() => new Promise<Awaited<ReturnType<PageletHost["runQuietRecall"]>>>((resolve) => {
-            resolveRecall = () => resolve({
-                generatedAt: "2026-07-05T12:00:00.000Z",
-                currentPath: "notes/current.md",
-                totalCount: 1,
-                candidates: [{
-                    id: "recall-alpha",
-                    title: "Recall: Alpha",
-                    summary: "Alpha may matter again.",
-                    sourceRefs: [{ path: "notes/alpha.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                    whyNow: ["Source appears near the current note in Memory search."],
-                    nextAction: "Open it.",
-                    relation: "related" as const,
-                    score: 80,
-                    generatedAt: "2026-07-05T12:00:00.000Z",
-                }],
-            });
-        }));
-        const coordinator = makeCoordinator(() => [], { runQuietRecall });
-        const bubbleView = makeBubbleView();
-        const petView = makePetView();
-
-        coordinator.showBubble(bubbleView, petView);
-        await Promise.resolve();
-        shownContent(bubbleView).actions[0].callback();
-        bubbleView.close();
-
-        coordinator.showBubble(bubbleView, petView);
-        await Promise.resolve();
-        expect(shownContent(bubbleView).type).toBe("ready-empty");
-
-        resolveRecall();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(runQuietRecall).toHaveBeenCalledTimes(1);
-        expect(shownContent(bubbleView).type).toBe("ready-empty");
-        expect(JSON.stringify(shownContent(bubbleView))).not.toContain("Alpha may matter again");
-    });
-
-    it("runs Discover inside Bubble and renders high-quality Recall cards", async () => {
-        const onSourceClick = jest.fn();
+    it("closes Bubble and routes Discover through the unified callback without running Quiet Recall", async () => {
         const runQuietRecall = jest.fn(async () => ({
             generatedAt: "2026-07-05T12:00:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 3,
-            candidates: [{
-                id: "recall-alpha",
-                title: "Recall: Alpha",
-                summary: "Alpha may matter again.",
-                sourceRefs: [{ path: "notes/alpha.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                whyNow: ["Source appears near the current note in Memory search."],
-                nextAction: "Open it.",
-                relation: "related" as const,
-                score: 80,
-                generatedAt: "2026-07-05T12:00:00.000Z",
-                evaluationProvenance: "ai" as const,
-                evaluationFingerprint: "eval-recall-alpha",
-            }, {
-                id: "recall-weak",
-                title: "Recall: Weak",
-                summary: "Weak match.",
-                sourceRefs: [{ path: "notes/weak.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                whyNow: ["Weak signal."],
-                nextAction: "Ignore.",
-                relation: "far" as const,
-                score: 40,
-                generatedAt: "2026-07-05T12:00:00.000Z",
-            }, {
-                id: "recall-current",
-                title: "Recall: Current",
-                summary: "The current note backed this saved insight.",
-                sourceRefs: [{ path: "notes/current.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                whyNow: ["Source matches the note you are looking at."],
-                nextAction: "Compare it.",
-                relation: "current" as const,
-                score: 90,
-                generatedAt: "2026-07-05T12:00:00.000Z",
-                evaluationProvenance: "ai" as const,
-                evaluationFingerprint: "eval-recall-current",
-            }],
-            discoverCandidates: [{
-                id: "recall-local-only",
-                title: "Recall: Local candidate",
-                summary: "LOCAL SUMMARY MUST NOT RENDER",
-                sourceRefs: [{ path: "notes/local.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                whyNow: ["LOCAL WHY NOW MUST NOT RENDER"],
-                nextAction: "LOCAL NEXT ACTION MUST NOT RENDER",
-                relation: "related" as const,
-                score: 85,
-                generatedAt: "2026-07-05T12:00:00.000Z",
-                evaluationProvenance: "local" as const,
-            }],
-        }));
-        const coordinator = makeCoordinator(() => [], { runQuietRecall }, { onSourceClick });
-        const bubbleView = makeBubbleView();
-
-        coordinator.showBubble(bubbleView, makePetView());
-        await flushAsyncWork();
-
-        const ready = shownContent(bubbleView);
-        expect(ready.type).toBe("ready-empty");
-        ready.actions[0].callback();
-
-        expect(shownContent(bubbleView).findings[0]?.text).toContain("Looking for old notes");
-        await flushAsyncWork();
-
-        const content = shownContent(bubbleView);
-        expect(content.type).toBe("recall-delivery");
-        expect(content.cards).toHaveLength(2);
-        expect(JSON.stringify(content)).toContain("Alpha may matter again.");
-        expect(JSON.stringify(content)).toContain("Source appears near the current note in Memory search.");
-        expect(JSON.stringify(content)).not.toContain("LOCAL WHY NOW MUST NOT RENDER");
-        expect(JSON.stringify(content)).not.toContain("LOCAL SUMMARY MUST NOT RENDER");
-        expect(content.cards?.[0]?.actions.map((action) => action.label))
-            .toContain("Link");
-        expect(content.cards?.[1]?.actions.map((action) => action.label))
-            .not.toContain("Link");
-
-        content.cards?.[0]?.actions[0].callback();
-        expect(onSourceClick).toHaveBeenCalledWith("notes/alpha.md");
-    });
-
-    it("renders local-only Bubble Discover as one labeled clue without Recall stack or why-now", async () => {
-        const onSourceClick = jest.fn();
-        let preparationActive = false;
-        const runQuietRecall = jest.fn(async () => ({
-            generatedAt: "2026-07-05T12:00:00.000Z",
-            currentPath: "notes/current.md",
             totalCount: 0,
             candidates: [],
-            discoverCandidates: [{
-                id: "recall-local",
-                title: "Recall: Local candidate",
-                summary: "LOCAL SUMMARY MUST NOT RENDER",
-                sourceRefs: [{ path: "notes/local.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
-                whyNow: ["LOCAL WHY NOW MUST NOT RENDER"],
-                nextAction: "LOCAL NEXT ACTION MUST NOT RENDER",
-                relation: "related" as const,
-                score: 85,
-                generatedAt: "2026-07-05T12:00:00.000Z",
-                evaluationProvenance: "local" as const,
-            }],
         }));
-        const coordinator = makeCoordinator(() => [], {
-            runQuietRecall,
-            getMemoryPreparationStatus: () => preparationActive
-                ? { filesDone: 1, filesTotal: 2 }
-                : null,
-        }, { onSourceClick });
+        const onDiscoverConnections = jest.fn();
+        const coordinator = makeCoordinator(() => [], { runQuietRecall }, {
+            onDiscoverConnections,
+        });
         const bubbleView = makeBubbleView();
 
         coordinator.showBubble(bubbleView, makePetView());
         await flushAsyncWork();
-        preparationActive = true;
         shownContent(bubbleView).actions[0].callback();
-        await flushAsyncWork();
 
-        const content = shownContent(bubbleView);
-        expect(content.type).toBe("discovery");
-        expect(content.cards).toBeUndefined();
-        expect(content.inlineHint).toBeUndefined();
-        expect(content.findings[0]?.text).toBe("Local related clue");
-        expect(content.findings[1]).toEqual({
-            text: "Related by local note signals.",
-            sourceLink: "notes/local.md",
-            sourceTitle: "local",
-        });
-        expect(JSON.stringify(content)).not.toContain("LOCAL WHY NOW MUST NOT RENDER");
-        expect(JSON.stringify(content)).not.toContain("LOCAL SUMMARY MUST NOT RENDER");
-
-        content.actions[0]?.callback();
-        expect(onSourceClick).toHaveBeenCalledWith("notes/local.md");
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+        expect(bubbleView.bubbleState).toBe("hidden");
+        expect(onDiscoverConnections).toHaveBeenCalledTimes(1);
+        expect(runQuietRecall).not.toHaveBeenCalled();
     });
 
     it("keeps proactive Quiet Recall to View, Later, and Dismiss even with a distinct source", () => {

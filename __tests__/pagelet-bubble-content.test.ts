@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
 import {
+    buildAgentInsightDeliveryContent,
     buildDiscoveryContent,
     buildEmptyContent,
     buildPreparedRecapDeliveryContent,
@@ -41,6 +42,59 @@ function makeCallbacks(): BubbleStateCallbacks {
 }
 
 describe("Pagelet Bubble quick access content", () => {
+    it("builds a source-backed Agent insight preview with the exact review receipt", () => {
+        const candidate = {
+            id: "agent-insight-1",
+            kind: "review" as const,
+            title: "Two project decisions now conflict",
+            body: [
+                "## Two project decisions now conflict",
+                "The delivery decision and the older menu plan point in different directions.",
+                "This full source-backed explanation is intentionally much longer than Bubble copy.",
+            ].join("\n"),
+            sourceRefs: [{ path: "Projects/Decision.md", title: "Decision" }],
+            whyNow: ["This became visible after the anchor note changed."],
+            preparedAt: "2026-07-31T12:00:00.000Z",
+            staleStatus: "fresh" as const,
+            route: { surface: "panel" as const, payloadType: "agent-insight" },
+            deliveryReceipt: {
+                version: 1 as const,
+                kind: "review" as const,
+                fingerprint: "v1:review:0000000000000121",
+            },
+        };
+        const callbacks = {
+            onView: jest.fn(),
+            onLater: jest.fn(),
+        };
+
+        const content = buildAgentInsightDeliveryContent(candidate, callbacks, "en");
+
+        expect(content).toMatchObject({
+            type: "review-delivery",
+            findings: [{
+                text: candidate.title,
+                sourceLink: "Projects/Decision.md",
+                sourceTitle: "Decision",
+            }],
+            inlineHint: {
+                text: candidate.whyNow[0],
+                icon: "sparkles",
+            },
+            deliveryReceipt: candidate.deliveryReceipt,
+        });
+        expect(JSON.stringify(content.findings)).not.toContain(candidate.body);
+        expect(content.actions.map((action) => action.label)).toEqual([
+            "View insight",
+            "Later",
+        ]);
+
+        content.actions[0]?.callback();
+        content.actions[1]?.callback();
+        expect(callbacks.onView).toHaveBeenCalledWith(candidate);
+        expect(callbacks.onLater).toHaveBeenCalledWith(candidate);
+    });
+
     it("adapts QuietRecallCandidate into a DeliveryCandidate", () => {
         const candidate = {
             id: "recall-1",

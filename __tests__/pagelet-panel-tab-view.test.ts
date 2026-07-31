@@ -3977,6 +3977,92 @@ describe("Pagelet panel and tab view regressions", () => {
         );
     });
 
+    it("renders duplicated Deep Discover prose once through the safe markdown DOM path", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onRelatedNoteClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+        const markdown = [
+            "## Evidence",
+            "",
+            "- First source-backed point",
+            "",
+            "<img src=x onerror=alert(1)>",
+        ].join("\n");
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [{
+            title: "Deep Discover",
+            description: markdown,
+            insightText: markdown,
+            sourceFile: "notes/evidence.md",
+        }], {
+            sourcePath: "notes/current.md",
+            preparedReadOnly: true,
+        });
+
+        expect(mockMarkdownRender).not.toHaveBeenCalled();
+        expect(container.querySelectorAll(".pa-pagelet-panel-timeline-meta")).toHaveLength(0);
+        expect(container.querySelectorAll(".pa-pagelet-panel-timeline-insight")).toHaveLength(1);
+        expect(container.querySelector(".pa-pagelet-panel-preview-h2")?.textContent).toBe("Evidence");
+        expect(container.querySelector(".pa-pagelet-panel-preview-li")?.textContent)
+            .toBe("• First source-backed point");
+        expect(container.querySelector("img")).toBeNull();
+        expect(container.textContent).not.toContain("## Evidence");
+    });
+
+    it("keeps every discovery source visible and clickable outside the capped graph", async () => {
+        const relatedNoteClick = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onRelatedNoteClick: relatedNoteClick,
+            },
+            getLocale: () => "en",
+        });
+        const sourcePaths = Array.from(
+            { length: 10 },
+            (_, index) => `sources/evidence-${index + 1}.md`,
+        );
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", sourcePaths.map((sourceFile, index) => ({
+            title: `Evidence ${index + 1}`,
+            description: index === 0 ? "Source-backed insight." : sourceFile,
+            ...(index === 0 ? { insightText: "Source-backed insight." } : {}),
+            sourceFile,
+        })), {
+            sourcePath: "notes/current.md",
+            preparedReadOnly: true,
+        });
+
+        expect(container.querySelectorAll(".pa-pagelet-panel-connection-node")).toHaveLength(8);
+        const sourceLinks = container.querySelectorAll(".pa-pagelet-panel-source-link");
+        expect(sourceLinks).toHaveLength(sourcePaths.length);
+        expect(sourceLinks.map((link) => link.textContent)).toEqual(sourcePaths);
+
+        await sourceLinks[9]?.click();
+        expect(relatedNoteClick).toHaveBeenCalledWith(
+            sourcePaths[9],
+            "notes/current.md",
+        );
+    });
+
     it("expires Discovery graph drag click suppression before the next intentional click", async () => {
         jest.useFakeTimers();
         try {

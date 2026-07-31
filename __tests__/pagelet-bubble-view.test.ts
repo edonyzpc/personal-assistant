@@ -562,12 +562,12 @@ describe("Pagelet BubbleView", () => {
         view.destroy();
     });
 
-    it("commits a non-stack receipt only after its Bubble is visibly mounted", () => {
+    it("commits an Agent insight receipt only after its Bubble is visibly mounted", () => {
         const onDeliveryVisible = jest.fn();
         const receipt = {
             version: 1 as const,
-            kind: "recap" as const,
-            fingerprint: "v1:recap:visible",
+            kind: "review" as const,
+            fingerprint: "v1:review:visible",
         };
         const container = new FakeElement("div");
         container.isConnected = true;
@@ -580,14 +580,17 @@ describe("Pagelet BubbleView", () => {
             },
             onDeliveryVisible,
         });
-
-        view.mount(container as unknown as HTMLElement);
-        view.show({
-            type: "recap-delivery",
-            findings: [{ text: "Visible recap" }],
+        const content = {
+            type: "review-delivery" as const,
+            findings: [{ text: "Visible Agent insight" }],
             actions: [],
             deliveryReceipt: receipt,
-        }, anchor as unknown as HTMLElement);
+        };
+
+        view.show(content, anchor as unknown as HTMLElement);
+        expect(onDeliveryVisible).not.toHaveBeenCalled();
+        view.mount(container as unknown as HTMLElement);
+        view.show(content, anchor as unknown as HTMLElement);
 
         expect(view.bubbleState).toBe("visible");
         expect(onDeliveryVisible).toHaveBeenCalledTimes(1);

@@ -98,6 +98,25 @@ describe("AttentionAwareDeliveryStore", () => {
         }]);
     });
 
+    it("round-trips Deep Discover review receipts without changing the schema", () => {
+        const storage = new MemoryAttentionStorage();
+        const target = receipt(42, "review");
+        const store = new AttentionAwareDeliveryStore({ storage, now: () => 42 });
+
+        store.markSeen(target, "bubble");
+
+        expect(store.isSeen(target)).toBe(true);
+        expect(JSON.parse(storage.serialized ?? "")).toEqual(emptyState({
+            seen: [{
+                kind: "review",
+                fingerprint: target.fingerprint,
+                seenAt: 42,
+                surface: "bubble",
+            }],
+        }));
+        expect(new AttentionAwareDeliveryStore({ storage }).isSeen(target)).toBe(true);
+    });
+
     it("evicts only the deterministic oldest-seen entry above 2,000 without a TTL", () => {
         const seededSeen = Array.from({ length: MAX_SEEN_DELIVERIES }, (_, index) => ({
             kind: "recall" as const,
@@ -173,6 +192,14 @@ describe("AttentionAwareDeliveryStore", () => {
                 surface: "bubble",
                 title: "must not be accepted",
             }] as unknown as PageletAttentionPersistedState["seen"],
+        }))],
+        ["review kind with a mismatched fingerprint", JSON.stringify(emptyState({
+            seen: [{
+                kind: "review",
+                fingerprint: receipt(4, "recap").fingerprint,
+                seenAt: 1,
+                surface: "bubble",
+            }],
         }))],
         ["duplicate fingerprint", JSON.stringify(emptyState({
             seen: [

@@ -184,6 +184,7 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS.temperature).toBe(0.2);          // SDD §2.2
         expect(PAGELET_DEFAULTS.maxInputTokens).toBe(8000);      // D018
         expect(PAGELET_DEFAULTS.maxOutputTokens).toBe(2000);     // D018
+        expect(PAGELET_DEFAULTS.deepDiscoverEnabled).toBe(true);
         expect(PAGELET_DEFAULTS.preloadEnabled).toBe(false);     // background prep is explicit opt-in
         expect(PAGELET_DEFAULTS.pageletProviderFirstUseNotified).toBe(false);
         expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(true);
@@ -258,6 +259,7 @@ describe("mergePageletSettings", () => {
             petCorner: "bottom-right",
             proactiveHints: false,
             proactiveHintsCooldown: 30,
+            deepDiscoverEnabled: true,
             preloadEnabled: true,
             scopeRecapPreparationEnabled: true,
             scopeRecapBackgroundAuthorization: "authorized-v1",
@@ -1150,7 +1152,7 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        expect(rows).toHaveLength(27);
+        expect(rows).toHaveLength(23);
         expect(rows.map((r) => r.name)).toEqual([
             "Enable Pagelet",
             "Reviews folder",
@@ -1163,13 +1165,9 @@ describe("renderPageletSection", () => {
             "Pet corner",
             "Proactive hints",
             "Hint cooldown (minutes)",
-            // Background review preparation
-            "Prepare reviews in the background",
-            "Preparation interval (minutes)",
-            "Background AI calls per hour",
-            "Background AI calls per day",
-            "Preparation input token budget",
-            "Preparation output token budget",
+            // Unified Pagelet Agent
+            "Deep Discover",
+            "Today's Deep Discover usage",
             // Scope Recap preparation (independent from generic preload)
             "Prepare Scope Recap in the background",
             "High-value Recap hints",
@@ -1441,23 +1439,26 @@ describe("renderPageletSection", () => {
         expect(host.settings.pagelet.maxOutputTokens).toBe(PAGELET_BOUNDS.maxOutputTokens.min);
     });
 
-    it("rejects background preparation token edits above the background pool", async () => {
+    it("renders Deep Discover as one switch and keeps legacy preload controls hidden", async () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost();
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        await rows[14].textOnChange!("32000"); // preloadTokenBudget.input
-        expect(host.settings.pagelet.preloadTokenBudget.input).toBe(PAGELET_DEFAULTS.preloadTokenBudget.input);
+        expect(rows.map((row) => row.name)).not.toContain("Prepare reviews in the background");
+        expect(rows[10].name).toBe("Deep Discover");
+        await rows[10].toggleOnChange!(false);
+        expect(host.settings.pagelet.deepDiscoverEnabled).toBe(false);
+    });
 
-        await rows[14].textOnChange!("4000");
-        expect(host.settings.pagelet.preloadTokenBudget.input).toBe(PAGELET_PRELOAD_TOKEN_BOUNDS.input.max);
-
-        await rows[15].textOnChange!("4000"); // preloadTokenBudget.output
-        expect(host.settings.pagelet.preloadTokenBudget.output).toBe(PAGELET_DEFAULTS.preloadTokenBudget.output);
-
-        await rows[15].textOnChange!("1000");
-        expect(host.settings.pagelet.preloadTokenBudget.output).toBe(PAGELET_PRELOAD_TOKEN_BOUNDS.output.max);
+    it("migrates the old background-provider choice only when the new key is absent", () => {
+        expect(mergePageletSettings({ preloadEnabled: true }).deepDiscoverEnabled).toBe(true);
+        expect(mergePageletSettings({ preloadEnabled: false }).deepDiscoverEnabled).toBe(false);
+        expect(mergePageletSettings({
+            preloadEnabled: false,
+            deepDiscoverEnabled: true,
+        }).deepDiscoverEnabled).toBe(true);
+        expect(mergePageletSettings({}).deepDiscoverEnabled).toBe(true);
     });
 });

@@ -35,6 +35,10 @@ import type { OnboardingNudge } from "../src/pagelet/bubble/BubbleContent";
 import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
 import { scopeRecapToDeliveryCandidate } from "../src/pagelet/bubble/recap-card";
 import type { DeliveryReceipt } from "../src/pagelet/attention";
+import type {
+    PageletDeepDiscoverControllerResult,
+    PageletDeepDiscoverTriggerReason,
+} from "../src/pagelet/agent/types";
 import type { PageletDetailPayload } from "../src/pagelet/tab/types";
 import type {
     ConfirmedMemoryRecord,
@@ -101,6 +105,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 proactiveHints: false,
                 proactiveHintsCooldown: 30,
                 proactiveHintsQuietHours: { enabled: false, start: "22:00", end: "08:00" },
+                deepDiscoverEnabled: true,
                 preloadEnabled: true,
                 preloadInterval: 30,
                 preloadPerHourCap: 2,
@@ -295,6 +300,56 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
     return host;
 }
 
+function makeVerifiedDeepDiscoverResult(
+    triggerReason: PageletDeepDiscoverTriggerReason = "explicit",
+    anchorPath = "notes/current.md",
+): PageletDeepDiscoverControllerResult {
+    const anchor = {
+        path: anchorPath,
+        mtime: 100,
+        size: 100,
+        contentHash: "a".repeat(64),
+    };
+    const related = {
+        path: "notes/related.md",
+        mtime: 101,
+        size: 120,
+        contentHash: "b".repeat(64),
+    };
+    return {
+        status: "verified",
+        insight: {
+            body: [
+                "## Release assumptions conflict",
+                `\`${anchorPath}\` requires feedback before release, while`,
+                "`notes/related.md` shows that direct release amplifies risk.",
+            ].join("\n"),
+            normalizedBody: "release assumptions conflict",
+            anchor,
+            sources: [anchor, related],
+            sourceRefs: [{ path: anchorPath }, { path: related.path }],
+            cacheIdentity: {
+                pipelineVersion: "pagelet-deep-discover-v1",
+                anchor,
+                sources: [anchor, related],
+                dataBoundaryIdentity: "boundary-test",
+                providerPolicyIdentity: "provider-test",
+                modelIdentity: "test:model",
+                locale: "en",
+            },
+            cacheIdentityHash: `deep-${anchorPath}`,
+            triggerReason,
+            preparedAt: Date.parse("2026-07-31T00:00:00.000Z"),
+            metrics: {
+                modelTurns: 3,
+                toolCalls: 9,
+                wallTimeMs: 1_200,
+            },
+            webObservations: [],
+        },
+    };
+}
+
 function makePetWorkProbe() {
     const transitions: string[] = [];
     const stateMachine = {
@@ -402,6 +457,255 @@ function makeMemoryRecord(overrides: Partial<ConfirmedMemoryRecord> = {}): Confi
     };
 }
 
+describe("PageletOrchestrator Deep Discover migration", () => {
+    it("routes every stable provider-backed entry to one controller and never calls legacy providers", async () => {
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
+            status: "quiet",
+            reason: "no-insight",
+        } as const));
+        const host = makeHost({ runDeepDiscover });
+        const foregroundAnalyze = jest.fn();
+        const preloadAnalyze = jest.fn();
+        host.createForegroundAnalyzeCallback = () => foregroundAnalyze as never;
+        host.createPreloadAnalyzeCallback = () => preloadAnalyze as never;
+        const legacyDiscovery = jest.spyOn(host, "discoverConnections");
+        const legacyRecap = jest.spyOn(host, "runScopeRecap");
+        const legacyRecall = jest.spyOn(host, "runQuietRecall");
+        const orchestrator = new PageletOrchestrator(host);
+        const callbacks = orchestrator.getCommandCallbacks();
+
+        await Promise.resolve(callbacks.onReviewCurrent());
+        await Promise.resolve(callbacks.onQuickReview());
+        await Promise.resolve(callbacks.onDiscoverConnections());
+        await Promise.resolve(callbacks.onQuietRecall());
+        await Promise.resolve(callbacks.onScopeRecap());
+        callbacks.onOpenPreparedReview();
+        await (orchestrator as unknown as {
+            reviewSelectedScope(): Promise<void>;
+        }).reviewSelectedScope();
+        await flushAsyncWork();
+
+        expect(runDeepDiscover).toHaveBeenCalledTimes(7);
+        for (const [request] of runDeepDiscover.mock.calls) {
+            expect(request).toEqual({
+                path: "notes/current.md",
+                triggerReason: "explicit",
+                force: true,
+            });
+        }
+        expect(foregroundAnalyze).not.toHaveBeenCalled();
+        expect(preloadAnalyze).not.toHaveBeenCalled();
+        expect(legacyDiscovery).not.toHaveBeenCalled();
+        expect(legacyRecap).not.toHaveBeenCalled();
+        expect(legacyRecall).not.toHaveBeenCalled();
+    });
+
+    it("uses the exact leave, changed-open, and edited paths for automatic triggers", async () => {
+        jest.useFakeTimers();
+        try {
+            const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
+                status: "quiet",
+                reason: "no-insight",
+            } as const));
+            const host = makeHost({ runDeepDiscover });
+            host.settings.pagelet.petVisible = false;
+            const orchestrator = new PageletOrchestrator(host);
+            const internals = orchestrator as unknown as {
+                handleLeafChange(leaf: unknown): void;
+                handleNoteActivity(path: string): void;
+            };
+            const leaf = (path: string) => ({
+                view: {
+                    getViewType: () => "markdown",
+                    file: makeTFile(path),
+                    contentEl: {} as HTMLElement,
+                },
+            });
+
+            internals.handleLeafChange(leaf("notes/a.md"));
+            internals.handleLeafChange(leaf("notes/b.md"));
+            internals.handleNoteActivity("notes/edited.md");
+            internals.handleNoteActivity("notes/another-edited.md");
+            jest.advanceTimersByTime(5_000);
+            await flushAsyncWork();
+
+            expect(runDeepDiscover.mock.calls.map(([request]) => request)).toEqual([
+                {
+                    path: "notes/a.md",
+                    triggerReason: "open-changed-note",
+                },
+                {
+                    path: "notes/a.md",
+                    triggerReason: "leave-note",
+                },
+                {
+                    path: "notes/b.md",
+                    triggerReason: "open-changed-note",
+                },
+                {
+                    path: "notes/edited.md",
+                    triggerReason: "edit-idle",
+                },
+                {
+                    path: "notes/another-edited.md",
+                    triggerReason: "edit-idle",
+                },
+            ]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("invalidates a candidate and its open Panel when any cited source changes", async () => {
+        const host = makeHost();
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            open: jest.fn(),
+            close: jest.fn(),
+            isOpen: true,
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            acceptDeepDiscoverResult(
+                result: PageletDeepDiscoverControllerResult,
+                options: { path: string; proactive: boolean },
+            ): { kind: "review"; sourceRefs: Array<{ path: string }> } | null;
+            openAgentInsightPanel(
+                candidate: { kind: "review"; sourceRefs: Array<{ path: string }> },
+            ): void;
+            invalidateAgentInsightForPaths(paths: readonly string[]): void;
+            agentInsightCandidate: unknown;
+            openAgentInsightCandidate: unknown;
+        };
+        internals.panelView = panelView;
+        const candidate = internals.acceptDeepDiscoverResult(
+            makeVerifiedDeepDiscoverResult(),
+            { path: "notes/current.md", proactive: false },
+        );
+        expect(candidate).not.toBeNull();
+        internals.openAgentInsightPanel(candidate!);
+
+        internals.invalidateAgentInsightForPaths(["notes/related.md"]);
+
+        expect(internals.agentInsightCandidate).toBeNull();
+        expect(internals.openAgentInsightCandidate).toBeNull();
+        expect(panelView.close).toHaveBeenCalledTimes(1);
+    });
+
+    it("invalidates a candidate and its open Panel when policy identity changes", () => {
+        let policyIdentity = "policy:v1";
+        const host = makeHost({
+            getDeepDiscoverPolicyIdentity: () => policyIdentity,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            open: jest.fn(),
+            close: jest.fn(),
+            isOpen: true,
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            acceptDeepDiscoverResult(
+                result: PageletDeepDiscoverControllerResult,
+                options: { path: string; proactive: boolean },
+            ): { kind: "review"; sourceRefs: Array<{ path: string }> } | null;
+            openAgentInsightPanel(
+                candidate: { kind: "review"; sourceRefs: Array<{ path: string }> },
+            ): void;
+            currentAgentInsightCandidate(): unknown;
+            agentInsightCandidate: unknown;
+            openAgentInsightCandidate: unknown;
+        };
+        internals.panelView = panelView;
+        const candidate = internals.acceptDeepDiscoverResult(
+            makeVerifiedDeepDiscoverResult(),
+            { path: "notes/current.md", proactive: false },
+        );
+        internals.openAgentInsightPanel(candidate!);
+
+        policyIdentity = "policy:v2";
+        expect(internals.currentAgentInsightCandidate()).toBeNull();
+
+        expect(internals.agentInsightCandidate).toBeNull();
+        expect(internals.openAgentInsightCandidate).toBeNull();
+        expect(panelView.close).toHaveBeenCalledTimes(1);
+    });
+
+    it("admits a verified automatic insight as one AgentInsight ticket", async () => {
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => (
+            makeVerifiedDeepDiscoverResult("edit-idle")
+        ));
+        const host = makeHost({ runDeepDiscover });
+        host.settings.pagelet.proactiveHints = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            runAutomaticDeepDiscover(path: string, reason: "edit-idle"): Promise<void>;
+            currentAdmittedNudgeTickets(): NudgeTicket[];
+            agentInsightCandidate: { kind: string; sourceRefs: Array<{ path: string }> } | null;
+        };
+
+        await internals.runAutomaticDeepDiscover("notes/current.md", "edit-idle");
+
+        expect(internals.agentInsightCandidate).toEqual(expect.objectContaining({
+            kind: "review",
+            sourceRefs: [
+                expect.objectContaining({ path: "notes/current.md" }),
+                expect.objectContaining({ path: "notes/related.md" }),
+            ],
+        }));
+        expect(internals.currentAdmittedNudgeTickets()).toEqual([
+            expect.objectContaining({
+                owner: NudgeOwner.AgentInsight,
+                candidate: expect.objectContaining({ kind: "review" }),
+            }),
+        ]);
+        expect(Notice).not.toHaveBeenCalled();
+    });
+
+    it("opens verified explicit free-form output in a read-only Panel with every source", async () => {
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(
+            async () => makeVerifiedDeepDiscoverResult(),
+        );
+        const host = makeHost({ runDeepDiscover });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            open: jest.fn(),
+            close: jest.fn(),
+            isOpen: true,
+        };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await Promise.resolve(orchestrator.getCommandCallbacks().onDiscoverConnections());
+
+        expect(panelView.open).toHaveBeenCalledWith(
+            "discover",
+            expect.arrayContaining([
+                expect.objectContaining({ sourceFile: "notes/current.md" }),
+                expect.objectContaining({ sourceFile: "notes/related.md" }),
+            ]),
+            expect.objectContaining({
+                preparedReadOnly: true,
+                sourcePath: "notes/current.md",
+            }),
+        );
+    });
+
+    it("explains the daily limit only for an explicit trigger", async () => {
+        jest.mocked(Notice).mockClear();
+        const host = makeHost({
+            runDeepDiscover: async () => ({ status: "limit", reason: "limit" }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+
+        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+
+        expect(Notice).toHaveBeenCalledWith(
+            "Deep Discover has reached today's 36-run limit. It will resume tomorrow.",
+            5000,
+        );
+    });
+});
+
 describe("PageletOrchestrator foreground review concurrency", () => {
     it("uses the foreground analysis callback for current-note reviews", async () => {
         const preloadAnalyze = jest.fn(async () => ({
@@ -422,7 +726,9 @@ describe("PageletOrchestrator foreground review concurrency", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        await orchestrator.reviewCurrentNote();
+        await (orchestrator as unknown as {
+            analyzeCurrentNote(): Promise<void>;
+        }).analyzeCurrentNote();
 
         expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
         expect(preloadAnalyze).not.toHaveBeenCalled();
@@ -471,7 +777,9 @@ describe("PageletOrchestrator foreground review concurrency", () => {
             stateMachine: { transition },
         };
 
-        await orchestrator.reviewCurrentNote();
+        await (orchestrator as unknown as {
+            analyzeCurrentNote(): Promise<void>;
+        }).analyzeCurrentNote();
 
         expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
         expect(transition).toHaveBeenCalledWith("analysis-start");
@@ -500,9 +808,12 @@ describe("PageletOrchestrator foreground review concurrency", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        const first = orchestrator.reviewCurrentNote();
+        const legacyReview = () => (orchestrator as unknown as {
+            analyzeCurrentNote(): Promise<void>;
+        }).analyzeCurrentNote();
+        const first = legacyReview();
         const tokenAfterFirstAcceptedRun = (orchestrator as unknown as { foregroundRouteToken: number }).foregroundRouteToken;
-        const second = orchestrator.reviewCurrentNote();
+        const second = legacyReview();
 
         await second;
         expect(callCount).toBe(1);
@@ -512,7 +823,7 @@ describe("PageletOrchestrator foreground review concurrency", () => {
         releaseFirst();
         await first;
 
-        await orchestrator.reviewCurrentNote();
+        await legacyReview();
         expect(callCount).toBe(2);
     });
 
@@ -596,7 +907,9 @@ describe("PageletOrchestrator attention-aware delivery integration", () => {
             expect.arrayContaining([expect.objectContaining({ owner: NudgeOwner.QuietRecall })]),
         );
 
-        await orchestrator.runQuietRecall();
+        await (orchestrator as unknown as {
+            runLegacyQuietRecall(): Promise<void>;
+        }).runLegacyQuietRecall();
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
             entryReason: "quiet-recall",
             extra: expect.objectContaining({
@@ -660,7 +973,9 @@ describe("PageletOrchestrator attention-aware delivery integration", () => {
         )[0]?.[0];
         expect(shown?.type).toBe("ready-empty");
 
-        await orchestrator.runScopeRecap();
+        await (orchestrator as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
         expect(openPageletDetailView).toHaveBeenCalledWith(payload);
     });
 
@@ -792,7 +1107,9 @@ describe("PageletOrchestrator quick review command", () => {
             tokenCost: { input: 10, output: 5 },
         });
 
-        orchestrator.getCommandCallbacks().onQuickReview();
+        (orchestrator as unknown as {
+            showBubble(entry: "quick-review"): void;
+        }).showBubble("quick-review");
         await flushAsyncWork();
 
         const [content] = bubbleView.show.mock.calls[bubbleView.show.mock.calls.length - 1] as unknown as [{
@@ -834,7 +1151,9 @@ describe("PageletOrchestrator quick review command", () => {
         };
         (orchestrator as unknown as { bubbleView: typeof bubbleView }).bubbleView = bubbleView;
 
-        orchestrator.getCommandCallbacks().onQuickReview();
+        (orchestrator as unknown as {
+            showBubble(entry: "quick-review"): void;
+        }).showBubble("quick-review");
         await flushAsyncWork();
 
         const [content] = bubbleView.show.mock.calls[bubbleView.show.mock.calls.length - 1] as unknown as [{
@@ -887,7 +1206,9 @@ describe("PageletOrchestrator quick review command", () => {
         }, HTMLElement];
         expect(content.type).toBe("needs-setup");
 
-        content.actions[1].callback();
+        await (orchestrator as unknown as {
+            analyzeCurrentNote(options: { preferPanel: boolean }): Promise<void>;
+        }).analyzeCurrentNote({ preferPanel: true });
         await flushAsyncWork();
 
         expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
@@ -895,7 +1216,7 @@ describe("PageletOrchestrator quick review command", () => {
         expect(panelView.open.mock.calls[0]?.[1]).toEqual(
             expect.arrayContaining([expect.objectContaining({ sourceFile: "notes/current.md" })]),
         );
-        expect(bubbleView.show).toHaveBeenCalledTimes(1);
+        expect(bubbleView.show).toHaveBeenCalled();
     });
 });
 
@@ -2044,7 +2365,9 @@ describe("PageletOrchestrator detail expansion", () => {
         host.runScopeRecap = runScopeRecap;
         const orchestrator = new PageletOrchestrator(host);
 
-        await orchestrator.getCommandCallbacks().onScopeRecap();
+        await (orchestrator as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
 
         expect(runScopeRecap).not.toHaveBeenCalled();
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
@@ -2155,7 +2478,9 @@ describe("PageletOrchestrator detail expansion", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        await orchestrator.getCommandCallbacks().onScopeRecap();
+        await (orchestrator as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
 
         const explanationPayload = openPageletDetailView.mock.calls[0]?.[0];
         const explanationCards = explanationPayload?.content
@@ -2257,7 +2582,9 @@ describe("PageletOrchestrator detail expansion", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        await orchestrator.getCommandCallbacks().onScopeRecap();
+        await (orchestrator as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
 
         expect(runScopeRecap).not.toHaveBeenCalled();
         const payload = openPageletDetailView.mock.calls[0]?.[0];
@@ -2361,7 +2688,9 @@ describe("PageletOrchestrator detail expansion", () => {
         (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(currentFile);
         const orchestrator = new PageletOrchestrator(host);
 
-        await orchestrator.getCommandCallbacks().onScopeRecap();
+        await (orchestrator as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
 
         const bubbleView = {
             bubbleState: "hidden",
@@ -2391,7 +2720,9 @@ describe("PageletOrchestrator detail expansion", () => {
         (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(currentFile);
         const orchestrator = new PageletOrchestrator(host);
 
-        await orchestrator.getCommandCallbacks().onScopeRecap();
+        await (orchestrator as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
 
         const bubbleView = {
             bubbleState: "hidden",
@@ -2495,7 +2826,9 @@ describe("PageletOrchestrator detail expansion", () => {
         const [suppressedContent] = reloadedBubble.show.mock.calls[0] as unknown as [{ type: string }, HTMLElement];
         expect(suppressedContent.type).not.toBe("recap-delivery");
 
-        await reloaded.getCommandCallbacks().onScopeRecap();
+        await (reloaded as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
             extra: expect.objectContaining({
                 scopeRecap: expect.objectContaining({ id: "recap-test" }),
@@ -2578,7 +2911,9 @@ describe("PageletOrchestrator detail expansion", () => {
         );
         expect(host.settings.pagelet.scopeRecapNudgeSuppressions).toEqual([]);
 
-        orchestrator.openQuickReview();
+        (orchestrator as unknown as {
+            showBubble(entry: "quick-review"): void;
+        }).showBubble("quick-review");
 
         const [content] = bubbleView.show.mock.calls[0] as unknown as [{ type: string }];
         expect(content.type).toBe("recap-delivery");
@@ -2722,7 +3057,9 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(orchestrator.setOnboardingNudge(kind)).toBe(true);
         expect(updatePageletSetting).not.toHaveBeenCalledWith(settingKey, true);
 
-        orchestrator.openQuickReview();
+        (orchestrator as unknown as {
+            showBubble(entry: "quick-review"): void;
+        }).showBubble("quick-review");
 
         const [firstContent] = bubbleView.show.mock.calls[0] as unknown as [{ type: string }];
         expect(firstContent.type).toBe("nudge");
@@ -2730,7 +3067,9 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(internals.onboardingNudge).toBeNull();
 
         bubbleView.bubbleState = "hidden";
-        orchestrator.openQuickReview();
+        (orchestrator as unknown as {
+            showBubble(entry: "quick-review"): void;
+        }).showBubble("quick-review");
         const [secondContent] = bubbleView.show.mock.calls[1] as unknown as [{ type: string }];
         expect(secondContent.type).not.toBe("nudge");
         expect(updatePageletSetting.mock.calls.filter(([key]) => key === settingKey)).toHaveLength(1);
@@ -3166,7 +3505,9 @@ describe("PageletOrchestrator detail expansion", () => {
             expectedAuthorizationContextId: "scope-recap-auth-test",
         }));
 
-        await orchestrator.getCommandCallbacks().onScopeRecap();
+        await (orchestrator as unknown as {
+            runLegacyScopeRecap(): Promise<void>;
+        }).runLegacyScopeRecap();
         const explanation = openPageletDetailView.mock.calls.at(-1)?.[0];
         const retry = explanation?.content
             .flatMap((section) => ("cards" in section ? section.cards : []))
@@ -3216,7 +3557,9 @@ describe("PageletOrchestrator detail expansion", () => {
         });
         const orchestrator = new PageletOrchestrator(host);
 
-        await orchestrator.getCommandCallbacks().onQuietRecall();
+        await (orchestrator as unknown as {
+            runLegacyQuietRecall(): Promise<void>;
+        }).runLegacyQuietRecall();
 
         expect(runQuietRecall).toHaveBeenCalledTimes(1);
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
@@ -3255,7 +3598,9 @@ describe("PageletOrchestrator detail expansion", () => {
         (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(initialFile);
         const orchestrator = new PageletOrchestrator(host);
 
-        const inFlight = orchestrator.runQuietRecall();
+        const inFlight = (orchestrator as unknown as {
+            runLegacyQuietRecall(): Promise<void>;
+        }).runLegacyQuietRecall();
         await flushAsyncWork();
         (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(nextFile());
         resolveRecall({
@@ -3293,7 +3638,9 @@ describe("PageletOrchestrator detail expansion", () => {
         (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(initialFile);
 
         const orchestrator = new PageletOrchestrator(host);
-        await orchestrator.runQuietRecall();
+        await (orchestrator as unknown as {
+            runLegacyQuietRecall(): Promise<void>;
+        }).runLegacyQuietRecall();
 
         expect(openPageletDetailView).not.toHaveBeenCalled();
         expect(host.log).toHaveBeenCalledWith(
@@ -3335,7 +3682,10 @@ describe("PageletOrchestrator detail expansion", () => {
             openPageletDetailView,
         });
 
-        await new PageletOrchestrator(host).getCommandCallbacks().onQuietRecall();
+        const orchestrator = new PageletOrchestrator(host);
+        await (orchestrator as unknown as {
+            runLegacyQuietRecall(): Promise<void>;
+        }).runLegacyQuietRecall();
 
         const delivered = openPageletDetailView.mock.calls[0]?.[0].extra?.quietRecall;
         expect(delivered?.totalCount).toBe(2);
@@ -3525,6 +3875,7 @@ describe("PageletOrchestrator detail expansion", () => {
             bubbleView: typeof bubbleView;
             quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
             handleLeafChange(leaf: unknown): void;
+            scheduleQuietRecallAfterLeafChange(delayMs: number): void;
         };
         internals.petView = petView;
         internals.bubbleView = bubbleView;
@@ -3536,6 +3887,7 @@ describe("PageletOrchestrator detail expansion", () => {
                 contentEl: {} as HTMLElement,
             },
         });
+        internals.scheduleQuietRecallAfterLeafChange(250);
         jest.advanceTimersByTime(300);
         await flushAsyncWork();
 
@@ -3703,6 +4055,7 @@ describe("PageletOrchestrator detail expansion", () => {
             petView: typeof petView;
             quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
             handleLeafChange(leaf: unknown): void;
+            scheduleQuietRecallAfterLeafChange(delayMs: number): void;
         };
         internals.petView = petView;
 
@@ -3713,6 +4066,7 @@ describe("PageletOrchestrator detail expansion", () => {
                 contentEl: {} as HTMLElement,
             },
         });
+        internals.scheduleQuietRecallAfterLeafChange(250);
         jest.advanceTimersByTime(300);
         await flushAsyncWork();
 
@@ -3765,6 +4119,7 @@ describe("PageletOrchestrator detail expansion", () => {
             petView: typeof petView;
             quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
             handleLeafChange(leaf: unknown): void;
+            scheduleQuietRecallAfterLeafChange(delayMs: number): void;
         };
         internals.petView = petView;
 
@@ -3775,6 +4130,7 @@ describe("PageletOrchestrator detail expansion", () => {
                 contentEl: {} as HTMLElement,
             },
         });
+        internals.scheduleQuietRecallAfterLeafChange(250);
         jest.advanceTimersByTime(300);
         await flushAsyncWork();
 
@@ -3827,6 +4183,7 @@ describe("PageletOrchestrator detail expansion", () => {
             petView: typeof petView;
             quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
             handleLeafChange(leaf: unknown): void;
+            scheduleQuietRecallAfterLeafChange(delayMs: number): void;
         };
         internals.petView = petView;
 
@@ -3838,8 +4195,11 @@ describe("PageletOrchestrator detail expansion", () => {
             },
         };
         internals.handleLeafChange(leaf);
+        internals.scheduleQuietRecallAfterLeafChange(250);
         internals.handleLeafChange(leaf);
+        internals.scheduleQuietRecallAfterLeafChange(250);
         internals.handleLeafChange(leaf);
+        internals.scheduleQuietRecallAfterLeafChange(250);
         jest.advanceTimersByTime(300);
         await flushAsyncWork();
 
@@ -3906,6 +4266,7 @@ describe("PageletOrchestrator detail expansion", () => {
             petView: typeof petView;
             quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
             handleLeafChange(leaf: unknown): void;
+            scheduleQuietRecallAfterLeafChange(delayMs: number): void;
         };
         internals.petView = petView;
 
@@ -3916,6 +4277,7 @@ describe("PageletOrchestrator detail expansion", () => {
                 contentEl: {} as HTMLElement,
             },
         });
+        internals.scheduleQuietRecallAfterLeafChange(250);
         jest.advanceTimersByTime(300);
         await flushAsyncWork();
         expect(runQuietRecall).toHaveBeenCalledTimes(1);
@@ -3927,6 +4289,7 @@ describe("PageletOrchestrator detail expansion", () => {
                 contentEl: {} as HTMLElement,
             },
         });
+        internals.scheduleQuietRecallAfterLeafChange(250);
         resolveFirstRun({
             generatedAt: "2026-06-29T12:00:00.000Z",
             currentPath: "notes/stale.md",
@@ -3992,8 +4355,12 @@ describe("PageletOrchestrator detail expansion", () => {
             totalCount: 0,
             candidates: [],
         }));
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
+            status: "quiet",
+            reason: "no-insight",
+        } as const));
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
-        const host = makeHost({ runQuietRecall, openPageletDetailView });
+        const host = makeHost({ runQuietRecall, runDeepDiscover, openPageletDetailView });
         const orchestrator = new PageletOrchestrator(host);
         const preventDefault = jest.fn();
         const internals = orchestrator as unknown as {
@@ -4008,10 +4375,14 @@ describe("PageletOrchestrator detail expansion", () => {
         await flushAsyncWork();
 
         expect(preventDefault).toHaveBeenCalledTimes(1);
-        expect(runQuietRecall).toHaveBeenCalledTimes(1);
-        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
-            title: "Quiet Recall",
-        }));
+        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
+        expect(runDeepDiscover).toHaveBeenCalledWith({
+            path: "notes/current.md",
+            triggerReason: "explicit",
+            force: true,
+        });
+        expect(runQuietRecall).not.toHaveBeenCalled();
+        expect(openPageletDetailView).not.toHaveBeenCalled();
     });
 
     it("rejects a second foreground route while one is already in-flight", async () => {
@@ -4047,12 +4418,12 @@ describe("PageletOrchestrator detail expansion", () => {
         const orchestrator = new PageletOrchestrator(host);
         const internals = orchestrator as unknown as {
             runMaintenanceReview(): Promise<void>;
-            runQuietRecall(): Promise<void>;
+            runLegacyQuietRecall(): Promise<void>;
         };
 
         const maintenanceRun = internals.runMaintenanceReview();
         await Promise.resolve();
-        await internals.runQuietRecall();
+        await internals.runLegacyQuietRecall();
         resolveMaintenance(maintenanceReview);
         await maintenanceRun;
 
@@ -4064,8 +4435,14 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
     });
 
-    it("reports authorization-aware runtime state, feature usage, round diagnostics, and cost", async () => {
+    it("reports unified Deep Discover usage through the stable status command", async () => {
         jest.mocked(Notice).mockClear();
+        const getDeepDiscoverUsage = jest.fn(async () => ({
+            runs: 4,
+            dailyCap: 36,
+            modelTurns: 12,
+            toolCalls: 31,
+        }));
         const getPageletFeatureRateLimitStatus = jest.fn(async () => ({
             scopeRecap: {
                 hourlyUsed: 1,
@@ -4086,7 +4463,7 @@ describe("PageletOrchestrator detail expansion", () => {
                 dailyResetAt: Date.parse("2026-07-19T00:00:00.000Z"),
             },
         }));
-        const host = makeHost({ getPageletFeatureRateLimitStatus });
+        const host = makeHost({ getDeepDiscoverUsage, getPageletFeatureRateLimitStatus });
         host.settings.pagelet.scopeRecapBackgroundAuthorization = "pending";
         host.settings.pagelet.scopeRecapPreparationEnabled = true;
         const orchestrator = new PageletOrchestrator(host);
@@ -4141,16 +4518,10 @@ describe("PageletOrchestrator detail expansion", () => {
         orchestrator.getCommandCallbacks().onShowBackgroundPreparationStatus();
         await flushAsyncWork();
 
-        expect(getPageletFeatureRateLimitStatus).toHaveBeenCalledTimes(1);
+        expect(getDeepDiscoverUsage).toHaveBeenCalledTimes(1);
+        expect(getPageletFeatureRateLimitStatus).not.toHaveBeenCalled();
         const message = jest.mocked(Notice).mock.calls.at(-1)?.[0] as string;
-        expect(message).toContain("Scope Recap preparation: Running");
-        expect(message).toContain("actual AI call yes");
-        expect(message).toContain("estimated cost $0.001000");
-        expect(message).toContain("Quiet Recall evaluation: round round-12");
-        expect(message).toContain("2 actual call(s)");
-        expect(message).toContain("estimated cost $0.002000");
-        expect(message).toContain("Scope Recap 1/2 this hour and 4/10 today");
-        expect(message).toContain("Quiet Recall 3/10 this hour and 8/50 today");
+        expect(message).toBe("4 / 36 runs · 12 model turns · 31 tool calls");
     });
 });
 
@@ -4199,7 +4570,9 @@ describe("PageletOrchestrator review panel scope flow", () => {
             internals.currentPanelLayout = existingLayout;
             internals.saveFlow.setPending(pendingNote);
 
-            orchestrator.getCommandCallbacks().onOpenPreparedReview();
+            (orchestrator as unknown as {
+                handleExpandPanel(type: "prepared"): void;
+            }).handleExpandPanel("prepared");
 
             expect(panelView.open).not.toHaveBeenCalled();
             expect(panelView.close).not.toHaveBeenCalled();
@@ -4276,7 +4649,9 @@ describe("PageletOrchestrator review panel scope flow", () => {
             usedGovernedMemoryClaimIds: ["memory-claim-1"],
         });
 
-        orchestrator.getCommandCallbacks().onOpenPreparedReview();
+        (orchestrator as unknown as {
+            handleExpandPanel(type: "prepared"): void;
+        }).handleExpandPanel("prepared");
 
         expect(foregroundAnalyze).not.toHaveBeenCalled();
         expect(preloadAnalyze).not.toHaveBeenCalled();
@@ -4460,7 +4835,7 @@ describe("PageletOrchestrator review panel scope flow", () => {
         expect(createReviewQueueItem).not.toHaveBeenCalled();
     });
 
-    it("keeps explicit multi-note selected review results after active note changes", async () => {
+    it("keeps rollback-only multi-note review results after active note changes", async () => {
         const now = Date.now();
         const activeFile = makeTFile("notes/current.md", { size: 100, mtime: now });
         const recentFile = makeTFile("notes/recent.md", { size: 100, mtime: now - 86_400_000 });
@@ -4501,7 +4876,9 @@ describe("PageletOrchestrator review panel scope flow", () => {
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
         (orchestrator as unknown as { currentScopeRange: string }).currentScopeRange = "last3";
 
-        await (orchestrator as unknown as { reviewSelectedScope(): Promise<void> }).reviewSelectedScope();
+        await (orchestrator as unknown as {
+            reviewSelectedScopeLegacy(): Promise<void>;
+        }).reviewSelectedScopeLegacy();
 
         expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
         expect(panelView.open).toHaveBeenCalledWith(
@@ -4513,7 +4890,7 @@ describe("PageletOrchestrator review panel scope flow", () => {
         );
     });
 
-    it("keeps selected review failures visible in the panel", async () => {
+    it("keeps rollback-only selected review failures visible in the panel", async () => {
         const now = Date.now();
         const activeFile = makeTFile("notes/current.md", { size: 100, mtime: now });
         const panelView = { open: jest.fn(), showReviewError: jest.fn() };
@@ -4540,7 +4917,9 @@ describe("PageletOrchestrator review panel scope flow", () => {
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await (orchestrator as unknown as { reviewSelectedScope(): Promise<void> }).reviewSelectedScope();
+        await (orchestrator as unknown as {
+            reviewSelectedScopeLegacy(): Promise<void>;
+        }).reviewSelectedScopeLegacy();
 
         expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
         expect(panelView.open).not.toHaveBeenCalled();
@@ -4572,7 +4951,7 @@ describe("PageletOrchestrator connection discovery", () => {
         host.settings.pagelet.foregroundPerHourCap = 0;
         const orchestrator = new PageletOrchestrator(host);
 
-        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+        await (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
 
         expect(cachedRead).toHaveBeenCalled();
         expect(findRelatedNotes).toHaveBeenCalled();
@@ -4598,7 +4977,7 @@ describe("PageletOrchestrator connection discovery", () => {
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+        await (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
 
         expect(cachedRead).not.toHaveBeenCalled();
         expect(findRelatedNotes).not.toHaveBeenCalled();
@@ -4617,7 +4996,7 @@ describe("PageletOrchestrator connection discovery", () => {
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+        await (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
 
         expect(discoverConnections).not.toHaveBeenCalled();
         expect(panelView.open).toHaveBeenCalledWith(
@@ -4681,7 +5060,7 @@ describe("PageletOrchestrator connection discovery", () => {
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+        await (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
 
         expect(findRelatedNotes).toHaveBeenCalledTimes(1);
         expect(discoverConnections).toHaveBeenCalledWith(
@@ -4755,7 +5134,7 @@ describe("PageletOrchestrator connection discovery", () => {
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
         await expect(
-            (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections(),
+            (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections(),
         ).resolves.toBeUndefined();
 
         expect(discoverConnections).toHaveBeenCalledTimes(1);
@@ -4830,7 +5209,7 @@ describe("PageletOrchestrator connection discovery", () => {
             const orchestrator = new PageletOrchestrator(host);
             (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-            const run = (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+            const run = (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
             await flushAsyncWork();
             jest.advanceTimersByTime(61_000);
             await flushAsyncWork();
@@ -4902,7 +5281,7 @@ describe("PageletOrchestrator connection discovery", () => {
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+        await (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
 
         expect(discoverConnections).not.toHaveBeenCalled();
         expect(cachedRead).toHaveBeenCalledTimes(1);
@@ -4944,7 +5323,7 @@ describe("PageletOrchestrator connection discovery", () => {
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+        await (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
 
         expect(panelView.open).toHaveBeenCalledWith(
             "discover",
@@ -4999,12 +5378,12 @@ describe("PageletOrchestrator connection discovery", () => {
         const orchestrator = new PageletOrchestrator(host);
 
         const first = (orchestrator as unknown as {
-            discoverConnections(): Promise<void>;
-        }).discoverConnections();
+            discoverLegacyConnections(): Promise<void>;
+        }).discoverLegacyConnections();
         await providerStarted;
         const second = (orchestrator as unknown as {
-            discoverConnections(): Promise<void>;
-        }).discoverConnections();
+            discoverLegacyConnections(): Promise<void>;
+        }).discoverLegacyConnections();
 
         await second;
         expect(callCount).toBe(1);
@@ -5013,8 +5392,8 @@ describe("PageletOrchestrator connection discovery", () => {
         await first;
 
         await (orchestrator as unknown as {
-            discoverConnections(): Promise<void>;
-        }).discoverConnections();
+            discoverLegacyConnections(): Promise<void>;
+        }).discoverLegacyConnections();
         expect(callCount).toBe(2);
     });
 
@@ -5048,7 +5427,7 @@ describe("PageletOrchestrator connection discovery", () => {
         const orchestrator = new PageletOrchestrator(host);
         (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
 
-        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+        await (orchestrator as unknown as { discoverLegacyConnections(): Promise<void> }).discoverLegacyConnections();
 
         expect(panelView.open).not.toHaveBeenCalled();
     });
@@ -5089,7 +5468,7 @@ describe("PageletOrchestrator connection discovery", () => {
                     tokenCost: { input: number; output: number };
                 }): void;
             };
-            discoverConnections(): Promise<void>;
+            discoverLegacyConnections(): Promise<void>;
             saveFindingsAsReviewNote(findings: Array<{
                 title: string;
                 description: string;
@@ -5108,7 +5487,7 @@ describe("PageletOrchestrator connection discovery", () => {
             tokenCost: { input: 1, output: 2 },
         });
 
-        await internals.discoverConnections();
+        await internals.discoverLegacyConnections();
         await internals.saveFindingsAsReviewNote([{
             title: "shared concept",
             description: "shared concept",

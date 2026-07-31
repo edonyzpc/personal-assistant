@@ -6,13 +6,17 @@ import {
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES,
     createInspectObsidianNoteTool,
+    createListRecentNotesTool,
     createListVaultTagsTool,
     createReadCanvasSummaryTool,
+    createReadNoteOutlineTool,
+    createSearchVaultMetadataTool,
     createSearchVaultSnippetsTool,
     isChatToolName,
     isInspectObsidianNoteResult,
     isObsidianOperationsV1AToolName,
     type ChatToolDefinition,
+    type ChatToolContext,
     type ChatToolResult,
 } from '../src/ai-services/chat-tools';
 import { buildObsidianOperationsPlannerGuidance } from '../src/ai-services/obsidian-operations-capability-catalog';
@@ -254,5 +258,113 @@ describe('list_vault_tags cooperative cancellation (P0-B)', () => {
         expect(content.tags).toEqual([
             expect.objectContaining({ tag: '#example', count: 50 }),
         ]);
+    });
+});
+
+describe('vault tool path boundaries', () => {
+    function createBoundaryHost() {
+        const files = [
+            { path: 'allowed/anchor.md', basename: 'anchor', stat: { mtime: 3, ctime: 1, size: 20 } },
+            { path: 'private/secret.md', basename: 'secret', stat: { mtime: 4, ctime: 2, size: 24 } },
+        ];
+        const contents: Record<string, string> = {
+            'allowed/anchor.md': '# Anchor\nshared evidence',
+            'private/secret.md': '# Secret\nshared evidence',
+        };
+        const cachedRead = jest.fn(async (file: { path: string }) => contents[file.path] ?? '');
+        const getFileCache = jest.fn((file: { path: string }) => ({
+            headings: [{ heading: file.path.includes('secret') ? 'Secret' : 'Anchor', level: 1 }],
+            frontmatter: { project: 'shared' },
+        }));
+        const activeSecret = { file: files[1], editor: { getValue: () => contents[files[1].path] } };
+        const host = {
+            app: {
+                vault: {
+                    getMarkdownFiles: () => files,
+                    getAbstractFileByPath: (path: string) => files.find((file) => file.path === path) ?? null,
+                    cachedRead,
+                },
+                metadataCache: {
+                    getFileCache,
+                    resolvedLinks: {},
+                    unresolvedLinks: {},
+                },
+                workspace: {
+                    getActiveViewOfType: () => activeSecret,
+                },
+            },
+            log: jest.fn(),
+        };
+        return { host, cachedRead, getFileCache };
+    }
+
+    function context(host: unknown): ChatToolContext {
+        return { host } as unknown as ChatToolContext;
+    }
+
+    const isPathAllowed = (path: string) => path.startsWith('allowed/');
+
+    it('filters metadata and recent-note candidates before metadata enumeration', async () => {
+        const { host, getFileCache } = createBoundaryHost();
+        const metadata = await createSearchVaultMetadataTool({ isPathAllowed }).execute(
+            { query: 'shared', limit: 10 },
+            context(host),
+        );
+        const recent = await createListRecentNotesTool({ isPathAllowed }).execute(
+            { order: 'modified', limit: 10 },
+            context(host),
+        );
+
+        expect(metadata.content?.matches.map((match) => match.path)).toEqual(['allowed/anchor.md']);
+        expect(recent.content?.notes.map((note) => note.path)).toEqual(['allowed/anchor.md']);
+        expect(getFileCache).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'private/secret.md' }));
+    });
+
+    it('rejects outline and inspect paths before metadata lookup or file read', async () => {
+        const { host, cachedRead, getFileCache } = createBoundaryHost();
+        const outline = await createReadNoteOutlineTool({ isPathAllowed }).execute(
+            { path: 'private/secret.md', maxHeadings: 20 },
+            context(host),
+        );
+        const inspect = await createInspectObsidianNoteTool({
+            isPathAllowed,
+            allowActiveNoteFallback: false,
+        }).execute(
+            { path: 'private/secret.md' },
+            context(host),
+        );
+
+        expect(outline.ok).toBe(false);
+        expect(inspect.ok).toBe(false);
+        expect(cachedRead).not.toHaveBeenCalled();
+        expect(getFileCache).not.toHaveBeenCalled();
+        expect(outline.inputSummary).toBe('excluded path');
+        expect(inspect.inputSummary).toBe('excluded path');
+    });
+
+    it('maps omitted inspect path to the frozen fallback instead of the active note', async () => {
+        const { host, cachedRead } = createBoundaryHost();
+        const inspect = await createInspectObsidianNoteTool({
+            isPathAllowed,
+            fallbackPath: 'allowed/anchor.md',
+            allowActiveNoteFallback: false,
+        }).execute({}, context(host));
+
+        expect(inspect.ok).toBe(true);
+        expect(inspect.content?.path).toBe('allowed/anchor.md');
+        expect(cachedRead).toHaveBeenCalledTimes(1);
+        expect(cachedRead).toHaveBeenCalledWith(expect.objectContaining({ path: 'allowed/anchor.md' }));
+    });
+
+    it('filters snippet candidates before any excluded note is read', async () => {
+        const { host, cachedRead } = createBoundaryHost();
+        const snippets = await createSearchVaultSnippetsTool({ isPathAllowed }).execute(
+            { query: 'shared evidence', limit: 10 },
+            context(host),
+        );
+
+        expect(snippets.content?.matches.map((match) => match.path)).toEqual(['allowed/anchor.md']);
+        expect(cachedRead).toHaveBeenCalledTimes(1);
+        expect(cachedRead).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'private/secret.md' }));
     });
 });

@@ -18,6 +18,364 @@ describe("PaAgentLoop", () => {
         deterministicCounters.clear();
     });
 
+    it("acquires and releases an optional lease around each turn", async () => {
+        const order: string[] = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "use memory",
+            model: {
+                stream: async function* (input) {
+                    order.push(`model:${input.turnIndex}`);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: "toolcall_delta",
+                            id: "call_1",
+                            name: "search_memory",
+                            input: { query: "x" },
+                            index: 0,
+                        } as const;
+                        return;
+                    }
+                    yield { type: "text_delta", text: "Done." } as const;
+                },
+            },
+            toolExecutor: {
+                execute: async () => ({ outcome: "success", promptText: "result" }),
+            },
+            hostPolicy: {
+                afterTurn: (summary) => summary.status === "tool_results_ready"
+                    ? { action: "continue", reason: "tool_results_ready" }
+                    : { action: "stop", status: "completed", reason: "done" },
+            },
+            turnLeaseProvider: async ({ runId, turnIndex, signal }) => {
+                expect(runId).toBe("run_1");
+                expect(signal).toBeInstanceOf(AbortSignal);
+                order.push(`acquire:${turnIndex}`);
+                return {
+                    release: () => order.push(`release:${turnIndex}`),
+                };
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const result = await loop.run();
+
+        expect(result.status).toBe("completed");
+        expect(order).toEqual([
+            "acquire:0",
+            "model:0",
+            "release:0",
+            "acquire:1",
+            "model:1",
+            "release:1",
+        ]);
+    });
+
+    it("releases the turn lease when cancellation stops an active turn", async () => {
+        const controller = new AbortController();
+        let releaseCount = 0;
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "wait",
+            model: {
+                stream: () => {
+                    controller.abort();
+                    return neverStream();
+                },
+            },
+            signal: controller.signal,
+            turnLeaseProvider: async () => ({
+                release: () => {
+                    releaseCount += 1;
+                },
+            }),
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const result = await loop.run();
+
+        expect(result.status).toBe("aborted");
+        expect(releaseCount).toBe(1);
+    });
+
+    it("aborts a queued turn lease when the remaining wall clock expires", async () => {
+        jest.useFakeTimers();
+        try {
+            const loop = new PaAgentLoop({
+                runId: "run_1",
+                userInput: "wait",
+                model: {
+                    stream: async function* () {
+                        yield { type: "text_delta", text: "unexpected" } as const;
+                    },
+                },
+                maxWallClockMs: 25,
+                turnLeaseProvider: ({ signal }) => new Promise((_, reject) => {
+                    signal?.addEventListener("abort", () => {
+                        const error = new Error("Aborted");
+                        error.name = "AbortError";
+                        reject(error);
+                    }, { once: true });
+                }),
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await Promise.resolve();
+            jest.advanceTimersByTime(25);
+            const result = await resultPromise;
+
+            expect(result.status).toBe("incomplete");
+            expect(result.endPayload).toEqual(expect.objectContaining({
+                reason: "wall_clock_exceeded",
+                maxWallClockMs: 25,
+            }));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("uses the soft deadline to stop an ordinary lease wait and preserve a final-answer turn", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const policySummaries: Array<{ status: string; diagnostics: Array<Record<string, unknown>> }> = [];
+            let leaseAttempt = 0;
+            const loop = new PaAgentLoop({
+                runId: "run_soft_lease",
+                userInput: "discover",
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        yield { type: "text_delta", text: "Final answer." } as const;
+                    },
+                },
+                hostPolicy: {
+                    afterTurn: (summary) => {
+                        policySummaries.push({
+                            status: summary.status,
+                            diagnostics: summary.diagnostics,
+                        });
+                        return summary.diagnostics.some((item) => (
+                            item.type === "finalization_reserve_reached"
+                        ))
+                            ? {
+                                action: "continue" as const,
+                                reason: "corrective_turn" as const,
+                                toolMode: "final_answer_only" as const,
+                            }
+                            : {
+                                action: "stop" as const,
+                                status: "completed" as const,
+                                reason: "done",
+                            };
+                    },
+                },
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                turnLeaseProvider: ({ signal }) => {
+                    leaseAttempt += 1;
+                    if (leaseAttempt > 1) {
+                        return Promise.resolve({ release: () => undefined });
+                    }
+                    return new Promise((_, reject) => {
+                        signal?.addEventListener("abort", () => {
+                            const error = new Error("Aborted");
+                            error.name = "AbortError";
+                            reject(error);
+                        }, { once: true });
+                    });
+                },
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await Promise.resolve();
+            jest.advanceTimersByTime(70);
+            const result = await resultPromise;
+
+            expect(result.status).toBe("completed");
+            expect(leaseAttempt).toBe(2);
+            expect(modelInputs).toHaveLength(1);
+            expect(modelInputs[0]).toMatchObject({
+                turnIndex: 0,
+                toolMode: "final_answer_only",
+            });
+            expect(policySummaries[0]).toMatchObject({
+                status: "incomplete",
+                diagnostics: [expect.objectContaining({
+                    type: "finalization_reserve_reached",
+                    finalizationReserveMs: 30,
+                })],
+            });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("uses the soft deadline to interrupt an ordinary model turn before finalization", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            let ordinaryAbortObserved = false;
+            let finalStartedAfterAbort = false;
+            const loop = new PaAgentLoop({
+                runId: "run_soft_turn",
+                userInput: "discover",
+                model: {
+                    stream: (input) => {
+                        modelInputs.push(input);
+                        if (input.toolMode === "final_answer_only") {
+                            finalStartedAfterAbort = ordinaryAbortObserved;
+                            return streamChunks([{ type: "text_delta", text: "Final answer." }]);
+                        }
+                        return (async function* () {
+                            await new Promise<void>((resolve) => {
+                                const onAbort = () => {
+                                    ordinaryAbortObserved = true;
+                                    resolve();
+                                };
+                                input.signal?.addEventListener("abort", onAbort, { once: true });
+                                if (input.signal?.aborted) onAbort();
+                            });
+                            yield { type: "diagnostic", diagnostic: { type: "ordinary_aborted" } } as const;
+                        })();
+                    },
+                },
+                hostPolicy: {
+                    afterTurn: (summary) => summary.diagnostics.some((item) => (
+                        item.type === "finalization_reserve_reached"
+                    ))
+                        ? {
+                            action: "continue" as const,
+                            reason: "corrective_turn" as const,
+                            toolMode: "final_answer_only" as const,
+                        }
+                        : {
+                            action: "stop" as const,
+                            status: "completed" as const,
+                            reason: "done",
+                        },
+                },
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                assistantIdleTimeoutMs: 1_000,
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await Promise.resolve();
+            jest.advanceTimersByTime(70);
+            const result = await resultPromise;
+
+            expect(result.status).toBe("completed");
+            expect(result.committedFinalText).toBe("Final answer.");
+            expect(ordinaryAbortObserved).toBe(true);
+            expect(finalStartedAfterAbort).toBe(true);
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([
+                undefined,
+                "final_answer_only",
+            ]);
+            expect(result.turns[0]).toMatchObject({
+                status: "incomplete",
+                diagnostics: [expect.objectContaining({
+                    type: "finalization_reserve_reached",
+                })],
+            });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("does not commit partial ordinary-turn text when the soft deadline reserves finalization", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const committed: string[] = [];
+            let ordinaryAbortObserved = false;
+            let finalStartedAfterAbort = false;
+            const loop = new PaAgentLoop({
+                runId: "run_soft_partial_text",
+                userInput: "discover",
+                model: {
+                    stream: (input) => {
+                        modelInputs.push(input);
+                        if (input.toolMode === "final_answer_only") {
+                            finalStartedAfterAbort = ordinaryAbortObserved;
+                            return streamChunks([{
+                                type: "text_delta",
+                                text: "Grounded final answer.",
+                            }]);
+                        }
+                        return (async function* () {
+                            yield {
+                                type: "text_delta",
+                                text: "Unfinished draft",
+                            } as const;
+                            await new Promise<void>((resolve) => {
+                                const onAbort = () => {
+                                    ordinaryAbortObserved = true;
+                                    resolve();
+                                };
+                                input.signal?.addEventListener("abort", onAbort, { once: true });
+                                if (input.signal?.aborted) onAbort();
+                            });
+                        })();
+                    },
+                },
+                hostPolicy: {
+                    afterTurn: (summary) => summary.diagnostics.some((item) => (
+                        item.type === "finalization_reserve_reached"
+                    ))
+                        ? {
+                            action: "continue" as const,
+                            reason: "corrective_turn" as const,
+                            toolMode: "final_answer_only" as const,
+                        }
+                        : {
+                            action: "stop" as const,
+                            status: "completed" as const,
+                            reason: "done",
+                        },
+                },
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                assistantIdleTimeoutMs: 1_000,
+                onCommittedFinalText: (text) => committed.push(text),
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(result.status).toBe("completed");
+            expect(result.committedFinalText).toBe("Grounded final answer.");
+            expect(ordinaryAbortObserved).toBe(true);
+            expect(finalStartedAfterAbort).toBe(true);
+            expect(committed).toEqual(["Grounded final answer."]);
+            expect(result.turns[0]).toMatchObject({
+                status: "incomplete",
+                committedFinalText: "",
+                pendingTextReclassified: true,
+                assistantMessage: {
+                    content: [expect.objectContaining({
+                        type: "thinking",
+                        text: "Unfinished draft",
+                    })],
+                },
+            });
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([
+                undefined,
+                "final_answer_only",
+            ]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("emits the canonical direct-answer lifecycle and commits text only after assistant message end", async () => {
         const events: AgentEvent[] = [];
         const committedSnapshots: Array<{ snapshot: string; lastEventType?: AgentEvent["type"] }> = [];

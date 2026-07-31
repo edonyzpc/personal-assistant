@@ -12,6 +12,7 @@ import {
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from '../src/ai-services/capability-types';
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
+import type { AgentRunCoordinatorPort } from '../src/ai-services/agent-run-coordinator';
 import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 import type { AgentEvent as CanonicalAgentEvent, ChatMessage, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
 import {
@@ -197,6 +198,7 @@ function createPlugin(overrides: {
     skillContextEnabled?: boolean;
     enabledSkillIds?: string[];
     memoryExtractionPromptContext?: Record<string, unknown>;
+    agentRunCoordinator?: AgentRunCoordinatorPort;
 } = {}) {
     const markdownFiles = overrides.markdownFiles ?? [];
     const abstractFiles = [...markdownFiles, ...(overrides.abstractFiles ?? [])];
@@ -266,6 +268,7 @@ function createPlugin(overrides: {
         isOperationsAgentEnabled: false,
         getMemoryExtractionPromptContext: jest.fn(() => overrides.memoryExtractionPromptContext),
         getResolvedLinks: jest.fn(() => overrides.resolvedLinks),
+        agentRunCoordinator: overrides.agentRunCoordinator,
     };
 }
 
@@ -565,6 +568,78 @@ describe('ChatService.streamLLM integration', () => {
     it('uses the matching regional WebSearch MCP endpoint for DashScope-compatible base URLs', () => {
         expect(getBailianWebSearchEndpointForBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1')).toBe(BAILIAN_WEB_SEARCH_MCP_ENDPOINT);
         expect(getBailianWebSearchEndpointForBaseURL('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/')).toBe(BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT);
+    });
+
+    it('holds the optional Chat lease for the complete run', async () => {
+        const order: string[] = [];
+        const model = createStreamModel('Hello.', () => order.push('model'));
+        mockCreateChatModel.mockResolvedValue(model);
+        const release = jest.fn(() => order.push('release'));
+        const coordinator: AgentRunCoordinatorPort = {
+            acquireChatLease: jest.fn(async (signal?: AbortSignal) => {
+                expect(signal).toBeUndefined();
+                order.push('acquire');
+                return { release };
+            }),
+            acquirePageletTurnLease: async () => ({ release: () => undefined }),
+        };
+        const plugin = createPlugin({ agentRunCoordinator: coordinator });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('hello', jest.fn());
+
+        expect(order).toEqual(['acquire', 'model', 'release']);
+        expect(coordinator.acquireChatLease).toHaveBeenCalledTimes(1);
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases the Chat lease when the run fails', async () => {
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(() => ({
+                [Symbol.asyncIterator]: () => ({
+                    next: async () => {
+                        throw new Error('stream failed');
+                    },
+                }),
+            })),
+            invoke: jest.fn(async () => {
+                throw new Error('invoke failed');
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const release = jest.fn();
+        const coordinator: AgentRunCoordinatorPort = {
+            acquireChatLease: jest.fn(async () => ({ release })),
+            acquirePageletTurnLease: async () => ({ release: () => undefined }),
+        };
+        const plugin = createPlugin({ agentRunCoordinator: coordinator });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await expect(service.streamLLM('hello', jest.fn())).rejects.toThrow();
+
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases the Chat lease when the active run is cancelled', async () => {
+        const controller = new AbortController();
+        const model = createStreamModel('unused', () => controller.abort());
+        mockCreateChatModel.mockResolvedValue(model);
+        const release = jest.fn();
+        const coordinator: AgentRunCoordinatorPort = {
+            acquireChatLease: jest.fn(async () => ({ release })),
+            acquirePageletTurnLease: async () => ({ release: () => undefined }),
+        };
+        const plugin = createPlugin({ agentRunCoordinator: coordinator });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await expect(service.streamLLM(
+            'hello',
+            jest.fn(),
+            controller.signal,
+        )).rejects.toMatchObject({ name: 'AbortError' });
+
+        expect(release).toHaveBeenCalledTimes(1);
     });
 
     it('routes a simple PA canonical turn from model chunk to onChunk callback', async () => {
