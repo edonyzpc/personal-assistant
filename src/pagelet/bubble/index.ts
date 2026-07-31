@@ -12,6 +12,7 @@
 export { BubbleView } from "./BubbleView";
 
 export {
+    buildAgentInsightDeliveryContent,
     buildQuickReviewContent,
     buildWritingAssistContent,
     buildDiscoveryContent,

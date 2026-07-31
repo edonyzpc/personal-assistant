@@ -3,6 +3,7 @@
 import type { App } from "obsidian";
 
 import type { MemorySearchPort } from "../memory/MemorySearchPort";
+import type { AgentRunCoordinatorPort } from "./agent-run-coordinator";
 import type { AgentCapabilityTier } from "./capability-types";
 
 /**
@@ -51,4 +52,7 @@ export interface AiServiceHost {
 
     /** Whether a vault path may be used as Memory evidence under current privacy settings. */
     isDataBoundaryAllowedPath?(path: string): boolean;
+
+    /** Optional capacity-one coordinator shared by Chat and Pagelet Agent runs. */
+    readonly agentRunCoordinator?: AgentRunCoordinatorPort;
 }

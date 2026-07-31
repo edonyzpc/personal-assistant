@@ -23,6 +23,10 @@ import type { WriteResult } from "./output/types";
 import type { PageletDetailPayload } from "./tab/types";
 import type { DiscoveryResult, PanelMemoryGovernanceState } from "./panel/types";
 import type {
+    PageletDeepDiscoverControllerResult,
+    PageletDeepDiscoverTriggerReason,
+} from "./agent/types";
+import type {
     ConfirmedMemoryRecord,
     GraphDiscoveryRunResult,
     MaintenanceReviewRunResult,
@@ -60,6 +64,13 @@ export interface PageletFeatureRateLimitStatus {
     quietRecall: PageletFeatureRateLimitUsage;
 }
 
+export interface PageletDeepDiscoverUsage {
+    runs: number;
+    dailyCap: number;
+    modelTurns: number;
+    toolCalls: number;
+}
+
 /**
  * Narrow host interface -- what the Pagelet orchestrator needs from the plugin.
  *
@@ -81,6 +92,7 @@ export interface PageletHost {
                 start: string;
                 end: string;
             };
+            deepDiscoverEnabled: boolean;
             preloadEnabled: boolean;
             preloadInterval: number;
             preloadPerHourCap: number;
@@ -152,6 +164,23 @@ export interface PageletHost {
 
     /** Device-local, per-vault storage for content-free delivery seen/ack state. */
     createPageletAttentionStorage?(): PageletAttentionStorage | undefined;
+
+    /** Run the unified read-only Pagelet Agent for an exact vault path. */
+    runDeepDiscover?(input: {
+        path: string;
+        triggerReason: PageletDeepDiscoverTriggerReason;
+        force?: boolean;
+        signal?: AbortSignal;
+    }): Promise<PageletDeepDiscoverControllerResult>;
+
+    /** Cancel active/pending Deep Discover work and clear in-memory derived content. */
+    cancelDeepDiscover?(): void;
+
+    /** Content-free usage for the current local day. */
+    getDeepDiscoverUsage?(): Promise<PageletDeepDiscoverUsage>;
+
+    /** Opaque runtime identity used to invalidate derived Deep Discover UI. */
+    getDeepDiscoverPolicyIdentity?(): string;
 
     /** Factory for the LLM callback used by foreground review commands. */
     createForegroundAnalyzeCallback(): AnalyzeCallback;

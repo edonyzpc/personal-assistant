@@ -25,16 +25,14 @@ import type {
     DeliveryReceipt,
 } from "./attention";
 import type { BubbleView } from "./bubble/BubbleView";
-import { buildContextLimitedContent, buildIntentionallyQuietContent, buildLocalDiscoveryClueContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildProactiveRecallDeliveryContent, buildRecallDeliveryStackContent, buildReadyEmptyContent, buildTerseEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
-import { quietRecallCandidateToDeliveryCandidate, quietRecallCandidateToDiscoveryCandidate } from "./bubble/recall-card";
+import { buildAgentInsightDeliveryContent, buildContextLimitedContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildProactiveRecallDeliveryContent, buildReadyEmptyContent, buildTerseEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
+import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";
 import { resolveBubbleExplanationState } from "./bubble/state-resolver";
 import type { PreloadFinding } from "./preload/types";
 import type { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetView } from "./pet/PetView";
 import type { PageletHost } from "./PageletHost";
 import {
-    QUIET_RECALL_BUBBLE_MIN_SCORE,
-    quietRecallLinkTargetPath,
     type PatternDetectionResult,
     type QuietRecallBubbleNudge,
     type QuietRecallCandidate,
@@ -77,15 +75,21 @@ export interface BubbleCoordinatorCallbacks {
     onPatternDetectionView(result: PatternDetectionResult): void;
     onPatternDetectionDismiss(result: PatternDetectionResult): void;
     getPreparedRecapCandidate(): (DeliveryCandidate & { kind: "recap" }) | null;
+    /** Return the latest verified Deep Discover insight, if one is pending. */
+    getAgentInsightCandidate?(): (DeliveryCandidate & { kind: "review" }) | null;
     /** Return only explicitly admitted proactive tickets; raw payloads stay separate. */
     getAdmittedNudgeTickets(): readonly NudgeTicket[];
     onPreparedRecapView(candidate: DeliveryCandidate & { kind: "recap" }): void;
     onPreparedRecapLater(candidate: DeliveryCandidate & { kind: "recap" }): void;
+    /** Open the verified free-form insight in the read-only Panel. */
+    onAgentInsightView?(candidate: DeliveryCandidate & { kind: "review" }): void;
+    /** Keep the insight in the in-memory cache without presenting it again now. */
+    onAgentInsightLater?(candidate: DeliveryCandidate & { kind: "review" }): void;
     /** Commit one-shot presentation state only after Bubble.show succeeds. */
     onNudgePresented(ticket: NudgeTicket): void;
     /** Return count of recall candidates that were evaluated but judged unconvincing by LLM. */
     getUnconvincingRecallCount(): number;
-    /** Device-local consumption gate for proactive Recall/Recap only. */
+    /** Device-local consumption gate for proactive Recall/Recap/Agent insight delivery. */
     isDeliverySeen?(receipt: DeliveryReceipt): boolean;
     /** Device-local, semantic/copy-version acknowledgement gate. */
     isExplanationAcknowledged?(kind: AttentionExplanationKind, copyVersion: string): boolean;
@@ -100,6 +104,7 @@ type BubbleEntry = "pet" | "quick-review";
 
 /** Explicit ownership for a renderable proactive nudge ticket. */
 export enum NudgeOwner {
+    AgentInsight = "agent-insight",
     PreparedRecap = "prepared-recap",
     QuietRecall = "quiet-recall",
     Pattern = "pattern",
@@ -107,6 +112,11 @@ export enum NudgeOwner {
 }
 
 export type NudgeTicket =
+    | {
+        key: string;
+        owner: NudgeOwner.AgentInsight;
+        candidate: DeliveryCandidate & { kind: "review" };
+    }
     | {
         key: string;
         owner: NudgeOwner.PreparedRecap;
@@ -168,9 +178,6 @@ export class BubbleCoordinator {
     private memoryReadinessRefreshInFlight = false;
     private pendingMemoryReadinessRefresh: MemoryReadinessRefreshRequest | null = null;
     private memoryReadinessRefreshEpoch = 0;
-    private lastAnchorEl: HTMLElement | null = null;
-    private discoverRunId = 0;
-    private discoverInFlightKey: string | null = null;
     private pendingNudgeTicket: NudgeTicket | null = null;
     private activeNudgeTicket: NudgeTicket | null = null;
     private readonly presentedNudgeKeys = new Set<string>();
@@ -184,8 +191,6 @@ export class BubbleCoordinator {
     destroy(): void {
         this.memoryReadinessRefreshEpoch += 1;
         this.pendingMemoryReadinessRefresh = null;
-        this.lastAnchorEl = null;
-        this.discoverInFlightKey = null;
         this.memoryReadySnapshot = null;
         this.pendingNudgeTicket = null;
         this.activeNudgeTicket = null;
@@ -217,7 +222,6 @@ export class BubbleCoordinator {
 
         // If bubble is already visible, close it (toggle)
         if (bubbleView.bubbleState === "visible") {
-            this.invalidateDiscoverRun();
             bubbleView.close();
             return;
         }
@@ -251,7 +255,6 @@ export class BubbleCoordinator {
             onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
             onSourceClick: (link) => this.callbacks.onSourceClick(link),
             onDismiss: () => {
-                this.invalidateDiscoverRun();
                 bubbleView.close();
                 this.callbacks.onDismiss();
             },
@@ -260,7 +263,7 @@ export class BubbleCoordinator {
                 this.callbacks.onReviewCurrentNote();
             },
             onDiscoverConnections: () => {
-                void this.handleDiscoverFromBubble(bubbleView);
+                this.handleDiscoverFromBubble(bubbleView);
             },
             onPrepareMemory: () => {
                 bubbleView.close();
@@ -291,8 +294,6 @@ export class BubbleCoordinator {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return;
         petView.closeActionRing?.(false, "action");
-        this.invalidateDiscoverRun();
-        this.lastAnchorEl = anchorEl;
         const entry = options.entry
             ?? (options.preserveFocus ? this.lastBubbleEntry : "pet");
         this.lastBubbleEntry = entry;
@@ -304,8 +305,26 @@ export class BubbleCoordinator {
             this.collectAdmittedNudgeTickets().filter((ticket) => this.ticketRuntimeEnabled(ticket)),
         );
         let presentation: BubblePresentation;
+        const agentInsight = this.callbacks.getAgentInsightCandidate?.() ?? null;
         const preparedRecap = this.callbacks.getPreparedRecapCandidate();
-        if (preparedRecap) {
+        if (agentInsight) {
+            presentation = {
+                content: buildAgentInsightDeliveryContent(agentInsight, {
+                    onView: (candidate) => {
+                        bubbleView.close();
+                        this.callbacks.onAgentInsightView?.(candidate);
+                    },
+                    onLater: (candidate) => {
+                        bubbleView.close();
+                        this.callbacks.onAgentInsightLater?.(candidate);
+                    },
+                }, locale),
+                ticket: admittedTickets.find((ticket) => (
+                    ticket.owner === NudgeOwner.AgentInsight
+                    && ticket.candidate.id === agentInsight.id
+                )) ?? null,
+            };
+        } else if (preparedRecap) {
             presentation = {
                 content: buildPreparedRecapDeliveryContent(preparedRecap, {
                     onViewRecap: (candidate) => {
@@ -569,7 +588,8 @@ export class BubbleCoordinator {
         const admittedTickets = this.sortNudgeTickets(
             this.collectAdmittedNudgeTickets().filter((ticket) => this.ticketRuntimeEnabled(ticket)),
         );
-        const presentation = this.callbacks.getPreparedRecapCandidate()
+        const presentation = (this.callbacks.getAgentInsightCandidate?.() ?? null)
+            || this.callbacks.getPreparedRecapCandidate()
             ? null
             : this.buildRegularBubbleContent(
                 bubbleView,
@@ -636,7 +656,8 @@ export class BubbleCoordinator {
     }
 
     private isDeliveryContent(content: BubbleContent): boolean {
-        return content.type === "recall-delivery"
+        return content.type === "review-delivery"
+            || content.type === "recall-delivery"
             || content.type === "recap-delivery"
             || content.type === "pattern-delivery"
             || content.type === "quick-review";
@@ -759,151 +780,9 @@ export class BubbleCoordinator {
             });
     }
 
-    private async handleDiscoverFromBubble(bubbleView: BubbleView): Promise<void> {
-        const anchorEl = this.currentBubbleAnchor();
-        if (!anchorEl) {
-            this.callbacks.onDiscoverConnections();
-            return;
-        }
-        const expectedPath = this.currentActivePath();
-        const runKey = expectedPath ?? "__no-active-path__";
-        const locale = getPageletUiLanguage();
-        bubbleView.show({
-            type: "ready-empty",
-            findings: [{ text: pageletT("pagelet.bubble.discover.loading", locale) }],
-            actions: [],
-        }, anchorEl);
-
-        if (this.discoverInFlightKey === runKey) return;
-
-        const runId = ++this.discoverRunId;
-        this.discoverInFlightKey = runKey;
-        const canPublish = (): boolean => {
-            if (runId !== this.discoverRunId) return false;
-            if (bubbleView.bubbleState !== "visible") return false;
-            return !expectedPath || this.currentActivePath() === expectedPath;
-        };
-        const closeIfStale = (): void => {
-            if (runId !== this.discoverRunId) return;
-            if (bubbleView.bubbleState === "visible") bubbleView.close();
-        };
-
-        try {
-            const recall = await this.host.runQuietRecall();
-            if (!canPublish() || this.host.isQuietRecallRunCurrent?.(recall) === false) {
-                closeIfStale();
-                return;
-            }
-            const aiCandidates = recall.candidates
-                .flatMap((candidate) => {
-                    const delivery = quietRecallCandidateToDeliveryCandidate(
-                        candidate,
-                        locale,
-                        recall.currentPath,
-                    );
-                    return delivery ? [delivery] : [];
-                })
-                .slice(0, 3);
-            const localCandidate = aiCandidates.length === 0
-                ? (recall.discoverCandidates ?? recall.candidates)
-                    .filter((candidate) => (
-                        candidate.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
-                        && candidate.sourceRefs.length > 0
-                    ))
-                    .map((candidate) => quietRecallCandidateToDiscoveryCandidate(candidate))
-                    .find((candidate) => candidate !== null) ?? null
-                : null;
-            if (aiCandidates.length === 0 && !localCandidate) {
-                if (!canPublish()) {
-                    closeIfStale();
-                    return;
-                }
-                bubbleView.show({
-                    type: "ready-empty",
-                    findings: [{ text: pageletT("pagelet.bubble.discover.noResults", locale) }],
-                    actions: [buildReadyEmptyContent(this.buildStateCallbacks(bubbleView), locale).actions[0]],
-                }, anchorEl);
-                return;
-            }
-            const content = localCandidate
-                ? buildLocalDiscoveryClueContent(localCandidate, {
-                    onOpen: (candidate) => {
-                        const sourcePath = candidate.sourceRefs[0]?.path;
-                        bubbleView.close();
-                        if (sourcePath) this.callbacks.onSourceClick(sourcePath);
-                    },
-                    onLinkToCurrent: (candidate) => {
-                        const currentPath = expectedPath;
-                        const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
-                        if (currentPath && linkTargetPath) {
-                            bubbleView.close();
-                            void this.host.linkRecallCandidate(currentPath, linkTargetPath).catch((error) => {
-                                this.host.log("Pagelet Bubble local clue link failed", error);
-                            });
-                        }
-                    },
-                    canLinkToCurrent: (candidate) => (
-                        quietRecallLinkTargetPath(candidate, expectedPath) !== null
-                    ),
-                    onLater: () => {
-                        bubbleView.close();
-                    },
-                }, locale)
-                : buildRecallDeliveryStackContent(aiCandidates, {
-                    onOpen: (candidate) => {
-                        const sourcePath = candidate.sourceRefs[0]?.path;
-                        bubbleView.close();
-                        if (sourcePath) this.callbacks.onSourceClick(sourcePath);
-                    },
-                    onLinkToCurrent: (candidate) => {
-                        const currentPath = expectedPath;
-                        const linkTargetPath = quietRecallLinkTargetPath(candidate, currentPath);
-                        if (currentPath && linkTargetPath) {
-                            bubbleView.close();
-                            void this.host.linkRecallCandidate(currentPath, linkTargetPath).catch((error) => {
-                                this.host.log("Pagelet Bubble recall link failed", error);
-                            });
-                        }
-                    },
-                    canLinkToCurrent: (candidate) => (
-                        quietRecallLinkTargetPath(candidate, expectedPath) !== null
-                    ),
-                    onLater: () => {
-                        bubbleView.close();
-                    },
-                }, locale);
-            this.applyInlineHint(content, locale);
-            if (!canPublish()) {
-                closeIfStale();
-                return;
-            }
-            bubbleView.show(content, anchorEl);
-        } catch (error) {
-            if (!canPublish()) {
-                closeIfStale();
-                return;
-            }
-            this.host.log("Pagelet Bubble discover recall failed", error);
-            this.callbacks.onDiscoverConnections();
-        } finally {
-            if (runId === this.discoverRunId) {
-                this.discoverInFlightKey = null;
-            }
-        }
-    }
-
-    private currentBubbleAnchor(): HTMLElement | null {
-        return this.lastAnchorEl;
-    }
-
-    private invalidateDiscoverRun(): void {
-        this.discoverRunId += 1;
-        this.discoverInFlightKey = null;
-    }
-
-    private currentActivePath(): string | null {
-        const file = this.host.app?.workspace?.getActiveFile?.() as { path?: string } | null | undefined;
-        return typeof file?.path === "string" ? file.path : null;
+    private handleDiscoverFromBubble(bubbleView: BubbleView): void {
+        bubbleView.close();
+        this.callbacks.onDiscoverConnections();
     }
 
     /**
@@ -916,8 +795,6 @@ export class BubbleCoordinator {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return { status: "unavailable" };
         petView?.closeActionRing?.(false, "action");
-        this.invalidateDiscoverRun();
-        this.lastAnchorEl = anchorEl;
         this.suppressNudgeStateForce = true;
         try { this.reconcileNudge(bubbleView, petView); }
         finally { this.suppressNudgeStateForce = false; }
@@ -1040,10 +917,13 @@ export class BubbleCoordinator {
             if (seen.has(ticket.key) || this.presentedNudgeKeys.has(ticket.key)) return false;
             seen.add(ticket.key);
             if (
-                (ticket.owner === NudgeOwner.PreparedRecap
+                (ticket.owner === NudgeOwner.AgentInsight
+                    || ticket.owner === NudgeOwner.PreparedRecap
                     || ticket.owner === NudgeOwner.QuietRecall)
                 && this.deliveryIsSeen(
-                    ticket.owner === NudgeOwner.PreparedRecap
+                    ticket.owner === NudgeOwner.AgentInsight
+                        ? ticket.candidate
+                        : ticket.owner === NudgeOwner.PreparedRecap
                         ? ticket.candidate
                         : ticket.deliveryCandidate,
                 )
@@ -1063,10 +943,11 @@ export class BubbleCoordinator {
         // Deterministic compatibility fallback while Tier-3 candidates have no
         // cross-type quality score. This is not a fixed product priority.
         const compatibilityOrder: Record<NudgeOwner, number> = {
-            [NudgeOwner.PreparedRecap]: 0,
-            [NudgeOwner.QuietRecall]: 1,
-            [NudgeOwner.Pattern]: 2,
-            [NudgeOwner.Onboarding]: 3,
+            [NudgeOwner.AgentInsight]: 0,
+            [NudgeOwner.PreparedRecap]: 1,
+            [NudgeOwner.QuietRecall]: 2,
+            [NudgeOwner.Pattern]: 3,
+            [NudgeOwner.Onboarding]: 4,
         };
         return [...tickets].sort(
             (left, right) => compatibilityOrder[left.owner] - compatibilityOrder[right.owner],
@@ -1077,6 +958,8 @@ export class BubbleCoordinator {
         if (!this.host.settings.pagelet.enabled || this.host.settings.focusMode) return false;
         if (this.host.settings.pagelet.petVisible === false) return false;
         switch (ticket.owner) {
+            case NudgeOwner.AgentInsight:
+                return this.host.settings.pagelet.deepDiscoverEnabled !== false;
             case NudgeOwner.PreparedRecap:
                 return this.host.settings.pagelet.scopeRecapHighValueHints !== false;
             case NudgeOwner.QuietRecall:
@@ -1113,7 +996,10 @@ export class BubbleCoordinator {
 
     private sharedPresentationDelay(tickets: NudgeTicket[]): number | null {
         if (tickets.length === 0) return null;
-        const enabled = tickets.some((ticket) => ticket.owner === NudgeOwner.PreparedRecap)
+        const enabled = tickets.some((ticket) => (
+            ticket.owner === NudgeOwner.AgentInsight
+            || ticket.owner === NudgeOwner.PreparedRecap
+        ))
             || (this.host.settings.pagelet.proactiveHints && this.proactiveHints.enabled);
         return this.proactiveHints.delayUntilEligibleMs({ enabled });
     }
@@ -1125,6 +1011,17 @@ export class BubbleCoordinator {
         locale: ReturnType<typeof getPageletUiLanguage>,
     ): BubbleContent | null {
         switch (ticket.owner) {
+            case NudgeOwner.AgentInsight:
+                return buildAgentInsightDeliveryContent(ticket.candidate, {
+                    onView: (candidate) => {
+                        bubbleView.close();
+                        this.callbacks.onAgentInsightView?.(candidate);
+                    },
+                    onLater: (candidate) => {
+                        bubbleView.close();
+                        this.callbacks.onAgentInsightLater?.(candidate);
+                    },
+                }, locale);
             case NudgeOwner.PreparedRecap:
                 return buildPreparedRecapDeliveryContent(ticket.candidate, {
                     onViewRecap: (candidate) => {
@@ -1243,7 +1140,6 @@ export class BubbleCoordinator {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return;
         petView?.closeActionRing?.(false, "action");
-        this.lastAnchorEl = anchorEl;
 
         const locale = getPageletUiLanguage();
         const stateCallbacks = this.buildStateCallbacks(bubbleView);

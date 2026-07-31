@@ -8,11 +8,26 @@ import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import {
     AIUtils,
     getDashScopeImageGenerationEndpoint,
+    isDashScopeCompatibleBaseURL,
     supportsDashScopeThinkingControl,
     type QwenRequestOptions,
 } from "./ai-services/ai-utils";
 import { stableStringify } from "./ai-services/agent-utils";
-import { ChatService } from "./ai-services/chat-service";
+import {
+    ChatService,
+    getBailianWebSearchEndpointForBaseURL,
+} from "./ai-services/chat-service";
+import { AgentRunCoordinator } from "./ai-services/agent-run-coordinator";
+import {
+    BuiltinWebSearchProvider,
+    createBailianWebSearchNetworkPolicy,
+    requestBailianWebSearchMcp,
+} from "./ai-services/builtin-web-search-provider";
+import type {
+    AgentCapability,
+    AgentRuntimePlatform,
+} from "./ai-services/capability-types";
+import { MemorySearchTool } from "./ai-services/memory-search-tool";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
@@ -71,6 +86,24 @@ import {
 } from './platform-dom';
 import { normalizeReviewsFolder, type PageletReviewsFolderError, type PageletSettings } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
+import {
+    PageletDeepDiscoverController,
+    PageletDeepDiscoverScheduler,
+    anchorSnapshotIdentity,
+    capturePageletAnchorSnapshot,
+    capturePageletSourceMaterial,
+    createPageletAgentCacheIdentity,
+    createPageletAgentRuntime,
+    createPageletNativeModel,
+    pageletAgentInsightToDeliveryCandidate,
+    type PageletAgentPolicyIdentity,
+    type PageletAgentSourceMaterial,
+    type PageletAgentSourceSnapshot,
+    type PageletAnchorSnapshot,
+    type PageletDeepDiscoverControllerRequest,
+    type PageletDeepDiscoverControllerResult,
+} from './pagelet/agent';
+import { AttentionAwareDeliveryStore } from './pagelet/attention';
 import {
     PageletProviderCallAdmission,
     PageletProviderCallControlError,
@@ -771,12 +804,21 @@ function buildQuietRecallLanguageRetryInstruction(language?: "zh" | "en"): strin
 }
 const SCOPE_RECAP_CALL_LIMITS = Object.freeze({ hourly: 2, daily: 10 });
 const QUIET_RECALL_CALL_LIMITS = Object.freeze({ hourly: 10, daily: 50 });
+const DEEP_DISCOVER_CALL_LIMITS = Object.freeze({ hourly: 36, daily: 36 });
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
+const PAGELET_DEEP_DISCOVER_USAGE_STORAGE_KEY_PREFIX = "pa-pagelet-deep-discover-usage";
 const PAGELET_CHANGE_WATERMARK_STORAGE_KEY_PREFIX = "pa-pagelet-preload-changes";
 const PAGELET_ATTENTION_STORAGE_KEY_PREFIX = "pa-pagelet-attention";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
 const PAGELET_DISCOVERY_MAX_RELATED_NOTES = 6;
+function normalizeDeepDiscoverUsageCount(value: unknown): number {
+    return typeof value === "number"
+        && Number.isSafeInteger(value)
+        && value >= 0
+        ? value
+        : 0;
+}
 const PAGELET_BACKGROUND_STANDARD_LIMITS = Object.freeze({
     inputTokens: 4_000,
     outputTokens: 1_000,
@@ -1140,6 +1182,8 @@ export class PluginManager extends Plugin {
     vss: VSS | null = null;
     memoryManager: MemoryManager | null = null;
     private manualMemoryActionInFlight = false;
+    /** Shared capacity-one lane: Chat owns run-level priority over Pagelet turns. */
+    private readonly agentRunCoordinator = new AgentRunCoordinator();
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
     private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
@@ -1160,6 +1204,12 @@ export class PluginManager extends Plugin {
     private pageletRateLimiterInstance: PageletRateLimiter | null = null;
     private scopeRecapRateLimiterInstance: PageletRateLimiter | null = null;
     private quietRecallRateLimiterInstance: PageletRateLimiter | null = null;
+    private deepDiscoverRateLimiterInstance: PageletRateLimiter | null = null;
+    private deepDiscoverScheduler: PageletDeepDiscoverScheduler | null = null;
+    private deepDiscoverControllerPolicyIdentitySnapshot: string | null = null;
+    private deepDiscoverControllerInitialization: Promise<PageletDeepDiscoverScheduler | null> | null = null;
+    private deepDiscoverControllerInitializationIdentity: string | null = null;
+    private deepDiscoverControllerEpoch = 0;
     private pageletProviderCallAdmissionInstance: PageletProviderCallAdmission | null = null;
     private quietRecallEvaluationCoordinatorInstance: QuietRecallEvaluationCoordinator | null = null;
     private quietRecallEvaluationPolicyIdentitySnapshot: string | null = null;
@@ -1794,6 +1844,7 @@ export class PluginManager extends Plugin {
             this.destroyPageletRuntime();
             return;
         }
+        this.syncPageletDeepDiscoverControllerIdentity();
 
         const quietRecallPolicyIdentity = this.getQuietRecallEvaluationPolicyIdentity();
         if (
@@ -2175,6 +2226,7 @@ export class PluginManager extends Plugin {
     }
 
     private destroyPageletRuntime(): void {
+        this.resetDeepDiscoverController();
         if (this.pageletOrchestrator) {
             try {
                 this.pageletOrchestrator.destroy();
@@ -2198,6 +2250,7 @@ export class PluginManager extends Plugin {
         this.pageletRateLimiterInstance = null;
         this.scopeRecapRateLimiterInstance = null;
         this.quietRecallRateLimiterInstance = null;
+        this.deepDiscoverRateLimiterInstance = null;
         this.quietRecallEvaluationCoordinatorInstance?.clear();
         this.quietRecallEvaluationCoordinatorInstance = null;
         this.quietRecallEvaluationPolicyIdentitySnapshot = null;
@@ -2317,6 +2370,10 @@ export class PluginManager extends Plugin {
                 this.pageletChangeWatermarkStorageKey(),
             ),
             createPageletAttentionStorage: () => this.createPageletAttentionStorage(),
+            runDeepDiscover: (input) => this.runPageletDeepDiscover(input),
+            cancelDeepDiscover: () => this.resetDeepDiscoverController(),
+            getDeepDiscoverUsage: () => this.getDeepDiscoverUsage(),
+            getDeepDiscoverPolicyIdentity: () => this.pageletDeepDiscoverPolicyIdentityKey(),
             openQuickCapture: () => this.openQuickCaptureModal(),
             createPreloadAnalyzeCallback: (): AnalyzeCallback => {
                 return async (files, config, callContext) => {
@@ -6689,6 +6746,7 @@ export class PluginManager extends Plugin {
             getResolvedLinks: () =>
                 this.app?.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined,
             isDataBoundaryAllowedPath: (path) => this.isDataBoundaryAllowedPath(path),
+            agentRunCoordinator: this.agentRunCoordinator,
         };
     }
 
@@ -6850,6 +6908,634 @@ export class PluginManager extends Plugin {
         return this.quietRecallRateLimiterInstance;
     }
 
+    private getDeepDiscoverRateLimiter(): PageletRateLimiter {
+        if (!this.deepDiscoverRateLimiterInstance) {
+            const vaultStorageScope = this.pageletVaultStorageScope();
+            this.deepDiscoverRateLimiterInstance = new PageletRateLimiter({
+                storage: this.createPageletRateLimitStorage("deep-discover", vaultStorageScope),
+                ...(vaultStorageScope ? {
+                    coordinationKey: this.pageletRateLimitStorageKey("deep-discover", vaultStorageScope),
+                } : {}),
+                config: {
+                    hourlyCap: DEEP_DISCOVER_CALL_LIMITS.hourly,
+                    dailyCap: DEEP_DISCOVER_CALL_LIMITS.daily,
+                },
+            });
+        }
+        return this.deepDiscoverRateLimiterInstance;
+    }
+
+    private async runPageletDeepDiscover(
+        input: PageletDeepDiscoverControllerRequest,
+    ): Promise<PageletDeepDiscoverControllerResult> {
+        if (input.signal?.aborted) return { status: "quiet", reason: "aborted" };
+        if (
+            this.unloading
+            || !this.settings.pagelet?.enabled
+            || !this.settings.pagelet.deepDiscoverEnabled
+        ) {
+            return { status: "limit", reason: "unavailable" };
+        }
+
+        const path = normalizePath(input.path);
+        if (!this.isPageletProviderPathAllowed(path)) {
+            return { status: "denied", reason: "data-boundary" };
+        }
+        const snapshotHost = this.createAiServiceHost();
+        const anchorSnapshot = await this.capturePageletDeepDiscoverAnchorSnapshot(
+            snapshotHost,
+            path,
+            (candidatePath) => this.isPageletProviderPathAllowed(candidatePath),
+            input.signal,
+        );
+        if (!anchorSnapshot) {
+            return { status: "stale", reason: "anchor-snapshot-unavailable" };
+        }
+        if (input.signal?.aborted) return { status: "quiet", reason: "aborted" };
+        const scheduler = await this.getOrCreatePageletDeepDiscoverScheduler();
+        if (!scheduler) return { status: "limit", reason: "unavailable" };
+
+        const request: PageletDeepDiscoverControllerRequest = {
+            ...input,
+            path,
+            anchorSnapshot,
+        };
+        if (input.force === true || input.triggerReason === "explicit") {
+            return scheduler.runNow({
+                ...request,
+                force: true,
+            });
+        }
+        return scheduler.schedule(request);
+    }
+
+    private syncPageletDeepDiscoverControllerIdentity(): void {
+        if (
+            !this.settings.pagelet?.enabled
+            || !this.settings.pagelet.deepDiscoverEnabled
+        ) {
+            if (
+                this.deepDiscoverScheduler
+                || this.deepDiscoverControllerInitialization
+            ) {
+                this.resetDeepDiscoverController();
+            }
+            return;
+        }
+        const identity = this.pageletDeepDiscoverPolicyIdentityKey();
+        if (
+            (
+                this.deepDiscoverControllerPolicyIdentitySnapshot !== null
+                && this.deepDiscoverControllerPolicyIdentitySnapshot !== identity
+            )
+            || (
+                this.deepDiscoverControllerInitializationIdentity !== null
+                && this.deepDiscoverControllerInitializationIdentity !== identity
+            )
+        ) {
+            this.resetDeepDiscoverController();
+        }
+    }
+
+    private resetDeepDiscoverController(): void {
+        this.deepDiscoverControllerEpoch += 1;
+        this.deepDiscoverScheduler?.dispose();
+        this.deepDiscoverScheduler = null;
+        this.deepDiscoverControllerPolicyIdentitySnapshot = null;
+        this.deepDiscoverControllerInitialization = null;
+        this.deepDiscoverControllerInitializationIdentity = null;
+    }
+
+    private async getOrCreatePageletDeepDiscoverScheduler(): Promise<PageletDeepDiscoverScheduler | null> {
+        if (this.getAISetupIssue() !== null) return null;
+        const identity = this.pageletDeepDiscoverPolicyIdentityKey();
+        if (
+            this.deepDiscoverScheduler
+            && this.deepDiscoverControllerPolicyIdentitySnapshot === identity
+        ) {
+            return this.deepDiscoverScheduler;
+        }
+        if (
+            this.deepDiscoverScheduler
+            || (
+                this.deepDiscoverControllerInitializationIdentity !== null
+                && this.deepDiscoverControllerInitializationIdentity !== identity
+            )
+        ) {
+            this.resetDeepDiscoverController();
+        }
+        if (
+            this.deepDiscoverControllerInitialization
+            && this.deepDiscoverControllerInitializationIdentity === identity
+        ) {
+            return this.deepDiscoverControllerInitialization;
+        }
+
+        const epoch = this.deepDiscoverControllerEpoch;
+        const initialization = this.createPageletDeepDiscoverScheduler(identity)
+            .catch((error) => {
+                this.log("Pagelet Deep Discover runtime initialization failed", {
+                    errorType: error instanceof Error ? error.name : "unknown",
+                });
+                return null;
+            });
+        this.deepDiscoverControllerInitialization = initialization;
+        this.deepDiscoverControllerInitializationIdentity = identity;
+        try {
+            const scheduler = await initialization;
+            if (!scheduler) return null;
+            if (
+                epoch !== this.deepDiscoverControllerEpoch
+                || this.unloading
+                || !this.settings.pagelet?.enabled
+                || !this.settings.pagelet.deepDiscoverEnabled
+                || identity !== this.pageletDeepDiscoverPolicyIdentityKey()
+            ) {
+                scheduler.dispose();
+                return null;
+            }
+            this.deepDiscoverScheduler = scheduler;
+            this.deepDiscoverControllerPolicyIdentitySnapshot = identity;
+            return scheduler;
+        } finally {
+            if (this.deepDiscoverControllerInitialization === initialization) {
+                this.deepDiscoverControllerInitialization = null;
+                this.deepDiscoverControllerInitializationIdentity = null;
+            }
+        }
+    }
+
+    private async createPageletDeepDiscoverScheduler(
+        expectedPolicyIdentity: string,
+    ): Promise<PageletDeepDiscoverScheduler | null> {
+        const liveHost = this.createAiServiceHost();
+        const runtimeHost: AiServiceHost = {
+            ...liveHost,
+            settings: { ...liveHost.settings },
+            isDataBoundaryAllowedPath: (path) => this.isPageletProviderPathAllowed(path),
+        };
+        const aiUtils = new AIUtils(runtimeHost);
+        const nativeCapability = aiUtils.getNativeToolCallingCapability({
+            internalGate: true,
+        });
+        if (!nativeCapability.supported) {
+            this.log("Pagelet Deep Discover native model unavailable", {
+                status: nativeCapability.status,
+            });
+            return null;
+        }
+
+        const runtimePlatform: AgentRuntimePlatform = Platform.isMobile
+            ? "mobile"
+            : "desktop";
+        const webCapabilities = await this.loadPageletDeepDiscoverWebCapabilities(
+            aiUtils,
+            runtimeHost,
+            runtimePlatform,
+        );
+        const memorySearch = new MemorySearchTool(runtimeHost, aiUtils);
+        const qwenRequestOptions = this.pageletDeepDiscoverQwenRequestOptions(
+            runtimeHost.settings,
+        );
+        const isPathAllowed = (path: string) => this.isPageletProviderPathAllowed(path);
+        const runtime = createPageletAgentRuntime({
+            host: runtimeHost,
+            createModel: (context) => createPageletNativeModel({
+                registry: context.registry,
+                allowedToolNames: context.allowedToolNames,
+                schemas: context.schemas,
+                toolDefinitions: context.toolDefinitions,
+                createChatModel: (temperature) => aiUtils.createChatModel(
+                    temperature,
+                    {
+                        modelName: runtimeHost.settings.chatModelName,
+                        transport: "native",
+                        ...(qwenRequestOptions ? { qwenRequestOptions } : {}),
+                    },
+                ),
+                signal: context.signal,
+            }),
+            executeMemorySearch: (input, context) => memorySearch.search(
+                input.query,
+                context.signal,
+                context.onBeforeVssSearch,
+            ),
+            captureSourceMaterial: (path, signal) => (
+                this.capturePageletDeepDiscoverSourceMaterial(
+                    runtimeHost,
+                    path,
+                    isPathAllowed,
+                    signal,
+                )
+            ),
+            isPathAllowed,
+            webCapabilities,
+            runtimePlatform,
+            turnLeaseProvider: ({ signal }) => (
+                this.agentRunCoordinator.acquirePageletTurnLease(signal)
+            ),
+        });
+        const controller = new PageletDeepDiscoverController({
+            runtime,
+            captureSnapshot: (path, signal) => this.capturePageletDeepDiscoverAnchorSnapshot(
+                runtimeHost,
+                path,
+                isPathAllowed,
+                signal,
+            ),
+            captureSourceMaterial: (path, signal) => this.capturePageletDeepDiscoverSourceMaterial(
+                runtimeHost,
+                path,
+                isPathAllowed,
+                signal,
+            ),
+            getPolicyIdentity: () => this.getPageletDeepDiscoverPolicyIdentity(),
+            isPathAllowed,
+            admitRun: (input) => this.admitPageletDeepDiscoverRun(
+                expectedPolicyIdentity,
+                input,
+            ),
+            getAnchorRelations: (path) => this.getPageletDeepDiscoverAnchorRelations(path),
+            isSeen: (input) => this.isPageletDeepDiscoverDeliverySeen(input),
+            onResult: (result, request) => {
+                this.handlePageletDeepDiscoverResult(result, request);
+            },
+        });
+        return new PageletDeepDiscoverScheduler({
+            controller,
+            delayMs: 0,
+        });
+    }
+
+    private async loadPageletDeepDiscoverWebCapabilities(
+        aiUtils: AIUtils,
+        host: AiServiceHost,
+        runtimePlatform: AgentRuntimePlatform,
+    ): Promise<AgentCapability[]> {
+        if (
+            host.settings.aiProvider !== "qwen"
+            || host.settings.webSearchEnabled !== true
+            || !isDashScopeCompatibleBaseURL(host.settings.baseURL)
+        ) {
+            return [];
+        }
+        try {
+            const apiKey = await aiUtils.getAPIToken();
+            if (!apiKey) return [];
+            const provider = new BuiltinWebSearchProvider({
+                policy: createBailianWebSearchNetworkPolicy(
+                    getBailianWebSearchEndpointForBaseURL(host.settings.baseURL),
+                ),
+                apiKey,
+                request: requestBailianWebSearchMcp,
+            });
+            const loaded = await provider.load({
+                turnId: "pagelet-deep-discover:capability-preload",
+                platform: runtimePlatform,
+                settings: host.settings as unknown as Record<string, unknown>,
+            });
+            if (loaded.status === "available") return loaded.capabilities;
+            this.log("Pagelet Deep Discover optional WebSearch unavailable", {
+                providerId: provider.id,
+                reason: loaded.unavailableReason,
+            });
+        } catch (error) {
+            this.log("Pagelet Deep Discover optional WebSearch initialization failed", {
+                errorType: error instanceof Error ? error.name : "unknown",
+            });
+        }
+        return [];
+    }
+
+    private pageletDeepDiscoverQwenRequestOptions(
+        settings: AiServiceHost["settings"],
+    ): QwenRequestOptions | undefined {
+        if (
+            settings.aiProvider !== "qwen"
+            || settings.qwenThinkingEnabled !== true
+            || !isDashScopeCompatibleBaseURL(settings.baseURL)
+        ) {
+            return undefined;
+        }
+        return { enableThinking: true };
+    }
+
+    private async capturePageletDeepDiscoverAnchorSnapshot(
+        host: AiServiceHost,
+        path: string,
+        isPathAllowed: (path: string) => boolean,
+        signal?: AbortSignal,
+    ): Promise<PageletAnchorSnapshot | null> {
+        const snapshot = await capturePageletAnchorSnapshot({
+            host,
+            path,
+            isPathAllowed,
+            signal,
+        });
+        return snapshot && this.pageletDeepDiscoverMaterialIsAllowed(snapshot)
+            ? snapshot
+            : null;
+    }
+
+    private async capturePageletDeepDiscoverSourceMaterial(
+        host: AiServiceHost,
+        path: string,
+        isPathAllowed: (path: string) => boolean,
+        signal?: AbortSignal,
+    ): Promise<PageletAgentSourceMaterial | null> {
+        const material = await capturePageletSourceMaterial({
+            host,
+            path,
+            isPathAllowed,
+            signal,
+        });
+        return material && this.pageletDeepDiscoverMaterialIsAllowed(material)
+            ? material
+            : null;
+    }
+
+    private pageletDeepDiscoverMaterialIsAllowed(material: {
+        path: string;
+        content: string;
+        mtime: number;
+        size: number;
+    }): boolean {
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(material.path));
+        return file instanceof TFile
+            && file.extension === "md"
+            && file.stat.mtime === material.mtime
+            && file.stat.size === material.size
+            && this.isPageletProviderSourceAllowedFile(file, material.content);
+    }
+
+    private getPageletDeepDiscoverPolicyIdentity(): PageletAgentPolicyIdentity {
+        const pagelet = this.getPageletSettingsWithDataBoundary();
+        const endpoint = (this.settings.baseURL ?? "").trim().replace(/\/+$/, "");
+        const platform: AgentRuntimePlatform = Platform.isMobile ? "mobile" : "desktop";
+        return {
+            dataBoundaryIdentity: `pagelet-agent-boundary:${stableHash(stableStringify({
+                version: 1,
+                shared: this.getMemoryDataBoundaryFingerprint(),
+                excludedFolders: [...pagelet.excludedFolders].sort(),
+                excludedTags: [...pagelet.excludedTags].sort(),
+                excludedPatterns: [...pagelet.excludedPatterns].sort(),
+                reviewsFolder: pagelet.reviewsFolder,
+            }))}`,
+            providerPolicyIdentity: `pagelet-agent-provider:${stableHash(stableStringify({
+                version: 1,
+                provider: this.settings.aiProvider,
+                providerPreset: this.settings.aiProviderPreset ?? null,
+                endpoint,
+                webSearchEnabled: this.settings.webSearchEnabled === true,
+                licenseTier: this.settings.licenseTier,
+                platform,
+            }))}`,
+            modelIdentity: `pagelet-agent-model:${stableHash(stableStringify({
+                version: 1,
+                model: this.settings.chatModelName,
+                policyModel: this.settings.policyModelName,
+                embeddingModel: this.settings.embeddingModelName,
+                qwenThinkingEnabled: this.settings.qwenThinkingEnabled === true,
+            }))}`,
+            locale: this.getPageletLocale(),
+        };
+    }
+
+    private pageletDeepDiscoverPolicyIdentityKey(): string {
+        return stableStringify(this.getPageletDeepDiscoverPolicyIdentity());
+    }
+
+    private async admitPageletDeepDiscoverRun(
+        expectedPolicyIdentity: string,
+        input: {
+            path: string;
+            signal?: AbortSignal;
+        },
+    ): Promise<{ ok: true } | { ok: false; reason: "limit" | "unavailable" }> {
+        if (input.signal?.aborted) throw createPageletProviderAbortError();
+        if (!this.pageletDeepDiscoverAdmissionIsCurrent(expectedPolicyIdentity, input)) {
+            return { ok: false, reason: "unavailable" };
+        }
+
+        let decision: Awaited<ReturnType<PageletRateLimiter["reserveLeaseIf"]>>;
+        try {
+            decision = await this.getDeepDiscoverRateLimiter().reserveLeaseIf(() => (
+                this.pageletDeepDiscoverAdmissionIsCurrent(expectedPolicyIdentity, input)
+            ));
+        } catch (error) {
+            if (input.signal?.aborted) throw createPageletProviderAbortError();
+            this.log("Pagelet Deep Discover admission storage unavailable", {
+                errorType: error instanceof Error ? error.name : "unknown",
+            });
+            return { ok: false, reason: "unavailable" };
+        }
+        if (input.signal?.aborted) {
+            if (decision.ok) await decision.reservation.rollback();
+            throw createPageletProviderAbortError();
+        }
+        if (!decision.ok) {
+            return {
+                ok: false,
+                reason: decision.reason === "condition" ? "unavailable" : "limit",
+            };
+        }
+
+        const reservation = decision.reservation;
+        try {
+            if (!this.pageletDeepDiscoverAdmissionIsCurrent(expectedPolicyIdentity, input)) {
+                await reservation.rollback();
+                return { ok: false, reason: "unavailable" };
+            }
+            await this.getPageletProviderCallAdmission().admitStandardCall();
+            if (input.signal?.aborted) throw createPageletProviderAbortError();
+            if (!this.pageletDeepDiscoverAdmissionIsCurrent(expectedPolicyIdentity, input)) {
+                await reservation.rollback();
+                return { ok: false, reason: "unavailable" };
+            }
+            reservation.commit();
+            return { ok: true };
+        } catch (error) {
+            await reservation.rollback();
+            if (input.signal?.aborted) throw createPageletProviderAbortError();
+            this.log("Pagelet Deep Discover provider admission failed", {
+                errorType: error instanceof Error ? error.name : "unknown",
+            });
+            return { ok: false, reason: "unavailable" };
+        }
+    }
+
+    private pageletDeepDiscoverAdmissionIsCurrent(
+        expectedPolicyIdentity: string,
+        input: {
+            path: string;
+            signal?: AbortSignal;
+        },
+    ): boolean {
+        if (
+            input.signal?.aborted
+            || this.unloading
+            || !this.settings.pagelet?.enabled
+            || !this.settings.pagelet.deepDiscoverEnabled
+            || this.getAISetupIssue() !== null
+            || expectedPolicyIdentity !== this.pageletDeepDiscoverPolicyIdentityKey()
+            || !this.isPageletProviderPathAllowed(input.path)
+        ) {
+            return false;
+        }
+        return new AIUtils(this).getNativeToolCallingCapability({
+            internalGate: true,
+        }).supported;
+    }
+
+    private getPageletDeepDiscoverAnchorRelations(path: string): {
+        explicitLinks: string[];
+        backlinks: string[];
+    } {
+        const allowed = (candidate: string) => this.isPageletProviderPathAllowed(candidate);
+        return {
+            explicitLinks: this.getResolvedOutgoingLinks(path).filter(allowed),
+            backlinks: (this.buildGraphDiscoveryBacklinkMap().get(normalizePath(path)) ?? [])
+                .filter(allowed),
+        };
+    }
+
+    private isPageletDeepDiscoverDeliverySeen(input: {
+        anchor: PageletAnchorSnapshot;
+        body: string;
+        normalizedBody: string;
+        sources: readonly PageletAgentSourceSnapshot[];
+        triggerReason: PageletDeepDiscoverControllerRequest["triggerReason"];
+    }): boolean {
+        const policyIdentity = this.getPageletDeepDiscoverPolicyIdentity();
+        const cacheIdentity = createPageletAgentCacheIdentity({
+            anchor: input.anchor,
+            sources: input.sources,
+            policyIdentity,
+        });
+        const candidate = pageletAgentInsightToDeliveryCandidate({
+            body: input.body,
+            normalizedBody: input.normalizedBody,
+            anchor: anchorSnapshotIdentity(input.anchor),
+            sources: input.sources.map((source) => ({ ...source })),
+            sourceRefs: input.sources.map((source) => ({ path: source.path })),
+            cacheIdentity,
+            cacheIdentityHash: "seen-probe",
+            triggerReason: input.triggerReason,
+            preparedAt: 0,
+            metrics: {
+                modelTurns: 0,
+                toolCalls: 0,
+                wallTimeMs: 0,
+            },
+            webObservations: [],
+        }, this.getPageletLocale());
+        const receipt = candidate.deliveryReceipt;
+        if (!receipt) return false;
+        return new AttentionAwareDeliveryStore({
+            storage: this.createPageletAttentionStorage(),
+        }).isSeen(receipt);
+    }
+
+    private handlePageletDeepDiscoverResult(
+        result: PageletDeepDiscoverControllerResult,
+        request: PageletDeepDiscoverControllerRequest,
+    ): void {
+        const metrics = result.status === "verified"
+            ? result.insight.metrics
+            : result.status === "quiet"
+                ? result.metrics
+                : undefined;
+        if (!metrics) return;
+        void this.recordDeepDiscoverUsageMetrics(metrics).catch((error) => {
+            this.log("Pagelet Deep Discover metrics persistence failed", {
+                errorType: error instanceof Error ? error.name : "unknown",
+            });
+        });
+        const inputTokens = normalizeDeepDiscoverUsageCount(metrics.tokenUsage?.inputTokens);
+        const outputTokens = normalizeDeepDiscoverUsageCount(metrics.tokenUsage?.outputTokens);
+        if (inputTokens > 0 || outputTokens > 0) {
+            this.pageletCostTracker.record({
+                inputTokens,
+                outputTokens,
+                provider: this.settings.aiProvider,
+                model: this.settings.chatModelName,
+            });
+        }
+        this.log("Pagelet Deep Discover run completed", {
+            status: result.status,
+            triggerReason: request.triggerReason,
+            modelTurns: metrics.modelTurns,
+            toolCalls: metrics.toolCalls,
+            wallTimeMs: metrics.wallTimeMs,
+            inputTokens,
+            outputTokens,
+        });
+    }
+
+    async getDeepDiscoverUsage(): Promise<{
+        runs: number;
+        dailyCap: number;
+        modelTurns: number;
+        toolCalls: number;
+    }> {
+        const limiterState = await this.getDeepDiscoverRateLimiter().getStateSnapshot();
+        const metrics = this.readDeepDiscoverUsageMetrics(limiterState.dailyResetAt);
+        return {
+            runs: limiterState.dailyCount,
+            dailyCap: DEEP_DISCOVER_CALL_LIMITS.daily,
+            modelTurns: metrics.modelTurns,
+            toolCalls: metrics.toolCalls,
+        };
+    }
+
+    private async recordDeepDiscoverUsageMetrics(metrics: {
+        modelTurns?: number;
+        toolCalls?: number;
+    }): Promise<void> {
+        const limiterState = await this.getDeepDiscoverRateLimiter().getStateSnapshot();
+        const current = this.readDeepDiscoverUsageMetrics(limiterState.dailyResetAt);
+        const storage = getPlatformLocalStorage();
+        const key = this.deepDiscoverUsageStorageKey();
+        if (!storage || !key) return;
+        storage.setItem(key, JSON.stringify({
+            dailyResetAt: limiterState.dailyResetAt,
+            modelTurns: current.modelTurns + normalizeDeepDiscoverUsageCount(metrics.modelTurns),
+            toolCalls: current.toolCalls + normalizeDeepDiscoverUsageCount(metrics.toolCalls),
+        }));
+    }
+
+    private readDeepDiscoverUsageMetrics(dailyResetAt: number): {
+        modelTurns: number;
+        toolCalls: number;
+    } {
+        const storage = getPlatformLocalStorage();
+        const key = this.deepDiscoverUsageStorageKey();
+        if (!storage || !key) return { modelTurns: 0, toolCalls: 0 };
+        try {
+            const parsed = JSON.parse(storage.getItem(key) ?? "null") as {
+                dailyResetAt?: unknown;
+                modelTurns?: unknown;
+                toolCalls?: unknown;
+            } | null;
+            if (!parsed || parsed.dailyResetAt !== dailyResetAt) {
+                return { modelTurns: 0, toolCalls: 0 };
+            }
+            return {
+                modelTurns: normalizeDeepDiscoverUsageCount(parsed.modelTurns),
+                toolCalls: normalizeDeepDiscoverUsageCount(parsed.toolCalls),
+            };
+        } catch {
+            return { modelTurns: 0, toolCalls: 0 };
+        }
+    }
+
+    private deepDiscoverUsageStorageKey(): string | null {
+        const scope = this.pageletVaultStorageScope();
+        return scope
+            ? [PAGELET_DEEP_DISCOVER_USAGE_STORAGE_KEY_PREFIX, "v1", scope].join(":")
+            : null;
+    }
+
     private getPageletProviderCallAdmission(): PageletProviderCallAdmission {
         if (!this.pageletProviderCallAdmissionInstance) {
             this.pageletProviderCallAdmissionInstance = new PageletProviderCallAdmission({
@@ -6929,7 +7615,7 @@ export class PluginManager extends Plugin {
     }
 
     private createPageletRateLimitStorage(
-        bucket: "foreground-review" | "scope-recap" | "quiet-recall",
+        bucket: "foreground-review" | "scope-recap" | "quiet-recall" | "deep-discover",
         vaultStorageScope: string | null = this.pageletVaultStorageScope(),
     ): PageletRateLimitStorage {
         const key = this.pageletRateLimitStorageKey(bucket, vaultStorageScope);
@@ -6997,7 +7683,7 @@ export class PluginManager extends Plugin {
     }
 
     private pageletRateLimitStorageKey(
-        bucket: "foreground-review" | "scope-recap" | "quiet-recall" | "background-review",
+        bucket: "foreground-review" | "scope-recap" | "quiet-recall" | "background-review" | "deep-discover",
         vaultStorageScope: string | null = this.pageletVaultStorageScope(),
     ): string {
         return [
@@ -7648,6 +8334,7 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        this.resetDeepDiscoverController();
         if (this.phase3Handle !== null) {
             clearPlatformTimeout(this.phase3Handle);
             this.phase3Handle = null;
@@ -7728,6 +8415,7 @@ export class PluginManager extends Plugin {
         this.pageletRateLimiterInstance = null;
         this.scopeRecapRateLimiterInstance = null;
         this.quietRecallRateLimiterInstance = null;
+        this.deepDiscoverRateLimiterInstance = null;
         this.quietRecallEvaluationCoordinatorInstance?.clear();
         this.quietRecallEvaluationCoordinatorInstance = null;
         this.quietRecallEvaluationPolicyIdentitySnapshot = null;

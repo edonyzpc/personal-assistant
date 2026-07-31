@@ -109,6 +109,8 @@ export interface PageletSettings {
     proactiveHintsCooldown: number;
 
     // ── Background review preparation ──────────────────────────────
+    /** Enable the unified read-only Pagelet Deep Discover agent. */
+    deepDiscoverEnabled: boolean;
     /** Enable background review preparation (stored under the historical preload key). */
     preloadEnabled: boolean;
     /** Background preparation polling interval in minutes. */
@@ -198,7 +200,10 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     petCorner: "bottom-right",
     proactiveHints: false,
     proactiveHintsCooldown: 30,
-    // Background review preparation
+    // Unified Pagelet agent. Existing installs inherit the historical
+    // background-provider opt-out in mergePageletSettings().
+    deepDiscoverEnabled: true,
+    // Legacy background review preparation settings (read compatibility only).
     preloadEnabled: false,
     preloadInterval: 30,
     preloadPerHourCap: 2,
@@ -398,7 +403,14 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         petCorner: normalizePetCorner(raw.petCorner),
         proactiveHints: typeof raw.proactiveHints === "boolean" ? raw.proactiveHints : PAGELET_DEFAULTS.proactiveHints,
         proactiveHintsCooldown: normalizeBoundedInt(raw.proactiveHintsCooldown, PAGELET_DEFAULTS.proactiveHintsCooldown, PAGELET_BOUNDS.proactiveHintsCooldown.min, PAGELET_BOUNDS.proactiveHintsCooldown.max),
-        // Background review preparation
+        // Unified Pagelet Agent. When the key is absent, preserve an existing
+        // user's historical background-provider choice; fresh installs default on.
+        deepDiscoverEnabled: typeof raw.deepDiscoverEnabled === "boolean"
+            ? raw.deepDiscoverEnabled
+            : typeof raw.preloadEnabled === "boolean"
+                ? raw.preloadEnabled
+                : PAGELET_DEFAULTS.deepDiscoverEnabled,
+        // Legacy background review preparation (read compatibility only).
         preloadEnabled: typeof raw.preloadEnabled === "boolean" ? raw.preloadEnabled : PAGELET_DEFAULTS.preloadEnabled,
         preloadInterval: normalizeBoundedInt(raw.preloadInterval, PAGELET_DEFAULTS.preloadInterval, PAGELET_BOUNDS.preloadInterval.min, PAGELET_BOUNDS.preloadInterval.max),
         preloadPerHourCap: normalizeBoundedInt(raw.preloadPerHourCap, PAGELET_DEFAULTS.preloadPerHourCap, PAGELET_BOUNDS.preloadPerHourCap.min, PAGELET_BOUNDS.preloadPerHourCap.max),
@@ -1035,8 +1047,17 @@ export interface PageletSettingsHost {
         pagelet: PageletSettings;
         /** Canonical Quiet Recall capability state consumed by runtime. */
         quietRecall: { quietRecallMode: "off" | "on" };
+        /** Deep Discover always uses this Chat model; it is not independently configurable. */
+        chatModelName?: string;
     };
     saveSettings(): Promise<void> | void;
+    /** Content-free per-vault Deep Discover usage for the current local day. */
+    getDeepDiscoverUsage?(): Promise<{
+        runs: number;
+        dailyCap: number;
+        modelTurns: number;
+        toolCalls: number;
+    }>;
     /**
      * Optional logger. Renders without verbosity if absent so consumers
      * outside the main plugin (storybook, testing harness) can omit it.
@@ -1303,106 +1324,32 @@ export function renderPageletSection(
                 }));
         });
 
-    // ── Preload ────────────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.preload.heading") });
+    // ── Deep Discover ──────────────────────────────────────────────────
+    parentEl.createEl("h3", { text: t("pagelet.settings.deepDiscover.heading") });
 
     factory.create(parentEl)
-        .setName(t("pagelet.settings.preloadEnabled.name"))
-        .setDesc(t("pagelet.settings.preloadEnabled.desc"))
+        .setName(t("pagelet.settings.deepDiscoverEnabled.name"))
+        .setDesc(t("pagelet.settings.deepDiscoverEnabled.desc", {
+            model: host.settings.chatModelName?.trim()
+                || t("pagelet.settings.deepDiscover.modelConfigured"),
+        }))
         .addToggle((toggle) =>
             toggle
-                .setValue(settings.preloadEnabled)
-                .onChange((value) => saveOnChange(() => { settings.preloadEnabled = value; })));
+                .setValue(settings.deepDiscoverEnabled)
+                .onChange((value) => saveOnChange(() => { settings.deepDiscoverEnabled = value; })));
 
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.preloadInterval.name"))
-        .setDesc(t("pagelet.settings.preloadInterval.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("5", "5 min")
-                .addOption("15", "15 min")
-                .addOption("30", "30 min")
-                .addOption("60", "1 hour")
-                .addOption("120", "2 hours")
-                .addOption("240", "4 hours")
-                .setValue(settings.preloadInterval.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.preloadInterval = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.preloadInterval,
-                        PAGELET_BOUNDS.preloadInterval.min,
-                        PAGELET_BOUNDS.preloadInterval.max,
-                    );
-                }));
-        });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.preloadPerHourCap.name"))
-        .setDesc(t("pagelet.settings.preloadPerHourCap.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder(PAGELET_DEFAULTS.preloadPerHourCap.toString())
-                .setValue(settings.preloadPerHourCap.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.preloadPerHourCap = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.preloadPerHourCap,
-                        PAGELET_BOUNDS.preloadPerHourCap.min,
-                        PAGELET_BOUNDS.preloadPerHourCap.max,
-                    );
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.preloadPerDayCap.name"))
-        .setDesc(t("pagelet.settings.preloadPerDayCap.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder(PAGELET_DEFAULTS.preloadPerDayCap.toString())
-                .setValue(settings.preloadPerDayCap.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.preloadPerDayCap = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.preloadPerDayCap,
-                        PAGELET_BOUNDS.preloadPerDayCap.min,
-                        PAGELET_BOUNDS.preloadPerDayCap.max,
-                    );
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.preloadTokenBudgetInput.name"))
-        .setDesc(t("pagelet.settings.preloadTokenBudgetInput.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("4000")
-                .setValue(settings.preloadTokenBudget.input.toString())
-                .onChange((value) => saveOnChange(() => {
-                    const parsed = parseInt(value, 10);
-                    if (
-                        Number.isFinite(parsed)
-                        && parsed >= PAGELET_PRELOAD_TOKEN_BOUNDS.input.min
-                        && parsed <= PAGELET_PRELOAD_TOKEN_BOUNDS.input.max
-                    ) {
-                        settings.preloadTokenBudget = { ...settings.preloadTokenBudget, input: parsed };
-                    }
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.preloadTokenBudgetOutput.name"))
-        .setDesc(t("pagelet.settings.preloadTokenBudgetOutput.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("1000")
-                .setValue(settings.preloadTokenBudget.output.toString())
-                .onChange((value) => saveOnChange(() => {
-                    const parsed = parseInt(value, 10);
-                    if (
-                        Number.isFinite(parsed)
-                        && parsed >= PAGELET_PRELOAD_TOKEN_BOUNDS.output.min
-                        && parsed <= PAGELET_PRELOAD_TOKEN_BOUNDS.output.max
-                    ) {
-                        settings.preloadTokenBudget = { ...settings.preloadTokenBudget, output: parsed };
-                    }
-                })));
+    const usageRow = factory.create(parentEl)
+        .setName(t("pagelet.settings.deepDiscover.usage.name"))
+        .setDesc(t("pagelet.settings.deepDiscover.usage.fixed"));
+    if (host.getDeepDiscoverUsage) {
+        void host.getDeepDiscoverUsage()
+            .then((usage) => {
+                usageRow.setDesc(t("pagelet.settings.deepDiscover.usage.value", usage));
+            })
+            .catch((error) => {
+                host.log?.("Pagelet Deep Discover usage unavailable", error);
+            });
+    }
 
     // Scope Recap is intentionally separate from generic review preparation:
     // its first provider-backed background read has its own disclosure and

@@ -15,6 +15,7 @@ export type BubbleState = "hidden" | "visible";
 
 /** Content type determines which scenario's content to render */
 export type BubbleContentType =
+    | "review-delivery"
     | "recall-delivery"
     | "recap-delivery"
     | "pattern-delivery"

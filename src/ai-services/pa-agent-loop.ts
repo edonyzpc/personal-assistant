@@ -3,6 +3,8 @@ import {
 } from "./agent-runtime-primitives";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { errorMessage } from "./agent-utils";
+import type { AgentRunLease } from "./agent-run-coordinator";
+import { isAbortError } from "./chat-utils";
 import {
     deriveContinuedAgentControlSnapshot,
     summarizeAgentControlSnapshot,
@@ -61,6 +63,7 @@ export interface PaAgentModelInput {
     runtimeInstruction?: string;
     toolMode?: PaAgentToolMode;
     controlSnapshot?: AgentControlSnapshot;
+    signal?: AbortSignal;
 }
 
 export interface PaAgentModel {
@@ -117,6 +120,16 @@ export interface PaAgentHostPolicy {
     afterTurn(summary: PaAgentTurnSummary): PaAgentAfterTurnDecision | Promise<PaAgentAfterTurnDecision>;
 }
 
+export interface PaAgentTurnLeaseContext {
+    runId: string;
+    turnIndex: number;
+    signal?: AbortSignal;
+}
+
+export type PaAgentTurnLeaseProvider = (
+    context: PaAgentTurnLeaseContext,
+) => AgentRunLease | PromiseLike<AgentRunLease>;
+
 export interface PaAgentLoopOptions {
     runId: string;
     userInput: string;
@@ -136,6 +149,12 @@ export interface PaAgentLoopOptions {
     maxObservationChars?: number;
     assistantIdleTimeoutMs?: number;
     maxWallClockMs?: number;
+    /**
+     * Optional final-answer reserve inside `maxWallClockMs`. Ordinary turns and
+     * their lease waits stop at the soft deadline; `final_answer_only` may use
+     * the remaining time up to the existing hard deadline.
+     */
+    finalizationReserveMs?: number;
     toolTimeoutMs?: number;
     toolTimeoutOutcome?: ToolExecutionOutcome;
     toolAbortGraceMs?: number;
@@ -147,6 +166,12 @@ export interface PaAgentLoopOptions {
     toolExecutionMode?: PaAgentToolExecutionMode;
     startupTimings?: readonly PaAgentTimingEntry[];
     signal?: AbortSignal;
+    /**
+     * Optional per-turn admission seam for hosts such as Pagelet. The lease is
+     * held from turn_start through turn_end and released before host policy may
+     * continue to the next turn.
+     */
+    turnLeaseProvider?: PaAgentTurnLeaseProvider;
 }
 
 export interface PaAgentLoopResult {
@@ -170,6 +195,7 @@ export class PaAgentLoop {
     private readonly maxTurns: number;
     private readonly assistantIdleTimeoutMs: number;
     private readonly maxWallClockMs: number;
+    private readonly finalizationReserveMs: number;
     private readonly runStartedAt: number;
     private readonly startupTimings: readonly PaAgentTimingEntry[];
     private readonly transcript: PaAgentMessage[] = [];
@@ -177,6 +203,7 @@ export class PaAgentLoop {
     private readonly dispatcher: ToolExecutionDispatcher;
     private committedFinalText = "";
     private endPayload?: Record<string, unknown>;
+    private activeTurnToolMode?: PaAgentToolMode;
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
@@ -184,6 +211,10 @@ export class PaAgentLoop {
         this.maxTurns = options.maxTurns ?? 20;
         this.assistantIdleTimeoutMs = options.assistantIdleTimeoutMs ?? 60_000;
         this.maxWallClockMs = options.maxWallClockMs ?? 180_000;
+        this.finalizationReserveMs = normalizeFinalizationReserveMs(
+            options.finalizationReserveMs,
+            this.maxWallClockMs,
+        );
         this.runStartedAt = this.now();
         this.startupTimings = options.startupTimings ?? [];
         this.events = new AgentLifecycleEventEmitter({
@@ -203,8 +234,8 @@ export class PaAgentLoop {
             maxToolCalls: options.maxToolCalls ?? 30,
             now: this.now,
             isAborted: () => this.isAborted(),
-            isWallClockExceeded: () => this.isWallClockExceeded(),
-            wallClockRemainingMs: () => this.wallClockRemainingMs(),
+            isWallClockExceeded: () => this.isTurnDeadlineExceeded(this.activeTurnToolMode),
+            wallClockRemainingMs: () => this.turnDeadlineRemainingMs(this.activeTurnToolMode),
             events: this.events,
             emitToolResult: (turnId, toolCall, result) => this.emitToolResult(turnId, toolCall, result),
         });
@@ -218,25 +249,140 @@ export class PaAgentLoop {
         let nextRuntimeInstruction = this.options.initialRuntimeInstruction;
         let nextToolMode: PaAgentToolMode | undefined;
         let nextControlSnapshot = this.options.initialControlSnapshot;
-        for (let turnIndex = 0; turnIndex < this.maxTurns; turnIndex++) {
-            if (this.isAborted()) {
-                this.endAgent("aborted", { reason: "user_abort" });
-                return this.createResult("aborted");
-            }
-            if (this.isWallClockExceeded()) {
-                this.endAgent("incomplete", {
-                    reason: "wall_clock_exceeded",
-                    maxWallClockMs: this.maxWallClockMs,
-                });
-                return this.createResult("incomplete");
-            }
-
-            const turnSummary = await this.runTurn(
+        const requestReservedFinalTurn = async (
+            turnIndex: number,
+        ): Promise<PaAgentLoopResult | undefined> => {
+            const summary = this.createFinalizationReserveSummary(
                 turnIndex,
-                nextRuntimeInstruction,
-                nextToolMode,
                 nextControlSnapshot,
             );
+            const decision = await this.decideAfterTurn(summary);
+            if (
+                decision.action === "continue"
+                && decision.toolMode === "final_answer_only"
+            ) {
+                nextRuntimeInstruction = decision.runtimeInstruction;
+                nextToolMode = decision.toolMode;
+                nextControlSnapshot = decision.controlSnapshot
+                    ?? deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
+                        runtimeInstruction: decision.runtimeInstruction,
+                        toolMode: decision.toolMode,
+                    });
+                return undefined;
+            }
+
+            const status = decision.action === "stop"
+                ? (decision.status ?? "incomplete")
+                : "incomplete";
+            const warnings = decision.action === "stop" ? decision.warnings : undefined;
+            const diagnostics = decision.action === "stop"
+                ? (decision.diagnostics ?? summary.diagnostics)
+                : summary.diagnostics;
+            this.endAgent(status, {
+                reason: decision.action === "stop"
+                    ? decision.reason
+                    : "finalization_reserve_policy_declined",
+                ...(warnings ? { warnings } : {}),
+                diagnostics,
+            });
+            return this.createResult(status);
+        };
+
+        for (let turnIndex = 0; turnIndex < this.maxTurns; turnIndex++) {
+            let turnSummary: PaAgentTurnSummary;
+            while (true) {
+                if (this.isAborted()) {
+                    this.endAgent("aborted", { reason: "user_abort" });
+                    return this.createResult("aborted");
+                }
+                if (this.isWallClockExceeded()) {
+                    this.endAgent("incomplete", {
+                        reason: "wall_clock_exceeded",
+                        maxWallClockMs: this.maxWallClockMs,
+                    });
+                    return this.createResult("incomplete");
+                }
+
+                if (this.isFinalizationReserveReached(nextToolMode)) {
+                    const stopped = await requestReservedFinalTurn(turnIndex);
+                    if (stopped) return stopped;
+                }
+
+                let turnLease: AgentRunLease | undefined;
+                const leaseWait = this.options.turnLeaseProvider
+                    ? this.createTurnLeaseWaitScope(nextToolMode)
+                    : undefined;
+                try {
+                    turnLease = await this.options.turnLeaseProvider?.({
+                        runId: this.options.runId,
+                        turnIndex,
+                        signal: leaseWait?.signal ?? this.options.signal,
+                    });
+                } catch (error) {
+                    const deadlineReason = leaseWait?.deadlineReason();
+                    if (deadlineReason === "finalization_reserve_reached") {
+                        const stopped = await requestReservedFinalTurn(turnIndex);
+                        if (stopped) return stopped;
+                        continue;
+                    }
+                    if (deadlineReason === "wall_clock_exceeded") {
+                        this.endAgent("incomplete", {
+                            reason: "wall_clock_exceeded",
+                            maxWallClockMs: this.maxWallClockMs,
+                        });
+                        return this.createResult("incomplete");
+                    }
+                    if (isAbortError(error, leaseWait?.signal ?? this.options.signal)) {
+                        this.endAgent("aborted", { reason: "user_abort" });
+                        return this.createResult("aborted");
+                    }
+                    this.endAgent("error", {
+                        reason: "turn_lease_error",
+                        diagnostics: [{
+                            type: "turn_lease_error",
+                            message: errorMessage(error),
+                        }],
+                    });
+                    return this.createResult("error");
+                } finally {
+                    leaseWait?.dispose();
+                }
+
+                if (this.isAborted()) {
+                    turnLease?.release();
+                    this.endAgent("aborted", { reason: "user_abort" });
+                    return this.createResult("aborted");
+                }
+                if (this.isWallClockExceeded()) {
+                    turnLease?.release();
+                    this.endAgent("incomplete", {
+                        reason: "wall_clock_exceeded",
+                        maxWallClockMs: this.maxWallClockMs,
+                    });
+                    return this.createResult("incomplete");
+                }
+                if (this.isFinalizationReserveReached(nextToolMode)) {
+                    turnLease?.release();
+                    const stopped = await requestReservedFinalTurn(turnIndex);
+                    if (stopped) return stopped;
+                    continue;
+                }
+
+                try {
+                    this.activeTurnToolMode = nextToolMode;
+                    turnSummary = await this.runTurn(
+                        turnIndex,
+                        nextRuntimeInstruction,
+                        nextToolMode,
+                        nextControlSnapshot,
+                    );
+                } finally {
+                    this.activeTurnToolMode = undefined;
+                    turnLease?.release();
+                }
+                break;
+            }
+
             this.turns.push(turnSummary);
             nextRuntimeInstruction = undefined;
             nextToolMode = undefined;
@@ -287,6 +433,7 @@ export class PaAgentLoop {
         toolMode?: PaAgentToolMode,
         controlSnapshot?: AgentControlSnapshot,
     ): Promise<PaAgentTurnSummary> {
+        const turnAbort = this.createTurnAbortScope();
         const turnStartedAt = this.now();
         const turnId = this.createId("turn");
         this.events.turnStart(turnId, {
@@ -332,6 +479,7 @@ export class PaAgentLoop {
             runtimeInstruction,
             toolMode,
             controlSnapshot,
+            signal: turnAbort.signal,
         };
         let terminalStatus: TurnEndStatus | undefined;
         let stopReason: "stop" | "tool_calls" | "error" | "aborted" | "idle_timeout" | "wall_clock_exceeded" | undefined;
@@ -352,8 +500,8 @@ export class PaAgentLoop {
                 signal: this.options.signal,
                 assistantIdleTimeoutMs: this.assistantIdleTimeoutMs,
                 isAborted: () => this.isAborted(),
-                isWallClockExceeded: () => this.isWallClockExceeded(),
-                wallClockRemainingMs: () => this.wallClockRemainingMs(),
+                isWallClockExceeded: () => this.isTurnDeadlineExceeded(toolMode),
+                wallClockRemainingMs: () => this.turnDeadlineRemainingMs(toolMode),
             })
             : undefined;
 
@@ -363,6 +511,7 @@ export class PaAgentLoop {
                 break;
             }
             if (next.type === "idle") {
+                turnAbort.abort();
                 stopReason = "idle_timeout";
                 terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "incomplete";
                 diagnostics.push({ type: "assistant_idle_timeout", timeoutMs: this.assistantIdleTimeoutMs });
@@ -375,12 +524,22 @@ export class PaAgentLoop {
                 break;
             }
             if (next.type === "wall_clock_exceeded") {
+                turnAbort.abort();
                 stopReason = "wall_clock_exceeded";
-                terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "incomplete";
-                diagnostics.push({ type: "wall_clock_exceeded", maxWallClockMs: this.maxWallClockMs });
+                const diagnostic = this.turnDeadlineDiagnostic(toolMode);
+                const reserveReached = diagnostic.type === "finalization_reserve_reached";
+                terminalStatus = reserveReached
+                    ? "incomplete"
+                    : (pendingText.length > 0 ? "completed_with_warning" : "incomplete");
+                if (reserveReached && pendingText.length > 0) {
+                    pendingTextReclassified = true;
+                    reclassifyTextPartsAsThinking(assistantMessage.content);
+                }
+                diagnostics.push(diagnostic);
                 break;
             }
             if (next.type === "error") {
+                turnAbort.abort();
                 stopReason = "error";
                 terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "error";
                 diagnostics.push(providerErrorDiagnostic(next.error));
@@ -505,7 +664,7 @@ export class PaAgentLoop {
             diagnostics.push({ type: "user_abort" });
         } else if (toolExecutionStoppedBy === "wall_clock_exceeded") {
             terminalStatus = "incomplete";
-            diagnostics.push({ type: "wall_clock_exceeded", maxWallClockMs: this.maxWallClockMs });
+            diagnostics.push(this.turnDeadlineDiagnostic(toolMode));
         }
         if (!hasToolCall && terminalStatus === undefined && pendingText.length === 0) {
             terminalStatus = "incomplete";
@@ -551,7 +710,7 @@ export class PaAgentLoop {
             toolResults.length > 0 ? toolResults : undefined,
         );
 
-        return {
+        const summary: PaAgentTurnSummary = {
             turnId,
             turnIndex,
             status,
@@ -565,6 +724,8 @@ export class PaAgentLoop {
             timing: turnTiming,
             ...(controlSnapshot ? { controlSnapshot } : {}),
         };
+        turnAbort.dispose();
+        return summary;
     }
 
     private emitToolResult(
@@ -741,6 +902,129 @@ export class PaAgentLoop {
         return Math.max(0, this.maxWallClockMs - (this.now() - this.runStartedAt));
     }
 
+    private isFinalizationReserveReached(toolMode: PaAgentToolMode | undefined): boolean {
+        return this.usesFinalizationReserve(toolMode)
+            && (this.turnDeadlineRemainingMs(toolMode) ?? Number.POSITIVE_INFINITY) <= 0;
+    }
+
+    private isTurnDeadlineExceeded(toolMode: PaAgentToolMode | undefined): boolean {
+        return this.isWallClockExceeded() || this.isFinalizationReserveReached(toolMode);
+    }
+
+    private turnDeadlineRemainingMs(toolMode: PaAgentToolMode | undefined): number | undefined {
+        const hardRemainingMs = this.wallClockRemainingMs();
+        if (hardRemainingMs === undefined) return undefined;
+        if (!this.usesFinalizationReserve(toolMode)) return hardRemainingMs;
+        return Math.max(0, hardRemainingMs - this.finalizationReserveMs);
+    }
+
+    private usesFinalizationReserve(toolMode: PaAgentToolMode | undefined): boolean {
+        return this.finalizationReserveMs > 0 && toolMode !== "final_answer_only";
+    }
+
+    private turnDeadlineDiagnostic(
+        toolMode: PaAgentToolMode | undefined,
+    ): Record<string, unknown> {
+        if (!this.isWallClockExceeded() && this.isFinalizationReserveReached(toolMode)) {
+            return {
+                type: "finalization_reserve_reached",
+                finalizationReserveMs: this.finalizationReserveMs,
+                maxWallClockMs: this.maxWallClockMs,
+            };
+        }
+        return { type: "wall_clock_exceeded", maxWallClockMs: this.maxWallClockMs };
+    }
+
+    private createFinalizationReserveSummary(
+        turnIndex: number,
+        controlSnapshot: AgentControlSnapshot | undefined,
+    ): PaAgentTurnSummary {
+        const diagnostic = this.turnDeadlineDiagnostic(undefined);
+        return {
+            turnId: `${this.options.runId}:finalization-reserve`,
+            turnIndex,
+            status: "incomplete",
+            assistantMessage: {
+                role: "assistant",
+                id: `${this.options.runId}:finalization-reserve`,
+                content: [],
+                timestamp: this.now(),
+            },
+            committedFinalText: this.committedFinalText,
+            pendingTextReclassified: false,
+            toolCalls: [],
+            toolResults: [],
+            diagnostics: [diagnostic],
+            metrics: [],
+            timing: {
+                turnIndex,
+                status: "incomplete",
+                elapsedMs: 0,
+                modelElapsedMs: 0,
+                modelChunkCount: 0,
+                toolCallCount: 0,
+                toolResultCount: 0,
+            },
+            controlSnapshot,
+        };
+    }
+
+    private createTurnAbortScope(): {
+        signal: AbortSignal;
+        abort(): void;
+        dispose(): void;
+    } {
+        const controller = new AbortController();
+        const onAbort = () => controller.abort();
+        this.options.signal?.addEventListener("abort", onAbort, { once: true });
+        if (this.options.signal?.aborted) controller.abort();
+        return {
+            signal: controller.signal,
+            abort: () => controller.abort(),
+            dispose: () => this.options.signal?.removeEventListener("abort", onAbort),
+        };
+    }
+
+    private createTurnLeaseWaitScope(toolMode: PaAgentToolMode | undefined): {
+        signal: AbortSignal;
+        deadlineReason(): "finalization_reserve_reached" | "wall_clock_exceeded" | undefined;
+        dispose(): void;
+    } {
+        const controller = new AbortController();
+        let timedOut = false;
+        let timer: PlatformTimeoutHandle | undefined;
+        const onAbort = () => controller.abort();
+        const remaining = this.turnDeadlineRemainingMs(toolMode);
+        this.options.signal?.addEventListener("abort", onAbort, { once: true });
+        if (this.options.signal?.aborted) {
+            controller.abort();
+        } else if (remaining !== undefined) {
+            timer = setPlatformTimeout(() => {
+                timedOut = true;
+                controller.abort();
+            }, remaining);
+        }
+        return {
+            signal: controller.signal,
+            deadlineReason: () => {
+                if (this.isWallClockExceeded()) return "wall_clock_exceeded";
+                if (
+                    timedOut
+                    || this.isFinalizationReserveReached(toolMode)
+                ) {
+                    return this.usesFinalizationReserve(toolMode)
+                        ? "finalization_reserve_reached"
+                        : "wall_clock_exceeded";
+                }
+                return undefined;
+            },
+            dispose: () => {
+                if (timer !== undefined) clearPlatformTimeout(timer);
+                this.options.signal?.removeEventListener("abort", onAbort);
+            },
+        };
+    }
+
     private createPolicyInterruptPromise(): {
         promise: Promise<PolicyDecisionRaceResult>;
         cleanup: () => void;
@@ -788,6 +1072,22 @@ function isPreflightOnlyToolResult(result: PaAgentToolExecutionResult): boolean 
 
 function elapsedSince(startedAt: number, endedAt: number): number {
     return Math.max(0, endedAt - startedAt);
+}
+
+function normalizeFinalizationReserveMs(
+    reserveMs: number | undefined,
+    maxWallClockMs: number,
+): number {
+    if (
+        reserveMs === undefined
+        || !Number.isFinite(reserveMs)
+        || reserveMs <= 0
+        || !Number.isFinite(maxWallClockMs)
+        || maxWallClockMs < 0
+    ) {
+        return 0;
+    }
+    return Math.min(reserveMs, maxWallClockMs);
 }
 
 function reclassifyTextPartsAsThinking(parts: AssistantMessagePart[]): void {

@@ -101,6 +101,30 @@ import {
 import { throwIfAborted } from "./chat-utils";
 import type { MemorySearchResult } from "./chat-types";
 
+export interface VaultToolPathFilterOptions {
+    /**
+     * Optional fail-closed vault path boundary. When supplied, factories must
+     * apply it before enumerating metadata or reading note content.
+     */
+    isPathAllowed?: (path: string) => boolean;
+}
+
+export interface InspectObsidianNoteToolOptions extends VaultToolPathFilterOptions {
+    /**
+     * Host-owned fallback used by non-workspace runtimes (for example a frozen
+     * Pagelet anchor). This is checked by `isPathAllowed` before lookup/read.
+     */
+    fallbackPath?: string;
+    /**
+     * Chat keeps the legacy active-note fallback by default. Read-only
+     * background runtimes set this to false so workspace focus can never
+     * redirect the read.
+     */
+    allowActiveNoteFallback?: boolean;
+    /** Include bounded note text alongside structure for evidence gathering. */
+    includeContentChars?: number;
+}
+
 function buildV1APlannerGuidance(
     catalogSections: readonly ObsidianOperationsCatalogSectionId[],
     toolSpecificGuidance: readonly string[],
@@ -412,7 +436,9 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
     };
 }
 
-export function createSearchVaultMetadataTool(): ChatToolDefinition<SearchVaultMetadataInput, SearchVaultMetadataOutput> {
+export function createSearchVaultMetadataTool(
+    options: VaultToolPathFilterOptions = {},
+): ChatToolDefinition<SearchVaultMetadataInput, SearchVaultMetadataOutput> {
     return {
         name: "search_vault_metadata",
         description: "Search Markdown note filenames, paths, tags, and frontmatter metadata.",
@@ -452,6 +478,7 @@ export function createSearchVaultMetadataTool(): ChatToolDefinition<SearchVaultM
             const metadataCache = getMetadataCache(context.host);
             const querySignals = buildMetadataQuerySignals(input.query);
             const matches = getMarkdownFiles(context.host)
+                .filter((file) => isAllowedPath(file.path, options.isPathAllowed))
                 .map((file) => scoreMetadataMatch(file, metadataCache.getFileCache?.(file), querySignals))
                 .filter((match): match is VaultMetadataMatch => match !== null)
                 .sort((a, b) => b.score - a.score || (b.mtime ?? 0) - (a.mtime ?? 0) || a.path.localeCompare(b.path))
@@ -468,7 +495,9 @@ export function createSearchVaultMetadataTool(): ChatToolDefinition<SearchVaultM
     };
 }
 
-export function createListRecentNotesTool(): ChatToolDefinition<ListRecentNotesInput, ListRecentNotesOutput> {
+export function createListRecentNotesTool(
+    options: VaultToolPathFilterOptions = {},
+): ChatToolDefinition<ListRecentNotesInput, ListRecentNotesOutput> {
     return {
         name: "list_recent_notes",
         description: "List recently modified or created Markdown notes.",
@@ -507,6 +536,7 @@ export function createListRecentNotesTool(): ChatToolDefinition<ListRecentNotesI
             throwIfAborted(context.signal);
             const statKey = input.order === "created" ? "ctime" : "mtime";
             const notes = getMarkdownFiles(context.host)
+                .filter((file) => isAllowedPath(file.path, options.isPathAllowed))
                 .map(fileToRecentNote)
                 .sort((a, b) => (b[statKey] ?? 0) - (a[statKey] ?? 0) || a.path.localeCompare(b.path))
                 .slice(0, input.limit);
@@ -522,7 +552,9 @@ export function createListRecentNotesTool(): ChatToolDefinition<ListRecentNotesI
     };
 }
 
-export function createReadNoteOutlineTool(): ChatToolDefinition<ReadNoteOutlineInput, ReadNoteOutlineOutput> {
+export function createReadNoteOutlineTool(
+    options: VaultToolPathFilterOptions = {},
+): ChatToolDefinition<ReadNoteOutlineInput, ReadNoteOutlineOutput> {
     return {
         name: "read_note_outline",
         description: "Read the heading outline for a specific Markdown note path.",
@@ -559,7 +591,15 @@ export function createReadNoteOutlineTool(): ChatToolDefinition<ReadNoteOutlineI
         validateInput: validateReadNoteOutlineInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const file = findMarkdownFileByPath(context.host, input.path);
+            const normalizedPath = normalizeBoundaryPath(input.path);
+            if (!normalizedPath || !isAllowedPath(normalizedPath, options.isPathAllowed)) {
+                return createToolFailureResult(
+                    "read_note_outline",
+                    "excluded path",
+                    "Requested Markdown note was not available in the permitted vault scope.",
+                );
+            }
+            const file = findMarkdownFileByPath(context.host, normalizedPath);
             if (!file) {
                 return createToolFailureResult(
                     "read_note_outline",
@@ -591,13 +631,21 @@ export function createReadNoteOutlineTool(): ChatToolDefinition<ReadNoteOutlineI
     };
 }
 
-export function createInspectObsidianNoteTool(): ChatToolDefinition<InspectObsidianNoteInput, InspectObsidianNoteOutput> {
+export function createInspectObsidianNoteTool(
+    options: InspectObsidianNoteToolOptions = {},
+): ChatToolDefinition<InspectObsidianNoteInput, InspectObsidianNoteOutput> {
+    const allowActiveNoteFallback = options.allowActiveNoteFallback ?? true;
+    const hasHostFallback = Boolean(options.fallbackPath);
     return {
         name: "inspect_obsidian_note",
         description: "Read a bounded Obsidian Markdown note structure summary.",
         plannerGuidance: buildV1APlannerGuidance(["markdown", "safety"], [
             "Use when the user asks about note properties, tags, headings, tasks, callouts, embeds, links, backlinks, or unresolved links.",
-            "Use without a path for the active Markdown note; use a vault-relative .md path when a target note is known.",
+            hasHostFallback
+                ? "Use a vault-relative .md path when known; an omitted path resolves only to the host-provided frozen anchor."
+                : allowActiveNoteFallback
+                    ? "Use without a path for the active Markdown note; use a vault-relative .md path when a target note is known."
+                    : "Always provide a vault-relative .md path; there is no active-note fallback.",
             "This returns structure and short facts only; it must not return full note bodies.",
         ]),
         inputSchema: {
@@ -622,14 +670,40 @@ export function createInspectObsidianNoteTool(): ChatToolDefinition<InspectObsid
         validateInput: validateInspectObsidianNoteInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const file = input.path
-                ? findMarkdownFileByPath(context.host, input.path)
-                : findCurrentMarkdownView(context.host.app.workspace)?.file ?? null;
+            const requestedPath = input.path ?? options.fallbackPath;
+            const normalizedPath = requestedPath ? normalizeBoundaryPath(requestedPath) : undefined;
+            if (
+                requestedPath
+                && (!normalizedPath || !isAllowedPath(normalizedPath, options.isPathAllowed))
+            ) {
+                return createToolFailureResult(
+                    "inspect_obsidian_note",
+                    "excluded path",
+                    "Requested Markdown note was not available in the permitted vault scope.",
+                );
+            }
+            const activeFile = !requestedPath && allowActiveNoteFallback
+                ? findCurrentMarkdownView(context.host.app.workspace)?.file ?? null
+                : null;
+            if (activeFile && !isAllowedPath(activeFile.path, options.isPathAllowed)) {
+                return createToolFailureResult(
+                    "inspect_obsidian_note",
+                    "excluded path",
+                    "Requested Markdown note was not available in the permitted vault scope.",
+                );
+            }
+            const file = normalizedPath
+                ? findMarkdownFileByPath(context.host, normalizedPath)
+                : activeFile;
             if (!file) {
                 return createToolFailureResult(
                     "inspect_obsidian_note",
-                    input.path ?? "current note",
-                    input.path ? "Requested Markdown note was not found." : "No active Markdown note was available.",
+                    requestedPath ? "requested note" : "current note",
+                    requestedPath
+                        ? "Requested Markdown note was not found."
+                        : allowActiveNoteFallback
+                            ? "No active Markdown note was available."
+                            : "A Markdown note path or frozen anchor was required.",
                 );
             }
 
@@ -643,11 +717,19 @@ export function createInspectObsidianNoteTool(): ChatToolDefinition<InspectObsid
                 skippedSources: readResult.skippedForSize ? [VAULT_FILE_READ_SKIPPED_SIZE_SOURCE] : [],
                 omittedCount: readResult.truncated ? 1 : 0,
             });
+            const includeContentChars = normalizeContentCharLimit(options.includeContentChars);
+            const content = includeContentChars > 0
+                ? {
+                    ...structure,
+                    fullText: truncate(readResult.content, includeContentChars),
+                    fullTextTruncated: readResult.truncated || readResult.content.length > includeContentChars,
+                } as InspectObsidianNoteOutput
+                : structure;
             return {
                 ok: true,
                 tool: "inspect_obsidian_note",
                 inputSummary: file.path,
-                content: structure,
+                content,
                 sources: [{ path: file.path }],
             };
         },
@@ -730,7 +812,9 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
     };
 }
 
-export function createSearchVaultSnippetsTool(): ChatToolDefinition<SearchVaultSnippetsInput, VaultSnippetSearchOutput> {
+export function createSearchVaultSnippetsTool(
+    options: VaultToolPathFilterOptions = {},
+): ChatToolDefinition<SearchVaultSnippetsInput, VaultSnippetSearchOutput> {
     return {
         name: "search_vault_snippets",
         description: "Search bounded Markdown snippets in the vault.",
@@ -774,16 +858,112 @@ export function createSearchVaultSnippetsTool(): ChatToolDefinition<SearchVaultS
         validateInput: validateSearchVaultSnippetsInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const result = await searchVaultSnippets(context.host, input, context.signal);
+            const normalizedScope = input.scope ? normalizeBoundaryPath(input.scope) : undefined;
+            if (
+                input.scope
+                && (!normalizedScope || (
+                    normalizedScope.toLowerCase().endsWith(".md")
+                    && !isAllowedPath(normalizedScope, options.isPathAllowed)
+                ))
+            ) {
+                return createToolFailureResult(
+                    "search_vault_snippets",
+                    "excluded scope",
+                    "Requested snippet scope was not available in the permitted vault scope.",
+                );
+            }
+            const scopedInput = normalizedScope ? { ...input, scope: normalizedScope } : input;
+            const filteredHost = options.isPathAllowed
+                ? createPathFilteredHost(context.host, options.isPathAllowed)
+                : context.host;
+            const result = await searchVaultSnippets(filteredHost, scopedInput, context.signal);
             return {
                 ok: true,
                 tool: "search_vault_snippets",
-                inputSummary: input.scope ? `${input.query} in ${input.scope}` : input.query,
+                inputSummary: scopedInput.scope ? `${input.query} in ${scopedInput.scope}` : input.query,
                 content: result,
                 sources: result.matches.map((match) => ({ path: match.path })),
             };
         },
     };
+}
+
+function normalizeBoundaryPath(path: string): string | undefined {
+    const normalized = String(path ?? "")
+        .trim()
+        .replace(/\\/g, "/")
+        .replace(/^\.\/+/, "")
+        .replace(/\/+/g, "/")
+        .replace(/\/$/g, "");
+    if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) return undefined;
+    const segments = normalized.split("/");
+    if (segments.some((segment) => segment === ".." || segment === "")) return undefined;
+    return segments.filter((segment) => segment !== ".").join("/");
+}
+
+function isAllowedPath(
+    path: string,
+    isPathAllowed: VaultToolPathFilterOptions["isPathAllowed"],
+): boolean {
+    if (!isPathAllowed) return true;
+    const normalized = normalizeBoundaryPath(path);
+    if (!normalized) return false;
+    try {
+        return isPathAllowed(normalized) === true;
+    } catch {
+        return false;
+    }
+}
+
+function normalizeContentCharLimit(value: number | undefined): number {
+    if (!Number.isFinite(value) || (value ?? 0) <= 0) return 0;
+    return Math.min(Math.floor(value!), 8_000);
+}
+
+function createPathFilteredHost(
+    host: ChatToolContext["host"],
+    isPathAllowed: (path: string) => boolean,
+): ChatToolContext["host"] {
+    const sourceVault = host.app.vault as unknown as {
+        getMarkdownFiles?: () => Array<{ path: string }>;
+        getAbstractFileByPath?: (path: string) => unknown;
+        cachedRead?: (file: { path: string }) => Promise<string>;
+    };
+    const filteredVault: {
+        getMarkdownFiles: () => Array<{ path: string }>;
+        getAbstractFileByPath: (path: string) => unknown;
+        cachedRead?: (file: { path: string }) => Promise<string>;
+    } = {
+        getMarkdownFiles: () => (sourceVault.getMarkdownFiles?.() ?? [])
+            .filter((file) => isAllowedPath(file.path, isPathAllowed)),
+        getAbstractFileByPath: (path: string) => {
+            const normalized = normalizeBoundaryPath(path);
+            return normalized && isAllowedPath(normalized, isPathAllowed)
+                ? sourceVault.getAbstractFileByPath?.(normalized) ?? null
+                : null;
+        },
+    };
+    if (typeof sourceVault.cachedRead === "function") {
+        filteredVault.cachedRead = async (file: { path: string }) => {
+            if (!isAllowedPath(file.path, isPathAllowed)) {
+                throw new Error("Vault path is outside the permitted scope.");
+            }
+            return await sourceVault.cachedRead?.(file) ?? "";
+        };
+    }
+    const filteredApp = Object.create(host.app) as ChatToolContext["host"]["app"];
+    Object.defineProperty(filteredApp, "vault", {
+        configurable: true,
+        enumerable: true,
+        value: filteredVault,
+    });
+    const filteredHost = Object.create(host) as ChatToolContext["host"];
+    Object.defineProperty(filteredHost, "app", {
+        configurable: true,
+        enumerable: true,
+        value: filteredApp,
+    });
+    return filteredHost;
 }
 
 export function createListVaultTagsTool(): ChatToolDefinition<ListVaultTagsInput, VaultTagsOutput> {

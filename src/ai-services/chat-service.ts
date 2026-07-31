@@ -97,32 +97,37 @@ export class ChatService {
         chatHistory?: ChatMessage[],
         options: StreamLLMOptions = {},
     ): Promise<void> {
-        const memoryMode = options.memoryMode ?? "auto";
-        const nativeToolPlanningOptions = {
-            nativeToolPlanningInternalGate: true,
-        };
-        const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
-        const runtime = new PaAgentRuntime(
-            this.host,
-            this.aiUtils,
-            {
-                ...nativeToolPlanningOptions,
-                runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
-                additionalCapabilityProviders,
-                policyOptions: {
-                    licenseTier: this.host.settings.licenseTier,
+        const lease = await this.host.agentRunCoordinator?.acquireChatLease(signal);
+        try {
+            const memoryMode = options.memoryMode ?? "auto";
+            const nativeToolPlanningOptions = {
+                nativeToolPlanningInternalGate: true,
+            };
+            const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
+            const runtime = new PaAgentRuntime(
+                this.host,
+                this.aiUtils,
+                {
+                    ...nativeToolPlanningOptions,
+                    runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
+                    additionalCapabilityProviders,
+                    policyOptions: {
+                        licenseTier: this.host.settings.licenseTier,
+                    },
                 },
-            },
-        );
-        await runtime.streamTurn({
-            prompt,
-            chatHistory,
-            memoryMode,
-            signal,
-            qwenRequestOptions: this.getFinalAnswerQwenRequestOptions(),
-            onLifecycleEvent: options.onLifecycleEvent,
-            onEvent: (event) => adaptAgentEvent(event, onChunk, options),
-        });
+            );
+            await runtime.streamTurn({
+                prompt,
+                chatHistory,
+                memoryMode,
+                signal,
+                qwenRequestOptions: this.getFinalAnswerQwenRequestOptions(),
+                onLifecycleEvent: options.onLifecycleEvent,
+                onEvent: (event) => adaptAgentEvent(event, onChunk, options),
+            });
+        } finally {
+            lease?.release();
+        }
     }
 }
 

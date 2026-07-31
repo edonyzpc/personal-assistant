@@ -59,10 +59,11 @@ import { getPageletOverlayRoot } from "./overlay-root";
 import { ResearchManager } from "./research";
 
 import { AnalysisSessionManager } from "./AnalysisSessionManager";
-import { BackgroundPreparationCoordinator } from "./BackgroundPreparationCoordinator";
 import { BubbleCoordinator, NudgeOwner, type NudgeTicket } from "./BubbleCoordinator";
 import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
+import { pageletAgentInsightToDeliveryCandidate } from "./agent/delivery-adapter";
+import type { PageletDeepDiscoverControllerResult } from "./agent/types";
 import { resolveRelatedMarkdownNote } from "./related-note";
 import type { PageletDetailPayload, TabSection } from "./tab/types";
 import { splitReviewQueueForSections } from "./tab/review-queue-routing";
@@ -115,7 +116,6 @@ export class PageletOrchestrator {
 
     // ---- Delegates --------------------------------------------------------
     private readonly sessionManager: AnalysisSessionManager;
-    private readonly backgroundPrep: BackgroundPreparationCoordinator;
     private readonly bubbleCoordinator: BubbleCoordinator;
     private readonly attentionStore: AttentionAwareDeliveryStore;
     private readonly saveFlow: ReviewNoteSaveFlow;
@@ -130,7 +130,13 @@ export class PageletOrchestrator {
 
     // ---- State ------------------------------------------------------------
     private idleTimer: PlatformTimeoutHandle | null = null;
-    private activityDebounceTimer: PlatformTimeoutHandle | null = null;
+    private readonly activityDebounceTimers = new Map<string, PlatformTimeoutHandle>();
+    private currentMarkdownAnchorPath: string | null = null;
+    private agentInsightCandidate: (DeliveryCandidate & { kind: "review" }) | null = null;
+    private agentInsightAnchorPath: string | null = null;
+    private agentInsightPolicyIdentity: string | null = null;
+    private openAgentInsightCandidate: (DeliveryCandidate & { kind: "review" }) | null = null;
+    private agentInsightNudgeKey: string | null = null;
     private quietRecallNudgeCandidate: QuietRecallCandidate | null = null;
     private quietRecallBubbleNudge: QuietRecallBubbleNudge | null = null;
     private preparedRecapCandidate: (DeliveryCandidate & { kind: "recap" }) | null = null;
@@ -253,23 +259,13 @@ export class PageletOrchestrator {
             quietHours: s.proactiveHintsQuietHours,
         });
 
-        // Delegate: background preparation coordinator (after proactiveHints)
-        this.backgroundPrep = new BackgroundPreparationCoordinator(
-            host, this.preloadCache, this.preloadBudget,
-            this.changeDetector, this.scopeResolver,
-            {
-                onPetTransition: (event) => this.transitionPet(event, "background"),
-                onPetFlashError: () => this.petView?.flashError(),
-            },
-        );
-
         // Delegate: bubble coordinator (after proactiveHints)
         this.bubbleCoordinator = new BubbleCoordinator(host, this.proactiveHints, {
             onExpandPanel: (type) => this.handleExpandPanel(type),
             onSourceClick: (link) => this.handleSourceClick(link),
             onDismiss: () => this.handleBubbleDismiss(),
-            onReviewCurrentNote: () => { void this.reviewCurrentNote({ preferPanel: true }); },
-            onDiscoverConnections: () => { void this.discoverConnections(); },
+            onReviewCurrentNote: () => { void this.runExplicitDeepDiscover(); },
+            onDiscoverConnections: () => { void this.runExplicitDeepDiscover(); },
             onQuietRecallDiscoverOnly: () => { void this.openQuietRecallDiscoverFallback(); },
             getOnboardingNudge: () => this.onboardingNudge,
             onOnboardingNudgeDismiss: (nudge) => this.handleOnboardingNudgeDismiss(nudge),
@@ -283,9 +279,15 @@ export class PageletOrchestrator {
             onPatternDetectionView: (result) => { void this.handlePatternDetectionBubbleView(result); },
             onPatternDetectionDismiss: (result) => this.handlePatternDetectionBubbleDismiss(result),
             getPreparedRecapCandidate: () => this.currentPreparedRecapCandidate(),
+            getAgentInsightCandidate: () => this.currentAgentInsightCandidate(),
             getAdmittedNudgeTickets: () => this.currentAdmittedNudgeTickets(),
             onPreparedRecapView: () => { void this.openPreparedRecapDelivery(); },
             onPreparedRecapLater: () => this.snoozePreparedRecapNudge(),
+            onAgentInsightView: (candidate) => this.openAgentInsightPanel(candidate),
+            onAgentInsightLater: () => {
+                this.agentInsightNudgeKey = null;
+                this.reconcilePetNudge();
+            },
             onNudgePresented: (ticket) => this.handleNudgePresented(ticket),
             getUnconvincingRecallCount: () => this.unconvincingRecallCount,
             isDeliverySeen: (receipt) => this.attentionStore.isSeen(receipt),
@@ -324,12 +326,12 @@ export class PageletOrchestrator {
         };
         this.handleQuietRecallShortcut = (e: KeyboardEvent) => {
             if (e.key !== "Control" || e.repeat || e.metaKey || e.altKey || e.shiftKey) return;
-            if (this.host.settings.focusMode || !this.host.settings.quietRecall.enabled) return;
+            if (this.host.settings.focusMode || !this.host.settings.pagelet.deepDiscoverEnabled) return;
             const now = Date.now();
             if (now - this.lastQuietRecallCtrlKeydownAt <= PageletOrchestrator.QUIET_RECALL_DOUBLE_CTRL_MS) {
                 this.lastQuietRecallCtrlKeydownAt = 0;
                 e.preventDefault();
-                void this.runQuietRecall();
+                void this.runExplicitDeepDiscover();
                 return;
             }
             this.lastQuietRecallCtrlKeydownAt = now;
@@ -356,7 +358,6 @@ export class PageletOrchestrator {
      */
     initialize(): void {
         if (this.destroyed) return;
-        const s = this.host.settings.pagelet;
 
         // 1. Overlay mount root (under workspace.containerEl to avoid titlebar overlap)
         const overlayRoot = getPageletOverlayRoot(this.host.app);
@@ -432,6 +433,7 @@ export class PageletOrchestrator {
         this.host.registerEvent(
             this.host.app.vault.on("modify", (file) => {
                 if (file.path.endsWith(".md")) {
+                    this.invalidateAgentInsightForPaths([file.path]);
                     this.sessionManager.invalidateScopePlan();
                     if (this.pathTouchesCurrentRecapScope(file.path)) {
                         this.invalidatePreparedRecapScope();
@@ -455,6 +457,7 @@ export class PageletOrchestrator {
         this.host.registerEvent(
             this.host.app.vault.on("delete", (file) => {
                 if (file.path.endsWith(".md")) {
+                    this.invalidateAgentInsightForPaths([file.path]);
                     this.sessionManager.invalidateScopePlan();
                     this.invalidatePreparedRecapScope();
                     this.invalidateQuietRecallBubbleNudge();
@@ -464,6 +467,7 @@ export class PageletOrchestrator {
         this.host.registerEvent(
             this.host.app.vault.on("rename", (file, oldPath) => {
                 if (file.path.endsWith(".md") || oldPath.endsWith(".md")) {
+                    this.invalidateAgentInsightForPaths([oldPath, file.path]);
                     this.sessionManager.invalidateScopePlan();
                     this.invalidatePreparedRecapScope();
                     this.invalidateQuietRecallBubbleNudge();
@@ -471,18 +475,14 @@ export class PageletOrchestrator {
             }),
         );
 
-        // 4. Start background preparation engine (if enabled)
-        if (s.preloadEnabled) {
-            this.backgroundPrep.start();
-        }
-
-        // 5. Mount Pet on whatever leaf is currently active
+        // 4. Mount Pet on whatever leaf is currently active. Deep Discover
+        // owns all provider-backed background work; legacy preload stays dormant.
         const initialLeaf = this.getCurrentWorkspaceLeaf();
         if (initialLeaf) {
             this.handleLeafChange(initialLeaf);
         }
 
-        // 6. Begin idle tracking
+        // 5. Begin idle tracking
         this.resetIdleTimer();
     }
 
@@ -508,7 +508,8 @@ export class PageletOrchestrator {
         this.escapeListenerDocument?.removeEventListener("keydown", this.handleQuietRecallShortcut, true);
         this.escapeListenerDocument = null;
         this.cancelRecapPetWork();
-        this.backgroundPrep.destroy();
+        this.host.cancelDeepDiscover?.();
+        this.clearAgentInsight();
         this.bubbleCoordinator.destroy();
         this.petView?.destroy();
         this.bubbleView?.destroy();
@@ -581,14 +582,13 @@ export class PageletOrchestrator {
                 this.petView.stateMachine.forceState("idle");
             }
         }
-        if (
-            s.scopeRecapPreparationEnabled
-            && s.scopeRecapBackgroundAuthorization !== "declined-v1"
-        ) {
-            this.schedulePreparedRecap("pagelet-open", 0);
-        }
-        if (!this.canPrepareQuietRecallBubbleNudge()) {
-            this.clearQuietRecallBubbleNudge();
+        this.clearRecapPreparationTimer();
+        this.invalidateQuietRecallBubbleNudge();
+        if (!s.deepDiscoverEnabled) {
+            this.host.cancelDeepDiscover?.();
+            this.clearAgentInsight({ closePanel: true });
+        } else {
+            this.invalidateAgentInsightIfPolicyChanged();
         }
         if (this.petView) {
             this.petView.stateMachine.proactiveHintsEnabled = s.proactiveHints;
@@ -596,7 +596,6 @@ export class PageletOrchestrator {
         }
         this.syncPetVisibility();
 
-        this.backgroundPrep.syncConfig();
         this.reconcilePetNudge();
     }
 
@@ -608,15 +607,13 @@ export class PageletOrchestrator {
         return {
             onOpenPanel: () => this.openPanel(),
             onOpenPreparedReview: () => this.openPreparedReview(),
-            onReviewCurrent: () => this.reviewCurrentNote(),
-            onQuickReview: () => this.openQuickReview(),
-            onDiscoverConnections: async () => {
-                await this.discoverConnections();
-            },
+            onReviewCurrent: () => this.runExplicitDeepDiscover(),
+            onQuickReview: () => this.runExplicitDeepDiscover(),
+            onDiscoverConnections: () => this.runExplicitDeepDiscover(),
             onMaintenanceReview: () => this.runMaintenanceReview(),
-            onQuietRecall: () => this.runQuietRecall(),
+            onQuietRecall: () => this.runExplicitDeepDiscover(),
             onGraphDiscovery: () => this.runGraphDiscovery(),
-            onScopeRecap: () => this.runScopeRecap(),
+            onScopeRecap: () => this.runExplicitDeepDiscover(),
             onClearScopeRecapCache: () => this.clearScopeRecapCache(),
             onToggleProactiveHints: () => this.toggleProactiveHints(),
             onShowBackgroundPreparationStatus: () => {
@@ -636,15 +633,11 @@ export class PageletOrchestrator {
     }
 
     openPreparedReview(): void {
-        this.handleExpandPanel("prepared");
+        void this.runExplicitDeepDiscover();
     }
 
     openQuickReview(): void {
-        if (this.petView?.rootEl && this.bubbleView) {
-            this.showBubble("quick-review");
-            return;
-        }
-        this.openPanel();
+        void this.runExplicitDeepDiscover();
     }
 
     clearScopeRecapCache(): void {
@@ -656,7 +649,8 @@ export class PageletOrchestrator {
     }
 
     async reviewCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
-        await this.analyzeCurrentNote(options);
+        void options;
+        await this.runExplicitDeepDiscover();
     }
 
     async runMaintenanceReview(): Promise<void> {
@@ -692,6 +686,11 @@ export class PageletOrchestrator {
     }
 
     async runQuietRecall(): Promise<void> {
+        await this.runExplicitDeepDiscover();
+    }
+
+    /** Rollback-only implementation retained without any production route. */
+    private async runLegacyQuietRecall(): Promise<void> {
         const expectedContextKey = this.currentActiveNoteSnapshotKey();
         const routeToken = this.beginForegroundRoute("current", "review", {
             reserveGenericBudget: false,
@@ -844,11 +843,17 @@ export class PageletOrchestrator {
     }
 
     private clearGenericNudgeAdmissions(): void {
+        this.agentInsightNudgeKey = null;
         this.patternDetectionNudgeAdmissionKey = null;
         this.onboardingNudgeAdmissionKey = null;
     }
 
     async runScopeRecap(): Promise<void> {
+        await this.runExplicitDeepDiscover();
+    }
+
+    /** Rollback-only implementation retained without any production route. */
+    private async runLegacyScopeRecap(): Promise<void> {
         try {
             if (this.preparedRecapIsCurrent() && this.preparedRecapPayload) {
                 this.preparedRecapNudgeFingerprint = null;
@@ -1037,6 +1042,54 @@ export class PageletOrchestrator {
         return Boolean(receipt && this.attentionStore.isSeen(receipt));
     }
 
+    private currentAgentInsightCandidate(): (DeliveryCandidate & { kind: "review" }) | null {
+        this.invalidateAgentInsightIfPolicyChanged();
+        const candidate = this.agentInsightCandidate;
+        return candidate && !this.deliveryCandidateIsSeen(candidate) ? candidate : null;
+    }
+
+    private clearAgentInsight(options: { closePanel?: boolean } = {}): void {
+        this.agentInsightCandidate = null;
+        this.agentInsightAnchorPath = null;
+        this.agentInsightPolicyIdentity = null;
+        this.agentInsightNudgeKey = null;
+        if (options.closePanel && this.openAgentInsightCandidate) {
+            this.openAgentInsightCandidate = null;
+            this.panelView?.close();
+        }
+    }
+
+    private invalidateAgentInsightIfPolicyChanged(): void {
+        if (!this.agentInsightCandidate && !this.openAgentInsightCandidate) return;
+        const current = this.host.getDeepDiscoverPolicyIdentity?.() ?? null;
+        if (current === this.agentInsightPolicyIdentity) return;
+        this.clearAgentInsight({ closePanel: true });
+    }
+
+    private invalidateAgentInsightForPaths(paths: readonly string[]): void {
+        const changed = new Set(paths.map((path) => normalizePath(path)));
+        const touches = (
+            candidate: (DeliveryCandidate & { kind: "review" }) | null,
+        ): boolean => Boolean(candidate?.sourceRefs.some(
+            (source) => changed.has(normalizePath(source.path)),
+        ));
+        const invalidatesCurrent = touches(this.agentInsightCandidate);
+        const invalidatesOpen = touches(this.openAgentInsightCandidate);
+        if (invalidatesCurrent) {
+            this.agentInsightCandidate = null;
+            this.agentInsightAnchorPath = null;
+            this.agentInsightNudgeKey = null;
+        }
+        if (invalidatesOpen) {
+            this.openAgentInsightCandidate = null;
+            this.panelView?.close();
+        }
+        if (!this.agentInsightCandidate && !this.openAgentInsightCandidate) {
+            this.agentInsightPolicyIdentity = null;
+        }
+        if (invalidatesCurrent || invalidatesOpen) this.reconcilePetNudge();
+    }
+
     private currentPreparedRecapNudgeCandidate(): (DeliveryCandidate & { kind: "recap" }) | null {
         const candidate = this.currentPreparedRecapCandidate();
         return candidate && candidate.id === this.preparedRecapNudgeFingerprint
@@ -1046,6 +1099,17 @@ export class PageletOrchestrator {
 
     private currentAdmittedNudgeTickets(): NudgeTicket[] {
         const tickets: NudgeTicket[] = [];
+        const agentInsight = this.currentAgentInsightCandidate();
+        if (
+            agentInsight
+            && this.agentInsightNudgeKey === `${NudgeOwner.AgentInsight}:${agentInsight.id}`
+        ) {
+            tickets.push({
+                key: this.agentInsightNudgeKey,
+                owner: NudgeOwner.AgentInsight,
+                candidate: agentInsight,
+            });
+        }
         const preparedRecap = this.currentPreparedRecapNudgeCandidate();
         if (preparedRecap) {
             tickets.push({
@@ -1650,6 +1714,11 @@ export class PageletOrchestrator {
     }
 
     private async reviewSelectedScope(): Promise<void> {
+        await this.runExplicitDeepDiscover();
+    }
+
+    /** Rollback-only implementation retained without any production route. */
+    private async reviewSelectedScopeLegacy(): Promise<void> {
         const plan = this.sessionManager.ensureScopePlan();
         if (!plan) {
             new Notice(this.t("pagelet.notice.noNotesInRange"), 4000);
@@ -1809,12 +1878,174 @@ export class PageletOrchestrator {
         }
     }
 
+    private async runAutomaticDeepDiscover(
+        path: string,
+        triggerReason: "leave-note" | "edit-idle" | "open-changed-note",
+    ): Promise<void> {
+        if (
+            this.destroyed
+            || !this.host.settings.pagelet.deepDiscoverEnabled
+            || !this.host.runDeepDiscover
+            || !path.endsWith(".md")
+            || !this.host.isPathAllowedForPagelet(path)
+        ) return;
+        try {
+            const result = await this.host.runDeepDiscover({ path, triggerReason });
+            if (this.destroyed) return;
+            this.acceptDeepDiscoverResult(result, { path, proactive: true });
+        } catch (error) {
+            this.host.log("Pagelet Deep Discover background run failed", {
+                triggerReason,
+                error: error instanceof Error ? error.name : "unknown",
+            });
+        }
+    }
+
+    private async runExplicitDeepDiscover(): Promise<void> {
+        const activeFile = this.host.app.workspace.getActiveFile?.();
+        if (!activeFile || !activeFile.path.endsWith(".md")) return;
+        if (!this.host.settings.pagelet.deepDiscoverEnabled || !this.host.runDeepDiscover) {
+            new Notice(this.t("pagelet.deepDiscover.unavailable"), 5000);
+            return;
+        }
+        if (!this.host.isPathAllowedForPagelet(activeFile.path)) {
+            new Notice(this.t("pagelet.deepDiscover.boundaryDenied"), 5000);
+            return;
+        }
+
+        const path = activeFile.path;
+        this.invalidateAgentInsightIfPolicyChanged();
+        const existingCandidate = this.agentInsightCandidate;
+        if (existingCandidate && this.agentInsightAnchorPath === path) {
+            this.openAgentInsightPanel(existingCandidate);
+        }
+        const routeToken = ++this.foregroundRouteToken;
+        this.transitionPet("analysis-start", "connection");
+        try {
+            const result = await this.host.runDeepDiscover({
+                path,
+                triggerReason: "explicit",
+                force: true,
+            });
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            const accepted = this.acceptDeepDiscoverResult(result, {
+                path,
+                proactive: false,
+            });
+            if (accepted) {
+                this.openAgentInsightPanel(accepted);
+                return;
+            }
+            if (result.status === "limit") {
+                new Notice(this.t(
+                    result.reason === "limit"
+                        ? "pagelet.deepDiscover.limitReached"
+                        : "pagelet.deepDiscover.unavailable",
+                ), 5000);
+            } else if (result.status === "denied") {
+                new Notice(this.t("pagelet.deepDiscover.boundaryDenied"), 5000);
+            } else if (result.status === "error") {
+                new Notice(this.t("pagelet.panel.status.error"), 5000);
+            }
+        } catch (error) {
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.host.log("Pagelet Deep Discover foreground run failed", {
+                error: error instanceof Error ? error.name : "unknown",
+            });
+            this.petView?.flashError();
+            new Notice(this.t("pagelet.panel.status.error"), 5000);
+        } finally {
+            this.settleForForegroundOwner(routeToken);
+        }
+    }
+
+    private acceptDeepDiscoverResult(
+        result: PageletDeepDiscoverControllerResult,
+        options: { path: string; proactive: boolean },
+    ): (DeliveryCandidate & { kind: "review" }) | null {
+        if (result.status !== "verified" && result.status !== "cache-hit") return null;
+        if (result.insight.anchor.path !== options.path) return null;
+        const policyIdentity = this.host.getDeepDiscoverPolicyIdentity?.() ?? null;
+        if (
+            (this.agentInsightCandidate || this.openAgentInsightCandidate)
+            && this.agentInsightPolicyIdentity !== policyIdentity
+        ) {
+            this.clearAgentInsight({ closePanel: true });
+        }
+        const candidate = pageletAgentInsightToDeliveryCandidate(
+            result.insight,
+            getPageletUiLanguage(),
+        );
+        this.agentInsightCandidate = candidate;
+        this.agentInsightAnchorPath = result.insight.anchor.path;
+        this.agentInsightPolicyIdentity = policyIdentity;
+        this.agentInsightNudgeKey = null;
+
+        if (
+            options.proactive
+            && !this.deliveryCandidateIsSeen(candidate)
+            && this.host.settings.pagelet.petVisible
+            && !this.host.settings.focusMode
+            && this.proactiveHints.onInsightsReady()
+        ) {
+            this.agentInsightNudgeKey = `${NudgeOwner.AgentInsight}:${candidate.id}`;
+            this.transitionPet("insights-ready");
+        } else {
+            this.reconcilePetNudge();
+        }
+        return candidate;
+    }
+
+    private openAgentInsightPanel(
+        candidate: DeliveryCandidate & { kind: "review" },
+    ): void {
+        const findings: PanelFinding[] = candidate.sourceRefs.length > 0
+            ? candidate.sourceRefs.map((source, index) => ({
+                title: index === 0 ? candidate.title : (source.title ?? source.path),
+                description: index === 0 ? candidate.body : source.path,
+                ...(index === 0 ? { insightText: candidate.body } : {}),
+                sourceFile: source.path,
+                sourceTitle: source.title ?? source.path,
+            }))
+            : [{
+                title: candidate.title,
+                description: candidate.body,
+                insightText: candidate.body,
+            }];
+        this.bubbleView?.close();
+        this.currentPanelLayout = "discover";
+        this.saveFlow.clearPending();
+        this.openAgentInsightCandidate = candidate;
+        this.panelView?.open("discover", findings, {
+            preparedReadOnly: true,
+            sourcePath: this.agentInsightAnchorPath ?? candidate.sourceRefs[0]?.path,
+        });
+        if (!this.panelView?.isOpen) this.openAgentInsightCandidate = null;
+        if (this.panelView?.isOpen && candidate.deliveryReceipt) {
+            this.attentionStore.markSeen(candidate.deliveryReceipt, "detail");
+        }
+        this.agentInsightNudgeKey = null;
+        this.reconcilePetNudge();
+    }
+
     // ======================================================================
     // Pet lifecycle
     // ======================================================================
 
     /** Re-mount Pet on leaf change. */
     private handleLeafChange(leaf: WorkspaceLeaf | null): void {
+        const previousPath = this.currentMarkdownAnchorPath;
+        const nextPath = leaf?.view?.getViewType() === "markdown"
+            ? (leaf.view as MarkdownView).file?.path ?? null
+            : null;
+        if (previousPath && previousPath !== nextPath) {
+            void this.runAutomaticDeepDiscover(previousPath, "leave-note");
+        }
+        this.currentMarkdownAnchorPath = nextPath;
+        if (nextPath) {
+            void this.runAutomaticDeepDiscover(nextPath, "open-changed-note");
+        }
+
         // Always unmount from previous location
         this.petView?.unmount();
         this.bubbleView?.close();
@@ -1846,8 +2077,8 @@ export class PageletOrchestrator {
                 callbacks: {
                     onToggleBubble: () => this.handlePetClick(),
                     onQuickCaptureOpen: () => this.host.openQuickCapture(),
-                    onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
-                    onDiscoverConnections: () => { void this.discoverConnections(); },
+                    onReviewCurrentNote: () => { void this.runExplicitDeepDiscover(); },
+                    onDiscoverConnections: () => { void this.runExplicitDeepDiscover(); },
                     onActionRingWillOpen: () => {
                         this.bubbleView?.close({ restoreFocus: false });
                     },
@@ -1860,14 +2091,6 @@ export class PageletOrchestrator {
         }
 
         this.petView.mount(containerEl);
-        if (this.canPrepareQuietRecallBubbleNudge()) {
-            this.scheduleQuietRecallAfterLeafChange(
-                PageletOrchestrator.QUIET_RECALL_LEAF_CHANGE_DEBOUNCE_MS);
-        }
-        this.schedulePreparedRecap(
-            "pagelet-open",
-            PageletOrchestrator.PREPARED_RECAP_LEAF_CHANGE_DEBOUNCE_MS,
-        );
     }
 
     private handleFileOpen(): void {
@@ -1908,6 +2131,11 @@ export class PageletOrchestrator {
     }
 
     private async discoverConnections(): Promise<void> {
+        await this.runExplicitDeepDiscover();
+    }
+
+    /** Rollback-only implementation retained without any production route. */
+    private async discoverLegacyConnections(): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
         if (!this.host.isPathAllowedForPagelet(activeFile.path)) return;
@@ -2191,21 +2419,17 @@ export class PageletOrchestrator {
 
     /** Debounced note-activity handler. */
     private handleNoteActivity(modifiedPath?: string): void {
-        this.clearActivityDebounce();
-        this.activityDebounceTimer = setPlatformTimeout(() => {
-            this.activityDebounceTimer = null;
+        const debounceKey = modifiedPath ? normalizePath(modifiedPath) : "__pagelet_activity__";
+        this.clearActivityDebounce(debounceKey);
+        const timer = setPlatformTimeout(() => {
+            this.activityDebounceTimers.delete(debounceKey);
             this.petView?.stateMachine.transition("note-activity");
-            this.backgroundPrep.noteActivity();
-            void this.prepareQuietRecallBubbleNudge();
-            if (!modifiedPath || this.pathTouchesCurrentRecapScope(modifiedPath)) {
-                if (this.preparedRecapArtifact) this.invalidatePreparedRecapScope();
-                this.schedulePreparedRecap(
-                    "note-activity",
-                    PageletOrchestrator.PREPARED_RECAP_NOTE_ACTIVITY_DEBOUNCE_MS,
-                );
+            if (modifiedPath) {
+                void this.runAutomaticDeepDiscover(modifiedPath, "edit-idle");
             }
             this.resetIdleTimer();
         }, PageletOrchestrator.ACTIVITY_DEBOUNCE_MS);
+        this.activityDebounceTimers.set(debounceKey, timer);
     }
 
     private pathTouchesCurrentRecapScope(path: string): boolean {
@@ -2242,7 +2466,6 @@ export class PageletOrchestrator {
         this.idleTimer = setPlatformTimeout(() => {
             this.idleTimer = null;
             this.petView?.stateMachine.transition("long-idle");
-            this.schedulePreparedRecap("idle", 0);
         }, PageletOrchestrator.IDLE_TIMEOUT_MS);
     }
 
@@ -2253,11 +2476,19 @@ export class PageletOrchestrator {
         }
     }
 
-    private clearActivityDebounce(): void {
-        if (this.activityDebounceTimer !== null) {
-            clearPlatformTimeout(this.activityDebounceTimer);
-            this.activityDebounceTimer = null;
+    private clearActivityDebounce(path?: string): void {
+        if (path !== undefined) {
+            const timer = this.activityDebounceTimers.get(path);
+            if (timer !== undefined) {
+                clearPlatformTimeout(timer);
+                this.activityDebounceTimers.delete(path);
+            }
+            return;
         }
+        for (const timer of this.activityDebounceTimers.values()) {
+            clearPlatformTimeout(timer);
+        }
+        this.activityDebounceTimers.clear();
     }
 
     // ======================================================================
@@ -2309,92 +2540,24 @@ export class PageletOrchestrator {
         }
     }
 
-    /** Show a Notice with background preparation diagnostics. */
+    /** Preserve the stable command while reporting the unified Agent lane. */
     private async showBackgroundPreparationStatusNotice(): Promise<void> {
-        const status = this.backgroundPrep.status();
-        const reviewLine = status
-            ? this.t("pagelet.preload.status.notice", {
-                state: this.t(status.running ? "pagelet.preload.status.running" : "pagelet.preload.status.stopped"),
-                last: status.lastCycleAt
-                    ? new Date(status.lastCycleAt).toLocaleTimeString()
-                    : this.t("pagelet.preload.status.never"),
-                hourly: status.budgetRemaining.hourly,
-                daily: status.budgetRemaining.daily,
-                cache: this.t(status.cacheHasResults ? "pagelet.preload.status.cacheYes" : "pagelet.preload.status.cacheNo"),
-                findings: status.cachedFindingCount,
-            })
-            : this.t("pagelet.preload.status.notRunning");
-        const recapState = this.preparedRecapIsCurrent()
-            ? this.t("pagelet.recap.status.ready")
-            : this.lastRecapAttempt
-                ? this.t("pagelet.recap.status.notReady")
-                : this.t("pagelet.recap.status.never");
-        const recapOperationallyEnabled = this.host.settings.pagelet.scopeRecapBackgroundAuthorization !== "declined-v1"
-            && this.host.settings.pagelet.scopeRecapPreparationEnabled
-            && this.host.isScopeRecapProviderConfigured();
-        const recapCost = this.lastRecapAttempt?.cost;
-        const recapLine = this.t("pagelet.recap.status.notice", {
-            enabled: this.t(recapOperationallyEnabled
-                ? "pagelet.preload.status.running"
-                : "pagelet.preload.status.stopped"),
-            state: recapState,
-            included: this.lastRecapAttempt?.includedSourceCount ?? 0,
-            tokens: (this.lastRecapAttempt?.cost?.inputTokens ?? 0)
-                + (this.lastRecapAttempt?.cost?.outputTokens ?? 0),
-            outcome: this.lastRecapAttempt?.outcome ?? this.t("pagelet.status.none"),
-            attemptedAt: this.lastRecapAttempt
-                ? new Date(this.lastRecapAttempt.attemptedAt).toLocaleTimeString()
-                : this.t("pagelet.status.none"),
-            scope: this.lastRecapAttempt?.scope.kind ?? this.t("pagelet.status.none"),
-            callMade: this.lastRecapAttempt
-                ? this.t(this.lastRecapAttempt.providerCallMade ? "pagelet.status.yes" : "pagelet.status.no")
-                : this.t("pagelet.status.none"),
-            cost: recapCost
-                ? recapCost.pricingKnown === false
-                    ? this.t("pagelet.status.unknown")
-                    : `$${(recapCost.estimatedCost ?? 0).toFixed(6)}`
-                : this.t("pagelet.status.none"),
-        });
-        const recallDiagnostics = this.lastQuietRecallDiagnostics;
-        const recallLine = this.t("pagelet.recall.status.notice", {
-            round: recallDiagnostics?.roundId.slice(0, 8) ?? this.t("pagelet.status.none"),
-            startedAt: recallDiagnostics
-                ? new Date(recallDiagnostics.startedAt).toLocaleTimeString()
-                : this.t("pagelet.status.none"),
-            calls: recallDiagnostics?.totalProviderCalls
-                ?? recallDiagnostics?.providerCalls
-                ?? 0,
-            accepted: this.lastQuietRecallAcceptedCount,
-            outcome: recallDiagnostics?.blockedReason ?? this.t("pagelet.status.none"),
-            cost: recallDiagnostics
-                ? recallDiagnostics.pricingKnown
-                    ? `$${recallDiagnostics.estimatedCost.toFixed(6)}`
-                    : this.t("pagelet.status.unknown")
-                : this.t("pagelet.status.none"),
-            hourlyRemaining: recallDiagnostics?.limiterUsage?.hourlyRemaining
-                ?? this.t("pagelet.status.none"),
-            dailyRemaining: recallDiagnostics?.limiterUsage?.dailyRemaining
-                ?? this.t("pagelet.status.none"),
-        });
-        let limitsLine = this.t("pagelet.featureLimits.status.unavailable");
-        if (this.host.getPageletFeatureRateLimitStatus) {
-            try {
-                const limits = await this.host.getPageletFeatureRateLimitStatus();
-                limitsLine = this.t("pagelet.featureLimits.status.notice", {
-                    recapHourUsed: limits.scopeRecap.hourlyUsed,
-                    recapHourCap: limits.scopeRecap.hourlyCap,
-                    recapDayUsed: limits.scopeRecap.dailyUsed,
-                    recapDayCap: limits.scopeRecap.dailyCap,
-                    recallHourUsed: limits.quietRecall.hourlyUsed,
-                    recallHourCap: limits.quietRecall.hourlyCap,
-                    recallDayUsed: limits.quietRecall.dailyUsed,
-                    recallDayCap: limits.quietRecall.dailyCap,
-                });
-            } catch (error) {
-                this.host.log("Pagelet feature usage status unavailable", error);
-            }
+        if (!this.host.getDeepDiscoverUsage) {
+            new Notice(this.t("pagelet.deepDiscover.usageUnavailable"), 5000);
+            return;
         }
-        new Notice(`${reviewLine}\n${recapLine}\n${recallLine}\n${limitsLine}`, 12_000);
+        try {
+            const usage = await this.host.getDeepDiscoverUsage();
+            new Notice(this.t("pagelet.settings.deepDiscover.usage.value", {
+                runs: usage.runs,
+                dailyCap: usage.dailyCap,
+                modelTurns: usage.modelTurns,
+                toolCalls: usage.toolCalls,
+            }), 8000);
+        } catch (error) {
+            this.host.log("Pagelet Deep Discover usage unavailable", error);
+            new Notice(this.t("pagelet.deepDiscover.usageUnavailable"), 5000);
+        }
     }
 
     // ======================================================================
@@ -2403,6 +2566,11 @@ export class PageletOrchestrator {
 
     private handleNudgePresented(ticket: NudgeTicket): void {
         switch (ticket.owner) {
+            case NudgeOwner.AgentInsight:
+                if (this.agentInsightNudgeKey === ticket.key) {
+                    this.agentInsightNudgeKey = null;
+                }
+                return;
             case NudgeOwner.PreparedRecap:
                 if (this.preparedRecapNudgeFingerprint === ticket.candidate.id) {
                     this.preparedRecapNudgeFingerprint = null;
@@ -3020,6 +3188,7 @@ export class PageletOrchestrator {
     private clearPanelSession(): void {
         if (this.preservePanelSessionOnClose) return;
         if (this.saveFlow.isSaveInProgress) return;
+        this.openAgentInsightCandidate = null;
         this.currentPanelLayout = null;
         this.saveFlow.clearPending();
     }

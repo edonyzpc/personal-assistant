@@ -29,6 +29,8 @@ import type { LocalDiscoveryCandidate } from "./recall-card";
 const MAX_FINDINGS = 3;
 /** Maximum findings shown in the nudge bubble */
 const MAX_NUDGE_FINDINGS = 2;
+/** Keep Deep Discover Bubble copy compact; the complete body stays in the Panel. */
+const MAX_AGENT_INSIGHT_SUMMARY_CHARS = 96;
 
 export interface QuietRecallNudgeOptions {
     pageletEnabled: boolean;
@@ -452,6 +454,56 @@ export function buildPreparedRecapDeliveryContent(
             },
         ],
     };
+}
+
+/**
+ * Deep Discover stays free-form in the Panel; the Bubble only previews the
+ * strongest text and carries the exact delivery receipt that became visible.
+ */
+export function buildAgentInsightDeliveryContent(
+    candidate: DeliveryCandidate & { kind: "review" },
+    callbacks: {
+        onView(candidate: DeliveryCandidate & { kind: "review" }): void;
+        onLater(candidate: DeliveryCandidate & { kind: "review" }): void;
+    },
+    locale: PageletLocale = "en",
+): BubbleContent {
+    const firstSource = candidate.sourceRefs[0];
+    return {
+        type: "review-delivery",
+        findings: [{
+            text: agentInsightSummary(candidate),
+            sourceLink: firstSource?.path,
+            sourceTitle: firstSource?.title ?? firstSource?.path,
+        }],
+        deliveryReceipt: candidate.deliveryReceipt,
+        inlineHint: candidate.whyNow[0]
+            ? { text: candidate.whyNow[0], icon: "sparkles" }
+            : undefined,
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.agentInsight.view", locale),
+                description: pageletT("pagelet.bubble.agentInsight.viewDescription", locale),
+                icon: "panel-right-open",
+                primary: true,
+                callback: () => callbacks.onView(candidate),
+            },
+            {
+                label: pageletT("pagelet.bubble.later", locale),
+                variant: "compact",
+                callback: () => callbacks.onLater(candidate),
+            },
+        ],
+    };
+}
+
+function agentInsightSummary(candidate: DeliveryCandidate & { kind: "review" }): string {
+    const summary = (candidate.title.trim() || candidate.body)
+        .replace(/\s+/gu, " ")
+        .trim();
+    return summary.length > MAX_AGENT_INSIGHT_SUMMARY_CHARS
+        ? `${summary.slice(0, MAX_AGENT_INSIGHT_SUMMARY_CHARS - 1).trimEnd()}…`
+        : summary;
 }
 
 export function buildOnboardingNudgeContent(

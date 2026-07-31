@@ -6,7 +6,7 @@ export const MAX_SEEN_DELIVERIES = 2_000;
 
 export type DeliveryFingerprintVersion = typeof DELIVERY_FINGERPRINT_VERSION;
 export type AttentionStateSchemaVersion = typeof ATTENTION_STATE_SCHEMA_VERSION;
-export type DeliveryKind = "recall" | "recap";
+export type DeliveryKind = "recall" | "recap" | "review";
 export type DeliveryPresentationSurface = "bubble" | "detail";
 export type AttentionExplanationKind = "ready-empty" | "intentionally-quiet";
 export type AttentionDeliveryMode = "persisted" | "session-only";
@@ -50,6 +50,15 @@ export interface RecapDeliveryReceiptInput {
     body?: string | null;
     whyItMatters?: string | readonly string[] | null;
     scopeIdentity?: RecapScopeIdentity;
+    sourceIdentities?: readonly string[] | null;
+}
+
+export interface ReviewDeliveryReceiptInput {
+    locale?: string | null;
+    title?: string | null;
+    body?: string | null;
+    whyNow?: string | readonly string[] | null;
+    anchorSourceIdentity?: string | null;
     sourceIdentities?: readonly string[] | null;
 }
 

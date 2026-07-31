@@ -8,6 +8,7 @@ import {
     type RecallDeliveryReceiptInput,
     type RecapDeliveryReceiptInput,
     type RecapScopeIdentity,
+    type ReviewDeliveryReceiptInput,
 } from "./types";
 
 type CanonicalField = readonly [name: string, value: string];
@@ -134,6 +135,19 @@ export function buildRecapDeliveryReceipt(
         ["body", normalizeText(input.body)],
         ["whyItMatters", serializeList(normalizeTextList(input.whyItMatters))],
         ["scopeIdentity", serializeScopeIdentity(input.scopeIdentity)],
+        ["sourceIdentities", serializeList(normalizeSourceIdentities(input.sourceIdentities))],
+    ]);
+}
+
+export function buildReviewDeliveryReceipt(
+    input: ReviewDeliveryReceiptInput,
+): DeliveryReceipt {
+    return buildReceipt("review", [
+        ["locale", normalizeLocale(input.locale)],
+        ["title", normalizeText(input.title)],
+        ["body", normalizeText(input.body)],
+        ["whyNow", serializeList(normalizeTextList(input.whyNow))],
+        ["anchorSourceIdentity", normalizeSourceIdentity(input.anchorSourceIdentity)],
         ["sourceIdentities", serializeList(normalizeSourceIdentities(input.sourceIdentities))],
     ]);
 }

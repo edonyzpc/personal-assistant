@@ -22,7 +22,7 @@ export interface AttentionAwareDeliveryStoreOptions {
     onDiagnostic?: (diagnostic: AttentionDeliveryDiagnostic) => void;
 }
 
-const DELIVERY_KINDS = ["recall", "recap"] as const;
+const DELIVERY_KINDS = ["recall", "recap", "review"] as const;
 const DELIVERY_SURFACES = ["bubble", "detail"] as const;
 const EXPLANATION_KINDS = ["ready-empty", "intentionally-quiet"] as const;
 const STATE_KEYS = [

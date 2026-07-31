@@ -112,6 +112,7 @@ function renderTimelineItem(
     finding: PanelFinding,
     locale: PageletLocale = "en",
     options: PanelLayoutRenderOptions = {},
+    renderInsightAsMarkdown = false,
 ): HTMLElement {
     const item = el("div", "pa-pagelet-panel-timeline-item");
 
@@ -150,15 +151,27 @@ function renderTimelineItem(
     content.appendChild(
         el("div", "pa-pagelet-panel-timeline-title", finding.title),
     );
-    if (finding.description) {
+    const descriptionDuplicatesInsight = Boolean(
+        finding.description
+        && finding.insightText
+        && finding.description.trim() === finding.insightText.trim(),
+    );
+    if (finding.description && !descriptionDuplicatesInsight) {
         content.appendChild(
             el("div", "pa-pagelet-panel-timeline-meta", finding.description),
         );
     }
     if (finding.insightText) {
-        content.appendChild(
-            el("div", "pa-pagelet-panel-timeline-insight", finding.insightText),
-        );
+        const insight = el("div", "pa-pagelet-panel-timeline-insight");
+        if (renderInsightAsMarkdown) {
+            // Discovery layouts are synchronous and do not own an Obsidian
+            // Component lifecycle, so reuse the existing textContent-only
+            // markdown DOM path instead of injecting rendered HTML.
+            renderSimpleMarkdownPreview(insight, finding.insightText);
+        } else {
+            insight.textContent = finding.insightText;
+        }
+        content.appendChild(insight);
     }
 
     // Action buttons
@@ -273,6 +286,22 @@ export function renderDiscoveryLayout(
     ));
     wrapper.appendChild(mapWrap);
 
+    const sourcePaths = collectDiscoverySourcePaths(findings);
+    if (sourcePaths.length > 0) {
+        wrapper.appendChild(
+            el("div", "pa-pagelet-panel-timeline-divider"),
+        );
+        wrapper.appendChild(
+            el("div", "pa-pagelet-panel-timeline-section-label",
+                pageletT("pagelet.recap.detail.sources", locale)),
+        );
+        wrapper.appendChild(renderDiscoverySourceList(
+            sourcePaths,
+            options.sourcePath,
+            options.onConnectionNodeClick,
+        ));
+    }
+
     // Connection list section
     if (connections && connections.length > 0) {
         wrapper.appendChild(
@@ -295,7 +324,7 @@ export function renderDiscoveryLayout(
         );
         for (const finding of findings) {
             if (finding.insightText) {
-                wrapper.appendChild(renderTimelineItem(finding));
+                wrapper.appendChild(renderTimelineItem(finding, locale, options, true));
             }
         }
     }
@@ -327,6 +356,47 @@ interface ConnectionGraphEdge {
     to: number;
     strength: NoteConnection["strength"];
     color: string;
+}
+
+function collectDiscoverySourcePaths(findings: readonly PanelFinding[]): string[] {
+    const paths: string[] = [];
+    const seen = new Set<string>();
+    for (const finding of findings) {
+        const path = normalizeNoteNodeName(finding.sourceFile);
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        paths.push(path);
+    }
+    return paths;
+}
+
+function renderDiscoverySourceList(
+    sourcePaths: readonly string[],
+    sourcePath?: string,
+    onSourceClick?: (noteName: string, sourcePath?: string) => void,
+): HTMLElement {
+    const list = el("ul", "pa-pagelet-panel-context-pager-list pa-pagelet-panel-source-list");
+    for (const path of sourcePaths) {
+        const item = el("li");
+        if (onSourceClick) {
+            const button = el(
+                "button",
+                "pa-pagelet-panel-timeline-action-btn pa-pagelet-panel-source-link",
+                path,
+            );
+            button.setAttribute("type", "button");
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onSourceClick(path, sourcePath);
+            });
+            item.appendChild(button);
+        } else {
+            item.textContent = path;
+        }
+        list.appendChild(item);
+    }
+    return list;
 }
 
 /** Build the connection map container with an interactive SVG graph. */
