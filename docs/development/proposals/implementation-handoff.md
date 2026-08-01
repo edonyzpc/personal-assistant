@@ -3,11 +3,11 @@
 Document status: Current
 Delivery status: Needs Decision
 Updated: 2026-08-01
-Work item: B-123
-Related work item: B-101
+Work item: B-101
+Related work item: B-123
 Target: Codex (implementation advisor → designer → developer → tester)
-Authority: Project owner's staged Step 1 → 2 → 3 implementation sequence and completion criteria; B-123 is the current primary delivery and B-101 remains the Operations lane.
-Restart condition: Owner 决定关闭 B-123，或明确启动 B-101 / Step 2。
+Authority: Project owner's staged Step 1 → 2 → 3 implementation sequence and completion criteria; B-123 Step 1 and B-101 Step 2 closed on 2026-08-01.
+Restart condition: Owner explicitly authorizes B-101 Step 3 Pagelet + Operations integration; completed Step 1/2 work does not grant that authority.
 
 ---
 
@@ -17,7 +17,7 @@ PA Agent 需要两项核心能力演进：
 1. **Pagelet Agent 化**：让 AI 深度参与笔记分析，产出当前 single-shot 管道做不到的跨笔记深层洞察
 2. **Operations 能力**：让 Agent 能将对话结论写入 vault，以及执行 Pagelet 推荐的动作
 
-方向已验证（Pagelet Agent 实验在真实 vault 上产出了 6 条高价值跨笔记洞察，用户确认有价值）。设计决策已确定。现在需要进入 SDD 设计和实现。
+方向已验证，设计决策已确定。Step 1 与 Step 2 已于 2026-08-01 完成并关闭；当前停在 Step 3 的 owner 授权边界，没有实施中的 Step。
 
 ---
 
@@ -52,6 +52,8 @@ PA Agent 需要两项核心能力演进：
 ## 实施计划
 
 ### Step 1：Pagelet Agent Deep Discover
+
+**Status: Closed 2026-08-01.** 最终证据见 [Deep Discover SDD](./pagelet-agent/pagelet-agent-deep-discover-sdd.md)。
 
 **目标**：实现 agent loop 并在真实 vault 上验证比 single-shot 更好。
 
@@ -97,6 +99,8 @@ PA Agent 需要两项核心能力演进：
 
 ### Step 2：Operations Phase 1 — Chat 对话结论落地
 
+**Status: Closed 2026-08-01.** 最终证据见 [Step 2 SDD](./operations-agent/operations-agent-step2-sdd.md#14-closeout-evidence-2026-08-01)。
+
 **目标**：用户在 Chat 中讨论后能将结论保存到 vault。
 
 **完成标准**：
@@ -141,6 +145,8 @@ PA Agent 需要两项核心能力演进：
 
 ### Step 3：Pagelet + Operations 联动
 
+**Status: Not authorized.** Step 1/2 functional 只满足技术依赖，不构成实施授权。
+
 **目标**：Pagelet 发现 insight 后用户能一键执行动作或升级到 Chat 讨论。
 
 **完成标准**：
@@ -177,11 +183,8 @@ PA Agent 需要两项核心能力演进：
 
 ## 开始方式
 
-1. 先读完必读文档
-2. 选择一个 Step 开始（Step 1 或 Step 2，可并行）
-3. 为该 Step 编写 SDD（需要解决对应的技术问题）
-4. SDD 完成后开始实现
-5. 实现后 `make deploy` 验证
-6. 在真实 vault 上 dogfood
+Step 1/2 已关闭，不再自动选择下一步。Owner 明确授权 Step 3 后，才为
+Pagelet + Operations 联动编写 focused SDD，并继续实现、`make deploy` 与真实 vault
+dogfood。
 
 如有技术问题需要澄清（不是方向问题），可以提出。方向问题请 escalate 给 owner。

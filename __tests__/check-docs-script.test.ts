@@ -188,6 +188,69 @@ describe("scripts/check-docs.mjs", () => {
         expect(runCheck(repo)).toContain("Documentation check passed");
     });
 
+    it("accepts implementation only in a named owner-directed proposal lane", () => {
+        const repo = createFixture({ backlogItem: true, backlogWorkItem: "B-101" });
+        addProposal(repo, "Approved", "Implementing", {
+            path: "operations-agent/operations-agent-step2-sdd.md",
+            workItem: "B-101",
+        });
+
+        expect(runCheck(repo)).toContain("Documentation check passed");
+    });
+
+    it("accepts terminal closure only in a named owner-directed proposal lane", () => {
+        const repo = createFixture({ backlogItem: true, backlogWorkItem: "B-123" });
+        addProposal(repo, "Current", "Closed", {
+            path: "pagelet-agent/pagelet-agent-proposal.md",
+            workItem: "B-123",
+        });
+        writeFileSync(join(repo, "docs/backlog.md"), "# Backlog\n", "utf8");
+
+        expect(runCheck(repo)).toContain("Documentation check passed");
+    });
+
+    it("rejects implementation state on an ordinary proposal", () => {
+        const repo = createFixture({ backlogItem: true });
+        addProposal(repo, "Current", "Implementing");
+
+        expect(expectCheckFailure(repo)).toContain("invalid proposal Delivery status");
+    });
+
+    it("rejects Approved document state on an ordinary proposal", () => {
+        const repo = createFixture({ backlogItem: true });
+        addProposal(repo, "Approved", "Needs Decision");
+
+        expect(expectCheckFailure(repo)).toContain("invalid Document status Approved");
+    });
+
+    it("does not grant the owner-directed exception to the wrong Work item", () => {
+        const repo = createFixture({ backlogItem: true });
+        addProposal(repo, "Current", "Implementing", {
+            path: "operations-agent/operations-agent-step2-sdd.md",
+        });
+
+        const output = expectCheckFailure(repo);
+        expect(output).toContain("owner-directed proposal Work item must remain B-101");
+        expect(output).toContain("invalid proposal Delivery status");
+    });
+
+    it("does not let an ordinary terminal proposal close its Backlog item", () => {
+        const repo = createFixture({ backlogItem: true });
+        addProposal(repo, "Current", "Closed");
+        writeFileSync(join(repo, "docs/backlog.md"), "# Backlog\n", "utf8");
+
+        const output = expectCheckFailure(repo);
+        expect(output).toContain("invalid proposal Delivery status");
+        expect(output).toContain("Removed Backlog B-099 lacks an Active Package or terminal archive/closeout");
+    });
+
+    it("still requires non-terminal proposal work to remain in Backlog", () => {
+        const repo = createFixture();
+        addProposal(repo, "Current", "Needs Decision");
+
+        expect(expectCheckFailure(repo)).toContain("proposal Work item is missing from Backlog");
+    });
+
     it("does not let Archive links make an orphan current document reachable", () => {
         const repo = createFixture();
         write(repo, "docs/development/unknown/orphan.md", "# Orphan\n");
@@ -208,6 +271,7 @@ describe("scripts/check-docs.mjs", () => {
 function createFixture(options: {
     archiveEvidence?: boolean;
     backlogItem?: boolean;
+    backlogWorkItem?: string;
     designArtifacts?: boolean;
     governance?: boolean;
     legacyWorkflow?: boolean;
@@ -234,7 +298,7 @@ function createFixture(options: {
 [Archive](./archive/README.md)
 ${options.archiveEvidence ? "[Evidence](./archive/evidence.md)\n" : ""}`,
         "docs/backlog.md": options.backlogItem
-            ? "# Backlog\n\n| ID | Item | Boundary | Next | Source |\n| --- | --- | --- | --- | --- |\n| B-099 | Test | Test | Decide | User request 2026-07-21 |\n"
+            ? `# Backlog\n\n| ID | Item | Boundary | Next | Source |\n| --- | --- | --- | --- | --- |\n| ${options.backlogWorkItem ?? "B-099"} | Test | Test | Decide | User request 2026-07-21 |\n`
             : "# Backlog\n",
         "docs/development-roadmap.md": "# Roadmap\n",
         "docs/product/README.md": "# Product\n\n[Register](./active-decisions.md)\n[Decisions](./decisions/README.md)\n[Spec](./specs/sample.md)\n",
@@ -358,6 +422,30 @@ Otherwise add an explicit disposition pointing to repo-local authority.
 
 The focused checker test verifies current-document continuity.
 `;
+}
+
+function addProposal(
+    repo: string,
+    documentStatus: "Approved" | "Current",
+    deliveryStatus: "Needs Decision" | "Blocked" | "Implementing" | "Closed",
+    options: { path?: string; workItem?: string } = {},
+): void {
+    const proposalPath = options.path ?? "sample.md";
+    const workItem = options.workItem ?? "B-099";
+    write(
+        repo,
+        `docs/development/proposals/${proposalPath}`,
+        `# Sample Proposal
+
+Document status: ${documentStatus}
+Delivery status: ${deliveryStatus}
+Updated: 2026-07-21
+Work item: ${workItem}
+Authority: Owner-authorized proposal
+Restart condition: Owner changes delivery state
+`,
+    );
+    append(repo, "docs/development/proposals/README.md", `\n[Sample proposal](./${proposalPath})\n`);
 }
 
 function addActivePackage(repo: string, slug: string, workItem: string, status: "Planned" | "Implementing"): void {

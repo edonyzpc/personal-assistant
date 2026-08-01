@@ -1,6 +1,6 @@
 # Development Roadmap
 
-> Last updated: 2026-07-11. The previous v2.7 release-prep roadmap is archived
+> Last updated: 2026-08-01. The previous v2.7 release-prep roadmap is archived
 > at [development-roadmap-v2.7.md](./archive/development-roadmap-v2.7.md).
 
 ## Current Baseline
@@ -10,8 +10,8 @@
 | Current version in this worktree | `2.8.4` |
 | Release tag | `2.8.4` |
 | Current release theme | Post-2.8 patch line plus completed Memory Control Center validation and PA Agent/Pagelet release-readiness |
-| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools |
-| Hidden / disabled major runtime | Operations Agent append mode remains disabled by `OPERATIONS_AGENT_RUNTIME_ENABLED=false` |
+| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + opt-in Operations Step 2 |
+| Operations Agent availability | `OPERATIONS_AGENT_RUNTIME_ENABLED=true` makes Step 2 build-available; persisted `operationsAgentEnabled` remains `false` by default and requires explicit per-vault opt-in |
 
 ## Completed Release Lines
 
@@ -36,7 +36,7 @@ Roadmap 只表达方向，不复制执行状态。每项当前状态、下一步
 
 | Direction | Work item | Why it may matter | Scope guard |
 | --- | --- | --- | --- |
-| Operations Agent productization | B-101 | 把既有 write-action substrate 变成可确认的有限笔记编辑模式 | runtime flag 保持关闭；不加入 shell、任意文件写入、plugin action 或 command execution |
+| Operations Agent Step 2 | B-101 | 把 Chat 结论转成用户确认的 vault 变更 | 仅 `vault_create` / `vault_append` / `vault_process` / `frontmatter_update`；单 intent inline 确认、stale-safe、Undo、content-free audit；Step 3 Pagelet integration 与额外写入仍关闭 |
 | Pagelet async result UX | B-002 | 避免用户切换笔记时丢失已付费 provider result | 先复核现有实现；不隐藏持久化完整 provider output |
 | Architecture quality pass | B-105 | 降低成熟 v2.x codebase 的维护成本 | 行为保持、按独立 slice 验证；runtime/UI 需要 app smoke |
 | Android VSS validation | B-003 | 关闭 README 中剩余 mobile parity 证据缺口 | 只接受物理 Android 证据，不从 desktop/iOS 推断 |

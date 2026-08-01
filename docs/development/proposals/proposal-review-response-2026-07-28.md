@@ -3,10 +3,10 @@
 Document status: Current
 Delivery status: Needs Decision
 Updated: 2026-08-01
-Work item: B-123
-Related work item: B-101
+Work item: B-101
+Related work item: B-123
 Authority: Project owner's settled design decisions for B-123 Pagelet Deep Discover and related B-101 Operations.
-Restart condition: Owner 决定关闭 B-123；B-101 仅在 owner 明确启动 Step 2 后进入实现。
+Restart condition: B-123 Step 1 与 B-101 Step 2 均于 2026-08-01 关闭；只有 owner 明确授权 B-101 Step 3 后才继续 Pagelet + Operations 联动。
 Revision: v2 — reflects rewritten proposals and confirmed implementation plan
 Scope: Pagelet Agent proposal + Agent Operations capability proposal
 Discussed by: Project owner + Claude Code (product discussion partner)
@@ -147,7 +147,7 @@ grows with the user over time. Not a near-term deliverable but the design lens.
 ### 4.1 Three Steps
 
 ```
-Step 1: Pagelet Agent Deep Discover 试验
+Step 1: Pagelet Agent Deep Discover 试验 [Closed 2026-08-01]
   ├── Implement agent loop (reuse PaAgentLoop, Pagelet mode config)
   ├── Anchor-note exploration with vault read tools
   ├── Run 20+ real vault cases, compare vs single-shot
@@ -156,7 +156,7 @@ Step 1: Pagelet Agent Deep Discover 试验
   ├── Display results in existing UI (Panel/Bubble)
   └── Silent when no insight (no forced output)
 
-Step 2: Operations Phase 1 — Chat 对话结论落地
+Step 2: Operations Phase 1 — Chat 对话结论落地 [Closed 2026-08-01]
   ├── 4 core write tools (create/append/process/frontmatter_update)
   ├── Agent proactively suggests saving (depth/content triggers)
   ├── Agent judges write target (path+filename), fallback to 0.unsorted/
@@ -166,7 +166,7 @@ Step 2: Operations Phase 1 — Chat 对话结论落地
   ├── Audit log (content-free)
   └── Dogfood: daily Chat discussions naturally saved to vault
 
-Step 3: Pagelet + Operations 联动
+Step 3: Pagelet + Operations 联动 [Not authorized]
   ├── Insight card action buttons (context-specific action text)
   ├── Simple actions: inline confirm → direct execution
   ├── Complex actions: carry context → upgrade to Chat Agent
@@ -179,8 +179,11 @@ Step 3: Pagelet + Operations 联动
 ```
 Step 1 (Pagelet Agent) — no dependency, start immediately
 Step 2 (Operations) — no dependency on Step 1, can run in parallel or after
-Step 3 (Integration) — depends on both Step 1 and Step 2 being functional
+Step 3 (Integration) — technical dependency is satisfied, but owner authorization is still required
 ```
+
+Step 2 delivery evidence is recorded in the
+[focused SDD](./operations-agent/operations-agent-step2-sdd.md#14-closeout-evidence-2026-08-01).
 
 ### 4.3 What the proposals ARE
 
@@ -297,8 +300,9 @@ Any AI session (Codex, Claude Code, or other) working on these proposals MUST:
 8. **Companion is the north star.** Evaluate design tradeoffs against: "does
    this make PA feel more like a quiet companion that grows with the user?"
 
-9. **Implementation order is Step 1 → 2 → 3.** Steps 1 and 2 can run in
-   parallel. Step 3 requires both to be functional.
+9. **Implementation order is Step 1 → 2 → 3.** Steps 1 and 2 are closed. Their
+   functional state satisfies the technical dependency only; Step 3 still
+   requires an explicit owner authorization before SDD or implementation.
 
 10. **The user's role**: independent developer, sole decision-maker. Frame your
     work as "implementation advisor" — answer "how to build this well," not

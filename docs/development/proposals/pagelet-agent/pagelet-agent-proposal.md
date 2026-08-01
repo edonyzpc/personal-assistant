@@ -1,11 +1,11 @@
 # Pagelet Agent 化提案
 
 Document status: Current
-Delivery status: Needs Decision
+Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-123
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
-Restart condition: Owner 决定关闭 B-123，或明确启动 B-101 / Step 2。
+Restart condition: B-123 已由 owner 于 2026-08-01 关闭；仅在新的 Pagelet Deep Discover 证据触发独立 work item 时重开。
 Implementation SDD: [Pagelet Agent Deep Discover](./pagelet-agent-deep-discover-sdd.md)
 
 > Pagelet 从编排式管道（single-shot LLM）演进为 Agent 模式的设计提案。

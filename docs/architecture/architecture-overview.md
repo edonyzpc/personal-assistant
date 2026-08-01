@@ -1,6 +1,6 @@
 # Personal Assistant — 项目架构全景
 
-> **版本**: v2.8.4 current-doc refresh · **日期**: 2026-07-11 · **作者**: edony
+> **版本**: v2.8.4 current-doc refresh · **日期**: 2026-08-01 · **作者**: edony
 >
 > 本文档面向项目负责人，提供**技术状态**与**产品定义**的全局视图，辅助下一步规划决策。
 
@@ -742,6 +742,8 @@ graph LR
 
 **安全防护**: 路径遍历、`.obsidian` 目录、控制字符、不可见字符、尾部点/空格 — 共 10 种攻击类别校验。
 
+Operations Agent Step 2 只按需暴露 `vault_create`、`vault_append`、`vault_process` 与 `frontmatter_update`。同一 intent 通过 Chat inline card 一次确认；已有笔记在 `vault.process()` 内重验 baseline，Undo 遇到 drift 则 fail closed，audit 默认 content-free。build gate 可用不代表用户授权，per-vault 设置仍默认关闭。
+
 ### 6.8 五个 LLM 场景
 
 | 场景 | 触发 | 用途 |
@@ -971,8 +973,8 @@ summary.
 |------|------|
 | Current version | `2.8.4` |
 | Current release theme | Post-2.8 patch line plus completed Memory Control Center validation and PA Agent/Pagelet release-readiness |
-| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools |
-| Hidden / disabled major runtime | Operations Agent append mode remains disabled by `OPERATIONS_AGENT_RUNTIME_ENABLED=false` |
+| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + opt-in Operations Step 2 |
+| Operations Agent availability | `OPERATIONS_AGENT_RUNTIME_ENABLED=true` makes Step 2 build-available; persisted per-vault `operationsAgentEnabled` defaults to `false` |
 
 ### 10.2 已完成发布线
 
@@ -987,7 +989,7 @@ summary.
 
 | Theme | Current guardrail |
 |------|-------------------|
-| Operations Agent productization | Start with append-to-current-note only; keep runtime disabled until the action runtime, prompt split, settings semantics, and Obsidian smoke are complete. |
+| Operations Agent Step 2 | Exactly four core tools with one inline intent confirmation, stale-safe execution, drift-safe Undo, and content-free audit; Step 3 Pagelet integration and extra writes remain closed. |
 | User custom Skills | Requires product design and allowed-tools policy before implementation. |
 | Pagelet async result UX | Use source-bound in-memory results first; do not persist full provider output silently. |
 | Architecture quality pass | Behavior-preserving extraction first, with focused tests and Obsidian smoke for runtime/UI surfaces. |

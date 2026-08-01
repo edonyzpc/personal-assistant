@@ -349,11 +349,47 @@ for (const file of walkMarkdown(docsRoot)) {
     }
 }
 
+const terminalProposalDeliveryStatuses = new Set(["Closed", "Cancelled", "Superseded", "Rejected"]);
+const standardProposalDeliveryStatuses = new Set([
+    "Needs Decision",
+    "Blocked",
+]);
+const ownerDirectedProposalDeliveryStatuses = new Set([
+    ...standardProposalDeliveryStatuses,
+    "Implementing",
+    ...terminalProposalDeliveryStatuses,
+]);
+// Owner-directed legacy handoff/proposal documents are a fixed compatibility lane,
+// not a general alternative to Active Tracker delivery authority.
+const ownerDirectedProposalWorkItems = new Map([
+    ["docs/development/proposals/implementation-handoff.md", "B-101"],
+    ["docs/development/proposals/proposal-review-response-2026-07-28.md", "B-101"],
+    ["docs/development/proposals/operations-agent/agent-operations-capability.md", "B-101"],
+    ["docs/development/proposals/operations-agent/operations-agent-step2-sdd.md", "B-101"],
+    ["docs/development/proposals/pagelet-agent/pagelet-agent-proposal.md", "B-123"],
+    ["docs/development/proposals/pagelet-agent/pagelet-agent-deep-discover-sdd.md", "B-123"],
+]);
+
+function isOwnerDirectedProposal(file, workItem) {
+    return ownerDirectedProposalWorkItems.get(relative(file)) === workItem;
+}
+
 for (const file of proposalFiles) {
     const content = requireFields(file, ["Document status", "Delivery status", "Updated", "Work item", "Authority", "Restart condition"]);
-    validateDocumentStatus(file, content, ["Current"]);
-    if (!/^B-\d{3}$/u.test(field(content, "Work item") ?? "")) errors.push(`${relative(file)} -> invalid proposal Work item`);
-    if (!["Needs Decision", "Blocked"].includes(field(content, "Delivery status"))) errors.push(`${relative(file)} -> invalid proposal Delivery status`);
+    const workItem = field(content, "Work item");
+    const ownerDirectedWorkItem = ownerDirectedProposalWorkItems.get(relative(file));
+    const ownerDirected = isOwnerDirectedProposal(file, workItem);
+    validateDocumentStatus(file, content, ownerDirected ? ["Approved", "Current"] : ["Current"]);
+    if (!/^B-\d{3}$/u.test(workItem ?? "")) errors.push(`${relative(file)} -> invalid proposal Work item`);
+    if (ownerDirectedWorkItem && workItem !== ownerDirectedWorkItem) {
+        errors.push(`${relative(file)} -> owner-directed proposal Work item must remain ${ownerDirectedWorkItem}`);
+    }
+    const allowedDeliveryStatuses = ownerDirected
+        ? ownerDirectedProposalDeliveryStatuses
+        : standardProposalDeliveryStatuses;
+    if (!allowedDeliveryStatuses.has(field(content, "Delivery status"))) {
+        errors.push(`${relative(file)} -> invalid proposal Delivery status`);
+    }
 }
 
 const backlog = readFileSync(index("backlog.md"), "utf8");
@@ -384,8 +420,14 @@ for (const id of new Set(backlogIds)) {
 }
 const backlogIdSet = new Set(backlogIds);
 for (const file of proposalFiles) {
-    const workItem = field(readFileSync(file, "utf8"), "Work item");
-    if (!backlogIdSet.has(workItem)) errors.push(`${relative(file)} -> proposal Work item is missing from Backlog`);
+    const content = readFileSync(file, "utf8");
+    const workItem = field(content, "Work item");
+    const deliveryStatus = field(content, "Delivery status");
+    const ownerDirectedTerminal = isOwnerDirectedProposal(file, workItem)
+        && terminalProposalDeliveryStatuses.has(deliveryStatus);
+    if (!ownerDirectedTerminal && !backlogIdSet.has(workItem)) {
+        errors.push(`${relative(file)} -> proposal Work item is missing from Backlog`);
+    }
 }
 
 function traceabilityIds(content, workItem) {
@@ -707,6 +749,16 @@ for (const file of directMarkdown(index("product/specs"))) {
 
 const archiveRoot = index("archive");
 const closedWorkItems = new Set();
+for (const file of proposalFiles) {
+    const content = readFileSync(file, "utf8");
+    const workItem = field(content, "Work item");
+    const terminalStatus = field(content, "Delivery status");
+    if (isOwnerDirectedProposal(file, workItem)
+        && /^B-\d{3}$/u.test(workItem ?? "")
+        && terminalProposalDeliveryStatuses.has(terminalStatus)) {
+        closedWorkItems.add(workItem);
+    }
+}
 for (const file of walkMarkdown(archiveRoot)) {
     if ([archiveIndexFile, dispositionLogFile].includes(file)) continue;
     const content = readFileSync(file, "utf8");

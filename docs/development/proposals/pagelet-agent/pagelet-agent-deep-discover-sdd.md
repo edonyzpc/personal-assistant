@@ -2,12 +2,12 @@
 
 Document status: Current
 Design status: Approved
-Delivery status: Needs Decision
+Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-123
 Implementation step: Step 1 — Pagelet Agent Deep Discover
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
-Restart condition: Owner 决定关闭 B-123，或明确启动 B-101 / Step 2。
+Restart condition: B-123 已由 owner 于 2026-08-01 关闭；本文永久保留为 Step 1 source-verified design 与最终验证依据。
 Handoff: [Implementation Handoff Brief](../implementation-handoff.md)
 Direction: [Pagelet Agent proposal](./pagelet-agent-proposal.md)
 
@@ -583,7 +583,7 @@ UI 观察期间仍出现 test vault 既有 Memory dirty-journal 的 VSS reconcil
 它未进入 Obsidian error buffer、未影响 Deep candidate/Bubble/Panel/Settings，并与本次
 provider-free UI 路径无调用关系，因此不阻断 Step 1。该现象属于独立 Memory/VSS
 follow-up，不在 B-123 内扩 scope。至此 §17 的 Step 1 通过条件全部满足；后续只需
-owner 决定关闭 B-123，或明确启动 B-101 / Step 2。
+owner 已于 2026-08-01 关闭 B-123，并启动 B-101 / Step 2。
 
 ## 19. Approval
 

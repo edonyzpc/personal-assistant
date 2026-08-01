@@ -1,11 +1,11 @@
 # Agent Operations 能力层
 
 Document status: Current
-Delivery status: Blocked
-Updated: 2026-07-30
+Delivery status: Needs Decision
+Updated: 2026-08-01
 Work item: B-101
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)、[DEC-014](../../../product/decisions/dec-014-defer-operations-agent.md) 与 [DEC-011](../../../product/decisions/dec-011-capability-policy-boundary.md)。
-Restart condition: Owner 明确启动 Step 2 后，先完成 focused Operations SDD、4 个 core tools、inline confirm / undo / content-free audit、安全验证与真实 Obsidian dogfood；runtime exposure 仍受 DEC-014 gate。
+Restart condition: Step 2 已于 2026-08-01 完成实现、`make deploy`、test-vault 与真实 vault dogfood；仅在 owner 明确授权 Step 3 后启动 Pagelet 联动或扩大写能力。
 
 > 定义 PA Agent 在 Obsidian vault 中的写操作能力。
 > 核心场景：Chat 对话结论落地到 vault + Pagelet insight 的推荐动作执行。
@@ -40,6 +40,8 @@ Agent 生成内容：
 ```
 
 ### 1.2 辅助场景：Pagelet Insight 简单动作
+
+> Step 3 direction only：本节与 1.3 尚未获得实施授权；当前运行时只交付 1.1 Chat 场景。
 
 Pagelet Agent 发现 insight 后的推荐动作中，部分是简单直接操作：
 
@@ -83,13 +85,13 @@ Pagelet Agent 发现复杂 insight
 | 笔记问答 | ✓ | ✓ | ✓ | ✓ |
 | Web 搜索 | ✓ | ✓ | ✓ | ✓ |
 | 跨笔记深度分析 | ✓ (Vault模式) | ✓ | 弱 | ✓ (Pagelet Agent) |
-| 生成新笔记 | ✓ | ✓ | ✗ | ✓ |
-| 修改现有笔记 | ✓ | ✓ | ✗ | ✓ |
-| 多步任务执行 | ✓ (Agent模式) | ✓ | ✗ | ✓ |
+| 生成新笔记 | ✓ | ✓ | ✓ (Step 2 opt-in) | ✓ |
+| 修改现有笔记 | ✓ | ✓ | ✓ (Step 2 opt-in) | ✓ |
+| 多步任务执行 | ✓ (Agent模式) | ✓ | ✓ (intent-level opt-in) | ✓ |
 | 后台主动发现 | ✗ | ✗ | ✓ (Pagelet) | ✓ (Pagelet Agent) |
 
 **PA 的差异化**：后台主动发现（竞品没有）+ 安静可信的交互模式。
-**PA 的能力缺口**：写入 vault（竞品都有，PA 没有）。
+**PA 的剩余缺口**：Step 2 已补齐有界 Chat 写入；Pagelet action / handoff 仍是未授权的 Step 3。
 
 ---
 
@@ -218,7 +220,7 @@ Agent 根据以下信号判断写到哪：
 所有写操作确认内联在交互流程中：
 
 **Chat 场景**：Agent 展示目标和内容摘要 → [确认] [取消]
-**Pagelet 场景**：insight card 切换为确认态 → [确认] [取消]
+**Pagelet 场景（Step 3，未授权）**：insight card 切换为确认态 → [确认] [取消]
 
 ### 6.2 风险分级
 
@@ -241,10 +243,10 @@ Agent 根据以下信号判断写到哪：
 
 ### 6.4 回滚
 
-- 即时撤销：操作完成后内联 [撤销] 按钮
-- 历史回滚：Tab 中操作历史 section
+- 即时撤销：操作完成后内联 [撤销] 按钮；Step 2 receipt 只在当前运行时内存中短期保留
+- 历史回滚：未来能力，不属于 Step 2，也没有操作历史 Tab
 - 回滚前验证：当前内容 == 操作后的 expected 状态，否则 fail closed
-- 文件已被用户编辑 → 不能盲目恢复，展示 diff 让用户决定
+- 文件已被用户编辑 → Step 2 fail closed 并报告 drift，不提供继续覆盖或 diff 决策 UI
 
 ---
 
@@ -265,15 +267,15 @@ frontmatter_update: { path: string; set?: Record; delete?: string[] } → { succ
 ### 7.2 按需加载
 
 - 读工具：常驻（~1.5K tokens）
-- 写工具：按需加载——Agent 识别到用户意图包含写操作时加载
-- 加载后在同一对话内持续可用
+- 写工具：每个 run 按需暴露——仅当最新用户消息命中显式写意图时加载
+- 后续 turn 重新判断写意图；不会因为同一对话曾加载过就持续暴露
 
 ### 7.3 内容生成指导
 
 Agent 生成写入内容时：
-- 加载 bundled `obsidian-markdown` skill 获取格式规范
+- 对 substantial Markdown 加载 bundled `obsidian-markdown` skill 获取格式规范
 - 根据 vault 的 Zettelkasten 结构判断 frontmatter 字段
-- 使用 `generate_link` 确保 wikilink 格式正确
+- 直接生成 Obsidian-compatible wikilink；Step 2 不导出 `generate_link` tool
 
 ---
 
@@ -300,13 +302,15 @@ Agent 生成写入内容时：
 
 ### 8.3 与 Pagelet Agent
 
-共享同一套写入工具层。Pagelet 的 action 按钮直接触发写入 tool call（简单动作），或带上下文升级到 Chat（复杂动作）。
+Step 3 的方向是共享同一套写入工具层：Pagelet action 按钮触发简单写入，或带上下文升级到 Chat。该联动尚未获 owner 授权，当前运行时没有 Pagelet action / handoff。
 
 ---
 
 ## 9 · 实施路径
 
-### 9.1 Phase 1：Chat 对话结论落地
+### 9.1 Phase 1：Chat 对话结论落地（Delivered 2026-08-01）
+
+交付与验证证据见 [Step 2 SDD](./operations-agent-step2-sdd.md#14-closeout-evidence-2026-08-01)。
 
 - 实现 4 个核心写入 tool（create/append/process/frontmatter_update）
 - 实现内联确认 UI
@@ -315,7 +319,7 @@ Agent 生成写入内容时：
 - 审计日志（content-free）
 - 验证：dogfooding 日常使用 Chat 讨论后保存到 vault
 
-### 9.2 Phase 2：Pagelet 简单 Action
+### 9.2 Phase 2：Pagelet 简单 Action（Awaiting owner authorization）
 
 - Pagelet insight card 的 action 按钮接入写入 tool
 - 简单操作直接执行（加链接、改 frontmatter）

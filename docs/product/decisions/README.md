@@ -12,7 +12,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-003 | Preserve the dual product line | Accepted | Product boundary and investment direction | [Record](./dec-003-dual-product-line.md) |
 | DEC-005 | Transparent and reversible Memory governance | Accepted | Memory trust and permission model | [Record](./dec-005-memory-governance.md) |
 | DEC-011 | Preserve capability and policy boundaries | Accepted | PA Agent/action safety architecture | [Record](./dec-011-capability-policy-boundary.md) |
-| DEC-014 | Defer Operations Agent productization | Deferred | Write/action product exposure | [Record](./dec-014-defer-operations-agent.md) |
+| DEC-014 | Bound Operations Agent Step 2 to explicit vault opt-in | Accepted | Write/action product exposure | [Record](./dec-014-defer-operations-agent.md) |
 | DEC-016 | Defer hosted Premium layer | Deferred | Hosted/commercial service | [Record](./dec-016-defer-hosted-premium.md) |
 | DEC-017 | Default bounded background preparation for Scope Recap | Accepted | Pagelet Recap trigger, data and cost boundary | [Record](./dec-017-default-background-recap-preparation.md) |
 | DEC-018 | Quality-gated proactive hints for Scope Recap | Accepted | Pagelet Recap visibility, attention and suppression boundary | [Record](./dec-018-quality-gated-scope-recap-hints.md) |

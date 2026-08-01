@@ -19,7 +19,7 @@ Updated: 2026-08-01
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
-| B-101 | Operations Agent productization | 保持 `OPERATIONS_AGENT_RUNTIME_ENABLED=false`；owner 明确启动 Step 2 后，先完成 focused SDD、core tools、inline confirm / undo / content-free audit、安全 review 与真实 Obsidian smoke | [Capability](./development/proposals/operations-agent/agent-operations-capability.md), [boundary plan](./development/proposals/operations-agent/operations-agent-plan.md), [mode SDD](./development/proposals/operations-agent/operations-agent-mode-sdd.md) |
+| B-101 | Operations Agent productization | Step 2 已于 2026-08-01 完成并通过 `make deploy`、test-vault 与真实 vault dogfood；剩余范围只有 Step 3 Pagelet + Operations 联动，必须由 owner 明确授权后重启，额外写工具仍需独立需求证据 | [Capability](./development/proposals/operations-agent/agent-operations-capability.md), [Step 2 SDD](./development/proposals/operations-agent/operations-agent-step2-sdd.md) |
 | B-102 | Obsidian Operations CLI adapter (v1B) | Desktop CLI reads 的用户价值足以覆盖 probe、allowlist、timeout、argv execution 与 vault confinement 成本时，重新开启 SPEC-05 | [Architecture plan](./architecture/obsidian-operations-agent-plan.md) |
 | B-103 | 用户自定义 Skills | 先确认产品价值、工具权限、Settings UX 与 vault-side discovery 边界，再写 SDD | [Historical tracker](./archive/v2-post-release-spec-driven-development.md) |
 | B-104 | PA Agent latency levers | 必须先有同口径 p50/p95 样本；再评估 read-only batch、compact final-answer 与 direct route | [Historical plan](./archive/pa-agent-latency-optimization-plan.md) |
@@ -36,7 +36,6 @@ Updated: 2026-08-01
 | B-119 | 有界 Insight Enhancement Layer（Graph / Pattern / Maintenance） | 仅当用户明确把 B-119 选为唯一 `Next` 并授权实现时重启；先按当前源码复核预算、provider/Data Boundary、ephemeral overlay、UI clone/render 与 move-only 写入边界，再创建 Approved SDD | [DEC-022](./product/decisions/dec-022-bounded-insight-enhancement-layer.md), [Product Spec](./product/specs/pa-insight-enhancement-layer-product-spec.md) |
 | B-120 | Writing Insight / 近期笔记写作回顾 | 只有 B-119 Graph/Pattern/Maintenance 真实 dogfood 后，仍证明独立写作趋势能提供 Recall/Recap 未覆盖的低负担价值，才重新决定来源呈现、触发频率、成本和 UI；当前不进入实现 | [DEC-022](./product/decisions/dec-022-bounded-insight-enhancement-layer.md), [historical external source](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance) |
 | B-122 | Generic preload → Review DeliveryCandidate adapter | B-118 明确 raw `PreloadFinding[]` 只进入显式 Prepared Panel，不触发 Pet nudge 或 Bubble；只有真实使用证明该缓存值得主动浮现，且 stable identity、source-backed confidence、why-now、currentness、route/action 与噪声预算均获批后才重开 | [Bubble Product Spec](./product/specs/pagelet-bubble-readiness-and-recall-product-spec.md), [B-118 Product Spec](./product/specs/pagelet-ui-ux-hardening-product-spec.md) |
-| B-123 | Pagelet `Deep Discover` final dogfood | Step 1 已完成 20/20 修复版 dogfood、owner 匿名盲评、20/36 真实配额、provider-free test runner、Bubble → Panel / Settings 可见验证与真实 vault 恢复；质量门通过 | Owner 决定关闭 B-123，或明确启动 B-101 / Step 2 | [Owner decision](./development/proposals/proposal-review-response-2026-07-28.md), [Deep Discover SDD](./development/proposals/pagelet-agent/pagelet-agent-deep-discover-sdd.md) |
 
 ## 触发型评估
 
