@@ -2,10 +2,10 @@
 
 Document status: Current
 Delivery status: Blocked
-Updated: 2026-07-30
+Updated: 2026-08-01
 Work item: B-123
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
-Restart condition: 36/day 配额恢复且 Mac 解锁后，完成修复版 20+ 有效 cases、同版本 baseline 盲评、app 可视 smoke，并由 owner 判断质量提升。
+Restart condition: Mac 解锁后补 Bubble → Panel / Settings 可视 smoke；随后由 owner 决定关闭 B-123 或启动 Step 2。
 Implementation SDD: [Pagelet Agent Deep Discover](./pagelet-agent-deep-discover-sdd.md)
 
 > Pagelet 从编排式管道（single-shot LLM）演进为 Agent 模式的设计提案。

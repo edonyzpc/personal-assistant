@@ -3,11 +3,11 @@
 Document status: Current
 Design status: Approved
 Delivery status: Blocked
-Updated: 2026-07-31
+Updated: 2026-08-01
 Work item: B-123
 Implementation step: Step 1 — Pagelet Agent Deep Discover
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
-Restart condition: 36/day 配额恢复且 Mac 解锁后，完成修复版 20+ 有效 cases、同版本 baseline 盲评与 app 内可视验证。
+Restart condition: Mac 解锁后补 Bubble → Panel / Settings 可视验证；随后由 owner 决定关闭 B-123 或启动 Step 2。
 Handoff: [Implementation Handoff Brief](../implementation-handoff.md)
 Direction: [Pagelet Agent proposal](./pagelet-agent-proposal.md)
 
@@ -523,6 +523,54 @@ type-check、build，并确认 `dist` 与 test vault 部署产物一致。Mac �
 仍需在每日额度恢复后用修复版重跑至少 20 个有效 cases，并完成同版本 baseline 盲评；
 不得绕过 36/day 或高风险确认。Mac 解锁后补 Bubble → Panel 可视交互证据。当前
 first-pass 不满足 §17 的最终通过条件。
+
+### 18.2 2026-08-01 repaired-run checkpoint
+
+修复版在同一 Qwen provider、`deepseek-v4-pro` 模型和原 Data Boundary 下完成 20 个
+匿名分层 cases；覆盖 4 类目录、短中长笔记、低/高链接密度、新近/较旧笔记与 5 个
+预期静默样本。20 个 case 全部完成，0 blocked：
+
+- Deep Discover：14 verified / 6 quiet；累计 118 model turns、215 tool calls；总 wall
+  time 1,975,316ms，mean 98.8s。
+- single-shot baseline：同版本 legacy function 仅注入当前 renderer session，不注册
+  command/timer、不写 vault；总 wall time 226,962ms，mean 11.3s。
+- Deep quota 从 0 严格递增到 20 / 36；两批之间等待真实 12/hour 与 baseline
+  10/hour rolling window 自然释放，未清理、恢复、调高或绕过 limiter。
+- 质量门实际静默原因包括 `insufficient-vault-sources`、`runtime-incomplete` 与
+  `ungrounded-path`；均以 fail-closed 结束，没有形成不可核验交付。
+- `data.json` hash 在 dogfood 前后保持不变；原始 note/path/insight 只留 renderer
+  内存，CLI、repo、Settings 与持久日志只保留 content-free 指标。
+
+本轮开始前发现 explicit / `force=true` admission 会绕过 Deep limiter，与 §10 的
+“所有实际启动 run 计入 36/day”冲突。已移除该旁路并补 2 个回归测试：force run
+成功时先 reserve、provider admission 后 commit；quota exhausted 时不进入 provider。
+修复后 `make deploy` 通过 170 suites / 3604 tests、lint、type-check 与 build；独立复审
+未发现 P0–P2。
+
+test vault provider-free runner 为 26 PASS / 1 BLOCKED / 0 bugs；受保护的 durable
+Memory probe 按设计未改 fixture。清空缓冲后复跑及持续观察均无 error/console error。
+早先一次 VSS dirty-journal flush 失败未复现，属于 Memory 后台链而非 Deep blocker。
+
+owner 已完成 20-case 匿名 A/B 盲评。各维度均为每 case `0/1/2`：
+
+| Dimension | Deep Discover | baseline | 20-case mean |
+| --- | ---: | ---: | --- |
+| source correctness | 33 | 16 | 1.65 vs 0.80 |
+| incremental multi-hop value | 26 | 10 | 1.30 vs 0.50 |
+| novelty beyond backlinks | 18 | 4 | 0.90 vs 0.20 |
+| action usefulness | 9 | 2 | 0.45 vs 0.10 |
+| false positive | 0 | 3 | 0% vs 15% |
+
+Deep Discover 的 multi-hop、novelty 与 action 合计 53，对照组为 16；source
+correctness 未下降，且从 16 提升到 33。结合 14 verified / 6 quiet 与 0 false
+positive，owner 盲评分支持 §17 的质量提升门通过。代价是平均 wall time 98.8s，对照组
+11.3s；本 Step 保留 36/day 与安静交付边界，不把速度差异伪装为等价体验。
+
+评分后已销毁临时 dogfood runtime，并从完整备份恢复真实 vault 的原插件
+`2.9.0-beta.1`。6 个关键文件逐字节一致，完整插件目录仅目录时间戳不同；原
+Pagelet local state 已恢复，dogfood 实际消耗的 Deep 日配额仍保留为 20 / 36，未回滚。
+Bubble → Panel 与 Settings 的最终可见交互因 Mac 再次锁定待补；除该 UI 证据外，
+本 checkpoint 已满足 §17 的真实 vault 质量判断。
 
 ## 19. Approval
 

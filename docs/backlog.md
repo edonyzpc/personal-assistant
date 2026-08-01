@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-07-31
+Updated: 2026-08-01
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -36,7 +36,7 @@ Updated: 2026-07-31
 | B-119 | 有界 Insight Enhancement Layer（Graph / Pattern / Maintenance） | 仅当用户明确把 B-119 选为唯一 `Next` 并授权实现时重启；先按当前源码复核预算、provider/Data Boundary、ephemeral overlay、UI clone/render 与 move-only 写入边界，再创建 Approved SDD | [DEC-022](./product/decisions/dec-022-bounded-insight-enhancement-layer.md), [Product Spec](./product/specs/pa-insight-enhancement-layer-product-spec.md) |
 | B-120 | Writing Insight / 近期笔记写作回顾 | 只有 B-119 Graph/Pattern/Maintenance 真实 dogfood 后，仍证明独立写作趋势能提供 Recall/Recap 未覆盖的低负担价值，才重新决定来源呈现、触发频率、成本和 UI；当前不进入实现 | [DEC-022](./product/decisions/dec-022-bounded-insight-enhancement-layer.md), [historical external source](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance) |
 | B-122 | Generic preload → Review DeliveryCandidate adapter | B-118 明确 raw `PreloadFinding[]` 只进入显式 Prepared Panel，不触发 Pet nudge 或 Bubble；只有真实使用证明该缓存值得主动浮现，且 stable identity、source-backed confidence、why-now、currentness、route/action 与噪声预算均获批后才重开 | [Bubble Product Spec](./product/specs/pagelet-bubble-readiness-and-recall-product-spec.md), [B-118 Product Spec](./product/specs/pagelet-ui-ux-hardening-product-spec.md) |
-| B-123 | Pagelet `Deep Discover` final dogfood | Step 1 runtime、quality gate、review 与 `make deploy` 已完成；首轮 17 个 provider runs 为 6 verified / 11 quiet，另 3 个由 36/day 上限拒绝，尚未满足最终对照验收 | 36/day 配额恢复且 Mac 解锁后，用修复版完成 20+ 有效 cases、同版本 baseline 盲评与 app 内可视验证 | [Owner decision](./development/proposals/proposal-review-response-2026-07-28.md), [Deep Discover SDD](./development/proposals/pagelet-agent/pagelet-agent-deep-discover-sdd.md) |
+| B-123 | Pagelet `Deep Discover` final dogfood | 修复版 20/20 cases 已完成：14 verified / 6 quiet、0 blocked，真实配额 20/36；owner 匿名盲评分确认质量门通过；真实 vault 已恢复；test runner 26 PASS / 1 protected BLOCKED / 0 bugs | Mac 解锁后补 Bubble → Panel / Settings 可见验证，再由 owner 决定是否关闭 B-123 或启动 Step 2 | [Owner decision](./development/proposals/proposal-review-response-2026-07-28.md), [Deep Discover SDD](./development/proposals/pagelet-agent/pagelet-agent-deep-discover-sdd.md) |
 
 ## 触发型评估
 
