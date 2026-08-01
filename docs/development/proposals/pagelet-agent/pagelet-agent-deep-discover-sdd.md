@@ -2,12 +2,12 @@
 
 Document status: Current
 Design status: Approved
-Delivery status: Blocked
+Delivery status: Needs Decision
 Updated: 2026-08-01
 Work item: B-123
 Implementation step: Step 1 — Pagelet Agent Deep Discover
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
-Restart condition: Mac 解锁后补 Bubble → Panel / Settings 可视验证；随后由 owner 决定关闭 B-123 或启动 Step 2。
+Restart condition: Owner 决定关闭 B-123，或明确启动 B-101 / Step 2。
 Handoff: [Implementation Handoff Brief](../implementation-handoff.md)
 Direction: [Pagelet Agent proposal](./pagelet-agent-proposal.md)
 
@@ -569,8 +569,21 @@ positive，owner 盲评分支持 §17 的质量提升门通过。代价是平均
 评分后已销毁临时 dogfood runtime，并从完整备份恢复真实 vault 的原插件
 `2.9.0-beta.1`。6 个关键文件逐字节一致，完整插件目录仅目录时间戳不同；原
 Pagelet local state 已恢复，dogfood 实际消耗的 Deep 日配额仍保留为 20 / 36，未回滚。
-Bubble → Panel 与 Settings 的最终可见交互因 Mac 再次锁定待补；除该 UI 证据外，
-本 checkpoint 已满足 §17 的真实 vault 质量判断。
+
+最终可见验证在已部署的 test vault 2.8.4 / Obsidian 1.13.4 完成：以
+`pagelet-smoke-golden.md` 为 active leaf，使用仅当前 renderer session 的
+provider-free verified candidate，真实点击 Pet 打开 Bubble，再点击 `View insight`
+进入 source-backed Connection Discovery Panel；候选使用 session-only attention store，
+provider calls 与持久写入均为 0。独立 `Settings - test` 窗口同时确认 Deep Discover
+已启用、共用 Chat model `deepseek-v4-flash`、provider/cost 提示可见，今日用量为
+`0 / 36 runs · 0 model turns · 0 tool calls`。候选随后清理，debug 与 mobile emulation
+均关闭，Obsidian error buffer 为空。
+
+UI 观察期间仍出现 test vault 既有 Memory dirty-journal 的 VSS reconcile/flush 失败；
+它未进入 Obsidian error buffer、未影响 Deep candidate/Bubble/Panel/Settings，并与本次
+provider-free UI 路径无调用关系，因此不阻断 Step 1。该现象属于独立 Memory/VSS
+follow-up，不在 B-123 内扩 scope。至此 §17 的 Step 1 通过条件全部满足；后续只需
+owner 决定关闭 B-123，或明确启动 B-101 / Step 2。
 
 ## 19. Approval
 

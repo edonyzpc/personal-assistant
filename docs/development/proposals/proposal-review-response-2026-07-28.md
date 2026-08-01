@@ -1,12 +1,12 @@
 # Proposal Review Response
 
 Document status: Current
-Delivery status: Blocked
+Delivery status: Needs Decision
 Updated: 2026-08-01
 Work item: B-123
 Related work item: B-101
 Authority: Project owner's settled design decisions for B-123 Pagelet Deep Discover and related B-101 Operations.
-Restart condition: Mac 解锁后补 Step 1 Bubble → Panel / Settings 可见 smoke；B-101 仅在 owner 明确启动 Step 2 后进入实现。
+Restart condition: Owner 决定关闭 B-123；B-101 仅在 owner 明确启动 Step 2 后进入实现。
 Revision: v2 — reflects rewritten proposals and confirmed implementation plan
 Scope: Pagelet Agent proposal + Agent Operations capability proposal
 Discussed by: Project owner + Claude Code (product discussion partner)
