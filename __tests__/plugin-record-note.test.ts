@@ -6337,8 +6337,58 @@ describe('Pagelet production rate-limit storage', () => {
         };
         plugin.scopeRecapRateLimiterInstance = null;
         plugin.quietRecallRateLimiterInstance = null;
+        plugin.deepDiscoverRateLimiterInstance = null;
         return plugin;
     }
+
+    it('keeps forced Deep Discover runs behind quota before provider admission', async () => {
+        const plugin = createRateLimitHarness();
+        const commit = jest.fn();
+        const rollback = jest.fn(async () => undefined);
+        const reserveLeaseIf = jest.fn(async (condition: () => boolean) => {
+            expect(condition()).toBe(true);
+            return {
+                ok: true as const,
+                reservation: { commit, rollback },
+            };
+        });
+        const admitStandardCall = jest.fn(async () => undefined);
+        plugin.getDeepDiscoverRateLimiter = jest.fn(() => ({ reserveLeaseIf }));
+        plugin.getPageletProviderCallAdmission = jest.fn(() => ({ admitStandardCall }));
+        plugin.pageletDeepDiscoverAdmissionIsCurrent = jest.fn(() => true);
+
+        await expect(plugin.admitPageletDeepDiscoverRun('policy:v1', {
+            path: 'notes/forced.md',
+            triggerReason: 'explicit',
+            force: true,
+        })).resolves.toEqual({ ok: true });
+
+        expect(reserveLeaseIf).toHaveBeenCalledTimes(1);
+        expect(admitStandardCall).toHaveBeenCalledTimes(1);
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(rollback).not.toHaveBeenCalled();
+    });
+
+    it('blocks forced Deep Discover before provider admission when quota is exhausted', async () => {
+        const plugin = createRateLimitHarness();
+        const reserveLeaseIf = jest.fn(async () => ({
+            ok: false as const,
+            reason: 'hr-cap' as const,
+        }));
+        const admitStandardCall = jest.fn(async () => undefined);
+        plugin.getDeepDiscoverRateLimiter = jest.fn(() => ({ reserveLeaseIf }));
+        plugin.getPageletProviderCallAdmission = jest.fn(() => ({ admitStandardCall }));
+        plugin.pageletDeepDiscoverAdmissionIsCurrent = jest.fn(() => true);
+
+        await expect(plugin.admitPageletDeepDiscoverRun('policy:v1', {
+            path: 'notes/forced.md',
+            triggerReason: 'explicit',
+            force: true,
+        })).resolves.toEqual({ ok: false, reason: 'limit' });
+
+        expect(reserveLeaseIf).toHaveBeenCalledTimes(1);
+        expect(admitStandardCall).not.toHaveBeenCalled();
+    });
 
     it('isolates persisted quotas and watermarks for different same-name vaults', () => {
         const first = createRateLimitHarness();

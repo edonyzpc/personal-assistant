@@ -7318,12 +7318,6 @@ export class PluginManager extends Plugin {
         if (!this.pageletDeepDiscoverAdmissionIsCurrent(expectedPolicyIdentity, input)) {
             return { ok: false, reason: "unavailable" };
         }
-        if (input.force) {
-            await this.getPageletProviderCallAdmission().admitStandardCall();
-            if (input.signal?.aborted) throw createPageletProviderAbortError();
-            return { ok: true };
-        }
-
         let decision: Awaited<ReturnType<PageletRateLimiter["reserveLeaseIf"]>>;
         try {
             decision = await this.getDeepDiscoverRateLimiter().reserveLeaseIf(() => (
