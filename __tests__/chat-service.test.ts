@@ -15,6 +15,7 @@ import { createChatToolCapability } from '../src/ai-services/capability-adapter'
 import type { AgentRunCoordinatorPort } from '../src/ai-services/agent-run-coordinator';
 import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 import type { AgentEvent as CanonicalAgentEvent, ChatMessage, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
+import type { OperationsIntent } from '../src/ai-services/operations/types';
 import {
     BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
@@ -194,6 +195,7 @@ function createPlugin(overrides: {
     baseURL?: string;
     qwenThinkingEnabled?: boolean;
     webSearchEnabled?: boolean;
+    operationsAgentEnabled?: boolean;
     licenseTier?: AgentCapabilityTier;
     skillContextEnabled?: boolean;
     enabledSkillIds?: string[];
@@ -214,7 +216,10 @@ function createPlugin(overrides: {
             policyModelName: '',
             embeddingModelName: 'text-embedding-3-small',
             memoryEnabled: true,
-            operationsAgentEnabled: false,
+            operationsAgentEnabled: overrides.operationsAgentEnabled ?? false,
+            operationsProactiveSaveSuggestionsEnabled: true,
+            operationsAuditIncludeContent: false,
+            operationsAuditRetentionDays: 30,
             statisticsVaultId: 'test-vault',
             skillContextEnabled: overrides.skillContextEnabled ?? false,
             enabledSkillIds: overrides.enabledSkillIds ?? [],
@@ -265,7 +270,7 @@ function createPlugin(overrides: {
         },
         log: jest.fn(),
         getAPIToken: jest.fn(async () => 'sk-SECRET_TOKEN_SENTINEL'),
-        isOperationsAgentEnabled: false,
+        isOperationsAgentEnabled: overrides.operationsAgentEnabled ?? false,
         getMemoryExtractionPromptContext: jest.fn(() => overrides.memoryExtractionPromptContext),
         getResolvedLinks: jest.fn(() => overrides.resolvedLinks),
         agentRunCoordinator: overrides.agentRunCoordinator,
@@ -769,6 +774,260 @@ describe('ChatService.streamLLM integration', () => {
             .map((tool) => tool.function?.name)
             .sort();
         expect(exportedToolNames).toEqual(['search_memory']);
+    });
+
+    it('keeps Operations actions absent from ordinary turns even after user opt-in', async () => {
+        const model = createStreamChunksModel([{ content: 'ordinary answer' }]);
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('Summarize the current note', jest.fn());
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name);
+        expect(exportedToolNames).not.toEqual(expect.arrayContaining([
+            'vault_create',
+            'vault_append',
+            'vault_process',
+            'frontmatter_update',
+        ]));
+    });
+
+    it('rejects a hallucinated Operations action on an ordinary turn after opt-in', async () => {
+        let modelTurn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* () {
+                modelTurn += 1;
+                if (modelTurn === 1) {
+                    yield {
+                        tool_call_chunks: [{
+                            index: 0,
+                            id: 'call_unbound_create',
+                            name: 'vault_create',
+                            args: JSON.stringify({
+                                path: '0.unsorted/must-not-write.md',
+                                content: 'must not write',
+                            }),
+                        }],
+                    };
+                    return;
+                }
+                yield { content: 'ordinary answer' };
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const staged: OperationsIntent[] = [];
+        const events: CanonicalAgentEvent[] = [];
+
+        await service.streamLLM('Tell me a short joke.', jest.fn(), undefined, undefined, {
+            onOperationsIntentStaged: (intent) => staged.push(intent),
+            onLifecycleEvent: (event) => events.push(event),
+        });
+
+        expect(staged).toEqual([]);
+        expect(events).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool_execution_end',
+                toolName: 'vault_create',
+                outcome: 'policy_rejected',
+            }),
+        ]));
+    });
+
+    it('exposes only the current note plus four Operations actions for a current-note-only save', async () => {
+        const model = createStreamChunksModel([{ content: 'proposal ready' }]);
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('Use the current note only and save this conclusion to this note.', jest.fn());
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name)
+            .sort();
+        expect(exportedToolNames).toEqual([
+            'frontmatter_update',
+            'get_current_note_context',
+            'vault_append',
+            'vault_create',
+            'vault_process',
+        ]);
+    });
+
+    it('stages a structured Operations call without writing and executes only after explicit confirmation', async () => {
+        let modelTurn = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* () {
+                modelTurn += 1;
+                if (modelTurn === 1) {
+                    yield {
+                        tool_call_chunks: [{
+                            index: 0,
+                            id: 'call_create',
+                            name: 'vault_create',
+                            args: JSON.stringify({
+                                path: '0.unsorted/operations-e2e.md',
+                                content: '# Operations E2E',
+                            }),
+                        }],
+                    };
+                    return;
+                }
+                yield { content: 'Review the inline proposal.' };
+            }),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const files = new Map<string, { path: string }>();
+        const vault = plugin.app.vault as typeof plugin.app.vault & {
+            adapter: {
+                exists: jest.Mock<(path: string) => Promise<boolean>>;
+                mkdir: jest.Mock<(path: string) => Promise<void>>;
+                write: jest.Mock<(path: string, content: string) => Promise<void>>;
+                list: jest.Mock<(path: string) => Promise<{ files: string[]; folders: string[] }>>;
+                read: jest.Mock<(path: string) => Promise<string>>;
+                remove: jest.Mock<(path: string) => Promise<void>>;
+            };
+            create: jest.Mock<(path: string, content: string) => Promise<{ path: string }>>;
+            process: jest.Mock;
+            delete: jest.Mock;
+        };
+        vault.getAbstractFileByPath.mockImplementation((path: string) =>
+            files.get(path) ?? (path === '0.unsorted' ? { path, children: [] } : null));
+        vault.adapter = {
+            exists: jest.fn(async (path: string) => path === '0.unsorted'),
+            mkdir: jest.fn(async () => undefined),
+            write: jest.fn(async () => undefined),
+            list: jest.fn(async () => ({ files: [], folders: [] })),
+            read: jest.fn(async () => ''),
+            remove: jest.fn(async () => undefined),
+        };
+        vault.create = jest.fn(async (path: string) => {
+            const file = { path };
+            files.set(path, file);
+            return file;
+        });
+        vault.process = jest.fn();
+        vault.delete = jest.fn();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const staged: OperationsIntent[] = [];
+
+        await service.streamLLM(
+            'Save this conclusion as a new note in my vault.',
+            jest.fn(),
+            undefined,
+            undefined,
+            { onOperationsIntentStaged: (intent) => staged.push(intent) },
+        );
+
+        expect(staged).toHaveLength(1);
+        expect(staged[0]).toMatchObject({
+            state: 'pending',
+            operations: [{
+                name: 'vault_create',
+                path: '0.unsorted/operations-e2e.md',
+                expectedAfter: '# Operations E2E',
+            }],
+        });
+        expect(vault.create).not.toHaveBeenCalled();
+
+        const result = await service.confirmOperationsIntent(staged[0].id);
+        expect(result.state).toBe('completed');
+        expect(vault.create).toHaveBeenCalledWith('0.unsorted/operations-e2e.md', '# Operations E2E');
+    });
+
+    it('cancels a pending Operations intent when the setting is revoked before confirmation', async () => {
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const vault = plugin.app.vault as typeof plugin.app.vault & {
+            adapter: { exists: jest.Mock<(path: string) => Promise<boolean>> };
+            create: jest.Mock;
+        };
+        vault.adapter = {
+            exists: jest.fn(async (path: string) => path === '0.unsorted'),
+        };
+        vault.getAbstractFileByPath.mockImplementation((path: string) =>
+            path === '0.unsorted' ? { path, children: [] } : null);
+        vault.create = jest.fn();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const controller = (service as unknown as {
+            operationsController: {
+                stageIntent(input: {
+                    runId: string;
+                    turnId: string;
+                    operations: Array<{ toolCallId: string; name: 'vault_create'; input: unknown }>;
+                }): Promise<OperationsIntent>;
+            };
+        }).operationsController;
+        const intent = await controller.stageIntent({
+            runId: 'run-revoked',
+            turnId: 'turn-revoked',
+            operations: [{
+                toolCallId: 'call-revoked',
+                name: 'vault_create',
+                input: { path: '0.unsorted/revoked.md', content: 'Not written' },
+            }],
+        });
+        plugin.isOperationsAgentEnabled = false;
+
+        await expect(service.confirmOperationsIntent(intent.id)).rejects.toThrow('no longer enabled');
+
+        expect(vault.create).not.toHaveBeenCalled();
+        expect(() => service.cancelOperationsIntent(intent.id)).toThrow('cancelled');
+    });
+
+    it('logs an audit retention warning without note content', async () => {
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const vault = plugin.app.vault as typeof plugin.app.vault & {
+            adapter: {
+                exists: jest.Mock<(path: string) => Promise<boolean>>;
+                mkdir: jest.Mock<(path: string) => Promise<void>>;
+                write: jest.Mock<(path: string, content: string) => Promise<void>>;
+            };
+            create: jest.Mock<(path: string, content: string) => Promise<{ path: string }>>;
+        };
+        vault.adapter = {
+            exists: jest.fn(async (path: string) => path === '0.unsorted'),
+            mkdir: jest.fn(async () => undefined),
+            write: jest.fn(async () => undefined),
+        };
+        vault.getAbstractFileByPath.mockImplementation((path: string) =>
+            path === '0.unsorted' ? { path, children: [] } : null);
+        vault.create = jest.fn(async (path: string) => ({ path }));
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const controller = (service as unknown as {
+            operationsController: {
+                stageIntent(input: {
+                    runId: string;
+                    turnId: string;
+                    operations: Array<{ toolCallId: string; name: 'vault_create'; input: unknown }>;
+                }): Promise<OperationsIntent>;
+            };
+        }).operationsController;
+        const intent = await controller.stageIntent({
+            runId: 'run-retention-warning',
+            turnId: 'turn-retention-warning',
+            operations: [{
+                toolCallId: 'call-retention-warning',
+                name: 'vault_create',
+                input: { path: '0.unsorted/audit-warning.md', content: 'PRIVATE_NOTE_CONTENT' },
+            }],
+        });
+
+        await expect(service.confirmOperationsIntent(intent.id)).resolves.toMatchObject({ state: 'completed' });
+
+        const warningCall = (plugin.log as jest.Mock).mock.calls.find(
+            ([message]) => message === 'Operations audit retention cleanup incomplete',
+        );
+        expect(warningCall?.[1]).toMatchObject({
+            path: '0.unsorted/audit-warning.md',
+            warning: 'Audit retention cleanup is unavailable.',
+        });
+        expect(JSON.stringify(warningCall)).not.toContain('PRIVATE_NOTE_CONTENT');
     });
 
     it('honors Chinese explicit no-web when weather/current-info would otherwise route to WebSearch', async () => {

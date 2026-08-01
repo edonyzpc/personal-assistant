@@ -47,11 +47,19 @@ export function isObsidianOperationsV1AToolName(name: string): name is ObsidianO
 }
 
 export interface ChatToolInputSchemaProperty {
-    type: "string" | "number" | "integer" | "boolean";
+    type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
     description?: string;
     enum?: string[];
     minimum?: number;
     maximum?: number;
+    minLength?: number;
+    maxLength?: number;
+    properties?: Record<string, ChatToolInputSchemaProperty>;
+    required?: string[];
+    additionalProperties?: boolean | ChatToolInputSchemaProperty;
+    items?: ChatToolInputSchemaProperty;
+    anyOf?: ChatToolInputSchemaProperty[];
+    oneOf?: ChatToolInputSchemaProperty[];
 }
 
 export interface ChatToolInputSchema {

@@ -949,14 +949,17 @@ describe('PA Agent telemetry settings', () => {
     });
 });
 
-describe('Operations Agent disabled rollout', () => {
-    it('keeps Operations Agent unavailable even if legacy data had it enabled', () => {
-        expect(OPERATIONS_AGENT_RUNTIME_ENABLED).toBe(false);
+describe('Operations Agent opt-in rollout', () => {
+    it('keeps the build available while preserving explicit user opt-in', () => {
+        expect(OPERATIONS_AGENT_RUNTIME_ENABLED).toBe(true);
         expect(DEFAULT_SETTINGS.operationsAgentEnabled).toBe(false);
-        expect(mergeLoadedSettings({ operationsAgentEnabled: true }).operationsAgentEnabled).toBe(false);
+        expect(mergeLoadedSettings({ operationsAgentEnabled: true }).operationsAgentEnabled).toBe(true);
+        expect(mergeLoadedSettings({ operationsAgentEnabled: false }).operationsAgentEnabled).toBe(false);
+        expect(mergeLoadedSettings({ operationsAuditRetentionDays: 90 }).operationsAuditRetentionDays).toBe(90);
+        expect(mergeLoadedSettings({ operationsAuditRetentionDays: 31 }).operationsAuditRetentionDays).toBe(30);
     });
 
-    it('does not render the Operations Agent settings entry', () => {
+    it('renders the opt-in, suggestion, and audit controls', () => {
         const plugin = makePlugin({ operationsAgentEnabled: true });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -964,7 +967,12 @@ describe('Operations Agent disabled rollout', () => {
         tab.display();
 
         const names = getMockSettingRecords().map((record) => record.name);
-        expect(names).not.toContain('Operations Agent Mode (Beta)');
+        expect(names).toEqual(expect.arrayContaining([
+            'Save Chat conclusions to notes (Beta)',
+            'Suggest saving useful conclusions',
+            'Include note content in write audit',
+            'Write audit retention',
+        ]));
     });
 });
 

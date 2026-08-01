@@ -230,6 +230,22 @@ describe("ChatHistoryManager", () => {
         await expect(manager.findConversation(conversation.id)).resolves.not.toBeNull();
     });
 
+    it("persists only the content-free Operations save suggestion state", async () => {
+        const { manager, store } = makeManager();
+        await manager.initialize();
+        const conversation = await manager.startConversation("summarize my notes");
+
+        const updated = await manager.updateOperationsSaveSuggestionState(conversation.id, "offered");
+
+        expect(updated).toEqual(expect.objectContaining({
+            id: conversation.id,
+            operationsSaveSuggestionState: "offered",
+        }));
+        await expect(store.getConversation(conversation.id)).resolves.toEqual(expect.objectContaining({
+            operationsSaveSuggestionState: "offered",
+        }));
+    });
+
     it("deleteConversation removes both conversation record and all of its turns", async () => {
         const { manager, store } = makeManager();
         await manager.initialize();

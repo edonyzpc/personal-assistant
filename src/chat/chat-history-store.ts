@@ -29,6 +29,7 @@ export interface PersistedConversation {
     updatedAt: string;
     turnCount: number;
     preview: string;
+    operationsSaveSuggestionState?: "offered" | "accepted" | "declined";
 }
 
 export interface PersistedChatMessage {

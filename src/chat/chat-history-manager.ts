@@ -179,6 +179,22 @@ export class ChatHistoryManager {
         return this.store.getConversation(id);
     }
 
+    async updateOperationsSaveSuggestionState(
+        conversationId: string,
+        state: "offered" | "accepted" | "declined",
+    ): Promise<PersistedConversation | null> {
+        if (!this.isAvailable()) return null;
+        const conversation = await this.store.getConversation(conversationId);
+        if (!conversation) return null;
+        const updated: PersistedConversation = {
+            ...conversation,
+            operationsSaveSuggestionState: state,
+            updatedAt: this.toIso(this.now()),
+        };
+        await this.store.upsertConversation(updated);
+        return updated;
+    }
+
     async removeTurnsFromIndex(conversationId: string, fromIndex: number): Promise<void> {
         if (!this.isAvailable()) return;
         const turns = await this.store.getTurns(conversationId);

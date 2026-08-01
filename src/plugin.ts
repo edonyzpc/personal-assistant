@@ -6728,12 +6728,15 @@ export class PluginManager extends Plugin {
     }
 
     private createAiServiceHost(): AiServiceHost {
+        const getOperationsAgentEnabled = () => this.isOperationsAgentEnabled;
         return {
             app: this.app,
             settings: this.settings,
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
             getAPIToken: () => this.getAPIToken(),
-            isOperationsAgentEnabled: this.isOperationsAgentEnabled,
+            get isOperationsAgentEnabled() {
+                return getOperationsAgentEnabled();
+            },
             getMemoryExtractionPromptContext: () =>
                 this.getMemoryExtractionPromptContext() as unknown as Record<string, unknown>,
             memorySearch: {
@@ -6827,9 +6830,13 @@ export class PluginManager extends Plugin {
     }
 
     private createChatHost(): ChatHost {
+        const getOperationsAgentEnabled = () => this.isOperationsAgentEnabled;
         return {
             app: this.app,
             settings: this.settings,
+            get isOperationsAgentEnabled() {
+                return getOperationsAgentEnabled();
+            },
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
             getAISetupIssue: () => this.getAISetupIssue(),
             chatHistoryManager: this.chatHistoryManager,
@@ -10303,13 +10310,11 @@ export class PluginManager extends Plugin {
     }
 
     /**
-     * Whether Operations Agent mode is enabled in the user's settings.
-     * When true, the PA Agent runtime switches to "chat-with-actions"
-     * policy and registers the AppendToolProvider so the model can
-     * propose write actions that go through the 4-gate framework.
+     * Effective Operations availability: build gate plus persisted user opt-in.
+     * Eligible Chat turns may stage the four bounded actions for inline review.
      */
     get isOperationsAgentEnabled(): boolean {
-        return OPERATIONS_AGENT_RUNTIME_ENABLED;
+        return OPERATIONS_AGENT_RUNTIME_ENABLED && this.settings.operationsAgentEnabled === true;
     }
 
     /**

@@ -32,6 +32,28 @@ export class ConversationPersistence {
         return this.activeId;
     }
 
+    get activeConversationTurnCount(): number {
+        return this.activeConversation?.turnCount ?? 0;
+    }
+
+    get operationsSaveSuggestionState(): "offered" | "accepted" | "declined" | undefined {
+        return this.activeConversation?.operationsSaveSuggestionState;
+    }
+
+    async setOperationsSaveSuggestionState(
+        state: "offered" | "accepted" | "declined",
+    ): Promise<void> {
+        const conversationId = this.activeId;
+        const manager = await this.getReadyManager();
+        if (!manager || !conversationId) return;
+        try {
+            const updated = await manager.updateOperationsSaveSuggestionState(conversationId, state);
+            if (updated && this.activeId === conversationId) this.activeConversation = updated;
+        } catch (error) {
+            this.options.log("Failed to persist Operations save suggestion state", error);
+        }
+    }
+
     async waitForPendingWrites(): Promise<void> {
         await this.persistChain.catch(() => undefined);
     }

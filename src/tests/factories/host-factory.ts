@@ -79,6 +79,9 @@ export function createAiServiceHost(
         licenseTier: MOCK_LICENSE_TIER,
         memoryEnabled: true,
         operationsAgentEnabled: false,
+        operationsProactiveSaveSuggestionsEnabled: true,
+        operationsAuditIncludeContent: false,
+        operationsAuditRetentionDays: 30,
         statisticsVaultId: "test-vault",
         ...settingsOverrides,
     };
@@ -94,11 +97,11 @@ export function createAiServiceHost(
         settings,
         log: () => undefined,
         getAPIToken: async () => "test-token",
-        isOperationsAgentEnabled: settings.operationsAgentEnabled,
         getMemoryExtractionPromptContext: () => undefined,
         memorySearch,
         getResolvedLinks: () => undefined,
         ...hostOverrides,
+        isOperationsAgentEnabled: hostOverrides.isOperationsAgentEnabled ?? settings.operationsAgentEnabled,
     };
 }
 
@@ -118,6 +121,8 @@ export function createChatHost(
         aiProvider: "openai",
         baseURL: "https://api.openai.com/v1",
         chatModelName: "gpt-4o-mini",
+        operationsAgentEnabled: false,
+        operationsProactiveSaveSuggestionsEnabled: true,
         ...settingsOverrides,
     };
     const memoryStatus: ChatHost["memoryStatus"] = {
@@ -146,5 +151,6 @@ export function createChatHost(
         onSettingsChanged: () => () => undefined,
         scheduleMemoryExtractionAfterChatTurn: () => undefined,
         ...hostOverrides,
+        isOperationsAgentEnabled: hostOverrides.isOperationsAgentEnabled ?? settings.operationsAgentEnabled,
     };
 }

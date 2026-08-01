@@ -7298,6 +7298,142 @@ body.is-mobile .pa-insights-viewer > button {
 	line-height: 1.35;
 }
 
+.pa-chat-view .pa-operations-save-suggestion {
+    margin: 0.65rem 0 0.25rem;
+    padding: 0.75rem;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+}
+
+.pa-chat-view .pa-operations-save-suggestion__text {
+    color: var(--text-normal);
+    line-height: 1.45;
+}
+
+.pa-chat-view .pa-operations-save-suggestion__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.65rem;
+}
+
+.pa-chat-view .pa-operations-save-suggestion__actions > button {
+    min-height: 44px;
+    padding-inline: 0.85rem;
+}
+
+.pa-chat-view .pa-operations-save-suggestion__status {
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+
+.pa-chat-view .pa-operations-intent-card {
+	margin: 0.75rem 0 0.35rem;
+	padding: 0.85rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+}
+
+.pa-chat-view .pa-operations-intent-card__header,
+.pa-chat-view .pa-operations-intent-card__operation-header,
+.pa-chat-view .pa-operations-intent-card__operation-footer,
+.pa-chat-view .pa-operations-intent-card__actions {
+    display: flex;
+	align-items: center;
+	gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.pa-chat-view .pa-operations-intent-card [hidden] {
+    display: none;
+}
+
+.pa-chat-view .pa-operations-intent-card__header {
+	justify-content: space-between;
+	margin-bottom: 0.7rem;
+}
+
+.pa-chat-view .pa-operations-intent-card__title {
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+
+.pa-chat-view .pa-operations-intent-card__status,
+.pa-chat-view .pa-operations-intent-card__operation-status {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.pa-chat-view .pa-operations-intent-card__list {
+	display: grid;
+	gap: 0.65rem;
+}
+
+.pa-chat-view .pa-operations-intent-card__operation {
+	min-width: 0;
+	padding: 0.65rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-primary);
+}
+
+.pa-chat-view .pa-operations-intent-card__operation-kind {
+	font-weight: var(--font-semibold);
+}
+
+.pa-chat-view .pa-operations-intent-card__path {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	color: var(--text-muted);
+}
+
+.pa-chat-view .pa-operations-intent-card__preview {
+	box-sizing: border-box;
+	max-width: 100%;
+	max-height: 14rem;
+	margin: 0.55rem 0;
+	padding: 0.55rem;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	border-radius: var(--radius-s);
+	background: var(--code-background);
+	color: var(--text-normal);
+	font-size: var(--font-ui-smaller);
+}
+
+.pa-chat-view .pa-operations-intent-card__operation-footer {
+	justify-content: space-between;
+}
+
+.pa-chat-view .pa-operations-intent-card__operation-status[data-status="succeeded"],
+.pa-chat-view .pa-operations-intent-card__operation-status[data-status="undone"] {
+	color: var(--text-success);
+}
+
+.pa-chat-view .pa-operations-intent-card__operation-status[data-status="failed"],
+.pa-chat-view .pa-operations-intent-card__operation-status[data-status="stale"],
+.pa-chat-view .pa-operations-intent-card__operation-status[data-status="expired"] {
+	color: var(--text-error);
+}
+
+.pa-chat-view .pa-operations-intent-card__actions {
+	justify-content: flex-end;
+	margin-top: 0.75rem;
+}
+
+.pa-chat-view .pa-operations-intent-card__actions > button,
+.pa-chat-view .pa-operations-intent-card__undo {
+	min-height: 44px;
+	padding-inline: 0.85rem;
+}
+
+body.is-mobile .pa-chat-view .pa-operations-intent-card__actions > button {
+	flex: 1 1 auto;
+}
+
 .pa-quick-capture-modal-shell {
 	box-sizing: border-box;
 	width: min(720px, calc(100vw - 32px));

@@ -13,7 +13,10 @@ export interface ChatHost {
         aiProvider: string;
         baseURL: string;
         chatModelName: string;
+        operationsAgentEnabled: boolean;
+        operationsProactiveSaveSuggestionsEnabled: boolean;
     };
+    readonly isOperationsAgentEnabled: boolean;
     log(message: string, ...args: unknown[]): void;
     getAISetupIssue(): string | null;
     readonly chatHistoryManager: ChatHistoryManager | undefined;

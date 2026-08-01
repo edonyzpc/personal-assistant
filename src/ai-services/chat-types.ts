@@ -480,6 +480,10 @@ export type ChatToolName =
     | "read_canvas_summary"
     | "search_vault_snippets"
     | "list_vault_tags"
+    | "vault_create"
+    | "vault_append"
+    | "vault_process"
+    | "frontmatter_update"
     | "replace_selection"
     | "webSearch"
     | "load_skill";

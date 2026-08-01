@@ -60,8 +60,33 @@ export interface PaAgentToolExecutionResult {
     metadata?: Record<string, unknown>;
 }
 
+/**
+ * One complete assistant tool phase, presented to an executor before any
+ * individual call is dispatched. Operations uses this seam to freeze all
+ * writable calls from the phase as one user-confirmable intent while leaving
+ * ordinary read-only calls on the existing execution path.
+ */
+export interface PaAgentToolBatchPreparationInput {
+    runId: string;
+    turnId: string;
+    turnIndex: number;
+    userInput: string;
+    toolCalls: readonly ParsedBufferedToolCall[];
+    toolMode?: PaAgentToolMode;
+    controlSnapshot?: AgentControlSnapshot;
+    signal: AbortSignal;
+}
+
+export interface PaAgentToolBatchPreparationResult {
+    /** Results keyed by tool-call id. Calls not present continue normally. */
+    toolResults: ReadonlyMap<string, PaAgentToolExecutionResult>;
+}
+
 export interface PaAgentToolExecutor {
     execute(input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult>;
+    prepareBatch?(
+        input: PaAgentToolBatchPreparationInput,
+    ): Promise<PaAgentToolBatchPreparationResult | void>;
     /**
      * Optional hybrid-dispatch lookup. Returns the tool's preferred execution mode (defaults to "parallel"
      * when omitted). When the loop is in "hybrid" mode, any tool returning "sequential" forces the whole

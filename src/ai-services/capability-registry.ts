@@ -34,6 +34,8 @@ export interface CapabilityRegistryOptions {
 export interface CapabilityExportFilter {
     allowedToolNames?: ReadonlySet<string>;
     blockedToolNames?: ReadonlySet<string>;
+    /** Action capabilities stay undiscoverable unless the current run opted in. */
+    includeActions?: boolean;
 }
 
 export class CapabilityRegistry {
@@ -293,7 +295,10 @@ export class CapabilityRegistry {
 
     private listCapabilitiesForExport(filter?: CapabilityExportFilter): AgentCapability[] {
         return this.policyEngine.filterExportable(this.listCapabilities())
-            .filter((capability) => capability.kind === "tool")
+            .filter((capability) => (
+                capability.kind === "tool"
+                || (capability.kind === "action" && filter?.includeActions === true)
+            ))
             .filter((capability) => isCapabilityAllowedForExport(capability.name, filter));
     }
 

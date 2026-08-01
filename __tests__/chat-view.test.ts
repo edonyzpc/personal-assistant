@@ -3,11 +3,17 @@ import { readFileSync } from 'node:fs';
 import { Component, MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
-import { CHAT_MENU_IDLE_CLOSE_MS, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
+import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
 import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
+import type {
+    OperationsExecutionResult,
+    OperationsIntent,
+    PreparedOperation,
+    UndoResult,
+} from '../src/ai-services/operations/types';
 
 jest.mock('obsidian');
 
@@ -43,10 +49,20 @@ const mockStreamLLM = jest.fn<(
     chatHistory?: unknown[],
     options?: StreamLLMOptions,
 ) => Promise<void>>();
+const mockConfirmOperationsIntent = jest.fn<(intentId: string) => Promise<OperationsExecutionResult>>();
+const mockCancelOperationsIntent = jest.fn<(intentId: string) => OperationsIntent>();
+const mockCancelPendingOperations = jest.fn<() => void>();
+const mockUndoOperations = jest.fn<(receiptIds: readonly string[]) => Promise<UndoResult[]>>();
+const mockDisposeChatService = jest.fn<() => void>();
 
 jest.mock('../src/ai-services/chat-service', () => ({
     ChatService: jest.fn().mockImplementation(() => ({
         streamLLM: mockStreamLLM,
+        confirmOperationsIntent: mockConfirmOperationsIntent,
+        cancelOperationsIntent: mockCancelOperationsIntent,
+        cancelPendingOperations: mockCancelPendingOperations,
+        undoOperations: mockUndoOperations,
+        dispose: mockDisposeChatService,
     })),
 }));
 
@@ -97,6 +113,7 @@ class MockElement {
     readonly classList = new MockClassList();
     readonly children: MockElement[] = [];
     readonly attributes = new Map<string, string>();
+    readonly dataset: Record<string, string> = {};
     readonly listeners = new Map<string, Array<(event: unknown) => void>>();
     readonly style = {
         values: new Map<string, string>(),
@@ -597,7 +614,13 @@ afterEach(async () => {
     }));
 });
 
-function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; chatHistoryManager?: unknown; setupIssue?: string | null } = {}) {
+function createView(options: {
+    withMarkdownLeaf?: boolean;
+    panelWidth?: number;
+    chatHistoryManager?: unknown;
+    setupIssue?: string | null;
+    operationsEnabled?: boolean;
+} = {}) {
     const containerEl = new MockElement('div');
     containerEl.clientWidth = options.panelWidth ?? 600;
     const workspaceHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -637,6 +660,7 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
     };
     const plugin = {
         app,
+        isOperationsAgentEnabled: options.operationsEnabled === true,
         settings: {
             debug: false,
             memoryEnabled: true,
@@ -654,6 +678,8 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
             aiProvider: 'openai',
             baseURL: '',
             chatModelName: 'gpt-test',
+            operationsAgentEnabled: options.operationsEnabled === true,
+            operationsProactiveSaveSuggestionsEnabled: true,
         },
         chatHistoryManager: options.chatHistoryManager,
         memoryStatus: {
@@ -683,6 +709,11 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
         }),
         createChatService: jest.fn(() => ({
             streamLLM: mockStreamLLM,
+            confirmOperationsIntent: mockConfirmOperationsIntent,
+            cancelOperationsIntent: mockCancelOperationsIntent,
+            cancelPendingOperations: mockCancelPendingOperations,
+            undoOperations: mockUndoOperations,
+            dispose: mockDisposeChatService,
         })),
         openMemorySettings: jest.fn(),
         log: jest.fn(),
@@ -781,6 +812,12 @@ describe('LLMView turn lifecycle', () => {
         animationFrames = [];
         nextAnimationFrameId = 1;
         mockStreamLLM.mockReset();
+        mockConfirmOperationsIntent.mockReset();
+        mockCancelOperationsIntent.mockReset();
+        mockCancelPendingOperations.mockReset();
+        mockUndoOperations.mockReset();
+        mockDisposeChatService.mockReset();
+        mockUndoOperations.mockResolvedValue([]);
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockClear();
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             el.setText(markdown);
@@ -832,6 +869,264 @@ describe('LLMView turn lifecycle', () => {
         const { view } = createView();
 
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
+    });
+
+    it('keeps an Operations preview inline and inert until the model turn finishes, then supports confirm and Undo', async () => {
+        const { view, containerEl } = createView({ operationsEnabled: true });
+        await view.onOpen();
+        const operation: PreparedOperation = {
+            id: 'operation_1',
+            toolCallId: 'call_1',
+            name: 'vault_create',
+            input: {
+                path: '0.unsorted/decision.md',
+                content: '# Decision\n\nKeep the quiet default.',
+            },
+            path: '0.unsorted/decision.md',
+            expectedBefore: null,
+            expectedAfter: '# Decision\n\nKeep the quiet default.',
+        };
+        const intent: OperationsIntent = {
+            id: 'intent_1',
+            runId: 'run_1',
+            turnId: 'turn_1',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            operations: [operation],
+            state: 'pending',
+        };
+        mockCancelOperationsIntent.mockReturnValue({ ...intent, state: 'cancelled' });
+        mockConfirmOperationsIntent.mockResolvedValue({
+            intentId: intent.id,
+            state: 'completed',
+            operations: [{
+                operationId: operation.id,
+                toolCallId: operation.toolCallId,
+                name: operation.name,
+                path: operation.path,
+                status: 'succeeded',
+                receiptId: 'receipt_1',
+                auditStatus: 'written',
+                auditRetentionWarning: 'cleanup unavailable',
+            }],
+        });
+        mockUndoOperations.mockResolvedValue([{
+            receiptId: 'receipt_1',
+            operationId: operation.id,
+            path: operation.path,
+            status: 'undone',
+            auditStatus: 'written',
+            auditRetentionWarning: 'cleanup unavailable',
+        }]);
+
+        getTextArea(containerEl).value = 'Save this decision';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.options.onOperationsIntentStaged?.(intent);
+
+        const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+        const confirmButton = getButtonByText(card, 'Confirm changes');
+        expect(confirmButton.disabled).toBe(true);
+        expect(mockConfirmOperationsIntent).not.toHaveBeenCalled();
+        expect(allText(card)).toContain('0.unsorted/decision.md');
+        expect(allText(card)).toContain('Keep the quiet default.');
+
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        expect(allText(containerEl)).toContain('The current proposal is ready for review below. Nothing has been written yet.');
+        expect(confirmButton.disabled).toBe(false);
+        await confirmButton.click();
+        await flushPromises();
+        expect(mockConfirmOperationsIntent).toHaveBeenCalledWith(intent.id);
+        expect(allText(card)).toContain('Changes applied.');
+        expect(allText(card)).toContain('older audit files may not have been cleaned up');
+
+        const undoButton = getButtonByText(card, 'Undo');
+        expect(undoButton.hidden).toBe(false);
+        await undoButton.click();
+        await flushPromises();
+        expect(mockUndoOperations).toHaveBeenCalledWith(['receipt_1']);
+        expect(allText(card)).toContain('Undone; older audit files may not have been cleaned up');
+    });
+
+    it('submits one visible save request from a qualifying vault-backed conclusion', async () => {
+        const { view, containerEl } = createView({ operationsEnabled: true });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'Summarize the decision from these notes';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            contextUsed: [{
+                category: 'current-note',
+                label: 'Current note',
+                sources: [{ path: 'notes/decision.md' }],
+            }],
+        });
+        streamCalls[0].onChunk('# Decision\n\n' + 'A source-backed conclusion with a clear next step. '.repeat(12));
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const suggestion = getElementByClass(containerEl, 'pa-operations-save-suggestion');
+        expect(allText(suggestion)).toContain('worth keeping');
+        jest.useFakeTimers();
+        getButtonByText(suggestion, 'Save').click();
+        jest.runOnlyPendingTimers();
+        await Promise.resolve();
+        jest.useRealTimers();
+        await flushPromises();
+
+        expect(streamCalls).toHaveLength(2);
+        expect(streamCalls[1].prompt).toContain('Save the conclusion from your previous answer');
+        expect(getElementsByClass(containerEl, 'pa-operations-save-suggestion')).toHaveLength(1);
+        streamCalls[1].resolve();
+        await flushPromises();
+    });
+
+    it('keeps a save suggestion retryable when a draft blocks dispatch', async () => {
+        const { view, containerEl } = createView({ operationsEnabled: true });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'Summarize this plan';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            contextUsed: [{ category: 'current-note', label: 'Current note' }],
+        });
+        streamCalls[0].onChunk('## Plan\n\n- ' + 'A complete, source-backed plan with a settled decision. '.repeat(12));
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'my next question';
+        const suggestion = getElementByClass(containerEl, 'pa-operations-save-suggestion');
+        const saveButton = getButtonByText(suggestion, 'Save');
+        jest.useFakeTimers();
+        saveButton.click();
+        jest.runOnlyPendingTimers();
+        await Promise.resolve();
+        jest.useRealTimers();
+        await flushPromises();
+
+        expect(textArea.value).toBe('my next question');
+        expect(streamCalls).toHaveLength(1);
+        expect(saveButton.hidden).toBe(false);
+        expect(saveButton.disabled).toBe(false);
+        expect(allText(suggestion)).toContain('Send your current draft first');
+
+        textArea.value = '';
+        jest.useFakeTimers();
+        saveButton.click();
+        jest.runOnlyPendingTimers();
+        await Promise.resolve();
+        jest.useRealTimers();
+        await flushPromises();
+
+        expect(streamCalls).toHaveLength(2);
+        expect(streamCalls[1].prompt).toContain('Save the conclusion from your previous answer');
+        expect(saveButton.hidden).toBe(true);
+        streamCalls[1].resolve();
+        await flushPromises();
+    });
+
+    it.each(['Clear Chat', 'New Chat'] as const)(
+        '%s discards pending Operations intents before resetting the conversation',
+        async (actionLabel) => {
+            const { view, containerEl } = createView({ operationsEnabled: true });
+            await view.onOpen();
+            mockCancelOperationsIntent.mockClear();
+            mockCancelPendingOperations.mockClear();
+
+            const operation: PreparedOperation = {
+                id: `operation_${actionLabel}`,
+                toolCallId: `call_${actionLabel}`,
+                name: 'vault_append',
+                input: { path: 'notes/decision.md', content: '\nKeep this.' },
+                path: 'notes/decision.md',
+                expectedBefore: '# Decision',
+                expectedAfter: '# Decision\nKeep this.',
+            };
+            const intent: OperationsIntent = {
+                id: `intent_${actionLabel}`,
+                runId: 'run_reset',
+                turnId: 'turn_reset',
+                createdAt: Date.now(),
+                expiresAt: Date.now() + 60_000,
+                operations: [operation],
+                state: 'pending',
+            };
+
+            getTextArea(containerEl).value = 'Prepare a note update';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            streamCalls[0].options.onOperationsIntentStaged?.(intent);
+            streamCalls[0].onChunk('Review this proposed change.');
+            streamCalls[0].resolve();
+            await flushPromises();
+            await flushPromises();
+
+            const card = getElementByClass(containerEl, 'pa-operations-intent-card');
+            const confirmButton = getButtonByText(card, 'Confirm changes');
+            let releasePendingWrites!: () => void;
+            const pendingWrites = new Promise<void>((resolve) => {
+                releasePendingWrites = resolve;
+            });
+            const persistence = (view as unknown as {
+                conversationPersistence: { waitForPendingWrites: () => Promise<void> };
+            }).conversationPersistence;
+            const waitForPendingWrites = jest.spyOn(persistence, 'waitForPendingWrites')
+                .mockReturnValueOnce(pendingWrites);
+            mockCancelOperationsIntent.mockClear();
+            mockCancelPendingOperations.mockClear();
+            mockConfirmOperationsIntent.mockClear();
+            getButtonByText(containerEl, actionLabel).click();
+            await Promise.resolve();
+
+            expect(waitForPendingWrites).toHaveBeenCalledTimes(1);
+            expect(mockCancelOperationsIntent).toHaveBeenCalledWith(intent.id);
+            expect(mockCancelPendingOperations).toHaveBeenCalledTimes(1);
+            expect(confirmButton.disabled).toBe(true);
+            expect(confirmButton.hidden).toBe(true);
+            confirmButton.click();
+            expect(mockConfirmOperationsIntent).not.toHaveBeenCalled();
+            expect(getElementsByClass(containerEl, 'pa-operations-intent-card')).toHaveLength(1);
+
+            releasePendingWrites();
+            await flushPromises();
+            await flushPromises();
+            expect(getElementsByClass(containerEl, 'pa-operations-intent-card')).toHaveLength(0);
+        },
+    );
+
+    it('formats bounded operation-specific previews without HTML injection', () => {
+        const operation = {
+            id: 'operation_preview',
+            toolCallId: 'call_preview',
+            name: 'frontmatter_update',
+            input: {
+                path: 'notes/project.md',
+                set: { status: '<script>alert(1)</script>' },
+                delete: ['legacy'],
+            },
+            path: 'notes/project.md',
+            expectedBefore: '---\nlegacy: true\n---\nBody',
+            expectedAfter: '---\nstatus: value\n---\nBody',
+        } satisfies PreparedOperation;
+
+        expect(formatOperationsPreview(operation)).toBe([
+            'Set status: "<script>alert(1)</script>"',
+            'Remove legacy',
+        ].join('\n'));
     });
 
     afterEach(() => {
@@ -3180,6 +3475,24 @@ describe('LLMView turn lifecycle', () => {
 
         expect(containerEl.classList.contains('is-narrow')).toBe(true);
         expect(containerEl.classList.contains('is-compact')).toBe(true);
+    });
+
+    it('keeps Operations cards scoped to Chat with touch-sized actions', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        const suggestionActions = getCssRuleBlock(
+            css,
+            '.pa-chat-view .pa-operations-save-suggestion__actions > button',
+        );
+        const intentActions = getCssRuleBlock(
+            css,
+            '.pa-chat-view .pa-operations-intent-card__undo',
+        );
+
+        expect(css).toContain('.pa-chat-view .pa-operations-save-suggestion {');
+        expect(css).toContain('.pa-chat-view .pa-operations-intent-card {');
+        expect(css).toMatch(/\.pa-chat-view \.pa-operations-intent-card \[hidden\] \{\s*display: none;\s*\}/);
+        expect(suggestionActions).toContain('min-height: 44px;');
+        expect(intentActions).toContain('min-height: 44px;');
     });
 
     it('keeps message actions discoverable in the bottom toolbar', () => {

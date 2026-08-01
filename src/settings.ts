@@ -275,8 +275,14 @@ export interface PluginManagerSettings {
     memoryExtractionIncludeVaultInsights: boolean;
     memoryExtractionConsent: MemoryExtractionConsentSettings;
     vssCacheExcludePath: string[];
-    /** Operations Agent mode (Beta): enable AI to append content to the active note. */
+    /** Operations Agent mode (Beta): allow staged, user-confirmed core vault writes. */
     operationsAgentEnabled: boolean;
+    /** Offer at most one quiet save suggestion in a qualifying conversation. */
+    operationsProactiveSaveSuggestionsEnabled: boolean;
+    /** Explicit privacy opt-in for before/after content in Operations audit files. */
+    operationsAuditIncludeContent: boolean;
+    /** Operations audit retention window. */
+    operationsAuditRetentionDays: 30 | 90;
     /** Low-friction raw note capture. AI post-processing stays disabled until its slice is complete. */
     quickCapture: QuickCaptureSettings;
     /** Shared Data Boundary policy for source selection and provider disclosure. */
@@ -389,6 +395,9 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     // value, so existing users keep their configured exclusions.
     vssCacheExcludePath: [LEGACY_CONFIG_DIR],
     operationsAgentEnabled: false,
+    operationsProactiveSaveSuggestionsEnabled: true,
+    operationsAuditIncludeContent: false,
+    operationsAuditRetentionDays: 30,
     quickCapture: { ...QUICK_CAPTURE_DEFAULTS },
     dataBoundary: {
         excludedFolders: [...DATA_BOUNDARY_DEFAULTS.excludedFolders],
@@ -538,7 +547,13 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     // architecture stays enabled until a real authorization source is wired in.
     // Do not trust persisted data.json for this field.
     merged.licenseTier = MOCK_LICENSE_TIER;
-    merged.operationsAgentEnabled = OPERATIONS_AGENT_RUNTIME_ENABLED;
+    merged.operationsAgentEnabled = loadedObject.operationsAgentEnabled === true;
+    merged.operationsProactiveSaveSuggestionsEnabled =
+        typeof loadedObject.operationsProactiveSaveSuggestionsEnabled === "boolean"
+            ? loadedObject.operationsProactiveSaveSuggestionsEnabled
+            : DEFAULT_SETTINGS.operationsProactiveSaveSuggestionsEnabled;
+    merged.operationsAuditIncludeContent = loadedObject.operationsAuditIncludeContent === true;
+    merged.operationsAuditRetentionDays = loadedObject.operationsAuditRetentionDays === 90 ? 90 : 30;
     // Pagelet has its own per-field normalizer (8 fields, mixed types).
     // Delegating keeps the legacy merge focused on settings that predate
     // Pagelet and avoids polluting this file with Pagelet-specific bounds.
@@ -4107,6 +4122,41 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(plugin.settings.operationsAgentEnabled)
                     .onChange(async (value) => {
                         plugin.settings.operationsAgentEnabled = value;
+                        await plugin.saveSettings();
+                    });
+            });
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.operationsAgent.proactiveSave.name"))
+            .setDesc(this.t("plugin.settings.operationsAgent.proactiveSave.desc"))
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(plugin.settings.operationsProactiveSaveSuggestionsEnabled)
+                    .onChange(async (value) => {
+                        plugin.settings.operationsProactiveSaveSuggestionsEnabled = value;
+                        await plugin.saveSettings();
+                    });
+            });
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.operationsAgent.auditContent.name"))
+            .setDesc(this.t("plugin.settings.operationsAgent.auditContent.desc"))
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(plugin.settings.operationsAuditIncludeContent)
+                    .onChange(async (value) => {
+                        plugin.settings.operationsAuditIncludeContent = value;
+                        await plugin.saveSettings();
+                    });
+            });
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.operationsAgent.auditRetention.name"))
+            .setDesc(this.t("plugin.settings.operationsAgent.auditRetention.desc"))
+            .addDropdown((dropdown) => {
+                dropdown
+                    .addOption("30", this.t("plugin.settings.operationsAgent.auditRetention.30"))
+                    .addOption("90", this.t("plugin.settings.operationsAgent.auditRetention.90"))
+                    .setValue(String(plugin.settings.operationsAuditRetentionDays))
+                    .onChange(async (value) => {
+                        plugin.settings.operationsAuditRetentionDays = value === "90" ? 90 : 30;
                         await plugin.saveSettings();
                     });
             });

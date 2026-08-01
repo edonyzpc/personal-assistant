@@ -29,6 +29,9 @@ export interface AiServiceHost {
         licenseTier: AgentCapabilityTier;
         memoryEnabled: boolean;
         operationsAgentEnabled: boolean;
+        operationsProactiveSaveSuggestionsEnabled: boolean;
+        operationsAuditIncludeContent: boolean;
+        operationsAuditRetentionDays: 30 | 90;
         statisticsVaultId: string;
     };
 

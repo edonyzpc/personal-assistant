@@ -79,11 +79,143 @@ export class ToolExecutionDispatcher {
         const parsedToolCalls = [...buffers]
             .sort(compareBufferedToolCallOrder)
             .map((buffer) => parseBufferedToolCall(buffer));
+        const batchPreparationToolCalls = this.collectBatchPreparationToolCalls(
+            parsedToolCalls,
+            turnToolMode,
+            turnControlSnapshot,
+        );
+        const preparation = await this.prepareToolBatch(
+            turnId,
+            turnIndex,
+            batchPreparationToolCalls,
+            turnToolMode,
+            turnControlSnapshot,
+        );
         const dispatch = this.resolveBatchExecutionMode(parsedToolCalls);
         if (dispatch === "parallel") {
-            return this.executeToolCallsParallel(turnId, turnIndex, parsedToolCalls, turnToolMode, turnControlSnapshot);
+            const execution = await this.executeToolCallsParallel(
+                turnId,
+                turnIndex,
+                parsedToolCalls,
+                turnToolMode,
+                turnControlSnapshot,
+                preparation.toolResults,
+            );
+            return {
+                ...execution,
+                diagnostics: [...preparation.diagnostics, ...execution.diagnostics],
+            };
         }
-        return this.executeToolCallsSequential(turnId, turnIndex, parsedToolCalls, turnToolMode, turnControlSnapshot);
+        const execution = await this.executeToolCallsSequential(
+            turnId,
+            turnIndex,
+            parsedToolCalls,
+            turnToolMode,
+            turnControlSnapshot,
+            preparation.toolResults,
+        );
+        return {
+            ...execution,
+            diagnostics: [...preparation.diagnostics, ...execution.diagnostics],
+        };
+    }
+
+    private collectBatchPreparationToolCalls(
+        toolCalls: ParsedBufferedToolCall[],
+        toolMode: PaAgentToolMode | undefined,
+        controlSnapshot: AgentControlSnapshot | undefined,
+    ): ParsedBufferedToolCall[] {
+        if (toolMode === "final_answer_only") return [];
+        const meaningfulToolCallNames = collectMeaningfulToolCallNames(toolCalls);
+        const projectedSeen = new Set(this.seenToolCallKeys);
+        let projectedCount = this.toolCallCount;
+        const eligible: ParsedBufferedToolCall[] = [];
+        for (const toolCall of toolCalls) {
+            if (this.classifyControlSnapshotSkip(toolCall, controlSnapshot)) continue;
+            if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) continue;
+            if (projectedCount >= this.config.maxToolCalls || toolCall.parseError) continue;
+            const key = normalizeToolCallKey(toolCall);
+            if (projectedSeen.has(key)) continue;
+            projectedSeen.add(key);
+            projectedCount += 1;
+            eligible.push(toolCall);
+        }
+        return eligible;
+    }
+
+    private async prepareToolBatch(
+        turnId: string,
+        turnIndex: number,
+        toolCalls: ParsedBufferedToolCall[],
+        toolMode: PaAgentToolMode | undefined,
+        controlSnapshot: AgentControlSnapshot | undefined,
+    ): Promise<{
+        toolResults: ReadonlyMap<string, PaAgentToolExecutionResult>;
+        diagnostics: Array<Record<string, unknown>>;
+    }> {
+        const executor = this.config.toolExecutor;
+        if (!executor?.prepareBatch || toolMode === "final_answer_only" || toolCalls.length === 0) {
+            return { toolResults: new Map(), diagnostics: [] };
+        }
+        const controller = new AbortController();
+        const interrupt = this.createToolInterruptPromise(controller);
+        const preparationPromise: Promise<BatchPreparationRaceResult> = Promise.resolve().then(() =>
+            executor.prepareBatch!({
+                runId: this.config.runId,
+                turnId,
+                turnIndex,
+                userInput: this.config.userInput,
+                toolCalls,
+                ...(toolMode ? { toolMode } : {}),
+                ...(controlSnapshot ? { controlSnapshot } : {}),
+                signal: controller.signal,
+            }),
+        ).then(
+            (result) => ({ type: "batch_completed" as const, result }),
+            (error) => ({ type: "batch_rejected" as const, error }),
+        );
+        try {
+            const result = await Promise.race([preparationPromise, interrupt.promise]);
+            switch (result.type) {
+                case "batch_completed":
+                    return { toolResults: result.result?.toolResults ?? new Map(), diagnostics: [] };
+                case "batch_rejected":
+                    return {
+                        toolResults: new Map(),
+                        diagnostics: [{
+                            type: "tool_batch_prepare_failed",
+                            errorType: result.error instanceof Error ? result.error.name : "unknown",
+                        }],
+                    };
+                case "tool_timeout":
+                    return {
+                        toolResults: new Map(),
+                        diagnostics: [{
+                            type: "tool_batch_prepare_timeout",
+                            timeoutMs: this.config.toolTimeoutMs,
+                        }],
+                    };
+                case "aborted":
+                case "abort_timeout":
+                    return {
+                        toolResults: new Map(),
+                        diagnostics: [{ type: "tool_batch_prepare_aborted" }],
+                    };
+                case "wall_clock_exceeded":
+                    return {
+                        toolResults: new Map(),
+                        diagnostics: [{ type: "tool_batch_prepare_wall_clock_exceeded" }],
+                    };
+                case "completed":
+                case "rejected":
+                    return {
+                        toolResults: new Map(),
+                        diagnostics: [{ type: "tool_batch_prepare_invalid_runtime_state" }],
+                    };
+            }
+        } finally {
+            interrupt.cleanup();
+        }
     }
 
     private resolveBatchExecutionMode(parsedToolCalls: ParsedBufferedToolCall[]): "sequential" | "parallel" {
@@ -107,6 +239,7 @@ export class ToolExecutionDispatcher {
         parsedToolCalls: ParsedBufferedToolCall[],
         turnToolMode: PaAgentToolMode | undefined,
         turnControlSnapshot: AgentControlSnapshot | undefined,
+        preparedToolResults: ReadonlyMap<string, PaAgentToolExecutionResult>,
     ): Promise<ToolExecutionSummary> {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         const diagnostics: Array<Record<string, unknown>> = [];
@@ -131,7 +264,8 @@ export class ToolExecutionDispatcher {
             } else {
                 this.seenToolCallKeys.add(normalizeToolCallKey(toolCall));
                 this._toolCallCount += 1;
-                executionResult = await this.executeRealToolCall(turnId, turnIndex, toolCall);
+                executionResult = preparedToolResults.get(toolCall.id)
+                    ?? await this.executeRealToolCall(turnId, turnIndex, toolCall);
             }
 
             const toolResult = this.config.emitToolResult(turnId, toolCall, executionResult);
@@ -154,6 +288,7 @@ export class ToolExecutionDispatcher {
         parsedToolCalls: ParsedBufferedToolCall[],
         turnToolMode: PaAgentToolMode | undefined,
         turnControlSnapshot: AgentControlSnapshot | undefined,
+        preparedToolResults: ReadonlyMap<string, PaAgentToolExecutionResult>,
     ): Promise<ToolExecutionSummary> {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         const diagnostics: Array<Record<string, unknown>> = [];
@@ -189,7 +324,8 @@ export class ToolExecutionDispatcher {
         const pending: Array<Promise<PaAgentToolExecutionResult>> = entries.map((entry) =>
             entry.skipResult !== undefined
                 ? Promise.resolve(entry.skipResult)
-                : this.executeRealToolCall(turnId, turnIndex, entry.toolCall),
+                : Promise.resolve(preparedToolResults.get(entry.toolCall.id))
+                    .then((prepared) => prepared ?? this.executeRealToolCall(turnId, turnIndex, entry.toolCall)),
         );
         const results = await Promise.all(pending);
 
@@ -561,6 +697,13 @@ type ToolExecutionRaceResult =
     | { type: "aborted" }
     | { type: "wall_clock_exceeded" }
     | { type: "abort_timeout" };
+
+type BatchPreparationRaceResult =
+    | {
+        type: "batch_completed";
+        result: Awaited<ReturnType<NonNullable<PaAgentToolExecutor["prepareBatch"]>>>;
+    }
+    | { type: "batch_rejected"; error: unknown };
 
 interface ParallelToolEntry {
     toolCall: ParsedBufferedToolCall;

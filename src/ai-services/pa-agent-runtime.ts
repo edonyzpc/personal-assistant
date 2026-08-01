@@ -10,6 +10,7 @@ import type { MemoryMode } from "../memory-manager";
 import { MemorySearchTool } from "./memory-search-tool";
 import {
     createPaAgentAnswerStreamPrompt,
+    createOperationsPromptGuidance,
     formatCanonicalHostContext,
     formatSkillCatalog,
     formatToolObservations,
@@ -44,16 +45,25 @@ import { CapabilityRegistry } from "./capability-registry";
 import { createCoreToolCapabilities } from "./capability-adapter";
 import {
     agentResultToChatToolResult,
+    type AgentCapability,
     type AgentCapabilityContext,
     type AgentRuntimePlatform,
     type CapabilityProvider,
 } from "./capability-types";
-import { PolicyEngine, type PolicyEngineOptions } from "./policy-engine";
+import {
+    PolicyEngine,
+    type CapabilityPolicyDecision,
+    type PolicyEngineOptions,
+} from "./policy-engine";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { errorMessage } from "./agent-utils";
 import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-provider";
-import { AppendToolProvider } from "./append-tool-provider";
-import { SelectionToolProvider } from "./selection-tool-provider";
+import { OperationsToolProvider } from "./operations/operations-tool-provider";
+import {
+    createOperationsStagingToolExecutor,
+    type OperationsIntentStager,
+} from "./operations/operations-tool-executor";
+import { CORE_WRITE_TOOL_NAMES } from "./operations/types";
 import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
@@ -86,6 +96,7 @@ import {
     type PaAgentModel,
     type PaAgentModelInput,
     type PaAgentModelStreamChunk,
+    type PaAgentTurnSummary,
     type PaAgentToolExecutor,
 } from "./pa-agent-loop";
 import {
@@ -94,8 +105,10 @@ import {
     type PaAgentProviderUsage,
 } from "./context";
 import {
+    createAgentControlSnapshot,
     createInitialAgentControlSnapshot,
     toolConstraintsFromAgentControlSnapshot,
+    type AgentControlSnapshot,
 } from "./pa-agent-control-policy";
 import type {
     AgentEvent,
@@ -143,6 +156,8 @@ export interface PaAgentRuntimeOptions {
     runtimePlatform?: AgentRuntimePlatform;
     additionalCapabilityProviders?: readonly CapabilityProvider[];
     skillContextProvider?: SkillContextProvider | null;
+    /** Per-view Operations controller. Its presence enables staging, never direct writes. */
+    operationsIntentController?: OperationsIntentStager;
     /**
      * Write Action Framework v1 PolicyEngine parameters (SDD §4 + §5.1).
      *
@@ -189,6 +204,36 @@ interface PaAgentStartupTiming {
 const MAX_TURN_WALL_CLOCK_MS = 180_000;
 const MAX_CHAT_HISTORY_CHARS = 60_000;
 export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 24000;
+const OPERATIONS_SUPPORT_TOOL_NAMES = [
+    "search_vault_metadata",
+    "list_recent_notes",
+    "read_note_outline",
+    "inspect_obsidian_note",
+    "search_vault_snippets",
+    "list_vault_tags",
+] as const;
+
+class OperationsTurnPolicyEngine extends PolicyEngine {
+    private actionsAllowedForTurn = false;
+
+    setActionsAllowedForTurn(allowed: boolean): void {
+        this.actionsAllowedForTurn = allowed;
+    }
+
+    override canExport(capability: AgentCapability): CapabilityPolicyDecision {
+        if (capability.kind === "action" && !this.actionsAllowedForTurn) {
+            return { allowed: false, reason: "action capabilities require current-turn write intent" };
+        }
+        return super.canExport(capability);
+    }
+
+    override canExecute(capability: AgentCapability): CapabilityPolicyDecision {
+        if (capability.kind === "action" && !this.actionsAllowedForTurn) {
+            return { allowed: false, reason: "action capabilities require current-turn write intent" };
+        }
+        return super.canExecute(capability);
+    }
+}
 export const canFallbackToNonStreaming = (
     error: unknown,
     receivedAnyVisibleOutput: boolean,
@@ -601,6 +646,7 @@ export class PaAgentRuntime {
     private readonly memoryTool: MemorySearchTool;
     private readonly contextManager: PaAgentContextManager;
     private readonly toolRegistry: CapabilityRegistry;
+    private readonly operationsPolicyEngine: OperationsTurnPolicyEngine | null;
     private readonly skillContextProvider: SkillContextProvider | null;
     private skillContextProviderRegistered = false;
     private readonly options: PaAgentRuntimeOptions;
@@ -621,10 +667,9 @@ export class PaAgentRuntime {
         this.memoryTool = new MemorySearchTool(host, aiUtils);
         this.contextManager = new PaAgentContextManager();
         const runtimePlatform = this.options.runtimePlatform ?? "desktop";
-        // Operations Agent mode: when enabled, override policy to allow
-        // chat-with-actions and include the AppendToolProvider.
-        const operationsAgentEnabled = this.host.isOperationsAgentEnabled;
-        const effectivePolicyOptions = operationsAgentEnabled
+        const operationsRuntimeAvailable = this.host.isOperationsAgentEnabled
+            && Boolean(options.operationsIntentController);
+        const effectivePolicyOptions = operationsRuntimeAvailable
             ? {
                 ...options.policyOptions,
                 runKind: "chat-with-actions" as const,
@@ -632,8 +677,14 @@ export class PaAgentRuntime {
                 allowedActionPermissions: ["local-filesystem-write" as const],
             }
             : options.policyOptions;
+        this.operationsPolicyEngine = operationsRuntimeAvailable
+            ? new OperationsTurnPolicyEngine({
+                platform: runtimePlatform,
+                ...effectivePolicyOptions,
+            })
+            : null;
         this.toolRegistry = new CapabilityRegistry({
-            policyEngine: new PolicyEngine({
+            policyEngine: this.operationsPolicyEngine ?? new PolicyEngine({
                 platform: runtimePlatform,
                 ...effectivePolicyOptions,
             }),
@@ -679,16 +730,14 @@ export class PaAgentRuntime {
         this.skillContextProvider = options.skillContextProvider === null
             ? null
             : options.skillContextProvider ?? new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
-        // Operations Agent mode: inject the AppendToolProvider into the
-        // additional capability providers so it is registered alongside
-        // any caller-supplied providers (e.g., web search).
-        if (operationsAgentEnabled) {
-            const appendProvider = new AppendToolProvider();
-            const selectionProvider = new SelectionToolProvider();
+        // Register the four bounded Operations actions only when both the
+        // persisted feature opt-in and the per-view staging controller exist.
+        if (operationsRuntimeAvailable) {
+            const operationsProvider = new OperationsToolProvider();
             const existingProviders = this.options.additionalCapabilityProviders ?? [];
             this.options = {
                 ...this.options,
-                additionalCapabilityProviders: [...existingProviders, appendProvider, selectionProvider],
+                additionalCapabilityProviders: [...existingProviders, operationsProvider],
             };
         }
     }
@@ -709,6 +758,12 @@ export class PaAgentRuntime {
     private async streamPaAgentCanonicalTurn(options: PaAgentStreamOptions): Promise<void> {
         const runtimeStartedAt = Date.now();
         const startupTimings: PaAgentStartupTiming[] = [];
+        const operationsActionsEligible = this.host.isOperationsAgentEnabled
+            && Boolean(this.options.operationsIntentController)
+            && hasOperationsWriteIntent(options.prompt);
+        let operationsIntentStaged = false;
+        let operationsAcknowledgementRequested = false;
+        this.operationsPolicyEngine?.setActionsAllowedForTurn(operationsActionsEligible);
         const recordStartupTiming = <T>(
             phase: string,
             startedAt: number,
@@ -784,6 +839,11 @@ export class PaAgentRuntime {
         });
         const availableRequiredCapabilities = this.getAvailableRequiredCapabilities(options);
         const availableSemanticToolNames = new Set<string>(availableRequiredCapabilities);
+        if (operationsActionsEligible) {
+            for (const toolName of [...CORE_WRITE_TOOL_NAMES, ...OPERATIONS_SUPPORT_TOOL_NAMES]) {
+                availableSemanticToolNames.add(toolName);
+            }
+        }
         const availableMetaToolNames = new Set<string>();
         if (this.toolRegistry.getDefinition(LOAD_SKILL_TOOL_NAME)) {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
@@ -793,7 +853,10 @@ export class PaAgentRuntime {
             availableCapabilities: availableRequiredCapabilities,
             classification: requiredCapabilityClassification,
         });
-        const toolUseConstraints = createPaAgentToolUseConstraints(options.prompt);
+        const toolUseConstraints = includeOperationsInToolUseConstraints(
+            createPaAgentToolUseConstraints(options.prompt),
+            operationsActionsEligible,
+        );
         const initialRuntimeInstruction = combineRuntimeInstructions([
             requiredCapabilityPolicy.initialRuntimeInstruction,
             createPaAgentToolConstraintRuntimeInstruction(toolUseConstraints),
@@ -802,9 +865,14 @@ export class PaAgentRuntime {
             ...(toolUseConstraints ? { constraints: toolUseConstraints } : {}),
             availableSemanticToolNames,
             availableMetaToolNames,
-            requiredToolNames: new Set(requiredCapabilityClassification.items
-                .filter((item) => item.level === "required")
-                .map((item) => item.capability)),
+            requiredToolNames: new Set([
+                ...requiredCapabilityClassification.items
+                    .filter((item) => item.level === "required")
+                    .map((item) => item.capability),
+                ...(operationsActionsEligible
+                    ? [...CORE_WRITE_TOOL_NAMES, ...OPERATIONS_SUPPORT_TOOL_NAMES]
+                    : []),
+            ]),
             ...(initialRuntimeInstruction
                 ? { initialRuntimeInstruction }
                 : {}),
@@ -833,7 +901,11 @@ export class PaAgentRuntime {
                 }
                 const activeToolUseConstraints = toolConstraintsFromAgentControlSnapshot(input.controlSnapshot)
                     ?? toolUseConstraints;
-                const schemaResult = toolRegistry.exportProviderSchemasSafe(activeToolUseConstraints);
+                const exportFilter = {
+                    ...activeToolUseConstraints,
+                    includeActions: operationsActionsEligible,
+                };
+                const schemaResult = toolRegistry.exportProviderSchemasSafe(exportFilter);
                 if (!schemaResult.ok) {
                     legacyEvents.activity("fallback-tool-disabled", "Native tool schema export failed", {
                         legacyStatus: { type: "fallback", reason: "Native tool schema export failed." } satisfies ChatAgentStatus,
@@ -844,7 +916,7 @@ export class PaAgentRuntime {
                     : [];
                 const toolDefinitions = input.toolMode === "final_answer_only"
                     ? []
-                    : toolRegistry.listDefinitions(activeToolUseConstraints);
+                    : toolRegistry.listDefinitions(exportFilter);
                 const canonicalInput = buildCanonicalModelInput(input, toolDefinitions);
                 yield {
                     type: "diagnostic",
@@ -911,7 +983,22 @@ export class PaAgentRuntime {
                 ? { blockedToolNames: toolUseConstraints.blockedToolNames }
                 : {}),
         });
-        const toolExecutor = this.actionExecutor
+        const toolExecutor = operationsActionsEligible && this.options.operationsIntentController
+            ? createOperationsStagingToolExecutor({
+                baseExecutor: baseToolExecutor,
+                registry: this.toolRegistry,
+                controller: this.options.operationsIntentController,
+                onToolRunning: (tool, message) => {
+                    options.onStatus?.({ type: "tool-running", tool, message });
+                },
+                ...(toolUseConstraints?.allowedToolNames
+                    ? { allowedToolNames: toolUseConstraints.allowedToolNames }
+                    : {}),
+                ...(toolUseConstraints?.blockedToolNames
+                    ? { blockedToolNames: toolUseConstraints.blockedToolNames }
+                    : {}),
+            })
+            : this.actionExecutor
             ? createWriteActionAwareToolExecutor({
                 baseExecutor: baseToolExecutor,
                 actionExecutor: this.actionExecutor,
@@ -935,7 +1022,50 @@ export class PaAgentRuntime {
             model,
             toolExecutor,
             hostPolicy: {
-                afterTurn: (summary) => requiredCapabilityPolicy.hostPolicy.afterTurn(summary),
+                afterTurn: async (summary) => {
+                    operationsIntentStaged ||= hasStagedOperationsIntent(summary);
+                    const decision = await requiredCapabilityPolicy.hostPolicy.afterTurn(summary);
+                    if (
+                        operationsIntentStaged
+                        && operationsAcknowledgementRequested
+                        && decision.action === "continue"
+                    ) {
+                        return {
+                            action: "stop" as const,
+                            status: "completed" as const,
+                            reason: "operations_intent_staged_acknowledgement_empty",
+                            diagnostics: [{
+                                type: "operations_intent_staged_acknowledgement_empty",
+                                message: "The inline confirmation card is the successful output; no generic finalization turn was run.",
+                            }],
+                        };
+                    }
+                    if (operationsIntentStaged && decision.action === "continue") {
+                        operationsAcknowledgementRequested = true;
+                        return {
+                            ...decision,
+                            runtimeInstruction: OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
+                            toolMode: "normal" as const,
+                            controlSnapshot: createOperationsAcknowledgementControlSnapshot(
+                                decision.controlSnapshot ?? summary.controlSnapshot,
+                            ),
+                        };
+                    }
+                    if (
+                        decision.action !== "continue"
+                        || decision.toolMode === "final_answer_only"
+                        || !decision.controlSnapshot
+                    ) {
+                        return decision;
+                    }
+                    return {
+                        ...decision,
+                        controlSnapshot: preserveOperationsActionsInControlSnapshot(
+                            decision.controlSnapshot,
+                            operationsActionsEligible,
+                        ),
+                    };
+                },
             },
             onEvent: (event) => eventAdapter.handle(event),
             ...(hostContext ? { hostContext } : {}),
@@ -1084,7 +1214,9 @@ export class PaAgentRuntime {
             ));
         const projection = this.contextManager.forPrompt({
             prompt: options.prompt,
-            chatHistory: options.chatHistory,
+            chatHistory: isOperationsStagedAcknowledgement(input.runtimeInstruction)
+                ? undefined
+                : options.chatHistory,
             transcript: input.transcript,
             turnIndex: input.turnIndex,
             hostContext,
@@ -1103,6 +1235,7 @@ export class PaAgentRuntime {
             available_skills: projection.availableSkills,
             tool_definitions: projection.toolDefinitions,
             tool_observations: projection.toolObservations,
+            operations_guidance: createOperationsPromptGuidance(toolDefinitions ?? []),
             __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
         };
     }
@@ -1349,6 +1482,201 @@ function bindStreamingToolsIfAvailable(llm: unknown, schemas: ChatToolProviderSc
 interface PaAgentToolUseConstraints {
     allowedToolNames?: ReadonlySet<string>;
     blockedToolNames?: ReadonlySet<string>;
+}
+
+export const OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION = [
+    "The current user's Operations proposal was staged successfully in the inline confirmation card, and nothing has been written yet.",
+    "Reply only with a concise acknowledgement that this current proposal is ready for review.",
+    "Do not mention internal turns, tool availability, or the state or content of any earlier proposal.",
+    "Do not call tools or claim that a write has completed.",
+].join(" ");
+
+export function isOperationsStagedAcknowledgement(runtimeInstruction?: string): boolean {
+    return runtimeInstruction === OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION;
+}
+
+function hasStagedOperationsIntent(summary: PaAgentTurnSummary): boolean {
+    return summary.toolResults.some((result) => (
+        CORE_WRITE_TOOL_NAMES.some((toolName) => toolName === result.toolName)
+        && result.content.metadata?.staged === true
+        && result.content.metadata?.wrote === false
+    ));
+}
+
+export function createOperationsAcknowledgementControlSnapshot(
+    previous?: AgentControlSnapshot,
+): AgentControlSnapshot {
+    return createAgentControlSnapshot({
+        exposureMode: "answer-ready",
+        sourceScope: previous?.sourceScope ?? "none",
+        allowedToolNames: new Set(),
+        ...(previous?.blockedToolNames ? { blockedToolNames: previous.blockedToolNames } : {}),
+        ...(previous ? { blockedReasons: previous.blockedReasons } : {}),
+        runtimeInstruction: OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
+        toolMode: "normal",
+        ...(previous ? { budgetState: previous.budgetState } : {}),
+        diagnostics: [
+            ...(previous?.diagnostics ?? []),
+            {
+                type: "operations_intent_staged_acknowledgement",
+                message: "Operations proposal is staged; the next turn may only acknowledge the inline confirmation card.",
+            },
+        ],
+    });
+}
+
+export function preserveOperationsActionsInControlSnapshot(
+    snapshot: AgentControlSnapshot,
+    includeOperations: boolean,
+): AgentControlSnapshot {
+    if (!includeOperations || snapshot.toolMode === "final_answer_only" || !snapshot.allowedToolNames) {
+        return snapshot;
+    }
+    return {
+        ...snapshot,
+        allowedToolNames: new Set([
+            ...snapshot.allowedToolNames,
+            ...CORE_WRITE_TOOL_NAMES,
+        ]),
+    };
+}
+
+const OPERATIONS_WRITE_INTENT_ENGLISH = [
+    /^(?:please\s+)?save(?:\s+(?:it|this))?[.!]?$/iu,
+    /\b(?:save|store|persist)\s+(?:it|this|that|these|previous|above)\b/iu,
+    /\b(?:save|store|persist)\s+(?:(?:the|our|your|my)\s+)?(?:conclusion|decision|result|summary|plan|answer|analysis)\b/iu,
+    /\b(?:save|store|persist)\b.{0,40}\b(?:to|into|in|as)\b.{0,30}\b(?:note|notes|vault|markdown|frontmatter|propert(?:y|ies)|file)\b/iu,
+    /\b(?:write|append|add)\b.{0,60}\b(?:to|into)\b.{0,30}\b(?:note|notes|vault|markdown|file)\b/iu,
+    /\b(?:insert|replace)\b.{0,60}\b(?:in|into|within)\b.{0,30}\b(?:note|notes|vault|markdown|file)\b/iu,
+    /\b(?:delete|remove)\b.{0,60}\b(?:from|in|within)\b.{0,30}\b(?:note|notes|vault|markdown|file)\b/iu,
+    /\b(?:in|within)\s+(?:the\s+)?(?:(?:current|existing)\s+)?(?:note|file|markdown)\b.{0,60}\b(?:write|append|add|update|edit|insert|replace|set|change|remove|delete)\b/iu,
+    /\b(?:create|write|add)\s+(?:(?:a|an|the|this|that|my|our|your|new)\s+)?(?:markdown\s+)?(?:note|file)\b/iu,
+    /\b(?:update|edit)\s+(?:(?:the|this|that|my|our|your)\s+)?(?:(?:current|existing)\s+)?(?:note|file|markdown|frontmatter)\b/iu,
+    /\b(?:update|edit|set|change|remove|delete)\s+(?:the\s+)?(?:[\p{L}\p{N}_-]+\s+){0,3}(?:frontmatter|propert(?:y|ies))\b/iu,
+    /\b(?:save|store|persist|write|append|add|create|update|edit|insert|replace|remove|delete)\b.{0,100}[^\s"'`<>|]+\.md\b/iu,
+    /[^\s"'`<>|]+\.md\b.{0,60}\b(?:save|store|persist|write|append|add|create|update|edit|insert|replace|remove|delete)\b/iu,
+];
+const OPERATIONS_WRITE_INTENT_CHINESE = [
+    /^(?:请)?(?:保存|存一下|保存一下)(?:它|这个|这条)?[。！!]?$/u,
+    /(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改).{0,60}(?:笔记|知识库|属性|正文|文件|Markdown)/u,
+    /(?:把|将).{0,100}(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改)/u,
+    /(?:在|向).{0,40}(?:笔记|知识库|正文|文件|Markdown).{0,80}(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改)/u,
+    /(?:保存|存下)(?:这个|这条|这些|以上|上述|刚才|上一条|结论|内容|方案|决定)/u,
+    /(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改).{0,100}[^\s"'`<>|]+\.md\b/iu,
+    /[^\s"'`<>|]+\.md\b.{0,80}(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改)/iu,
+];
+
+const OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE = "save|store|persist|write|create|append|add|update|edit|insert|replace|set|change|remove|delete";
+const OPERATIONS_WRITE_ACTION_CHINESE_SOURCE = "保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|设置|变更|更改|移除|删除";
+const OPERATIONS_WRITE_ACTION_ENGLISH = new RegExp(`\\b(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`, "iu");
+const OPERATIONS_WRITE_ACTION_CHINESE = new RegExp(`(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})`, "u");
+const OPERATIONS_WRITE_NEGATION_ENGLISH = /\b(?:do\s+not|don't|never|should\s+not|shouldn't|must\s+not|mustn't|need\s+not|no\s+need\s+to|without)\b/iu;
+const OPERATIONS_WRITE_NEGATION_CHINESE = /(?:不要|别|无需|不用|不必|不应|不应该|不可|禁止)/u;
+const OPERATIONS_EXPLICIT_WRITE_ENGLISH = new RegExp([
+    `^(?:(?:please|just|only)\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
+    `^(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
+    `^i\\s+(?:want|need|would\\s+like)\\s+(?:you\\s+)?to\\s+(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
+    `^(?:in\\s+)?[^\\n]{0,120}\\.md\\b(?:\\s+(?:after|before|under|at)\\s+[^,;.!?\\n]{1,40})?[\\s,:-]{0,8}(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
+    `^(?:in|within)\\s+(?:the\\s+)?(?:(?:current|existing)\\s+)?(?:note|file|markdown)\\b(?:\\s+(?:after|before|under|at)\\s+[^,;.!?\\n]{1,40})?[\\s,:-]{0,8}(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
+].join("|"), "iu");
+const OPERATIONS_EXPLICIT_WRITE_CHINESE = new RegExp([
+    `^(?:(?:请|请帮我|帮我|麻烦你?|可以帮我|能否帮我|只需|只)\\s*)?(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})`,
+    `^(?:(?:请|我想|我要|我需要)\\s*)?(?:把|将).{0,120}(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})`,
+    `^[^\\n]{0,120}\\.md\\b(?:中|里|内|\\s*的?(?:末尾|开头|尾部|顶部)|\\s*的?[^，,。；;]{1,40}(?:后|前|下))?[\\s，,:：-]*(?:(?:请)?(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})|(?:请)?(?:把|将).{0,80}(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE}))`,
+    `^(?:请)?(?:在|向).{0,40}(?:笔记|知识库|正文|文件|Markdown)(?:中|里|内|的[^，,。；;]{0,30})?[\\s，,:：-]*(?:(?:请)?(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})|(?:请)?(?:把|将).{0,80}(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE}))`,
+].join("|"), "iu");
+
+function operationsWriteIntentCandidates(input: string): string[] {
+    const candidates = new Set<string>();
+    const clauses = input.split(/[;；。！？!?\n]+|\.(?=\s|$)/u);
+    for (const clause of clauses) {
+        const trimmed = clause.trim();
+        if (!trimmed) continue;
+        candidates.add(trimmed);
+        if (isOperationsInstructionalScope(trimmed)) continue;
+        const boundaryPattern = isOperationsNegationScope(trimmed)
+            ? /,\s*(?:and\s+)?(?:just|only)\b|，\s*(?:只需|只要|只|就)|\b(?:but|instead)\b|(?:但是|但|而是)/giu
+            : new RegExp([
+                ",\\s*(?:and\\s+)?(?:just|only)\\b",
+                "，\\s*(?:只需|只要|只|就)",
+                `\\band\\s+(?=(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b)`,
+                "\\b(?:and\\s+then|then|after\\s+that|but|instead)\\b",
+                "(?:然后|接着|随后|但是|但|而是)",
+            ].join("|"), "giu");
+        let segmentStart = 0;
+        for (const boundary of trimmed.matchAll(boundaryPattern)) {
+            const boundaryIndex = boundary.index ?? 0;
+            const segment = trimmed.slice(segmentStart, boundaryIndex).trim();
+            if (segment) candidates.add(segment);
+            segmentStart = boundaryIndex + boundary[0].length;
+        }
+        const tail = trimmed.slice(segmentStart).trim();
+        if (tail) candidates.add(tail);
+    }
+    return [...candidates];
+}
+
+function isOperationsInstructionalScope(candidate: string): boolean {
+    return /^(?:how\s+(?:do|can|should)\s+i|(?:should|can|could|would)\s+i)\b/iu.test(candidate)
+        || /^(?:what|which|why|when|where)\s+(?:is|are|do|does|would|should|can|could)\b/iu.test(candidate)
+        || /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:explain|describe|teach|translate|quote|proofread)\b/iu.test(candidate)
+        || /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:show|tell)\s+me\s+(?:how|why|when|whether|the\s+(?:steps?|method|way))\b/iu.test(candidate)
+        || /^(?:如何|怎么|怎样|是否|要不要|可否)/u.test(candidate)
+        || /^(?:请)?(?:解释|说明|描述|教我|翻译|改写|润色|校对|引用)/u.test(candidate)
+        || /^(?:请)?(?:把|将)\s*[“"'`].{0,240}[”"'`]\s*(?:翻译|改写|润色|校对|解释|说明)(?:成|为|一下)?/u.test(candidate)
+        || /^(?:请)?(?:告诉我|展示|演示)(?:如何|怎么|怎样|为什么|何时|是否)/u.test(candidate);
+}
+
+function isOperationsInstructionalCandidate(candidate: string): boolean {
+    return isOperationsInstructionalScope(candidate)
+        || /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:show|tell)\b/iu.test(candidate)
+        || /^(?:请)?(?:告诉我|展示|演示)/u.test(candidate);
+}
+
+function isOperationsNegationScope(candidate: string): boolean {
+    return /^(?:please\s+)?(?:do\s+not|don't|never|need\s+not|no\s+need\s+to|without)\b/iu.test(candidate)
+        || /^(?:请)?(?:不要|别|无需|不用|不必|不应|不应该|不可|禁止)/u.test(candidate);
+}
+
+function isOperationsWriteNegatedBeforeAction(candidate: string): boolean {
+    const actionIndexes = [
+        OPERATIONS_WRITE_ACTION_ENGLISH.exec(candidate)?.index,
+        OPERATIONS_WRITE_ACTION_CHINESE.exec(candidate)?.index,
+    ].filter((index): index is number => index !== undefined);
+    if (actionIndexes.length === 0) return false;
+    const firstActionIndex = Math.min(...actionIndexes);
+    const negationIndexes = [
+        OPERATIONS_WRITE_NEGATION_ENGLISH.exec(candidate)?.index,
+        OPERATIONS_WRITE_NEGATION_CHINESE.exec(candidate)?.index,
+    ].filter((index): index is number => index !== undefined);
+    return negationIndexes.some((index) => index < firstActionIndex);
+}
+
+/** Latest-message-only discovery gate; it exposes schemas but never authorizes a write. */
+export function hasOperationsWriteIntent(userInput: string): boolean {
+    const input = userInput.trim();
+    if (!input) return false;
+    const writeIntentPatterns = [...OPERATIONS_WRITE_INTENT_ENGLISH, ...OPERATIONS_WRITE_INTENT_CHINESE];
+    return operationsWriteIntentCandidates(input).some((candidate) => (
+        !isOperationsInstructionalCandidate(candidate)
+        && !isOperationsWriteNegatedBeforeAction(candidate)
+        && (OPERATIONS_EXPLICIT_WRITE_ENGLISH.test(candidate) || OPERATIONS_EXPLICIT_WRITE_CHINESE.test(candidate))
+        && writeIntentPatterns.some((pattern) => pattern.test(candidate))
+    ));
+}
+
+function includeOperationsInToolUseConstraints(
+    constraints: PaAgentToolUseConstraints | undefined,
+    includeOperations: boolean,
+): PaAgentToolUseConstraints | undefined {
+    if (!includeOperations || !constraints?.allowedToolNames) return constraints;
+    return {
+        ...constraints,
+        allowedToolNames: new Set([
+            ...constraints.allowedToolNames,
+            ...CORE_WRITE_TOOL_NAMES,
+        ]),
+    };
 }
 
 function createPaAgentToolUseConstraints(userInput: string): PaAgentToolUseConstraints | undefined {
@@ -1768,6 +2096,7 @@ export {
 export { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 export {
     PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES,
+    createOperationsPromptGuidance,
     formatCanonicalChatHistory,
     formatToolObservations,
     formatSkillCatalog,
