@@ -3,7 +3,7 @@
 Document status: Current
 Design status: Approved
 Delivery status: Closed
-Updated: 2026-08-01
+Updated: 2026-08-02
 Work item: B-101
 Implementation step: Step 3 — Pagelet insight action and Chat handoff
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md), [Operations capability direction](./agent-operations-capability.md), and the owner's explicit Step 3 implementation authorization on 2026-08-01.
@@ -408,9 +408,35 @@ Real-vault dogfood (`anthelion`):
 - The original plugin assets/data and anchor note were restored byte-for-byte,
   Operations returned to `false`, and the Obsidian error buffer was empty. The
   legitimate 36/day provider quota usage was retained rather than rolled back.
-- The Mac later relocked, so validation evidence is the actual Obsidian
-  DOM/state and button interactions through the running app, not a claim of a
-  fresh compositor screenshot.
+
+Supplemental visible-window evidence (`test` vault, 2026-08-02):
+
+- After the Mac was unlocked, the Step 3 visible flows were repeated in
+  Obsidian 1.13.4 through actual on-screen button clicks. The deployed
+  `main.js`, `styles.css`, and `manifest.json` still matched `dist/`
+  byte-for-byte at current `master`.
+- On `ux-journey/weekly-review-notes.md`, the direct action exposed the exact
+  one-note preview below. Cancel preserved the original SHA-256
+  `63cec1e5...`; Confirm added exactly one `pa-related` value and exposed Undo;
+  Undo restored the full original SHA-256.
+- A fresh configured-Qwen Deep Discover run on
+  `ux-journey/PA product direction.md` produced a verified two-source insight
+  with zero WebSearch observations. Clicking `Discuss in Chat` opened a new
+  Chat with the complete visible `From Pagelet` attachment, both vault sources,
+  and the default prompt, without sending it. Runtime inspection recorded
+  `chatHistory: 0`, `pendingHandoff: true`, `sourceCount: 2`, and
+  `isStreaming: false`; there were no `.pa-chat-message` elements.
+- The pending attachment and draft were removed after capture, the standard
+  `pagelet-smoke-golden.md` note was restored as the active target, and the
+  Obsidian error buffer remained empty. These fresh screenshots supplement the
+  earlier real-vault DOM/action evidence; no real-vault content appears in the
+  image assets.
+
+![Pagelet one-note action preview](../../../assets/validation/b101-step3/pagelet-action-preview.png)
+
+![Pagelet action result with Undo](../../../assets/validation/b101-step3/pagelet-action-result-undo.png)
+
+![Pagelet to Chat handoff prepared without auto-send](../../../assets/validation/b101-step3/pagelet-chat-handoff.png)
 
 No extra write tool, background write, confirmation bypass, limiter bypass,
 commit, push, or release was introduced by Step 3.
