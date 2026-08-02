@@ -1,14 +1,58 @@
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
+import {
+    createPageletChatHandoffContext,
+    type PageletChatHandoffContext,
+} from "../../ai-services/pagelet-handoff";
 import { buildReviewDeliveryReceipt } from "../attention/fingerprint";
 import type { DeliveryCandidate } from "../bubble/types";
-import type { PageletAgentVerifiedInsight } from "./types";
+import type {
+    PageletAgentValidationIdentity,
+    PageletAgentVerifiedInsight,
+} from "./types";
+
+export interface PageletAgentDirectLinkAction {
+    readonly kind: "link-related";
+    readonly candidateId: string;
+    readonly anchorPath: string;
+    readonly sourcePath: string;
+    readonly label: string;
+}
+
+export interface PageletAgentDeliveryIntegration {
+    readonly validationIdentity: PageletAgentValidationIdentity;
+    readonly handoff: PageletChatHandoffContext;
+    readonly directAction?: PageletAgentDirectLinkAction;
+}
+
+export type PageletAgentDeliveryCandidate = DeliveryCandidate & {
+    kind: "review";
+    readonly pageletAgent: PageletAgentDeliveryIntegration;
+};
 
 export function pageletAgentInsightToDeliveryCandidate(
     insight: PageletAgentVerifiedInsight,
     locale: PageletLocale,
-): DeliveryCandidate & { kind: "review" } {
+): PageletAgentDeliveryCandidate {
     const title = extractInsightTitle(insight.body);
     const whyNow = [localizedWhyNow(insight.triggerReason, locale)];
+    const directAction = buildDirectLinkAction(insight, locale);
+    const validationIdentity = freezeValidationIdentity(insight);
+    const handoff = createPageletChatHandoffContext({
+        version: 1,
+        id: insight.cacheIdentityHash,
+        body: insight.body,
+        anchor: insight.anchor,
+        sources: insight.sources,
+        sourceRefs: insight.sourceRefs.map((source) => ({
+            path: source.path,
+            title: sourceTitle(source.path),
+        })),
+        webUrls: [...new Set(insight.webObservations.map((observation) => observation.url))],
+        whyNow,
+        triggerReason: insight.triggerReason,
+        preparedAt: insight.preparedAt,
+        pipelineVersion: insight.cacheIdentity.pipelineVersion,
+    });
     return {
         id: insight.cacheIdentityHash,
         kind: "review",
@@ -32,7 +76,58 @@ export function pageletAgentInsightToDeliveryCandidate(
             anchorSourceIdentity: insight.anchor.path,
             sourceIdentities: insight.sources.map((source) => source.path),
         }),
+        pageletAgent: Object.freeze({
+            validationIdentity,
+            handoff,
+            ...(directAction ? { directAction } : {}),
+        }),
     };
+}
+
+function buildDirectLinkAction(
+    insight: PageletAgentVerifiedInsight,
+    locale: PageletLocale,
+): PageletAgentDirectLinkAction | undefined {
+    const anchorPath = normalizeComparablePath(insight.anchor.path);
+    const related = insight.sources.find(
+        (source) => normalizeComparablePath(source.path) !== anchorPath,
+    );
+    if (!related) return undefined;
+    const anchorTitle = sourceTitle(insight.anchor.path);
+    const relatedTitle = sourceTitle(related.path);
+    return Object.freeze({
+        kind: "link-related",
+        candidateId: insight.cacheIdentityHash,
+        anchorPath: insight.anchor.path,
+        sourcePath: related.path,
+        label: pageletT("pagelet.panel.agentInsight.link", locale, {
+            anchor: anchorTitle,
+            source: relatedTitle,
+        }),
+    });
+}
+
+function freezeValidationIdentity(
+    insight: PageletAgentVerifiedInsight,
+): PageletAgentValidationIdentity {
+    return Object.freeze({
+        cacheIdentity: Object.freeze({
+            ...insight.cacheIdentity,
+            anchor: Object.freeze({ ...insight.cacheIdentity.anchor }),
+            sources: Object.freeze(insight.cacheIdentity.sources.map((source) => (
+                Object.freeze({ ...source })
+            ))),
+        }),
+        cacheIdentityHash: insight.cacheIdentityHash,
+        preparedAt: insight.preparedAt,
+        webObservations: Object.freeze(insight.webObservations.map((observation) => (
+            Object.freeze({ ...observation })
+        ))),
+    });
+}
+
+function normalizeComparablePath(path: string): string {
+    return path.replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/^\.\//, "");
 }
 
 function localizedWhyNow(

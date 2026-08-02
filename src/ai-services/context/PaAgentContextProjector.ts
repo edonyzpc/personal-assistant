@@ -1,4 +1,8 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
+import {
+    createPageletChatHandoffContext,
+    type PageletChatHandoffContext,
+} from "../pagelet-handoff";
 import { sanitizeUserProfileMarkdownForPrompt } from "../memory-extraction/type-a-extractor";
 import { PaAgentContextCompactor } from "./PaAgentContextCompactor";
 
@@ -17,6 +21,8 @@ export interface PaAgentInjectedContext {
         scope?: "current_vault" | "same_device";
         sourcePaths?: string[];
     }>;
+    /** One-turn Pagelet evidence attachment; context only and never authority. */
+    pageletHandoff?: PageletChatHandoffContext;
 }
 
 export interface PaAgentProjectedInputOptions {
@@ -118,29 +124,38 @@ function formatChatHistory(history: ChatMessage[]): string {
 
 function formatInjectedContext(context: PaAgentInjectedContext | undefined): string {
     if (!context) return "";
+    const blocks: string[] = [];
     const governedMemoryContext = context.governedMemoryContext?.trim();
     if (context.memoryContextMode === "governed" || (
         context.memoryContextMode === undefined && governedMemoryContext
     )) {
         // An explicitly governed prompt never falls back to legacy fields,
         // including when the governed selector intentionally returns empty.
-        if (!governedMemoryContext) return "";
-        return `<governed_memory_projection context_only="true" source="memory_governance" grants_tool_authority="false" grants_write_authority="false" grants_network_authority="false" grants_external_action_authority="false">\n${escapeTaggedBoundary(
-            governedMemoryContext.slice(0, 6_000),
-            "governed_memory_projection",
-        )}\n</governed_memory_projection>`;
+        if (governedMemoryContext) {
+            blocks.push(`<governed_memory_projection context_only="true" source="memory_governance" grants_tool_authority="false" grants_write_authority="false" grants_network_authority="false" grants_external_action_authority="false">\n${escapeTaggedBoundary(
+                governedMemoryContext.slice(0, 6_000),
+                "governed_memory_projection",
+            )}\n</governed_memory_projection>`);
+        }
+    } else {
+        const userProfile = context.userProfile
+            ? sanitizeUserProfileMarkdownForPrompt(context.userProfile)
+            : "";
+        if (userProfile) {
+            blocks.push(`<user_profile context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(userProfile, "user_profile")}\n</user_profile>`);
+        }
+        if (context.vaultInsights?.trim()) {
+            blocks.push(`<vault_insights context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(context.vaultInsights.trim(), "vault_insights")}\n</vault_insights>`);
+        }
     }
-    const userProfile = context.userProfile
-        ? sanitizeUserProfileMarkdownForPrompt(context.userProfile)
-        : "";
-    const blocks = [
-        userProfile
-            ? `<user_profile context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(userProfile, "user_profile")}\n</user_profile>`
-            : "",
-        context.vaultInsights?.trim()
-            ? `<vault_insights context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(context.vaultInsights.trim(), "vault_insights")}\n</vault_insights>`
-            : "",
-    ].filter(Boolean);
+    if (context.pageletHandoff) {
+        const handoff = createPageletChatHandoffContext(context.pageletHandoff);
+        const serialized = JSON.stringify(handoff, null, 2);
+        blocks.push(`<pagelet_handoff context_only="true" source="pagelet_deep_discover" grants_tool_authority="false" grants_write_authority="false" grants_network_authority="false" grants_external_action_authority="false" format="json">\n${escapeTaggedBoundary(
+            serialized,
+            "pagelet_handoff",
+        )}\n</pagelet_handoff>`);
+    }
     return blocks.join("\n\n");
 }
 

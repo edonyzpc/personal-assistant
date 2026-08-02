@@ -174,13 +174,41 @@ function renderTimelineItem(
         content.appendChild(insight);
     }
 
+
+    if (finding.actionStatus) {
+        const status = el(
+            "div",
+            `pa-pagelet-panel-action-status pa-pagelet-panel-action-status--${finding.actionStatus.tone ?? "neutral"}`,
+        );
+        status.setAttribute("role", "status");
+        status.setAttribute("aria-live", "polite");
+        if (finding.actionStatus.busy) status.setAttribute("aria-busy", "true");
+        status.appendChild(el("div", "pa-pagelet-panel-action-status-label", finding.actionStatus.label));
+        if (finding.actionStatus.detail) {
+            status.appendChild(el("div", "pa-pagelet-panel-action-status-detail", finding.actionStatus.detail));
+        }
+        if (finding.actionStatus.preview) {
+            status.appendChild(el("pre", "pa-pagelet-panel-action-status-preview", finding.actionStatus.preview));
+        }
+        content.appendChild(status);
+    }
+
     // Action buttons
     if (finding.actions && finding.actions.length > 0) {
         const actionsRow = el("div", "pa-pagelet-panel-timeline-actions");
         for (const action of finding.actions) {
-            const btn = el("button", "pa-pagelet-panel-timeline-action-btn", action.label);
+            const classes = [
+                "pa-pagelet-panel-timeline-action-btn",
+                action.primary ? "pa-pagelet-panel-timeline-action-btn--primary" : "",
+            ].filter(Boolean).join(" ");
+            const btn = el("button", classes, action.label);
+            btn.type = "button";
+            btn.disabled = action.disabled === true || action.busy === true;
+            if (action.description) btn.title = action.description;
+            if (action.busy) btn.setAttribute("aria-busy", "true");
             btn.addEventListener("click", (e) => {
                 e.stopPropagation();
+                if (btn.disabled) return;
                 action.callback();
             });
             actionsRow.appendChild(btn);

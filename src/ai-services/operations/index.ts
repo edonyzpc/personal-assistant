@@ -3,6 +3,8 @@ export * from "./input-validation";
 export * from "./vault-path";
 export * from "./vault-transform";
 export * from "./operations-tool-provider";
+export * from "./operations-service";
+export * from "./operations-presentation";
 export * from "./operations-tool-executor";
 export * from "./operations-intent-controller";
 export * from "./operations-undo-store";

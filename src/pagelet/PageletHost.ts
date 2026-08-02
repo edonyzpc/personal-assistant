@@ -13,6 +13,16 @@
 
 import type { App, EventRef } from "obsidian";
 
+import type {
+    PageletChatHandoffContext,
+    PageletChatHandoffPreparationResult,
+} from "../ai-services/pagelet-handoff";
+import type {
+    OperationsExecutionResult,
+    OperationsIntent,
+    UndoResult,
+} from "../ai-services/operations/types";
+
 import type { PetCorner } from "./pet/types";
 import type { AnalyzeCallback } from "./preload/types";
 import type { PreloadBudgetStorage } from "./preload/PreloadBudget";
@@ -23,6 +33,7 @@ import type { WriteResult } from "./output/types";
 import type { PageletDetailPayload } from "./tab/types";
 import type { DiscoveryResult, PanelMemoryGovernanceState } from "./panel/types";
 import type {
+    PageletAgentValidationIdentity,
     PageletDeepDiscoverControllerResult,
     PageletDeepDiscoverTriggerReason,
 } from "./agent/types";
@@ -181,6 +192,40 @@ export interface PageletHost {
 
     /** Opaque runtime identity used to invalidate derived Deep Discover UI. */
     getDeepDiscoverPolicyIdentity?(): string;
+
+    /** Provider-free exact-source validation before a Pagelet action or Chat handoff. */
+    validateDeepDiscoverInsight?(
+        identity: PageletAgentValidationIdentity,
+        signal?: AbortSignal,
+    ): Promise<boolean>;
+
+    /** Live per-vault Operations gate used only to decide whether to show direct actions. */
+    isOperationsAvailable?(): boolean;
+
+    /** Stage (but never execute) the deterministic one-way Pagelet related-note action. */
+    stagePageletInsightLink?(input: {
+        candidateId: string;
+        anchorPath: string;
+        sourcePath: string;
+    }, signal?: AbortSignal): Promise<OperationsIntent>;
+
+    /** Execute an already staged Pagelet Operations intent after inline confirmation. */
+    confirmPageletOperationsIntent?(intentId: string): Promise<OperationsExecutionResult>;
+
+    /** Cancel an unconfirmed Pagelet Operations intent. */
+    cancelPageletOperationsIntent?(intentId: string): void;
+
+    /** Undo successful Pagelet Operations receipts through the shared executor. */
+    undoPageletOperationsReceipts?(receiptIds: readonly string[]): Promise<UndoResult[]>;
+
+    /** Consume one counted, short-lived Pagelet self-write vault event. */
+    consumePageletOperationsSelfWrite?(path: string): boolean;
+
+    /** Open a new Chat with a visible, context-only Pagelet attachment. */
+    openPageletChatHandoff?(
+        context: PageletChatHandoffContext,
+        signal?: AbortSignal,
+    ): Promise<PageletChatHandoffPreparationResult>;
 
     /** Factory for the LLM callback used by foreground review commands. */
     createForegroundAnalyzeCallback(): AnalyzeCallback;

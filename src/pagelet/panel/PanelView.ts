@@ -66,9 +66,22 @@ interface PanelReviewRunError {
     detail: string;
 }
 
+interface PanelActionFocusSnapshot {
+    preferredLabel: string | null;
+}
+
 /** Detect mobile context using the Obsidian convention. */
 function isMobile(): boolean {
     return getPlatformDocument().body.classList.contains("is-mobile");
+}
+
+function elementIsWithin(element: Element, container: Element): boolean {
+    let current: Element | null = element;
+    while (current) {
+        if (current === container) return true;
+        current = current.parentElement;
+    }
+    return false;
 }
 
 const PANEL_SCOPE_RANGES: readonly PageletReviewRange[] = [
@@ -304,6 +317,7 @@ export class PanelView {
 
     private renderCurrentLayout(): void {
         if (!this.bodyEl || !this.currentLayout) return;
+        const actionFocus = this.captureActionFocus();
         this.destroySuggestionRenderers();
         clearChildren(this.bodyEl);
         const body = this.bodyEl;
@@ -333,6 +347,7 @@ export class PanelView {
             && (layoutType === "review" || layoutType === "current")
         ) {
             this.renderReviewRunError(contentEl, this.reviewRunError);
+            this.restoreActionFocus(actionFocus);
             return;
         }
 
@@ -372,6 +387,46 @@ export class PanelView {
 
         if ((layoutType === "review" || layoutType === "current") && this.hasSuggestionFindings()) {
             body.appendChild(this.renderDraftSection());
+        }
+        this.restoreActionFocus(actionFocus);
+    }
+
+    private captureActionFocus(): PanelActionFocusSnapshot | null {
+        if (!this.bodyEl) return null;
+        const active = getPlatformDocument().activeElement as HTMLElement | null;
+        if (!active || !elementIsWithin(active, this.bodyEl)) return null;
+        const isAction = active.classList.contains("pa-pagelet-panel-timeline-action-btn");
+        const isStatus = active.classList.contains("pa-pagelet-panel-action-status");
+        if (!isAction && !isStatus) return null;
+        return {
+            preferredLabel: isAction ? active.textContent?.trim() || null : null,
+        };
+    }
+
+    private restoreActionFocus(snapshot: PanelActionFocusSnapshot | null): void {
+        if (!this.bodyEl) return;
+        const status = this.bodyEl.querySelector<HTMLElement>(".pa-pagelet-panel-action-status");
+        if (status?.getAttribute("aria-busy") === "true") {
+            status.setAttribute("tabindex", "-1");
+        }
+        if (!snapshot) return;
+
+        const enabledActions = Array.from(
+            this.bodyEl.querySelectorAll<HTMLButtonElement>(".pa-pagelet-panel-timeline-action-btn"),
+        ).filter((button) => !button.disabled);
+        const target = enabledActions.find(
+            (button) => snapshot.preferredLabel !== null
+                && button.textContent?.trim() === snapshot.preferredLabel,
+        ) ?? enabledActions.find(
+            (button) => button.classList.contains("pa-pagelet-panel-timeline-action-btn--primary"),
+        ) ?? enabledActions[0];
+        if (target) {
+            target.focus({ preventScroll: true });
+            return;
+        }
+        if (status) {
+            status.setAttribute("tabindex", "-1");
+            status.focus({ preventScroll: true });
         }
     }
 

@@ -66,16 +66,16 @@ export interface PageletAgentWebObservation {
 }
 
 export interface PageletAgentPolicyIdentity {
-    dataBoundaryIdentity: string;
-    providerPolicyIdentity: string;
-    modelIdentity: string;
-    locale: string;
+    readonly dataBoundaryIdentity: string;
+    readonly providerPolicyIdentity: string;
+    readonly modelIdentity: string;
+    readonly locale: string;
 }
 
 export interface PageletAgentCacheIdentity extends PageletAgentPolicyIdentity {
-    pipelineVersion: typeof PAGELET_DEEP_DISCOVER_PIPELINE_VERSION;
-    anchor: PageletAnchorSnapshotIdentity;
-    sources: PageletAgentSourceSnapshot[];
+    readonly pipelineVersion: typeof PAGELET_DEEP_DISCOVER_PIPELINE_VERSION;
+    readonly anchor: PageletAnchorSnapshotIdentity;
+    readonly sources: readonly PageletAgentSourceSnapshot[];
 }
 
 export interface PageletAgentRunMetrics {
@@ -159,6 +159,18 @@ export interface PageletAgentVerifiedInsight {
     preparedAt: number;
     metrics: PageletAgentRunMetrics;
     webObservations: PageletAgentWebObservation[];
+}
+
+/**
+ * Content-free local identity retained by Pagelet delivery so a later action
+ * or Chat handoff can revalidate the exact verified insight without another
+ * provider call.
+ */
+export interface PageletAgentValidationIdentity {
+    readonly cacheIdentity: PageletAgentCacheIdentity;
+    readonly cacheIdentityHash: string;
+    readonly preparedAt: number;
+    readonly webObservations: readonly PageletAgentWebObservation[];
 }
 
 export type PageletAgentQualityRejectReason =

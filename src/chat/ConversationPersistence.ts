@@ -25,6 +25,7 @@ export class ConversationPersistence {
     private nextTurnIndex = 0;
     private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
     private persistChain: Promise<void> = Promise.resolve();
+    private unpersistedFinalizedEntries = new Set<TimelineEntry>();
 
     constructor(private readonly options: ConversationPersistenceOptions) {}
 
@@ -63,6 +64,7 @@ export class ConversationPersistence {
         this.activeId = null;
         this.nextTurnIndex = 0;
         this.persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
+        this.unpersistedFinalizedEntries.clear();
     }
 
     async getReadyManager(): Promise<ChatHistoryManager | null> {
@@ -111,13 +113,94 @@ export class ConversationPersistence {
         return true;
     }
 
-    async clearActiveConversationPointer(): Promise<void> {
+    async clearActiveConversationPointer(): Promise<boolean> {
         const manager = await this.getReadyManager();
-        if (!manager) return;
+        if (!manager) return false;
         try {
             await manager.setActiveConversationId(null);
+            return true;
         } catch (error) {
             this.options.log("Failed to clear active conversation pointer", error);
+            return false;
+        }
+    }
+
+    async clearActiveConversationPointerForHandoff(input: {
+        hasVisibleConversation: boolean;
+        canCommit: () => boolean;
+        commit: () => void;
+    }): Promise<boolean> {
+        await this.waitForPendingWrites();
+        if (!input.canCommit()) return false;
+
+        let manager: ChatHistoryManager | null;
+        try {
+            manager = await this.getReadyManager();
+        } catch (error) {
+            this.options.log("Failed to verify chat history before Pagelet handoff", error);
+            return false;
+        }
+
+        if (!input.canCommit()) return false;
+        if (!manager) {
+            if (input.hasVisibleConversation || !input.canCommit()) return false;
+            try {
+                input.commit();
+                return true;
+            } catch (error) {
+                this.options.log("Failed to commit Pagelet handoff without chat persistence", error);
+                return false;
+            }
+        }
+        if (
+            input.hasVisibleConversation
+            && (
+                !this.activeId
+                || this.unpersistedFinalizedEntries.size > 0
+            )
+        ) {
+            return false;
+        }
+
+        let previousActiveConversationId: string | null;
+        try {
+            previousActiveConversationId = await manager.getActiveConversationId();
+            if (!input.canCommit()) return false;
+            await manager.setActiveConversationId(null);
+        } catch (error) {
+            this.options.log("Failed to clear active conversation pointer for Pagelet handoff", error);
+            return false;
+        }
+
+        if (!input.canCommit()) {
+            await this.restoreActiveConversationPointerAfterCancelledHandoff(
+                manager,
+                previousActiveConversationId,
+            );
+            return false;
+        }
+
+        try {
+            input.commit();
+            return true;
+        } catch (error) {
+            this.options.log("Failed to commit Pagelet handoff after clearing chat pointer", error);
+            await this.restoreActiveConversationPointerAfterCancelledHandoff(
+                manager,
+                previousActiveConversationId,
+            );
+            return false;
+        }
+    }
+
+    private async restoreActiveConversationPointerAfterCancelledHandoff(
+        manager: ChatHistoryManager,
+        conversationId: string | null,
+    ): Promise<void> {
+        try {
+            await manager.setActiveConversationId(conversationId);
+        } catch (error) {
+            this.options.log("Failed to restore active conversation pointer after cancelled Pagelet handoff", error);
         }
     }
 
@@ -155,22 +238,28 @@ export class ConversationPersistence {
         this.activeId = conversation.id;
         this.nextTurnIndex = maxTurnIndex + 1;
         this.persistedTurnIndexByEntry = persistedTurnIndexByEntry;
+        this.unpersistedFinalizedEntries.clear();
 
         return { chatHistory, timelineEntries };
     }
 
-    persistFinalizedTurn(prompt: string, entry: TimelineEntry): Promise<void> {
+    persistFinalizedTurn(prompt: string, entry: TimelineEntry): Promise<boolean> {
+        if (entry.kind !== 'history') return Promise.resolve(true);
+        this.unpersistedFinalizedEntries.add(entry);
+        let persisted = false;
         const next = this.persistChain
             .catch(() => undefined)
-            .then(() => this.runPersistFinalizedTurn(prompt, entry));
+            .then(async () => {
+                persisted = await this.runPersistFinalizedTurn(prompt, entry);
+            });
         this.persistChain = next;
-        return next;
+        return next.then(() => persisted);
     }
 
-    private async runPersistFinalizedTurn(prompt: string, entry: TimelineEntry): Promise<void> {
-        if (entry.kind !== 'history') return;
+    private async runPersistFinalizedTurn(prompt: string, entry: TimelineEntry): Promise<boolean> {
+        if (entry.kind !== 'history') return true;
         const manager = await this.getReadyManager();
-        if (!manager) return;
+        if (!manager) return false;
 
         try {
             let conversation = this.activeConversation;
@@ -194,10 +283,21 @@ export class ConversationPersistence {
             this.activeConversation = updated;
             this.nextTurnIndex = turnIndex + 1;
             this.persistedTurnIndexByEntry.set(entry, turnIndex);
-            this.options.scheduleMemoryExtractionAfterChatTurn?.(conversationId, updated.turnCount);
-            await manager.maybePrune();
+            this.unpersistedFinalizedEntries.delete(entry);
+            try {
+                this.options.scheduleMemoryExtractionAfterChatTurn?.(conversationId, updated.turnCount);
+            } catch (error) {
+                this.options.log("Failed to schedule Memory extraction after chat turn", error);
+            }
+            try {
+                await manager.maybePrune();
+            } catch (error) {
+                this.options.log("Failed to prune chat conversations after persisting turn", error);
+            }
+            return true;
         } catch (error) {
             this.options.log("Failed to persist chat turn", error);
+            return false;
         }
     }
 

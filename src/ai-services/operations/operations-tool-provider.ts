@@ -69,6 +69,9 @@ export class OperationsToolProvider implements CapabilityProvider {
     readonly required = false;
     readonly kind = "tool-provider" as const;
     readonly platform = "both" as const;
+    private readonly capabilities = CORE_WRITE_TOOL_NAMES.map(
+        (name) => new OperationsToolCapability(name),
+    );
 
     async load(context: ProviderLoadContext): Promise<ProviderLoadResult> {
         if (!OPERATIONS_AGENT_RUNTIME_ENABLED || context.settings.operationsAgentEnabled !== true) {
@@ -80,7 +83,10 @@ export class OperationsToolProvider implements CapabilityProvider {
         }
         return {
             status: "available",
-            capabilities: CORE_WRITE_TOOL_NAMES.map((name) => new OperationsToolCapability(name)),
+            // Capability identity is stable across Chat/Pagelet runtime loads so
+            // the plugin-owned OperationsService can be the single provider
+            // authority while each surface keeps its own intent session.
+            capabilities: [...this.capabilities],
         };
     }
 }

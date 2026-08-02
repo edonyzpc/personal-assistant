@@ -4,6 +4,11 @@ import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
 import type { PaAgentMessage, PaAgentPersistedTurn, TurnEndStatus } from '../ai-services/chat-types';
 import type { MemoryMaintenancePlan } from '../memory-manager';
+import {
+    createPageletChatHandoffContext,
+    type PageletChatHandoffContext,
+    type PageletChatHandoffPreparationResult,
+} from '../ai-services/pagelet-handoff';
 import type { ThinkingStatusView, RenderedMessage, RuntimeWarningViewItem, CanonicalLifecycleUiState, UiTurn, TerminalTurnEntry, TimelineEntry } from './types';
 import { confirmChatAction, pickChatConversation } from './modals';
 import type { ChatHost } from './ChatHost';
@@ -44,11 +49,11 @@ import type {
     OperationsIntent,
     PreparedOperation,
     UndoResult,
-    VaultAppendInput,
-    FrontmatterUpdateInput,
 } from '../ai-services/operations/types';
+import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
 
 export { VIEW_TYPE_LLM };
+export { formatOperationsPreview };
 export const PA_CHAT_SUBAGENT_ICON = "PA_CHAT_SUBAGENT";
 export type { ChatMessage };
 
@@ -63,57 +68,24 @@ const ROLE_IDENTICON_FILL_CLASSES: Record<string, string> = {
     'var(--pa-chat-role-identicon-blue)': 'pa-chat-role-identicon-fill-blue',
 };
 
-const OPERATIONS_PREVIEW_MAX_CHARS = 1_600;
-
-export function formatOperationsPreview(operation: PreparedOperation): string {
-    if (operation.name === 'vault_create') {
-        return operation.expectedAfter;
-    }
-    if (operation.name === 'vault_append') {
-        return `+ ${(operation.input as VaultAppendInput).content}`;
-    }
-    if (operation.name === 'frontmatter_update') {
-        const input = operation.input as FrontmatterUpdateInput;
-        const lines = [
-            ...Object.entries(input.set ?? {}).map(([key, value]) => `Set ${key}: ${JSON.stringify(value)}`),
-            ...(input.delete ?? []).map((key) => `Remove ${key}`),
-        ];
-        return lines.join('\n');
-    }
-    return formatOperationsBeforeAfterPreview(
-        operation.expectedBefore ?? '',
-        operation.expectedAfter,
+function uniquePageletVaultSources(context: PageletChatHandoffContext): string[] {
+    const titleByPath = new Map(
+        context.sourceRefs.map((source) => [source.path, source.title] as const),
     );
-}
-
-function formatOperationsBeforeAfterPreview(before: string, after: string): string {
-    let prefix = 0;
-    while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
-    let suffix = 0;
-    while (
-        suffix < before.length - prefix
-        && suffix < after.length - prefix
-        && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
-    ) suffix += 1;
-    const contextChars = 220;
-    const excerpt = (value: string) => {
-        const start = Math.max(0, prefix - contextChars);
-        const changedEnd = value.length - suffix;
-        const end = Math.min(value.length, changedEnd + contextChars);
-        return `${start > 0 ? '…' : ''}${value.slice(start, end)}${end < value.length ? '…' : ''}`;
-    };
-    return truncateOperationsPreview([
-        'Before',
-        excerpt(before),
-        '',
-        'After',
-        excerpt(after),
-    ].join('\n'));
-}
-
-function truncateOperationsPreview(value: string): string {
-    if (value.length <= OPERATIONS_PREVIEW_MAX_CHARS) return value;
-    return `${value.slice(0, OPERATIONS_PREVIEW_MAX_CHARS)}\n…`;
+    const paths = [
+        context.anchor.path,
+        ...context.sources.map((source) => source.path),
+        ...context.sourceRefs.map((source) => source.path),
+    ];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const path of paths) {
+        if (seen.has(path)) continue;
+        seen.add(path);
+        const title = titleByPath.get(path);
+        result.push(title && title !== path ? `${title} — ${path}` : path);
+    }
+    return result;
 }
 
 const getMonotonicTimeMs = () => {
@@ -205,6 +177,13 @@ export class LLMView extends ItemView {
     private chatDrawerHost: HTMLElement | null = null;
     private composerTextArea: HTMLTextAreaElement | null = null;
     private syncComposerControlsForExternalPrefill: (() => void) | null = null;
+    private pendingPageletHandoff: PageletChatHandoffContext | null = null;
+    private renderPageletHandoffForOpenView: (() => void) | null = null;
+    private preparePageletHandoffForOpenView: ((
+        context: PageletChatHandoffContext,
+        signal?: AbortSignal,
+    ) => Promise<PageletChatHandoffPreparationResult>) | null = null;
+    private pageletHandoffPreparationChain: Promise<void> = Promise.resolve();
     private viewTeardownCallbacks = new Set<() => void>();
     private roleIdenticonSessionSeed = createChatRoleIdenticonSessionSeed();
     private readonly operationsSuggestionStateByConversation = new Map<string, OperationsSaveSuggestionState>();
@@ -223,6 +202,37 @@ export class LLMView extends ItemView {
         this.syncComposerControlsForExternalPrefill();
         this.composerTextArea.focus();
         return true;
+    }
+
+    async preparePageletHandoff(
+        context: PageletChatHandoffContext,
+        signal?: AbortSignal,
+    ): Promise<PageletChatHandoffPreparationResult> {
+        let normalized: PageletChatHandoffContext;
+        try {
+            normalized = createPageletChatHandoffContext(context);
+        } catch (error) {
+            this.host.log("Could not prepare Pagelet Chat context", error);
+            return { status: "invalid" };
+        }
+
+        const execute = async (): Promise<PageletChatHandoffPreparationResult> => {
+            if (signal?.aborted) return { status: "unavailable" };
+            const prepare = this.preparePageletHandoffForOpenView;
+            if (!prepare) return { status: "unavailable" };
+            try {
+                return await prepare(normalized, signal);
+            } catch (error) {
+                this.host.log("Could not prepare Pagelet Chat context", error);
+                return { status: "invalid" };
+            }
+        };
+        const request = this.pageletHandoffPreparationChain.then(execute, execute);
+        this.pageletHandoffPreparationChain = request.then(
+            () => undefined,
+            () => undefined,
+        );
+        return await request;
     }
 
     constructor(leaf: WorkspaceLeaf, host: ChatHost) {
@@ -313,6 +323,91 @@ export class LLMView extends ItemView {
             cls: 'pa-chat-keyboard-spacer',
             attr: { 'aria-hidden': 'true' },
         });
+        const pageletAttachment = inputDiv.createDiv({
+            cls: 'pa-chat-pagelet-attachment',
+            attr: {
+                role: 'group',
+                'aria-label': t("plugin.chat.pageletAttachment.title"),
+            },
+        });
+        pageletAttachment.hidden = true;
+        const renderPageletHandoff = () => {
+            pageletAttachment.empty();
+            const context = this.pendingPageletHandoff;
+            pageletAttachment.hidden = context === null;
+            if (!context) return;
+
+            const header = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__header' });
+            header.createDiv({
+                cls: 'pa-chat-pagelet-attachment__title',
+                text: t("plugin.chat.pageletAttachment.title"),
+            });
+            const removeButton = header.createEl('button', {
+                cls: 'pa-chat-pagelet-attachment__remove',
+                attr: {
+                    type: 'button',
+                    'aria-label': t("plugin.chat.pageletAttachment.remove"),
+                    title: t("plugin.chat.pageletAttachment.remove"),
+                },
+            });
+            removeButton.disabled = this.isStreaming;
+            setIcon(removeButton, 'x');
+            removeButton.createSpan({
+                cls: 'pa-sr-only',
+                text: t("plugin.chat.pageletAttachment.remove"),
+            });
+            removeButton.onclick = () => {
+                if (this.isStreaming) return;
+                this.clearPendingPageletHandoff();
+                syncComposerControls();
+                textArea.focus();
+            };
+
+            pageletAttachment.createDiv({
+                cls: 'pa-chat-pagelet-attachment__body',
+                text: context.body,
+            });
+
+            if (context.whyNow.length > 0) {
+                const whyNow = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__section' });
+                whyNow.createDiv({
+                    cls: 'pa-chat-pagelet-attachment__label',
+                    text: t("plugin.chat.pageletAttachment.whyNow"),
+                });
+                const list = whyNow.createEl('ul');
+                for (const reason of context.whyNow) list.createEl('li', { text: reason });
+            }
+
+            const vaultSources = uniquePageletVaultSources(context);
+            const sources = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__section' });
+            sources.createDiv({
+                cls: 'pa-chat-pagelet-attachment__label',
+                text: t("plugin.chat.pageletAttachment.sources"),
+            });
+            const sourceList = sources.createEl('ul');
+            for (const source of vaultSources) sourceList.createEl('li', { text: source });
+
+            if (context.webUrls.length > 0) {
+                const webSources = pageletAttachment.createDiv({ cls: 'pa-chat-pagelet-attachment__section' });
+                webSources.createDiv({
+                    cls: 'pa-chat-pagelet-attachment__label',
+                    text: t("plugin.chat.pageletAttachment.webSources"),
+                });
+                const webList = webSources.createEl('ul');
+                for (const url of context.webUrls) webList.createEl('li', { text: url });
+            }
+
+            pageletAttachment.createDiv({
+                cls: 'pa-chat-pagelet-attachment__verified-at',
+                text: t("plugin.chat.pageletAttachment.verifiedAt", {
+                    time: new Date(context.preparedAt).toLocaleString(
+                        getPluginUiLanguage() === 'zh' ? 'zh-CN' : 'en-US',
+                    ),
+                }),
+            });
+        };
+        this.renderPageletHandoffForOpenView = renderPageletHandoff;
+        renderPageletHandoff();
         const composerRow = inputDiv.createDiv({ cls: 'pa-chat-composer-row' });
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: t("plugin.chat.placeholder.askAboutNotes") }
@@ -2472,6 +2567,8 @@ export class LLMView extends ItemView {
                 return;
             }
             if (canonical.runId && event.runId !== canonical.runId) return;
+            canonical.active = true;
+            canonical.runId ??= event.runId;
 
             switch (event.type) {
                 case 'turn_start':
@@ -2794,9 +2891,11 @@ export class LLMView extends ItemView {
             const turnSourcePath = this.getMarkdownRenderSourcePath();
             const controller = new AbortController();
             this.abortController = controller;
+            this.renderPageletHandoffForOpenView?.();
             const isLiveTurn = () => this.isCurrentTurn(sessionId, turnId, controller);
             const isSameTurn = () => this.isCurrentTurn(sessionId, turnId, controller, { includeCancelled: true });
             const modelHistory = this.chatHistory.map((message) => ({ ...message }));
+            const turnPageletHandoff = this.pendingPageletHandoff;
             const previousResult = this.result;
             const turn: UiTurn = {
                 id: ++uiTurnId,
@@ -2806,6 +2905,7 @@ export class LLMView extends ItemView {
                 canonicalLifecycle: createCanonicalLifecycleState(),
             };
             const operationsCardHandles: OperationsIntentCardHandle[] = [];
+            let sawLegacyPartialFailure = false;
             const isUiTurnVisible = () => isCurrentSession()
                 && this.activeTurnId === turnId
                 && Boolean(turn.userMessage?.messageDiv.parentElement);
@@ -2880,6 +2980,7 @@ export class LLMView extends ItemView {
                     modelHistory,
                     {
                         memoryMode: "auto",
+                        pageletHandoff: turnPageletHandoff ?? undefined,
                         onOperationsIntentStaged: (intent) => {
                             if (!isLiveTurn() || !turn.assistantMessage) return;
                             const handle = renderOperationsIntentCard(turn.assistantMessage, intent);
@@ -2892,6 +2993,9 @@ export class LLMView extends ItemView {
                         onReasoningChunk: handleProviderReasoning,
                         onTurnMetadata: handleTurnMetadata,
                         onEvent: (event) => {
+                            if (event.kind === 'partial-output-error' || event.kind === 'aborted') {
+                                sawLegacyPartialFailure = true;
+                            }
                             if (turn.canonicalLifecycle.active) return;
                             if (event.kind === 'activity') {
                                 const status = event.detail?.legacyStatus as ChatAgentStatus | undefined;
@@ -2932,7 +3036,21 @@ export class LLMView extends ItemView {
                 for (const handle of operationsCardHandles) handle.activate();
                 isFinalizing = true;
                 syncComposerControls();
-                await finalizeSuccessfulTurn(turn, prompt, responseContent, isLiveTurn);
+                const finalized = await finalizeSuccessfulTurn(turn, prompt, responseContent, isLiveTurn);
+                const completedPageletTurn = !sawLegacyPartialFailure
+                    && (
+                        turn.canonicalLifecycle.active
+                            ? turn.canonicalLifecycle.terminalStatus === 'completed'
+                            : true
+                    );
+                if (
+                    finalized
+                    && completedPageletTurn
+                    && turnPageletHandoff
+                    && this.pendingPageletHandoff?.id === turnPageletHandoff.id
+                ) {
+                    this.clearPendingPageletHandoff();
+                }
 
             } catch (error) {
                 for (const handle of operationsCardHandles) handle.discard();
@@ -2952,6 +3070,7 @@ export class LLMView extends ItemView {
                     isFinalizing = false;
                     setHistoryDeleteButtonsDisabled(false);
                     syncComposerControls();
+                    this.renderPageletHandoffForOpenView?.();
                 }
             }
         };
@@ -2980,6 +3099,7 @@ export class LLMView extends ItemView {
             if (!confirmed) return;
             if (!isCurrentSession()) return;
             discardPendingOperations();
+            this.clearPendingPageletHandoff();
             await this.conversationPersistence.waitForPendingWrites();
             this.invalidateActiveTurn();
             isStopping = false;
@@ -3053,6 +3173,7 @@ export class LLMView extends ItemView {
         ) => {
             const hydrated = this.conversationPersistence.hydrateConversation(conversation, turns);
             if (!hydrated) return;
+            this.clearPendingPageletHandoff();
             this.invalidateActiveTurn();
             isStopping = false;
             isFinalizing = false;
@@ -3078,7 +3199,7 @@ export class LLMView extends ItemView {
                 const loaded = await this.conversationPersistence.loadActiveConversation();
                 if (!loaded) return;
                 if (!isCurrentSession()) return;
-                if (isGenerating() || this.chatHistory.length > 0) return;
+                if (isGenerating() || this.chatHistory.length > 0 || this.pendingPageletHandoff) return;
                 applyRestoredConversation(loaded.conversation, loaded.turns);
             } catch (error) {
                 this.host.log?.("Failed to restore chat history", error);
@@ -3124,6 +3245,7 @@ export class LLMView extends ItemView {
             }
             discardPendingOperations();
             await this.conversationPersistence.waitForPendingWrites();
+            this.clearPendingPageletHandoff();
             this.invalidateActiveTurn();
             isStopping = false;
             isFinalizing = false;
@@ -3141,6 +3263,57 @@ export class LLMView extends ItemView {
             renderEmptyState();
             await this.conversationPersistence.clearActiveConversationPointer();
             new Notice(t("plugin.chat.notice.startedNewChat"));
+        };
+
+        this.preparePageletHandoffForOpenView = async (context, signal) => {
+            if (!isCurrentSession()) return { status: "unavailable" };
+            if (signal?.aborted) return { status: "unavailable" };
+            if (isGenerating()) return { status: "busy" };
+            if (textArea.value.trim().length > 0) {
+                textArea.focus();
+                return { status: "draft-conflict" };
+            }
+
+            const canCommitHandoff = () => isCurrentSession()
+                && !signal?.aborted
+                && !isGenerating()
+                && textArea.value.trim().length === 0;
+            const clearedActivePointer = await this.conversationPersistence
+                .clearActiveConversationPointerForHandoff({
+                    hasVisibleConversation: this.chatHistory.length > 0 || timelineEntries.length > 0,
+                    canCommit: canCommitHandoff,
+                    commit: () => {
+                        discardPendingOperations();
+                        this.invalidateActiveTurn();
+                        isStopping = false;
+                        isFinalizing = false;
+                        this.cancelScheduledScroll();
+                        this.chatHistory = [];
+                        timelineEntries = [];
+                        this.conversationPersistence.resetActiveConversationState();
+                        this.resetRoleIdenticonSessionSeed();
+                        this.unloadAllMarkdownRenderOwners();
+                        this.responseDiv.empty();
+                        this.result = '';
+                        this.pendingPageletHandoff = context;
+                        renderPageletHandoff();
+                        textArea.value = t("plugin.chat.pageletAttachment.defaultPrompt");
+                        hideComposerHint();
+                        syncComposerControls();
+                        renderEmptyState();
+                        textArea.focus();
+                    },
+                });
+            if (!clearedActivePointer) {
+                if (signal?.aborted) return { status: "unavailable" };
+                if (textArea.value.trim().length > 0) textArea.focus();
+                return isGenerating()
+                    ? { status: "busy" }
+                    : textArea.value.trim().length > 0
+                        ? { status: "draft-conflict" }
+                        : { status: "unavailable" };
+            }
+            return { status: "prepared" };
         };
 
         const openHistoryPicker = async () => {
@@ -3266,19 +3439,28 @@ export class LLMView extends ItemView {
         this.disconnectSettingsChangeListener();
         this.mobileInputAdapter.teardownMobileTabBarAutoHide();
         this.clearChatDrawerHost();
+        this.clearPendingPageletHandoff();
         this.composerTextArea = null;
         this.syncComposerControlsForExternalPrefill = null;
+        this.renderPageletHandoffForOpenView = null;
+        this.preparePageletHandoffForOpenView = null;
     }
 
     private startViewSession(): number {
         this.runViewTeardownCallbacks();
         this.chatService.cancelPendingOperations?.();
+        this.clearPendingPageletHandoff();
         this.cancelScheduledScroll();
         this.mobileInputAdapter.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
         this.disconnectSettingsChangeListener();
         this.viewSessionId += 1;
         return this.viewSessionId;
+    }
+
+    private clearPendingPageletHandoff(): void {
+        this.pendingPageletHandoff = null;
+        this.renderPageletHandoffForOpenView?.();
     }
 
     private resetRoleIdenticonSessionSeed(): void {

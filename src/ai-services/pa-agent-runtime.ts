@@ -7,6 +7,7 @@ import type {
 } from "./ai-utils";
 import type { AiServiceHost } from "./AiServiceHost";
 import type { MemoryMode } from "../memory-manager";
+import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { MemorySearchTool } from "./memory-search-tool";
 import {
     createPaAgentAnswerStreamPrompt,
@@ -136,6 +137,8 @@ export interface PaAgentRunOptions {
     prompt: string;
     chatHistory?: ChatMessage[];
     memoryMode: MemoryMode;
+    /** Visible Pagelet evidence. It is context-only and never grants tool authority. */
+    pageletHandoff?: PageletChatHandoffContext;
     signal?: AbortSignal;
     onStatus?: (status: ChatAgentStatus) => void;
 }
@@ -158,6 +161,8 @@ export interface PaAgentRuntimeOptions {
     skillContextProvider?: SkillContextProvider | null;
     /** Per-view Operations controller. Its presence enables staging, never direct writes. */
     operationsIntentController?: OperationsIntentStager;
+    /** Plugin-owned provider shared across surface-scoped Operations sessions. */
+    operationsToolProvider?: OperationsToolProvider;
     /**
      * Write Action Framework v1 PolicyEngine parameters (SDD §4 + §5.1).
      *
@@ -733,7 +738,7 @@ export class PaAgentRuntime {
         // Register the four bounded Operations actions only when both the
         // persisted feature opt-in and the per-view staging controller exist.
         if (operationsRuntimeAvailable) {
-            const operationsProvider = new OperationsToolProvider();
+            const operationsProvider = options.operationsToolProvider ?? new OperationsToolProvider();
             const existingProviders = this.options.additionalCapabilityProviders ?? [];
             this.options = {
                 ...this.options,
@@ -789,7 +794,7 @@ export class PaAgentRuntime {
 
         const runId = createAgentRunId();
         const legacyEvents = new AgentEventEmitter(options.onEvent);
-        const injectedContext = this.readInjectedContext();
+        const injectedContext = this.readInjectedContext(options.pageletHandoff);
         const governedMemoryTrace = injectedContext?.governedMemoryTrace ?? [];
         if (governedMemoryTrace.length > 0) {
             legacyEvents.turnMetadata({
@@ -1240,8 +1245,15 @@ export class PaAgentRuntime {
         };
     }
 
-    private readInjectedContext(): PaAgentInjectedContext | undefined {
-        return this.host.getMemoryExtractionPromptContext();
+    private readInjectedContext(
+        pageletHandoff?: PageletChatHandoffContext,
+    ): PaAgentInjectedContext | undefined {
+        const memoryContext = this.host.getMemoryExtractionPromptContext();
+        if (!pageletHandoff) return memoryContext;
+        return {
+            ...(memoryContext ?? {}),
+            pageletHandoff,
+        };
     }
 
 

@@ -10,11 +10,16 @@ import {
     hashPageletAgentCacheIdentity,
 } from "./pagelet-agent-cache";
 import { evaluatePageletAgentQuality } from "./pagelet-agent-quality-gate";
+import {
+    PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
+    PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS,
+} from "./types";
 import type {
     PageletAgentPolicyIdentity,
     PageletAgentRuntime,
     PageletAgentSourceMaterial,
     PageletAgentSourceSnapshot,
+    PageletAgentValidationIdentity,
     PageletAgentVerifiedInsight,
     PageletAnchorSnapshot,
     PageletDeepDiscoverControllerResult,
@@ -121,6 +126,50 @@ export class PageletDeepDiscoverController {
 
     clearCache(): void {
         this.cache.clear();
+    }
+
+    /**
+     * Revalidate a delivered insight without invoking the model or refreshing
+     * the cache. Pagelet actions and Chat handoff fail closed when any source,
+     * policy, pipeline, or web-backed reuse boundary changed.
+     */
+    async validateInsight(
+        identity: PageletAgentValidationIdentity,
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        try {
+            if (this.disposed || signal?.aborted) return false;
+            const expected = identity.cacheIdentity;
+            if (
+                expected.pipelineVersion !== PAGELET_DEEP_DISCOVER_PIPELINE_VERSION
+                || hashPageletAgentCacheIdentity(expected) !== identity.cacheIdentityHash
+            ) return false;
+            if (
+                identity.webObservations.length > 0
+                && (this.dependencies.now ?? Date.now)() - identity.preparedAt
+                    >= PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS
+            ) return false;
+
+            const policyBefore = await this.dependencies.getPolicyIdentity();
+            if (!samePolicyIdentity(expected, policyBefore)) return false;
+
+            const snapshots = new Map<string, PageletAgentSourceSnapshot>();
+            snapshots.set(expected.anchor.path, expected.anchor);
+            for (const source of expected.sources) snapshots.set(source.path, source);
+            for (const snapshot of snapshots.values()) {
+                if (signal?.aborted || !safeAllowed(this.dependencies.isPathAllowed, snapshot.path)) {
+                    return false;
+                }
+                const material = await this.dependencies.captureSourceMaterial(snapshot.path, signal);
+                if (!material || !sameSourceSnapshot(snapshot, material)) return false;
+            }
+
+            if (signal?.aborted) return false;
+            const policyAfter = await this.dependencies.getPolicyIdentity();
+            return samePolicyIdentity(expected, policyAfter);
+        } catch {
+            return false;
+        }
     }
 
     dispose(): void {

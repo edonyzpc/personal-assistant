@@ -43,15 +43,28 @@ export interface PanelFinding {
     sourceTitle?: string;
     insightText?: string;
     timestamp?: string;
+    actionStatus?: PanelActionStatus;
     actions?: PanelAction[];
     suggestion?: PageletSuggestion;
     diagnostics?: PanelFindingDiagnostics;
     sourceId?: string;
 }
 
+export interface PanelActionStatus {
+    label: string;
+    detail?: string;
+    preview?: string;
+    busy?: boolean;
+    tone?: "neutral" | "success" | "error";
+}
+
 /** Panel action button */
 export interface PanelAction {
     label: string;
+    description?: string;
+    disabled?: boolean;
+    busy?: boolean;
+    primary?: boolean;
     callback: () => void;
 }
 

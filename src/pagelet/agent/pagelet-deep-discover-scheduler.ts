@@ -2,7 +2,10 @@ import type {
     PageletDeepDiscoverController,
     PageletDeepDiscoverControllerRequest,
 } from "./pagelet-deep-discover-controller";
-import type { PageletDeepDiscoverControllerResult } from "./types";
+import type {
+    PageletAgentValidationIdentity,
+    PageletDeepDiscoverControllerResult,
+} from "./types";
 
 interface ScheduledRequest {
     request: PageletDeepDiscoverControllerRequest;
@@ -139,6 +142,15 @@ export class PageletDeepDiscoverScheduler {
             reason: "aborted",
         };
         for (const waiter of pending.waiters) waiter.resolve(result);
+    }
+
+    /** Provider-free exact-source validation for delivered Pagelet actions. */
+    async validateInsight(
+        identity: PageletAgentValidationIdentity,
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        if (this.disposed || signal?.aborted) return false;
+        return await this.options.controller.validateInsight(identity, signal);
     }
 
     dispose(): void {

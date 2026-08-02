@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, type TAbstractFile, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
@@ -28,6 +28,14 @@ import type {
     AgentRuntimePlatform,
 } from "./ai-services/capability-types";
 import { MemorySearchTool } from "./ai-services/memory-search-tool";
+import {
+    OperationsService,
+    type OperationsExecutionResult,
+    type OperationsIntent,
+    type OperationsSession,
+    type UndoResult,
+    type OperationsVault,
+} from "./ai-services/operations";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
@@ -1184,6 +1192,16 @@ export class PluginManager extends Plugin {
     private manualMemoryActionInFlight = false;
     /** Shared capacity-one lane: Chat owns run-level priority over Pagelet turns. */
     private readonly agentRunCoordinator = new AgentRunCoordinator();
+    /** Shared provider/policy composition root; mutable intent state stays per surface. */
+    private operationsService: OperationsService | null = null;
+    private pageletOperationsSession: OperationsSession | null = null;
+    /** Confirm/Undo must finish before a disabled Pagelet session is disposed. */
+    private readonly pageletOperationsInFlight = new Map<OperationsSession, number>();
+    private readonly retiringPageletOperationsSessions = new Set<OperationsSession>();
+    private readonly pageletOperationsSelfWrites = new Map<
+        string,
+        { count: number; expiresAt: number }
+    >();
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
     private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
@@ -2244,6 +2262,8 @@ export class PluginManager extends Plugin {
             }
             this.pageletRuntime = null;
         }
+        this.retirePageletOperationsSession();
+        this.pageletOperationsSelfWrites?.clear();
         this.reviewQueueStore = null;
         this.savedInsightStore = null;
         this.memoryGovernanceStore = null;
@@ -2375,6 +2395,38 @@ export class PluginManager extends Plugin {
             cancelDeepDiscover: () => this.resetDeepDiscoverController(),
             getDeepDiscoverUsage: () => this.getDeepDiscoverUsage(),
             getDeepDiscoverPolicyIdentity: () => this.pageletDeepDiscoverPolicyIdentityKey(),
+            validateDeepDiscoverInsight: async (identity, signal) => {
+                if (
+                    !this.deepDiscoverScheduler
+                    || this.deepDiscoverControllerPolicyIdentitySnapshot
+                        !== this.pageletDeepDiscoverPolicyIdentityKey()
+                ) return false;
+                return await this.deepDiscoverScheduler.validateInsight(identity, signal);
+            },
+            isOperationsAvailable: () => this.isOperationsAgentEnabled,
+            stagePageletInsightLink: (input, signal) => (
+                this.stagePageletInsightLink(input, signal)
+            ),
+            confirmPageletOperationsIntent: (intentId) => (
+                this.confirmPageletOperationsIntent(intentId)
+            ),
+            cancelPageletOperationsIntent: (intentId) => {
+                this.cancelPageletOperationsIntent(intentId);
+            },
+            undoPageletOperationsReceipts: (receiptIds) => (
+                this.undoPageletOperationsReceipts(receiptIds)
+            ),
+            consumePageletOperationsSelfWrite: (path) => (
+                this.consumePageletOperationsSelfWrite(path)
+            ),
+            openPageletChatHandoff: async (context, signal) => {
+                if (signal?.aborted) return { status: "unavailable" };
+                const view = await this.activeChatView();
+                if (signal?.aborted) return { status: "unavailable" };
+                return view
+                    ? await view.preparePageletHandoff(context, signal)
+                    : { status: "unavailable" };
+            },
             openQuickCapture: () => this.openQuickCaptureModal(),
             createPreloadAnalyzeCallback: (): AnalyzeCallback => {
                 return async (files, config, callContext) => {
@@ -6754,8 +6806,238 @@ export class PluginManager extends Plugin {
         };
     }
 
+    private getOperationsService(): OperationsService {
+        if (this.operationsService) return this.operationsService;
+        const vault = this.app.vault as unknown as OperationsVault;
+        this.operationsService = new OperationsService({
+            vault,
+            trashFile: async (file) => {
+                await this.app.fileManager.trashFile(file as unknown as TAbstractFile);
+            },
+            isOperationsAgentEnabled: () => this.isOperationsAgentEnabled,
+            audit: {
+                includeContent: () => this.settings.operationsAuditIncludeContent,
+                retentionDays: () => this.settings.operationsAuditRetentionDays,
+            },
+            isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
+            log: (message, ...args) => this.log(message, ...args),
+        });
+        return this.operationsService;
+    }
+
+    private getPageletOperationsSession(): OperationsSession {
+        if (this.pageletOperationsSession) return this.pageletOperationsSession;
+        this.pageletOperationsSession = this.getOperationsService().createSession({
+            surface: "pagelet",
+            markSelfWrite: (path) => this.markPageletOperationsSelfWrite(path),
+        });
+        return this.pageletOperationsSession;
+    }
+
+    private retirePageletOperationsSession(): void {
+        const session = this.pageletOperationsSession;
+        this.pageletOperationsSession = null;
+        if (!session) return;
+        if ((this.pageletOperationsInFlight?.get(session) ?? 0) > 0) {
+            this.retiringPageletOperationsSessions?.add(session);
+            return;
+        }
+        this.disposePageletOperationsSession(session);
+    }
+
+    private beginPageletOperationsExecution(session: OperationsSession): void {
+        this.pageletOperationsInFlight.set(
+            session,
+            (this.pageletOperationsInFlight.get(session) ?? 0) + 1,
+        );
+    }
+
+    private finishPageletOperationsExecution(session: OperationsSession): void {
+        const remaining = (this.pageletOperationsInFlight.get(session) ?? 1) - 1;
+        if (remaining > 0) {
+            this.pageletOperationsInFlight.set(session, remaining);
+            return;
+        }
+        this.pageletOperationsInFlight.delete(session);
+        if (!this.retiringPageletOperationsSessions.delete(session)) return;
+        this.disposePageletOperationsSession(session);
+    }
+
+    private disposePageletOperationsSession(session: OperationsSession): void {
+        try {
+            session.dispose();
+        } catch (error) {
+            this.log("Failed to dispose Pagelet Operations session", error);
+        }
+    }
+
+    private async stagePageletInsightLink(input: {
+        candidateId: string;
+        anchorPath: string;
+        sourcePath: string;
+    }, signal?: AbortSignal): Promise<OperationsIntent> {
+        if (!this.isOperationsAgentEnabled) {
+            throw new Error("Operations is not enabled. Nothing was written.");
+        }
+        const anchorPath = normalizePath(input.anchorPath);
+        const sourcePath = normalizePath(input.sourcePath);
+        if (
+            !input.candidateId
+            || anchorPath === sourcePath
+            || !this.isPageletProviderPathAllowed(anchorPath)
+            || !this.isPageletProviderPathAllowed(sourcePath)
+        ) {
+            throw new Error("This Pagelet action is no longer available.");
+        }
+        const anchorFile = this.app.vault.getAbstractFileByPath(anchorPath);
+        if (!(anchorFile instanceof TFile) || anchorFile.extension !== "md") {
+            throw new Error("The target note is no longer available.");
+        }
+
+        const session = this.getPageletOperationsSession();
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            if (signal?.aborted) throw createAbortError();
+            const before = await this.app.vault.read(anchorFile);
+            if (signal?.aborted) throw createAbortError();
+            const related = readPaRelatedLinksFromMarkdown(before);
+            const link = `[[${sourcePath}]]`;
+            const linkIdentity = paRelatedWikilinkIdentity(link);
+            if (related.some((value) => (
+                linkIdentity !== null && paRelatedWikilinkIdentity(value) === linkIdentity
+            ))) {
+                throw new Error("These notes are already linked.");
+            }
+            const intent = await session.stageIntent({
+                runId: `pagelet:${input.candidateId}`,
+                turnId: `pagelet-link:${input.candidateId}:${Date.now()}`,
+                operations: [{
+                    toolCallId: `pagelet-link:${input.candidateId}:${attempt}`,
+                    name: "frontmatter_update",
+                    input: {
+                        path: anchorPath,
+                        set: { "pa-related": [...related, link] },
+                    },
+                }],
+            }, signal);
+            if (intent.operations[0]?.expectedBefore === before) return intent;
+            session.cancel(intent.id);
+        }
+        throw new Error("The target changed while preparing the preview. Try again.");
+    }
+
+    private async confirmPageletOperationsIntent(
+        intentId: string,
+    ): Promise<OperationsExecutionResult> {
+        const selfWritesBefore = this.snapshotPageletOperationsSelfWrites();
+        const session = this.getPageletOperationsSession();
+        this.beginPageletOperationsExecution(session);
+        try {
+            const result = await session.confirm(intentId);
+            this.restoreFailedPageletOperationsSelfWrites(
+                selfWritesBefore,
+                result.operations
+                    .filter((operation) => operation.status !== "succeeded")
+                    .map((operation) => operation.path),
+            );
+            return result;
+        } catch (error) {
+            this.restoreFailedPageletOperationsSelfWrites(selfWritesBefore);
+            throw error;
+        } finally {
+            this.finishPageletOperationsExecution(session);
+        }
+    }
+
+    private cancelPageletOperationsIntent(intentId: string): void {
+        this.pageletOperationsSession?.cancel(intentId);
+    }
+
+    private async undoPageletOperationsReceipts(
+        receiptIds: readonly string[],
+    ): Promise<UndoResult[]> {
+        const session = this.pageletOperationsSession;
+        if (!session) return [];
+        const selfWritesBefore = this.snapshotPageletOperationsSelfWrites();
+        this.beginPageletOperationsExecution(session);
+        try {
+            const results = await session.undoMany(receiptIds);
+            this.restoreFailedPageletOperationsSelfWrites(
+                selfWritesBefore,
+                results.flatMap((result) => (
+                    result.status !== "undone" && result.path ? [result.path] : []
+                )),
+            );
+            return results;
+        } catch (error) {
+            this.restoreFailedPageletOperationsSelfWrites(selfWritesBefore);
+            throw error;
+        } finally {
+            this.finishPageletOperationsExecution(session);
+        }
+    }
+
+    private snapshotPageletOperationsSelfWrites(): Map<
+        string,
+        { count: number; expiresAt: number }
+    > {
+        const now = Date.now();
+        for (const [path, entry] of this.pageletOperationsSelfWrites) {
+            if (entry.expiresAt <= now) this.pageletOperationsSelfWrites.delete(path);
+        }
+        return new Map(this.pageletOperationsSelfWrites);
+    }
+
+    private restoreFailedPageletOperationsSelfWrites(
+        before: ReadonlyMap<string, { count: number; expiresAt: number }>,
+        paths?: readonly string[],
+    ): void {
+        const normalizedPaths = paths
+            ? new Set(paths.map((path) => normalizePath(path)))
+            : new Set(this.pageletOperationsSelfWrites.keys());
+        for (const path of normalizedPaths) {
+            const current = this.pageletOperationsSelfWrites.get(path);
+            const previous = before.get(path);
+            if (!current || current.count <= (previous?.count ?? 0)) continue;
+            if (!previous) {
+                this.pageletOperationsSelfWrites.delete(path);
+            } else {
+                this.pageletOperationsSelfWrites.set(path, previous);
+            }
+        }
+    }
+
+    private markPageletOperationsSelfWrite(path: string): void {
+        const normalized = normalizePath(path);
+        const current = this.pageletOperationsSelfWrites.get(normalized);
+        const now = Date.now();
+        this.pageletOperationsSelfWrites.set(normalized, {
+            count: current && current.expiresAt > now ? current.count + 1 : 1,
+            expiresAt: now + 10_000,
+        });
+    }
+
+    private consumePageletOperationsSelfWrite(path: string): boolean {
+        const normalized = normalizePath(path);
+        const current = this.pageletOperationsSelfWrites.get(normalized);
+        if (!current) return false;
+        if (current.expiresAt <= Date.now()) {
+            this.pageletOperationsSelfWrites.delete(normalized);
+            return false;
+        }
+        if (current.count <= 1) {
+            this.pageletOperationsSelfWrites.delete(normalized);
+        } else {
+            this.pageletOperationsSelfWrites.set(normalized, {
+                ...current,
+                count: current.count - 1,
+            });
+        }
+        return true;
+    }
+
     createChatService(): ChatService {
-        return new ChatService(this.createAiServiceHost());
+        const operationsSession = this.getOperationsService().createSession({ surface: "chat" });
+        return new ChatService(this.createAiServiceHost(), operationsSession);
     }
 
     private openQuickCaptureModal(): void {
@@ -6857,7 +7139,7 @@ export class PluginManager extends Plugin {
                 showTechnicalStatus: () => void this.showTechnicalMemoryStatus(),
                 onStatusChanged: (listener) => this.onMemoryStatusChanged(listener),
             },
-            createChatService: () => new ChatService(this.createAiServiceHost()),
+            createChatService: () => this.createChatService(),
             onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 this.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),
@@ -8418,6 +8700,18 @@ export class PluginManager extends Plugin {
             }
             this.pageletRuntime = null;
         }
+        if (this.operationsService) {
+            try {
+                this.operationsService.dispose();
+            } catch (error) {
+                this.log("Failed to dispose Operations service", error);
+            }
+            this.operationsService = null;
+        }
+        this.pageletOperationsSession = null;
+        this.pageletOperationsInFlight?.clear();
+        this.retiringPageletOperationsSessions?.clear();
+        this.pageletOperationsSelfWrites?.clear();
         this.reviewQueueStore = null;
         this.savedInsightStore = null;
         this.memoryGovernanceStore = null;
@@ -10303,6 +10597,14 @@ export class PluginManager extends Plugin {
         }
 
         if (leaf) {
+            await leaf.loadIfDeferred?.();
+            if (!(leaf.view instanceof LLMView)) {
+                await leaf.setViewState({
+                    type: VIEW_TYPE_LLM,
+                    active: true,
+                });
+                await leaf.loadIfDeferred?.();
+            }
             await workspace.revealLeaf(leaf);
         }
 
@@ -11365,6 +11667,74 @@ function coerceModelResultToString(result: unknown): string {
     if (typeof result === "string") return result;
     const content = (result as { content?: unknown })?.content;
     return content != null ? String(content) : String(result);
+}
+
+function readPaRelatedLinksFromMarkdown(markdown: string): string[] {
+    const info = getFrontMatterInfo(markdown);
+    if (!info.exists) {
+        if (/^\uFEFF?---\s*(?:\r?\n|$)/u.test(markdown)) {
+            throw new Error("The target note has invalid Properties.");
+        }
+        return [];
+    }
+    let frontmatter: Record<string, unknown> = {};
+    if (info.frontmatter.trim()) {
+        const parsed = parseYaml(info.frontmatter);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("The target note has invalid Properties.");
+        }
+        frontmatter = parsed as Record<string, unknown>;
+    }
+    const raw = frontmatter["pa-related"];
+    if (raw === undefined || raw === null) return [];
+    const values = typeof raw === "string"
+        ? [raw]
+        : Array.isArray(raw) && raw.every((entry) => typeof entry === "string")
+            ? raw as string[]
+            : null;
+    if (!values) {
+        throw new Error("The existing pa-related Property needs review in Chat.");
+    }
+    const deduplicated: string[] = [];
+    const identities = new Set<string>();
+    for (const value of values) {
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+        const wikilinkIdentity = paRelatedWikilinkIdentity(trimmed);
+        const identity = wikilinkIdentity === null
+            ? `literal:${trimmed}`
+            : `wikilink:${wikilinkIdentity}`;
+        if (identities.has(identity)) continue;
+        identities.add(identity);
+        deduplicated.push(trimmed);
+    }
+    return deduplicated;
+}
+
+/**
+ * Compare only explicit vault-relative wikilink destinations. `.md` and alias
+ * presentation are non-semantic; heading/block fragments stay in the identity
+ * so a precise subsection relationship is never collapsed into a whole-note link.
+ */
+function paRelatedWikilinkIdentity(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("[[") || !trimmed.endsWith("]]")) return null;
+    const inner = trimmed.slice(2, -2);
+    if (!inner || inner.includes("[") || inner.includes("]")) return null;
+    const aliasAt = inner.indexOf("|");
+    const destination = (aliasAt === -1 ? inner : inner.slice(0, aliasAt)).trim();
+    const fragmentAt = destination.indexOf("#");
+    const rawPath = (fragmentAt === -1 ? destination : destination.slice(0, fragmentAt)).trim();
+    if (!rawPath) return null;
+    const path = rawPath.replace(/\.md$/iu, "");
+    if (fragmentAt === -1) return path;
+    return `${path}#${destination.slice(fragmentAt + 1).trim()}`;
+}
+
+function createAbortError(): Error {
+    const error = new Error("Aborted");
+    error.name = "AbortError";
+    return error;
 }
 
 function setPluginTimeout(callback: () => void, ms: number): TimeoutHandle {
