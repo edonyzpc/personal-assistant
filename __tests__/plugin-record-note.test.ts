@@ -118,7 +118,9 @@ jest.mock('obsidian', () => {
                 if (raw === 'true') return [[key, true]];
                 if (raw === 'false') return [[key, false]];
                 if (raw.startsWith('[') && raw.endsWith(']')) {
-                    return [[key, raw.slice(1, -1).split(',').map((part) => part.trim())]];
+                    return [[key, raw.slice(1, -1).split(',').map((part) => (
+                        part.trim().replace(/^['"]|['"]$/g, '')
+                    ))]];
                 }
                 return [[key, raw.replace(/^['"]|['"]$/g, '')]];
             })),
@@ -4299,6 +4301,13 @@ describe('Memory governance plugin bootstrap', () => {
             plugin.pageletSettingsUnsubscribe = null;
             plugin.pageletOrchestrator = null;
             plugin.pageletRuntime = null;
+            const disposeOperationsService = jest.fn();
+            plugin.operationsService = { dispose: disposeOperationsService };
+            plugin.pageletOperationsSession = {};
+            plugin.pageletOperationsSelfWrites = new Map([[
+                'notes/pending-self-write.md',
+                { count: 1, expiresAt: Date.now() + 10_000 },
+            ]]);
             plugin.scheduleMemoryForgetRetry();
             plugin.memoryForgetRetryDelayMs = 4_000;
 
@@ -4313,6 +4322,10 @@ describe('Memory governance plugin bootstrap', () => {
             expect(plugin.memoryForgetRetryTimer).toBeNull();
             expect(plugin.memoryForgetRetryDelayMs).toBe(1_000);
             expect(plugin.memoryGovernanceGarbageCollectionTimer).toBeNull();
+            expect(disposeOperationsService).toHaveBeenCalledTimes(1);
+            expect(plugin.operationsService).toBeNull();
+            expect(plugin.pageletOperationsSession).toBeNull();
+            expect(plugin.pageletOperationsSelfWrites.size).toBe(0);
         } finally {
             jest.useRealTimers();
         }
@@ -8610,6 +8623,306 @@ describe('Pagelet detail workspace leaf', () => {
 
 });
 
+describe('Pagelet Operations direct action adapter', () => {
+    function createHarness(initialBodies: string[]) {
+        const TestTFile = TFile as unknown as new (path: string) => TFile;
+        const anchorFile = new TestTFile('Notes/Anchor.md');
+        const sourceFile = new TestTFile('Notes/Source.md');
+        const bodies = [...initialBodies];
+        let latestBody = bodies[0] ?? '';
+        const read = jest.fn(async () => {
+            latestBody = bodies.shift() ?? latestBody;
+            return latestBody;
+        });
+        const stageIntent = jest.fn(async (input: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            id: `intent-${stageIntent.mock.calls.length}`,
+            runId: input.runId,
+            turnId: input.turnId,
+            createdAt: 1,
+            expiresAt: 2,
+            state: 'pending',
+            operations: [{
+                id: `operation-${stageIntent.mock.calls.length}`,
+                ...input.operations[0],
+                path: 'Notes/Anchor.md',
+                expectedBefore: latestBody,
+                expectedAfter: latestBody,
+            }],
+        }));
+        const cancel = jest.fn();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { operationsAgentEnabled: true };
+        plugin.app = {
+            vault: {
+                getAbstractFileByPath: jest.fn((path: string) => {
+                    if (path === anchorFile.path) return anchorFile;
+                    if (path === sourceFile.path) return sourceFile;
+                    return null;
+                }),
+                read,
+            },
+        };
+        plugin.isPageletProviderPathAllowed = jest.fn(() => true);
+        plugin.pageletOperationsSession = { stageIntent, cancel };
+        plugin.pageletOperationsInFlight = new Map();
+        plugin.retiringPageletOperationsSessions = new Set();
+        plugin.pageletOperationsSelfWrites = new Map();
+        return { plugin, read, stageIntent, cancel };
+    }
+
+    it.each([
+        {
+            label: 'scalar',
+            body: '---\npa-related: "[[Notes/Existing.md]]"\n---\nBody',
+            expected: ['[[Notes/Existing.md]]', '[[Notes/Source.md]]'],
+        },
+        {
+            label: 'array with duplicates',
+            body: '---\npa-related: ["[[Notes/Existing.md]]", "[[Notes/Existing.md]]", "[[Notes/Other.md]]"]\n---\nBody',
+            expected: ['[[Notes/Existing.md]]', '[[Notes/Other.md]]', '[[Notes/Source.md]]'],
+        },
+        {
+            label: 'semantic wikilink variants',
+            body: '---\npa-related: ["[[Notes/Existing]]", "[[Notes/Existing.md|Existing alias]]", "[[Notes/Existing#First]]", "[[Notes/Existing.md#First|First alias]]", "[[Notes/Existing.md#Second|Second alias]]"]\n---\nBody',
+            expected: [
+                '[[Notes/Existing]]',
+                '[[Notes/Existing#First]]',
+                '[[Notes/Existing.md#Second|Second alias]]',
+                '[[Notes/Source.md]]',
+            ],
+        },
+    ])('merges and deduplicates a $label pa-related value', async ({ body, expected }) => {
+        const { plugin, stageIntent } = createHarness([body]);
+
+        await plugin.stagePageletInsightLink({
+            candidateId: 'candidate-1',
+            anchorPath: 'Notes/Anchor.md',
+            sourcePath: 'Notes/Source.md',
+        });
+
+        expect(stageIntent).toHaveBeenCalledTimes(1);
+        expect(stageIntent.mock.calls[0]?.[0].operations).toEqual([expect.objectContaining({
+            name: 'frontmatter_update',
+            input: {
+                path: 'Notes/Anchor.md',
+                set: { 'pa-related': expected },
+            },
+        })]);
+    });
+
+    it.each([
+        {
+            label: 'already-linked notes',
+            body: '---\npa-related: "[[Notes/Source.md]]"\n---\nBody',
+            message: 'already linked',
+        },
+        {
+            label: 'extensionless already-linked notes',
+            body: '---\npa-related: "[[Notes/Source]]"\n---\nBody',
+            message: 'already linked',
+        },
+        {
+            label: 'aliased already-linked notes',
+            body: '---\npa-related: "[[Notes/Source.md|Readable source]]"\n---\nBody',
+            message: 'already linked',
+        },
+        {
+            label: 'malformed frontmatter',
+            body: '---\npa-related: "[[Notes/Existing.md]]"\nBody',
+            message: 'invalid Properties',
+        },
+        {
+            label: 'unsupported pa-related shape',
+            body: '---\npa-related: true\n---\nBody',
+            message: 'needs review in Chat',
+        },
+    ])('fails closed for $label', async ({ body, message }) => {
+        const { plugin, stageIntent } = createHarness([body]);
+
+        await expect(plugin.stagePageletInsightLink({
+            candidateId: 'candidate-1',
+            anchorPath: 'Notes/Anchor.md',
+            sourcePath: 'Notes/Source.md',
+        })).rejects.toThrow(message);
+
+        expect(stageIntent).not.toHaveBeenCalled();
+    });
+
+    it('preserves a heading-specific relation when adding the whole-note link', async () => {
+        const body = '---\npa-related: ["[[Notes/Source#Decision|Decision excerpt]]"]\n---\nBody';
+        const { plugin, stageIntent } = createHarness([body]);
+
+        await plugin.stagePageletInsightLink({
+            candidateId: 'candidate-1',
+            anchorPath: 'Notes/Anchor.md',
+            sourcePath: 'Notes/Source.md',
+        });
+
+        expect(stageIntent.mock.calls[0]?.[0].operations[0].input.set['pa-related']).toEqual([
+            '[[Notes/Source#Decision|Decision excerpt]]',
+            '[[Notes/Source.md]]',
+        ]);
+    });
+
+    it('cancels a drifted preview and retries once from the fresh body', async () => {
+        const first = '---\npa-related: "[[Notes/Old.md]]"\n---\nFirst';
+        const second = '---\npa-related: "[[Notes/Fresh.md]]"\n---\nSecond';
+        const { plugin, read, stageIntent, cancel } = createHarness([first, second]);
+        stageIntent
+            .mockImplementationOnce(async (input: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+                id: 'intent-stale',
+                runId: input.runId,
+                turnId: input.turnId,
+                createdAt: 1,
+                expiresAt: 2,
+                state: 'pending',
+                operations: [{
+                    id: 'operation-stale',
+                    ...input.operations[0],
+                    path: 'Notes/Anchor.md',
+                    expectedBefore: 'different-body',
+                    expectedAfter: 'different-body',
+                }],
+            }))
+            .mockImplementationOnce(async (input: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+                id: 'intent-fresh',
+                runId: input.runId,
+                turnId: input.turnId,
+                createdAt: 1,
+                expiresAt: 2,
+                state: 'pending',
+                operations: [{
+                    id: 'operation-fresh',
+                    ...input.operations[0],
+                    path: 'Notes/Anchor.md',
+                    expectedBefore: second,
+                    expectedAfter: second,
+                }],
+            }));
+
+        const intent = await plugin.stagePageletInsightLink({
+            candidateId: 'candidate-1',
+            anchorPath: 'Notes/Anchor.md',
+            sourcePath: 'Notes/Source.md',
+        });
+
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(stageIntent).toHaveBeenCalledTimes(2);
+        expect(cancel).toHaveBeenCalledWith('intent-stale');
+        expect(intent.id).toBe('intent-fresh');
+        expect(stageIntent.mock.calls[1]?.[0].operations[0].input.set['pa-related']).toEqual([
+            '[[Notes/Fresh.md]]',
+            '[[Notes/Source.md]]',
+        ]);
+    });
+
+    it('removes only failed confirm and Undo self-write marks', async () => {
+        const { plugin } = createHarness(['Body']);
+        plugin.markPageletOperationsSelfWrite('Notes/Anchor.md');
+        plugin.pageletOperationsSession = {
+            confirm: jest.fn(async () => {
+                plugin.markPageletOperationsSelfWrite('Notes/Anchor.md');
+                return {
+                    intentId: 'intent-1',
+                    state: 'failed',
+                    operations: [{
+                        operationId: 'operation-1',
+                        toolCallId: 'tool-1',
+                        name: 'frontmatter_update',
+                        path: 'Notes/Anchor.md',
+                        status: 'stale',
+                    }],
+                };
+            }),
+            undoMany: jest.fn(async () => {
+                plugin.markPageletOperationsSelfWrite('Notes/Undo.md');
+                return [{
+                    receiptId: 'receipt-1',
+                    operationId: 'operation-1',
+                    path: 'Notes/Undo.md',
+                    status: 'stale',
+                }];
+            }),
+        };
+
+        await plugin.confirmPageletOperationsIntent('intent-1');
+        expect(plugin.consumePageletOperationsSelfWrite('Notes/Anchor.md')).toBe(true);
+        expect(plugin.consumePageletOperationsSelfWrite('Notes/Anchor.md')).toBe(false);
+
+        await plugin.undoPageletOperationsReceipts(['receipt-1']);
+        expect(plugin.consumePageletOperationsSelfWrite('Notes/Undo.md')).toBe(false);
+    });
+
+    it('retires a disabled Pagelet session only after an in-flight confirm returns its receipt', async () => {
+        const { plugin } = createHarness(['Body']);
+        let resolveConfirm!: (result: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const confirmResult = {
+            intentId: 'intent-1',
+            state: 'completed',
+            operations: [{
+                operationId: 'operation-1',
+                toolCallId: 'tool-1',
+                name: 'frontmatter_update',
+                path: 'Notes/Anchor.md',
+                status: 'succeeded',
+                receiptId: 'receipt-1',
+            }],
+        };
+        const session = {
+            confirm: jest.fn(() => new Promise((resolve) => {
+                resolveConfirm = resolve;
+            })),
+            dispose: jest.fn(),
+        };
+        plugin.pageletOperationsSession = session;
+        plugin.resetDeepDiscoverController = jest.fn();
+        plugin.log = jest.fn();
+
+        const confirmation = plugin.confirmPageletOperationsIntent('intent-1');
+        await Promise.resolve();
+        plugin.destroyPageletRuntime();
+
+        expect(session.dispose).not.toHaveBeenCalled();
+        expect(plugin.pageletOperationsSession).toBeNull();
+
+        resolveConfirm(confirmResult);
+        await expect(confirmation).resolves.toMatchObject({
+            operations: [expect.objectContaining({ receiptId: 'receipt-1' })],
+        });
+        expect(session.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('retires a disabled Pagelet session only after an in-flight Undo settles', async () => {
+        const { plugin } = createHarness(['Body']);
+        let resolveUndo!: (result: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const session = {
+            undoMany: jest.fn(() => new Promise((resolve) => {
+                resolveUndo = resolve;
+            })),
+            dispose: jest.fn(),
+        };
+        plugin.pageletOperationsSession = session;
+        plugin.resetDeepDiscoverController = jest.fn();
+        plugin.log = jest.fn();
+
+        const undo = plugin.undoPageletOperationsReceipts(['receipt-1']);
+        await Promise.resolve();
+        plugin.destroyPageletRuntime();
+
+        expect(session.dispose).not.toHaveBeenCalled();
+        resolveUndo([{
+            receiptId: 'receipt-1',
+            operationId: 'operation-1',
+            path: 'Notes/Anchor.md',
+            status: 'undone',
+        }]);
+        await expect(undo).resolves.toEqual([
+            expect.objectContaining({ receiptId: 'receipt-1', status: 'undone' }),
+        ]);
+        expect(session.dispose).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('Quick Capture service lifecycle', () => {
     function createQuickCapturePlugin() {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -8642,10 +8955,21 @@ describe('Quick Capture service lifecycle', () => {
     it('keeps the shared service when Pagelet runtime is torn down', () => {
         const plugin = createQuickCapturePlugin();
         const first = plugin.createQuickCaptureService();
+        const pageletOperationsSession = { dispose: jest.fn() };
+        const operationsService = { dispose: jest.fn() };
+        plugin.pageletOperationsSession = pageletOperationsSession;
+        plugin.operationsService = operationsService;
+        plugin.pageletOperationsInFlight = new Map();
+        plugin.retiringPageletOperationsSessions = new Set();
+        plugin.pageletOperationsSelfWrites = new Map();
 
         plugin.destroyPageletRuntime();
 
         expect(plugin.createQuickCaptureService()).toBe(first);
+        expect(pageletOperationsSession.dispose).toHaveBeenCalledTimes(1);
+        expect(plugin.pageletOperationsSession).toBeNull();
+        expect(operationsService.dispose).not.toHaveBeenCalled();
+        expect(plugin.operationsService).toBe(operationsService);
     });
 });
 

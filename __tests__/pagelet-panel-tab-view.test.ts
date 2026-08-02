@@ -4020,6 +4020,117 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).not.toContain("## Evidence");
     });
 
+    it("renders Pagelet action preview as a polite status and keeps busy actions inert", async () => {
+        const busyCallback = jest.fn();
+        const confirmCallback = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [{
+            title: "Deep Discover",
+            description: "Source-backed insight.",
+            insightText: "Source-backed insight.",
+            actionStatus: {
+                label: "Review this one-note change before confirming.",
+                detail: "Target: notes/current.md",
+                preview: "Set pa-related: [\"[[notes/related]]\"]",
+                busy: true,
+            },
+            actions: [
+                { label: "Preparing", busy: true, callback: busyCallback },
+                { label: "Confirm", primary: true, callback: confirmCallback },
+            ],
+        }], {
+            sourcePath: "notes/current.md",
+            preparedReadOnly: true,
+        });
+
+        const status = container.querySelector(".pa-pagelet-panel-action-status");
+        expect(status?.getAttribute("role")).toBe("status");
+        expect(status?.getAttribute("aria-live")).toBe("polite");
+        expect(status?.getAttribute("aria-busy")).toBe("true");
+        expect(container.querySelector(".pa-pagelet-panel-action-status-preview")?.textContent)
+            .toBe("Set pa-related: [\"[[notes/related]]\"]");
+        const buttons = container.querySelectorAll(".pa-pagelet-panel-timeline-action-btn");
+        expect(buttons).toHaveLength(2);
+        expect(buttons[0]?.disabled).toBe(true);
+        expect(buttons[0]?.getAttribute("aria-busy")).toBe("true");
+        expect(buttons[1]?.classList.contains("pa-pagelet-panel-timeline-action-btn--primary")).toBe(true);
+
+        await buttons[0]?.click();
+        await buttons[1]?.click();
+        expect(busyCallback).not.toHaveBeenCalled();
+        expect(confirmCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves action focus and moves it through busy status to the next primary action", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+        const finding = (
+            label: string,
+            actions: Array<{ label: string; primary?: boolean; busy?: boolean }>,
+            busy = false,
+        ) => ({
+            title: "Deep Discover",
+            description: "Source-backed insight.",
+            insightText: "Source-backed insight.",
+            actionStatus: { label, busy },
+            actions: actions.map((action) => ({ ...action, callback: () => undefined })),
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [finding("Review before confirming.", [
+            { label: "Confirm", primary: true },
+            { label: "Cancel" },
+        ])], { preparedReadOnly: true });
+
+        const pendingButtons = container.querySelectorAll(".pa-pagelet-panel-timeline-action-btn");
+        pendingButtons[1]?.focus();
+        panel.open("discover", [finding("Review before confirming.", [
+            { label: "Confirm", primary: true },
+            { label: "Cancel" },
+        ])], { preparedReadOnly: true });
+        expect((globalRecord.document as FakeDocument).activeElement?.textContent).toBe("Cancel");
+
+        const refreshedConfirm = container.querySelectorAll(".pa-pagelet-panel-timeline-action-btn")[0];
+        refreshedConfirm?.focus();
+        panel.open("discover", [finding("Applying the confirmed change…", [
+            { label: "Confirm", busy: true },
+        ], true)], { preparedReadOnly: true });
+
+        const busyStatus = container.querySelector(".pa-pagelet-panel-action-status");
+        expect(busyStatus?.getAttribute("tabindex")).toBe("-1");
+        expect((globalRecord.document as FakeDocument).activeElement).toBe(busyStatus);
+
+        panel.open("discover", [finding("The related-note link was added.", [
+            { label: "Undo", primary: true },
+        ])], { preparedReadOnly: true });
+        const undo = container.querySelector(".pa-pagelet-panel-timeline-action-btn");
+        expect(undo?.textContent).toBe("Undo");
+        expect((globalRecord.document as FakeDocument).activeElement).toBe(undo);
+    });
+
     it("keeps every discovery source visible and clickable outside the capped graph", async () => {
         const relatedNoteClick = jest.fn();
         const container = new FakeElement("div");

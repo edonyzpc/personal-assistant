@@ -198,6 +198,27 @@ describe("scripts/check-docs.mjs", () => {
         expect(runCheck(repo)).toContain("Documentation check passed");
     });
 
+    it("keeps the owner-authorized Step 3 SDD in the fixed B-101 proposal lane", () => {
+        const repo = createFixture({ backlogItem: true, backlogWorkItem: "B-101" });
+        addProposal(repo, "Current", "Implementing", {
+            path: "operations-agent/operations-agent-step3-sdd.md",
+            workItem: "B-101",
+        });
+
+        expect(runCheck(repo)).toContain("Documentation check passed");
+    });
+
+    it.each([
+        "operations-agent/operations-agent-plan.md",
+        "operations-agent/operations-agent-mode-sdd.md",
+    ])("accepts the superseded historical B-101 lane after Backlog close: %s", (path) => {
+        const repo = createFixture({ backlogItem: true, backlogWorkItem: "B-101" });
+        addProposal(repo, "Current", "Superseded", { path, workItem: "B-101" });
+        writeFileSync(join(repo, "docs/backlog.md"), "# Backlog\n", "utf8");
+
+        expect(runCheck(repo)).toContain("Documentation check passed");
+    });
+
     it("accepts terminal closure only in a named owner-directed proposal lane", () => {
         const repo = createFixture({ backlogItem: true, backlogWorkItem: "B-123" });
         addProposal(repo, "Current", "Closed", {
@@ -427,7 +448,7 @@ The focused checker test verifies current-document continuity.
 function addProposal(
     repo: string,
     documentStatus: "Approved" | "Current",
-    deliveryStatus: "Needs Decision" | "Blocked" | "Implementing" | "Closed",
+    deliveryStatus: "Needs Decision" | "Blocked" | "Implementing" | "Closed" | "Superseded",
     options: { path?: string; workItem?: string } = {},
 ): void {
     const proposalPath = options.path ?? "sample.md";

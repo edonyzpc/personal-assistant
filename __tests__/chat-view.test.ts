@@ -8,6 +8,7 @@ import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/fo
 import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
+import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import type {
     OperationsExecutionResult,
     OperationsIntent,
@@ -520,6 +521,66 @@ function flushPromises() {
     return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+function createPageletHandoffContext(body = `# Verified insight\n\n${"Complete evidence. ".repeat(40)}`): PageletChatHandoffContext {
+    return {
+        version: 1,
+        id: 'pagelet-cache-1',
+        body,
+        anchor: {
+            path: 'projects/anchor.md',
+            mtime: 10,
+            size: 100,
+            contentHash: 'anchor-hash',
+        },
+        sources: [
+            { path: 'research/a.md', mtime: 11, size: 101, contentHash: 'a-hash' },
+            { path: 'research/b.md', mtime: 12, size: 102, contentHash: 'b-hash' },
+        ],
+        sourceRefs: [
+            { path: 'research/a.md', title: 'Source A' },
+            { path: 'research/b.md', title: 'Source B' },
+        ],
+        webUrls: ['https://example.com/a', 'https://example.com/b'],
+        whyNow: ['The anchor changed.', 'The sources now agree.'],
+        triggerReason: 'explicit',
+        preparedAt: 1_700_000_000_000,
+        pipelineVersion: 'pagelet-deep-discover-v1',
+    };
+}
+
+function createWritableChatHistoryManager(options: {
+    recordTurnError?: Error;
+    clearPointerError?: Error;
+} = {}) {
+    let activeConversationId: string | null = null;
+    const createdConversation = {
+        id: 'conv_pagelet_handoff',
+        title: 'Current conversation',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+        turnCount: 0,
+        preview: 'Current prompt',
+    };
+    return {
+        initialize: jest.fn(async () => undefined),
+        isAvailable: jest.fn(() => true),
+        getActiveConversationId: jest.fn(async () => activeConversationId),
+        startConversation: jest.fn(async () => {
+            activeConversationId = createdConversation.id;
+            return createdConversation;
+        }),
+        recordTurn: jest.fn(async () => {
+            if (options.recordTurnError) throw options.recordTurnError;
+            return { ...createdConversation, turnCount: 1 };
+        }),
+        maybePrune: jest.fn(async () => []),
+        setActiveConversationId: jest.fn(async (id: string | null) => {
+            if (id === null && options.clearPointerError) throw options.clearPointerError;
+            activeConversationId = id;
+        }),
+    };
+}
+
 function emitCanonical(call: StreamCall, event: AgentEvent) {
     call.options.onLifecycleEvent?.(event);
 }
@@ -869,6 +930,365 @@ describe('LLMView turn lifecycle', () => {
         const { view } = createView();
 
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
+    });
+
+    it('prepares a complete removable Pagelet attachment without sending and consumes it after one successful Ask', async () => {
+        const { view, containerEl } = createView({ operationsEnabled: true });
+        await view.onOpen();
+        const context = createPageletHandoffContext();
+
+        await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'prepared' });
+
+        const attachment = getElementByClass(containerEl, 'pa-chat-pagelet-attachment');
+        expect(attachment.hidden).toBe(false);
+        expect(allText(attachment)).toContain(context.body);
+        expect(allText(attachment)).toContain('Source A — research/a.md');
+        expect(allText(attachment)).toContain('Source B — research/b.md');
+        expect(allText(attachment)).toContain('https://example.com/a');
+        expect(allText(attachment)).toContain('https://example.com/b');
+        expect(getTextArea(containerEl).value).toBe('Discuss this Pagelet insight and help me decide the next step.');
+        expect(streamCalls).toHaveLength(0);
+
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        expect(streamCalls).toHaveLength(1);
+        expect(streamCalls[0].options.pageletHandoff).toEqual(context);
+        expect(streamCalls[0].prompt).toBe('Discuss this Pagelet insight and help me decide the next step.');
+        streamCalls[0].onChunk('A source-backed answer.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(attachment.hidden).toBe(true);
+        getTextArea(containerEl).value = 'A follow-up question';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        expect(streamCalls[1].options.pageletHandoff).toBeUndefined();
+        streamCalls[1].resolve();
+        await flushPromises();
+    });
+
+    it('fails closed for a draft or active stream and retains Pagelet evidence after provider failure', async () => {
+        const chatHistoryManager = createWritableChatHistoryManager();
+        const { view, containerEl } = createView({
+            chatHistoryManager,
+        });
+        await view.onOpen();
+        const context = createPageletHandoffContext();
+        const textArea = getTextArea(containerEl);
+
+        textArea.value = 'Do not replace this draft';
+        await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'draft-conflict' });
+        expect(textArea.value).toBe('Do not replace this draft');
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+
+        textArea.value = 'Normal question';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'busy' });
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(1);
+
+        textArea.value = '';
+        await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'prepared' });
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[1].reject(new Error('provider unavailable'));
+        await flushPromises();
+        await flushPromises();
+
+        const attachment = getElementByClass(containerEl, 'pa-chat-pagelet-attachment');
+        expect(attachment.hidden).toBe(false);
+        expect(allText(attachment)).toContain(context.body);
+    });
+
+    it('clears a prepared Pagelet attachment when the user starts New Chat', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({ status: 'prepared' });
+
+        void getButtonByText(containerEl, 'New Chat').click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+        expect(getTextArea(containerEl).value).toBe('');
+    });
+
+    it('keeps the current conversation intact when chat history is unavailable', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Keep this conversation';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('This answer is only visible locally.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        const existingHistory = [...view.chatHistory];
+        mockCancelPendingOperations.mockClear();
+
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({
+            status: 'unavailable',
+        });
+
+        expect(view.chatHistory).toEqual(existingHistory);
+        expect(allText(containerEl)).toContain('Keep this conversation');
+        expect(allText(containerEl)).toContain('This answer is only visible locally.');
+        expect(textArea.value).toBe('');
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+        expect(mockCancelPendingOperations).not.toHaveBeenCalled();
+    });
+
+    it('keeps the current conversation intact when recording its visible turn failed', async () => {
+        const chatHistoryManager = createWritableChatHistoryManager({
+            recordTurnError: new Error('record failed'),
+        });
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Keep the failed record';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Still visible after the record failure.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(1);
+        const existingHistory = [...view.chatHistory];
+        mockCancelPendingOperations.mockClear();
+
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({
+            status: 'unavailable',
+        });
+
+        expect(view.chatHistory).toEqual(existingHistory);
+        expect(allText(containerEl)).toContain('Keep the failed record');
+        expect(allText(containerEl)).toContain('Still visible after the record failure.');
+        expect(chatHistoryManager.setActiveConversationId).not.toHaveBeenCalled();
+        expect(mockCancelPendingOperations).not.toHaveBeenCalled();
+    });
+
+    it('does not clear the UI or pending Operations when the active pointer cannot be cleared', async () => {
+        const chatHistoryManager = createWritableChatHistoryManager({
+            clearPointerError: new Error('pointer failed'),
+        });
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Persisted current conversation';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Persisted current answer.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        expect(chatHistoryManager.recordTurn).toHaveBeenCalledTimes(1);
+        const existingHistory = [...view.chatHistory];
+        mockCancelPendingOperations.mockClear();
+
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({
+            status: 'unavailable',
+        });
+
+        expect(chatHistoryManager.setActiveConversationId).toHaveBeenCalledWith(null);
+        expect(view.chatHistory).toEqual(existingHistory);
+        expect(allText(containerEl)).toContain('Persisted current conversation');
+        expect(allText(containerEl)).toContain('Persisted current answer.');
+        expect(textArea.value).toBe('');
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+        expect(mockCancelPendingOperations).not.toHaveBeenCalled();
+    });
+
+    it('restores the prior pointer and leaves Chat intact when the user starts a stream during a deferred handoff', async () => {
+        let releaseClear: (() => void) | undefined;
+        let markClearStarted: (() => void) | undefined;
+        const clearGate = new Promise<void>((resolve) => {
+            releaseClear = resolve;
+        });
+        const clearStarted = new Promise<void>((resolve) => {
+            markClearStarted = resolve;
+        });
+        const chatHistoryManager = createWritableChatHistoryManager();
+        chatHistoryManager.setActiveConversationId.mockImplementation(async (id: string | null) => {
+            if (id !== null) return;
+            markClearStarted?.();
+            await clearGate;
+        });
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Existing prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Existing answer.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        const existingHistory = [...view.chatHistory];
+        mockCancelPendingOperations.mockClear();
+
+        const preparing = view.preparePageletHandoff(createPageletHandoffContext());
+        await clearStarted;
+        textArea.value = 'User took over while Pagelet was opening';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        expect(streamCalls).toHaveLength(2);
+        releaseClear?.();
+
+        await expect(preparing).resolves.toEqual({ status: 'busy' });
+        expect(chatHistoryManager.setActiveConversationId.mock.calls).toEqual([
+            [null],
+            ['conv_pagelet_handoff'],
+        ]);
+        expect(view.chatHistory).toEqual(existingHistory);
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+        expect(allText(containerEl)).toContain('User took over while Pagelet was opening');
+        expect(mockCancelPendingOperations).not.toHaveBeenCalled();
+
+        streamCalls[1].resolve();
+        await flushPromises();
+        await flushPromises();
+    });
+
+    it('cancels a deferred handoff without resetting Chat when its Panel signal aborts', async () => {
+        let releaseClear: (() => void) | undefined;
+        let markClearStarted: (() => void) | undefined;
+        const clearGate = new Promise<void>((resolve) => {
+            releaseClear = resolve;
+        });
+        const clearStarted = new Promise<void>((resolve) => {
+            markClearStarted = resolve;
+        });
+        const chatHistoryManager = createWritableChatHistoryManager();
+        chatHistoryManager.setActiveConversationId.mockImplementation(async (id: string | null) => {
+            if (id !== null) return;
+            markClearStarted?.();
+            await clearGate;
+        });
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Conversation before Panel close';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Answer before Panel close.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+        const existingHistory = [...view.chatHistory];
+        mockCancelPendingOperations.mockClear();
+        const controller = new AbortController();
+
+        const preparing = view.preparePageletHandoff(
+            createPageletHandoffContext(),
+            controller.signal,
+        );
+        await clearStarted;
+        controller.abort();
+        releaseClear?.();
+
+        await expect(preparing).resolves.toEqual({ status: 'unavailable' });
+        expect(chatHistoryManager.setActiveConversationId.mock.calls).toEqual([
+            [null],
+            ['conv_pagelet_handoff'],
+        ]);
+        expect(view.chatHistory).toEqual(existingHistory);
+        expect(textArea.value).toBe('');
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
+        expect(mockCancelPendingOperations).not.toHaveBeenCalled();
+    });
+
+    it('serializes concurrent Pagelet handoff preparation requests', async () => {
+        let releaseClear: (() => void) | undefined;
+        let markClearStarted: (() => void) | undefined;
+        const clearGate = new Promise<void>((resolve) => {
+            releaseClear = resolve;
+        });
+        const clearStarted = new Promise<void>((resolve) => {
+            markClearStarted = resolve;
+        });
+        const chatHistoryManager = createWritableChatHistoryManager();
+        chatHistoryManager.setActiveConversationId.mockImplementation(async (id: string | null) => {
+            if (id !== null) return;
+            markClearStarted?.();
+            await clearGate;
+        });
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Persist me first';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Persisted answer.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const firstContext = createPageletHandoffContext();
+        const secondContext = { ...firstContext, id: 'pagelet-cache-2' };
+        const first = view.preparePageletHandoff(firstContext);
+        await clearStarted;
+        const second = view.preparePageletHandoff(secondContext);
+        await flushPromises();
+        expect(chatHistoryManager.setActiveConversationId).toHaveBeenCalledTimes(1);
+        releaseClear?.();
+
+        await expect(first).resolves.toEqual({ status: 'prepared' });
+        await expect(second).resolves.toEqual({ status: 'draft-conflict' });
+        expect(chatHistoryManager.setActiveConversationId).toHaveBeenCalledTimes(1);
+        expect(allText(getElementByClass(containerEl, 'pa-chat-pagelet-attachment'))).toContain(firstContext.body);
+    });
+
+    it.each([
+        ['completed', true],
+        ['completed_with_warning', false],
+        ['incomplete', false],
+    ] as const)('consumes Pagelet evidence only for canonical %s', async (status, shouldConsume) => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({
+            status: 'prepared',
+        });
+
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Canonical response.');
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(streamCalls[0], canonicalEvent({ type: 'agent_end', status }));
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(shouldConsume);
+    });
+
+    it('retains Pagelet evidence after a legacy partial-output failure', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({
+            status: 'prepared',
+        });
+
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Partial response.');
+        streamCalls[0].options.onEvent?.({
+            version: 1,
+            turnId: 'legacy_turn_1',
+            seq: 1,
+            timestamp: 100,
+            kind: 'partial-output-error',
+            category: 'provider',
+        });
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(false);
     });
 
     it('keeps an Operations preview inline and inert until the model turn finishes, then supports confirm and Undo', async () => {

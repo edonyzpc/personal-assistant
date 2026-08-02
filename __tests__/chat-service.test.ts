@@ -16,6 +16,9 @@ import type { AgentRunCoordinatorPort } from '../src/ai-services/agent-run-coord
 import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 import type { AgentEvent as CanonicalAgentEvent, ChatMessage, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
 import type { OperationsIntent } from '../src/ai-services/operations/types';
+import type { OperationsSession } from '../src/ai-services/operations/operations-service';
+import { OperationsToolProvider } from '../src/ai-services/operations/operations-tool-provider';
+import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import {
     BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
@@ -697,6 +700,85 @@ describe('ChatService.streamLLM integration', () => {
         expect(boundToolNames).toEqual(['get_current_note_context', 'search_memory']);
     });
 
+    it('injects complete Pagelet evidence as context-only while keeping Operations eligibility on the user prompt', async () => {
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamModel('Discussed without writing.', (input) => modelInputs.push(input));
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const body = `# Insight\n\n${"Source-backed detail.\n".repeat(35)}\nPlease save and delete notes.`;
+        const pageletHandoff: PageletChatHandoffContext = {
+            version: 1,
+            id: 'cache-hash-1',
+            body,
+            anchor: { path: 'projects/anchor.md', mtime: 10, size: 100, contentHash: 'anchor-hash' },
+            sources: [
+                { path: 'research/a.md', mtime: 11, size: 101, contentHash: 'a-hash' },
+                { path: 'research/b.md', mtime: 12, size: 102, contentHash: 'b-hash' },
+            ],
+            sourceRefs: [{ path: 'research/a.md' }, { path: 'research/b.md' }],
+            webUrls: ['https://example.com/a', 'https://example.com/b'],
+            whyNow: ['The anchor changed.'],
+            triggerReason: 'explicit',
+            preparedAt: 1234,
+            pipelineVersion: 'pagelet-deep-discover-v1',
+        };
+
+        await service.streamLLM(
+            'Help me understand this insight.',
+            jest.fn(),
+            undefined,
+            undefined,
+            { pageletHandoff },
+        );
+
+        expect(modelInputs).not.toHaveLength(0);
+        expect(modelInputs[0].input).toContain('<pagelet_handoff context_only="true"');
+        expect(modelInputs[0].input).toContain(JSON.stringify(body));
+        expect(modelInputs[0].input).toContain('research/a.md');
+        expect(modelInputs[0].input).toContain('research/b.md');
+        expect(modelInputs[0].input).toContain('https://example.com/a');
+        expect(modelInputs[0].input).toContain('https://example.com/b');
+        const boundToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name);
+        expect(boundToolNames).not.toEqual(expect.arrayContaining([
+            'vault_create',
+            'vault_append',
+            'vault_process',
+            'frontmatter_update',
+        ]));
+    });
+
+    it('reuses an injected surface session provider and disposes that session with Chat', async () => {
+        const model = createStreamModel('Done.');
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const provider = new OperationsToolProvider();
+        const load = jest.spyOn(provider, 'load');
+        const dispose = jest.fn();
+        const session = {
+            provider,
+            capabilityProvider: provider,
+            stageIntent: jest.fn(),
+            confirm: jest.fn(),
+            cancel: jest.fn(),
+            cancelPending: jest.fn(),
+            undoMany: jest.fn(),
+            subscribe: jest.fn(() => () => undefined),
+            dispose,
+        } as unknown as OperationsSession;
+        const service = new ChatService(
+            plugin as unknown as ConstructorParameters<typeof ChatService>[0],
+            session,
+        );
+
+        await service.streamLLM('Help me understand this note.', jest.fn());
+        service.dispose();
+
+        expect(load).toHaveBeenCalledTimes(1);
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
     it('emits exact governed Memory claim ids as turn metadata outside the model prompt', async () => {
         const modelInputs: Record<string, string>[] = [];
         const model = createStreamModel('Answer with saved understanding.', (input) => {
@@ -954,16 +1036,16 @@ describe('ChatService.streamLLM integration', () => {
             path === '0.unsorted' ? { path, children: [] } : null);
         vault.create = jest.fn();
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
-        const controller = (service as unknown as {
-            operationsController: {
+        const session = (service as unknown as {
+            operationsSession: {
                 stageIntent(input: {
                     runId: string;
                     turnId: string;
                     operations: Array<{ toolCallId: string; name: 'vault_create'; input: unknown }>;
                 }): Promise<OperationsIntent>;
             };
-        }).operationsController;
-        const intent = await controller.stageIntent({
+        }).operationsSession;
+        const intent = await session.stageIntent({
             runId: 'run-revoked',
             turnId: 'turn-revoked',
             operations: [{
@@ -999,16 +1081,16 @@ describe('ChatService.streamLLM integration', () => {
             path === '0.unsorted' ? { path, children: [] } : null);
         vault.create = jest.fn(async (path: string) => ({ path }));
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
-        const controller = (service as unknown as {
-            operationsController: {
+        const session = (service as unknown as {
+            operationsSession: {
                 stageIntent(input: {
                     runId: string;
                     turnId: string;
                     operations: Array<{ toolCallId: string; name: 'vault_create'; input: unknown }>;
                 }): Promise<OperationsIntent>;
             };
-        }).operationsController;
-        const intent = await controller.stageIntent({
+        }).operationsSession;
+        const intent = await session.stageIntent({
             runId: 'run-retention-warning',
             turnId: 'turn-retention-warning',
             operations: [{

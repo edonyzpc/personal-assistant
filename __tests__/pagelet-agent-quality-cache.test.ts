@@ -617,6 +617,144 @@ describe('Pagelet agent cache and controller', () => {
         });
     });
 
+    it('projects complete immutable action and Chat context without hidden runtime fields', () => {
+        const body = `## Complete insight\n${'source-backed detail '.repeat(40)}`;
+        const insight = {
+            ...verifiedInsight(true),
+            body,
+            metrics: { modelTurns: 99, toolCalls: 88, wallTimeMs: 77 },
+            webObservations: [
+                { url: 'https://example.com/evidence', observationHash: 'one' },
+                { url: 'https://example.com/evidence', observationHash: 'two' },
+            ],
+        };
+
+        const candidate = pageletAgentInsightToDeliveryCandidate(insight, 'en');
+
+        expect(candidate.pageletAgent.directAction).toEqual({
+            kind: 'link-related',
+            candidateId: insight.cacheIdentityHash,
+            anchorPath: 'notes/anchor.md',
+            sourcePath: 'notes/related.md',
+            label: 'Link “related” from “anchor”',
+        });
+        expect(candidate.pageletAgent.handoff).toMatchObject({
+            version: 1,
+            id: insight.cacheIdentityHash,
+            body,
+            anchor: insight.anchor,
+            sources: insight.sources,
+            sourceRefs: [
+                { path: 'notes/anchor.md', title: 'anchor' },
+                { path: 'notes/related.md', title: 'related' },
+            ],
+            webUrls: ['https://example.com/evidence'],
+            triggerReason: 'explicit',
+            preparedAt: 1_000,
+            pipelineVersion: 'pagelet-deep-discover-v1',
+        });
+        expect(Object.keys(candidate.pageletAgent.handoff).sort()).toEqual([
+            'anchor',
+            'body',
+            'id',
+            'pipelineVersion',
+            'preparedAt',
+            'sourceRefs',
+            'sources',
+            'triggerReason',
+            'version',
+            'webUrls',
+            'whyNow',
+        ]);
+        expect(candidate.pageletAgent.handoff).not.toHaveProperty('metrics');
+        expect(Object.isFrozen(candidate.pageletAgent.handoff)).toBe(true);
+        expect(Object.isFrozen(candidate.pageletAgent.validationIdentity.cacheIdentity.sources)).toBe(true);
+    });
+
+    it('omits the direct route when no verified non-anchor source exists', () => {
+        const insight = verifiedInsight();
+        insight.sources = [{ ...insight.anchor }];
+        insight.sourceRefs = [{ path: insight.anchor.path }];
+        insight.cacheIdentity = {
+            ...insight.cacheIdentity,
+            sources: [{ ...insight.anchor }],
+        };
+        insight.cacheIdentityHash = hashPageletAgentCacheIdentity(insight.cacheIdentity);
+
+        const candidate = pageletAgentInsightToDeliveryCandidate(insight, 'en');
+
+        expect(candidate.pageletAgent.directAction).toBeUndefined();
+        expect(candidate.pageletAgent.handoff.body).toBe(insight.body);
+    });
+
+    it('revalidates exact policy and source snapshots without invoking the provider runtime', async () => {
+        const runtimeRun = jest.fn();
+        let currentPolicy = policyIdentity;
+        let currentMaterials = materials();
+        const captureSourceMaterial = jest.fn(async (path: string) => currentMaterials.get(path) ?? null);
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run: runtimeRun as never },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial,
+            getPolicyIdentity: () => currentPolicy,
+            isPathAllowed: () => true,
+            now: () => 2_000,
+        });
+        const identity = pageletAgentInsightToDeliveryCandidate(
+            verifiedInsight(),
+            'en',
+        ).pageletAgent.validationIdentity;
+
+        await expect(controller.validateInsight(identity)).resolves.toBe(true);
+        expect(runtimeRun).not.toHaveBeenCalled();
+
+        currentMaterials = new Map(materials());
+        currentMaterials.set(relatedMaterial.path, { ...relatedMaterial, contentHash: 'changed' });
+        await expect(controller.validateInsight(identity)).resolves.toBe(false);
+
+        currentMaterials = materials();
+        currentPolicy = { ...policyIdentity, dataBoundaryIdentity: 'boundary-2' };
+        await expect(controller.validateInsight(identity)).resolves.toBe(false);
+        expect(runtimeRun).not.toHaveBeenCalled();
+    });
+
+    it('expires a delivered web-backed validation identity at the reuse boundary', async () => {
+        const insight = verifiedInsight(true);
+        const identity = pageletAgentInsightToDeliveryCandidate(insight, 'en')
+            .pageletAgent.validationIdentity;
+        const runtimeRun = jest.fn();
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run: runtimeRun as never },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async (path) => materials().get(path) ?? null,
+            getPolicyIdentity: () => policyIdentity,
+            isPathAllowed: () => true,
+            now: () => insight.preparedAt + 24 * 60 * 60 * 1000,
+        });
+
+        await expect(controller.validateInsight(identity)).resolves.toBe(false);
+        expect(runtimeRun).not.toHaveBeenCalled();
+    });
+
+    it('exposes the same provider-free validation through the scheduler seam', async () => {
+        const identity = pageletAgentInsightToDeliveryCandidate(
+            verifiedInsight(),
+            'en',
+        ).pageletAgent.validationIdentity;
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run: jest.fn() as never },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async (path) => materials().get(path) ?? null,
+            getPolicyIdentity: () => policyIdentity,
+            isPathAllowed: () => true,
+        });
+        const scheduler = new PageletDeepDiscoverScheduler({ controller, delayMs: 0 });
+
+        await expect(scheduler.validateInsight(identity)).resolves.toBe(true);
+        scheduler.dispose();
+        await expect(scheduler.validateInsight(identity)).resolves.toBe(false);
+    });
+
     it('uses the trigger-time anchor snapshot instead of recapturing after scheduling', async () => {
         const runtimeRun = jest.fn(async (_request: unknown) => makeRun([
             '## 发布策略存在风险缺口',

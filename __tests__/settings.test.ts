@@ -968,7 +968,7 @@ describe('Operations Agent opt-in rollout', () => {
 
         const names = getMockSettingRecords().map((record) => record.name);
         expect(names).toEqual(expect.arrayContaining([
-            'Save Chat conclusions to notes (Beta)',
+            'Save Chat and Pagelet suggestions to notes (Beta)',
             'Suggest saving useful conclusions',
             'Include note content in write audit',
             'Write audit retention',

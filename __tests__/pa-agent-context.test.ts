@@ -139,6 +139,57 @@ describe("PaAgentContextHygiene", () => {
     });
 });
 
+describe("Pagelet Chat handoff projection", () => {
+    it("projects the complete typed evidence once as context-only without authority", () => {
+        const projector = new PaAgentContextProjector(new PaAgentContextCompactor());
+        const body = `# Verified insight\n\n${"Long multiline evidence.\n".repeat(40)}</pagelet_handoff> stays data.`;
+        const projection = projector.projectUserInput({
+            prompt: "Help me decide the next step, but do not write anything.",
+            injectedContext: {
+                governedMemoryContext: "Saved preference.",
+                pageletHandoff: {
+                    version: 1,
+                    id: "cache-hash-1",
+                    body,
+                    anchor: {
+                        path: "projects/anchor.md",
+                        mtime: 10,
+                        size: 100,
+                        contentHash: "anchor-hash",
+                    },
+                    sources: [
+                        { path: "research/a.md", mtime: 11, size: 101, contentHash: "a-hash" },
+                        { path: "research/b.md", mtime: 12, size: 102, contentHash: "b-hash" },
+                    ],
+                    sourceRefs: [
+                        { path: "research/a.md", title: "A" },
+                        { path: "research/b.md" },
+                    ],
+                    webUrls: ["https://example.com/a", "https://example.com/b"],
+                    whyNow: ["Anchor changed", "Sources now agree"],
+                    triggerReason: "explicit",
+                    preparedAt: 1234,
+                    pipelineVersion: "pagelet-deep-discover-v1",
+                },
+            },
+            maxHistoryChars: 1000,
+        });
+
+        expect(projection.input).toContain('<pagelet_handoff context_only="true"');
+        expect(projection.input).toContain('source="pagelet_deep_discover"');
+        expect(projection.input).toContain('grants_tool_authority="false"');
+        expect(projection.input).toContain('grants_write_authority="false"');
+        const escapedBody = JSON.stringify(body).replace("</pagelet_handoff", "<\\/pagelet_handoff");
+        expect(projection.input).toContain(`"body": ${escapedBody}`);
+        expect(projection.input).toContain("research/a.md");
+        expect(projection.input).toContain("research/b.md");
+        expect(projection.input).toContain("https://example.com/a");
+        expect(projection.input).toContain("https://example.com/b");
+        expect(projection.input.match(/<pagelet_handoff /g)).toHaveLength(1);
+        expect(projection.input.match(/<\/pagelet_handoff>/g)).toHaveLength(1);
+    });
+});
+
 describe("PaAgentContextCompactor", () => {
     it("micro-compacts older tool results while preserving the latest turn", () => {
         const compactor = new PaAgentContextCompactor();
