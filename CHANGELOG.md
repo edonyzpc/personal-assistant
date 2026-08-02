@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.6](https://github.com/edonyzpc/personal-assistant/compare/2.9.0-beta.5...2.9.0-beta.6) (2026-08-02)
+
+### Features
+- pagelet: add Pagelet Deep Discover runtime pipeline
+- operations: complete B-101 Step 2 runtime and chat save flow
+- operations-agent: complete step3 chat and pagelet handoff runtime
+
+### Fix
+- pagelet: resolve pet background, nudge click, and bubble dismiss issues
+- pagelet: resolve Deep Discover runtime issues from code review
+- pagelet: enforce quota for explicit Deep Discover runs
+
+### Docs
+- proposals: add PA Agent evolution proposals and implementation handoff
+- backlog: repair Deep Discover delivery docs for step1 closure
+- pagelet: add Deep Discover code review results
+- pagelet: record repaired Deep Discover dogfood
+- pagelet: close Deep Discover validation gate
+- operations: close B-123 and B-101 Step 2 governance artifacts
+- operations-agent: update step3 architecture and docs tracking
+- operations-agent: add step3 visible-window evidence
+- pagelet: close b121 attention-aware delivery
+- close out B-001 Pagelet Tab
+
+### Tests
+- pagelet: add Deep Discover runtime regression coverage
+- operations-agent: add handoff and operations service tests
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
