@@ -6,6 +6,7 @@ Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明�
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-08-02 | `docs/archive/pagelet-tab-restructure-tracker.md` | deleted-after-absorption | [B-001 closeout evidence](./2026/pagelet-b001-tab-closeout.md) | 当前源码与 tests 承担稳定行为，B-001 最终桌面与 iPhone-profile 模拟证据已吸收到当前 checklist 和紧凑 closeout；历史执行过程可由 Git 恢复。 |
 | 2026-08-02 | `docs/development/active/pagelet-attention-aware-delivery/**` | deleted-after-absorption | [B-121 closeout evidence](./2026/pagelet-b121-attention-aware-delivery-closeout.md) | DEC-025、B-121 Product Spec、当前 Pagelet contracts 与 focused tests 已承担稳定行为；独有桌面/iPhone 验证和 landscape waiver 压缩到一份 current-linked closeout，完整过程包由 Git 历史恢复。 |
 | 2026-07-27 | `docs/development/active/pagelet-ui-ux-optimization/**` | deleted-after-absorption | [B-118 closeout evidence](./2026/pagelet-b118-ui-ux-hardening-closeout.md) | 当前产品边界已由 DEC-021/023/024 与 Product Specs 承担；最终部署、桌面/iPhone 证据和 residual 压缩到一份 current-linked closeout，完整过程包由 Git 历史恢复。 |
 | 2026-07-27 | `docs/development/active/insight-enhancement-layer/**` | deleted-after-absorption | [B-119 Product Spec](../product/specs/pa-insight-enhancement-layer-product-spec.md) | 未获 runtime 实现授权的计划包移回 Backlog B-119；稳定产品边界保留在 DEC-022/Spec，唯一 Discovery 依据迁入 current-linked Archive。 |

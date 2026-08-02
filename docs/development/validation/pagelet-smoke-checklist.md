@@ -6,10 +6,10 @@ layout, and end-to-end LLM-driven prompt-injection resilience against a real
 provider.
 
 Current scope: Pagelet is a quiet reviewer in the note
-(`review → optional panel → preview modal → .pagelet/*.md → Notice`). It can
-surface current-note findings, prepare background review hints, open a review
-panel, and save independent review notes. Source notes, daily notes, tasks, and
-frontmatter are not modified by Pagelet.
+(`review → optional panel or Detail Tab → preview modal → .pagelet/*.md → Notice`).
+It can surface current-note findings, prepare background review hints, open a
+review panel or source-backed Detail Tab, and save independent review notes.
+Source notes, daily notes, tasks, and frontmatter are not modified by Pagelet.
 
 The automated suite already covers:
 
@@ -30,6 +30,77 @@ The checks below verify behaviour the test mocks cannot reproduce.
 ---
 
 ## Latest Verification Log
+
+### 2026-08-02 · B-001 Pagelet Tab closeout
+
+Environment:
+
+- Ref: local `master` at `1a9e7d1c`; no runtime source changed during this
+  closeout.
+- Vault: repo-local `test/` vault, deployed with `make deploy`.
+- Obsidian: 1.13.4 desktop.
+- Fixture: static, provider-free Pagelet Detail payload over
+  `pagelet-smoke-golden.md`; it made no provider call and no note-content write.
+- Mobile lane: maintainer-approved Obsidian desktop mobile emulation with an
+  iPhone portrait profile (`393 × 852`, DPR 3, five touch points).
+
+Local and runtime gates:
+
+- PASS: focused `pagelet-panel-tab-view.test.ts` suite, 82/82 tests.
+- PASS: TypeScript check, `git diff --check`, and the runtime source scan for
+  `<style>` creation plus `innerHTML`/`outerHTML` assignment.
+- PASS: `make deploy`, including 177 Jest suites / 3752 tests, lint, build, and
+  deployment into the test vault.
+- PASS: provider-free Pagelet smoke runner, 26 PASS / 1 expected BLOCKED / 0
+  bugs. The blocked D6 probe intentionally did not mutate protected durable
+  Memory.
+
+Desktop Detail Tab:
+
+- PASS: navigation stayed hidden with fewer than three logical sections.
+- PASS: with four logical sections, `entryReason=pattern-detection` placed
+  `Cross-note patterns` first; the initial three-item navigation exposed
+  `Show 1 more sections`.
+- PASS: visible-window button interaction expanded the fourth navigation item;
+  clicking `Used sources` opened Context Pager and smooth-scrolled to it while
+  the navigation remained sticky.
+- PASS: visible-window interaction closed the Detail Tab; restoring its same-
+  process workspace state preserved the Pattern, Saved Insight, overview
+  content, and `entryReason`, without a duplicate Detail leaf or a temporary-
+  result error.
+- Evidence: [desktop expanded Context Pager](../../assets/validation/b001-pagelet-tab/desktop-tab-navigation.jpg).
+
+Mobile-emulated Detail Tab:
+
+- PASS: Obsidian mobile mode and the iPhone profile activated the mobile CSS
+  branch (`app.isMobile=true`, `393 × 852`, DPR 3, touch input, coarse pointer).
+- PASS: visible-window interaction expanded the fourth item and opened
+  `Used sources`; the resulting scroll position kept the sticky navigation
+  visible above the final overview card and expanded Context Pager.
+- PASS: all four navigation buttons measured 44px high, the navigation did not
+  overlap the mobile header, all four sections remained rendered and readable,
+  and the scroll body had no horizontal overflow (`369px / 369px`).
+- Evidence: [iPhone-profile expanded Context Pager](../../assets/validation/b001-pagelet-tab/iphone-emulation-tab-navigation.jpg).
+- Closeout record: [B-001 Pagelet Tab closeout evidence](../../archive/2026/pagelet-b001-tab-closeout.md).
+
+Closeout notes:
+
+- PASS: device metrics, touch emulation, and Obsidian mobile mode were disabled
+  after the smoke; the restored desktop environment reported no captured
+  console messages or errors.
+- Evidence boundary: desktop mobile emulation validates layout, mobile CSS,
+  ordinary click, smooth-scroll, and scroll-container behavior. It does not
+  claim physical-iPhone touch timing, native WKWebView/safe-area behavior,
+  software-keyboard interaction, or device performance.
+- The archived `TabView.ts <= 800 lines` target is retired as a historical
+  implementation metric, not a current product or correctness contract.
+  `TabView.ts` is currently 1089 lines after later intentional Pagelet
+  capabilities; no maintainability defect was found that would justify a
+  closeout-only refactor.
+- Weekly Review source matches are limited to preserved deserialization/settings
+  compatibility, negative command coverage, and historical output filename
+  fixtures; no standalone Weekly Review runtime UI or command remains.
+- UX findings: none.
 
 ### 2026-06-19 · Final pre-publish gate · v2.7 release-review follow-up
 
