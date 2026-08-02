@@ -196,7 +196,7 @@ Pagelet does NOT try to solve (preserved from historical design):
 
 7. **Vault-local and transparent.** Settings, pending review drafts, and feedback state are scoped to the current vault. Included and skipped notes should be inspectable. **[PRESERVED]**
 
-8. **Narrow write boundary.** Pagelet creates only independent review notes after explicit confirmation, under the **Write Action Framework** contract (D025, D030). It must not modify source notes, append to daily notes, change tasks, or update frontmatter. Broader action orchestration belongs to the future **Operations Agent mode**. **[PRESERVED]**
+8. **Narrow write boundary.** Pagelet keeps Deep Discover read-only. Under the explicitly enabled **Operations Agent** contract, a user-opened, source-backed insight may stage one deterministic source-note action for inline confirmation; multi-file, judgment-heavy, or uncertain work must move to Chat with complete visible context. Pagelet never writes in the background or without confirmation. **[CHANGED — DEC-014 / B-101 Step 3]**
 
 9. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. The Pet never pops up a modal, plays a sound, or demands attention. **[PRESERVED]**
 
@@ -1452,16 +1452,16 @@ used to override current behavior.
 - Cross-note theme detection.
 - Smarter background preparation scheduling (adaptive interval based on user activity patterns).
 
-### Out Of Pagelet Scope / Future Operations Agent Candidates
+### Out Of Pagelet Scope / Operations Boundaries
 
-- Append to daily/periodic notes after preview.
-- Apply a selected suggestion back to a source note with diff preview.
+- Background append to daily/periodic notes.
+- Arbitrary suggestion-to-source-note edits outside the bounded Step 3 action.
 - Convert selected suggestions into tasks.
 - Deeper Web research workflows.
 - More durable personalization after a separate privacy and product review.
 - Multi-vault awareness.
 
-These are not Pagelet behaviors. Do NOT promote any future write or automation behavior into Pagelet without a separate product definition, updated Write Action Framework boundary (D025, D030), and an explicit decision record.
+These are not current Pagelet behaviors. B-101 Step 3 authorizes only the focused [Pagelet Operations SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md): one deterministic, single-file action after inline confirmation, or a complete-context handoff to Chat. Do NOT promote any other write or automation behavior without explicit owner authority and an updated current contract.
 
 Future product definition: [Pagelet Maintenance Review Product Spec](../archive/pagelet-maintenance-review-product-spec.md) defines the proposed Pagelet-owned maintenance review surface. It does not change current shipped behavior until the write boundary and implementation SDD are explicitly updated.
 

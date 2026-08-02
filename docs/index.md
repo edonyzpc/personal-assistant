@@ -24,7 +24,7 @@
 
 - 活跃执行状态只看 [Active Registry](./development/active/README.md)，需求讨论状态只看 [Discovery Registry](./development/discovery/README.md)；本页不复制状态，避免漂移。
 - 未开始、延期与触发型事项只看 [Backlog](./backlog.md)；本页不复制条目状态。
-- Operations Agent Step 2 的 build availability 已开启，但 per-vault `operationsAgentEnabled` 仍默认为 `false`。显式 opt-in 只开放 [DEC-014](./product/decisions/dec-014-defer-operations-agent.md) 批准的四个 core tools 与 inline 确认 / stale-safe / Undo / content-free audit 边界；Step 3 Pagelet integration 与额外写入仍关闭。
+- Operations Agent build availability 已开启，但 per-vault `operationsAgentEnabled` 仍默认为 `false`。显式 opt-in 只开放 [DEC-014](./product/decisions/dec-014-defer-operations-agent.md) 批准的四个 core tools 与 inline 确认 / stale-safe / Undo / content-free audit 边界；已交付的 Step 3 只允许 Pagelet 单文件确定性动作或完整上下文 Chat handoff，额外写入仍关闭。
 
 ## 目录职责
 

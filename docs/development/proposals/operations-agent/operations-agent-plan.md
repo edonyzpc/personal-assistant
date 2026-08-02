@@ -1,22 +1,28 @@
 # Operations Agent Plan
 
 Document status: Current
-Delivery status: Blocked
-Updated: 2026-07-12
+Delivery status: Superseded
+Updated: 2026-08-01
 Work item: B-101
-Authority: Proposal boundary only; not product/runtime approval.
-Restart condition: B-101 action runtime、prompt split、Settings 语义、安全 review 与真实 Obsidian smoke 获得明确批准。
+Authority: Historical proposal boundary; superseded by the delivered [Operations capability](./agent-operations-capability.md) and Step 2/3 SDDs.
+Restart condition: Do not restart this plan; additional scope requires a new work item and explicit owner authorization under the current capability contract.
 
 ## Status
 
 | Field | Value |
 | --- | --- |
-| Track | Future Operations Agent / action mode |
-| Status | Draft boundary plan |
+| Track | Historical Operations Agent / action mode |
+| Status | Superseded by the delivered B-101 Step 2/3 boundary |
 | Source | PA Agent v1 closeout follow-up |
 | Related docs | [PA Agent Architecture Plan](../../../architecture/pa-agent-architecture-plan.md), [Write Action Design Handoff](../../../archive/write-action-design-handoff.md), [Obsidian Operations Agent Plan](../../../architecture/obsidian-operations-agent-plan.md) |
 
-This document is a future-work boundary linked to Backlog B-101, not an approved Active Package. PA Agent v1 remains read-only plus network-read. Do not implement write, command, shell, script, local MCP, or plugin-management actions by weakening the PA Agent v1 capability policy.
+This document preserves the original future-work boundary; it is not current
+execution authority and no longer represents a Backlog item. Use the
+[Operations capability](./agent-operations-capability.md),
+[Step 2 SDD](./operations-agent-step2-sdd.md), and
+[Step 3 SDD](./operations-agent-step3-sdd.md) for the delivered boundary. Do
+not implement command, shell, script, local MCP, plugin-management, or broader
+write actions by weakening the current capability policy.
 
 ## Scope
 

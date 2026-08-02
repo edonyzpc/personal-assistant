@@ -110,7 +110,18 @@ Core tools remain behind the same `CapabilityRegistry` and Data Boundary checks 
 
 `OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. Operations becomes effective only when the persisted per-vault `operationsAgentEnabled` setting is also `true`. A detected write-intent run may then switch to `chat-with-actions` and register exactly `vault_create`, `vault_append`, `vault_process`, and `frontmatter_update`; no old append/selection action or fifth write tool is registered.
 
-Calls from one assistant tool phase stage one immutable intent and show one inline Chat preview; no write occurs until explicit confirmation. Existing-note changes revalidate their frozen baseline inside `vault.process()`, create rechecks collisions, Undo fails closed after drift, and audit is content-free by default. Step 3 Pagelet integration and every write outside the four core tools remain closed. See [DEC-014](../product/decisions/dec-014-defer-operations-agent.md), [Step 2 SDD](../development/proposals/operations-agent/operations-agent-step2-sdd.md), and [Write Action Framework](./write-action-framework-sdd.md).
+Calls from one assistant tool phase stage one immutable intent and show one inline Chat preview; no write occurs until explicit confirmation. Existing-note changes revalidate their frozen baseline inside `vault.process()`, create rechecks collisions, Undo fails closed after drift, and audit is content-free by default.
+
+The delivered Step 3 integration reuses the plugin-owned Operations provider
+with isolated Chat/Pagelet sessions. A user-opened, source-backed Pagelet Panel
+may stage only one deterministic `frontmatter_update` that adds a one-way
+`pa-related` link; complex or uncertain work carries the complete visible
+context into Chat without auto-sending or granting write authority. Every
+write outside the four core tools and every broader Pagelet direct action
+remain closed. See [DEC-014](../product/decisions/dec-014-defer-operations-agent.md),
+[Step 2 SDD](../development/proposals/operations-agent/operations-agent-step2-sdd.md),
+[Step 3 SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md),
+and [Write Action Framework](./write-action-framework-sdd.md).
 
 ## Context Management
 

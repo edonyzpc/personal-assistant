@@ -1,11 +1,11 @@
 # Agent Operations 能力层
 
 Document status: Current
-Delivery status: Needs Decision
+Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-101
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)、[DEC-014](../../../product/decisions/dec-014-defer-operations-agent.md) 与 [DEC-011](../../../product/decisions/dec-011-capability-policy-boundary.md)。
-Restart condition: Step 2 已于 2026-08-01 完成实现、`make deploy`、test-vault 与真实 vault dogfood；仅在 owner 明确授权 Step 3 后启动 Pagelet 联动或扩大写能力。
+Restart condition: Step 2/3 已关闭；额外写工具或 Pagelet 直接动作仍需独立需求证据、新 work item 与 owner 授权。
 
 > 定义 PA Agent 在 Obsidian vault 中的写操作能力。
 > 核心场景：Chat 对话结论落地到 vault + Pagelet insight 的推荐动作执行。
@@ -41,15 +41,15 @@ Agent 生成内容：
 
 ### 1.2 辅助场景：Pagelet Insight 简单动作
 
-> Step 3 direction only：本节与 1.3 尚未获得实施授权；当前运行时只交付 1.1 Chat 场景。
+> Step 3 delivered：本节与 1.3 已按 [focused SDD](./operations-agent-step3-sdd.md) 交付；直接动作仍限单文件、确定性、显式确认。
 
-Pagelet Agent 发现 insight 后的推荐动作中，部分是简单直接操作：
+Pagelet Agent 发现 insight 后，当前 Step 3 只开放一个简单直接操作：
 
-- 添加互相链接
-- 更新 frontmatter（加 tag、改 status）
-- 追加引用到指定 section
+- 在 insight anchor note 的 `pa-related` Property 中加入一条指向所选 source note 的单向 wikilink。
 
-这些不需要 Chat 对话，用户在 insight card 上点击 action → 确认 → 直接执行。
+用户在完整 insight Panel 点击 action → 查看内联预览 → 确认 → 执行。互相链接、
+任意 tag/status 更新与正文/section append **不属于当前 Pagelet 直接动作**；需要这些变更时
+进入 Chat 讨论并使用已有 Operations 确认流，是否扩为新的 Pagelet 直接动作留待未来独立授权。
 
 ### 1.3 升级场景：Pagelet → Chat 协作
 
@@ -71,7 +71,7 @@ Pagelet Agent 发现复杂 insight
 |---|---|---|
 | 性质 | 安静观察、主动发现 | 主动对话、深度讨论 |
 | 触发 | 系统事件 | 用户提问 |
-| 写能力 | 简单直接动作 | 对话结论落地 |
+| 写能力 | 单向 `pa-related` 直接动作 | 对话结论落地及其他修改 |
 | 升级 | 复杂问题 → 交给 Chat | — |
 
 **写能力是共享的底层**，两种模式通过同一套写入工具操作 vault。
@@ -91,7 +91,7 @@ Pagelet Agent 发现复杂 insight
 | 后台主动发现 | ✗ | ✗ | ✓ (Pagelet) | ✓ (Pagelet Agent) |
 
 **PA 的差异化**：后台主动发现（竞品没有）+ 安静可信的交互模式。
-**PA 的剩余缺口**：Step 2 已补齐有界 Chat 写入；Pagelet action / handoff 仍是未授权的 Step 3。
+**PA 的当前交付**：Step 2 已补齐有界 Chat 写入；Step 3 已交付 Pagelet 单文件确认动作与完整 Chat handoff。
 
 ---
 
@@ -101,10 +101,14 @@ Pagelet Agent 发现复杂 insight
 
 | Tool | 用途 | 场景 |
 |------|------|------|
-| `vault_create` | 创建新笔记 | Chat 结论生成新笔记；Pagelet 建议创建 MOC |
-| `vault_append` | 追加内容到笔记末尾 | Chat 结论追加到已有笔记 |
-| `vault_process` | 在已有笔记的指定位置插入/替换/删除 | 加链接到 References section；Pagelet 简单 action |
-| `frontmatter_update` | 修改 frontmatter 属性 | 加 tag、改 status、加 related |
+| `vault_create` | 创建新笔记 | Chat 结论生成新笔记；Pagelet 创建 MOC 走 Chat/未来授权 |
+| `vault_append` | 追加内容到笔记末尾 | Chat 结论追加到已有笔记；Pagelet append 走 Chat/未来授权 |
+| `vault_process` | 在已有笔记的指定位置插入/替换/删除 | Chat 修改；Pagelet section/link 修改走 Chat/未来授权 |
+| `frontmatter_update` | 修改 frontmatter 属性 | Chat 可加 tag/改 status；当前 Pagelet 只设置单向 `pa-related` |
+
+当前 Step 3 不把 Chat 已有的四个工具等同于四类 Pagelet 直接动作。Pagelet Panel 仅以
+确定性本地参数调用一次 `frontmatter_update`，目标固定为 anchor note，字段固定为
+`pa-related`，值为保留既有 scalar/array 内容、去重后追加 source wikilink 的数组。
 
 ### 3.2 vault_process 的三种 operation
 
@@ -220,7 +224,7 @@ Agent 根据以下信号判断写到哪：
 所有写操作确认内联在交互流程中：
 
 **Chat 场景**：Agent 展示目标和内容摘要 → [确认] [取消]
-**Pagelet 场景（Step 3，未授权）**：insight card 切换为确认态 → [确认] [取消]
+**Pagelet 场景（Step 3）**：用户打开完整 insight card，确定性单文件动作切换为确认态 → [确认] [取消]
 
 ### 6.2 风险分级
 
@@ -302,7 +306,7 @@ Agent 生成写入内容时：
 
 ### 8.3 与 Pagelet Agent
 
-Step 3 的方向是共享同一套写入工具层：Pagelet action 按钮触发简单写入，或带上下文升级到 Chat。该联动尚未获 owner 授权，当前运行时没有 Pagelet action / handoff。
+Step 3 共享同一套写入工具层：Pagelet action 按钮触发简单单文件写入，或带完整可见上下文升级到 Chat。实现边界与 T10 传递契约见 [Step 3 SDD](./operations-agent-step3-sdd.md)。
 
 ---
 
@@ -319,14 +323,14 @@ Step 3 的方向是共享同一套写入工具层：Pagelet action 按钮触发�
 - 审计日志（content-free）
 - 验证：dogfooding 日常使用 Chat 讨论后保存到 vault
 
-### 9.2 Phase 2：Pagelet 简单 Action（Awaiting owner authorization）
+### 9.2 Phase 2：Pagelet 简单 Action（Delivered 2026-08-01）
 
-- Pagelet insight card 的 action 按钮接入写入 tool
-- 简单操作直接执行（加链接、改 frontmatter）
-- 复杂操作升级到 Chat
-- 验证：Pagelet 发现 insight → 一键执行
+- Pagelet 完整 insight Panel 的 action 按钮接入共享写入层
+- 当前直接动作仅为 anchor note → source note 的单向 `pa-related` wikilink
+- 互链、tag/status、正文/section append 与其他复杂操作升级到 Chat；未来若要直接执行需独立授权
+- 验证：Pagelet 发现 insight → 预览并确认单向链接 → 可撤销
 
-### 9.3 Phase 3：扩展操作（按需）
+### 9.3 Phase 3：扩展操作（未授权；按独立需求重启）
 
 - file_rename（当整理结构成为高频需求时）
 - command_execute（当有明确安全场景时）
@@ -353,9 +357,9 @@ Step 3 的方向是共享同一套写入工具层：Pagelet action 按钮触发�
 | T12 | vault_create 已存在行为 | 文件已存在时 create 应该怎样 | 返回 error，不覆盖；Agent 需先检查或使用 vault_append |
 | T13 | vault_process.search 匹配方式 | 字面匹配还是正则 | 字面匹配（安全、可预测）；不支持正则 |
 | T14 | vault_process heading 格式 | heading 参数格式和找不到时的行为 | 参数为 heading 文本（不含 `#` 前缀）；找不到时返回 error |
-| T15 | 多文件原子性 | 一个意图涉及多文件（如双向链接），部分失败怎么办 | Agent 逐步执行；某步失败时汇报已完成和失败的步骤；用户可选回滚已完成部分 |
+| T15 | 多文件原子性 | 未来一个意图涉及多文件（如双向链接），部分失败怎么办 | 不进入当前 Pagelet 直接动作；先走 Chat，未来扩展时再定义逐步执行与回滚策略 |
 | T16 | 主动建议频率控制 | Agent 每条消息都建议保存会很烦 | 每次对话最多建议 1 次；用户拒绝后同一对话不再建议；可在 Settings 关闭 |
-| T17 | 单意图多操作确认 | "添加双向链接"= 两个 vault_process，几次确认？ | 一次意图确认覆盖整个操作序列；展示涉及的所有文件 |
+| T17 | 单意图多操作确认 | 未来“添加双向链接”= 两个操作，几次确认？ | 当前 Step 3 不开放；走 Chat 现有 intent 预览，未来 Pagelet 扩展需独立决策 |
 
 ---
 

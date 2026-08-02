@@ -744,6 +744,12 @@ graph LR
 
 Operations Agent Step 2 只按需暴露 `vault_create`、`vault_append`、`vault_process` 与 `frontmatter_update`。同一 intent 通过 Chat inline card 一次确认；已有笔记在 `vault.process()` 内重验 baseline，Undo 遇到 drift 则 fail closed，audit 默认 content-free。build gate 可用不代表用户授权，per-vault 设置仍默认关闭。
 
+Step 3 已在同一 plugin-owned Operations provider 上交付 Pagelet 联动，Chat 与
+Pagelet 的 pending intent / Undo session 相互隔离。用户主动打开 source-backed
+Panel 后，只能预览并确认一个确定性的单文件 `pa-related` 更新；复杂或不确定动作
+以完整可见上下文进入 Chat，不自动发送，也不继承写入授权。额外工具、更多 Pagelet
+直接动作与后台写入仍关闭。
+
 ### 6.8 五个 LLM 场景
 
 | 场景 | 触发 | 用途 |
@@ -973,8 +979,8 @@ summary.
 |------|------|
 | Current version | `2.8.4` |
 | Current release theme | Post-2.8 patch line plus completed Memory Control Center validation and PA Agent/Pagelet release-readiness |
-| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + opt-in Operations Step 2 |
-| Operations Agent availability | `OPERATIONS_AGENT_RUNTIME_ENABLED=true` makes Step 2 build-available; persisted per-vault `operationsAgentEnabled` defaults to `false` |
+| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools + opt-in bounded Operations with delivered Pagelet integration |
+| Operations Agent availability | `OPERATIONS_AGENT_RUNTIME_ENABLED=true` makes the bounded layer build-available; persisted per-vault `operationsAgentEnabled` defaults to `false` |
 
 ### 10.2 已完成发布线
 
@@ -989,7 +995,6 @@ summary.
 
 | Theme | Current guardrail |
 |------|-------------------|
-| Operations Agent Step 2 | Exactly four core tools with one inline intent confirmation, stale-safe execution, drift-safe Undo, and content-free audit; Step 3 Pagelet integration and extra writes remain closed. |
 | User custom Skills | Requires product design and allowed-tools policy before implementation. |
 | Pagelet async result UX | Use source-bound in-memory results first; do not persist full provider output silently. |
 | Architecture quality pass | Behavior-preserving extraction first, with focused tests and Obsidian smoke for runtime/UI surfaces. |

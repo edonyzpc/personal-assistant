@@ -7,7 +7,7 @@ Updated: 2026-08-01
 Work item: B-101
 Implementation step: Step 2 — Operations Phase 1 / Chat conclusions to vault
 Authority: [Owner decision record](../proposal-review-response-2026-07-28.md) and [Operations capability direction](./agent-operations-capability.md); owner authorized implementation on 2026-08-01.
-Restart condition: Step 2 closed on 2026-08-01; reopen only for a confirmed Step 2 regression. Step 3 Pagelet integration and every write capability outside the four core tools require a separate owner decision.
+Restart condition: Step 2 closed on 2026-08-01; reopen only for a confirmed Step 2 regression. Step 3 was separately authorized, delivered, and closed under its own SDD; every write capability outside the four core tools still requires a new owner decision.
 Handoff: [Implementation Handoff Brief](../implementation-handoff.md)
 
 ## 1. Outcome And Scope
@@ -419,7 +419,8 @@ Required closeout gate:
 - Undo snapshots are memory-only and short-lived; audit is durable and
   content-free by default.
 - Runtime availability may ship behind a build gate, but the user setting stays
-  opt-in and defaults off. Step 3 remains a separate owner decision.
+  opt-in and defaults off. Step 3 was a separate owner decision and its later
+  delivery does not enlarge this Step 2 boundary.
 
 Open design findings: None. Direction choices are settled by the owner decision
 record; implementation discoveries must preserve these invariants or be raised
@@ -467,5 +468,7 @@ Step 2 is closed against the approved scope and gates:
   for stale results; no prompt, note content, snapshot, diff, or tool arguments
   were present.
 
-Step 3 remains closed. Starting Pagelet actions, Pagelet → Chat handoff, extra
-write tools, or command execution requires explicit owner authorization.
+Step 3 was subsequently authorized and closed under the
+[Step 3 SDD](./operations-agent-step3-sdd.md#12-closeout-evidence--2026-08-01).
+Extra write tools, additional Pagelet direct actions, or command execution still
+require independent demand evidence and explicit owner authorization.

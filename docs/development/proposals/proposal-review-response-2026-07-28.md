@@ -1,12 +1,12 @@
 # Proposal Review Response
 
 Document status: Current
-Delivery status: Needs Decision
+Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-101
 Related work item: B-123
 Authority: Project owner's settled design decisions for B-123 Pagelet Deep Discover and related B-101 Operations.
-Restart condition: B-123 Step 1 与 B-101 Step 2 均于 2026-08-01 关闭；只有 owner 明确授权 B-101 Step 3 后才继续 Pagelet + Operations 联动。
+Restart condition: B-123 Step 1 与 B-101 Step 2/3 均已关闭；任何新增写工具或 Pagelet 直接动作需要独立需求证据与 owner 明确授权。
 Revision: v2 — reflects rewritten proposals and confirmed implementation plan
 Scope: Pagelet Agent proposal + Agent Operations capability proposal
 Discussed by: Project owner + Claude Code (product discussion partner)
@@ -133,7 +133,8 @@ All operations: immediate undo available
 
 ### 3.5 Command execution — Still DEFERRED (not permanently excluded)
 
-Deferred to Step 3+ expansion. Will be evaluated with real scenarios.
+Deferred to a future independently authorized expansion. It requires a proven
+scenario and does not follow automatically from the closed Step 3.
 
 ### 3.6 "Companion" vision — Still the product north star
 
@@ -166,7 +167,7 @@ Step 2: Operations Phase 1 — Chat 对话结论落地 [Closed 2026-08-01]
   ├── Audit log (content-free)
   └── Dogfood: daily Chat discussions naturally saved to vault
 
-Step 3: Pagelet + Operations 联动 [Not authorized]
+Step 3: Pagelet + Operations 联动 [Closed 2026-08-01]
   ├── Insight card action buttons (context-specific action text)
   ├── Simple actions: inline confirm → direct execution
   ├── Complex actions: carry context → upgrade to Chat Agent
@@ -179,11 +180,13 @@ Step 3: Pagelet + Operations 联动 [Not authorized]
 ```
 Step 1 (Pagelet Agent) — no dependency, start immediately
 Step 2 (Operations) — no dependency on Step 1, can run in parallel or after
-Step 3 (Integration) — technical dependency is satisfied, but owner authorization is still required
+Step 3 (Integration) — delivered and closed within the explicitly authorized boundary
 ```
 
 Step 2 delivery evidence is recorded in the
 [focused SDD](./operations-agent/operations-agent-step2-sdd.md#14-closeout-evidence-2026-08-01).
+Step 3 delivery evidence is recorded in its
+[focused SDD](./operations-agent/operations-agent-step3-sdd.md#12-closeout-evidence--2026-08-01).
 
 ### 4.3 What the proposals ARE
 
@@ -294,15 +297,15 @@ Any AI session (Codex, Claude Code, or other) working on these proposals MUST:
    output. The Agent should express findings naturally. Quality is judged by
    source grounding and user value, not by schema compliance.
 
-7. **Operations scope is focused.** Do not expand beyond the 4 core tools in
-   Step 2. Additional tools are Step 3+ and require proven demand.
+7. **Operations scope is focused.** Do not expand beyond the 4 core tools.
+   Additional tools require proven demand and explicit owner authorization.
 
 8. **Companion is the north star.** Evaluate design tradeoffs against: "does
    this make PA feel more like a quiet companion that grows with the user?"
 
-9. **Implementation order is Step 1 → 2 → 3.** Steps 1 and 2 are closed. Their
-   functional state satisfies the technical dependency only; Step 3 still
-   requires an explicit owner authorization before SDD or implementation.
+9. **Implementation order is Step 1 → 2 → 3.** All three steps closed on
+   2026-08-01. Step 3's focused SDD remains the delivered boundary and does
+   not authorize extra write tools.
 
 10. **The user's role**: independent developer, sole decision-maker. Frame your
     work as "implementation advisor" — answer "how to build this well," not
@@ -318,9 +321,9 @@ Any AI session (Codex, Claude Code, or other) working on these proposals MUST:
 
 Before implementation begins, verify:
 
-- [ ] SDD written for the target Step (addresses all technical requirements)
-- [ ] Proposal read and understood (direction document, not spec)
-- [ ] This review response read (authoritative decisions)
-- [ ] No governance overhead added beyond SDD + implement + dogfood
-- [ ] Technical issues T1-T10 addressed in SDD
-- [ ] Completion criteria for the Step are clear and agreed
+- [x] SDD written for the target Step (addresses all technical requirements)
+- [x] Proposal read and understood (direction document, not spec)
+- [x] This review response read (authoritative decisions)
+- [x] No governance overhead added beyond SDD + implement + dogfood
+- [x] Technical issues T1-T10 addressed in SDD
+- [x] Completion criteria for the Step are clear and agreed

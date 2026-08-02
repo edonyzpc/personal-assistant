@@ -1,13 +1,13 @@
 # Implementation Handoff Brief
 
 Document status: Current
-Delivery status: Needs Decision
+Delivery status: Closed
 Updated: 2026-08-01
 Work item: B-101
 Related work item: B-123
 Target: Codex (implementation advisor → designer → developer → tester)
-Authority: Project owner's staged Step 1 → 2 → 3 implementation sequence and completion criteria; B-123 Step 1 and B-101 Step 2 closed on 2026-08-01.
-Restart condition: Owner explicitly authorizes B-101 Step 3 Pagelet + Operations integration; completed Step 1/2 work does not grant that authority.
+Authority: Project owner's staged Step 1 → 2 → 3 implementation sequence and completion criteria; all three steps closed on 2026-08-01.
+Restart condition: B-101 is closed. Any additional Operations tool or Pagelet write behavior requires a new work item, independent demand evidence, and explicit owner authorization.
 
 ---
 
@@ -17,7 +17,7 @@ PA Agent 需要两项核心能力演进：
 1. **Pagelet Agent 化**：让 AI 深度参与笔记分析，产出当前 single-shot 管道做不到的跨笔记深层洞察
 2. **Operations 能力**：让 Agent 能将对话结论写入 vault，以及执行 Pagelet 推荐的动作
 
-方向已验证，设计决策已确定。Step 1 与 Step 2 已于 2026-08-01 完成并关闭；当前停在 Step 3 的 owner 授权边界，没有实施中的 Step。
+方向已验证，设计决策已确定。Step 1、Step 2 与 Step 3 均已于 2026-08-01 完成并关闭；最终实现与验证证据见各 Step SDD。
 
 ---
 
@@ -145,7 +145,7 @@ PA Agent 需要两项核心能力演进：
 
 ### Step 3：Pagelet + Operations 联动
 
-**Status: Not authorized.** Step 1/2 functional 只满足技术依赖，不构成实施授权。
+**Status: Closed 2026-08-01.** 最终证据见 [Step 3 SDD](./operations-agent/operations-agent-step3-sdd.md#12-closeout-evidence--2026-08-01)。
 
 **目标**：Pagelet 发现 insight 后用户能一键执行动作或升级到 Chat 讨论。
 
@@ -183,8 +183,7 @@ PA Agent 需要两项核心能力演进：
 
 ## 开始方式
 
-Step 1/2 已关闭，不再自动选择下一步。Owner 明确授权 Step 3 后，才为
-Pagelet + Operations 联动编写 focused SDD，并继续实现、`make deploy` 与真实 vault
-dogfood。
+Step 1/2/3 已关闭，没有自动衔接的下一实施 Step。未经新的 owner 授权与独立需求证据，
+不扩大四个 core tools 或 Pagelet 直接动作，也不自动 commit、push 或 release。
 
 如有技术问题需要澄清（不是方向问题），可以提出。方向问题请 escalate 给 owner。

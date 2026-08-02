@@ -366,6 +366,9 @@ const ownerDirectedProposalWorkItems = new Map([
     ["docs/development/proposals/proposal-review-response-2026-07-28.md", "B-101"],
     ["docs/development/proposals/operations-agent/agent-operations-capability.md", "B-101"],
     ["docs/development/proposals/operations-agent/operations-agent-step2-sdd.md", "B-101"],
+    ["docs/development/proposals/operations-agent/operations-agent-step3-sdd.md", "B-101"],
+    ["docs/development/proposals/operations-agent/operations-agent-plan.md", "B-101"],
+    ["docs/development/proposals/operations-agent/operations-agent-mode-sdd.md", "B-101"],
     ["docs/development/proposals/pagelet-agent/pagelet-agent-proposal.md", "B-123"],
     ["docs/development/proposals/pagelet-agent/pagelet-agent-deep-discover-sdd.md", "B-123"],
 ]);
