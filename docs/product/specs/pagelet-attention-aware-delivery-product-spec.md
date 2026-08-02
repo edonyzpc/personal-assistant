@@ -1,7 +1,7 @@
 # Pagelet Attention-Aware Delivery Product Spec
 
 Document status: Approved
-Updated: 2026-07-27
+Updated: 2026-08-02
 Work item: B-121
 Decision: [DEC-025 — Pagelet 采用消费感知的主动交付与空态 Action Ring](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
 Authority: Pagelet 已看去重、空态 acknowledgement、Pet 短点分流与 Action Ring 的用户行为、范围、非目标及验收标准。
@@ -235,13 +235,14 @@ None. 用户于 2026-07-22 选择首次空态解释后显示 Ring、已看内容
 已看状态仅当前设备生效；并于 2026-07-27 确认 Intentionally Quiet 在说明看过后也使用
 同一 Ring。
 
-## Delivery Handoff
+## Delivery Evidence
 
-- Active Package: [B-121 Development Track](../../development/active/pagelet-attention-aware-delivery/README.md)；
-  用户已授权按本 spec 完成设计、开发、测试与验证。source-verified SDD 已批准。
+- Final delivery evidence: [B-121 compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md)。
 - Architecture contracts: 复用 Pagelet device-local Vault storage identity；实现应把
   delivery identity/ledger、owner admission、Bubble/Detail visibility commit 与 Pet
   interaction resolver 分层，避免把 seen 混入 evaluator cache 或 RHP。
-- Release / rollout boundary: 需要 focused Jest、type-check、community DOM scan、
-  `make deploy` 后桌面 Obsidian smoke；Ring 触控与布局需要 iPhone real-device smoke。
-  测试与实现不授权 commit、push、tag、publish 或 release。
+- Release / rollout boundary: B-121 核心 runtime 已进入 BRAT `2.9.0-beta.5`；tag 后
+  follow-up fixes 尚无更新的 beta/stable package。发布状态不改变本 spec 的当前行为边界。
+- Work created or removed: B-121 实现、review、local/iCloud deployment、desktop 与
+  iPhone portrait/touch 验证已关闭；Active Package 在结论吸收后删除，独有终态证据见
+  compact closeout。

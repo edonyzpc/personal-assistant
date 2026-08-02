@@ -1,7 +1,7 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-07-27
+Updated: 2026-08-02
 Work item: B-108
 Scoped work items: B-118, B-121
 Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
@@ -21,7 +21,7 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 | Historical provenance (non-authoritative) | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
-| B-121 scoped amendment | [Attention-Aware Delivery Product Spec](./pagelet-attention-aware-delivery-product-spec.md) governs device-local seen suppression and the Pet Action Ring after acknowledged Ready Empty / Intentionally Quiet. The behavior is implemented locally and has passed automated、review、local/iCloud deployment、desktop smoke and iPhone portrait toolbar geometry/visual gates；the latest Ring is a 44px horizontal row, while physical landscape remains a declared residual rather than a claimed PASS. |
+| B-121 scoped amendment | [Attention-Aware Delivery Product Spec](./pagelet-attention-aware-delivery-product-spec.md) governs device-local seen suppression and the Pet Action Ring after acknowledged Ready Empty / Intentionally Quiet. The delivered behavior passed automated、review、local/iCloud deployment、desktop smoke and iPhone portrait toolbar geometry/visual gates；the latest Ring is a 44px horizontal row, while physical landscape remains a declared residual rather than a claimed PASS. Final evidence is in the [B-121 compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md). |
 | Implementation record | [Historical SDD](../../archive/pagelet-bubble-readiness-and-recall-sdd.md) and [redesign tracker](../../archive/pa-product-redesign-development-tracker.md) |
 
 ---
@@ -800,7 +800,7 @@ This iteration does NOT include:
 | --- | --- | --- | --- |
 | OD-1 | Pet visual states for Presence | Resolved for this round: no Pet state expansion | Keep only necessary existing state mapping; Pet redesign is not blocking Bubble work. |
 | OD-2 | Bubble card stack | Resolved: single-visible-card stack, max 3 cards | Default one; enable card switching only for multiple high-quality distinct candidates. |
-| OD-3 | "Intentionally Quiet" acknowledgment | Superseded by DEC-025/B-121: show the explanation once, then route Pet short click to Action Ring | B-118 remains Validated; the successor is implemented locally, with iPhone B-121 smoke still pending. |
+| OD-3 | "Intentionally Quiet" acknowledgment | Superseded by DEC-025/B-121: show the explanation once, then route Pet short click to Action Ring | B-118 and B-121 are closed；the successor passed desktop and iPhone portrait/touch smoke，with physical landscape retained as `NOT TESTED / accepted waiver`. |
 | OD-4 | Preparing state: show progress numbers? | Resolved: show numbers only for larger vaults | Use a threshold such as 20+ notes. Small vaults show simple preparing copy. |
 | OD-5 | Bridge hint content for first Recall | Resolved: real delivery first; bridge as inline hint | Onboarding annotates value moments, not replaces them. |
 | OD-6 | Discover trigger from empty state | Resolved: keep routing results into Panel | Bubble is only the trigger; results remain active-note-snapshot-bound in Panel. |

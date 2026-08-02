@@ -2,7 +2,7 @@
 
 Decision ID: DEC-025
 Status: Accepted
-Updated: 2026-07-27
+Updated: 2026-08-02
 Authority: 用户于 2026-07-22 至 2026-07-27 对重复 Recall/Recap、Pet 空态与主动关闭提示后的安静状态逐项选择产品方案
 Work item: B-121
 
@@ -73,8 +73,10 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
   使用设备本地 Vault storage。本地存储损坏或不可用时至少保留会话内去重并在
   diagnostics 暴露降级，不能写入 Markdown 补偿。
 - Work created or removed: B-121 从 B-118 的延期空态观察项升级为独立产品范围；
-  B-118 保持 Validated，不在原 tracker 内重开。用户随后已授权建立 B-121 Active
-  Package 并完成实现与验证；仍未授权 commit、push、tag、publish 或 release。
+  B-118 保持关闭，不在原 tracker 内重开。B-121 已完成实现与验证并关闭 Active
+  Package；当前行为由本决定、Product Spec、Pagelet contracts 与 focused tests 承担，
+  独有终态证据保留在 compact closeout。核心 runtime 已进入 BRAT `2.9.0-beta.5`；tag
+  后 follow-up fixes 尚无更新的 beta/stable package。
 
 ## Revisit Trigger
 
@@ -89,6 +91,6 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
 
 - Product Spec: [B-121 Pagelet Attention-Aware Delivery](../specs/pagelet-attention-aware-delivery-product-spec.md)
 - Related current specs: [Bubble Readiness and Recall](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)、[Quiet Recall](../specs/pa-quiet-recall-insight-timing-product-spec.md)、[Scope Recap](../specs/pa-scope-recap-theme-summary-product-spec.md)
-- Architecture / SDD: [B-121 SDD](../../development/active/pagelet-attention-aware-delivery/sdd.md)
-- Delivery track: [B-121 Active Package](../../development/active/pagelet-attention-aware-delivery/README.md)
+- Current product design: [Pagelet Product Design](../pagelet-product-design.md)
+- Final delivery evidence: [B-121 compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md)
 - Supersedes / superseded by: supersedes B-118's deferred ordinary quiet-empty disposition and narrows the old session/producer-level once semantics; none otherwise
