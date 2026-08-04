@@ -27,6 +27,10 @@
 - [Saved Insight and Insight Ledger](./specs/pa-saved-insight-ledger-product-spec.md)
 - [Insight Enhancement Layer](./specs/pa-insight-enhancement-layer-product-spec.md)
 
+## Share And Reuse
+
+- [Share Card](./specs/pa-share-card-product-spec.md)
+
 ## Pagelet Delivery
 
 - [Attention-Aware Delivery and Action Ring](./specs/pagelet-attention-aware-delivery-product-spec.md)
