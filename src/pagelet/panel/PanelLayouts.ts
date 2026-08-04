@@ -40,6 +40,8 @@ export interface PanelLayoutRenderOptions {
     onConnectionNodeClick?: (noteName: string, sourcePath?: string) => void;
     onResearchFinding?: (finding: PanelFinding) => void;
     sourcePath?: string;
+    app?: App;
+    renderComponent?: Component;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,10 +165,18 @@ function renderTimelineItem(
     }
     if (finding.insightText) {
         const insight = el("div", "pa-pagelet-panel-timeline-insight");
-        if (renderInsightAsMarkdown) {
-            // Discovery layouts are synchronous and do not own an Obsidian
-            // Component lifecycle, so reuse the existing textContent-only
-            // markdown DOM path instead of injecting rendered HTML.
+        if (renderInsightAsMarkdown && options.app && options.renderComponent) {
+            void Promise.resolve(MarkdownRenderer.render(
+                options.app,
+                finding.insightText,
+                insight,
+                options.sourcePath ?? "",
+                options.renderComponent,
+            )).catch(() => {
+                clearChildren(insight);
+                renderSimpleMarkdownPreview(insight, finding.insightText!);
+            });
+        } else if (renderInsightAsMarkdown) {
             renderSimpleMarkdownPreview(insight, finding.insightText);
         } else {
             insight.textContent = finding.insightText;
@@ -319,12 +329,9 @@ export function renderDiscoveryLayout(
         wrapper.appendChild(
             el("div", "pa-pagelet-panel-timeline-divider"),
         );
-        wrapper.appendChild(
-            el("div", "pa-pagelet-panel-timeline-section-label",
-                pageletT("pagelet.recap.detail.sources", locale)),
-        );
-        wrapper.appendChild(renderDiscoverySourceList(
+        wrapper.appendChild(renderCollapsibleSourceSection(
             sourcePaths,
+            locale,
             options.sourcePath,
             options.onConnectionNodeClick,
         ));
@@ -398,33 +405,69 @@ function collectDiscoverySourcePaths(findings: readonly PanelFinding[]): string[
     return paths;
 }
 
-function renderDiscoverySourceList(
+function filenameFromPath(path: string): string {
+    const segments = path.split("/");
+    const file = segments[segments.length - 1] ?? path;
+    return file.replace(/\.md$/i, "");
+}
+
+function renderCollapsibleSourceSection(
     sourcePaths: readonly string[],
+    locale: PageletLocale,
     sourcePath?: string,
     onSourceClick?: (noteName: string, sourcePath?: string) => void,
 ): HTMLElement {
-    const list = el("ul", "pa-pagelet-panel-context-pager-list pa-pagelet-panel-source-list");
+    const section = el("div", "pa-pagelet-panel-source-section");
+
+    const toggle = el("button", "pa-pagelet-panel-source-toggle");
+    toggle.setAttribute("type", "button");
+    toggle.setAttribute("aria-expanded", "false");
+    const chevron = el("span", "pa-pagelet-panel-source-toggle-chevron", "›");
+    const label = el("span", "pa-pagelet-panel-source-toggle-label",
+        pageletT("pagelet.recap.detail.sources", locale));
+    const count = el("span", "pa-pagelet-panel-source-toggle-count",
+        String(sourcePaths.length));
+    toggle.appendChild(chevron);
+    toggle.appendChild(label);
+    toggle.appendChild(count);
+    section.appendChild(toggle);
+
+    const chipContainer = el("div", "pa-pagelet-panel-source-chips");
+    chipContainer.setAttribute("hidden", "");
     for (const path of sourcePaths) {
-        const item = el("li");
+        const chip = el("span", "pa-pagelet-panel-source-chip", filenameFromPath(path));
+        chip.setAttribute("title", path);
         if (onSourceClick) {
-            const button = el(
-                "button",
-                "pa-pagelet-panel-timeline-action-btn pa-pagelet-panel-source-link",
-                path,
-            );
-            button.setAttribute("type", "button");
-            button.addEventListener("click", (event) => {
+            chip.classList.add("pa-pagelet-panel-source-chip--clickable");
+            chip.setAttribute("role", "button");
+            chip.setAttribute("tabindex", "0");
+            chip.addEventListener("click", (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 onSourceClick(path, sourcePath);
             });
-            item.appendChild(button);
-        } else {
-            item.textContent = path;
+            chip.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSourceClick(path, sourcePath);
+                }
+            });
         }
-        list.appendChild(item);
+        chipContainer.appendChild(chip);
     }
-    return list;
+    section.appendChild(chipContainer);
+
+    toggle.addEventListener("click", () => {
+        const expanded = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!expanded));
+        if (expanded) {
+            chipContainer.setAttribute("hidden", "");
+        } else {
+            chipContainer.removeAttribute("hidden");
+        }
+    });
+
+    return section;
 }
 
 /** Build the connection map container with an interactive SVG graph. */

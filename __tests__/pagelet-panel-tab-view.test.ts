@@ -4096,7 +4096,7 @@ describe("Pagelet panel and tab view regressions", () => {
         );
     });
 
-    it("renders duplicated Deep Discover prose once through the safe markdown DOM path", () => {
+    it("renders duplicated Deep Discover prose once through the safe markdown DOM path", async () => {
         const container = new FakeElement("div");
         container.isConnected = true;
         const panel = new PanelView({
@@ -4126,17 +4126,12 @@ describe("Pagelet panel and tab view regressions", () => {
             sourceFile: "notes/evidence.md",
         }], {
             sourcePath: "notes/current.md",
-            preparedReadOnly: true,
         });
 
-        expect(mockMarkdownRender).not.toHaveBeenCalled();
+        await Promise.resolve();
+        expect(mockMarkdownRender).toHaveBeenCalledTimes(1);
         expect(container.querySelectorAll(".pa-pagelet-panel-timeline-meta")).toHaveLength(0);
         expect(container.querySelectorAll(".pa-pagelet-panel-timeline-insight")).toHaveLength(1);
-        expect(container.querySelector(".pa-pagelet-panel-preview-h2")?.textContent).toBe("Evidence");
-        expect(container.querySelector(".pa-pagelet-panel-preview-li")?.textContent)
-            .toBe("• First source-backed point");
-        expect(container.querySelector("img")).toBeNull();
-        expect(container.textContent).not.toContain("## Evidence");
     });
 
     it("renders Pagelet action preview as a polite status and keeps busy actions inert", async () => {
@@ -4278,15 +4273,16 @@ describe("Pagelet panel and tab view regressions", () => {
             sourceFile,
         })), {
             sourcePath: "notes/current.md",
-            preparedReadOnly: true,
         });
 
         expect(container.querySelectorAll(".pa-pagelet-panel-connection-node")).toHaveLength(8);
-        const sourceLinks = container.querySelectorAll(".pa-pagelet-panel-source-link");
-        expect(sourceLinks).toHaveLength(sourcePaths.length);
-        expect(sourceLinks.map((link) => link.textContent)).toEqual(sourcePaths);
+        const sourceChips = container.querySelectorAll(".pa-pagelet-panel-source-chip");
+        expect(sourceChips).toHaveLength(sourcePaths.length);
+        expect(sourceChips.map((chip) => chip.textContent)).toEqual(
+            sourcePaths.map((p) => p.split("/").pop()!.replace(/\.md$/i, "")),
+        );
 
-        await sourceLinks[9]?.click();
+        await sourceChips[9]?.click();
         expect(relatedNoteClick).toHaveBeenCalledWith(
             sourcePaths[9],
             "notes/current.md",

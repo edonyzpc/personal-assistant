@@ -3,7 +3,7 @@
 /**
  * Pagelet -- Panel DOM lifecycle manager.
  *
- * The Panel is a side panel (~380px wide) that slides in from the right.
+ * The Panel is a side panel (~460px wide) that slides in from the right.
  * It provides scenario-adaptive layouts for deeper exploration:
  *
  *   - review:   Timeline of recent note activity with AI insights.
@@ -316,7 +316,7 @@ export class PanelView {
         this.titleEl.textContent =
             pageletT(LAYOUT_TITLE_KEYS[layoutType], this.getLocale()) || layoutType;
 
-        if (layoutType !== "summary") {
+        if (layoutType !== "summary" && layoutType !== "discover") {
             this.renderComponent?.unload();
             this.renderComponent = null;
         }
@@ -383,7 +383,13 @@ export class PanelView {
             case "current":
                 renderCurrentNoteAnalysis(contentEl, visibleFindings, this.getLocale(), renderOptions);
                 break;
-            case "discover":
+            case "discover": {
+                this.renderComponent?.unload();
+                this.renderComponent = new Component();
+                this.renderComponent.load();
+                renderOptions.app = this.options.app;
+                renderOptions.renderComponent = this.renderComponent;
+
                 renderDiscoveryLayout(
                     contentEl,
                     visibleFindings,
@@ -392,6 +398,7 @@ export class PanelView {
                     renderOptions,
                 );
                 break;
+            }
             case "summary": {
                 // Clean up previous render component
                 this.renderComponent?.unload();
