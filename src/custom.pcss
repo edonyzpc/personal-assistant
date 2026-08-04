@@ -4589,8 +4589,8 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
 .pa-pagelet-panel {
 	position: fixed;
 	top: 0;
-	right: -380px;
-	width: min(380px,100vw);
+	right: -460px;
+	width: min(460px,100vw);
 	--pa-pagelet-panel-height: 100vh;
 	height: var(--pa-pagelet-panel-height);
 	padding-top: env(safe-area-inset-top,0px);
@@ -5160,6 +5160,86 @@ body > .tooltip {
 	font-size: calc(var(--font-text-size, 16px) * 0.6875);
 	line-height: 1.5;
 	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-panel-source-section {
+	padding-left: 24px;
+}
+
+.pa-pagelet-panel-source-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 0;
+	border: none;
+	background: none;
+	color: var(--text-faint,#666);
+	font-size: var(--font-ui-smaller);
+	font-family: inherit;
+	cursor: pointer;
+	text-transform: uppercase;
+	letter-spacing: .5px;
+	transition: color .15s;
+}
+
+.pa-pagelet-panel-source-toggle:hover {
+	color: var(--text-muted,#999);
+}
+
+.pa-pagelet-panel-source-toggle-chevron {
+	display: inline-block;
+	transition: transform .2s;
+	font-size: 1.1em;
+}
+
+.pa-pagelet-panel-source-toggle[aria-expanded=true] .pa-pagelet-panel-source-toggle-chevron {
+	transform: rotate(90deg);
+}
+
+.pa-pagelet-panel-source-toggle-count {
+	opacity: .7;
+	font-size: .9em;
+}
+
+.pa-pagelet-panel-source-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+	padding-bottom: 4px;
+}
+
+.pa-pagelet-panel-source-chips[hidden] {
+	display: none;
+}
+
+.pa-pagelet-panel-source-chip {
+	display: inline-block;
+	padding: 3px 10px;
+	border-radius: 12px;
+	background: var(--background-modifier-hover,#3a3a3a);
+	color: var(--text-muted,#999);
+	font-size: calc(var(--font-text-size, 16px) * 0.75);
+	line-height: 1.4;
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pa-pagelet-panel-source-chip--clickable {
+	cursor: pointer;
+	transition: background-color .15s, color .15s;
+}
+
+.pa-pagelet-panel-source-chip--clickable:hover {
+	background: var(--interactive-accent,#7c9eff);
+	color: var(--text-on-accent,#fff);
+}
+
+.pa-pagelet-panel-source-chip--clickable:focus-visible {
+	outline: 2px solid var(--interactive-accent,#7c9eff);
+	outline-offset: 1px;
 }
 
 .pa-pagelet-panel-review-queue-count {
