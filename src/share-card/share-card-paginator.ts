@@ -576,7 +576,7 @@ function findCodeSpanClose(source: string, start: number, limit: number): number
     })();
     let cursor = start + markerLength;
     while (cursor < limit) {
-        if (source.charAt(cursor) !== "`" || escapedAt(source, cursor)) {
+        if (source.charAt(cursor) !== "`") {
             cursor += 1;
             continue;
         }
@@ -898,10 +898,28 @@ function createSafeFragmentPlan(source: string): SafeFragmentPlan {
                 cursor = closeEnd;
                 continue;
             }
+            if (view.startsWith("[[", cursor)) {
+                const wikiClose = view.indexOf("]]", cursor + 2);
+                if (wikiClose < 0 || wikiClose >= limit) {
+                    paginationCannotProveSafety("Unclosed wiki-link cannot be split safely.");
+                }
+                const wikiEnd = wikiClose + 2;
+                protectToken(cursor, wikiEnd);
+                cursor = wikiEnd;
+                continue;
+            }
+            if (view.startsWith("![[", cursor)) {
+                const embedClose = view.indexOf("]]", cursor + 3);
+                if (embedClose < 0 || embedClose >= limit) {
+                    paginationCannotProveSafety("Unclosed embed cannot be split safely.");
+                }
+                const embedEnd = embedClose + 2;
+                protectToken(cursor, embedEnd);
+                cursor = embedEnd;
+                continue;
+            }
             if (
                 view.startsWith("![", cursor)
-                || view.startsWith("![[", cursor)
-                || view.startsWith("[[", cursor)
                 || view.startsWith("~~", cursor)
                 || view.startsWith("==", cursor)
                 || view.startsWith("%%", cursor)

@@ -278,9 +278,10 @@ interface BacktickRun {
     length: number;
 }
 
-function findBacktickRun(markdown: string, from: number): BacktickRun | null {
+function findBacktickRun(markdown: string, from: number, checkEscape = true): BacktickRun | null {
     for (let cursor = from; cursor < markdown.length; cursor += 1) {
-        if (markdown.charAt(cursor) !== "`" || isEscapedAt(markdown, cursor)) continue;
+        if (markdown.charAt(cursor) !== "`") continue;
+        if (checkEscape && isEscapedAt(markdown, cursor)) continue;
         let end = cursor + 1;
         while (markdown.charAt(end) === "`") end += 1;
         return { start: cursor, end, length: end - cursor };
@@ -299,9 +300,9 @@ function prepareTextSegment(markdown: string): string {
             break;
         }
 
-        let closing = findBacktickRun(markdown, opening.end);
+        let closing = findBacktickRun(markdown, opening.end, false);
         while (closing && closing.length !== opening.length) {
-            closing = findBacktickRun(markdown, closing.end);
+            closing = findBacktickRun(markdown, closing.end, false);
         }
         if (!closing) {
             output += prepareMediaSegment(markdown.slice(cursor));
