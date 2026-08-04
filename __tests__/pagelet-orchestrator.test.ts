@@ -734,7 +734,6 @@ describe("PageletOrchestrator Deep Discover migration", () => {
                 expect.objectContaining({ sourceFile: "notes/related.md" }),
             ]),
             expect.objectContaining({
-                preparedReadOnly: true,
                 sourcePath: "notes/current.md",
             }),
         );

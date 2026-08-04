@@ -2107,7 +2107,6 @@ export class PageletOrchestrator {
         this.currentPanelLayout = "discover";
         this.saveFlow.clearPending();
         this.panelView?.open("discover", findings, {
-            preparedReadOnly: true,
             sourcePath: candidate.pageletAgent.handoff.anchor.path,
         });
     }
