@@ -1,5 +1,10 @@
 # Pagelet 使用指南
 
+> 正在试用 BRAT `2.9.0-beta.6`？请优先阅读
+> [2.9.0-beta.6 用户试用指南](./v2.9.0-beta.6-user-trial-guide.md)。该版本已把多个
+> provider-backed Pagelet 入口统一到“深度发现”管线；下文保留较早的结构化审阅
+> 工作流说明，不应覆盖 Beta 指南中标明的当前行为。
+
 > 本指南已对照 2026-06-06 的真实 Obsidian `test/` vault GUI smoke 结果整理。
 > 最新全量 GUI smoke 结果保存在 `test/pagelet-smoke-runtime-result.json`，
 > 摘要记录在 `docs/development/validation/pagelet-smoke-checklist.md`。
