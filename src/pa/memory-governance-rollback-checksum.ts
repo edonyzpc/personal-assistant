@@ -1,3 +1,4 @@
+import { cloneJson } from "./helpers";
 import { hashLegacyMemoryPayload } from "./memory-governance-migration";
 import type { LegacyRollbackValue } from "./memory-governance-persistence";
 
@@ -10,8 +11,4 @@ export function checksumLegacyRollbackValue(value: LegacyRollbackValue): string 
         confirmedMemoryCount: canonical.kind === "policy" ? canonical.confirmedMemoryCount : undefined,
         memoryAutoAcceptPaused: canonical.kind === "policy" ? canonical.memoryAutoAcceptPaused : undefined,
     });
-}
-
-function cloneJson<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
 }

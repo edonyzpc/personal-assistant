@@ -5,7 +5,7 @@ import {
     type PersistedSourceRef,
     type RetrievalLane,
 } from "./contracts";
-import { normalizeVaultPath, stableHash, isRecord } from "./helpers";
+import { normalizeVaultPath, stableHash, isRecord, uniqueStrings } from "./helpers";
 import type { QuietRecallCandidate } from "./quiet-recall";
 
 export const RETRIEVAL_HABIT_FEEDBACK_KINDS = [
@@ -390,9 +390,6 @@ function scaleHabitBonusForScore(score: number, habitBonus: number): number {
     return Math.max(-cap, Math.min(cap, habitBonus));
 }
 
-function uniqueStrings(values: readonly string[]): string[] {
-    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
 
 export class RetrievalHabitProfileStore {
     constructor(private readonly options: RetrievalHabitProfileStoreOptions) {

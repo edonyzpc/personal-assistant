@@ -3,6 +3,7 @@ import {
     createPageletChatHandoffContext,
     type PageletChatHandoffContext,
 } from "../../ai-services/pagelet-handoff";
+import { noteTitleFromPath, normalizeVaultPath } from "../../pa/helpers";
 import { buildReviewDeliveryReceipt } from "../attention/fingerprint";
 import type { DeliveryCandidate } from "../bubble/types";
 import type {
@@ -45,7 +46,7 @@ export function pageletAgentInsightToDeliveryCandidate(
         sources: insight.sources,
         sourceRefs: insight.sourceRefs.map((source) => ({
             path: source.path,
-            title: sourceTitle(source.path),
+            title: noteTitleFromPath(source.path),
         })),
         webUrls: [...new Set(insight.webObservations.map((observation) => observation.url))],
         whyNow,
@@ -60,7 +61,7 @@ export function pageletAgentInsightToDeliveryCandidate(
         body: insight.body,
         sourceRefs: insight.sourceRefs.map((source) => ({
             path: source.path,
-            title: sourceTitle(source.path),
+            title: noteTitleFromPath(source.path),
         })),
         whyNow,
         preparedAt: new Date(insight.preparedAt).toISOString(),
@@ -88,13 +89,13 @@ function buildDirectLinkAction(
     insight: PageletAgentVerifiedInsight,
     locale: PageletLocale,
 ): PageletAgentDirectLinkAction | undefined {
-    const anchorPath = normalizeComparablePath(insight.anchor.path);
+    const anchorPath = normalizeVaultPath(insight.anchor.path);
     const related = insight.sources.find(
-        (source) => normalizeComparablePath(source.path) !== anchorPath,
+        (source) => normalizeVaultPath(source.path) !== anchorPath,
     );
     if (!related) return undefined;
-    const anchorTitle = sourceTitle(insight.anchor.path);
-    const relatedTitle = sourceTitle(related.path);
+    const anchorTitle = noteTitleFromPath(insight.anchor.path);
+    const relatedTitle = noteTitleFromPath(related.path);
     return Object.freeze({
         kind: "link-related",
         candidateId: insight.cacheIdentityHash,
@@ -126,9 +127,6 @@ function freezeValidationIdentity(
     });
 }
 
-function normalizeComparablePath(path: string): string {
-    return path.replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/^\.\//, "");
-}
 
 function localizedWhyNow(
     triggerReason: PageletAgentVerifiedInsight["triggerReason"],
@@ -165,6 +163,3 @@ function truncateTitle(value: string): string {
     return value.length > 96 ? `${value.slice(0, 95).trimEnd()}…` : value;
 }
 
-function sourceTitle(path: string): string {
-    return (path.split("/").pop() ?? path).replace(/\.md$/i, "");
-}

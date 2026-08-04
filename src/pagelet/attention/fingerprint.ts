@@ -46,9 +46,6 @@ function normalizeSourceIdentities(
         .filter((identity) => identity.length > 0));
 }
 
-function normalizeTag(tag: string): string {
-    return normalizeText(tag).replace(/^#+/, "").toLowerCase();
-}
 
 function serializeScalar(value: string): string {
     return `${value.length}:${value}`;
@@ -83,7 +80,7 @@ function serializeScopeIdentity(scope: RecapScopeIdentity): string {
         .map((path) => normalizeSourceIdentity(path))
         .filter((path) => path.length > 0));
     const tags = uniqueSorted((structured.tags ?? [])
-        .map(normalizeTag)
+        .map((tag) => normalizeText(tag).replace(/^#+/, "").toLowerCase())
         .filter((tag) => tag.length > 0));
     return serializeFields([
         ["type", "structured"],

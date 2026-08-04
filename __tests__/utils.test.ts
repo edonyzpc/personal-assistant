@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { strToU8, unzipSync, zipSync } from 'fflate';
 import type { App } from 'obsidian';
-import { extractFile, extractFiles, extractToFold } from '../src/utils';
+import { extractFiles } from '../src/utils';
 
 jest.mock('obsidian', () => ({
     normalizePath: (path: string) => path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, ''),
@@ -81,7 +81,6 @@ describe('ZIP utilities', () => {
         }), 'release/unrelated.bin', 99);
 
         expect(() => unzipSync(new Uint8Array(zipBytes))).toThrow();
-        await expect(extractFile(zipBytes, 'theme.css')).resolves.toBe('theme css');
         await expect(extractFiles(zipBytes, ['theme.css', 'manifest.json'])).resolves.toEqual({
             'theme.css': 'theme css',
             'manifest.json': '{"name":"sample-theme"}',
@@ -97,34 +96,4 @@ describe('ZIP utilities', () => {
         });
     });
 
-    it('writes safe ZIP entries under the target folder', async () => {
-        const { app, write } = createMockApp();
-
-        await extractToFold(app, createZip({
-            'release/theme.css': 'theme css',
-        }), '.obsidian/themes/sample-theme');
-
-        expect(write).toHaveBeenCalledTimes(1);
-        expect(write).toHaveBeenCalledWith('.obsidian/themes/sample-theme/release/theme.css', 'theme css');
-    });
-
-    it('rejects unsafe ZIP entry paths before writing files', async () => {
-        const unsafeEntryPaths = [
-            '../escape.md',
-            'nested/../../escape.md',
-            '/absolute.md',
-            'C:/escape.md',
-            'C:\\escape.md',
-        ];
-
-        for (const unsafeEntryPath of unsafeEntryPaths) {
-            const { app, write } = createMockApp();
-
-            await expect(extractToFold(app, createZip({
-                'release/theme.css': 'theme css',
-                [unsafeEntryPath]: 'escape',
-            }), '.obsidian/themes/sample-theme')).rejects.toThrow(`Unsafe ZIP entry path: ${unsafeEntryPath}`);
-            expect(write).not.toHaveBeenCalled();
-        }
-    });
 });

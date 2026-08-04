@@ -9,6 +9,7 @@ import type {
     VaultStatistics,
 } from "./stats-types";
 import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from "../obsidian-paths";
+import { isRecord } from "../pa/helpers";
 import { getPlatformCrypto, getPlatformLocalStorage } from "../platform-dom";
 
 export const STATS_STORE_VERSION = 2;
@@ -96,16 +97,13 @@ function roundPages(value: number): number {
     return Number(value.toFixed(1));
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function numberValue(value: unknown): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function normalizeActivity(value: unknown): ActivityCounts {
-    const source = isObject(value) ? value : {};
+    const source = isRecord(value) ? value : {};
     return {
         words: numberValue(source.words),
         characters: numberValue(source.characters),
@@ -117,7 +115,7 @@ function normalizeActivity(value: unknown): ActivityCounts {
 }
 
 function normalizeSnapshot(value: unknown): SnapshotCounts {
-    const source = isObject(value) ? value : {};
+    const source = isRecord(value) ? value : {};
     return {
         totalWords: numberValue(source.totalWords),
         totalCharacters: numberValue(source.totalCharacters),
@@ -130,7 +128,7 @@ function normalizeSnapshot(value: unknown): SnapshotCounts {
 }
 
 export function parseStatsShard(value: unknown): StatsDeviceShard | null {
-    if (!isObject(value)) return null;
+    if (!isRecord(value)) return null;
     if (value.version !== STATS_STORE_VERSION) return null;
     if (typeof value.date !== "string" || typeof value.deviceId !== "string") {
         return null;
@@ -145,7 +143,7 @@ export function parseStatsShard(value: unknown): StatsDeviceShard | null {
 }
 
 export function legacyStatsDayToShard(date: string, day: unknown): StatsDeviceShard {
-    const source = isObject(day) ? day : {};
+    const source = isRecord(day) ? day : {};
     return createStatsShard(
         date,
         LEGACY_DEVICE_ID,
@@ -416,7 +414,7 @@ export class StatsStore {
             return;
         }
 
-        if (!legacy || !isObject(legacy) || !isObject(legacy.history)) {
+        if (!legacy || !isRecord(legacy) || !isRecord(legacy.history)) {
             this.migrationErrors.push({
                 path: legacyStatsPath,
                 message: "Legacy statistics file does not contain a valid history object.",

@@ -40,7 +40,6 @@ import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION } from './settings'
-import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, hasSecretValue, icons } from './utils';
@@ -329,7 +328,7 @@ import {
     selectGovernedMemoryUse,
     type MemorySuppressionFingerprintRef,
 } from './pa/memory-use-projection';
-import { includesString, stableHash } from './pa/helpers';
+import { includesString, stableHash, parentFolder } from './pa/helpers';
 import { getMemoryTrustLevel } from './pa/memory-trust-level';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
@@ -762,11 +761,6 @@ function arraysEqual(left: string[], right: string[]): boolean {
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function parentFolder(path: string): string {
-    const normalized = normalizePath(path).replace(/^\.\//, "");
-    const slash = normalized.lastIndexOf("/");
-    return slash > 0 ? normalized.slice(0, slash) : "";
-}
 
 export function buildMemoryDataBoundaryFingerprint(
     settings: Readonly<PluginManagerSettings["dataBoundary"]>,
@@ -10636,7 +10630,7 @@ export class PluginManager extends Plugin {
      * Eligible Chat turns may stage the four bounded actions for inline review.
      */
     get isOperationsAgentEnabled(): boolean {
-        return OPERATIONS_AGENT_RUNTIME_ENABLED && this.settings.operationsAgentEnabled === true;
+        return this.settings.operationsAgentEnabled === true;
     }
 
     /**

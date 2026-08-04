@@ -1,4 +1,4 @@
-import { cloneScope, cloneSourceRef, stableHash } from "./helpers";
+import { cloneJson, cloneScope, cloneSourceRef, stableHash } from "./helpers";
 import { createDeterministicLegacyMigrationId } from "./memory-governance-migration";
 import { checksumLegacyRollbackValue } from "./memory-governance-migration-coordinator";
 import type {
@@ -719,10 +719,6 @@ function cloneRecord(record: ConfirmedMemoryRecord): ConfirmedMemoryRecord {
 
 function cloneRecords(records: readonly ConfirmedMemoryRecord[]): ConfirmedMemoryRecord[] {
     return records.map(cloneRecord);
-}
-
-function cloneJson<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function partitionsEqual(left: MemoryPartitionKey, right: MemoryPartitionKey): boolean {

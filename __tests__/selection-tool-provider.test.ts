@@ -3,10 +3,6 @@ import { describe, expect, it, jest } from "@jest/globals";
 jest.mock("obsidian", () => ({
     MarkdownView: class MarkdownView {},
 }));
-jest.mock("../src/operations-agent-flags", () => ({
-    OPERATIONS_AGENT_RUNTIME_ENABLED: true,
-}));
-
 import { REPLACE_SELECTION_TOOL_NAME, SelectionToolProvider } from "../src/ai-services/selection-tool-provider";
 import type { AgentCapabilityContext, ProviderLoadContext } from "../src/ai-services/capability-types";
 

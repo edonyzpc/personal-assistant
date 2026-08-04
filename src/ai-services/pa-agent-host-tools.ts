@@ -7,7 +7,6 @@ import {
     isSearchMemoryResult,
 } from "./chat-tools";
 import type {
-    ChatAgentSource,
     ChatContextUsedItem,
     ChatToolResult,
     SourceRecord,
@@ -18,6 +17,8 @@ import type {
     PaAgentToolExecutionResult,
     PaAgentToolExecutor,
 } from "./pa-agent-loop";
+import { truncate } from "./chat-tool-execution-helpers";
+import { dedupeSources } from "./pa-agent-history";
 import { LOAD_SKILL_TOOL_NAME } from "./skill-context-provider";
 
 const MAX_PREVIEW_CHARS = 1200;
@@ -202,7 +203,7 @@ export function chatToolResultToPaAgentToolExecutionResult(
     return {
         outcome,
         promptText,
-        previewText: truncate(result.error ?? promptText, MAX_PREVIEW_CHARS),
+        previewText: truncate(result.error ?? promptText, Math.max(0, MAX_PREVIEW_CHARS - 3)),
         sourceRecords,
         contextUsed,
         metadata: {
@@ -387,19 +388,6 @@ function getReadOnlyToolContextInfo(
     };
 }
 
-function dedupeSources(sources: readonly ChatAgentSource[]): ChatAgentSource[] {
-    const seen = new Set<string>();
-    const result: ChatAgentSource[] = [];
-    for (const source of sources) {
-        if (!source.path) continue;
-        const key = `${source.path}:${source.chunkIndex ?? ""}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        result.push({ ...source });
-    }
-    return result;
-}
-
 function cloneSourceRecords(records: readonly SourceRecord[]): SourceRecord[] {
     return records.map((record) => ({
         ...record,
@@ -415,7 +403,3 @@ function safeStringify(value: unknown): string {
     }
 }
 
-function truncate(text: string, maxChars: number): string {
-    if (text.length <= maxChars) return text;
-    return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
-}

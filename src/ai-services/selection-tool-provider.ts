@@ -23,7 +23,6 @@ import type {
     ChatToolProviderSchema,
     ChatToolRegistryDefinition,
 } from "./chat-tools";
-import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "../operations-agent-flags";
 
 export const SELECTION_TOOL_PROVIDER_ID = "selection-tool";
 export const REPLACE_SELECTION_TOOL_NAME = "replace_selection" as ChatToolName;
@@ -60,7 +59,7 @@ export class SelectionToolProvider implements CapabilityProvider {
     readonly platform = "both" as const;
 
     async load(context: ProviderLoadContext): Promise<ProviderLoadResult> {
-        const operationsAgentEnabled = OPERATIONS_AGENT_RUNTIME_ENABLED && context.settings.operationsAgentEnabled === true;
+        const operationsAgentEnabled = context.settings.operationsAgentEnabled === true;
         if (!operationsAgentEnabled) {
             return {
                 status: "unavailable",

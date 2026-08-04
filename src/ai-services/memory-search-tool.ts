@@ -5,6 +5,7 @@ import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 import type { AIUtils } from "./ai-utils";
 import type { AiServiceHost } from "./AiServiceHost";
 import { createAbortError, throwIfAborted } from "./chat-utils";
+import { truncate } from "./chat-tool-execution-helpers";
 import type { MemoryCandidate, MemoryCandidateAnchor, MemorySearchDocument, MemorySearchResult } from "./chat-types";
 
 export interface RawSearchResult {
@@ -467,6 +468,3 @@ function stringifyModelContentPart(part: ModelContentPart): string {
     return "";
 }
 
-function truncate(value: string, maxLength: number): string {
-    return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
-}

@@ -12,6 +12,7 @@
 import { Notice, TFile, type App } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
+import { noteTitleFromPath } from "../pa/helpers";
 
 import type { PanelFinding, PanelLayoutType, PanelOpenExtra, PanelScopeState } from "./panel/types";
 import type { PreloadFinding, PreloadResult } from "./preload/types";
@@ -349,7 +350,7 @@ export class AnalysisSessionManager {
     private toPanelScope(plan: PageletScopePlan): PanelScopeState {
         const candidates = plan.candidates.map((candidate) => ({
             path: candidate.path,
-            title: displayFileName(candidate.path),
+            title: noteTitleFromPath(candidate.path),
             reason: candidate.reason,
             included: candidate.included,
             locked: candidate.locked,
@@ -366,6 +367,3 @@ export class AnalysisSessionManager {
     }
 }
 
-function displayFileName(path: string): string {
-    return path.split("/").pop()?.replace(/\.md$/i, "") || path;
-}

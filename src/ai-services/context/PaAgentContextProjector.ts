@@ -3,6 +3,7 @@ import {
     createPageletChatHandoffContext,
     type PageletChatHandoffContext,
 } from "../pagelet-handoff";
+import { escapeTaggedBoundary } from "../agent-utils";
 import { sanitizeUserProfileMarkdownForPrompt } from "../memory-extraction/type-a-extractor";
 import { PaAgentContextCompactor } from "./PaAgentContextCompactor";
 
@@ -159,7 +160,3 @@ function formatInjectedContext(context: PaAgentInjectedContext | undefined): str
     return blocks.join("\n\n");
 }
 
-function escapeTaggedBoundary(value: string, tagName: string): string {
-    const pattern = new RegExp(`</${tagName}`, "gi");
-    return value.replace(pattern, `<\\/${tagName}`);
-}

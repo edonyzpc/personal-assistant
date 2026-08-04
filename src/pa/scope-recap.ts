@@ -5,7 +5,7 @@ import {
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
-import { normalizeVaultPath, stableHash, cloneSourceRef } from "./helpers";
+import { normalizeVaultPath, stableHash, cloneSourceRef, basenameFromPath, normalizeTag, uniqueStrings } from "./helpers";
 
 export type ScopeRecapSectionType = "summary" | "theme" | "tension" | "open_question" | "next_review_action";
 export type ScopeRecapStaleStatus = "fresh" | "stale" | "low-coverage" | "boundary-changed";
@@ -190,21 +190,8 @@ function nowDate(now: BuildScopeRecapOptions["now"]): Date {
     return value ? new Date(value.getTime()) : new Date();
 }
 
-function basenameFromPath(path: string): string {
-    const name = normalizeVaultPath(path).split("/").pop() ?? path;
-    return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
-}
-
 function noteTitle(note: ScopeRecapSourceNote): string {
     return note.title?.trim() || basenameFromPath(note.path);
-}
-
-function normalizeTag(tag: string): string {
-    return tag.trim().replace(/^#+/, "").toLowerCase();
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function normalizedScopeValue(scope: ReviewQueueScope): {

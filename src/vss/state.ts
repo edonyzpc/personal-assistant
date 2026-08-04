@@ -1,5 +1,6 @@
 import { normalizePath, type Vault } from "obsidian";
 import { getDeviceId } from "../stats/stats-store";
+import { isRecord } from "../pa/helpers";
 import { type VSSIndexMarker } from "./types";
 import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from "../obsidian-paths";
 
@@ -76,12 +77,9 @@ function isMissingFileError(error: unknown): boolean {
         && (error as { code?: unknown }).code === "ENOENT";
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function isVSSIndexMarker(value: unknown): value is VSSIndexMarker {
-    if (!isObject(value)) return false;
+    if (!isRecord(value)) return false;
     return typeof value.schemaVersion === "number"
         && typeof value.deviceId === "string"
         && typeof value.indexId === "string"

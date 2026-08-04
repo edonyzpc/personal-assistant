@@ -1,6 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 import type { QuietRecallCandidate } from "../../pa";
+import { noteTitleFromPath } from "../../pa/helpers";
 import type { PageletLocale } from "../../locales/pagelet";
 import { buildRecallDeliveryReceipt } from "../attention/fingerprint";
 import type { DeliveryCandidate } from "./types";
@@ -12,10 +13,6 @@ export interface LocalDiscoveryCandidate {
     preparedAt: string;
 }
 
-function sourceTitle(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
-}
 
 export function quietRecallCandidateToDeliveryCandidate(
     candidate: QuietRecallCandidate,
@@ -44,7 +41,7 @@ export function quietRecallCandidateToDiscoveryCandidate(
         id: candidate.id,
         sourceRefs: candidate.sourceRefs.map((ref) => ({
             path: ref.path,
-            title: sourceTitle(ref.path),
+            title: noteTitleFromPath(ref.path),
         })),
         relation: candidate.relation,
         preparedAt: candidate.generatedAt,
@@ -63,7 +60,7 @@ function quietRecallCandidateToCard(
         body: candidate.summary,
         sourceRefs: candidate.sourceRefs.map((ref) => ({
             path: ref.path,
-            title: sourceTitle(ref.path),
+            title: noteTitleFromPath(ref.path),
         })),
         whyNow: candidate.whyNow,
         preparedAt: candidate.generatedAt,

@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, requestUrl, normalizePath } from 'obsidian';
+import { requestUrl } from 'obsidian';
 import { strFromU8, unzipSync } from 'fflate';
 
 export const TEST_TOKEN = "personal-assistant";
@@ -8,7 +8,6 @@ export const TEST_TOKEN = "personal-assistant";
 export const icons: Record<string, string> = {
     PA_CHAT_SUBAGENT: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5.25V3.5"/><path d="M9.75 3.5h4.5"/><rect x="6.25" y="6.25" width="11.5" height="7.5" rx="2.25"/><path d="M9.5 9.75h.01"/><path d="M14.5 9.75h.01"/><path d="M9 17.75c.85-1.2 1.85-1.8 3-1.8s2.15.6 3 1.8"/><path d="M4.25 19.5c.45-1.9 1.58-3.23 3.4-4"/><path d="M19.75 19.5c-.45-1.9-1.58-3.23-3.4-4"/></svg>`,
     PluginAST: `<svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="100" height="100" viewBox="0 0 172 172" style=" fill:#000000;"><g fill="none" fill-rule="nonzero" stroke="none" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="" stroke-dashoffset="0" font-family="none" font-weight="none" font-size="none" text-anchor="none" style="mix-blend-mode: normal"><path d="M0,172v-172h172v172z" fill="none"></path><g fill="currentColor"><path d="M53.75,21.5c-8.27246,0 -14.86523,5.20703 -18.39257,12.09375c-8.39844,1.76368 -15.91504,6.84473 -19.31641,15.03321c-6.50879,15.5371 -16.04102,41.53027 -16.04102,64.24804c0,20.70215 16.92285,37.625 37.625,37.625c14.90723,0 27.75683,-8.86035 33.84571,-21.5h29.05859c6.08886,12.63965 18.93847,21.5 33.8457,21.5c20.70215,0 37.625,-16.92285 37.625,-37.625c0,-8.44043 -2.60351,-19.44239 -5.87891,-30.90625c-3.31739,-11.50585 -7.39062,-23.26367 -10.58203,-32.08203c-3.10742,-8.44043 -10.41406,-13.85742 -18.77051,-15.99902c-3.48534,-7.05469 -10.12011,-12.3877 -18.51855,-12.3877c-7.68457,0 -13.73145,4.61915 -17.51074,10.75h-29.47852c-3.77929,-6.13085 -9.82617,-10.75 -17.51074,-10.75zM53.75,32.25c4.70313,0 8.6084,3.02344 10.07813,7.18067l1.25977,3.56933h41.82422l1.25976,-3.56933c1.46973,-4.15723 5.375,-7.18067 10.07813,-7.18067c4.8291,0 8.77636,3.19141 10.16211,7.5166l1.00781,3.14942l3.27539,0.50391c5.87891,0.92382 10.70801,4.61914 12.76563,10.1621c2.81348,7.72656 6.21484,17.7627 9.19629,27.71484c-5.87891,-3.77929 -12.80761,-6.04687 -20.28223,-6.04687c-14.90723,0 -27.75683,8.86035 -33.8457,21.5h-29.05859c-6.08888,-12.63965 -18.93848,-21.5 -33.84571,-21.5c-8.18848,0 -15.74707,2.72949 -21.91992,7.22266c3.06543,-11.21192 7.01269,-21.87793 10.24609,-29.68848c2.22558,-5.375 7.22266,-8.86034 13.10156,-9.49023l3.44335,-0.37793l1.0918,-3.2754c1.42773,-4.2832 5.375,-7.39062 10.1621,-7.39062zM37.625,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM134.375,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM74.7041,107.5h22.59179c-0.25195,1.76368 -0.5459,3.52734 -0.5459,5.375c0,1.84766 0.29395,3.61133 0.5459,5.375h-22.59179c0.25195,-1.76367 0.5459,-3.52734 0.5459,-5.375c0,-1.84766 -0.29395,-3.61132 -0.5459,-5.375z"></path></g></g></svg>`,
-    //PluginAST_STATUSBAR: `<svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="100" height="100" viewBox="0 0 172 172"><g fill="currentColor" fill-rule="nonzero" stroke="none" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="" stroke-dashoffset="0" font-family="none" font-weight="none" font-size="none" text-anchor="none" style="mix-blend-mode: normal"><path d="M0,172v-172h172v172z" fill="none"></path><g fill="currentColor"><path d="M53.75,21.5c-8.27246,0 -14.86523,5.20703 -18.39257,12.09375c-8.39844,1.76368 -15.91504,6.84473 -19.31641,15.03321c-6.50879,15.5371 -16.04102,41.53027 -16.04102,64.24804c0,20.70215 16.92285,37.625 37.625,37.625c14.90723,0 27.75683,-8.86035 33.84571,-21.5h29.05859c6.08886,12.63965 18.93847,21.5 33.8457,21.5c20.70215,0 37.625,-16.92285 37.625,-37.625c0,-8.44043 -2.60351,-19.44239 -5.87891,-30.90625c-3.31739,-11.50585 -7.39062,-23.26367 -10.58203,-32.08203c-3.10742,-8.44043 -10.41406,-13.85742 -18.77051,-15.99902c-3.48534,-7.05469 -10.12011,-12.3877 -18.51855,-12.3877c-7.68457,0 -13.73145,4.61915 -17.51074,10.75h-29.47852c-3.77929,-6.13085 -9.82617,-10.75 -17.51074,-10.75zM53.75,32.25c4.70313,0 8.6084,3.02344 10.07813,7.18067l1.25977,3.56933h41.82422l1.25976,-3.56933c1.46973,-4.15723 5.375,-7.18067 10.07813,-7.18067c4.8291,0 8.77636,3.19141 10.16211,7.5166l1.00781,3.14942l3.27539,0.50391c5.87891,0.92382 10.70801,4.61914 12.76563,10.1621c2.81348,7.72656 6.21484,17.7627 9.19629,27.71484c-5.87891,-3.77929 -12.80761,-6.04687 -20.28223,-6.04687c-14.90723,0 -27.75683,8.86035 -33.8457,21.5h-29.05859c-6.08888,-12.63965 -18.93848,-21.5 -33.84571,-21.5c-8.18848,0 -15.74707,2.72949 -21.91992,7.22266c3.06543,-11.21192 7.01269,-21.87793 10.24609,-29.68848c2.22558,-5.375 7.22266,-8.86034 13.10156,-9.49023l3.44335,-0.37793l1.0918,-3.2754c1.42773,-4.2832 5.375,-7.39062 10.1621,-7.39062zM37.625,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM134.375,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM74.7041,107.5h22.59179c-0.25195,1.76368 -0.5459,3.52734 -0.5459,5.375c0,1.84766 0.29395,3.61133 0.5459,5.375h-22.59179c0.25195,-1.76367 0.5459,-3.52734 0.5459,-5.375c0,-1.84766 -0.29395,-3.61132 -0.5459,-5.375z"></path></g></g></svg>`,
     PluginAST_STATUSBAR: `<svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="100" height="100" viewBox="0 0 172 172"><g fill="currentColor" fill-rule="nonzero" stroke="none" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="" stroke-dashoffset="0" font-family="none" font-weight="none" font-size="none" text-anchor="none" style="mix-blend-mode: normal"><path d="M0,172v-172h172v172z" fill="none"></path><g id="svg-animate" fill="currentColor"><path d="M53.75,21.5c-8.27246,0 -14.86523,5.20703 -18.39257,12.09375c-8.39844,1.76368 -15.91504,6.84473 -19.31641,15.03321c-6.50879,15.5371 -16.04102,41.53027 -16.04102,64.24804c0,20.70215 16.92285,37.625 37.625,37.625c14.90723,0 27.75683,-8.86035 33.84571,-21.5h29.05859c6.08886,12.63965 18.93847,21.5 33.8457,21.5c20.70215,0 37.625,-16.92285 37.625,-37.625c0,-8.44043 -2.60351,-19.44239 -5.87891,-30.90625c-3.31739,-11.50585 -7.39062,-23.26367 -10.58203,-32.08203c-3.10742,-8.44043 -10.41406,-13.85742 -18.77051,-15.99902c-3.48534,-7.05469 -10.12011,-12.3877 -18.51855,-12.3877c-7.68457,0 -13.73145,4.61915 -17.51074,10.75h-29.47852c-3.77929,-6.13085 -9.82617,-10.75 -17.51074,-10.75zM53.75,32.25c4.70313,0 8.6084,3.02344 10.07813,7.18067l1.25977,3.56933h41.82422l1.25976,-3.56933c1.46973,-4.15723 5.375,-7.18067 10.07813,-7.18067c4.8291,0 8.77636,3.19141 10.16211,7.5166l1.00781,3.14942l3.27539,0.50391c5.87891,0.92382 10.70801,4.61914 12.76563,10.1621c2.81348,7.72656 6.21484,17.7627 9.19629,27.71484c-5.87891,-3.77929 -12.80761,-6.04687 -20.28223,-6.04687c-14.90723,0 -27.75683,8.86035 -33.8457,21.5h-29.05859c-6.08888,-12.63965 -18.93848,-21.5 -33.84571,-21.5c-8.18848,0 -15.74707,2.72949 -21.91992,7.22266c3.06543,-11.21192 7.01269,-21.87793 10.24609,-29.68848c2.22558,-5.375 7.22266,-8.86034 13.10156,-9.49023l3.44335,-0.37793l1.0918,-3.2754c1.42773,-4.2832 5.375,-7.39062 10.1621,-7.39062zM37.625,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM134.375,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM74.7041,107.5h22.59179c-0.25195,1.76368 -0.5459,3.52734 -0.5459,5.375c0,1.84766 0.29395,3.61133 0.5459,5.375h-22.59179c0.25195,-1.76367 0.5459,-3.52734 0.5459,-5.375c0,-1.84766 -0.29395,-3.61132 -0.5459,-5.375z"></path></g></g></svg>`,
     PluginAST_PREVIEW: `<svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="100" height="100" viewBox="0 0 172 172"><g fill="blue" fill-rule="nonzero" stroke="none" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="5,5" stroke-dashoffset="0" font-family="none" font-weight="none" font-size="none" text-anchor="none" style="mix-blend-mode: normal"><path d="M0,172v-172h172v172z" fill="none"></path><g id="svg-animate" fill="#2fcc70ee" fill-rule="nonzero"><path d="M53.75,21.5c-8.27246,0 -14.86523,5.20703 -18.39257,12.09375c-8.39844,1.76368 -15.91504,6.84473 -19.31641,15.03321c-6.50879,15.5371 -16.04102,41.53027 -16.04102,64.24804c0,20.70215 16.92285,37.625 37.625,37.625c14.90723,0 27.75683,-8.86035 33.84571,-21.5h29.05859c6.08886,12.63965 18.93847,21.5 33.8457,21.5c20.70215,0 37.625,-16.92285 37.625,-37.625c0,-8.44043 -2.60351,-19.44239 -5.87891,-30.90625c-3.31739,-11.50585 -7.39062,-23.26367 -10.58203,-32.08203c-3.10742,-8.44043 -10.41406,-13.85742 -18.77051,-15.99902c-3.48534,-7.05469 -10.12011,-12.3877 -18.51855,-12.3877c-7.68457,0 -13.73145,4.61915 -17.51074,10.75h-29.47852c-3.77929,-6.13085 -9.82617,-10.75 -17.51074,-10.75zM53.75,32.25c4.70313,0 8.6084,3.02344 10.07813,7.18067l1.25977,3.56933h41.82422l1.25976,-3.56933c1.46973,-4.15723 5.375,-7.18067 10.07813,-7.18067c4.8291,0 8.77636,3.19141 10.16211,7.5166l1.00781,3.14942l3.27539,0.50391c5.87891,0.92382 10.70801,4.61914 12.76563,10.1621c2.81348,7.72656 6.21484,17.7627 9.19629,27.71484c-5.87891,-3.77929 -12.80761,-6.04687 -20.28223,-6.04687c-14.90723,0 -27.75683,8.86035 -33.8457,21.5h-29.05859c-6.08888,-12.63965 -18.93848,-21.5 -33.84571,-21.5c-8.18848,0 -15.74707,2.72949 -21.91992,7.22266c3.06543,-11.21192 7.01269,-21.87793 10.24609,-29.68848c2.22558,-5.375 7.22266,-8.86034 13.10156,-9.49023l3.44335,-0.37793l1.0918,-3.2754c1.42773,-4.2832 5.375,-7.39062 10.1621,-7.39062zM37.625,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM134.375,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM74.7041,107.5h22.59179c-0.25195,1.76368 -0.5459,3.52734 -0.5459,5.375c0,1.84766 0.29395,3.61133 0.5459,5.375h-22.59179c0.25195,-1.76367 0.5459,-3.52734 0.5459,-5.375c0,-1.84766 -0.29395,-3.61132 -0.5459,-5.375z"></path></g></g></svg>`,
     PluginAST_STAT: `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bar-chart-3"><path d="M3 3v18h18"/><path stroke-width="3" stroke="green" d="M18 17V9"/><path stroke-width="3" stroke="red" d="M13 17V5"/><path stroke-width="3" stroke="goldenrod" d="M8 17v-3"/></svg>`,
@@ -16,8 +15,6 @@ export const icons: Record<string, string> = {
     SWITCH_OFF_STATUS: `<svg width="99px" height="99px" viewBox="0 0 24 24" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><g fill="red" fill-rule="nonzero"><path d="M5.75,3 L18.25,3 C19.7687831,3 21,4.23121694 21,5.75 L21,18.25 C21,19.7687831 19.7687831,21 18.25,21 L5.75,21 C4.23121694,21 3,19.7687831 3,18.25 L3,5.75 C3,4.23121694 4.23121694,3 5.75,3 Z M5.75,4.5 C5.05964406,4.5 4.5,5.05964406 4.5,5.75 L4.5,18.25 C4.5,18.9403559 5.05964406,19.5 5.75,19.5 L18.25,19.5 C18.9403559,19.5 19.5,18.9403559 19.5,18.25 L19.5,5.75 C19.5,5.05964406 18.9403559,4.5 18.25,4.5 L5.75,4.5 Z"></path></g></g></svg>`,
     PLUGIN_UPDATE_STATUS: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="48" height="48"><path fill='red' d="M2,7H0V3C0,1.35,1.35,0,3,0H7V2H3c-.55,0-1,.45-1,1V7Zm0,14v-4H0v4c0,1.65,1.35,3,3,3H7v-2H3c-.55,0-1-.45-1-1Zm20,0c0,.55-.45,1-1,1h-4v2h4c1.65,0,3-1.35,3-3v-4h-2v4Zm-4-10.08v-.92h-4.33l-1.18-4.5h-.97l-1.18,4.5H6v.92l3.32,1.85-1.3,4.08,.72,.54,3.27-2.53,3.26,2.52,.75-.52-1.33-4.03,3.3-1.91ZM17,0V8l7-4L17,0Z"/></svg>`,
     PLUGIN_UPDATED_STATUS: `<svg xmlns="http://www.w3.org/2000/svg" width="99px" height="99px" viewBox="0 -960 960 960" width="48"><path fill="green" d="M229.911-160Q201-160 180.5-180.589q-20.5-20.588-20.5-49.5Q160-259 180.589-279.5q20.588-20.5 49.5-20.5Q259-300 279.5-279.411q20.5 20.588 20.5 49.5Q300-201 279.411-180.5q-20.588 20.5-49.5 20.5Zm335 0Q536-160 515.5-180.589q-20.5-20.588-20.5-49.5Q495-259 515.589-279.5q20.588-20.5 49.5-20.5Q594-300 614.5-279.411q20.5 20.588 20.5 49.5Q635-201 614.411-180.5q-20.588 20.5-49.5 20.5Zm-170-165Q366-325 345.5-345.589q-20.5-20.588-20.5-49.5Q325-424 345.589-444.5q20.588-20.5 49.5-20.5Q424-465 444.5-444.411q20.5 20.588 20.5 49.5Q465-366 444.411-345.5q-20.588 20.5-49.5 20.5Zm335 0Q701-325 680.5-345.589q-20.5-20.588-20.5-49.5Q660-424 680.589-444.5q20.588-20.5 49.5-20.5Q759-465 779.5-444.411q20.5 20.588 20.5 49.5Q800-366 779.411-345.5q-20.588 20.5-49.5 20.5Zm-500-170Q201-495 180.5-515.589q-20.5-20.588-20.5-49.5Q160-594 180.589-614.5q20.588-20.5 49.5-20.5Q259-635 279.5-614.411q20.5 20.588 20.5 49.5Q300-536 279.411-515.5q-20.588 20.5-49.5 20.5Zm335 0Q536-495 515.5-515.589q-20.5-20.588-20.5-49.5Q495-594 515.589-614.5q20.588-20.5 49.5-20.5Q594-635 614.5-614.411q20.5 20.588 20.5 49.5Q635-536 614.411-515.5q-20.588 20.5-49.5 20.5Zm-170-165Q366-660 345.5-680.589q-20.5-20.588-20.5-49.5Q325-759 345.589-779.5q20.588-20.5 49.5-20.5Q424-800 444.5-779.411q20.5 20.588 20.5 49.5Q465-701 444.411-680.5q-20.588 20.5-49.5 20.5Zm335 0Q701-660 680.5-680.589q-20.5-20.588-20.5-49.5Q660-759 680.589-779.5q20.588-20.5 49.5-20.5Q759-800 779.5-779.411q20.5 20.588 20.5 49.5Q800-701 779.411-680.5q-20.588 20.5-49.5 20.5Z"/></svg>`,
-    PLUGIN_AI_BOT: `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bot-icon lucide-bot"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>`,
-    PLUGIN_AI_BRAIN: `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-brain-icon lucide-brain"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>`,
 };
 
 export const generateRandomString = () => {
@@ -30,34 +27,6 @@ export const downloadZipFile = async (url: string) => {
     return bytes;
 };
 
-const getSafeZipEntryPath = (targetPath: string, entryName: string): string | null => {
-    const entryPath = entryName.replace(/\\/g, "/");
-    if (!entryPath ||
-        entryPath.includes("\0") ||
-        entryPath.startsWith("/") ||
-        /^[A-Za-z]:/.test(entryPath)) {
-        return null;
-    }
-
-    const entryParts = entryPath.split("/");
-    if (entryParts.some((part) => part === "..")) {
-        return null;
-    }
-
-    const safeEntryPath = normalizePath(entryPath);
-    if (!safeEntryPath) {
-        return null;
-    }
-
-    const normalizedTarget = normalizePath(targetPath);
-    const destinationPath = normalizePath(`${normalizedTarget}/${safeEntryPath}`);
-    if (normalizedTarget && destinationPath !== normalizedTarget && !destinationPath.startsWith(`${normalizedTarget}/`)) {
-        return null;
-    }
-
-    return destinationPath;
-};
-
 const matchesZipFileName = (zipPath: string, fileName: string) => {
     if (!fileName) {
         return false;
@@ -67,37 +36,6 @@ const matchesZipFileName = (zipPath: string, fileName: string) => {
     const normalizedFileName = fileName.replace(/\\/g, "/");
     return normalizedZipPath === normalizedFileName || normalizedZipPath.endsWith(`/${normalizedFileName}`);
 };
-
-export const extractToFold = async (writer: App, zipBytes: ArrayBuffer, targetPath: string) => {
-    const writablePaths = new Map<string, string>();
-    const files = unzipSync(new Uint8Array(zipBytes), {
-        filter: (file) => {
-            if (file.originalSize === 0) {
-                return false;
-            }
-
-            const path2Write = getSafeZipEntryPath(targetPath, file.name);
-            if (!path2Write) {
-                throw new Error(`Unsafe ZIP entry path: ${file.name}`);
-            }
-
-            writablePaths.set(file.name, path2Write);
-            return true;
-        },
-    });
-    const writableEntries = Object.entries(files).flatMap(([fileName, bytes]) => {
-        const path2Write = writablePaths.get(fileName);
-        if (!path2Write) {
-            return [];
-        }
-
-        return [{ path2Write, data: strFromU8(bytes) }];
-    });
-
-    await Promise.all(writableEntries.map(async ({ path2Write, data }) => {
-        await writer.vault.adapter.write(path2Write, data);
-    }));
-}
 
 export const extractFiles = async (zipBytes: ArrayBuffer, fileNames: string[]): Promise<Record<string, string | null>> => {
     const requestedFileNames = Array.from(new Set(fileNames));
@@ -121,15 +59,8 @@ export const extractFiles = async (zipBytes: ArrayBuffer, fileNames: string[]): 
     ]));
 }
 
-export const extractFile = async (zipBytes: ArrayBuffer, fileName: string) => {
-    const files = await extractFiles(zipBytes, [fileName]);
-    const file = files[fileName];
-
-    if (file !== null && file !== undefined) {
-        return file;
-    } else {
-        return null;
-    }
+export function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
 }
 
 export const KEYCHAIN_API_TOKEN_ID = "pa-api-token";

@@ -12,6 +12,7 @@ import {
     parseMarkdownStructure,
     truncate,
 } from "../../ai-services/chat-tool-execution-helpers";
+import { noteTitleFromPath } from "../../pa/helpers";
 import { normalizeSnapshotPath } from "./anchor-snapshot";
 import type { PageletAnchorSnapshot } from "./types";
 
@@ -64,7 +65,7 @@ export function createAnchorBoundCurrentNoteTool(
             const headings = extractAnchorHeadings(anchor.content);
             const output: PageletAnchorContextOutput = {
                 path: anchor.path,
-                title: titleFromPath(anchor.path),
+                title: noteTitleFromPath(anchor.path),
                 mode: input.mode,
                 mtime: anchor.mtime,
                 size: anchor.size,
@@ -131,7 +132,7 @@ export function createAnchorBoundInspectNoteTool(
                 const content = {
                     kind: "note-structure" as const,
                     path: anchor.path,
-                    title: titleFromPath(anchor.path),
+                    title: noteTitleFromPath(anchor.path),
                     headings: parsed.headings,
                     tasks: parsed.tasks,
                     callouts: parsed.callouts,
@@ -196,9 +197,6 @@ function extractAnchorHeadings(content: string): string[] {
     return headings;
 }
 
-function titleFromPath(path: string): string {
-    return (path.split("/").pop() ?? path).replace(/\.md$/i, "");
-}
 
 function countLines(content: string): number {
     return content.length === 0 ? 0 : content.split(/\r?\n/).length;

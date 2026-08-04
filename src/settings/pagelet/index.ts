@@ -40,6 +40,7 @@ import {
     isVaultPathInConfigDir,
     normalizeVaultConfigDir,
 } from "../../obsidian-paths";
+import { isRecord } from "../../pa/helpers";
 import type { QuietRecallEvaluationDiagnostics } from "../../pa/quiet-recall-evaluation";
 import type { ScopeRecapAttemptStatus } from "../../pa/scope-recap";
 import type { PetCorner } from "../../pagelet/pet/types";
@@ -1007,9 +1008,6 @@ function normalizeStringArray(value: unknown): string[] {
     return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 /**
  * Exhaustive map from validator error to its i18n key. Replaces a runtime

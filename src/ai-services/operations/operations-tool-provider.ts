@@ -13,7 +13,6 @@ import type {
     ChatToolProviderSchema,
     ChatToolRegistryDefinition,
 } from "../chat-tools";
-import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "../../operations-agent-flags";
 import {
     MAX_FRONTMATTER_KEYS,
     MAX_FRONTMATTER_KEY_CHARS,
@@ -74,7 +73,7 @@ export class OperationsToolProvider implements CapabilityProvider {
     );
 
     async load(context: ProviderLoadContext): Promise<ProviderLoadResult> {
-        if (!OPERATIONS_AGENT_RUNTIME_ENABLED || context.settings.operationsAgentEnabled !== true) {
+        if (context.settings.operationsAgentEnabled !== true) {
             return {
                 status: "unavailable",
                 capabilities: [],

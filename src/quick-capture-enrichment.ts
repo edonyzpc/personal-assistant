@@ -13,6 +13,7 @@ import {
     type ReviewQueueCreateInput,
 } from "./pa";
 import type { QuickCapturePostProcessInput } from "./quick-capture";
+import { isRecord } from "./pa/helpers";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 export const QUICK_CAPTURE_ENRICHMENT_SUGGESTION_TYPES = [
@@ -114,9 +115,6 @@ function isMemorySensitivity(value: unknown): value is MemorySensitivity {
     return typeof value === "string" && (MEMORY_SENSITIVITIES as readonly string[]).includes(value);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
 
 function normalizeWhyShown(value: unknown, fallback: string): string[] {
     if (!Array.isArray(value)) return [fallback];

@@ -1,5 +1,5 @@
 import type { PersistedSourceRef, ReviewQueueScope } from "./contracts";
-import { cloneScope, cloneSourceRef } from "./helpers";
+import { cloneScope, cloneSourceRef, UNDO_RETENTION_MS } from "./helpers";
 import {
     createTypeATargetSuppressionFingerprint,
     LEGACY_TYPE_A_ADOPTION_RULE_FINGERPRINT,
@@ -33,7 +33,6 @@ import {
     type PersistedMemoryProvenance,
 } from "./memory-governance-persistence";
 
-const UNDO_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const COMPLETED_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_FORGET_TRANSITIONS_PER_RUN = 10_000;
 

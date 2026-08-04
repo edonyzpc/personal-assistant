@@ -6,8 +6,6 @@ export type DirtyTimestamps = {
     epoch?: number; // monotonic in-memory guard used to avoid clearing newer dirty work
 };
 
-export type DirtyRecord = Record<string, DirtyTimestamps>;
-
 export const computeContentHash = async (input: string): Promise<string> => {
     const subtle = getPlatformCrypto()?.subtle;
     if (!subtle) {
@@ -40,7 +38,3 @@ export const selectFlushCandidates = (
     return result;
 };
 
-export const shouldRespectRateGap = (lastProcessedAt: number | null, now: number, rateGap: number): boolean => {
-    if (lastProcessedAt === null) return true;
-    return now - lastProcessedAt >= rateGap;
-};

@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { computeContentHash, selectFlushCandidates, shouldRespectRateGap, DirtyTimestamps } from '../src/vss-helpers';
+import { computeContentHash, selectFlushCandidates, DirtyTimestamps } from '../src/vss-helpers';
 
 describe('computeContentHash', () => {
     it('returns stable hash for identical input', async () => {
@@ -44,18 +44,3 @@ describe('selectFlushCandidates', () => {
     });
 });
 
-describe('shouldRespectRateGap', () => {
-    it('allows first run when no previous timestamp', () => {
-        expect(shouldRespectRateGap(null, Date.now(), 3000)).toBe(true);
-    });
-
-    it('blocks when gap not met', () => {
-        const now = 1_000_000;
-        expect(shouldRespectRateGap(now, now + 1_000, 3_000)).toBe(false);
-    });
-
-    it('allows when gap exceeded', () => {
-        const now = 1_000_000;
-        expect(shouldRespectRateGap(now, now + 3_500, 3_000)).toBe(true);
-    });
-});

@@ -1,4 +1,3 @@
-import type { Vault } from "obsidian";
 import { MATCH_COMMENT, MATCH_HTML_COMMENT } from "../constant";
 
 export function getWordCount(text: string): number {
@@ -56,10 +55,6 @@ export function getSentenceCount(text: string): number {
 
 export function getPageCount(text: string, pageWords: number): number {
     return parseFloat((getWordCount(text) / pageWords).toFixed(1));
-}
-
-export function getTotalFileCount(vault: Vault): number {
-    return vault.getMarkdownFiles().length;
 }
 
 export function cleanComments(text: string): string {

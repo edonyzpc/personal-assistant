@@ -120,9 +120,6 @@ const DASH_SCOPE_NATIVE_TOOL_CALLING_UNSUPPORTED_MODEL_SIGNALS = [
 
 export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
     buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS);
-export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
-    DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS;
-
 interface CreateChatModelOptions {
     transport?: ChatTransport;
     qwenRequestOptions?: QwenRequestOptions;

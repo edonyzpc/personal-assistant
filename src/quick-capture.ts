@@ -2,6 +2,7 @@ import { App, Modal, Notice, TFile, normalizePath } from "obsidian";
 
 import { validateAppendConfinement, validateTargetConfinementSync } from "./ai-services/write-action-framework/target-confinement";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
+import { isRecord, parentFolder } from "./pa/helpers";
 
 export const QUICK_CAPTURE_COMMAND_ID = "pa-quick-capture";
 export const QUICK_CAPTURE_COMMAND_NAME = "PA: Quick Capture";
@@ -67,9 +68,6 @@ export interface QuickCaptureCaptureOptions {
 const DESTINATIONS: readonly QuickCaptureDestination[] = ["daily", "inbox", "current-file"];
 const QUICK_CAPTURE_MAX_PATH_LENGTH = 400;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
 
 export function normalizeQuickCaptureDestination(value: unknown): QuickCaptureDestination {
     return DESTINATIONS.includes(value as QuickCaptureDestination)
@@ -168,10 +166,6 @@ function appendEntry(existingContent: string, entry: string): string {
     return `${existingContent}${separator}${entry}\n`;
 }
 
-function parentFolder(path: string): string {
-    const slash = path.lastIndexOf("/");
-    return slash > 0 ? path.slice(0, slash) : "";
-}
 
 function validateQuickCaptureVaultPath(path: string): string {
     const result = validateTargetConfinementSync(path, {

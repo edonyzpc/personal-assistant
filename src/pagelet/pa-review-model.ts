@@ -75,6 +75,7 @@ import {
 } from "./pa-review-rate-limit";
 import { pageletT, type PageletLocale } from "../locales/pagelet";
 import { toError } from "../error-utils";
+import { errorMessage } from "../ai-services/agent-utils";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { PageletProviderCallControlError } from "./provider-call-admission";
 
@@ -1177,16 +1178,6 @@ function finalizeReviewOutcome(
 ): PageletReviewOutcome {
     diagnostics.totalElapsedMs = Math.max(0, Math.round(now() - startedAt));
     return outcome;
-}
-
-function errorMessage(err: unknown): string {
-    if (err instanceof Error) return err.message;
-    if (typeof err === "string") return err;
-    try {
-        return JSON.stringify(err);
-    } catch {
-        return "unknown error";
-    }
 }
 
 /**

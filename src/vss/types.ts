@@ -145,8 +145,3 @@ export function scoreFromDistance(distance: number, metric: VSSDistanceMetric): 
     return 1 / (1 + Math.max(0, distance));
 }
 
-export function estimateVectorMemoryBytes(chunkCount: number, dimensions: number): number {
-    const vectorBytes = chunkCount * dimensions * Float32Array.BYTES_PER_ELEMENT;
-    const metadataOverheadBytes = chunkCount * 512;
-    return vectorBytes + metadataOverheadBytes;
-}

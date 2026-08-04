@@ -1,5 +1,6 @@
 import { normalizePath, type Vault } from "obsidian";
 import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from "../obsidian-paths";
+import { isRecord, stableHash } from "../pa/helpers";
 import type { StatsDeviceShard, StatsStoreError, VaultStatistics } from "./stats-types";
 import {
     getStatsDailyRoot,
@@ -60,7 +61,7 @@ export async function importV2StatsHistory(
             corruptShardCount += 1;
             continue;
         }
-        sourceFingerprints.push({ path, hash: hashString(content) });
+        sourceFingerprints.push({ path, hash: stableHash(content) });
         const parsed = parseJson(content, path, errors);
         if (parsed === undefined) {
             corruptShardCount += 1;
@@ -126,7 +127,7 @@ export async function importV2StatsHistory(
                     corruptShardCount += 1;
                     continue;
                 }
-                const contentHash = hashString(content);
+                const contentHash = stableHash(content);
                 sourceFingerprints.push({ path: file, hash: contentHash });
                 const parsed = parseJson(content, file, errors);
                 if (parsed === undefined) {
@@ -226,12 +227,9 @@ function shardToRecord(shard: StatsDeviceShard, vaultId: string): StatsDailyDevi
 }
 
 function isLegacyStats(value: unknown): value is VaultStatistics {
-    return isObject(value) && isObject(value.history);
+    return isRecord(value) && isRecord(value.history);
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function parseJson(content: string, path: string, errors: StatsStoreError[]): unknown {
     try {
@@ -246,7 +244,7 @@ function parseJson(content: string, path: string, errors: StatsStoreError[]): un
 }
 
 function parseValidV2Shard(value: unknown): StatsDeviceShard | null {
-    if (!isObject(value) || !isObject(value.activity) || !isObject(value.snapshot)) {
+    if (!isRecord(value) || !isRecord(value.activity) || !isRecord(value.snapshot)) {
         return null;
     }
     if (typeof value.updatedAt !== "string" || Number.isNaN(Date.parse(value.updatedAt))) {
@@ -270,7 +268,7 @@ function parseValidV2Shard(value: unknown): StatsDeviceShard | null {
 }
 
 function parseValidLegacyStatsDay(date: string, value: unknown): StatsDeviceShard | null {
-    if (!isObject(value)) {
+    if (!isRecord(value)) {
         return null;
     }
     if (!allFiniteNumbers(value, [
@@ -351,14 +349,5 @@ function hashRecords(records: StatsDailyDeviceRecord[]): string {
 }
 
 function hashStable(value: unknown): string {
-    return hashString(JSON.stringify(value));
-}
-
-function hashString(value: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < value.length; i++) {
-        hash ^= value.charCodeAt(i);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(36);
+    return stableHash(JSON.stringify(value));
 }

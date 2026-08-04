@@ -5,7 +5,7 @@ import { readFileSync } from "fs";
 import { Platform } from "obsidian";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
-import { getPetAriaLabel, getPetHoldMenuLabels, PetView, resolvePetMountTarget } from "../src/pagelet/pet/PetView";
+import { getPetAriaLabel, PetView, resolvePetMountTarget } from "../src/pagelet/pet/PetView";
 
 afterEach(() => {
     jest.useRealTimers();
@@ -548,18 +548,6 @@ describe("PetView locale labels", () => {
         expect(getPetAriaLabel("zh", "working", "summary")).toBe("拾页助手: 正在准备回顾");
     });
 
-    it("localizes the three long-press actions", () => {
-        expect(getPetHoldMenuLabels("en")).toEqual({
-            capture: "Capture",
-            review: "Review",
-            discover: "Discover",
-        });
-        expect(getPetHoldMenuLabels("zh")).toEqual({
-            capture: "随手记下",
-            review: "审阅",
-            discover: "发现关联",
-        });
-    });
 });
 
 describe("PetView task kind", () => {

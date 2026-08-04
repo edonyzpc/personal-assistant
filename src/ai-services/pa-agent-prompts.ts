@@ -1,6 +1,7 @@
 import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate } from "@langchain/core/prompts";
 
 import { PaAgentContextProjector } from "./context";
+import { escapeTaggedBoundary } from "./agent-utils";
 import type { ChatMessage, PaAgentMessage } from "./chat-types";
 
 const MAX_CHAT_HISTORY_CHARS = 60_000;
@@ -109,11 +110,6 @@ export function formatToolObservations(
 function escapeUntrustedBoundary(value: string): string {
     // Prevent attackers from closing the envelope prematurely by including a literal </untrusted> in their content.
     return escapeTaggedBoundary(value, "untrusted");
-}
-
-function escapeTaggedBoundary(value: string, tagName: "chat_history" | "compaction_summary" | "untrusted"): string {
-    const pattern = new RegExp(`</${tagName}`, "gi");
-    return value.replace(pattern, `<\\/${tagName}`);
 }
 
 function escapeAttributeValue(value: string): string {

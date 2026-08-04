@@ -8,6 +8,7 @@ import {
     type VaultCreateInput,
     type VaultProcessInput,
 } from "./types";
+import { isRecord } from "../../pa/helpers";
 
 export const MAX_OPERATION_CONTENT_CHARS = 50_000;
 export const MAX_INTENT_OPERATIONS = 16;
@@ -327,9 +328,6 @@ function expectObject(value: unknown, path: string): Record<string, unknown> {
     return value;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function expectExactKeys(
     value: Record<string, unknown>,

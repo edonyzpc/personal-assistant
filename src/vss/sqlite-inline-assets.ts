@@ -43,14 +43,3 @@ export function getInlineSqliteWasmUrl(): string {
     return cachedSqliteWasmUrl;
 }
 
-/**
- * Optional revoke for hot-reload / test cleanup. Plugin teardown does not call this — orphaning
- * a single ~941KB blob URL on plugin reload is preferable to risking a use-after-revoke on any
- * SqliteVectorIndex that still holds the URL.
- */
-export function disposeInlineSqliteWasmUrl(): void {
-    if (cachedSqliteWasmUrl !== null) {
-        URL.revokeObjectURL(cachedSqliteWasmUrl);
-        cachedSqliteWasmUrl = null;
-    }
-}

@@ -5,14 +5,11 @@ import {
     selectStrongestConcreteScopeRecapInsight,
     type ScopeRecapRunResult,
 } from "../../pa";
+import { noteTitleFromPath } from "../../pa/helpers";
 import type { PageletLocale } from "../../locales/pagelet";
 import { buildRecapDeliveryReceipt } from "../attention/fingerprint";
 import type { DeliveryCandidate } from "./types";
 
-function sourceTitle(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
-}
 
 export function scopeRecapToDeliveryCandidate(
     recap: ScopeRecapRunResult,
@@ -29,7 +26,7 @@ export function scopeRecapToDeliveryCandidate(
         body: insight.summary,
         sourceRefs: insight.sourceRefs.map((ref) => ({
             path: ref.path,
-            title: sourceTitle(ref.path),
+            title: noteTitleFromPath(ref.path),
         })),
         whyNow: [whyItMatters],
         preparedAt: recap.generatedAt,

@@ -8,7 +8,7 @@ import {
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
-import { cloneScope, cloneSourceRef, includesString, isRecord, stableHash } from "./helpers";
+import { cloneJson, cloneScope, cloneSourceRef, includesString, isRecord, stableHash, UNDO_RETENTION_MS } from "./helpers";
 import {
     decideMemoryAdmission,
     type MemoryAdmissionDecision,
@@ -49,7 +49,6 @@ import {
     type ReviewQueueItem,
 } from "./review-queue-store";
 
-const UNDO_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const AUTHORITIES = [
     "source_observation",
     "pa_inference",
@@ -1245,10 +1244,6 @@ function admissionClaimIsCurrent(
         && claim.sensitivity === envelope.sensitivity
         && claim.effect === envelope.effect
         && JSON.stringify(claim.applicability) === JSON.stringify(envelope.applicability);
-}
-
-function cloneJson<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function failure<T>(reason: string): MemoryAdmissionCoordinatorResult<T> {

@@ -136,7 +136,7 @@ function mergeContextUsed(items: ChatContextUsedItem[]): ChatContextUsedItem[] {
     return [...byKey.values()];
 }
 
-function dedupeSources(sources: readonly ChatAgentSource[]): ChatAgentSource[] {
+export function dedupeSources(sources: readonly ChatAgentSource[]): ChatAgentSource[] {
     const seen = new Set<string>();
     const result: ChatAgentSource[] = [];
     for (const source of sources) {

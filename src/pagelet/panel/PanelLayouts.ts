@@ -30,6 +30,7 @@ import {
     setPlatformTimeout,
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
+import { clamp } from "../../utils";
 
 export interface PanelLayoutRenderOptions {
     onSuggestionRenderer?: (renderer: SuggestionCardRenderer) => void;
@@ -870,10 +871,6 @@ function updateNodeGroup(group: SVGGElement, node: ConnectionGraphNode): void {
     label.setAttribute("x", String(labelOnRight ? node.radius + 9 : -node.radius - 9));
     label.setAttribute("y", "4");
     label.setAttribute("text-anchor", labelOnRight ? "start" : "end");
-}
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.min(max, Math.max(min, value));
 }
 
 /** Build a connection item for the list below the map. */

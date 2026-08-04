@@ -31,6 +31,7 @@ import {
 } from "./chat-tool-types";
 import { TOOL_VALIDATION_INPUT_SUMMARY_CHARS } from "./chat-tool-constants";
 import { truncate } from "./chat-tool-execution-helpers";
+import { errorMessage } from "./agent-utils";
 import {
     deepEqualJson,
     summarizeRawInput,
@@ -154,6 +155,13 @@ function trimLargestJsonPayload(value: unknown, overflow: number): { trimmed: bo
     return { trimmed: true, omitted: 0 };
 }
 
+function truncateToExactLength(value: string, maxLength: number): string {
+    if (maxLength <= 0) return "";
+    if (value.length <= maxLength) return value;
+    if (maxLength <= 3) return ".".repeat(maxLength);
+    return `${value.slice(0, maxLength - 3)}...`;
+}
+
 function findLargestJsonTrimTarget(value: unknown): JsonTrimTarget | null {
     let target: JsonTrimTarget | null = null;
     const visit = (current: unknown, parent?: JsonContainer, key?: string | number) => {
@@ -190,13 +198,6 @@ function findLargestJsonTrimTarget(value: unknown): JsonTrimTarget | null {
     };
     visit(value);
     return target;
-}
-
-function truncateToExactLength(value: string, maxLength: number): string {
-    if (maxLength <= 0) return "";
-    if (value.length <= maxLength) return value;
-    if (maxLength <= 3) return value.slice(0, maxLength);
-    return `${value.slice(0, maxLength - 3)}...`;
 }
 
 function createMinimalBudgetedV1AContent(tool: ObsidianOperationsV1AToolName, content: unknown): unknown {
@@ -274,12 +275,8 @@ export function cloneInputSchema(schema: ChatToolInputSchema): ChatToolInputSche
     };
 }
 
-function getErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
 export function sanitizeToolErrorMessage(error: unknown, fallback: string): string {
-    const message = getErrorMessage(error).replace(/\s+/g, " ").trim();
+    const message = errorMessage(error).replace(/\s+/g, " ").trim();
     return message ? truncate(message, TOOL_VALIDATION_INPUT_SUMMARY_CHARS) : fallback;
 }
 

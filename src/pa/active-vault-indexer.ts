@@ -8,7 +8,7 @@ import {
     type SkippedSourceRef,
     type UISourceRef,
 } from "./contracts";
-import { normalizeVaultPath } from "./helpers";
+import { normalizeVaultPath, normalizeTag, uniqueStrings } from "./helpers";
 import {
     applyRetrievalHabitProfileToEvidence,
     type RetrievalHabitProfileSettings,
@@ -547,9 +547,6 @@ function normalizeScore(score: unknown): number {
             : 0;
 }
 
-function normalizeTag(tag: string): string {
-    return tag.trim().replace(/^#+/, "").toLowerCase();
-}
 
 function normalizeAlias(alias: string): string {
     return alias.trim().toLowerCase();
@@ -609,9 +606,6 @@ function addUnique(values: string[], value: string | undefined): void {
     if (trimmed && !values.includes(trimmed)) values.push(trimmed);
 }
 
-function uniqueStrings(values: readonly string[]): string[] {
-    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
 
 function sanitizePersistedSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
     return {

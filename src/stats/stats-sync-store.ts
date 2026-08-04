@@ -1,5 +1,6 @@
 import { normalizePath, type Vault } from "obsidian";
 import { getVaultConfigDir, joinVaultConfigPath } from "../obsidian-paths";
+import { isRecord, stableHash } from "../pa/helpers";
 import type { ActivityCounts, SnapshotCounts, StatsStoreError } from "./stats-types";
 import {
     getStatsRecordKey,
@@ -64,7 +65,7 @@ export class StatsSyncStore {
                 }
                 const parsed = parseJson(trimmed, path, errors);
                 if (parsed === undefined) return;
-                if (isObject(parsed) && typeof parsed.vaultId === "string" && parsed.vaultId !== this.vaultId) {
+                if (isRecord(parsed) && typeof parsed.vaultId === "string" && parsed.vaultId !== this.vaultId) {
                     return;
                 }
                 const record = parseSyncRecord(parsed, this.vaultId);
@@ -157,7 +158,7 @@ export function getStatsSyncDevicePath(syncRoot: string, deviceId: string): stri
 }
 
 function parseSyncRecord(value: unknown, vaultId: string): StatsDailyDeviceRecord | null {
-    if (!isObject(value) || value.version !== 3 || value.vaultId !== vaultId) {
+    if (!isRecord(value) || value.version !== 3 || value.vaultId !== vaultId) {
         return null;
     }
     if (typeof value.date !== "string"
@@ -166,8 +167,8 @@ function parseSyncRecord(value: unknown, vaultId: string): StatsDailyDeviceRecor
         || Number.isNaN(Date.parse(value.updatedAt))
         || typeof value.revision !== "number"
         || !Number.isFinite(value.revision)
-        || !isObject(value.activity)
-        || !isObject(value.snapshot)) {
+        || !isRecord(value.activity)
+        || !isRecord(value.snapshot)) {
         return null;
     }
     if (!allFiniteNumbers(value.activity, ["words", "characters", "sentences", "pages", "footnotes", "citations"])) {
@@ -224,7 +225,7 @@ function recordToSyncLine(record: StatsDailyDeviceRecord): Omit<StatsDailyDevice
 }
 
 function getStatsSyncRecordHash(record: StatsDailyDeviceRecord): string {
-    return hashString(JSON.stringify({
+    return stableHash(JSON.stringify({
         version: record.version,
         vaultId: record.vaultId,
         date: record.date,
@@ -236,7 +237,7 @@ function getStatsSyncRecordHash(record: StatsDailyDeviceRecord): string {
 }
 
 function getLegacyStatsSyncRecordHash(record: StatsDailyDeviceRecord): string {
-    return hashString(JSON.stringify(recordToSyncLine(record)));
+    return stableHash(JSON.stringify(recordToSyncLine(record)));
 }
 
 function parseJson(content: string, path: string, errors: StatsStoreError[]): unknown {
@@ -255,9 +256,6 @@ function isConflictMarker(line: string): boolean {
     return line.startsWith("<<<<<<<") || line.startsWith("=======") || line.startsWith(">>>>>>>");
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function allFiniteNumbers(source: Record<string, unknown>, keys: string[]): boolean {
     return keys.every((key) => typeof source[key] === "number" && Number.isFinite(source[key]));
@@ -347,11 +345,3 @@ function sanitizeFileName(value: string): string {
     return value.replace(/[^A-Za-z0-9._-]/g, "_") || "device";
 }
 
-function hashString(value: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < value.length; i++) {
-        hash ^= value.charCodeAt(i);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(36);
-}

@@ -10,4 +10,3 @@ export const MATCH_HTML_COMMENT = new RegExp(
     "|<[?][^>]*>?",
     "g"
 );
-export const STATS_FILE_NAME = "stats.json";

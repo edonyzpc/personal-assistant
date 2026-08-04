@@ -40,6 +40,7 @@ import {
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
 import { appendIconButtonLabel, clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
+import { clamp } from "../../utils";
 
 /** Detect mobile context using the Obsidian convention or viewport width. */
 function isMobile(): boolean {
@@ -90,10 +91,6 @@ interface RenderableBubbleContent {
     findings: BubbleContent["findings"];
     actions: BubbleAction[];
     inlineHint?: BubbleContent["inlineHint"];
-}
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(value, max));
 }
 
 function minPositive(fallback: number, ...values: Array<number | undefined>): number {

@@ -1,4 +1,4 @@
-import { cloneScope, cloneSourceRef, stableHash } from "./helpers";
+import { cloneJson, cloneScope, cloneSourceRef, stableHash } from "./helpers";
 import { validateConfirmedMemoryRecord, type ConfirmedMemoryRecord } from "./memory-governance-store";
 import {
     buildLegacyMemoryRollbackProjection,
@@ -843,9 +843,6 @@ function cloneMigrationState(state: MemoryMigrationState): MemoryMigrationState 
     return { ...state };
 }
 
-function cloneJson<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
-}
 
 function buildConfirmationToken(
     state: DeviceMemoryGovernanceStateV1,

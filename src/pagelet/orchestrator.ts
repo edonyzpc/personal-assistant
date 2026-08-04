@@ -103,6 +103,7 @@ import {
     type ScopeRecapItem,
     type ScopeRecapPreparationResult,
 } from "../pa";
+import { noteTitleFromPath } from "../pa/helpers";
 
 // Re-export so existing `import { PageletHost } from "./orchestrator"` keeps working.
 export type { PageletHost } from "./PageletHost";
@@ -3853,11 +3854,6 @@ function agentInsightErrorLocaleKey(error: PageletInsightActionErrorKind): strin
     }
 }
 
-function noteTitleFromPath(path: string): string {
-    const normalized = path.trim();
-    if (!normalized) return "";
-    return normalized.split("/").pop()?.replace(/\.md$/i, "") ?? normalized;
-}
 
 function contextDropReasonForScopeSkip(reason: PageletScopeSkippedReason | undefined): ContextDropReason {
     switch (reason) {

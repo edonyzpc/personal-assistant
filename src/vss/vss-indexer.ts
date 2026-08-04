@@ -1,7 +1,9 @@
 import type { TFile } from "obsidian";
 
 import type { AIUtils, CreateEmbeddingsOptions } from "../ai-services/ai-utils";
+import { errorMessage } from "../ai-services/agent-utils";
 import { toError } from "../error-utils";
+import { isRecord } from "../pa/helpers";
 import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 import type { VSSChunk } from "./types";
 
@@ -88,7 +90,7 @@ export function isRetryableEmbeddingError(error: unknown): boolean {
         return true;
     }
 
-    const message = getErrorMessage(error).toLowerCase();
+    const message = errorMessage(error).toLowerCase();
     return [
         "rate limit",
         "too many requests",
@@ -108,21 +110,11 @@ export function isRetryableEmbeddingError(error: unknown): boolean {
 }
 
 export function getErrorStatus(error: unknown): number | undefined {
-    if (!isObject(error)) return undefined;
+    if (!isRecord(error)) return undefined;
     const directStatus = numberValueOrUndefined(error.status) ?? numberValueOrUndefined(error.statusCode);
     if (directStatus !== undefined) return directStatus;
     const response = error.response;
-    return isObject(response) ? numberValueOrUndefined(response.status) : undefined;
-}
-
-export function getErrorMessage(error: unknown): string {
-    if (error instanceof Error) return error.message;
-    if (isObject(error) && typeof error.message === "string") return error.message;
-    try {
-        return JSON.stringify(error);
-    } catch {
-        return String(error);
-    }
+    return isRecord(response) ? numberValueOrUndefined(response.status) : undefined;
 }
 
 export function estimateEmbeddingTokens(chunkCount: number): number {
@@ -146,6 +138,3 @@ function numberValueOrUndefined(value: unknown): number | undefined {
     return typeof value === "number" ? value : undefined;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}

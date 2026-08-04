@@ -16,7 +16,6 @@ import {
     getDashScopeImageSynthesisUrl,
     getDashScopeTasksUrl,
     isDashScopeCompatibleBaseURL,
-    SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
     supportsDashScopeThinkingControl,
 } from '../src/ai-services/ai-utils';
 
@@ -102,10 +101,6 @@ describe('native tool calling capability', () => {
                 baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
             },
         ]));
-    });
-
-    it('keeps smoke validations explicit for provider canary runs', () => {
-        expect(SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS);
     });
 
     it('defaults to disabled behind the internal gate', () => {

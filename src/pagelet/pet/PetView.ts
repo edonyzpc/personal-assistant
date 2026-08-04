@@ -27,6 +27,7 @@ import {
     setPlatformTimeout,
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
+import { clamp } from "../../utils";
 import { createHtmlElement } from "../dom-utils";
 import { createPetSvgElement, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
@@ -51,16 +52,6 @@ export function getPetActionRingLabels(locale: PageletLocale): {
         review: pageletT("pagelet.pet.actionRing.review", locale),
         discover: pageletT("pagelet.pet.actionRing.discover", locale),
     };
-}
-
-/** @deprecated Kept for callers that still consume the pre-B-121 label helper. */
-export function getPetHoldMenuLabels(locale: PageletLocale): {
-    capture: string;
-    review: string;
-    discover: string;
-} {
-    const { capture, review, discover } = getPetActionRingLabels(locale);
-    return { capture, review, discover };
 }
 
 export type PetMountTarget = {
@@ -290,20 +281,20 @@ function buildMobileToolbarHorizontalActionRingLayout(input: {
     const availableWidth = Math.max(0, input.maxRight - input.minLeft);
     const widthSum = input.sizes.reduce((sum, item) => sum + item.width, 0);
     const gap = input.sizes.length > 1
-        ? clampNumber(
+        ? clamp(
             (availableWidth - widthSum) / (input.sizes.length - 1),
             0,
             ACTION_RING_ITEM_GAP_PX,
         )
         : 0;
     const totalWidth = widthSum + gap * Math.max(0, input.sizes.length - 1);
-    let cursor = clampNumber(
+    let cursor = clamp(
         input.anchor.left,
         input.minLeft,
         Math.max(input.minLeft, input.maxRight - totalWidth),
     );
     const maxHeight = Math.max(44, ...input.sizes.map((item) => item.height));
-    const top = clampNumber(
+    const top = clamp(
         input.anchor.top + input.anchor.height + input.gutter,
         input.minTop,
         Math.max(input.minTop, input.maxBottom - maxHeight),
@@ -331,20 +322,20 @@ function buildMobileToolbarVerticalActionRingFallback(input: {
     const availableHeight = Math.max(0, input.maxBottom - input.minTop);
     const heightSum = input.sizes.reduce((sum, item) => sum + item.height, 0);
     const gap = input.sizes.length > 1
-        ? clampNumber(
+        ? clamp(
             (availableHeight - heightSum) / (input.sizes.length - 1),
             0,
             ACTION_RING_ITEM_GAP_PX,
         )
         : 0;
     const totalHeight = heightSum + gap * Math.max(0, input.sizes.length - 1);
-    let cursor = clampNumber(
+    let cursor = clamp(
         input.anchor.top + input.anchor.height + input.gutter,
         input.minTop,
         Math.max(input.minTop, input.maxBottom - totalHeight),
     );
     const maxWidth = Math.max(44, ...input.sizes.map((item) => item.width));
-    const left = clampNumber(
+    const left = clamp(
         input.anchor.left,
         input.minLeft,
         Math.max(input.minLeft, input.maxRight - maxWidth),
@@ -373,14 +364,14 @@ function buildHorizontalActionRingFallback(input: {
     const widths = input.sizes.map((item) => item.width);
     const widthSum = widths.reduce((sum, width) => sum + width, 0);
     const gap = input.sizes.length > 1
-        ? clampNumber(
+        ? clamp(
             (availableWidth - widthSum) / (input.sizes.length - 1),
             0,
             ACTION_RING_ITEM_GAP_PX,
         )
         : 0;
     const totalWidth = widthSum + gap * Math.max(0, input.sizes.length - 1);
-    let cursor = clampNumber(
+    let cursor = clamp(
         input.anchor.left + input.anchor.width / 2 - totalWidth / 2,
         input.minLeft,
         Math.max(input.minLeft, input.maxRight - totalWidth),
@@ -388,7 +379,7 @@ function buildHorizontalActionRingFallback(input: {
     const maxHeight = Math.max(44, ...input.sizes.map((item) => item.height));
     const placeAbove = input.anchor.top + input.anchor.height / 2
         >= input.viewport.top + input.viewport.height / 2;
-    const top = clampNumber(
+    const top = clamp(
         placeAbove
             ? input.anchor.top - maxHeight - 12
             : input.anchor.top + input.anchor.height + 12,
@@ -419,14 +410,14 @@ function buildVerticalActionRingFallback(input: {
     const heights = input.sizes.map((item) => item.height);
     const heightSum = heights.reduce((sum, height) => sum + height, 0);
     const gap = input.sizes.length > 1
-        ? clampNumber(
+        ? clamp(
             (availableHeight - heightSum) / (input.sizes.length - 1),
             0,
             ACTION_RING_ITEM_GAP_PX,
         )
         : 0;
     const totalHeight = heightSum + gap * Math.max(0, input.sizes.length - 1);
-    let cursor = clampNumber(
+    let cursor = clamp(
         input.anchor.top + input.anchor.height / 2 - totalHeight / 2,
         input.minTop,
         Math.max(input.minTop, input.maxBottom - totalHeight),
@@ -434,7 +425,7 @@ function buildVerticalActionRingFallback(input: {
     const maxWidth = Math.max(44, ...input.sizes.map((item) => item.width));
     const placeLeft = input.anchor.left + input.anchor.width / 2
         >= input.viewport.left + input.viewport.width / 2;
-    const left = clampNumber(
+    const left = clamp(
         placeLeft
             ? input.anchor.left - maxWidth - 12
             : input.anchor.left + input.anchor.width + 12,
@@ -463,12 +454,12 @@ function clampActionRingPosition(
     },
 ): ActionRingItemPosition {
     return {
-        left: clampNumber(
+        left: clamp(
             position.left,
             bounds.minLeft,
             Math.max(bounds.minLeft, bounds.maxRight - size.width),
         ),
-        top: clampNumber(
+        top: clamp(
             position.top,
             bounds.minTop,
             Math.max(bounds.minTop, bounds.maxBottom - size.height),
@@ -528,9 +519,6 @@ function finiteDimension(value: number, fallback: number): number {
     return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function clampNumber(value: number, min: number, max: number): number {
-    return Math.min(Math.max(value, min), max);
-}
 
 type RootGesture =
     | {

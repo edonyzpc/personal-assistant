@@ -6,6 +6,11 @@ export function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+export function escapeTaggedBoundary(value: string, tagName: string): string {
+    const pattern = new RegExp(`</${tagName}`, "gi");
+    return value.replace(pattern, `<\\/${tagName}`);
+}
+
 // JSON.stringify with object key sort, used to derive stable cache/dedup keys from
 // tool-call inputs regardless of provider key ordering.
 export function stableStringify(value: unknown): string {

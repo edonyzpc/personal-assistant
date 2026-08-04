@@ -9,6 +9,7 @@ import {
 } from "obsidian";
 
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locales/pagelet";
+import { isRecord } from "../../pa/helpers";
 import { getPlatformCrypto } from "../../platform-dom";
 import { quietRecallGovernedClaimId } from "../../pa";
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
@@ -980,6 +981,3 @@ function normalizeTabEntryReason(value: unknown): TabEntryReason | undefined {
         : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}

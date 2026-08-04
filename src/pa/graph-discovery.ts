@@ -5,7 +5,7 @@ import {
     type ReviewQueueScope,
     type ReviewQueueStatus,
 } from "./contracts";
-import { normalizeVaultPath, stableHash, cloneSourceRef } from "./helpers";
+import { normalizeVaultPath, stableHash, cloneSourceRef, basenameFromPath, parentFolder, normalizeTag, uniqueStrings } from "./helpers";
 import type {
     ReviewQueueCreateInput,
     ReviewQueueItem,
@@ -96,27 +96,8 @@ function nowDate(now: GraphDiscoveryOptions["now"]): Date {
     return value ? new Date(value.getTime()) : new Date();
 }
 
-function basenameFromPath(path: string): string {
-    const name = normalizeVaultPath(path).split("/").pop() ?? path;
-    return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
-}
-
-function parentFolder(path: string): string {
-    const normalized = normalizeVaultPath(path);
-    const slash = normalized.lastIndexOf("/");
-    return slash > 0 ? normalized.slice(0, slash) : "";
-}
-
 function noteTitle(note: GraphDiscoveryNote): string {
     return note.title?.trim() || basenameFromPath(note.path);
-}
-
-function normalizeTag(tag: string): string {
-    return tag.trim().replace(/^#+/, "").toLowerCase();
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function sourceRefsAreValid(refs: readonly PersistedSourceRef[]): boolean {

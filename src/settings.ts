@@ -4,6 +4,7 @@ import { App, Modal, Notice, PluginSettingTab, SecretComponent, Setting, debounc
 
 import type { PluginManager } from "./plugin"
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
+import { isRecord } from "./pa/helpers";
 import { getDashScopeImageGenerationEndpoint, isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
@@ -18,7 +19,6 @@ import {
 } from "./settings/pagelet";
 import { getPageletUiLanguage } from "./locales/pagelet";
 import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
-import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LEGACY_CONFIG_DIR } from "./obsidian-paths";
 import { getPlatformDocument, setPlatformTimeout } from "./platform-dom";
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from "./ai-services/capability-types";
@@ -129,14 +129,12 @@ export const MAINTENANCE_REVIEW_DEFAULTS: Readonly<MaintenanceReviewSettings> = 
     actionLog: [],
 });
 
-/** @deprecated Weekly Review is retired as a standalone runtime feature. */
-export interface WeeklyReviewSettings {
+interface WeeklyReviewSettings {
     enabled: boolean;
     preparedReviewEnabled: boolean;
 }
 
-/** @deprecated Kept only to preserve existing persisted settings. */
-export const WEEKLY_REVIEW_DEFAULTS: Readonly<WeeklyReviewSettings> = Object.freeze({
+const WEEKLY_REVIEW_DEFAULTS: Readonly<WeeklyReviewSettings> = Object.freeze({
     enabled: true,
     preparedReviewEnabled: false,
 });
@@ -713,9 +711,6 @@ export function normalizeEnabledSkillIds(value: unknown): string[] {
     return BUNDLED_SKILL_IDS.filter((id) => normalized.has(id));
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 
 function normalizeTrimmedStringArray(value: unknown, fallback: string[]): string[] {
     if (!Array.isArray(value)) return [...fallback];
@@ -4112,7 +4107,6 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private renderOperationsAgentSection(parentEl: HTMLElement): void {
-        if (!OPERATIONS_AGENT_RUNTIME_ENABLED) return;
         const plugin = this.plugin;
         new Setting(parentEl)
             .setName(this.t("plugin.settings.operationsAgent.name"))

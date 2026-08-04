@@ -35,13 +35,13 @@ import { throwIfAborted } from '../ai-services/chat-utils';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { createHeadingAwareMarkdownChunks } from './markdown-chunker';
 import { stableHash } from '../pa/helpers';
+import { errorMessage } from "../ai-services/agent-utils";
 import {
     EMBEDDING_RETRY_DELAYS_MS,
     QWEN_TEXT_EMBEDDING_SAFE_TPM,
     estimateEmbeddingTokens,
     estimateEmbeddingTokensForTexts,
     formatBytes,
-    getErrorMessage,
     getProgressFileName,
     getProgressPathName,
     isMissingFileError,
@@ -2919,7 +2919,7 @@ function isOpfsSahpoolLockedError(error: unknown): boolean {
     if (getErrorCode(error) === "opfs-sahpool-locked") {
         return true;
     }
-    return getErrorMessage(error).includes("Local memory storage is busy");
+    return errorMessage(error).includes("Local memory storage is busy");
 }
 
 function getVssShutdownBarriers(): Map<string, VSSShutdownEntry> {

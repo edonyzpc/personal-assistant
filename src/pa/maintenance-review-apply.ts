@@ -4,7 +4,7 @@ import {
     validateSourceRefPathShape,
     type PersistedSourceRef,
 } from "./contracts";
-import { normalizeVaultPath } from "./helpers";
+import { normalizeVaultPath, parentFolder } from "./helpers";
 import type { MaintenanceProposal } from "./maintenance-review";
 
 export type MaintenanceMoveActionStatus = "applied" | "undone";
@@ -42,11 +42,6 @@ export type MaintenanceMoveUndoResult =
 
 const GENERATED_NOTE_ROOTS = [".pagelet", "pagelet-generated"] as const;
 
-function parentFolder(path: string): string {
-    const normalized = normalizeVaultPath(path);
-    const slash = normalized.lastIndexOf("/");
-    return slash > 0 ? normalized.slice(0, slash) : "";
-}
 
 function targetAllowedRoots(path: string): string[] {
     const folder = parentFolder(path);

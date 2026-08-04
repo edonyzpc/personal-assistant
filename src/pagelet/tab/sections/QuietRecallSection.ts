@@ -6,6 +6,7 @@ import {
     type QuietRecallCandidate,
     type QuietRecallSaveResult,
 } from "../../../pa";
+import { noteTitleFromPath } from "../../../pa/helpers";
 import type { PanelQuietRecallState } from "../../panel/types";
 import type { PageletLocale } from "../../../locales/pagelet";
 import { pageletT } from "../../../locales/pagelet";
@@ -29,10 +30,6 @@ function hasValidSourceRefs(candidate: QuietRecallCandidate): boolean {
         && candidate.sourceRefs.every((ref) => Boolean(ref.path.trim()));
 }
 
-function sourceTitle(path: string): string {
-    const name = path.split("/").pop() ?? path;
-    return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
-}
 
 export class QuietRecallSection implements TabSectionRenderer {
     private readonly saveState: Map<string, QuietRecallSaveState>;
@@ -247,7 +244,7 @@ export class QuietRecallSection implements TabSectionRenderer {
             "pa-pagelet-tab-tag-chip pa-pagelet-tab-local-clue-label",
             pageletT("pagelet.recall.localClue", this.locale),
         ));
-        if (source) cardEl.appendChild(el("h4", undefined, sourceTitle(source)));
+        if (source) cardEl.appendChild(el("h4", undefined, noteTitleFromPath(source)));
 
         const tagRow = el("div", "pa-pagelet-tab-tag-row");
         tagRow.appendChild(el(

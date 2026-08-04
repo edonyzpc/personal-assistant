@@ -296,3 +296,4 @@ function truncateText(value: string, maxChars: number): string {
     if (maxChars <= 3) return ".".repeat(maxChars);
     return `${value.slice(0, maxChars - 3)}...`;
 }
+

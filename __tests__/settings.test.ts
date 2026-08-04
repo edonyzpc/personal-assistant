@@ -375,7 +375,6 @@ import {
     safeParseInt,
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
-import { OPERATIONS_AGENT_RUNTIME_ENABLED } from '../src/operations-agent-flags';
 import { confirmUserAction } from '../src/confirm';
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
@@ -951,7 +950,6 @@ describe('PA Agent telemetry settings', () => {
 
 describe('Operations Agent opt-in rollout', () => {
     it('keeps the build available while preserving explicit user opt-in', () => {
-        expect(OPERATIONS_AGENT_RUNTIME_ENABLED).toBe(true);
         expect(DEFAULT_SETTINGS.operationsAgentEnabled).toBe(false);
         expect(mergeLoadedSettings({ operationsAgentEnabled: true }).operationsAgentEnabled).toBe(true);
         expect(mergeLoadedSettings({ operationsAgentEnabled: false }).operationsAgentEnabled).toBe(false);

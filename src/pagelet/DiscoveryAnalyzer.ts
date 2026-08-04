@@ -1,5 +1,6 @@
 import type { DiscoveryResult, NoteConnection } from "./panel/types";
 import type { StructuredFinding } from "./llm/types";
+import { normalizeVaultPath } from "../pa/helpers";
 
 export type DiscoveryLLMCallback = (
     currentNote: { path: string; content: string },
@@ -49,9 +50,9 @@ function resolveConnectionTarget(
     relatedNotes: ReadonlyArray<{ path: string }>,
     currentTerms: ReadonlySet<string>,
 ): string {
-    const normalizedCurrent = normalizePathLike(currentNotePath);
+    const normalizedCurrent = normalizeVaultPath(currentNotePath);
     const direct = finding.sourceFile.trim();
-    if (direct && normalizePathLike(direct) !== normalizedCurrent) return direct;
+    if (direct && normalizeVaultPath(direct) !== normalizedCurrent) return direct;
 
     const haystack = [
         finding.sourceFile,
@@ -76,7 +77,7 @@ function scoreNoteMatch(
     haystack: string,
     currentTerms: ReadonlySet<string>,
 ): number {
-    const path = normalizePathLike(notePath).toLowerCase();
+    const path = normalizeVaultPath(notePath).toLowerCase();
     if (path && haystack.includes(path)) return 100;
 
     const spacedTitle = titleFromPath(notePath).toLowerCase()
@@ -106,9 +107,6 @@ function titleFromPath(path: string): string {
     return filename.replace(/\.md$/i, "").trim();
 }
 
-function normalizePathLike(path: string): string {
-    return path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/g, "");
-}
 
 function noteMatchTerms(path: string): string[] {
     const filename = (path.split("/").pop() ?? path).replace(/\.md$/i, "").toLowerCase();

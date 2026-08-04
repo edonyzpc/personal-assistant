@@ -12,6 +12,7 @@ import {
     validateConfirmedMemoryRecord,
     type ConfirmedMemoryRecord,
 } from "./memory-governance-store";
+import { cloneSourceRef, isRecord } from "./helpers";
 
 export type MemoryControlCenterOrigin =
     | "note_memory"
@@ -708,12 +709,6 @@ function compareSourceErrors(
         || left.code.localeCompare(right.code);
 }
 
-function cloneSourceRef(sourceRef: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...sourceRef,
-        ...(sourceRef.whyShown ? { whyShown: [...sourceRef.whyShown] } : {}),
-    };
-}
 
 function normalizeCount(value: unknown): number | undefined {
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
@@ -732,6 +727,3 @@ function nonEmptyString(value: unknown): string | null {
     return normalized.length > 0 ? normalized : null;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}

@@ -4,7 +4,7 @@ import {
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
-import { normalizeVaultPath, stableHash } from "./helpers";
+import { normalizeVaultPath, stableHash, basenameFromPath, parentFolder } from "./helpers";
 import type { ReviewQueueCreateInput } from "./review-queue-store";
 
 export const MAINTENANCE_PROPOSAL_ACTION_TYPES = [
@@ -121,19 +121,8 @@ const STOPWORDS = new Set([
     "there", "these", "this", "with", "would", "your", "当前", "这个", "一个", "我们",
 ]);
 
-function basenameFromPath(path: string): string {
-    const fileName = normalizeVaultPath(path).split("/").pop() ?? path;
-    return fileName.toLowerCase().endsWith(".md") ? fileName.slice(0, -3) : fileName;
-}
-
 function fileNameFromPath(path: string): string {
     return normalizeVaultPath(path).split("/").pop() ?? path;
-}
-
-function parentFolder(path: string): string {
-    const normalized = normalizeVaultPath(path);
-    const slash = normalized.lastIndexOf("/");
-    return slash > 0 ? normalized.slice(0, slash) : "";
 }
 
 function ensureMarkdownExtension(path: string): string {
