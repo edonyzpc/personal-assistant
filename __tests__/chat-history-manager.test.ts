@@ -159,6 +159,7 @@ describe("ChatHistoryManager", () => {
                 runtimeWarnings: [{ type: "test", message: "warn-u" } as ChatRuntimeWarning],
             },
         });
+        original.assistant.shareCardEligible = false;
         const persisted = manager.serializeTurn(original, "conv-1", 2);
         const rehydrated = manager.deserializeTurn(persisted);
         expect(rehydrated.userMessage.content).toBe("Q");
@@ -166,6 +167,8 @@ describe("ChatHistoryManager", () => {
             expect.objectContaining({ type: "test", message: "warn-u" }),
         ]);
         expect(rehydrated.assistantMessage.content).toBe("The meaning is 42.");
+        expect(persisted.assistant.shareCardEligible).toBe(false);
+        expect(rehydrated.assistantMessage.shareCardEligible).toBe(false);
         expect(rehydrated.historyEntry.contextUsedItems).toEqual([
             expect.objectContaining({ label: "Tool ctx" }),
         ]);

@@ -218,6 +218,7 @@
     "pagelet.panel.action.stopReview": "停止",
     "pagelet.panel.action.undo": "撤销",
     "pagelet.panel.action.undoDismiss": "撤销忽略",
+    "pagelet.panel.action.shareCard": "分享为卡片",
     "pagelet.panel.summary.fallback": "拾页为这篇笔记找到了建议。",
     "pagelet.panel.cards.empty": "没有可见建议。",
     "pagelet.panel.cost.none": "暂无审阅费用",

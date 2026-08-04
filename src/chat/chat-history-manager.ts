@@ -241,6 +241,9 @@ export class ChatHistoryManager {
         const assistantMessage: PersistedChatMessage = {
             role: "assistant",
             content: entry.assistant.content,
+            ...(entry.assistant.shareCardEligible !== undefined
+                ? { shareCardEligible: entry.assistant.shareCardEligible }
+                : {}),
             ...(assistantSourceRecords && assistantSourceRecords.length > 0
                 ? { sourceRecords: assistantSourceRecords.map(cloneSourceRecord) }
                 : {}),
@@ -289,6 +292,9 @@ export class ChatHistoryManager {
             role: "assistant",
             content: turn.assistant.content,
             canonicalTurn,
+            ...(turn.assistant.shareCardEligible !== undefined
+                ? { shareCardEligible: turn.assistant.shareCardEligible }
+                : {}),
             ...(memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(memoryMetadata) } : {}),
             ...(turn.assistant.runtimeWarnings && turn.assistant.runtimeWarnings.length > 0
                 ? { runtimeWarnings: turn.assistant.runtimeWarnings.map(cloneRuntimeWarning) }

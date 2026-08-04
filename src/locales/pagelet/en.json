@@ -222,6 +222,7 @@
     "pagelet.panel.action.stopReview": "Stop",
     "pagelet.panel.action.undo": "Undo",
     "pagelet.panel.action.undoDismiss": "Undo dismiss",
+    "pagelet.panel.action.shareCard": "Share as card",
     "pagelet.panel.summary.fallback": "Pagelet found suggestions for this note.",
     "pagelet.panel.cards.empty": "No visible suggestions.",
     "pagelet.panel.cost.none": "No review cost yet",

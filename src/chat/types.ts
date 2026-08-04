@@ -30,6 +30,7 @@ export type RenderedMessage = {
     actionMenuButton: HTMLButtonElement;
     copyButton?: HTMLButtonElement;
     addMessageButton?: HTMLButtonElement;
+    shareButton?: HTMLButtonElement;
     deleteButton?: HTMLButtonElement;
     renderToken: number;
     copyContent: string;

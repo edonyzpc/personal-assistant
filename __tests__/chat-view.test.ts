@@ -55,7 +55,6 @@ const mockCancelOperationsIntent = jest.fn<(intentId: string) => OperationsInten
 const mockCancelPendingOperations = jest.fn<() => void>();
 const mockUndoOperations = jest.fn<(receiptIds: readonly string[]) => Promise<UndoResult[]>>();
 const mockDisposeChatService = jest.fn<() => void>();
-
 jest.mock('../src/ai-services/chat-service', () => ({
     ChatService: jest.fn().mockImplementation(() => ({
         streamLLM: mockStreamLLM,
@@ -66,6 +65,21 @@ jest.mock('../src/ai-services/chat-service', () => ({
         dispose: mockDisposeChatService,
     })),
 }));
+
+jest.mock('../src/share-card/share-card-modal', () => {
+    const mockOpen = jest.fn();
+    return {
+        ShareCardModal: jest.fn((_app: unknown, _data: unknown) => ({ open: mockOpen })),
+        mockOpen,
+    };
+});
+
+const shareCardModalMock = jest.requireMock('../src/share-card/share-card-modal') as {
+    ShareCardModal: jest.Mock;
+    mockOpen: jest.Mock;
+};
+const mockShareCardModalConstructor = shareCardModalMock.ShareCardModal;
+const mockShareCardModalOpen = shareCardModalMock.mockOpen;
 
 jest.mock('../src/utils', () => ({
     isPluginEnabled: jest.fn(() => false),
@@ -878,6 +892,8 @@ describe('LLMView turn lifecycle', () => {
         mockCancelPendingOperations.mockReset();
         mockUndoOperations.mockReset();
         mockDisposeChatService.mockReset();
+        mockShareCardModalConstructor.mockClear();
+        mockShareCardModalOpen.mockClear();
         mockUndoOperations.mockResolvedValue([]);
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockClear();
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
@@ -1289,6 +1305,8 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(false);
+        expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        expect(getButtonsByClass(containerEl, 'share-card-message-button')).toHaveLength(0);
     });
 
     it('keeps an Operations preview inline and inert until the model turn finishes, then supports confirm and Undo', async () => {
@@ -1800,6 +1818,235 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].chatHistory).not.toBe(view.chatHistory);
         expect(streamCalls[1].chatHistory?.[0]).not.toBe(view.chatHistory[0]);
         expect(streamCalls[1].chatHistory?.[1]).not.toBe(view.chatHistory[1]);
+    });
+
+    it('offers Share Card only for a completed assistant message and uses its latest content and source path', async () => {
+        const { view, containerEl, app } = createView({ withMarkdownLeaf: true });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'share this answer';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        expect(getButtonsByClass(containerEl, 'share-card-message-button')).toHaveLength(0);
+        streamCalls[0].onChunk('first part');
+        streamCalls[0].onChunk('first part\n\nlatest part');
+        await flushPromises();
+        expect(getButtonsByClass(containerEl, 'share-card-message-button')).toHaveLength(0);
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const shareButtons = getButtonsByClass(containerEl, 'share-card-message-button');
+        expect(shareButtons).toHaveLength(1);
+        expect(getButtonsByClass(getElementByClass(containerEl, 'user'), 'share-card-message-button'))
+            .toHaveLength(0);
+        shareButtons[0].click();
+
+        expect(mockShareCardModalConstructor).toHaveBeenCalledWith(app, {
+            content: 'first part\n\nlatest part',
+            source: 'chat',
+            sourceLabel: 'PA Chat',
+            sourcePath: '0.unsorted/Dog.md',
+        });
+        expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not offer Share Card for a non-empty canonical incomplete answer', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'share only if complete';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_start',
+            runId: 'run_incomplete_share',
+            scope: 'run',
+            turnId: '__run__',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_start',
+            runId: 'run_incomplete_share',
+            turnId: 'turn_incomplete_share',
+            scope: 'turn',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_incomplete_share',
+            turnId: 'turn_incomplete_share',
+            scope: 'turn',
+            message: assistantMessage('assistant_incomplete_share', [{
+                type: 'text',
+                text: 'Partial but non-empty answer.',
+            }]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            runId: 'run_incomplete_share',
+            turnId: 'turn_incomplete_share',
+            scope: 'turn',
+            status: 'incomplete',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_end',
+            runId: 'run_incomplete_share',
+            scope: 'run',
+            turnId: '__run__',
+            status: 'incomplete',
+            metadata: { finalTurnId: 'turn_incomplete_share' },
+        }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory[1].content).toBe('Partial but non-empty answer.');
+        expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        expect(getButtonsByClass(containerEl, 'share-card-message-button')).toHaveLength(0);
+    });
+
+    it.each(['aborted', 'error'] as const)(
+        'does not offer Share Card for a non-empty canonical %s answer',
+        async (status) => {
+            const { view, containerEl } = createView();
+            await view.onOpen();
+
+            getTextArea(containerEl).value = `share only if not ${status}`;
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            const call = streamCalls[0];
+            emitCanonical(call, canonicalEvent({
+                type: 'agent_start',
+                runId: `run_${status}_share`,
+                scope: 'run',
+                turnId: '__run__',
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'turn_start',
+                runId: `run_${status}_share`,
+                turnId: `turn_${status}_share`,
+                scope: 'turn',
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'message_end',
+                runId: `run_${status}_share`,
+                turnId: `turn_${status}_share`,
+                scope: 'turn',
+                message: assistantMessage(`assistant_${status}_share`, [{
+                    type: 'text',
+                    text: `${status} but non-empty answer.`,
+                }]),
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'turn_end',
+                runId: `run_${status}_share`,
+                turnId: `turn_${status}_share`,
+                scope: 'turn',
+                status,
+            }));
+            emitCanonical(call, canonicalEvent({
+                type: 'agent_end',
+                runId: `run_${status}_share`,
+                scope: 'run',
+                turnId: '__run__',
+                status,
+                metadata: { finalTurnId: `turn_${status}_share` },
+            }));
+            call.resolve();
+            await flushPromises();
+            await flushPromises();
+
+            expect(view.chatHistory[1].content).toBe(`${status} but non-empty answer.`);
+            expect(view.chatHistory[1].shareCardEligible).toBe(false);
+            expect(getButtonsByClass(containerEl, 'share-card-message-button')).toHaveLength(0);
+        },
+    );
+
+    it('offers Share Card for a completed-with-warning canonical answer', async () => {
+        const { view, containerEl, app } = createView({ withMarkdownLeaf: true });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'share warning completion';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            message: assistantMessage('assistant_warning_share', [{
+                type: 'text',
+                text: 'Completed answer with a warning.',
+            }]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            status: 'completed_with_warning',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_end',
+            status: 'completed_with_warning',
+            metadata: {
+                warnings: [{
+                    type: 'required_capability_missing',
+                    capability: 'webSearch',
+                }],
+            },
+        }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const shareButton = getButtonsByClass(containerEl, 'share-card-message-button')[0];
+        expect(shareButton).toBeDefined();
+        shareButton.click();
+        expect(mockShareCardModalConstructor).toHaveBeenCalledWith(app, {
+            content: 'Completed answer with a warning.',
+            source: 'chat',
+            sourceLabel: 'PA Chat',
+            sourcePath: '0.unsorted/Dog.md',
+        });
+    });
+
+    it.each([
+        'provider_error',
+        'assistant_idle_timeout',
+        'wall_clock_exceeded',
+    ])('does not offer Share Card for partial canonical output with %s', async (warningType) => {
+        const { view, containerEl } = createView({ withMarkdownLeaf: true });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'share interrupted completion';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            message: assistantMessage('assistant_partial_share', [{
+                type: 'text',
+                text: 'Partial answer.',
+            }]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            status: 'completed_with_warning',
+            metadata: { diagnostics: [{ type: warningType }] },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_end',
+            status: 'completed_with_warning',
+        }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory[1].content).toBe('Partial answer.');
+        expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        expect(getButtonsByClass(containerEl, 'share-card-message-button')).toHaveLength(0);
     });
 
     it('shows a selected-text hint when the active Markdown editor has a selection', async () => {
@@ -3187,13 +3434,24 @@ describe('LLMView turn lifecycle', () => {
         expect(redrawnAssistantMessage.getAttribute('aria-busy')).toBeNull();
     });
 
-    it('restores persisted history with session role identicons', async () => {
+    it('restores persisted history with role identicons and only eligible Share Card actions', async () => {
         const restoredUser: ChatMessage = { role: 'user', content: 'restored prompt' };
         const restoredAssistant: ChatMessage = { role: 'assistant', content: 'restored answer' };
+        const restoredIneligibleUser: ChatMessage = { role: 'user', content: 'partial prompt' };
+        const restoredIneligibleAssistant: ChatMessage = {
+            role: 'assistant',
+            content: 'partial restored answer',
+            shareCardEligible: false,
+        };
         const restoredEntry = {
             kind: 'history' as const,
             user: restoredUser,
             assistant: restoredAssistant,
+        };
+        const restoredIneligibleEntry = {
+            kind: 'history' as const,
+            user: restoredIneligibleUser,
+            assistant: restoredIneligibleAssistant,
         };
         const chatHistoryManager = {
             initialize: jest.fn(async () => undefined),
@@ -3204,38 +3462,78 @@ describe('LLMView turn lifecycle', () => {
                 title: 'Restored',
                 createdAt: '2026-01-01T00:00:00.000Z',
                 updatedAt: '2026-01-01T00:00:00.000Z',
-                turnCount: 1,
+                turnCount: 2,
                 preview: 'restored prompt',
             })),
-            getTurns: jest.fn(async () => [{
-                conversationId: 'conv_restored',
-                turnIndex: 0,
-                user: { role: 'user' as const, content: 'restored prompt' },
-                assistant: { role: 'assistant' as const, content: 'restored answer' },
-            }]),
-            deserializeTurn: jest.fn(() => ({
-                userMessage: restoredUser,
-                assistantMessage: restoredAssistant,
-                historyEntry: restoredEntry,
-            })),
+            getTurns: jest.fn(async () => [
+                {
+                    conversationId: 'conv_restored',
+                    turnIndex: 0,
+                    user: { role: 'user' as const, content: 'restored prompt' },
+                    assistant: { role: 'assistant' as const, content: 'restored answer' },
+                },
+                {
+                    conversationId: 'conv_restored',
+                    turnIndex: 1,
+                    user: { role: 'user' as const, content: 'partial prompt' },
+                    assistant: {
+                        role: 'assistant' as const,
+                        content: 'partial restored answer',
+                        shareCardEligible: false,
+                    },
+                },
+            ]),
+            deserializeTurn: jest.fn((turn: { turnIndex: number }) => (
+                turn.turnIndex === 0
+                    ? {
+                        userMessage: restoredUser,
+                        assistantMessage: restoredAssistant,
+                        historyEntry: restoredEntry,
+                    }
+                    : {
+                        userMessage: restoredIneligibleUser,
+                        assistantMessage: restoredIneligibleAssistant,
+                        historyEntry: restoredIneligibleEntry,
+                    }
+            )),
             setActiveConversationId: jest.fn(async () => undefined),
         };
-        const { view, containerEl } = createView({ chatHistoryManager });
+        const { view, containerEl, app } = createView({
+            chatHistoryManager,
+            withMarkdownLeaf: true,
+        });
 
         await view.onOpen();
         await flushPromises();
         await flushPromises();
 
-        expect(chatHistoryManager.deserializeTurn).toHaveBeenCalledTimes(1);
-        expect(view.chatHistory).toEqual([restoredUser, restoredAssistant]);
+        expect(chatHistoryManager.deserializeTurn).toHaveBeenCalledTimes(2);
+        expect(view.chatHistory).toEqual([
+            restoredUser,
+            restoredAssistant,
+            restoredIneligibleUser,
+            restoredIneligibleAssistant,
+        ]);
         const restoredUserMessage = getElementByClass(containerEl, 'user');
-        const restoredAssistantMessage = getElementByClass(containerEl, 'assistant');
+        const restoredAssistantMessages = getElementsByClass(containerEl, 'assistant');
+        const restoredAssistantMessage = restoredAssistantMessages[0];
+        const restoredIneligibleAssistantMessage = restoredAssistantMessages[1];
         const restoredUserRole = getElementByClass(restoredUserMessage, 'message-role');
         const restoredAssistantRole = getElementByClass(restoredAssistantMessage, 'message-role');
         expect(getElementByClass(restoredUserRole, 'pa-chat-role-identicon-user').tagName).toBe('span');
         expect(getElementByClass(restoredAssistantRole, 'pa-chat-role-identicon-assistant').tagName).toBe('span');
         expect(restoredUserMessage.getAttribute('aria-busy')).toBeNull();
         expect(restoredAssistantMessage.getAttribute('aria-busy')).toBeNull();
+        expect(getButtonsByClass(restoredUserMessage, 'share-card-message-button')).toHaveLength(0);
+        expect(getButtonsByClass(restoredAssistantMessage, 'share-card-message-button')).toHaveLength(1);
+        expect(getButtonsByClass(restoredIneligibleAssistantMessage, 'share-card-message-button')).toHaveLength(0);
+        getButtonsByClass(restoredAssistantMessage, 'share-card-message-button')[0].click();
+        expect(mockShareCardModalConstructor).toHaveBeenCalledWith(app, {
+            content: 'restored answer',
+            source: 'chat',
+            sourceLabel: 'PA Chat',
+            sourcePath: '0.unsorted/Dog.md',
+        });
     });
 
     it('refreshes role identicon shapes when starting a new chat', async () => {
@@ -3967,8 +4265,9 @@ describe('LLMView turn lifecycle', () => {
 
         expect(css).toMatch(/\.pa-chat-message-menu\s*{[\s\S]*?top:\s*auto;[\s\S]*?bottom:\s*calc\(100% \+ 8px\);[\s\S]*?min-width:\s*96px;[\s\S]*?max-width:\s*min\(132px, calc\(100vw - 24px\)\);[\s\S]*?padding:\s*3px;/);
         expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.pa-chat-message-menu,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.pa-chat-message-menu\s*{[\s\S]*?right:\s*auto;[\s\S]*?left:\s*0;/);
-        expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.message-actions,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*76px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
-        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.llm-message\.assistant\s+\.message-actions,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*116px;[\s\S]*?\.pa-chat-message-menu\s*{[\s\S]*?min-width:\s*144px;/);
+        expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*110px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
+        expect(css).toMatch(/\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*76px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
+        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.llm-message\.assistant\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*166px;[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*116px;[\s\S]*?\.pa-chat-message-menu\s*{[\s\S]*?min-width:\s*144px;/);
         expect(css).toMatch(/\.pa-chat-message-menu::after\s*{[\s\S]*?top:\s*auto;[\s\S]*?right:\s*var\(--pa-chat-message-menu-arrow-right\);[\s\S]*?left:\s*var\(--pa-chat-message-menu-arrow-left\);[\s\S]*?bottom:\s*-6px;[\s\S]*?border-right:\s*1px solid var\(--background-modifier-border\);[\s\S]*?border-bottom:\s*1px solid var\(--background-modifier-border\);/);
         expect(css).toMatch(/\.pa-chat-message-menu\.pa-chat-message-menu-below\s*{[\s\S]*?top:\s*calc\(100% \+ 8px\);[\s\S]*?bottom:\s*auto;/);
         expect(sharedMenuItemBlock).toContain('box-sizing: border-box;');

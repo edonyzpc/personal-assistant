@@ -167,6 +167,10 @@ import {
     QuickCaptureService,
     type QuickCapturePostProcessInput,
 } from './quick-capture';
+import {
+    closeAllShareCardModals,
+    ShareCardModal,
+} from './share-card/share-card-modal';
 import { runQuickCaptureEnrichment } from './quick-capture-enrichment';
 import {
     ActiveVaultIndexer,
@@ -1594,6 +1598,21 @@ export class PluginManager extends Plugin {
                     helper.generate().catch((e) => this.log("Featured image generation failed", e));
                 }
             }
+        });
+
+        this.addCommand({
+            id: 'share-selection-as-card',
+            name: this.t("plugin.command.shareSelectionAsCard"),
+            editorCheckCallback: (checking, editor: Editor) => {
+                const selection = editor.getSelection();
+                if (selection.trim().length === 0) return false;
+                if (checking) return true;
+                new ShareCardModal(this.app, {
+                    content: selection,
+                    source: 'selection',
+                }).open();
+                return true;
+            },
         });
 
         this.addCommand({
@@ -8627,6 +8646,7 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        closeAllShareCardModals();
         this.resetDeepDiscoverController();
         if (this.phase3Handle !== null) {
             clearPlatformTimeout(this.phase3Handle);

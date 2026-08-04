@@ -126,6 +126,11 @@ function makeContentKey(findings: PanelFinding[]): string {
         .join("|");
 }
 
+function hasShareableFindingContent(finding: PanelFinding): boolean {
+    return [finding.title, finding.description, finding.insightText]
+        .some((value) => typeof value === "string" && value.trim().length > 0);
+}
+
 /** Layout type to i18n key mapping. */
 const LAYOUT_TITLE_KEYS: Record<PanelLayoutType, string> = {
     review: "pagelet.panel.layout.review",
@@ -156,6 +161,7 @@ export class PanelView {
     private bodyEl: HTMLDivElement | null = null;
     private titleEl: HTMLHeadingElement | null = null;
     private saveBtnEl: HTMLButtonElement | null = null;
+    private shareBtnEl: HTMLButtonElement | null = null;
     private headerExpandBtnEl: HTMLButtonElement | null = null;
     private footerExpandBtnEl: HTMLButtonElement | null = null;
     private containerEl: HTMLElement | null = null;
@@ -171,6 +177,22 @@ export class PanelView {
         return this.visibleFindings();
     }
 
+    /** Findings that are eligible for the currently visible Share Card action. */
+    get currentShareCardFindings(): PanelFinding[] {
+        const reviewContentReplaced = (
+            this.currentLayout === "review"
+            || this.currentLayout === "current"
+        ) && (this.reviewRunPending || Boolean(this.reviewRunError));
+        if (
+            !this.currentLayout
+            || this.currentExtra?.preparedReadOnly
+            || reviewContentReplaced
+        ) {
+            return [];
+        }
+        return this.visibleFindings().filter(hasShareableFindingContent);
+    }
+
     get currentPanelExtra(): PanelOpenExtra | undefined {
         return this.currentExtra;
     }
@@ -178,6 +200,7 @@ export class PanelView {
     private currentFindings: PanelFinding[] = [];
     private currentExtra: PanelOpenExtra | undefined;
     private currentContentKey = "";
+    private reviewRunPending = false;
     private reviewRunError: PanelReviewRunError | null = null;
     private readonly dismissedSuggestionIds = new Set<string>();
     private draftItems: PanelDraftItem[] = [];
@@ -274,6 +297,7 @@ export class PanelView {
         this.currentLayout = layoutType;
         this.currentFindings = content;
         this.currentExtra = extra;
+        this.reviewRunPending = false;
         this.reviewRunError = null;
         this.clearSlowReviewTimer();
         const contentKey = makeContentKey(content);
@@ -323,6 +347,7 @@ export class PanelView {
         const body = this.bodyEl;
         const layoutType = this.currentLayout;
         const visibleFindings = this.visibleFindings();
+        this.updateShareCardControl();
         const renderOptions = this.buildRenderOptions();
 
         if (layoutType === "review" && this.currentExtra?.scope) {
@@ -434,6 +459,7 @@ export class PanelView {
     close(): void {
         if (!this.rootEl) return;
         this.clearSlowReviewTimer();
+        this.reviewRunPending = false;
         const root = this.rootEl;
         root.setAttribute("data-state", "hidden");
         this._isOpen = false;
@@ -465,14 +491,17 @@ export class PanelView {
         this.bodyEl = null;
         this.titleEl = null;
         this.saveBtnEl = null;
+        this.shareBtnEl = null;
         this.headerExpandBtnEl = null;
         this.footerExpandBtnEl = null;
         this.containerEl = null;
         this._isOpen = false;
         this.currentLayout = null;
+        this.reviewRunPending = false;
     }
 
     showReviewError(message: string, detail?: string): void {
+        this.reviewRunPending = false;
         this.reviewRunError = {
             message,
             detail: detail ?? pageletT("pagelet.panel.error.retrySameSelection", this.getLocale()),
@@ -1142,6 +1171,23 @@ export class PanelView {
         this.saveBtnEl = saveBtn;
         footer.appendChild(saveBtn);
 
+        const shareBtn = createHtmlElement("button");
+        shareBtn.className = "pa-pagelet-panel-share-btn";
+        shareBtn.setAttribute("type", "button");
+        shareBtn.textContent = pageletT("pagelet.panel.action.shareCard", this.getLocale());
+        shareBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const onShareAsCard = this.options.callbacks.onShareAsCard;
+            if (!onShareAsCard || this.currentExtra?.preparedReadOnly) return;
+            const findings = this.currentShareCardFindings;
+            if (findings.length === 0) return;
+            onShareAsCard({
+                findings: [...findings],
+            });
+        });
+        this.shareBtnEl = shareBtn;
+        footer.appendChild(shareBtn);
+
         const expandTabBtn = createHtmlElement("button");
         expandTabBtn.className = "pa-pagelet-panel-expand-btn";
         expandTabBtn.textContent =
@@ -1165,6 +1211,7 @@ export class PanelView {
                 ? this.options.callbacks.onRunSelectedReview
                 : this.options.callbacks.onRunReview;
             if (!run) return;
+            this.reviewRunPending = true;
             this.reviewRunError = null;
             saveBtn.disabled = true;
             saveBtn.setAttribute("aria-busy", "true");
@@ -1179,6 +1226,8 @@ export class PanelView {
                 await run();
             } finally {
                 this.clearSlowReviewTimer();
+                const shouldRestoreLayout = this.reviewRunPending;
+                this.reviewRunPending = false;
                 if (
                     this.saveBtnEl === saveBtn
                     && (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected")
@@ -1186,7 +1235,7 @@ export class PanelView {
                     saveBtn.disabled = false;
                     saveBtn.removeAttribute("aria-busy");
                     saveBtn.textContent = previousLabel;
-                    if (this.currentLayout === "review" && this.currentFindings.length === 0 && this.bodyEl) {
+                    if (shouldRestoreLayout && this._isOpen && this.bodyEl) {
                         this.renderCurrentLayout();
                     }
                 }
@@ -1229,6 +1278,7 @@ export class PanelView {
 
     private renderReviewProgress(label?: string, detail?: string): void {
         if (!this.bodyEl) return;
+        this.updateShareCardControl();
         clearChildren(this.bodyEl);
 
         const card = createHtmlElement("div");
@@ -1388,6 +1438,22 @@ export class PanelView {
                 this.saveBtnEl.removeAttribute("hidden");
                 this.saveBtnEl.removeAttribute("aria-hidden");
             }
+        }
+        this.updateShareCardControl();
+    }
+
+    private updateShareCardControl(): void {
+        if (!this.shareBtnEl) return;
+        const hidden = !this.options.callbacks.onShareAsCard
+            || this.currentShareCardFindings.length === 0;
+        this.shareBtnEl.disabled = hidden;
+        this.shareBtnEl.setAttribute("aria-disabled", String(hidden));
+        if (hidden) {
+            this.shareBtnEl.setAttribute("hidden", "");
+            this.shareBtnEl.setAttribute("aria-hidden", "true");
+        } else {
+            this.shareBtnEl.removeAttribute("hidden");
+            this.shareBtnEl.removeAttribute("aria-hidden");
         }
     }
 

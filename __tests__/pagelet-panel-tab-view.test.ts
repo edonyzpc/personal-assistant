@@ -3359,6 +3359,7 @@ describe("Pagelet panel and tab view regressions", () => {
         const reviewPromise = new Promise<void>((resolve) => {
             resolveReview = resolve;
         });
+        const shareAsCard = jest.fn();
         const container = new FakeElement("div");
         container.isConnected = true;
         const panel = new PanelView({
@@ -3369,6 +3370,7 @@ describe("Pagelet panel and tab view regressions", () => {
                 onSaveAsReviewNote: async () => undefined,
                 onSourceClick: () => undefined,
                 onRunReview: async () => reviewPromise,
+                onShareAsCard: shareAsCard,
             },
             getLocale: () => "en",
         });
@@ -3382,6 +3384,11 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).toContain("Reviewing current note...");
         expect(runButton?.disabled).toBe(true);
         expect(runButton?.getAttribute("aria-busy")).toBe("true");
+        const shareButton = container.querySelector(".pa-pagelet-panel-share-btn");
+        expect(shareButton?.disabled).toBe(true);
+        expect(shareButton?.getAttribute("hidden")).toBe("");
+        await shareButton?.click();
+        expect(shareAsCard).not.toHaveBeenCalled();
 
         resolveReview();
         await reviewPromise;
@@ -3393,6 +3400,41 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(runButton?.getAttribute("aria-busy")).toBeNull();
         expect(runButton?.textContent).toContain("Review current note");
         expect(container.textContent).not.toContain("Reviewing current note...");
+    });
+
+    it("does not share stale findings while a review error replaces panel content", async () => {
+        const shareAsCard = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onShareAsCard: shareAsCard,
+            },
+            getLocale: () => "en",
+        });
+        const staleFinding = {
+            title: "Earlier result",
+            description: "This result is no longer visible after the failed review.",
+        };
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("review", [staleFinding]);
+        const shareButton = container.querySelector(".pa-pagelet-panel-share-btn");
+        expect(panel.currentShareCardFindings).toEqual([staleFinding]);
+        expect(shareButton?.disabled).toBe(false);
+
+        panel.showReviewError("Review failed");
+
+        expect(panel.currentShareCardFindings).toEqual([]);
+        expect(shareButton?.disabled).toBe(true);
+        expect(shareButton?.getAttribute("hidden")).toBe("");
+        await shareButton?.click();
+        expect(shareAsCard).not.toHaveBeenCalled();
     });
 
     it("keeps panel header icon tooltips on title while sr-only text provides names", async () => {
@@ -3447,6 +3489,7 @@ describe("Pagelet panel and tab view regressions", () => {
     it("keeps prepared cache strictly read-only and Panel-only", async () => {
         const expandToTab = jest.fn();
         const saveAsReviewNote = jest.fn(async () => undefined);
+        const shareAsCard = jest.fn();
         const container = new FakeElement("div");
         container.isConnected = true;
         const panel = new PanelView({
@@ -3455,6 +3498,7 @@ describe("Pagelet panel and tab view regressions", () => {
                 onExpandToTab: expandToTab,
                 onSaveAsReviewNote: saveAsReviewNote,
                 onSourceClick: () => undefined,
+                onShareAsCard: shareAsCard,
             },
             getLocale: () => "en",
         });
@@ -3470,24 +3514,29 @@ describe("Pagelet panel and tab view regressions", () => {
         const saveButton = container.querySelector(".pa-pagelet-panel-save-btn");
         const headerExpand = container.querySelector(".pa-pagelet-panel-header-expand-btn");
         const footerExpand = container.querySelector(".pa-pagelet-panel-expand-btn");
-        for (const button of [saveButton, headerExpand, footerExpand]) {
+        const shareButton = container.querySelector(".pa-pagelet-panel-share-btn");
+        for (const button of [saveButton, shareButton, headerExpand, footerExpand]) {
             expect(button?.getAttribute("hidden")).toBe("");
             expect(button?.getAttribute("aria-hidden")).toBe("true");
             expect(button?.disabled).toBe(true);
             await button?.click();
         }
         expect(saveAsReviewNote).not.toHaveBeenCalled();
+        expect(shareAsCard).not.toHaveBeenCalled();
         expect(expandToTab).not.toHaveBeenCalled();
 
         panel.open("review", [finding]);
 
-        for (const button of [saveButton, headerExpand, footerExpand]) {
+        for (const button of [saveButton, shareButton, headerExpand, footerExpand]) {
             expect(button?.getAttribute("hidden")).toBeNull();
             expect(button?.getAttribute("aria-hidden")).toBeNull();
             expect(button?.disabled).toBe(false);
             await button?.click();
         }
         expect(saveAsReviewNote).toHaveBeenCalledTimes(1);
+        expect(shareAsCard).toHaveBeenCalledWith({
+            findings: [finding],
+        });
         expect(expandToTab).toHaveBeenCalledTimes(2);
     });
 
@@ -3901,6 +3950,76 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelectorAll(".pa-pagelet-suggestion-card")).toHaveLength(1);
         expect(container.textContent).toContain("Second action.");
         expect(container.textContent).not.toContain("First action.");
+    });
+
+    it("shares only visible findings and hides the action when the payload is empty", async () => {
+        const shareAsCard = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onShareAsCard: shareAsCard,
+            },
+            getLocale: () => "en",
+        });
+        const findings = [
+            {
+                title: "Expand",
+                description: "First action.",
+                sourceId: "seg-1",
+                suggestion: {
+                    source_id: "seg-1",
+                    kind: "expand" as const,
+                    rationale: "First reason.",
+                    proposed_action: "First action.",
+                    related_notes: [],
+                },
+            },
+            {
+                title: "Clarify",
+                description: "Second action.",
+                sourceId: "seg-2",
+                suggestion: {
+                    source_id: "seg-2",
+                    kind: "clarify" as const,
+                    rationale: "Second reason.",
+                    proposed_action: "Second action.",
+                    related_notes: [],
+                },
+            },
+        ];
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("current", findings, { sourcePath: "notes/current.md" });
+
+        const shareButton = container.querySelector(".pa-pagelet-panel-share-btn");
+        expect(shareButton?.disabled).toBe(false);
+        expect(shareButton?.getAttribute("hidden")).toBeNull();
+        await shareButton?.click();
+        expect(shareAsCard).toHaveBeenLastCalledWith({
+            findings,
+        });
+
+        await container.querySelector(".pa-pagelet-suggestion-card__btn--dismiss")?.click();
+        await shareButton?.click();
+        expect(shareAsCard).toHaveBeenLastCalledWith({
+            findings: [findings[1]],
+        });
+
+        panel.open("current", [{
+            title: "  ",
+            description: "\n",
+            insightText: "",
+        }], { sourcePath: "notes/current.md" });
+        expect(shareButton?.disabled).toBe(true);
+        expect(shareButton?.getAttribute("hidden")).toBe("");
+        await shareButton?.click();
+        expect(shareAsCard).toHaveBeenCalledTimes(2);
     });
 
     it("renders discovery note connections as an interactive SVG graph", async () => {

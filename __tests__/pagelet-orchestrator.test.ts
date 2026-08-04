@@ -27,9 +27,14 @@ jest.mock("obsidian", () => {
     };
 });
 
+jest.mock("../src/share-card/share-card-modal", () => ({
+    ShareCardModal: jest.fn().mockImplementation(() => ({ open: jest.fn() })),
+}));
+
 import { Notice, TFile } from "obsidian";
 
 import { PageletOrchestrator, type PageletHost } from "../src/pagelet/orchestrator";
+import { ShareCardModal } from "../src/share-card/share-card-modal";
 import { NudgeOwner, type NudgeTicket } from "../src/pagelet/BubbleCoordinator";
 import type {
     OperationsExecutionResult,
@@ -6378,6 +6383,43 @@ describe("PageletOrchestrator connection discovery", () => {
         expect(Notice).toHaveBeenCalledWith(
             "This recall does not have another note to link.",
             4000,
+        );
+    });
+});
+
+describe("PageletOrchestrator Share Card gate", () => {
+    it("rejects a stale request when the panel has no currently shareable findings", () => {
+        jest.mocked(ShareCardModal).mockClear();
+        const orchestrator = new PageletOrchestrator(makeHost());
+        const findings = [{
+            title: "Earlier result",
+            description: "No longer visible while the review is pending or failed.",
+        }];
+        const panelView = {
+            currentPanelExtra: { sourcePath: "notes/current.md" },
+            currentShareCardFindings: [] as typeof findings,
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            sharePanelAsCard(request: { findings: typeof findings }): void;
+        };
+        internals.panelView = panelView;
+
+        internals.sharePanelAsCard({ findings });
+
+        expect(ShareCardModal).not.toHaveBeenCalled();
+
+        panelView.currentShareCardFindings = findings;
+        internals.sharePanelAsCard({ findings });
+
+        expect(ShareCardModal).toHaveBeenCalledTimes(1);
+        expect(ShareCardModal).toHaveBeenLastCalledWith(
+            expect.anything(),
+            {
+                content: "## Earlier result\n\nNo longer visible while the review is pending or failed.",
+                source: "pagelet",
+                sourceLabel: "PA Pagelet",
+            },
         );
     });
 });

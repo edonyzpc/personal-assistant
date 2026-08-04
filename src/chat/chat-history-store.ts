@@ -35,6 +35,7 @@ export interface PersistedConversation {
 export interface PersistedChatMessage {
     role: "user" | "assistant";
     content: string;
+    shareCardEligible?: boolean;
     sourceRecords?: SourceRecord[];
     runtimeWarnings?: ChatRuntimeWarning[];
     turnStatus?: TurnEndStatus;
@@ -549,6 +550,9 @@ function cloneMessage(message: PersistedChatMessage): PersistedChatMessage {
     return {
         role: message.role,
         content: message.content,
+        ...(message.shareCardEligible !== undefined
+            ? { shareCardEligible: message.shareCardEligible }
+            : {}),
         ...(message.sourceRecords ? { sourceRecords: message.sourceRecords.map(cloneSourceRecord) } : {}),
         ...(message.runtimeWarnings ? { runtimeWarnings: message.runtimeWarnings.map(cloneRuntimeWarning) } : {}),
         ...(message.turnStatus ? { turnStatus: message.turnStatus } : {}),

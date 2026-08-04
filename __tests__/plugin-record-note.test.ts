@@ -24,10 +24,13 @@ type MockModalContentRecord = {
 type RegisteredPluginCommand = {
     id: string;
     checkCallback: (checking: boolean) => boolean;
+    editorCheckCallback?: (
+        checking: boolean,
+        editor: { getSelection(): string },
+    ) => boolean;
 };
 const mockStatsManagerConstructor = jest.fn();
 const mockStatsRecalcTotals = jest.fn(async () => undefined);
-
 jest.mock('obsidian', () => {
     class MockPlugin { }
     class MockModalContentEl {
@@ -166,6 +169,24 @@ jest.mock('../src/confirm', () => ({
     )),
 }));
 jest.mock('../src/chat/chat-view', () => ({ VIEW_TYPE_LLM: 'llm-view', LLMView: class { } }));
+jest.mock('../src/share-card/share-card-modal', () => {
+    const mockOpen = jest.fn();
+    const mockCloseAllShareCardModals = jest.fn();
+    return {
+        ShareCardModal: jest.fn((_app: unknown, _data: unknown) => ({ open: mockOpen })),
+        mockOpen,
+        closeAllShareCardModals: mockCloseAllShareCardModals,
+        mockCloseAllShareCardModals,
+    };
+});
+const shareCardModalMock = jest.requireMock('../src/share-card/share-card-modal') as {
+    ShareCardModal: jest.Mock;
+    mockOpen: jest.Mock;
+    mockCloseAllShareCardModals: jest.Mock;
+};
+const mockShareCardModalConstructor = shareCardModalMock.ShareCardModal;
+const mockShareCardModalOpen = shareCardModalMock.mockOpen;
+const mockCloseAllShareCardModals = shareCardModalMock.mockCloseAllShareCardModals;
 jest.mock('../src/ai', () => ({ AssistantFeaturedImageHelper: class { }, AssistantHelper: class { } }));
 jest.mock('../src/vss', () => ({ VSS: class { } }));
 jest.mock('../src/memory-manager', () => ({
@@ -694,6 +715,8 @@ describe('plugin startup view registration', () => {
         plugin.log = jest.fn();
         mockStatsManagerConstructor.mockClear();
         mockStatsRecalcTotals.mockClear();
+        mockShareCardModalConstructor.mockClear();
+        mockShareCardModalOpen.mockClear();
 
         try {
             await plugin.onload();
@@ -722,6 +745,20 @@ describe('plugin startup view registration', () => {
             expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('pa-pagelet-detail-view', expect.any(Function));
             expect(registerView).toHaveBeenCalledTimes(4);
+            const shareSelectionCommand = getRegisteredCommand(plugin, 'share-selection-as-card');
+            const editor = { getSelection: jest.fn(() => '   \n') };
+            expect(shareSelectionCommand?.editorCheckCallback?.(true, editor)).toBe(false);
+            expect(mockShareCardModalConstructor).not.toHaveBeenCalled();
+
+            editor.getSelection.mockReturnValue('  # Keep spacing\n\n- item  ');
+            expect(shareSelectionCommand?.editorCheckCallback?.(true, editor)).toBe(true);
+            expect(mockShareCardModalConstructor).not.toHaveBeenCalled();
+            expect(shareSelectionCommand?.editorCheckCallback?.(false, editor)).toBe(true);
+            expect(mockShareCardModalConstructor).toHaveBeenCalledWith(plugin.app, {
+                content: '  # Keep spacing\n\n- item  ',
+                source: 'selection',
+            });
+            expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
             const detailViewFactory = registerView.mock.calls.find(
                 ([viewType]) => viewType === 'pa-pagelet-detail-view',
             )?.[1] as ((leaf: unknown) => PageletDetailView) | undefined;
@@ -4283,6 +4320,7 @@ describe('Memory governance plugin bootstrap', () => {
         jest.useFakeTimers();
         const { plugin, repository } = createBootstrapHarness();
         try {
+            mockCloseAllShareCardModals.mockClear();
             await plugin.initializeMemoryGovernanceBootstrap();
             const disposeRepository = jest.spyOn(repository, 'dispose');
             const disposeAdapter = jest.spyOn(plugin.deviceMemoryRecordRepository, 'dispose');
@@ -4316,6 +4354,7 @@ describe('Memory governance plugin bootstrap', () => {
 
             await plugin.unloadAsync();
 
+            expect(mockCloseAllShareCardModals).toHaveBeenCalledTimes(1);
             expect(unsubscribe).toHaveBeenCalledTimes(1);
             expect(disposeAdapter).toHaveBeenCalledTimes(1);
             expect(disposeRepository).toHaveBeenCalledTimes(1);

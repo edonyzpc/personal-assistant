@@ -68,6 +68,10 @@ export interface PanelAction {
     callback: () => void;
 }
 
+export interface PanelShareCardRequest {
+    findings: PanelFinding[];
+}
+
 /** Panel callbacks to parent */
 export interface PanelCallbacks {
     onExpandToTab: () => void;
@@ -82,6 +86,7 @@ export interface PanelCallbacks {
     onResearchFinding?: (finding: PanelFinding) => void | Promise<void>;
     onToggleHints?: () => void;
     onReviewQueueItemDismiss?: (id: string) => void | Promise<void>;
+    onShareAsCard?: (request: PanelShareCardRequest) => void;
 }
 
 /** Options for creating a PanelView */
@@ -189,7 +194,7 @@ export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
 export type PanelPatternDetectionState = PatternDetectionResult;
 
 export interface PanelOpenExtra {
-    /** Raw background cache is visible here only; it cannot be saved or expanded to Tab. */
+    /** Raw background cache is visible here only; it cannot be saved, shared, or expanded to Tab. */
     preparedReadOnly?: boolean;
     connections?: NoteConnection[];
     markdown?: string;

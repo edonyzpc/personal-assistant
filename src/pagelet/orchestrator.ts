@@ -47,6 +47,7 @@ import type {
     PanelLayoutType,
     PanelMemoryGovernanceState,
     PanelOpenExtra,
+    PanelShareCardRequest,
 } from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
 import { ProactiveHints } from "./hints/ProactiveHints";
@@ -68,6 +69,8 @@ import { AnalysisSessionManager } from "./AnalysisSessionManager";
 import { BubbleCoordinator, NudgeOwner, type NudgeTicket } from "./BubbleCoordinator";
 import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
+import { serializePageletFindings } from "../share-card/share-card-markdown";
+import { ShareCardModal } from "../share-card/share-card-modal";
 import { pageletAgentInsightToDeliveryCandidate } from "./agent/delivery-adapter";
 import type { PageletAgentDeliveryCandidate } from "./agent/delivery-adapter";
 import type { PageletDeepDiscoverControllerResult } from "./agent/types";
@@ -439,6 +442,7 @@ export class PageletOrchestrator {
                 onRelatedNoteClick: (noteName, sourcePath) => this.handleRelatedNoteClick(noteName, sourcePath),
                 onResearchFinding: (finding) => this.handleResearchFinding(finding),
                 onToggleHints: () => this.toggleProactiveHints(),
+                onShareAsCard: (request) => this.sharePanelAsCard(request),
             },
         });
         this.panelView.mount(overlayRoot);
@@ -3691,6 +3695,25 @@ export class PageletOrchestrator {
         return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.patternDetection || detailExtra.quietRecall
             ? detailExtra
             : undefined;
+    }
+
+    /** Share only the Panel findings that are still visible. */
+    private sharePanelAsCard(request: PanelShareCardRequest): void {
+        const panelView = this.panelView;
+        if (!panelView || panelView.currentPanelExtra?.preparedReadOnly) return;
+
+        const visibleFindings = new Set(panelView.currentShareCardFindings);
+        const findings = request.findings.filter((finding) => visibleFindings.has(finding));
+        if (findings.length === 0) return;
+
+        const content = serializePageletFindings(findings);
+        if (content.trim().length === 0) return;
+
+        new ShareCardModal(this.host.app, {
+            content,
+            source: "pagelet",
+            sourceLabel: "PA Pagelet",
+        }).open();
     }
 
     /** Save Panel findings as review note. */

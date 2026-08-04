@@ -2,7 +2,12 @@ import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, type
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
-import type { PaAgentMessage, PaAgentPersistedTurn, TurnEndStatus } from '../ai-services/chat-types';
+import type {
+    ChatRuntimeWarning,
+    PaAgentMessage,
+    PaAgentPersistedTurn,
+    TurnEndStatus,
+} from '../ai-services/chat-types';
 import type { MemoryMaintenancePlan } from '../memory-manager';
 import {
     createPageletChatHandoffContext,
@@ -51,6 +56,7 @@ import type {
     UndoResult,
 } from '../ai-services/operations/types';
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
+import { ShareCardModal } from '../share-card/share-card-modal';
 
 export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
@@ -67,6 +73,38 @@ const ROLE_IDENTICON_FILL_CLASSES: Record<string, string> = {
     'var(--pa-chat-role-identicon-purple)': 'pa-chat-role-identicon-fill-purple',
     'var(--pa-chat-role-identicon-blue)': 'pa-chat-role-identicon-fill-blue',
 };
+
+const PARTIAL_SHARE_CARD_WARNING_TYPES = new Set([
+    'assistant_idle_timeout',
+    'provider_error',
+    'wall_clock_exceeded',
+]);
+
+function hasPartialShareCardWarning(warnings: readonly ChatRuntimeWarning[] = []): boolean {
+    return warnings.some((warning) => PARTIAL_SHARE_CARD_WARNING_TYPES.has(warning.type));
+}
+
+function isExplicitCompletedShareCardStatus(
+    status: string | undefined,
+    warnings: readonly ChatRuntimeWarning[] = [],
+): boolean {
+    return status === 'completed'
+        || (status === 'completed_with_warning' && !hasPartialShareCardWarning(warnings));
+}
+
+function isCompletedShareCardStatus(
+    status: string | undefined,
+    warnings: readonly ChatRuntimeWarning[] = [],
+): boolean {
+    return status === undefined || isExplicitCompletedShareCardStatus(status, warnings);
+}
+
+function isShareCardEligibleAssistant(message: ChatMessage): boolean {
+    return message.role === 'assistant'
+        && message.content.trim().length > 0
+        && message.shareCardEligible !== false
+        && isCompletedShareCardStatus(message.canonicalTurn?.status, message.runtimeWarnings);
+}
 
 function uniquePageletVaultSources(context: PageletChatHandoffContext): string[] {
     const titleByPath = new Map(
@@ -1577,6 +1615,7 @@ export class LLMView extends ItemView {
             options: {
                 onDelete?: () => void | Promise<void>;
                 onAddToEditor?: (content: string) => void | Promise<void>;
+                onShareAsCard?: (content: string, sourcePath: string) => void | Promise<void>;
                 disableDeleteWhileGenerating?: boolean;
             },
         ) => {
@@ -1591,6 +1630,24 @@ export class LLMView extends ItemView {
                     void options.onAddToEditor?.(rendered.copyContent);
                 };
                 rendered.addMessageButton = addMessageButton;
+            }
+
+            if (
+                options.onShareAsCard
+                && rendered.copyContent.trim().length > 0
+                && !rendered.shareButton
+            ) {
+                const shareButton = createMessageActionButton(rendered.actionDiv, {
+                    icon: 'share-2',
+                    cls: 'share-card-message-button',
+                    label: t("plugin.chat.action.shareCard"),
+                });
+                rendered.actionDiv.insertBefore(shareButton, rendered.actionMenuButton);
+                shareButton.onclick = () => {
+                    if (rendered.copyContent.trim().length === 0) return;
+                    void options.onShareAsCard?.(rendered.copyContent, rendered.sourcePath);
+                };
+                rendered.shareButton = shareButton;
             }
 
             if (options.onDelete && !rendered.deleteButton) {
@@ -1643,6 +1700,7 @@ export class LLMView extends ItemView {
                 isLive?: () => boolean;
                 onDelete?: () => void | Promise<void>;
                 onAddToEditor?: (content: string) => void | Promise<void>;
+                onShareAsCard?: (content: string, sourcePath: string) => void | Promise<void>;
                 disableDeleteWhileGenerating?: boolean;
                 memoryMetadata?: ChatTurnMemoryMetadata;
                 showAssistantLoader?: boolean;
@@ -2076,6 +2134,16 @@ export class LLMView extends ItemView {
                         forceScroll,
                         onDelete: () => deleteHistoryPair(pairStart + 1),
                         onAddToEditor: (content) => addContentToEditor(content),
+                        onShareAsCard: isShareCardEligibleAssistant(entry.assistant)
+                            ? (content, sourcePath) => {
+                                new ShareCardModal(this.app, {
+                                    content,
+                                    source: 'chat',
+                                    sourceLabel: 'PA Chat',
+                                    sourcePath,
+                                }).open();
+                            }
+                            : undefined,
                         disableDeleteWhileGenerating: true,
                         memoryMetadata: metadata,
                     });
@@ -2775,6 +2843,7 @@ export class LLMView extends ItemView {
             prompt: string,
             responseContent: string,
             isLiveTurn: () => boolean,
+            sawLegacyPartialFailure: boolean,
         ) => {
             const userRendered = turn.userMessage;
             const assistantRendered = turn.assistantMessage;
@@ -2808,6 +2877,22 @@ export class LLMView extends ItemView {
             const assistantMessage: ChatMessage = {
                 role: 'assistant',
                 content: responseContent,
+                ...(
+                    sawLegacyPartialFailure
+                    || (
+                        turn.canonicalLifecycle.active
+                        && !isExplicitCompletedShareCardStatus(
+                            turn.canonicalLifecycle.terminalStatus,
+                            turn.canonicalLifecycle.warnings,
+                        )
+                    )
+                    || !isCompletedShareCardStatus(
+                        canonicalTurn?.status,
+                        turn.canonicalLifecycle.warnings,
+                    )
+                        ? { shareCardEligible: false }
+                        : {}
+                ),
                 ...(canonicalTurn ? { canonicalTurn } : {}),
                 ...(canonicalTurn && turn.memoryMetadata ? { memoryMetadata: turn.memoryMetadata } : {}),
                 ...(turn.canonicalLifecycle.warnings.length > 0
@@ -2837,6 +2922,16 @@ export class LLMView extends ItemView {
             ensureCompletedMessageActions(assistantRendered, {
                 onDelete: deleteCompletedPair,
                 onAddToEditor: (content) => addContentToEditor(content),
+                onShareAsCard: isShareCardEligibleAssistant(assistantMessage)
+                    ? (content, sourcePath) => {
+                        new ShareCardModal(this.app, {
+                            content,
+                            source: 'chat',
+                            sourceLabel: 'PA Chat',
+                            sourcePath,
+                        }).open();
+                    }
+                    : undefined,
                 disableDeleteWhileGenerating: true,
             });
 
@@ -3036,7 +3131,13 @@ export class LLMView extends ItemView {
                 for (const handle of operationsCardHandles) handle.activate();
                 isFinalizing = true;
                 syncComposerControls();
-                const finalized = await finalizeSuccessfulTurn(turn, prompt, responseContent, isLiveTurn);
+                const finalized = await finalizeSuccessfulTurn(
+                    turn,
+                    prompt,
+                    responseContent,
+                    isLiveTurn,
+                    sawLegacyPartialFailure,
+                );
                 const completedPageletTurn = !sawLegacyPartialFailure
                     && (
                         turn.canonicalLifecycle.active

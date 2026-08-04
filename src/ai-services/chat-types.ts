@@ -3,6 +3,8 @@ import type { PersistedContextTrace } from "../pa/contracts";
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
+    /** Explicit false when a persisted assistant output did not complete safely. */
+    shareCardEligible?: boolean;
     memoryMetadata?: ChatTurnMemoryMetadata;
     canonicalTurn?: PaAgentPersistedTurn;
     runtimeWarnings?: ChatRuntimeWarning[];
