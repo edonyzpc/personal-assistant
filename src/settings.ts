@@ -589,7 +589,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         : undefined;
     merged.focusMode = typeof loadedObject.focusMode === "boolean" ? loadedObject.focusMode : false;
     merged.author = typeof loadedObject.author === "string" ? loadedObject.author.trim() : "";
-    merged.noteTemplate = typeof loadedObject.noteTemplate === "string" ? loadedObject.noteTemplate : "";
+    merged.noteTemplate = typeof loadedObject.noteTemplate === "string" ? loadedObject.noteTemplate.trim() : "";
     merged.retrievalHabitProfile = mergeRetrievalHabitProfileSettings(loadedObject.retrievalHabitProfile);
     merged.memoryExtractionConsent = mergeMemoryExtractionConsentSettings(loadedObject.memoryExtractionConsent);
     if (!isMemoryExtractionConsentConfirmed(merged.memoryExtractionConsent)) {

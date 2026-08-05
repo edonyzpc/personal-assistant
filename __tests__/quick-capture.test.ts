@@ -334,7 +334,7 @@ describe("QuickCaptureService", () => {
 
         expect(harness.vault.create).toHaveBeenCalledTimes(1);
         const createdContent = (harness.vault.create as jest.Mock).mock.calls[0][1] as string;
-        expect(createdContent).toContain("---\ntitle: 2026-06-28");
+        expect(createdContent).toContain('---\ntitle: "2026-06-28"');
         expect(createdContent).toContain("subject: #capture");
         expect(createdContent).toContain("# 2026-06-28");
         expect(createdContent).toContain("- 09:07 remember the launch lesson");

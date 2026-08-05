@@ -19,11 +19,11 @@ describe("renderNoteTemplate", () => {
 
     it("replaces all placeholders in the default template", () => {
         const result = renderNoteTemplate(DEFAULT_NOTE_TEMPLATE, baseContext);
-        expect(result).toContain("title: 2026-06-28");
-        expect(result).toContain("date: 2026-06-28 09:07:00");
-        expect(result).toContain("modify: 2026-06-28 09:07:00");
-        expect(result).toContain("author: edony.zpc");
-        expect(result).toContain("  - 2026-06-28");
+        expect(result).toContain('title: "2026-06-28"');
+        expect(result).toContain('date: "2026-06-28 09:07:00"');
+        expect(result).toContain('modify: "2026-06-28 09:07:00"');
+        expect(result).toContain('author: "edony.zpc"');
+        expect(result).toContain('  - "2026-06-28"');
         expect(result).toContain("subject: #capture");
         expect(result).toContain("# 2026-06-28");
         expect(result).not.toContain("{{");
@@ -32,7 +32,7 @@ describe("renderNoteTemplate", () => {
     it("handles empty author", () => {
         const ctx = { ...baseContext, author: "" };
         const result = renderNoteTemplate(DEFAULT_NOTE_TEMPLATE, ctx);
-        expect(result).toContain("author: ");
+        expect(result).toContain('author: ""');
         expect(result).not.toContain("{{author}}");
     });
 

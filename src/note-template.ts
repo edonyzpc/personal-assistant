@@ -8,13 +8,13 @@ export interface NoteTemplateContext {
 }
 
 export const DEFAULT_NOTE_TEMPLATE = `---
-title: {{title}}
-date: {{date}}
-modify: {{modify}}
-author: {{author}}
+title: "{{title}}"
+date: "{{date}}"
+modify: "{{modify}}"
+author: "{{author}}"
 tags: []
 aliases:
-  - {{aliases}}
+  - "{{aliases}}"
 ---
 %%
 subject: {{subject}}
@@ -24,7 +24,6 @@ publish: false
 related: [[]]
 %%
 # {{title}}
-
 `;
 
 const PLACEHOLDER_RE = /\{\{(title|date|modify|author|aliases|subject)\}\}/g;

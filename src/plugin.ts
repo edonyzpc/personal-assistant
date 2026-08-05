@@ -10442,7 +10442,7 @@ export class PluginManager extends Plugin {
      * A new markdown file will be created at the given file path (`input`)
      * in the specified parent folder (`this.folder`)
      **/
-    async createNewNote(targetPath: string, fileName: string): Promise<void> {
+    async createNewNote(targetPath: string, fileName: string, timestamp: Date = new Date()): Promise<void> {
         const { vault } = this.app;
         const normalizedTargetPath = this.join(targetPath);
         const directoryPath = this.isVaultRootPath(normalizedTargetPath) ? "" : normalizedTargetPath;
@@ -10468,7 +10468,7 @@ export class PluginManager extends Plugin {
             }
             this.log("creating file: ", filePath);
             const template = this.settings.noteTemplate || DEFAULT_NOTE_TEMPLATE;
-            const context = buildNoteTemplateContext(fileName, new Date(), this.settings.author, "#thoughts");
+            const context = buildNoteTemplateContext(fileName, timestamp, this.settings.author, "#thoughts");
             const content = renderNoteTemplate(template, context);
             const File = await vault.create(filePath, content);
             const leaf = this.app.workspace.getLeaf('tab');

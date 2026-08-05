@@ -205,6 +205,7 @@ async function appendToVaultPath(
     path: string,
     entry: string,
     templateSettings: NoteTemplateSettings,
+    timestamp: Date,
 ): Promise<string> {
     const normalizedPath = validateQuickCaptureVaultPath(path);
     const file = app.vault.getAbstractFileByPath(normalizedPath);
@@ -217,9 +218,9 @@ async function appendToVaultPath(
         throw new Error(`Quick Capture target is not a Markdown file: ${normalizedPath}`);
     }
     await ensureFolder(app, parentFolder(normalizedPath));
-    const fileName = normalizedPath.split("/").pop()?.replace(/\.md$/i, "") ?? normalizedPath;
+    const fileName = normalizedPath.split("/").pop()?.replace(/\.md$/i, "") || normalizedPath;
     const template = templateSettings.noteTemplate || DEFAULT_NOTE_TEMPLATE;
-    const context = buildNoteTemplateContext(fileName, new Date(), templateSettings.author, "#capture");
+    const context = buildNoteTemplateContext(fileName, timestamp, templateSettings.author, "#capture");
     const rendered = renderNoteTemplate(template, context);
     const content = rendered.endsWith("\n")
         ? `${rendered}\n${entry}\n`
@@ -316,7 +317,7 @@ export class QuickCaptureService {
                 appendToVaultPath(this.host.app, normalizedPath, entry, {
                     author: this.host.settings.author,
                     noteTemplate: this.host.settings.noteTemplate,
-                }));
+                }, timestamp));
             new Notice(savedMessage(settings.destination));
             this.schedulePostProcessing(settings, {
                 captureId,
