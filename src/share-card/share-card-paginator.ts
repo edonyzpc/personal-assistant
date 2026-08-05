@@ -7,6 +7,7 @@ import {
     MAX_SHARE_CARD_PAGES,
     type ShareCardRenderPlan,
     type ShareCardRenderPlanSegment,
+    stripInlineCode,
 } from "./share-card-types";
 
 /**
@@ -1805,22 +1806,6 @@ export function isPureShareCardVisualBlock(block: string): boolean {
         .test(lines[lines.length - 1] ?? "");
 }
 
-function stripInlineCode(line: string): string {
-    let result = "";
-    let cursor = 0;
-    while (cursor < line.length) {
-        const openingStart = line.indexOf("`", cursor);
-        if (openingStart < 0) return result + line.slice(cursor);
-        let openingEnd = openingStart + 1;
-        while (line.charAt(openingEnd) === "`") openingEnd += 1;
-        const marker = line.slice(openingStart, openingEnd);
-        const closingStart = line.indexOf(marker, openingEnd);
-        result += line.slice(cursor, openingStart);
-        if (closingStart < 0) return result + line.slice(openingStart);
-        cursor = closingStart + marker.length;
-    }
-    return result;
-}
 
 /**
  * Greedily paginate semantic Markdown blocks using the injected final-render

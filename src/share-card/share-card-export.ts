@@ -106,7 +106,10 @@ export function assertShareCardElementIsSelfContained(element: HTMLElement): voi
             for (let index = 0; index < computed.length; index += 1) {
                 const propertyName = computed.item(index);
                 if (propertyName) {
-                    assertSelfContainedCssUrls(computed.getPropertyValue(propertyName));
+                    const propertyValue = computed.getPropertyValue(propertyName);
+                    if (propertyValue.includes("url(")) {
+                        assertSelfContainedCssUrls(propertyValue);
+                    }
                 }
             }
         }

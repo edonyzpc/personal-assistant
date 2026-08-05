@@ -81,3 +81,21 @@ export const MAX_SHARE_CARD_PAGES = 24;
 /** Compatibility aliases for callers that use shorter constant names. */
 export const MAX_CONTENT_CHARS = MAX_SHARE_CARD_CHARACTERS;
 export const MAX_CARD_PAGES = MAX_SHARE_CARD_PAGES;
+
+/** Strip backtick-delimited inline code spans, preserving surrounding text. */
+export function stripInlineCode(line: string): string {
+    let output = "";
+    let cursor = 0;
+    while (cursor < line.length) {
+        const start = line.indexOf("`", cursor);
+        if (start < 0) return output + line.slice(cursor);
+        let markerEnd = start + 1;
+        while (line.charAt(markerEnd) === "`") markerEnd += 1;
+        const marker = line.slice(start, markerEnd);
+        const end = line.indexOf(marker, markerEnd);
+        output += line.slice(cursor, start);
+        if (end < 0) return output + line.slice(start);
+        cursor = end + marker.length;
+    }
+    return output;
+}

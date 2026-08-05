@@ -10,12 +10,21 @@ export function normalizeVaultPath(path: string): string {
 }
 
 export function stableHash(text: string): string {
+    return (fnv1a(text) >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Base-36 variant for backward compatibility with pre-v2.9 persisted hashes. */
+export function stableHashBase36(text: string): string {
+    return (fnv1a(text) >>> 0).toString(36);
+}
+
+function fnv1a(text: string): number {
     let hash = 2166136261;
     for (let index = 0; index < text.length; index += 1) {
         hash ^= text.charCodeAt(index);
         hash = Math.imul(hash, 16777619);
     }
-    return (hash >>> 0).toString(16).padStart(8, "0");
+    return hash;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

@@ -15,6 +15,7 @@ import {
     type ShareCardRenderPlan,
     type ShareCardRenderPlanSegment,
     type ShareCardTheme,
+    stripInlineCode,
 } from "./share-card-types";
 
 const HARD_REMOVED_SELECTOR = ["script", "style", "link", "base", "meta"].join(",");
@@ -1753,22 +1754,7 @@ function markdownContainsApprovedVisual(markdown: string): boolean {
     return false;
 }
 
-function stripInlineCode(line: string): string {
-    let output = "";
-    let cursor = 0;
-    while (cursor < line.length) {
-        const start = line.indexOf("`", cursor);
-        if (start < 0) return output + line.slice(cursor);
-        let markerEnd = start + 1;
-        while (line.charAt(markerEnd) === "`") markerEnd += 1;
-        const marker = line.slice(start, markerEnd);
-        const end = line.indexOf(marker, markerEnd);
-        output += line.slice(cursor, start);
-        if (end < 0) return output + line.slice(start);
-        cursor = end + marker.length;
-    }
-    return output;
-}
+
 
 function waitForImageLoad(image: HTMLImageElement, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {

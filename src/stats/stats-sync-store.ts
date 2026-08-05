@@ -1,6 +1,6 @@
 import { normalizePath, type Vault } from "obsidian";
 import { getVaultConfigDir, joinVaultConfigPath } from "../obsidian-paths";
-import { isRecord, stableHash } from "../pa/helpers";
+import { isRecord, stableHash, stableHashBase36 } from "../pa/helpers";
 import type { ActivityCounts, SnapshotCounts, StatsStoreError } from "./stats-types";
 import {
     getStatsRecordKey,
@@ -98,7 +98,9 @@ export class StatsSyncStore {
             const exported = nextState.records[record.recordKey];
             const exportedMatches = Boolean(exported
                 && exported.revision === record.revision
-                && (exported.hash === hash || exported.hash === getLegacyStatsSyncRecordHash(record)));
+                && (exported.hash === hash
+                    || exported.hash === getLegacyStatsSyncRecordHash(record)
+                    || exported.hash === getStatsSyncRecordHashBase36(record)));
             if (!syncFileExists || !exportedMatches) {
                 changedRecords.push(record);
             }
@@ -238,6 +240,19 @@ function getStatsSyncRecordHash(record: StatsDailyDeviceRecord): string {
 
 function getLegacyStatsSyncRecordHash(record: StatsDailyDeviceRecord): string {
     return stableHash(JSON.stringify(recordToSyncLine(record)));
+}
+
+/** Match pre-v2.9 base-36 format persisted before stableHash switched to hex. */
+function getStatsSyncRecordHashBase36(record: StatsDailyDeviceRecord): string {
+    return stableHashBase36(JSON.stringify({
+        version: record.version,
+        vaultId: record.vaultId,
+        date: record.date,
+        deviceId: record.deviceId,
+        revision: record.revision,
+        activity: record.activity,
+        snapshot: record.snapshot,
+    }));
 }
 
 function parseJson(content: string, path: string, errors: StatsStoreError[]): unknown {
