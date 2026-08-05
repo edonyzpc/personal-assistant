@@ -7831,6 +7831,10 @@ body.is-mobile .pa-quick-capture-modal__input {
 	color: var(--text-error);
 }
 
+.pa-share-card-status[data-tone="warning"] {
+	color: var(--text-warning, var(--text-accent));
+}
+
 .pa-share-card-preview-viewport {
 	box-sizing: border-box;
 	display: flex;
@@ -7911,6 +7915,13 @@ body.is-mobile .pa-quick-capture-modal__input {
 	line-height: 24px;
 	text-rendering: optimizeLegibility;
 	-webkit-font-smoothing: antialiased;
+}
+
+.pa-share-card-static,
+.pa-share-card-static * {
+	animation: none !important;
+	transition: none !important;
+	caret-color: transparent;
 }
 
 .pa-share-card.is-light {
@@ -8088,14 +8099,67 @@ body.is-mobile .pa-quick-capture-modal__input {
 }
 
 .pa-share-card-body img,
-.pa-share-card-body iframe,
-.pa-share-card-body video,
-.pa-share-card-body audio,
 .pa-share-card-body canvas,
 .pa-share-card-body svg,
 .pa-share-card-body .internal-embed,
-.pa-share-card-body .media-embed {
-	display: none !important;
+.pa-share-card-body .media-embed,
+.pa-share-card-body .block-language-mermaid,
+.pa-share-card-body .mermaid {
+	display: block;
+	max-width: 100%;
+	max-height: 100%;
+	margin: 12px auto;
+}
+
+.pa-share-card-body img,
+.pa-share-card-body canvas,
+.pa-share-card-body svg {
+	width: auto;
+	height: auto;
+	object-fit: contain;
+}
+
+.pa-share-card-body > .pa-share-card-visual-block {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	max-width: 100%;
+	height: 100%;
+	max-height: 100%;
+	margin: 0;
+	overflow: hidden;
+}
+
+.pa-share-card-body > .pa-share-card-visual-block img,
+.pa-share-card-body > .pa-share-card-visual-block canvas,
+.pa-share-card-body > .pa-share-card-visual-block svg,
+.pa-share-card-body > .pa-share-card-visual-block .internal-embed,
+.pa-share-card-body > .pa-share-card-visual-block .media-embed,
+.pa-share-card-body > .pa-share-card-visual-block .block-language-mermaid,
+.pa-share-card-body > .pa-share-card-visual-block .mermaid {
+	min-height: 0;
+	max-height: 100%;
+	flex: 0 1 auto;
+}
+
+.pa-share-card-body .pa-share-card-resource-placeholder {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 72px;
+	margin: 12px 0;
+	padding: 12px 14px;
+	border: 1px dashed var(--pa-share-card-rule);
+	border-radius: 8px;
+	background: var(--pa-share-card-code);
+	color: var(--pa-share-card-muted);
+	font-size: 12px;
+	line-height: 18px;
+	text-align: center;
 }
 
 .pa-share-card-body-fallback {

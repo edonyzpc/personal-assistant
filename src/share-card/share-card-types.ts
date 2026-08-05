@@ -6,12 +6,17 @@ export type ShareCardSource = "chat" | "pagelet" | "selection";
 /** The visual theme is locked when the Share Card modal opens. */
 export type ShareCardTheme = "light" | "dark";
 
+/** Resolution-only context; values are never rendered into the card. */
+export interface ShareCardResourceContext {
+    basePath?: string;
+}
+
 /** Text already held by an explicit Share Card entry point. */
 export interface ShareCardData {
     content: string;
     source: ShareCardSource;
     sourceLabel?: string;
-    sourcePath?: string;
+    resourceContext?: ShareCardResourceContext;
 }
 
 /** One measured page, using a zero-based page index. */
@@ -19,6 +24,35 @@ export interface CardPage {
     pageIndex: number;
     totalPages: number;
     content: string;
+    /** @internal Non-enumerable source identity used only by the static renderer. */
+    readonly renderPlan?: ShareCardRenderPlan;
+}
+
+/** @internal Exact source identity for one static DOM segment on a card page. */
+export interface ShareCardRenderPlanSegment {
+    blockIndex: number;
+    sourceStart: number;
+    sourceEnd: number;
+    markdown: string;
+}
+
+/** @internal Never serialized into ShareCardData or export payloads. */
+export interface ShareCardRenderPlan {
+    segments: readonly ShareCardRenderPlanSegment[];
+}
+
+/** Attach renderer-only metadata without changing JSON or public page equality. */
+export function attachShareCardRenderPlan(
+    page: CardPage,
+    renderPlan: ShareCardRenderPlan,
+): CardPage {
+    Object.defineProperty(page, "renderPlan", {
+        configurable: false,
+        enumerable: false,
+        value: renderPlan,
+        writable: false,
+    });
+    return page;
 }
 
 /** Truthful result for a sequential Vault save operation. */

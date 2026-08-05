@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { MarkdownRenderer, TFile } from 'obsidian';
-import type { App } from 'obsidian';
+import type { App, MarkdownFileInfo } from 'obsidian';
 
 const mockNoticeMessages: string[] = [];
 const mockOpenedModals: Array<{ contentEl: MockModalContentRecord; onOpen?: () => void; onClose?: () => void }> = [];
@@ -27,6 +27,7 @@ type RegisteredPluginCommand = {
     editorCheckCallback?: (
         checking: boolean,
         editor: { getSelection(): string },
+        view?: MarkdownFileInfo,
     ) => boolean;
 };
 const mockStatsManagerConstructor = jest.fn();
@@ -753,10 +754,15 @@ describe('plugin startup view registration', () => {
             editor.getSelection.mockReturnValue('  # Keep spacing\n\n- item  ');
             expect(shareSelectionCommand?.editorCheckCallback?.(true, editor)).toBe(true);
             expect(mockShareCardModalConstructor).not.toHaveBeenCalled();
-            expect(shareSelectionCommand?.editorCheckCallback?.(false, editor)).toBe(true);
+            expect(shareSelectionCommand?.editorCheckCallback?.(
+                false,
+                editor,
+                { file: { path: 'Notes/Source.md' } } as unknown as MarkdownFileInfo,
+            )).toBe(true);
             expect(mockShareCardModalConstructor).toHaveBeenCalledWith(plugin.app, {
                 content: '  # Keep spacing\n\n- item  ',
                 source: 'selection',
+                resourceContext: { basePath: 'Notes/Source.md' },
             });
             expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
             const detailViewFactory = registerView.mock.calls.find(

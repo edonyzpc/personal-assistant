@@ -58,6 +58,7 @@
     "@langchain/openai": "1.4.4",
     "@langchain/textsplitters": "1.0.1",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
+    "@zumer/snapdom": "2.23.2",
     "chart.js": "^4.4.4",
     "fflate": "^0.8.3",
     "ldrs": "^1.1.7",

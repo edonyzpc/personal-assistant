@@ -26,6 +26,8 @@
     "plugin.chat.action.close": "关闭",
     "plugin.shareCard.title": "分享为卡片",
     "plugin.shareCard.preparing": "正在准备卡片…",
+    "plugin.shareCard.resourceIncomplete": "有 {count} 项视觉内容无法加载，已显示为占位提示。",
+    "plugin.shareCard.resourcePlaceholder": "视觉内容无法加载：{label}",
     "plugin.shareCard.renderFallback": "部分格式无法显示，已改用纯文本。",
     "plugin.shareCard.prepareFailed": "无法准备分享卡片，请关闭后重试。",
     "plugin.shareCard.tooLarge": "这段内容过长，无法生成分享卡片。请缩短后重试。",

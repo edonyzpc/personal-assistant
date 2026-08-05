@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-/** The text-first Markdown payload consumed by measured pagination. */
+/** Markdown payload consumed by measured, visual-aware pagination. */
 export interface PreparedShareCardMarkdown {
     markdown: string;
     blocks: string[];
@@ -11,310 +11,6 @@ export interface ShareablePageletFinding {
     title?: string;
     description?: string;
     insightText?: string;
-}
-
-const RAW_HTML_RESOURCE_ATTRIBUTE_RE = new RegExp(
-    String.raw`\s+(?:action|background|cite|data|formaction|href|imagesrcset|ping|poster|src|srcdoc|srcset|style|xlink:href)(?![\w:-])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?`,
-    "gi",
-);
-const RAW_HTML_EVENT_ATTRIBUTE_RE = new RegExp(
-    String.raw`\s+on[a-z0-9_-]+(?![\w:-])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?`,
-    "gi",
-);
-const RAW_HTML_IDENTITY_ATTRIBUTE_RE = new RegExp(
-    String.raw`\s+(?:class|id|is|data-[a-z0-9_.:-]+)(?![\w:-])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?`,
-    "gi",
-);
-
-function readableLabel(kind: string, value?: string): string {
-    const label = value?.replace(/\s+/g, " ").trim();
-    return label ? `[${kind}: ${label}]` : `[${kind}]`;
-}
-
-function attributeValue(attributes: string, name: string): string | undefined {
-    const quoted = new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i").exec(attributes);
-    if (quoted) return quoted[2];
-
-    return new RegExp(`\\b${name}\\s*=\\s*([^\\s>]+)`, "i").exec(attributes)?.[1];
-}
-
-function wikiEmbedLabel(value: string): string {
-    const [target = "", alias = ""] = value.split("|", 2);
-    const explicitAlias = alias.trim();
-    if (explicitAlias && !/^\d+(?:x\d+)?$/i.test(explicitAlias)) return explicitAlias;
-
-    const withoutAnchor = target.split(/[\^#]/, 1)[0].trim();
-    const fileName = withoutAnchor.split("/").pop() ?? withoutAnchor;
-    return fileName.replace(/\.[a-z0-9]{1,8}$/i, "") || "Embedded content";
-}
-
-function isEscapedAt(text: string, index: number): boolean {
-    let slashCount = 0;
-    for (let cursor = index - 1; cursor >= 0 && text.charAt(cursor) === "\\"; cursor -= 1) {
-        slashCount += 1;
-    }
-    return slashCount % 2 === 1;
-}
-
-function findClosingBracket(text: string, contentStart: number): number {
-    let depth = 1;
-    for (let cursor = contentStart; cursor < text.length; cursor += 1) {
-        if (isEscapedAt(text, cursor)) continue;
-        if (text.charAt(cursor) === "[") depth += 1;
-        if (text.charAt(cursor) !== "]") continue;
-        depth -= 1;
-        if (depth === 0) return cursor;
-    }
-    return -1;
-}
-
-function replaceMarkdownInlineImages(markdown: string): string {
-    let output = "";
-    let copyFrom = 0;
-    let searchFrom = 0;
-
-    while (searchFrom < markdown.length) {
-        const imageStart = markdown.indexOf("![", searchFrom);
-        if (imageStart < 0) break;
-        if (isEscapedAt(markdown, imageStart)) {
-            searchFrom = imageStart + 2;
-            continue;
-        }
-
-        const altEnd = findClosingBracket(markdown, imageStart + 2);
-        if (altEnd < 0 || markdown.charAt(altEnd + 1) !== "(") {
-            searchFrom = imageStart + 2;
-            continue;
-        }
-
-        let cursor = altEnd + 2;
-        let depth = 1;
-        let quote = "";
-        let insideAngleDestination = false;
-        while (cursor < markdown.length && depth > 0) {
-            const character = markdown.charAt(cursor);
-            if (isEscapedAt(markdown, cursor)) {
-                // Escaped parentheses/quotes are destination text, not syntax.
-            } else if (quote) {
-                if (character === quote) quote = "";
-            } else if (insideAngleDestination) {
-                if (character === ">") insideAngleDestination = false;
-            } else if (
-                (character === "\"" || character === "'")
-                && /\s/.test(markdown.charAt(cursor - 1))
-            ) {
-                quote = character;
-            } else if (character === "<" && depth === 1) {
-                insideAngleDestination = true;
-            } else if (character === "(") {
-                depth += 1;
-            } else if (character === ")") {
-                depth -= 1;
-            }
-            cursor += 1;
-        }
-        if (depth !== 0) {
-            searchFrom = imageStart + 2;
-            continue;
-        }
-
-        const alt = markdown.slice(imageStart + 2, altEnd)
-            .replace(/\\\[/g, "[")
-            .replace(/\\]/g, "]");
-        output += markdown.slice(copyFrom, imageStart);
-        output += readableLabel("Image", alt);
-        copyFrom = cursor;
-        searchFrom = cursor;
-    }
-
-    return output + markdown.slice(copyFrom);
-}
-
-function replaceMarkdownReferenceImages(markdown: string): string {
-    let output = "";
-    let copyFrom = 0;
-    let searchFrom = 0;
-
-    while (searchFrom < markdown.length) {
-        const imageStart = markdown.indexOf("![", searchFrom);
-        if (imageStart < 0) break;
-        if (isEscapedAt(markdown, imageStart)) {
-            searchFrom = imageStart + 2;
-            continue;
-        }
-
-        const altEnd = findClosingBracket(markdown, imageStart + 2);
-        if (altEnd < 0) {
-            // A malformed opener must not prevent a later valid image from
-            // being neutralized.
-            searchFrom = imageStart + 2;
-            continue;
-        }
-        const referenceStart = altEnd + 1;
-        if (markdown.charAt(referenceStart) === "(") {
-            searchFrom = altEnd + 1;
-            continue;
-        }
-
-        let imageEnd = altEnd + 1;
-        if (markdown.charAt(referenceStart) === "[") {
-            const referenceEnd = findClosingBracket(markdown, referenceStart + 1);
-            if (referenceEnd < 0) {
-                searchFrom = altEnd + 1;
-                continue;
-            }
-            imageEnd = referenceEnd + 1;
-        }
-
-        const alt = markdown.slice(imageStart + 2, altEnd)
-            .replace(/\\\[/g, "[")
-            .replace(/\\]/g, "]");
-        output += markdown.slice(copyFrom, imageStart);
-        output += readableLabel("Image", alt);
-        copyFrom = imageEnd;
-        searchFrom = imageEnd;
-    }
-
-    return output + markdown.slice(copyFrom);
-}
-
-/**
- * Remove resource-bearing attributes from raw HTML before MarkdownRenderer can
- * create DOM nodes for it. This parser only identifies tag boundaries; quoted
- * `>` characters remain inside the tag and literal code is excluded by the
- * callers that split fenced and inline-code segments.
- */
-function stripRawHtmlResourceAttributes(markdown: string): string {
-    let output = "";
-    let copyFrom = 0;
-    let cursor = 0;
-
-    while (cursor < markdown.length) {
-        const tagStart = markdown.indexOf("<", cursor);
-        if (tagStart < 0) break;
-
-        const prefix = markdown.charAt(tagStart + 1);
-        const tagNameStart = prefix === "/" ? tagStart + 2 : tagStart + 1;
-        if (!/[a-z]/i.test(markdown.charAt(tagNameStart))) {
-            cursor = tagStart + 1;
-            continue;
-        }
-
-        let quote = "";
-        let tagEnd = tagNameStart;
-        for (; tagEnd < markdown.length; tagEnd += 1) {
-            const character = markdown.charAt(tagEnd);
-            if (quote) {
-                if (character === quote) quote = "";
-                continue;
-            }
-            if (character === "\"" || character === "'") {
-                quote = character;
-                continue;
-            }
-            if (character === ">") break;
-        }
-        if (tagEnd >= markdown.length) break;
-
-        const rawTag = markdown.slice(tagStart, tagEnd + 1);
-        const tagName = /^[a-z][a-z0-9:-]*/i.exec(markdown.slice(tagNameStart))?.[0] ?? "";
-        const safeTag = tagName.includes("-")
-            ? ""
-            : prefix === "/"
-            ? rawTag
-            : rawTag
-                .replace(RAW_HTML_RESOURCE_ATTRIBUTE_RE, "")
-                .replace(RAW_HTML_EVENT_ATTRIBUTE_RE, "")
-                .replace(RAW_HTML_IDENTITY_ATTRIBUTE_RE, "");
-        output += markdown.slice(copyFrom, tagStart) + safeTag;
-        copyFrom = tagEnd + 1;
-        cursor = tagEnd + 1;
-    }
-
-    return output + markdown.slice(copyFrom);
-}
-
-function prepareMediaSegment(markdown: string): string {
-    let prepared = markdown;
-
-    // Obsidian embeds must be handled before ordinary Markdown image syntax.
-    prepared = prepared.replace(/!\[\[([^\]]+)\]\]/g, (_match, value: string) => (
-        readableLabel("Embed", wikiEmbedLabel(value))
-    ));
-
-    // Inline and reference-style Markdown images. Keep useful alt text, never
-    // the resource URL/reference that could make the renderer load media.
-    prepared = replaceMarkdownInlineImages(prepared);
-    prepared = replaceMarkdownReferenceImages(prepared);
-
-    // HTML media is also made inert. Paired elements are replaced first so
-    // fallback children cannot leave another active media element behind.
-    prepared = prepared.replace(
-        /<(picture|iframe|video|audio|canvas|svg|object)\b([^>]*)>[\s\S]*?<\/\1\s*>/gi,
-        (match: string, tag: string, attributes: string) => {
-            const kind = tag.charAt(0).toUpperCase() + tag.slice(1).toLowerCase();
-            const nestedImageAttributes = /<img\b([^>]*)\/?\s*>/i.exec(match)?.[1] ?? "";
-            const label = attributeValue(attributes, "title")
-                ?? attributeValue(nestedImageAttributes, "alt");
-            return readableLabel(kind, label);
-        },
-    );
-    prepared = prepared.replace(/<img\b([^>]*)\/?\s*>/gi, (_match, attributes: string) => (
-        readableLabel("Image", attributeValue(attributes, "alt"))
-    ));
-    prepared = prepared.replace(
-        /<(picture|iframe|video|audio|canvas|svg|object|embed|source)\b([^>]*)\/?\s*>/gi,
-        (_match, tag: string, attributes: string) => {
-            const kind = tag.charAt(0).toUpperCase() + tag.slice(1).toLowerCase();
-            return readableLabel(kind, attributeValue(attributes, "title"));
-        },
-    );
-    return stripRawHtmlResourceAttributes(prepared);
-}
-
-interface BacktickRun {
-    start: number;
-    end: number;
-    length: number;
-}
-
-function findBacktickRun(markdown: string, from: number, checkEscape = true): BacktickRun | null {
-    for (let cursor = from; cursor < markdown.length; cursor += 1) {
-        if (markdown.charAt(cursor) !== "`") continue;
-        if (checkEscape && isEscapedAt(markdown, cursor)) continue;
-        let end = cursor + 1;
-        while (markdown.charAt(end) === "`") end += 1;
-        return { start: cursor, end, length: end - cursor };
-    }
-    return null;
-}
-
-function prepareTextSegment(markdown: string): string {
-    let output = "";
-    let cursor = 0;
-
-    while (cursor < markdown.length) {
-        const opening = findBacktickRun(markdown, cursor);
-        if (!opening) {
-            output += prepareMediaSegment(markdown.slice(cursor));
-            break;
-        }
-
-        let closing = findBacktickRun(markdown, opening.end, false);
-        while (closing && closing.length !== opening.length) {
-            closing = findBacktickRun(markdown, closing.end, false);
-        }
-        if (!closing) {
-            output += prepareMediaSegment(markdown.slice(cursor));
-            break;
-        }
-
-        output += prepareMediaSegment(markdown.slice(cursor, opening.start));
-        output += markdown.slice(opening.start, closing.end);
-        cursor = closing.end;
-    }
-
-    return output;
 }
 
 interface BlockquoteFenceContainer {
@@ -335,6 +31,7 @@ type FenceContainer = BlockquoteFenceContainer | ListFenceContainer;
 interface FenceMatch {
     marker: string;
     markerEnd: number;
+    info: string;
     containers: FenceContainer[];
 }
 
@@ -520,6 +217,7 @@ function matchFenceCandidate(
     return {
         marker,
         markerEnd: line.sourceOffsets[markerEnd] ?? line.source.length,
+        info: fenceMatch[3].trim(),
         containers: candidate.containers,
     };
 }
@@ -739,7 +437,7 @@ function prepareOutsideFencedCode(markdown: string): string {
 
     const flushOrdinary = (): void => {
         if (ordinaryLines.length === 0) return;
-        output.push(prepareTextSegment(ordinaryLines.join("\n")));
+        output.push(ordinaryLines.join("\n"));
         ordinaryLines = [];
     };
 
@@ -833,7 +531,10 @@ function prepareOutsideFencedCode(markdown: string): string {
 
         flushOrdinary();
         fence = analysis.fence;
-        output.push(line.slice(0, analysis.fence.markerEnd));
+        output.push(
+            line.slice(0, analysis.fence.markerEnd)
+            + (analysis.fence.info.toLowerCase() === "mermaid" ? "mermaid" : ""),
+        );
     }
 
     flushOrdinary();
@@ -841,11 +542,14 @@ function prepareOutsideFencedCode(markdown: string): string {
 }
 
 /**
- * Prepare untrusted Markdown for local, text-only rendering.
+ * Prepare Markdown for resource-localized visual rendering.
  *
  * CRLF is normalized, but leading/trailing text and frontmatter-like/thematic
- * breaks are deliberately retained. Media syntax is replaced before Obsidian's
- * renderer can resolve or fetch it.
+ * breaks are deliberately retained. Visual syntax is preserved so the resource
+ * session can localize explicit media before Obsidian renders it. Literal code
+ * remains byte-for-byte equivalent apart from CRLF normalization. Mermaid is
+ * the only fenced processor permitted to execute; every other info string is
+ * stripped and therefore renders as ordinary code.
  */
 export function prepareShareCardMarkdown(markdown: string): PreparedShareCardMarkdown {
     const prepared = prepareOutsideFencedCode(markdown.replace(/\r\n?/g, "\n"));
@@ -866,6 +570,9 @@ export function splitShareCardMarkdown(markdown: string): string[] {
     const blocks: string[] = [];
     let ordinaryLines: string[] = [];
     let fencedLines: string[] | null = null;
+    let visualHtmlLines: string[] | null = null;
+    let visualHtmlTag = "";
+    let visualHtmlDepth = 0;
     let fence: FenceMatch | null = null;
     let listContainers: FenceContainer[] = [];
     let paragraphOpen = false;
@@ -883,7 +590,23 @@ export function splitShareCardMarkdown(markdown: string): string[] {
         fence = null;
     };
 
+    const flushVisualHtml = (): void => {
+        if (visualHtmlLines) blocks.push(visualHtmlLines.join("\n"));
+        visualHtmlLines = null;
+        visualHtmlTag = "";
+        visualHtmlDepth = 0;
+    };
+
     for (const line of lines) {
+        if (visualHtmlLines) {
+            visualHtmlLines.push(line);
+            visualHtmlDepth += visualHtmlTagDepth(line, visualHtmlTag);
+            if (visualHtmlDepth <= 0) flushVisualHtml();
+            listContainers = [];
+            paragraphOpen = false;
+            continue;
+        }
+
         if (fencedLines && fence) {
             const belongsToContainer = consumeFenceContainerPrefix(line, fence.containers) !== null;
             if (!belongsToContainer) flushFence();
@@ -896,6 +619,20 @@ export function splitShareCardMarkdown(markdown: string): string[] {
             listContainers = retainedListContainers(activeContainers);
             paragraphOpen = false;
             continue;
+        }
+
+        const visualTag = matchVisualHtmlTag(line);
+        if (visualTag) {
+            const depth = visualHtmlTagDepth(line, visualTag);
+            if (depth > 0) {
+                flushOrdinary();
+                visualHtmlLines = [line];
+                visualHtmlTag = visualTag;
+                visualHtmlDepth = depth;
+                listContainers = [];
+                paragraphOpen = false;
+                continue;
+            }
         }
 
         const analysis = analyzeFenceLine(line, listContainers, paragraphOpen);
@@ -918,7 +655,24 @@ export function splitShareCardMarkdown(markdown: string): string[] {
 
     flushOrdinary();
     flushFence();
+    flushVisualHtml();
     return blocks;
+}
+
+function matchVisualHtmlTag(line: string): string | null {
+    const withoutQuotes = line.replace(/^(?: {0,3}> ?)+/, "");
+    return /^ {0,3}<(svg|canvas|picture|figure)\b/i.exec(withoutQuotes)?.[1].toLowerCase()
+        ?? null;
+}
+
+function visualHtmlTagDepth(line: string, tagName: string): number {
+    const tags = line.match(new RegExp(`<\\/?${tagName}\\b[^>]*>`, "gi")) ?? [];
+    let depth = 0;
+    for (const tag of tags) {
+        if (/^<\//.test(tag)) depth -= 1;
+        else if (!/\/\s*>$/.test(tag)) depth += 1;
+    }
+    return depth;
 }
 
 /** Explicit alias used by callers that want the longer operation name. */

@@ -1597,13 +1597,15 @@ export class PluginManager extends Plugin {
         this.addCommand({
             id: 'share-selection-as-card',
             name: this.t("plugin.command.shareSelectionAsCard"),
-            editorCheckCallback: (checking, editor: Editor) => {
+            editorCheckCallback: (checking, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
                 const selection = editor.getSelection();
                 if (selection.trim().length === 0) return false;
                 if (checking) return true;
+                const basePath = view.file?.path;
                 new ShareCardModal(this.app, {
                     content: selection,
                     source: 'selection',
+                    ...(basePath ? { resourceContext: { basePath } } : {}),
                 }).open();
                 return true;
             },

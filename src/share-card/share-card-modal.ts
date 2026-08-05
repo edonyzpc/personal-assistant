@@ -4,6 +4,13 @@ import { Modal, Notice, setIcon, type App } from "obsidian";
 import { getPluginUiLanguage, pluginT } from "../locales/plugin";
 import { prepareShareCardMarkdown } from "./share-card-markdown";
 import {
+    ShareCardResourceAbortedError,
+    createShareCardResourceCache,
+    localizeShareCardResources,
+    type ShareCardCompletenessReport,
+    type ShareCardResourceCache,
+} from "./share-card-resources";
+import {
     paginateShareCardMarkdown,
     ShareCardTooLargeError,
 } from "./share-card-paginator";
@@ -23,6 +30,7 @@ import {
 import {
     ShareCardRenderCancelledError,
     ShareCardRenderer,
+    type ShareCardPreparedCompletenessSummary,
     type ShareCardRenderHandle,
 } from "./share-card-renderer";
 
@@ -34,6 +42,8 @@ function t(key: string, params?: Readonly<Record<string, string | number>>): str
 }
 
 export interface ShareCardModalDependencies {
+    localizeResources?: typeof localizeShareCardResources;
+    createResourceCache?: typeof createShareCardResourceCache;
     prepareMarkdown?: typeof prepareShareCardMarkdown;
     paginate?: typeof paginateShareCardMarkdown;
     createRenderer?: (app: App, ownerDocument: Document) => ShareCardRenderer;
@@ -66,6 +76,14 @@ export class ShareCardModal extends Modal {
     private copyButton: HTMLButtonElement | null = null;
     private saveButton: HTMLButtonElement | null = null;
     private ownerWindow: Window | null = null;
+    private resourceController: AbortController | null = null;
+    private resourceCache: ShareCardResourceCache | null = null;
+    private completenessReport: ShareCardCompletenessReport | null = null;
+    private preparedCompleteness: ShareCardPreparedCompletenessSummary = {
+        sanitizationIssueCount: 0,
+        usedPlainTextFallback: false,
+    };
+    private readonly pageCompleteness = new Map<number, ShareCardPreparedCompletenessSummary>();
     private openState = false;
     private busy = false;
     private operationToken = 0;
@@ -85,6 +103,16 @@ export class ShareCardModal extends Modal {
         this.busy = false;
         this.pages = [];
         this.currentPageIndex = 0;
+        this.completenessReport = null;
+        this.preparedCompleteness = {
+            sanitizationIssueCount: 0,
+            usedPlainTextFallback: false,
+        };
+        this.pageCompleteness.clear();
+        this.resourceController = new AbortController();
+        this.resourceCache = (
+            this.dependencies.createResourceCache ?? createShareCardResourceCache
+        )();
 
         const ownerDocument = this.contentEl.ownerDocument;
         this.ownerWindow = ownerDocument.defaultView;
@@ -125,8 +153,8 @@ export class ShareCardModal extends Modal {
 
         const token = this.nextToken();
         void this.prepare(token).catch((error) => {
+            if (error instanceof ShareCardResourceAbortedError || !this.isCurrent(token)) return;
             console.error("Share Card preparation failed.", error);
-            if (!this.isCurrent(token)) return;
             this.contentEl.setAttribute("aria-busy", "false");
             this.setStatus(t(error instanceof ShareCardTooLargeError
                 ? "plugin.shareCard.tooLarge"
@@ -140,6 +168,15 @@ export class ShareCardModal extends Modal {
         this.openState = false;
         this.busy = false;
         this.nextToken();
+        this.resourceController?.abort();
+        this.resourceController = null;
+        this.resourceCache = null;
+        this.completenessReport = null;
+        this.preparedCompleteness = {
+            sanitizationIssueCount: 0,
+            usedPlainTextFallback: false,
+        };
+        this.pageCompleteness.clear();
         this.ownerWindow?.removeEventListener("resize", this.handleResize);
         this.ownerWindow = null;
         this.previewRender?.cleanup();
@@ -162,18 +199,44 @@ export class ShareCardModal extends Modal {
                 this.data.content.length,
             );
         }
-        const prepared = (this.dependencies.prepareMarkdown ?? prepareShareCardMarkdown)(this.data.content);
+        const controller = this.resourceController;
+        const cache = this.resourceCache;
+        if (!controller || !cache) throw new ShareCardResourceAbortedError();
+        const localized = await (
+            this.dependencies.localizeResources ?? localizeShareCardResources
+        )(this.app, this.data.content, {
+            resourceBasePath: this.data.resourceContext?.basePath,
+            signal: controller.signal,
+            cache,
+        }, {
+            placeholderText: ({ label }) => t("plugin.shareCard.resourcePlaceholder", { label }),
+        });
+        if (!this.isCurrent(token)) return;
+        this.completenessReport = localized.report;
+        const prepared = (this.dependencies.prepareMarkdown ?? prepareShareCardMarkdown)(
+            localized.markdown,
+        );
         const renderOptions = {
             theme: this.theme,
             sourceLabel: this.data.sourceLabel,
-            sourcePath: this.data.sourcePath,
+            sourcePath: this.data.resourceContext?.basePath,
         };
+        const fit = typeof renderer.createPreparedFitPredicate === "function"
+            ? renderer.createPreparedFitPredicate(prepared.blocks, renderOptions)
+            : (content: string, pageIndex: number) => (
+                renderer.fits(content, pageIndex, renderOptions)
+            );
         const pages = await (this.dependencies.paginate ?? paginateShareCardMarkdown)(
             prepared.blocks,
-            (content, pageIndex) => renderer.fits(content, pageIndex, renderOptions),
+            fit,
+            { originalCharacterCount: this.data.content.length },
         );
         if (!this.isCurrent(token)) return;
 
+        if (typeof renderer.recordPreparedFinalPages === "function") {
+            renderer.recordPreparedFinalPages(pages, renderOptions);
+        }
+        this.refreshPreparedCompleteness(renderer);
         this.pages = pages;
         this.exporter = this.dependencies.createExporter?.(
             this.app,
@@ -185,6 +248,7 @@ export class ShareCardModal extends Modal {
             this.contentEl.ownerDocument,
             renderer,
             renderOptions,
+            { signal: controller.signal },
         );
         this.contentEl.setAttribute("aria-busy", "false");
         await this.renderPreview();
@@ -280,7 +344,7 @@ export class ShareCardModal extends Modal {
             render = await renderer.renderPage(page, {
                 theme: this.theme,
                 sourceLabel: this.data.sourceLabel,
-                sourcePath: this.data.sourcePath,
+                sourcePath: this.data.resourceContext?.basePath,
                 host,
             });
         } catch (error) {
@@ -300,11 +364,13 @@ export class ShareCardModal extends Modal {
 
         previousRender?.cleanup();
         this.previewRender = render;
+        this.pageCompleteness.set(page.pageIndex, {
+            sanitizationIssueCount: render.sanitizationIssues?.length ?? 0,
+            usedPlainTextFallback: render.usedPlainTextFallback,
+        });
         if (this.viewportEl) this.viewportEl.hidden = false;
         this.updatePreviewScale();
-        this.setStatus(render.usedPlainTextFallback
-            ? t("plugin.shareCard.renderFallback")
-            : "");
+        this.setReadyStatus();
         this.updateControls();
         return true;
     }
@@ -318,7 +384,8 @@ export class ShareCardModal extends Modal {
             await exporter.copyCurrentPage(page);
             if (!this.isCurrent(token)) return;
             new Notice(t("plugin.shareCard.copySuccess"));
-            this.setStatus(t("plugin.shareCard.copySuccess"));
+            this.refreshPreparedCompleteness();
+            this.setReadyStatus();
         } catch (error) {
             if (!this.isCurrent(token)) return;
             const message = error instanceof ShareCardClipboardUnavailableError
@@ -355,7 +422,12 @@ export class ShareCardModal extends Modal {
                 message = t("plugin.shareCard.saveFailed");
             }
             new Notice(message);
-            this.setStatus(message, result.savedPaths.length === result.attempted ? undefined : "error");
+            if (result.savedPaths.length === result.attempted) {
+                this.refreshPreparedCompleteness();
+                this.setReadyStatus();
+            } else {
+                this.setStatus(message, "error");
+            }
         } catch (error) {
             console.error("Share Card save operation failed.", error);
             if (!this.isCurrent(token)) return;
@@ -428,7 +500,48 @@ export class ShareCardModal extends Modal {
         scaleEl.style.height = `${CARD_HEIGHT * scale}px`;
     }
 
-    private setStatus(message: string, tone?: "error"): void {
+    private setReadyStatus(): void {
+        const incomplete = this.incompleteResourceCount()
+            + this.incompleteRenderCount();
+        const usedPlainTextFallback = this.preparedCompleteness.usedPlainTextFallback
+            || [...this.pageCompleteness.values()].some((summary) => (
+                summary.usedPlainTextFallback
+            ));
+        if (incomplete > 0) {
+            const message = t("plugin.shareCard.resourceIncomplete", { count: incomplete });
+            this.setStatus(usedPlainTextFallback
+                ? `${message} ${t("plugin.shareCard.renderFallback")}`
+                : message, "warning");
+        } else if (usedPlainTextFallback) {
+            this.setStatus(t("plugin.shareCard.renderFallback"), "warning");
+        } else {
+            this.setStatus("");
+        }
+    }
+
+    private refreshPreparedCompleteness(renderer = this.renderer): void {
+        if (!renderer || typeof renderer.getPreparedCompletenessSummary !== "function") return;
+        this.preparedCompleteness = renderer.getPreparedCompletenessSummary();
+    }
+
+    private incompleteRenderCount(): number {
+        const finalPageIssueCount = [...this.pageCompleteness.values()].reduce(
+            (total, summary) => total + summary.sanitizationIssueCount,
+            0,
+        );
+        return Math.max(
+            this.preparedCompleteness.sanitizationIssueCount,
+            finalPageIssueCount,
+        );
+    }
+
+    private incompleteResourceCount(): number {
+        const report = this.completenessReport;
+        if (!report) return 0;
+        return report.placeholderCount + report.failedCount;
+    }
+
+    private setStatus(message: string, tone?: "error" | "warning"): void {
         if (!this.statusEl) return;
         this.statusEl.textContent = message;
         if (tone) this.statusEl.dataset.tone = tone;

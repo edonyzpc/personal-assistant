@@ -3713,6 +3713,9 @@ export class PageletOrchestrator {
             content,
             source: "pagelet",
             sourceLabel: "PA Pagelet",
+            ...(panelView.currentPanelExtra?.sourcePath
+                ? { resourceContext: { basePath: panelView.currentPanelExtra.sourcePath } }
+                : {}),
         }).open();
     }
 

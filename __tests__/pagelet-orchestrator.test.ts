@@ -6418,6 +6418,7 @@ describe("PageletOrchestrator Share Card gate", () => {
                 content: "## Earlier result\n\nNo longer visible while the review is pending or failed.",
                 source: "pagelet",
                 sourceLabel: "PA Pagelet",
+                resourceContext: { basePath: "notes/current.md" },
             },
         );
     });

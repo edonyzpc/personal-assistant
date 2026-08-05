@@ -4,10 +4,12 @@ import type { App, Vault } from "obsidian";
 import {
     ShareCardClipboardUnavailableError,
     ShareCardExporter,
+    assertShareCardElementIsSelfContained,
     canCopyShareCardImage,
-    captureShareCardElement,
+    createSnapdomShareCardCapture,
     createShareCardBatchPaths,
     selectUniqueShareCardBatchPaths,
+    type SnapdomLike,
 } from "../src/share-card/share-card-export";
 import {
     ShareCardRenderCancelledError,
@@ -19,216 +21,150 @@ import {
     asElement,
 } from "./helpers/share-card-dom";
 
-interface CaptureTestNode {
-    nodeType: number;
-    nodeValue: string | null;
-    localName: string;
-    childNodes: CaptureTestNode[];
-    ownerDocument: Document;
-    styles: Record<string, string>;
-    getAttribute(name: string): string | null;
-}
-
-interface CaptureOutputNode {
-    nodeType: number;
-    nodeValue: string | null;
-    namespaceURI: string | null;
-    localName: string;
-    childNodes: CaptureOutputNode[];
-    attributes: Map<string, string>;
-    style: {
-        values: Map<string, string>;
-        setProperty(name: string, value: string): void;
-    };
-    appendChild(child: CaptureOutputNode): CaptureOutputNode;
-    setAttribute(name: string, value: string): void;
-}
-
-function createCaptureElement(
-    ownerDocument: Document,
-    localName: string,
-    options: {
-        attributes?: Record<string, string>;
-        children?: CaptureTestNode[];
-        styles?: Record<string, string>;
-    } = {},
-): CaptureTestNode {
-    const attributes = options.attributes ?? {};
-    return {
-        nodeType: 1,
-        nodeValue: null,
-        localName,
-        childNodes: options.children ?? [],
-        ownerDocument,
-        styles: options.styles ?? {},
-        getAttribute: (name) => Object.prototype.hasOwnProperty.call(attributes, name)
-            ? attributes[name]!
-            : null,
-    };
-}
-
-function createCaptureText(ownerDocument: Document, value: string): CaptureTestNode {
-    return {
-        nodeType: 3,
-        nodeValue: value,
-        localName: "",
-        childNodes: [],
-        ownerDocument,
-        styles: {},
-        getAttribute: () => null,
-    };
-}
-
-function createCaptureOutputElement(namespaceURI: string, localName: string): CaptureOutputNode {
-    const values = new Map<string, string>();
-    const node: CaptureOutputNode = {
-        nodeType: 1,
-        nodeValue: null,
-        namespaceURI,
-        localName,
-        childNodes: [],
-        attributes: new Map(),
-        style: {
-            values,
-            setProperty: (name, value) => values.set(name, value),
-        },
-        appendChild: (child) => {
-            node.childNodes.push(child);
-            return child;
-        },
-        setAttribute: (name, value) => node.attributes.set(name, value),
-    };
-    return node;
-}
-
-function createCaptureOutputText(value: string): CaptureOutputNode {
-    return {
-        nodeType: 3,
-        nodeValue: value,
-        namespaceURI: null,
-        localName: "",
-        childNodes: [],
-        attributes: new Map(),
-        style: {
-            values: new Map(),
-            setProperty: () => undefined,
-        },
-        appendChild: (child) => child,
-        setAttribute: () => undefined,
-    };
-}
-
 describe("Share Card export", () => {
-    it("captures a self-contained 1080 x 1440 PNG through SVG foreignObject and Canvas", async () => {
+    it("captures through SnapDOM with the audited fixed options", async () => {
+        const document = new ShareCardTestDocument();
+        const element = asElement(document.createElement("div"));
         const pngBlob = new Blob(["png"], { type: "image/png" });
-        const drawImage = jest.fn();
-        const canvas = {
-            width: 0,
-            height: 0,
-            getContext: jest.fn(() => ({ drawImage })),
-            toBlob: jest.fn((callback: BlobCallback, type?: string) => callback(
-                type === "image/png" ? pngBlob : null,
-            )),
-        };
-        const image = { onload: null, onerror: null } as unknown as HTMLImageElement;
-        let imageSource = "";
-        Object.defineProperty(image, "src", {
-            set: (value: string) => {
-                imageSource = value;
-                image.onload?.(new Event("load"));
-            },
-        });
-        const createObjectURL = jest.fn(() => {
-            throw new Error("foreignObject capture must not use a blob URL");
-        });
-        let serializedSvg: CaptureOutputNode | null = null;
-        class CaptureXMLSerializer {
-            serializeToString(node: CaptureOutputNode): string {
-                serializedSvg = node;
-                return '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1440" viewBox="0 0 540 720"><foreignObject /></svg>';
-            }
-        }
-        const ownerDocument = {
-            defaultView: {
-                URL: { createObjectURL },
-                XMLSerializer: CaptureXMLSerializer,
-                getComputedStyle: (element: CaptureTestNode) => ({
-                    getPropertyValue: (property: string) => element.styles[property] ?? "",
-                }),
-            },
-            createElementNS: jest.fn((namespaceURI: string, localName: string) => (
-                createCaptureOutputElement(namespaceURI, localName)
-            )),
-            createTextNode: jest.fn((value: string) => createCaptureOutputText(value)),
-            createElement: jest.fn((tagName: string) => {
-                if (tagName === "img") return image;
-                if (tagName === "canvas") return canvas;
-                throw new Error(`Unexpected capture element: ${tagName}`);
-            }),
-        } as unknown as Document;
-        const text = createCaptureText(ownerDocument, "A & <B>");
-        const omittedImage = createCaptureElement(ownerDocument, "img", {
-            attributes: { src: "https://remote.example/pixel.png" },
-        });
-        const paragraph = createCaptureElement(ownerDocument, "p", {
-            attributes: { href: "https://remote.example/link" },
-            children: [text, omittedImage],
-            styles: {
-                color: "rgb(59, 48, 40)",
-                "background-image": "url(https://remote.example/background.png)",
-            },
-        });
-        const element = createCaptureElement(ownerDocument, "div", {
-            children: [paragraph],
-            styles: {
-                display: "flex",
-                width: "540px",
-                height: "720px",
-                "background-image": "linear-gradient(#fff, #eee)",
-            },
-        });
+        const toBlob = jest.fn(async () => pngBlob);
+        const snapdomLike = jest.fn(async () => ({ toBlob })) as unknown as SnapdomLike;
 
-        await expect(captureShareCardElement(element as unknown as HTMLElement))
+        await expect(createSnapdomShareCardCapture(snapdomLike)(element))
             .resolves.toBe(pngBlob);
 
-        expect(canvas.width).toBe(1080);
-        expect(canvas.height).toBe(1440);
-        expect(drawImage).toHaveBeenCalledWith(image, 0, 0, 1080, 1440);
-        expect(createObjectURL).not.toHaveBeenCalled();
-        expect(imageSource).toMatch(/^data:image\/svg\+xml;charset=utf-8,/);
-        const encodedSvg = imageSource.slice(imageSource.indexOf(",") + 1);
-        expect(decodeURIComponent(encodedSvg)).toContain("<foreignObject");
-        expect(decodeURIComponent(encodedSvg)).toContain('width="1080"');
-        expect(decodeURIComponent(encodedSvg)).toContain('height="1440"');
-        expect(decodeURIComponent(encodedSvg)).toContain('viewBox="0 0 540 720"');
-        expect(serializedSvg).not.toBeNull();
-        const svg = serializedSvg as unknown as CaptureOutputNode;
-        expect(svg.localName).toBe("svg");
-        expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");
-        expect(svg.attributes.get("width")).toBe("1080");
-        expect(svg.attributes.get("height")).toBe("1440");
-        expect(svg.attributes.get("viewBox")).toBe("0 0 540 720");
-        const foreignObject = svg.childNodes[0]!;
-        expect(foreignObject.localName).toBe("foreignObject");
-        const wrapper = foreignObject.childNodes[0]!;
-        expect(wrapper.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
-        const clonedCard = wrapper.childNodes[0]!;
-        expect(clonedCard.style.values.get("background-image"))
-            .toBe("linear-gradient(#fff, #eee)");
-        const clonedParagraph = clonedCard.childNodes[0]!;
-        expect(clonedParagraph.attributes.has("href")).toBe(false);
-        expect(clonedParagraph.style.values.get("background-image")).toBeUndefined();
-        expect(clonedParagraph.style.values.get("color")).toBe("rgb(59, 48, 40)");
-        expect(clonedParagraph.childNodes).toHaveLength(1);
-        expect(clonedParagraph.childNodes[0]?.nodeValue).toBe("A & <B>");
+        expect(snapdomLike).toHaveBeenCalledWith(element, {
+            scale: 2,
+            dpr: 1,
+            type: "png",
+            useProxy: "",
+            embedFonts: false,
+            reconcile: false,
+            outerShadows: false,
+            resolvePicturePlaceholders: false,
+            cache: "disabled",
+        });
+        expect(toBlob).toHaveBeenCalledWith({ type: "png" });
     });
 
-    it("keeps the capture implementation free of runtime style nodes and HTML assignment", () => {
+    it("fails closed before SnapDOM when a capture resource is not self-contained", async () => {
+        const document = new ShareCardTestDocument();
+        const card = document.createElement("div");
+        const image = document.createElement("img");
+        image.setAttribute("src", "https://example.com/not-localized.png");
+        card.appendChild(image);
+        const snapdomLike = jest.fn(async () => ({
+            toBlob: async () => new Blob(["png"], { type: "image/png" }),
+        })) as unknown as SnapdomLike;
+
+        expect(() => assertShareCardElementIsSelfContained(asElement(card)))
+            .toThrow("external src resource");
+        await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card)))
+            .rejects.toThrow("external src resource");
+        expect(snapdomLike).not.toHaveBeenCalled();
+
+        image.setAttribute("src", "data:image/png;base64,AAAA");
+        expect(() => assertShareCardElementIsSelfContained(asElement(card))).not.toThrow();
+    });
+
+    it("audits every computed and pseudo-element URL before invoking SnapDOM", async () => {
+        const document = new ShareCardTestDocument();
+        const card = document.createElement("div");
+        const child = document.createElement("span");
+        child.setAttribute("fill", "url(#paint)");
+        card.appendChild(child);
+        const getComputedStyle = jest.fn((_element: Element, pseudo: string | null) => {
+            const values = pseudo === "::before"
+                ? new Map([["filter", "url(https://example.com/filter.svg#blur)"]])
+                : new Map([
+                    ["fill", "url(#paint)"],
+                    ["shape-outside", "none"],
+                ]);
+            const properties = [...values.keys()];
+            return {
+                length: properties.length,
+                item: (index: number) => properties[index] ?? "",
+                getPropertyValue: (property: string) => values.get(property) ?? "",
+            } as unknown as CSSStyleDeclaration;
+        });
+        Object.assign(document.defaultView, { getComputedStyle });
+        const snapdomLike = jest.fn(async () => ({
+            toBlob: async () => new Blob(["png"], { type: "image/png" }),
+        })) as unknown as SnapdomLike;
+
+        expect(() => assertShareCardElementIsSelfContained(asElement(card)))
+            .toThrow("external CSS resource");
+        await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card)))
+            .rejects.toThrow("external CSS resource");
+        expect(getComputedStyle).toHaveBeenCalledWith(expect.anything(), "::before");
+        expect(snapdomLike).not.toHaveBeenCalled();
+
+        getComputedStyle.mockImplementation(() => {
+            const values = new Map([["fill", "url(#paint)"]]);
+            return {
+                length: 1,
+                item: () => "fill",
+                getPropertyValue: (property: string) => values.get(property) ?? "",
+            } as unknown as CSSStyleDeclaration;
+        });
+        child.setAttribute("filter", "url(https://example.com/filter.svg#blur)");
+        expect(() => assertShareCardElementIsSelfContained(asElement(card)))
+            .toThrow("external CSS resource");
+    });
+
+    it.each([
+        "data:text/html,unsafe",
+        "data:image/bmp;base64,AAAA",
+        "data:image/svg+xml;base64,AAAA",
+    ])("accepts only the approved capture data-image formats: %s", (source) => {
+        const document = new ShareCardTestDocument();
+        const image = document.createElement("img");
+        image.setAttribute("src", source);
+
+        if (source.includes("svg+xml")) {
+            expect(() => assertShareCardElementIsSelfContained(asElement(image))).not.toThrow();
+        } else {
+            expect(() => assertShareCardElementIsSelfContained(asElement(image)))
+                .toThrow("external src resource");
+        }
+    });
+
+    it.each([
+        ["empty", new Blob([], { type: "image/png" }), "empty PNG blob"],
+        ["wrong MIME", new Blob(["jpeg"], { type: "image/jpeg" }), "image/jpeg"],
+    ])("rejects a %s SnapDOM blob", async (_label, blob, message) => {
+        const document = new ShareCardTestDocument();
+        const element = asElement(document.createElement("div"));
+        const snapdomLike = jest.fn(async () => ({
+            toBlob: async () => blob,
+        })) as unknown as SnapdomLike;
+        const capture = createSnapdomShareCardCapture(snapdomLike);
+
+        await expect(capture(element)).rejects.toThrow(message);
+    });
+
+    it("propagates SnapDOM and PNG conversion failures", async () => {
+        const document = new ShareCardTestDocument();
+        const element = asElement(document.createElement("div"));
+        const snapError = new Error("snapshot failed");
+        const blobError = new Error("PNG conversion failed");
+        const captureFailure = createSnapdomShareCardCapture(
+            jest.fn(async () => { throw snapError; }) as unknown as SnapdomLike,
+        );
+        const blobFailure = createSnapdomShareCardCapture(jest.fn(async () => ({
+            toBlob: async () => { throw blobError; },
+        })) as unknown as SnapdomLike);
+
+        await expect(captureFailure(element)).rejects.toBe(snapError);
+        await expect(blobFailure(element)).rejects.toBe(blobError);
+    });
+
+    it("keeps the plugin adapter free of owned runtime style nodes and HTML assignment", () => {
         const source = readFileSync(
             resolve(process.cwd(), "src/share-card/share-card-export.ts"),
             "utf8",
         );
-        expect(source).not.toContain("@zumer/snapdom");
+        expect(source).toContain('import("@zumer/snapdom")');
+        expect(source).not.toContain("XMLSerializer");
         expect(source).not.toMatch(/createElement\(\s*["']style["']\s*\)/);
         expect(source).not.toMatch(/\.(?:innerHTML|outerHTML)\s*=/);
     });
@@ -414,6 +350,53 @@ describe("Share Card export", () => {
         expect(cleanup).toHaveBeenCalledTimes(2);
     });
 
+    it("discards a late SnapDOM result after the render owner is cancelled", async () => {
+        const document = new ShareCardTestDocument();
+        const controller = new AbortController();
+        const cleanup = jest.fn(() => controller.abort());
+        const renderer = {
+            renderPage: jest.fn(async () => ({
+                cardEl: asElement(document.createElement("div")),
+                signal: controller.signal,
+                cleanup,
+            })),
+        } as unknown as ShareCardRenderer;
+        let finishCapture!: (blob: Blob) => void;
+        const capture = jest.fn(() => new Promise<Blob>((resolveCapture) => {
+            finishCapture = resolveCapture;
+        }));
+        const createBinary = jest.fn(async () => undefined);
+        const vault = {
+            getAbstractFileByPath: jest.fn(() => null),
+            adapter: { exists: jest.fn(async () => false) },
+            createFolder: jest.fn(async () => undefined),
+            createBinary,
+        } as unknown as Vault;
+        const exporter = new ShareCardExporter(
+            { vault } as App,
+            asDocument(document),
+            renderer,
+            { theme: "light" },
+            { capture },
+        );
+
+        const pending = exporter.savePages([{ content: "one", pageIndex: 0, totalPages: 1 }]);
+        for (let attempt = 0; attempt < 50 && !finishCapture; attempt += 1) {
+            await Promise.resolve();
+        }
+        expect(finishCapture).toBeDefined();
+        controller.abort();
+        finishCapture(new Blob(["png"], { type: "image/png" }));
+
+        await expect(pending).resolves.toEqual({
+            savedPaths: [],
+            attempted: 1,
+            failedPageIndex: 0,
+        });
+        expect(createBinary).not.toHaveBeenCalled();
+        expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
     it("serializes save batches per Vault across exporter instances", async () => {
         const document = new ShareCardTestDocument();
         const storedPaths = new Set<string>();
@@ -500,6 +483,82 @@ describe("Share Card export", () => {
         expect(createFolder).toHaveBeenCalledTimes(1);
         expect(secondRenderer.renderPage).toHaveBeenCalledTimes(1);
         expect(createBinary).toHaveBeenCalledTimes(2);
+    });
+
+    it("performs no Vault reads or writes when a queued save is cancelled", async () => {
+        const document = new ShareCardTestDocument();
+        let releaseFirstCapture!: (blob: Blob) => void;
+        let firstCaptureStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            firstCaptureStarted = resolve;
+        });
+        let folderExists = true;
+        const getAbstractFileByPath = jest.fn((path: string) => (
+            path === "PA-Cards" && folderExists ? { path, children: [] } : null
+        ));
+        const adapterExists = jest.fn(async () => false);
+        const createFolder = jest.fn(async () => {
+            folderExists = true;
+        });
+        const createBinary = jest.fn(async () => undefined);
+        const vault = {
+            getAbstractFileByPath,
+            adapter: { exists: adapterExists },
+            createFolder,
+            createBinary,
+        } as unknown as Vault;
+        const firstRenderer = {
+            renderPage: jest.fn(async () => ({
+                cardEl: asElement(document.createElement("div")),
+                cleanup: jest.fn(),
+            })),
+        } as unknown as ShareCardRenderer;
+        const secondRenderer = {
+            renderPage: jest.fn(async () => ({
+                cardEl: asElement(document.createElement("div")),
+                cleanup: jest.fn(),
+            })),
+        } as unknown as ShareCardRenderer;
+        const first = new ShareCardExporter(
+            { vault } as App,
+            asDocument(document),
+            firstRenderer,
+            { theme: "light" },
+            {
+                capture: () => new Promise<Blob>((resolve) => {
+                    releaseFirstCapture = resolve;
+                    firstCaptureStarted();
+                }),
+            },
+        );
+        const controller = new AbortController();
+        const secondCapture = jest.fn(async () => new Blob(["second"], { type: "image/png" }));
+        const second = new ShareCardExporter(
+            { vault } as App,
+            asDocument(document),
+            secondRenderer,
+            { theme: "light" },
+            { capture: secondCapture, signal: controller.signal },
+        );
+        const page = { content: "one", pageIndex: 0, totalPages: 1 };
+
+        const firstSave = first.savePages([page]);
+        await started;
+        const readsBeforeSecond = getAbstractFileByPath.mock.calls.length
+            + adapterExists.mock.calls.length;
+        const writesBeforeSecond = createFolder.mock.calls.length + createBinary.mock.calls.length;
+        const secondSave = second.savePages([page]);
+        controller.abort();
+        releaseFirstCapture(new Blob(["first"], { type: "image/png" }));
+
+        await expect(firstSave).resolves.toMatchObject({ attempted: 1 });
+        await expect(secondSave).rejects.toBeInstanceOf(ShareCardRenderCancelledError);
+        expect(getAbstractFileByPath.mock.calls.length + adapterExists.mock.calls.length)
+            .toBe(readsBeforeSecond);
+        expect(createFolder.mock.calls.length + createBinary.mock.calls.length)
+            .toBe(writesBeforeSecond + 1);
+        expect(secondRenderer.renderPage).not.toHaveBeenCalled();
+        expect(secondCapture).not.toHaveBeenCalled();
     });
 
     it("continues the per-Vault queue after an earlier transaction rejects", async () => {

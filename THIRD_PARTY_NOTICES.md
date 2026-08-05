@@ -64,6 +64,7 @@ runtime and is licensed with the project source. Reference attribution:
 | `@langchain/textsplitters` | `1.0.1` | `MIT` | `node_modules/@langchain/textsplitters` |
 | `@sqlite.org/sqlite-wasm` | `3.53.0-build1` | `Apache-2.0` | `node_modules/@sqlite.org/sqlite-wasm` |
 | `@standard-schema/spec` | `1.1.0` | `MIT` | `node_modules/@standard-schema/spec` |
+| `@zumer/snapdom` | `2.23.2` | `MIT` | `node_modules/@zumer/snapdom` |
 | `ansi-styles` | `5.2.0` | `MIT` | `node_modules/@langchain/core/node_modules/ansi-styles` |
 | `base64-js` | `1.5.1` | `MIT` | `node_modules/base64-js` |
 | `camelcase` | `6.3.0` | `MIT` | `node_modules/camelcase` |
@@ -465,6 +466,36 @@ Apache License
 MIT License
 
 Copyright (c) 2024 Colin McDonnell
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+~~~
+
+### @zumer/snapdom@2.23.2
+
+- License: `MIT`
+- Lockfile path: `node_modules/@zumer/snapdom`
+- Source file: `node_modules/@zumer/snapdom/LICENSE`
+
+~~~text
+MIT License
+
+Copyright (c) 2025 ZumerLab
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

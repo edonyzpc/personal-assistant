@@ -7,7 +7,15 @@ import {
 } from "../src/share-card/share-card-modal";
 import { ShareCardClipboardUnavailableError } from "../src/share-card/share-card-export";
 import type { ShareCardExporter } from "../src/share-card/share-card-export";
-import type { ShareCardRenderer } from "../src/share-card/share-card-renderer";
+import type {
+    ShareCardPreparedCompletenessSummary,
+    ShareCardRenderer,
+} from "../src/share-card/share-card-renderer";
+import {
+    ShareCardResourceAbortedError,
+    type LocalizedShareCardResources,
+    type ShareCardResourceContext,
+} from "../src/share-card/share-card-resources";
 import {
     MAX_SHARE_CARD_CHARACTERS,
     type CardPage,
@@ -68,6 +76,7 @@ describe("ShareCardModal", () => {
         expect(actions.children.every((child) => child.disabled)).toBe(true);
         expect(document.listenerCount("resize")).toBe(1);
 
+        await flushShareCardTasks();
         resolvePages([
             { content: "one", pageIndex: 0, totalPages: 2 },
             { content: "two", pageIndex: 1, totalPages: 2 },
@@ -125,6 +134,236 @@ describe("ShareCardModal", () => {
             expect.objectContaining({ host: asElement(scale) }),
         );
         modal.onClose();
+    });
+
+    it("localizes explicit resources with invisible base-path context before pagination", async () => {
+        const document = new ShareCardTestDocument();
+        const localized: LocalizedShareCardResources = {
+            markdown: "![missing](data:image/svg+xml,placeholder)",
+            report: {
+                complete: false,
+                resolvedCount: 0,
+                placeholderCount: 1,
+                failedCount: 0,
+                uniqueResourceCount: 1,
+                totalResolvedBytes: 0,
+                resources: [{
+                    id: "resource-1",
+                    kind: "markdown-image",
+                    reference: "missing.png",
+                    status: "placeholder",
+                    failureReason: "resource-not-found",
+                }],
+            },
+        };
+        const contexts: ShareCardResourceContext[] = [];
+        const localizeResources = jest.fn(async (
+            _app: App,
+            _markdown: string,
+            context: ShareCardResourceContext,
+        ) => {
+            contexts.push(context);
+            return localized;
+        });
+        const prepareMarkdown = jest.fn(() => ({
+            markdown: localized.markdown,
+            blocks: [localized.markdown],
+        }));
+        const paginate = jest.fn(async () => [{
+            content: localized.markdown,
+            pageIndex: 0,
+            totalPages: 1,
+        }]);
+        const modal = createModal(document, {
+            localizeResources: localizeResources as unknown as NonNullable<
+                ShareCardModalDependencies["localizeResources"]
+            >,
+            prepareMarkdown,
+            paginate,
+            createRenderer: () => createRenderer(document, []),
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+
+        expect(localizeResources).toHaveBeenCalledWith(
+            expect.anything(),
+            "share me",
+            expect.objectContaining({ resourceBasePath: "source.md" }),
+            expect.objectContaining({ placeholderText: expect.any(Function) }),
+        );
+        expect(contexts[0]?.cache).toBeDefined();
+        expect(contexts[0]?.signal?.aborted).toBe(false);
+        expect(prepareMarkdown).toHaveBeenCalledWith(localized.markdown);
+        expect(paginate).toHaveBeenCalledWith(
+            [localized.markdown],
+            expect.any(Function),
+            { originalCharacterCount: "share me".length },
+        );
+        const status = document.body.querySelector(".pa-share-card-status")!;
+        expect(status.textContent).toContain("placeholder (1)");
+        expect(status.dataset.tone).toBe("warning");
+        expect(document.body.querySelectorAll("*").some((element) => (
+            element.textContent.includes("source.md")
+        ))).toBe(false);
+        modal.onClose();
+    });
+
+    it("keeps a current-page render warning after copy succeeds", async () => {
+        const document = new ShareCardTestDocument();
+        const copyCurrentPage = jest.fn(async () => undefined);
+        const renderer = createRenderer(document, [], {
+            pageCompleteness: {
+                0: { sanitizationIssueCount: 1, usedPlainTextFallback: false },
+            },
+        });
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: () => createExporter({ copyCurrentPage }),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        const status = document.body.querySelector(".pa-share-card-status")!;
+        expect(status.textContent).toContain("placeholder (1)");
+
+        document.body.querySelector(".pa-share-card-actions")!.children[0]!.click();
+        await flushShareCardTasks();
+
+        expect(copyCurrentPage).toHaveBeenCalledTimes(1);
+        expect(notices).toHaveLength(1);
+        expect(String(notices[0]!.message)).toContain("copied");
+        expect(status.textContent).toContain("placeholder (1)");
+        expect(status.textContent).not.toContain("copied");
+        expect(status.dataset.tone).toBe("warning");
+        modal.onClose();
+    });
+
+    it("keeps a non-current prepared-page warning after Save all succeeds", async () => {
+        const document = new ShareCardTestDocument();
+        const pages = [0, 1].map((pageIndex) => ({
+            content: `page ${pageIndex + 1}`,
+            pageIndex,
+            totalPages: 2,
+        }));
+        const renderer = createRenderer(document, [], {
+            preparedCompleteness: {
+                sanitizationIssueCount: 1,
+                usedPlainTextFallback: false,
+            },
+        });
+        const savePages = jest.fn(async () => ({
+            savedPaths: ["PA-Cards/card-1.png", "PA-Cards/card-2.png"],
+            attempted: 2,
+        }));
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "pages", blocks: ["page 1", "page 2"] }),
+            paginate: async () => pages,
+            createRenderer: () => renderer,
+            createExporter: () => createExporter({ savePages }),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        expect(renderer.renderPage).toHaveBeenCalledTimes(1);
+        expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
+            pages,
+            expect.objectContaining({ theme: "light" }),
+        );
+
+        document.body.querySelector(".pa-share-card-actions")!.children[1]!.click();
+        await flushShareCardTasks();
+
+        const status = document.body.querySelector(".pa-share-card-status")!;
+        expect(savePages).toHaveBeenCalledWith(pages);
+        expect(notices).toHaveLength(1);
+        expect(String(notices[0]!.message)).toContain("Images saved: 2");
+        expect(status.textContent).toContain("placeholder (1)");
+        expect(status.textContent).not.toContain("Images saved");
+        expect(status.dataset.tone).toBe("warning");
+        modal.onClose();
+    });
+
+    it("combines a resource placeholder warning with prepared plain-text fallback", async () => {
+        const document = new ShareCardTestDocument();
+        const localized: LocalizedShareCardResources = {
+            markdown: "localized",
+            report: {
+                complete: false,
+                resolvedCount: 0,
+                placeholderCount: 1,
+                failedCount: 0,
+                uniqueResourceCount: 1,
+                totalResolvedBytes: 0,
+                resources: [{
+                    id: "resource-1",
+                    kind: "markdown-image",
+                    reference: "missing.png",
+                    status: "placeholder",
+                    failureReason: "resource-not-found",
+                }],
+            },
+        };
+        const renderer = createRenderer(document, [], {
+            preparedCompleteness: {
+                sanitizationIssueCount: 0,
+                usedPlainTextFallback: true,
+            },
+        });
+        const modal = createModal(document, {
+            localizeResources: jest.fn(async () => localized) as unknown as NonNullable<
+                ShareCardModalDependencies["localizeResources"]
+            >,
+            prepareMarkdown: () => ({ markdown: localized.markdown, blocks: [localized.markdown] }),
+            paginate: async () => [{ content: localized.markdown, pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+
+        const status = document.body.querySelector(".pa-share-card-status")!;
+        expect(status.textContent).toContain("placeholder (1)");
+        expect(status.textContent).toContain("Plain text");
+        expect(status.dataset.tone).toBe("warning");
+        modal.onClose();
+    });
+
+    it("aborts pending resource preparation when the Modal closes", async () => {
+        const document = new ShareCardTestDocument();
+        let preparationSignal: AbortSignal | undefined;
+        const localizeResources = jest.fn((
+            _app: App,
+            _markdown: string,
+            context: ShareCardResourceContext,
+        ) => {
+            preparationSignal = context.signal;
+            return new Promise<LocalizedShareCardResources>((_resolve, reject) => {
+                context.signal?.addEventListener("abort", () => {
+                    reject(new ShareCardResourceAbortedError());
+                }, { once: true });
+            });
+        });
+        const modal = createModal(document, {
+            localizeResources: localizeResources as unknown as NonNullable<
+                ShareCardModalDependencies["localizeResources"]
+            >,
+            createRenderer: () => createRenderer(document, []),
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        await Promise.resolve();
+        expect(preparationSignal?.aborted).toBe(false);
+        modal.onClose();
+        await flushShareCardTasks();
+
+        expect(preparationSignal?.aborted).toBe(true);
+        expect(notices).toHaveLength(0);
     });
 
     it("enforces exactly-once busy state and ignores completion after close", async () => {
@@ -234,6 +473,7 @@ describe("ShareCardModal", () => {
         expect(notices).toHaveLength(2);
         expect(String(notices[0]!.message)).toContain("copied");
         expect(String(notices[1]!.message)).toContain("Images saved: 3");
+        expect(document.body.querySelector(".pa-share-card-status")?.textContent).toBe("");
         modal.onClose();
     });
 
@@ -426,7 +666,7 @@ function createModal(
         content: "share me",
         source: "chat",
         sourceLabel: "PA Chat",
-        sourcePath: "source.md",
+        resourceContext: { basePath: "source.md" },
     },
 ): ShareCardModal {
     const modal = new ShareCardModal({} as App, data, dependencies);
@@ -442,20 +682,33 @@ function createModal(
 function createRenderer(
     document: ShareCardTestDocument,
     renderCleanups: jest.Mock[],
+    completeness: {
+        preparedCompleteness?: ShareCardPreparedCompletenessSummary;
+        pageCompleteness?: Readonly<Record<number, ShareCardPreparedCompletenessSummary>>;
+    } = {},
 ): ShareCardRenderer & {
     renderPage: jest.Mock;
     cleanup: jest.Mock;
 } {
-    const renderPage = jest.fn(async (_page: CardPage, options: { host?: HTMLElement }) => {
+    const renderPage = jest.fn(async (page: CardPage, options: { host?: HTMLElement }) => {
         const card = document.createElement("div");
         card.classList.add("pa-share-card");
         (options.host as unknown as ShareCardTestElement).appendChild(card);
         const cleanup = jest.fn(() => card.remove());
         renderCleanups.push(cleanup);
+        const pageCompleteness = completeness.pageCompleteness?.[page.pageIndex] ?? {
+            sanitizationIssueCount: 0,
+            usedPlainTextFallback: false,
+        };
         return {
             cardEl: asElement(card),
             bodyEl: asElement(document.createElement("div")),
-            usedPlainTextFallback: false,
+            signal: new AbortController().signal,
+            sanitizationIssues: Array.from(
+                { length: pageCompleteness.sanitizationIssueCount },
+                () => ({ tagName: "img", reason: "decode-failed" as const }),
+            ),
+            usedPlainTextFallback: pageCompleteness.usedPlainTextFallback,
             fits: () => true,
             cleanup,
         };
@@ -463,6 +716,13 @@ function createRenderer(
     return {
         renderPage,
         fits: jest.fn(async () => true),
+        recordPreparedFinalPages: jest.fn(),
+        getPreparedCompletenessSummary: jest.fn(() => (
+            completeness.preparedCompleteness ?? {
+                sanitizationIssueCount: 0,
+                usedPlainTextFallback: false,
+            }
+        )),
         cleanup: jest.fn(),
     } as unknown as ShareCardRenderer & {
         renderPage: jest.Mock;

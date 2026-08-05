@@ -26,6 +26,8 @@
     "plugin.chat.action.close": "Close",
     "plugin.shareCard.title": "Share as card",
     "plugin.shareCard.preparing": "Preparing card…",
+    "plugin.shareCard.resourceIncomplete": "Some visual content could not be loaded and is shown as a placeholder ({count}).",
+    "plugin.shareCard.resourcePlaceholder": "Visual unavailable: {label}",
     "plugin.shareCard.renderFallback": "Some formatting could not be shown. Plain text is used instead.",
     "plugin.shareCard.prepareFailed": "Could not prepare the share card. Close it and try again.",
     "plugin.shareCard.tooLarge": "This content is too long for a share card. Shorten it and try again.",

@@ -2140,7 +2140,7 @@ export class LLMView extends ItemView {
                                     content,
                                     source: 'chat',
                                     sourceLabel: 'PA Chat',
-                                    sourcePath,
+                                    resourceContext: { basePath: sourcePath },
                                 }).open();
                             }
                             : undefined,
@@ -2928,7 +2928,7 @@ export class LLMView extends ItemView {
                             content,
                             source: 'chat',
                             sourceLabel: 'PA Chat',
-                            sourcePath,
+                            resourceContext: { basePath: sourcePath },
                         }).open();
                     }
                     : undefined,

@@ -1848,7 +1848,7 @@ describe('LLMView turn lifecycle', () => {
             content: 'first part\n\nlatest part',
             source: 'chat',
             sourceLabel: 'PA Chat',
-            sourcePath: '0.unsorted/Dog.md',
+            resourceContext: { basePath: '0.unsorted/Dog.md' },
         });
         expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
     });
@@ -2006,7 +2006,7 @@ describe('LLMView turn lifecycle', () => {
             content: 'Completed answer with a warning.',
             source: 'chat',
             sourceLabel: 'PA Chat',
-            sourcePath: '0.unsorted/Dog.md',
+            resourceContext: { basePath: '0.unsorted/Dog.md' },
         });
     });
 
@@ -3532,7 +3532,7 @@ describe('LLMView turn lifecycle', () => {
             content: 'restored answer',
             source: 'chat',
             sourceLabel: 'PA Chat',
-            sourcePath: '0.unsorted/Dog.md',
+            resourceContext: { basePath: '0.unsorted/Dog.md' },
         });
     });
 

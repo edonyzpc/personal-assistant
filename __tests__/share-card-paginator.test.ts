@@ -1,5 +1,11 @@
 import {
+    applyShareCardReferenceDefinitionContext,
+    createShareCardFragmentBoundaryPlan,
+    createShareCardReferenceDefinitionContext,
+    isAtomicShareCardVisualBlock,
+    isPureShareCardVisualBlock,
     paginateShareCardMarkdown,
+    MAX_SHARE_CARD_FRAGMENT_BOUNDARIES,
     ShareCardPaginationError,
     ShareCardTooLargeError,
 } from "../src/share-card/share-card-paginator";
@@ -24,6 +30,85 @@ function removeRepeatedWrapper(
 }
 
 describe("paginateShareCardMarkdown", () => {
+    it.each([
+        "![remote](data:image/png;base64,AAAA)",
+        "![[asset.png]]",
+        "<img src=\"data:image/png;base64,AAAA\">",
+        "<svg viewBox=\"0 0 10 10\"><path d=\"M0 0\"/></svg>",
+        "```mermaid\ngraph TD\nA-->B\n```",
+    ])("keeps an approved visual block atomic: %s", async (block) => {
+        expect(isAtomicShareCardVisualBlock(block)).toBe(true);
+        expect(isPureShareCardVisualBlock(block)).toBe(true);
+        expect(createShareCardFragmentBoundaryPlan(block)).toBeNull();
+        await expect(paginateShareCardMarkdown([block], () => false))
+            .rejects.toMatchObject({ code: "unpageable-content" });
+    });
+
+    it("never treats mixed visible text and an inline image as a pure constrained visual", async () => {
+        const block = `${"before ".repeat(30)}![chart](data:image/png;base64,AAAA) ${"after ".repeat(30)}`;
+
+        expect(isAtomicShareCardVisualBlock(block)).toBe(true);
+        expect(isPureShareCardVisualBlock(block)).toBe(false);
+        await expect(paginateShareCardMarkdown([block], () => false))
+            .rejects.toMatchObject({ code: "unpageable-content" });
+    });
+
+    it("uses the original Markdown length before resource data URLs are inlined", async () => {
+        const localized = `![image](data:image/png;base64,${"A".repeat(
+            MAX_SHARE_CARD_CHARACTERS + 1,
+        )})`;
+
+        await expect(paginateShareCardMarkdown(
+            [localized],
+            () => true,
+            { originalCharacterCount: 16 },
+        )).resolves.toEqual([
+            { pageIndex: 0, totalPages: 1, content: localized },
+        ]);
+    });
+
+    it("greedily packs a small visual with adjacent text", async () => {
+        const visual = "```mermaid\ngraph TD\nA-->B\n```";
+        const fits = jest.fn((_content: string) => true);
+
+        const pages = await paginateShareCardMarkdown(
+            ["before", visual, "after"],
+            fits,
+        );
+
+        expect(pages.map((page) => page.content)).toEqual([
+            `before\n\n${visual}\n\nafter`,
+        ]);
+        expect(fits).toHaveBeenCalledTimes(1);
+    });
+
+    it("moves a whole visual with adjacent text to the next page when that prefix fits", async () => {
+        const visual = "![chart](data:image/png;base64,AAAA)";
+        const pages = await paginateShareCardMarkdown(
+            ["before", visual, "after"],
+            (content) => content !== `before\n\n${visual}\n\nafter`
+                && content !== "before\n\n" + visual + "\n\nafter",
+        );
+
+        expect(pages).toHaveLength(2);
+        expect(pages[0]?.content).toContain(visual);
+        expect(pages[0]?.content).toContain("before");
+        expect(pages[1]?.content).toBe("after");
+    });
+
+    it.each([
+        "`![literal](image.png)`",
+        "```md\n![literal](image.png)\n```",
+        "    ![literal](image.png)",
+        "-     ![literal](image.png)",
+        ">     ![literal](image.png)",
+        "<pre>![literal](image.png)</pre>",
+        "<pre>\n![literal](image.png)\n</pre>",
+        "<code>![literal](image.png)</code>",
+    ])("does not classify code-literal visual syntax as atomic: %s", (block) => {
+        expect(isAtomicShareCardVisualBlock(block)).toBe(false);
+    });
+
     it("greedily appends semantic blocks using the measured page index", async () => {
         const measurements: Array<{ markdown: string; pageIndex: number }> = [];
         const pages = await paginateShareCardMarkdown(
@@ -87,6 +172,30 @@ describe("paginateShareCardMarkdown", () => {
         expect(pages.every((page) => !page.content.includes("�"))).toBe(true);
     });
 
+    it("bounds 50k CJK sentinels while preserving measured progress and all content", async () => {
+        const original = "甲".repeat(MAX_SHARE_CARD_CHARACTERS);
+        const boundaryPlan = createShareCardFragmentBoundaryPlan(original);
+
+        expect(boundaryPlan).not.toBeNull();
+        expect(boundaryPlan?.insertions.length).toBeLessThanOrEqual(
+            MAX_SHARE_CARD_FRAGMENT_BOUNDARIES,
+        );
+        const pages = await paginateShareCardMarkdown(
+            [original],
+            (markdown) => Array.from(markdown).length <= 3_000,
+        );
+        expect(pages.length).toBeGreaterThan(1);
+        expect(pages.length).toBeLessThanOrEqual(MAX_SHARE_CARD_PAGES);
+        expect(pages.map((page) => page.content).join("")).toBe(original);
+        const instrumentedOffsets = new Set(boundaryPlan?.boundaries ?? []);
+        for (const segment of pages.flatMap((page) => page.renderPlan?.segments ?? [])) {
+            if (segment.sourceStart > 0) expect(instrumentedOffsets.has(segment.sourceStart)).toBe(true);
+            if (segment.sourceEnd < original.length) {
+                expect(instrumentedOffsets.has(segment.sourceEnd)).toBe(true);
+            }
+        }
+    });
+
     it("repeats fenced-code wrappers when a code block must split", async () => {
         const block = [
             "```ts",
@@ -134,6 +243,113 @@ describe("paginateShareCardMarkdown", () => {
         )).join("")).toBe(text);
     });
 
+    it("uses literal sentinels for fragment boundaries inside inline code", () => {
+        const source = `before \`${"code ".repeat(20)}\` after`;
+        const plan = createShareCardFragmentBoundaryPlan(source);
+        const codeStart = source.indexOf("`") + 1;
+        const codeEnd = source.lastIndexOf("`");
+        const codeInsertions = plan?.insertions.filter((insertion) => (
+            insertion.sourceOffset > codeStart && insertion.sourceOffset < codeEnd
+        ));
+
+        expect(codeInsertions?.length).toBeGreaterThan(0);
+        expect(codeInsertions?.every((insertion) => insertion.kind === "literal")).toBe(true);
+    });
+
+    it("splits task lists only between complete task items", async () => {
+        const first = "- [ ] first task";
+        const second = "- [x] second task";
+        const source = `${first}\n${second}`;
+        const secondStart = first.length + 1;
+        const plan = createShareCardFragmentBoundaryPlan(source);
+
+        expect(plan?.boundaries).toEqual([secondStart]);
+        expect(plan?.insertions).toEqual([{
+            insertionOffset: secondStart + "- [x] ".length,
+            kind: "element",
+            snap: "list-item-start",
+            sourceOffset: secondStart,
+        }]);
+
+        const pages = await paginateShareCardMarkdown(
+            [source],
+            (markdown) => markdown.length <= first.length + 1,
+        );
+        expect(pages.map((page) => page.content)).toEqual([`${first}\n`, second]);
+    });
+
+    it("fails closed for one oversized task item", async () => {
+        const task = `- [ ] ${"single task content ".repeat(12)}`;
+
+        await expect(paginateShareCardMarkdown(
+            [task],
+            (markdown) => markdown.length <= 40,
+        )).rejects.toMatchObject({ code: "unpageable-content" });
+    });
+
+    it("keeps nested child items inside their parent task atomic scope", async () => {
+        const parent = "- [ ] parent task";
+        const childTask = "  - [x] nested task";
+        const childOrdinary = "  - nested ordinary";
+        const source = [parent, childTask, childOrdinary].join("\n");
+        const plan = createShareCardFragmentBoundaryPlan(source);
+
+        expect(plan?.boundaries).toEqual([]);
+        await expect(paginateShareCardMarkdown(
+            [source],
+            (markdown) => markdown.length <= parent.length + 1,
+        )).rejects.toMatchObject({ code: "unpageable-content" });
+    });
+
+    it("does not expose a nested task boundary under an ordinary parent", () => {
+        const parent = "- ordinary parent";
+        const child = "  - [ ] nested task";
+        const childStart = parent.length + 1;
+        const plan = createShareCardFragmentBoundaryPlan(`${parent}\n${child}`);
+
+        expect(plan?.boundaries).not.toContain(childStart);
+        expect(plan?.insertions.some((insertion) => insertion.sourceOffset === childStart))
+            .toBe(false);
+    });
+
+    it("allows a task to paginate before a proven ordinary sibling", async () => {
+        const task = "- [ ] complete task";
+        const ordinary = "- ordinary sibling";
+        const source = `${task}\n${ordinary}`;
+        const siblingStart = task.length + 1;
+        const plan = createShareCardFragmentBoundaryPlan(source);
+        const siblingBoundary = plan?.insertions.find((insertion) => (
+            insertion.sourceOffset === siblingStart
+        ));
+
+        expect(siblingBoundary).toMatchObject({
+            kind: "element",
+            snap: "list-item-start",
+            sourceOffset: siblingStart,
+        });
+        const pages = await paginateShareCardMarkdown(
+            [source],
+            (markdown) => markdown.length <= task.length + 1,
+        );
+        expect(pages.map((page) => page.content)).toEqual([`${task}\n`, ordinary]);
+    });
+
+    it("snaps an intro boundary before the first item of a new list", async () => {
+        const intro = "intro";
+        const item = "- first";
+        const source = `${intro}\n${item}`;
+        const itemStart = intro.length + 1;
+        const plan = createShareCardFragmentBoundaryPlan(source);
+
+        expect(plan?.insertions.find((insertion) => insertion.sourceOffset === itemStart))
+            .toMatchObject({ snap: "list-item-start" });
+        const pages = await paginateShareCardMarkdown(
+            [source],
+            (markdown) => markdown.length <= item.length + 1,
+        );
+        expect(pages.map((page) => page.content)).toEqual([`${intro}\n`, item]);
+    });
+
     it("repeats a complete link around every forced label fragment", async () => {
         const destination = "https://example.com/reference";
         const label = Array.from({ length: 16 }, (_, index) => `label-${index}`).join(" ");
@@ -153,17 +369,28 @@ describe("paginateShareCardMarkdown", () => {
         expect(fragments.join("")).toBe(label);
     });
 
-    it("fails closed rather than separating a reference link from its definition", async () => {
+    it("keeps reference-link definitions as invisible context across page boundaries", async () => {
         const original = "[label][ref]\n[ref]: https://e.x";
 
-        await expect(paginateShareCardMarkdown(
+        const fragmented = await paginateShareCardMarkdown(
             [original],
             (markdown) => markdown.length <= 20,
-        )).rejects.toMatchObject({ code: "unpageable-content" });
-        await expect(paginateShareCardMarkdown(
+        );
+        const separateBlocks = await paginateShareCardMarkdown(
             ["[label][ref]", "[ref]: https://e.x"],
             (markdown) => markdown.length <= 20,
-        )).rejects.toMatchObject({ code: "unpageable-content" });
+        );
+
+        expect(fragmented).toEqual([
+            { pageIndex: 0, totalPages: 1, content: original },
+        ]);
+        expect(separateBlocks).toEqual([{
+            pageIndex: 0,
+            totalPages: 1,
+            content: "[label][ref]\n\n[ref]: https://e.x",
+        }]);
+        expect(fragmented.every((page) => page.content.trim().length > 0)).toBe(true);
+        expect(JSON.stringify(fragmented)).not.toContain("renderPlan");
 
         await expect(paginateShareCardMarkdown(
             [original],
@@ -173,17 +400,59 @@ describe("paginateShareCardMarkdown", () => {
         ]);
     });
 
+    it("keeps reference-image definitions as invisible context without a blank page", async () => {
+        const use = "![chart][image]";
+        const definition = "[image]: data:image/png;base64,AAAA";
+        const pages = await paginateShareCardMarkdown(
+            [use, definition],
+            (markdown) => markdown !== `${use}\n\n${definition}`,
+        );
+
+        expect(pages).toEqual([{
+            pageIndex: 0,
+            totalPages: 1,
+            content: `${use}\n\n${definition}`,
+        }]);
+    });
+
+    it("builds invisible per-block definition context without reading code literals", () => {
+        const definition = "[ref]: https://example.com/reference";
+        const context = createShareCardReferenceDefinitionContext([
+            "[label][ref]",
+            definition,
+            "```md\n[code]: https://example.com/code\n```",
+            "<pre>\n[raw]: https://example.com/raw\n</pre>",
+        ]);
+
+        expect([...context.definitions.keys()]).toEqual(["ref"]);
+        expect(applyShareCardReferenceDefinitionContext("[label][ref]", context))
+            .toBe(`[label][ref]\n\n${definition}`);
+        expect(applyShareCardReferenceDefinitionContext(
+            "```md\n[label][ref]\n```",
+            context,
+        )).toBe("```md\n[label][ref]\n```");
+        expect(applyShareCardReferenceDefinitionContext(
+            "`[label][ref]`",
+            context,
+        )).toBe("`[label][ref]`");
+    });
+
     it.each([
         ["blockquote", "> "],
         ["list", "- "],
-    ])("detects a separated reference definition inside a %s", async (
+    ])("keeps a separated reference definition inside a %s", async (
         _label,
         prefix,
     ) => {
-        await expect(paginateShareCardMarkdown(
+        const pages = await paginateShareCardMarkdown(
             [`${prefix}[label][ref]`, `${prefix}[ref]: https://e.x`],
             (markdown) => markdown.length <= 24,
-        )).rejects.toMatchObject({ code: "unpageable-content" });
+        );
+        expect(pages).toEqual([{
+            pageIndex: 0,
+            totalPages: 1,
+            content: `${prefix}[label][ref]\n\n${prefix}[ref]: https://e.x`,
+        }]);
     });
 
     it("ignores reference-looking literals inside fenced code", async () => {
@@ -217,11 +486,16 @@ describe("paginateShareCardMarkdown", () => {
             .toBe(blocks.join("\n\n"));
     });
 
-    it("finds a reference use after an unmatched literal backtick run", async () => {
-        await expect(paginateShareCardMarkdown(
+    it("keeps context for a reference use after an unmatched literal backtick run", async () => {
+        const pages = await paginateShareCardMarkdown(
             ["` unmatched [label][ref]", "[ref]: https://e.x"],
             (markdown) => markdown.length <= 28,
-        )).rejects.toMatchObject({ code: "unpageable-content" });
+        );
+        expect(pages).toEqual([{
+            pageIndex: 0,
+            totalPages: 1,
+            content: "` unmatched [label][ref]\n\n[ref]: https://e.x",
+        }]);
     });
 
     it.each([
