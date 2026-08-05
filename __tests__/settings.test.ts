@@ -207,6 +207,37 @@ jest.mock('obsidian', () => ({
             return this;
         }
 
+        addTextArea(callback: (text: {
+            inputEl: HTMLTextAreaElement;
+            setPlaceholder: (value: string) => unknown;
+            setValue: (value: unknown) => unknown;
+            onChange: (onChange: (value: string) => unknown) => unknown;
+        }) => void) {
+            const text: {
+                value?: unknown;
+                placeholder?: string;
+                onChange?: (value: string) => unknown;
+            } = {};
+            const inputEl = { rows: 6 } as unknown as HTMLTextAreaElement;
+            const textAreaComponent = {
+                inputEl,
+                setPlaceholder: (value: string) => {
+                    text.placeholder = value;
+                    return textAreaComponent;
+                },
+                setValue: (value: unknown) => {
+                    text.value = value;
+                    return textAreaComponent;
+                },
+                onChange: (onChange: (value: string) => unknown) => {
+                    text.onChange = onChange;
+                    return textAreaComponent;
+                },
+            };
+            callback(textAreaComponent);
+            return this;
+        }
+
         addDropdown(callback: (dropdown: {
             addOption: (value: string, text: string) => unknown;
             setValue: (value: string) => unknown;
@@ -3033,7 +3064,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(quickCaptureToggle?.value).toBe(true);
         expect(destination?.value).toBe('daily');
         expect(destination?.options).toEqual([
-            { value: 'daily', text: 'Daily Note' },
+            { value: 'daily', text: 'Record Note' },
             { value: 'inbox', text: 'Inbox note' },
             { value: 'current-file', text: 'Current file' },
         ]);

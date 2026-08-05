@@ -330,6 +330,7 @@ import {
 } from './pa/memory-use-projection';
 import { includesString, stableHash, parentFolder } from './pa/helpers';
 import { getMemoryTrustLevel } from './pa/memory-trust-level';
+import { buildNoteTemplateContext, DEFAULT_NOTE_TEMPLATE, renderNoteTemplate } from './note-template';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -10466,8 +10467,10 @@ export class PluginManager extends Plugin {
                 await this.createDirectory(directoryPath);
             }
             this.log("creating file: ", filePath);
-            const File = await vault.create(filePath, '');
-            // Create the file and open it in the active leaf
+            const template = this.settings.noteTemplate || DEFAULT_NOTE_TEMPLATE;
+            const context = buildNoteTemplateContext(fileName, new Date(), this.settings.author, "#thoughts");
+            const content = renderNoteTemplate(template, context);
+            const File = await vault.create(filePath, content);
             const leaf = this.app.workspace.getLeaf('tab');
             await leaf.openFile(File);
         } catch (error: unknown) {

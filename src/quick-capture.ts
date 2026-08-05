@@ -2,6 +2,7 @@ import { App, Modal, Notice, TFile, normalizePath } from "obsidian";
 
 import { validateAppendConfinement, validateTargetConfinementSync } from "./ai-services/write-action-framework/target-confinement";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
+import { buildNoteTemplateContext, DEFAULT_NOTE_TEMPLATE, renderNoteTemplate } from "./note-template";
 import { isRecord, parentFolder } from "./pa/helpers";
 
 export const QUICK_CAPTURE_COMMAND_ID = "pa-quick-capture";
@@ -28,6 +29,8 @@ export const QUICK_CAPTURE_DEFAULTS: Readonly<QuickCaptureSettings> = Object.fre
 export interface QuickCaptureRuntimeSettings {
     targetPath: string;
     fileFormat: string;
+    author: string;
+    noteTemplate: string;
     quickCapture?: Partial<QuickCaptureSettings>;
 }
 
@@ -192,7 +195,17 @@ async function ensureFolder(app: App, folder: string): Promise<void> {
     }
 }
 
-async function appendToVaultPath(app: App, path: string, entry: string): Promise<string> {
+interface NoteTemplateSettings {
+    author: string;
+    noteTemplate: string;
+}
+
+async function appendToVaultPath(
+    app: App,
+    path: string,
+    entry: string,
+    templateSettings: NoteTemplateSettings,
+): Promise<string> {
     const normalizedPath = validateQuickCaptureVaultPath(path);
     const file = app.vault.getAbstractFileByPath(normalizedPath);
     if (file instanceof TFile) {
@@ -204,7 +217,14 @@ async function appendToVaultPath(app: App, path: string, entry: string): Promise
         throw new Error(`Quick Capture target is not a Markdown file: ${normalizedPath}`);
     }
     await ensureFolder(app, parentFolder(normalizedPath));
-    await app.vault.create(normalizedPath, `${entry}\n`);
+    const fileName = normalizedPath.split("/").pop()?.replace(/\.md$/i, "") ?? normalizedPath;
+    const template = templateSettings.noteTemplate || DEFAULT_NOTE_TEMPLATE;
+    const context = buildNoteTemplateContext(fileName, new Date(), templateSettings.author, "#capture");
+    const rendered = renderNoteTemplate(template, context);
+    const content = rendered.endsWith("\n")
+        ? `${rendered}\n${entry}\n`
+        : `${rendered}\n\n${entry}\n`;
+    await app.vault.create(normalizedPath, content);
     return normalizedPath;
 }
 
@@ -293,7 +313,10 @@ export class QuickCaptureService {
                 );
             const normalizedPath = validateQuickCaptureVaultPath(path);
             const savedPath = await this.withAppendQueue(normalizedPath, () =>
-                appendToVaultPath(this.host.app, normalizedPath, entry));
+                appendToVaultPath(this.host.app, normalizedPath, entry, {
+                    author: this.host.settings.author,
+                    noteTemplate: this.host.settings.noteTemplate,
+                }));
             new Notice(savedMessage(settings.destination));
             this.schedulePostProcessing(settings, {
                 captureId,

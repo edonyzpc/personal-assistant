@@ -523,6 +523,7 @@ const createPluginHarness = ({
     };
     const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
     plugin.app = { vault, workspace, secretStorage };
+    plugin.settings = { author: "", noteTemplate: "" };
     plugin.log = jest.fn();
 
     return { plugin, vault, openFile, createdFiles, secretStorage };
@@ -627,7 +628,7 @@ describe('record note creation', () => {
         await plugin.createNewNote('.', '2026-05-01');
 
         expect(vault.createFolder).not.toHaveBeenCalled();
-        expect(vault.create).toHaveBeenCalledWith('2026-05-01.md', '');
+        expect(vault.create).toHaveBeenCalledWith('2026-05-01.md', expect.stringContaining('title: 2026-05-01'));
         expect(openFile).toHaveBeenCalledWith(createdFiles[0]);
     });
 
@@ -640,7 +641,7 @@ describe('record note creation', () => {
 
         expect(vault.adapter.exists).toHaveBeenCalledWith('9.src');
         expect(vault.createFolder).not.toHaveBeenCalled();
-        expect(vault.create).toHaveBeenCalledWith('9.src/2026-05-01.md', '');
+        expect(vault.create).toHaveBeenCalledWith('9.src/2026-05-01.md', expect.stringContaining('title: 2026-05-01'));
     });
 
     it('opens an existing record note instead of creating it again', async () => {

@@ -201,6 +201,8 @@ function makeService(
         settings: {
             targetPath: ".",
             fileFormat: "YYYY-MM-DD",
+            author: "",
+            noteTemplate: "",
             quickCapture,
         },
         formatDate: () => "2026-06-28",
@@ -319,23 +321,25 @@ describe("Quick Capture modal layout", () => {
         releaseCreate[0]();
         await Promise.resolve();
         await Promise.resolve();
-        expect(harness.files.get("2026-06-28.md")?.content).toBe("- 09:07 single submit only\n");
+        expect(harness.files.get("2026-06-28.md")?.content).toContain("- 09:07 single submit only");
     });
 });
 
 describe("QuickCaptureService", () => {
-    it("writes exact single-line text to the Daily Note by default", async () => {
+    it("writes single-line text to the Record Note with template by default", async () => {
         const harness = makeAppHarness();
         const service = makeService(harness.app);
 
         await service.captureText("remember the launch lesson");
 
-        expect(harness.vault.create).toHaveBeenCalledWith(
-            "2026-06-28.md",
-            "- 09:07 remember the launch lesson\n",
-        );
+        expect(harness.vault.create).toHaveBeenCalledTimes(1);
+        const createdContent = (harness.vault.create as jest.Mock).mock.calls[0][1] as string;
+        expect(createdContent).toContain("---\ntitle: 2026-06-28");
+        expect(createdContent).toContain("subject: #capture");
+        expect(createdContent).toContain("# 2026-06-28");
+        expect(createdContent).toContain("- 09:07 remember the launch lesson");
         expect(harness.vault.modify).not.toHaveBeenCalled();
-        expect(mockNotices).toEqual(["Saved to Daily Note"]);
+        expect(mockNotices).toEqual(["Saved to Record Note"]);
     });
 
     it("does not write or notify for empty input", async () => {
@@ -439,10 +443,8 @@ describe("QuickCaptureService", () => {
             destination: "daily",
             captureId: expect.stringMatching(/^qc-/),
         }));
-        expect(harness.vault.create).toHaveBeenCalledWith(
-            "2026-06-28.md",
-            "- 09:07 maybe turn this into a task\n",
-        );
+        const createdContent = (harness.vault.create as jest.Mock).mock.calls[0][1] as string;
+        expect(createdContent).toContain("- 09:07 maybe turn this into a task");
     });
 
     it("calls the saved callback only after a raw capture succeeds", async () => {
@@ -477,10 +479,8 @@ describe("QuickCaptureService", () => {
 
         expect(result.status).toBe("saved");
         expect(postProcessCapture).not.toHaveBeenCalled();
-        expect(harness.vault.create).toHaveBeenCalledWith(
-            "2026-06-28.md",
-            "- 09:07 one tap context\n",
-        );
+        const createdContent = (harness.vault.create as jest.Mock).mock.calls[0][1] as string;
+        expect(createdContent).toContain("- 09:07 one tap context");
     });
 
     it("does not let post-processing failure block the raw save", async () => {
@@ -498,7 +498,7 @@ describe("QuickCaptureService", () => {
         });
 
         await Promise.resolve();
-        expect(harness.files.get("2026-06-28.md")?.content).toBe("- 09:07 save even if AI fails\n");
-        expect(mockNotices).toEqual(["Saved to Daily Note"]);
+        expect(harness.files.get("2026-06-28.md")?.content).toContain("- 09:07 save even if AI fails");
+        expect(mockNotices).toEqual(["Saved to Record Note"]);
     });
 });

@@ -4,6 +4,7 @@ import { App, Modal, Notice, PluginSettingTab, SecretComponent, Setting, debounc
 
 import type { PluginManager } from "./plugin"
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
+import { DEFAULT_NOTE_TEMPLATE } from "./note-template";
 import { isRecord } from "./pa/helpers";
 import { getDashScopeImageGenerationEndpoint, isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
@@ -211,6 +212,8 @@ export interface PluginManagerSettings {
     debug: boolean;
     targetPath: string;
     fileFormat: string;
+    author: string;
+    noteTemplate: string;
     previewLimits: number;
     previewTags: string[];
     localGraph: {
@@ -317,6 +320,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     debug: false,
     targetPath: ".",
     fileFormat: "YYYY-MM-DD",
+    author: "",
+    noteTemplate: "",
     previewLimits: 5,
     previewTags: [],
     localGraph: {
@@ -583,6 +588,8 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         ? loadedObject.lastPatternDetectionAt.trim()
         : undefined;
     merged.focusMode = typeof loadedObject.focusMode === "boolean" ? loadedObject.focusMode : false;
+    merged.author = typeof loadedObject.author === "string" ? loadedObject.author.trim() : "";
+    merged.noteTemplate = typeof loadedObject.noteTemplate === "string" ? loadedObject.noteTemplate : "";
     merged.retrievalHabitProfile = mergeRetrievalHabitProfileSettings(loadedObject.retrievalHabitProfile);
     merged.memoryExtractionConsent = mergeMemoryExtractionConsentSettings(loadedObject.memoryExtractionConsent);
     if (!isMemoryExtractionConsentConfirmed(merged.memoryExtractionConsent)) {
@@ -1937,6 +1944,26 @@ export class SettingTab extends PluginSettingTab {
                     plugin.settings.fileFormat = value;
                     this.debouncedSave();
                 }));
+        new Setting(parentEl).setName(this.t("plugin.settings.record.author.name"))
+            .setDesc(this.t("plugin.settings.record.author.desc"))
+            .addText(text => text
+                .setPlaceholder('')
+                .setValue(plugin.settings.author)
+                .onChange((value) => {
+                    plugin.settings.author = value.trim();
+                    this.debouncedSave();
+                }));
+        new Setting(parentEl).setName(this.t("plugin.settings.record.noteTemplate.name"))
+            .setDesc(this.t("plugin.settings.record.noteTemplate.desc"))
+            .addTextArea(text => {
+                text.setPlaceholder(DEFAULT_NOTE_TEMPLATE)
+                    .setValue(plugin.settings.noteTemplate)
+                    .onChange((value) => {
+                        plugin.settings.noteTemplate = value;
+                        this.debouncedSave();
+                    });
+                text.inputEl.rows = 12;
+            });
         new Setting(parentEl).setName(this.t("plugin.settings.record.previewNumber.name"))
             .setDesc(this.t("plugin.settings.record.previewNumber.desc"))
             .addText(text => {
