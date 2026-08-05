@@ -2,11 +2,11 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-07-27
+Updated: 2026-08-04
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
-Bootstrap source: 用户于 2026-07-12 直接授权 docs/Agent/checker lifecycle remediation；2026-07-21 又明确取消 PA 项目内的 Linear Skill 与默认流程，并要求降低 Agent 的文档/token 维护负担。B-115 保持为该长期治理 contract 的稳定 ID。
+Bootstrap source: 用户于 2026-07-12 直接授权 docs/Agent/checker lifecycle remediation；2026-07-21 又明确取消 PA 项目内的 Linear Skill 与默认流程，并要求降低 Agent 的文档/token 维护负担；2026-08-04 要求将 Share Card 未经确认的技术选型和产品边界偏差吸收为项目规范与长期记忆。B-115 保持为该长期治理 contract 的稳定 ID。
 
 ## Context And Selected Governance Choice
 
@@ -31,6 +31,13 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
   `1 Now + 1 Next`、Feature Home link-only、Tracker-only status，且不创建独立
   handoff/closeout 文档。未入链、未索引、无稳定身份的过程草稿可由 checker 证明后
   直接删除；例行 turn 必须按任务读取最小当前 authority。
+- B-115/REQ-06: 用户提供的 spec 或 current authority 明确命名的技术选型与产品、数据、
+  媒体边界必须视为 binding constraint，直到显式 superseding decision 生效。“分析/设计
+  并实现”不授权 Agent 静默替换选型、缩窄或扩大能力边界。Material deviation 必须在
+  production code 或权威 Decision/SDD 变更前区分明确要求、已验证事实、推断与 open
+  decision，向用户提交原选择、证据、选项/取舍、建议和回滚并获得明确批准；实施后生成
+  的文档、测试、代码或 Agent 自写的 `Accepted`/`Approved` 状态不得追溯制造授权。事后
+  发现未批准偏差时必须如实标记，并由用户选择恢复原约束或接受新的带日期决定。
 
 ## Non-goals
 
@@ -53,6 +60,10 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
   定位；Tracker 独占执行状态与跨会话 handoff，Plan/SDD 按复杂度创建，`Validated`
   自动触发 closeout 询问，过程 artifact 吸收后默认删除，且不伪造 Product
   Decision/Product Spec provenance。
+- B-115/AC-06: lifecycle skill 与前向 contract test 明确保护 named technical choice、
+  derived product boundary 和 pre-implementation deviation approval；不得把 Agent 推断
+  写成用户已确认事实，也不得以 post-hoc authority 为未询问的选择背书；事后处置不能
+  回填或伪造事前批准。
 
 ## Traceability
 
@@ -63,6 +74,7 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 | B-115/REQ-04 / B-115/AC-03 | [Documentation Workflow — Active Package](../documentation-workflow.md#3-active-package) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 | B-115/REQ-05 / B-115/AC-04 | [Documentation Workflow — validation](../documentation-workflow.md#验证门) | [`check-docs-script.test.ts`](../../../__tests__/check-docs-script.test.ts)、[`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 | Engineering bootstrap / B-115/AC-05 | [Documentation Workflow](../documentation-workflow.md) | Current Governance index + focused contract tests |
+| B-115/REQ-06 / B-115/AC-06 | [Documentation Workflow — authorization](../documentation-workflow.md#自然语言入口与授权) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 
 ## Authority And Change Boundary
 

@@ -17,6 +17,13 @@ An explicit `review-only`, `analysis-only`, `read-only`, `no-file-changes`,
 overrides every route below. Quoted, historical, negated, and hypothetical
 phrases do not grant write authority.
 
+## Guard Material Decisions
+
+- Treat a named library, framework, API, architecture, or explicit product/data/media boundary in a user-provided spec or current authority as binding until explicitly superseded.
+- Analysis/design/implementation authority does not authorize silently replacing it, inventing a narrower or broader boundary, or treating an Agent inference as user approval.
+- Before production code or authoritative docs, separate explicit requirements, verified facts, inferences, and open decisions. A material deviation needs one compact decision card: original choice, evidence, options/tradeoffs, recommendation, and rollback.
+- Continue only after explicit user approval. An Agent-authored `Accepted`/`Approved` status or post-hoc Decision, SDD, test, or implementation cannot manufacture authority. If discovered later, label the deviation and ask whether to restore the original constraint or accept a new dated decision; never backdate approval.
+
 ## Read Minimally
 
 1. Inspect `git status --short`, focused diffs, and search by ID/slug/concept.

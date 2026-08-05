@@ -301,6 +301,13 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 - Separate must-fix correctness issues from optional polish.
 - For reported error strings, trace that exact command path before widening scope.
 
+## Specification And Deviation Authority
+
+- Treat a named library, framework, API, architecture, or explicit product/data/media boundary in a user-provided spec or current authority as binding until an explicit superseding decision is recorded. Finding defects elsewhere in the same draft does not demote that choice to an implementation suggestion.
+- “Analyze/design and implement” authorizes compatible corrections, not a silent material deviation. A material deviation includes replacing a named technical choice, adding or removing user-visible capability, narrowing supported content/media, or changing data, network, privacy, storage, permission, compatibility, or release behavior.
+- Before production code or authoritative decision/SDD changes, separate explicit requirements, verified facts, inferences, and open decisions. For a proposed deviation, present the original choice, evidence, options and tradeoffs, recommendation, and rollback; continue only after explicit user approval.
+- An Agent-authored `Accepted`/`Approved` status, Decision, Product Spec, SDD, test, or implementation cannot itself prove user approval or supersede a known source constraint. If an unapproved deviation is discovered after implementation, label it honestly and ask whether to restore the original constraint or accept a new dated decision; never backdate approval. Retain the source until the resolved outcome is absorbed under the documentation lifecycle.
+
 ## SDD-Driven Development
 
 This project follows SPEC-Driven Development (SDD). Each substantial PA feature

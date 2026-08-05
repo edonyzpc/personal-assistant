@@ -5,6 +5,8 @@ import { join } from "node:path";
 const repoRoot = process.cwd();
 const docsSkill = read(".agents/skills/pa-docs-lifecycle-manager/SKILL.md");
 const sddSkill = read(".agents/skills/sdd-lifecycle/SKILL.md");
+const governanceContract = read("docs/development/governance/gov-001-agent-managed-project-lifecycle.md");
+const documentationWorkflow = read("docs/development/documentation-workflow.md");
 
 describe("PA lifecycle skill forward contracts", () => {
     it("keeps explicit read-only requests globally zero-write", () => {
@@ -67,6 +69,19 @@ describe("PA lifecycle skill forward contracts", () => {
         expect(docsSkill).toContain("Product behavior, runtime, UI, data, privacy, or permissions");
         expect(docsSkill).toContain("Repo documentation, checker, CI/release tooling, or Agent workflow");
         expect(sddSkill).toContain("Use exactly one authority lane");
+    });
+
+    it("requires explicit approval before a material spec deviation", () => {
+        expect(docsSkill).toContain("named library, framework, API, architecture");
+        expect(docsSkill).toContain("separate explicit requirements, verified facts, inferences, and open decisions");
+        expect(docsSkill).toContain("Continue only after explicit user approval");
+        expect(docsSkill).toContain("Agent-authored `Accepted`/`Approved` status");
+        expect(docsSkill).toContain("never backdate approval");
+        expect(governanceContract).toContain("B-115/REQ-06");
+        expect(governanceContract).toContain("B-115/AC-06");
+        expect(documentationWorkflow).toContain("不授权静默替换技术选型");
+        expect(documentationWorkflow).toContain("不能追溯制造用户授权");
+        expect(documentationWorkflow).toContain("不得回填为“当初已批准”");
     });
 
     it("fails closed on an archive collision", () => {

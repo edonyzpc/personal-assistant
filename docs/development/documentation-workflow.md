@@ -27,6 +27,18 @@ Authority: PA 需求、决策、工程治理、开发状态、验证与历史证
 - “收尾/关闭/归档”才授权终态处置。
 - commit、push、tag、publish、release 始终分别授权。
 - review-only、analysis-only、read-only、no-file-changes 一律零写入。
+- 用户提供的 Spec 或 current authority 明确命名的 library、framework、API、architecture，
+  以及明确的产品、数据或媒体边界，均是 binding constraint，直到新的显式决定完成
+  supersede；同一草稿存在其他缺陷，不会把这些选择自动降级为实现建议。
+- “分析/设计并实现”只授权与已确认契约兼容的修正，不授权静默替换技术选型、增加或
+  删除用户可见能力、缩窄内容/媒体支持，或改变 data/network/privacy/storage/
+  permission/compatibility/release 边界。
+- 若证据支持 material deviation，Agent 必须在 production code 或权威 Decision/SDD
+  变更前区分 explicit requirements、verified facts、inferences 与 open decisions，并提交
+  原选择、证据、选项/取舍、建议和回滚方案；只有用户明确批准后才能继续。实施后补写
+  的 Agent 文档、测试或代码不能追溯制造用户授权，Agent 自写的 `Accepted`/`Approved`
+  状态也不是批准证据。事后发现未批准偏差时，必须如实标记并请用户选择恢复原约束或
+  接受一个新的带日期决定，不得回填为“当初已批准”。
 
 ## Lane
 
