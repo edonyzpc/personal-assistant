@@ -1,39 +1,29 @@
 # Share Card Software Design Document
 
 Document status: Approved
-Updated: 2026-08-04
+Updated: 2026-08-05
 Work item: B-124
 Authority: 本 track 的 source-verified implementation design、兼容性、风险与 test matrix。
 Product spec: [PA Share Card Product Spec](../../../product/specs/pa-share-card-product-spec.md)
 Plan: [Delivery Plan](./plan.md)
 Tracker: [Development Tracker](./tracker.md)
 
-## Current Source Baseline
+> [!note] Owner decision 2026-08-05
+> 用户选择完整渲染保真（内容方案 C）与精确锁定 `@zumer/snapdom@2.23.2`
+> 的窄例外（capture 方案 A）。本 SDD 取代此前 text-first / plugin-owned rasterizer 设计。
 
-| Surface | Verified current source | Design use |
-| --- | --- | --- |
-| Chat actions | `src/chat/chat-view.ts`: `ensureCompletedMessageActions`, history assistant path and `finalizeSuccessfulTurn`; `src/chat/types.ts`: `RenderedMessage` | `shareCardEligible` is persisted from terminal completion and optional `onShareAsCard` is passed only for completed assistant messages using current `copyContent/sourcePath` |
-| Pagelet Panel | `src/pagelet/panel/PanelView.ts`: `currentFindings`, `currentVisibleFindings`, `currentExtra`, Prepared controls and footer; `types.ts`: `PanelCallbacks`; `orchestrator.ts`: callback wiring | Callback keeps app/modal ownership outside leaf DOM view and shares only visible, non-Prepared, non-progress/error findings |
-| Editor command | `src/plugin.ts`: summary and featured-image editor command patterns | `share-selection-as-card` checks trimmed emptiness but passes the original selection |
-| Markdown lifecycle | Existing `Component` + `MarkdownRenderer.render()` patterns in Chat, Pagelet and preview Modal | Every live/measurement/export render owns and unloads an Obsidian `Component`; sync/Promise failures fall back safely |
-| DOM platform | `src/platform-dom.ts`: active document/window and animation-frame helpers; Pagelet `createHtmlElement/clearChildren` | No new global DOM assumption, raw timeout, runtime `<style>`, `innerHTML` or `outerHTML` |
-| Vault binary writes | `Vault.createFolder`, `Vault.createBinary`, `normalizePath` and existing featured-image path behavior | Proposed writer owns folder/path uniqueness and truthful partial result |
-| CSS / locales | `src/custom.pcss`, plugin/pagelet JSON dictionaries and translator functions | scoped `pa-share-card-*` styles and locale keys; no runtime style injection |
-| Capture adapter | `src/share-card/share-card-export.ts`: owner-document SVG/Canvas rasterizer and injected test seams | Plugin-owned adapter serializes only sanitized card DOM, copies an allowlist of computed styles without `url(...)`, and writes fixed `1080×1440` PNG without runtime `<style>` / `innerHTML` |
+## Implemented Architecture Baseline
 
-Current modules:
+| Surface | Current design contract |
+| --- | --- |
+| Entry points | Chat、Pagelet callback/orchestrator、editor selection 统一打开 `ShareCardModal`；不可见的 `resourceContext.basePath` 只用于资源解析，不进入 label 或 Pagelet 分享字段 |
+| Markdown/resources | 保留 image/embed/SVG/Canvas token；只允许 Mermaid visual processor；显式远程/Vault 资源先经有界 resolver 本地化并生成完整性报告 |
+| Pagination/renderer | Modal 分页前逐个语义块执行一次 render/sanitize/readiness，随后 probes、preview 与 export 只组合 inert static prototype clone；视觉块保持原子且参与贪心排版 |
+| Capture/export | 精确 SnapDOM adapter 捕获自包含 DOM；保留 clipboard gesture、Vault queue、unique batch、取消 checkpoint 与 truthful partial result |
+| UI/lifecycle | Modal 聚合整批资源、sanitization/decode 与 fallback 完整性；responsive preview、busy token、close/unload cleanup 保持生效 |
+| CSS/locales | scoped Share Card surface 支持视觉块、超高单视觉约束、资源占位与 incomplete 状态 |
 
-```text
-src/share-card/share-card-types.ts       shared data/theme/page/result contracts and dimensions
-src/share-card/share-card-markdown.ts    text-first preparation, semantic blocks, Pagelet projection
-src/share-card/share-card-paginator.ts   async measured greedy pagination and oversize split
-src/share-card/share-card-renderer.ts    card DOM, Markdown lifecycle, fit measurement, media pruning
-src/share-card/share-card-export.ts      local SVG/Canvas blob, clipboard capability, unique Vault batch writes
-src/share-card/share-card-modal.ts       UI state, preview/nav/actions, operation token and cleanup
-```
-
-No persisted setting is added. Repository search verified that command ID `share-selection-as-card`
-was non-conflicting before registration.
+No persisted setting or migration is added.
 
 Requirement traceability: B-124/REQ-01, B-124/REQ-02, B-124/REQ-03,
 B-124/REQ-04, B-124/REQ-05, B-124/REQ-06, B-124/REQ-07, B-124/REQ-08,
@@ -41,101 +31,83 @@ B-124/REQ-09, B-124/REQ-10, B-124/AC-01, B-124/AC-02, B-124/AC-03,
 B-124/AC-04, B-124/AC-05, B-124/AC-06, B-124/AC-07, B-124/AC-08,
 B-124/AC-09, B-124/AC-10.
 
-## Design And Data Flow
+## Approved Architecture
 
 ```mermaid
 sequenceDiagram
-  participant Entry as Chat/Pagelet/Editor
+  participant Entry as Chat / Pagelet / Selection
   participant Modal as ShareCardModal
-  participant Prep as Markdown/Paginator
+  participant Session as ShareCardResourceSession
   participant Render as ShareCardRenderer
-  participant Export as ShareCardExporter
-  participant OS as Clipboard/Vault
-  Entry->>Modal: ShareCardData(content, source, sourcePath?)
-  Modal->>Prep: prepare text + semantic blocks
-  Prep->>Render: fits(candidate, first/subsequent)
-  Render-->>Prep: measured overflow result
-  Prep-->>Modal: ordered CardPage[]
-  Modal->>Render: responsive preview current page
-  Modal->>Export: copy current OR capture/save pages
-  Export->>Render: render fixed offscreen target per page
-  Export->>OS: clipboard write OR unique createBinary batch
-  Export-->>Modal: exact outcome / partial count
+  participant Page as Paginator
+  participant Snap as SnapDOM Adapter
+  participant OS as Clipboard / Vault
+  Entry->>Modal: ShareCardData + resourceContext
+  Modal->>Session: scan explicit references only
+  Session->>Session: requestUrl / Vault API -> data URLs
+  Session-->>Modal: localized Markdown + completeness report
+  Modal->>Render: render each semantic block once
+  Render->>Render: sanitize + decode/fonts/quiet wait + static prototype
+  Render-->>Page: text/visual measured blocks
+  Page-->>Modal: ordered atomic CardPage[]
+  Modal->>Render: clone prepared page for preview/export
+  Modal->>Snap: fixed offscreen card, no external resource URI
+  Snap-->>OS: 1080x1440 PNG -> clipboard or sequential Vault writes
 ```
 
-### Text preparation
+The core invariant is:
 
-1. Normalize CRLF only; preserve leading thematic breaks/frontmatter-like content and all user text.
-2. Convert Markdown image/embed forms to readable text labels before render. Preserve literal fenced and
-   CommonMark indented-code content (including quote/list continuation indentation) but remove fence info
-   strings so registered diagram/query/code processors cannot execute or expand Vault reads during card
-   rendering. HTML-block lifecycle, paragraph interruption and same-marker thematic-break rules are tracked
-   before ordinary media neutralization. Fence recognition follows top-level, blockquote, list and
-   nested quote/list containers (including tab-stop continuation); when a list container ends implicitly,
-   ordinary media neutralization resumes immediately. Raw HTML loses resource/event/class/id/data attributes and
-   custom-element tags before render. Markdown is rendered while detached; before connection, prune any
-   `img`, `.internal-embed`, `iframe`, `video`, `audio`, `canvas`, SVG/diagram runtime and interactive
-   control, unwrap non-text elements, and retain only a pure-layout attribute allowlist. Never configure
-   `useProxy`.
-3. Split top-level Markdown into semantic blocks while fenced code remains atomic. Empty separators
-   carry no user text and do not become pages.
-4. Pagelet projection consumes `currentVisibleFindings`; it emits only visible title/description/
-   insight text and a horizontal rule between findings. Equal description/insight text is emitted once.
+> Resource authority and completeness belong to PA before capture. SnapDOM receives only a fixed,
+> stabilized, self-contained card DOM and is never used as a resource loader.
 
-### Measured pagination
-
-`paginateShareCardMarkdown(blocks, fits)` is asynchronous and environment-independent:
-
-- For each page, binary-search the largest measured prefix of consecutive semantic blocks and ask
-  `fits(candidate, pageIndex)` using a hidden card body with the same width, source-label rule and CSS
-  as export. This bounds short-block inputs to logarithmic probes per page instead of one frame per block.
-- The accepted candidate is always measured. If no block fits, flush an existing non-empty page or
-  treat the first block as an oversize singleton on an empty page.
-- If one block cannot fit an empty page, split it at Markdown-safe line/word boundaries. Fenced code
-  chunks repeat their opening/closing fence; container fences split only at complete safe lines. Other
-  Markdown fragments preserve or synthesize the needed heading/list/quote/emphasis/link/inline-code
-  continuation syntax, and an unprovably safe fragment fails closed instead of emitting invalid Markdown.
-  Long plain text uses code-point-safe binary search.
-- A split may not discard trailing whitespace, promote a mid-line marker into a new block, emit an
-  empty fence body, or cut an internal inline-code backtick run. Reference links and their definitions
-  must remain on the same independently rendered page. When those invariants cannot be proven, pagination
-  returns the typed `unpageable-content` result instead of silently changing the document.
-- Every loop must consume input or throw a typed pagination error; pages are non-empty except the
-  explicit empty-content fallback. Concatenated visible text remains ordered and complete.
-- `scrollHeight <= clientHeight + tolerance` is the final fit rule. Render failure switches the block
-  to plain text measurement instead of guessing by character count.
-- Input beyond 50,000 characters or 24 pages returns a typed too-large result; no partial pages are shown.
-
-### Preview and capture isolation
-
-- Modal locks `ShareCardTheme` at open and first builds pages. Visible preview may be scaled by a
-  wrapper based on available width; it never serves as the export target.
-- Renderer creates a fixed `540×720` offscreen target in the Modal owner document for measurement/
-  export, renders and sanitizes one page while detached, connects it, waits one platform animation frame,
-  then captures.
-- Capture clones only safe text elements into an XHTML `foreignObject`, inlines a computed-style
-  allowlist while rejecting resource-bearing CSS values, serializes the SVG with `XMLSerializer`, loads
-  it through an encoded self-contained `data:image/svg+xml` URL, then rasterizes through Canvas at fixed
-  `1080×1440`. The data URL preserves WebKit's origin-clean exception for `foreignObject`; capture creates
-  no runtime `<style>` and assigns no `innerHTML` / `outerHTML`.
-- Copy captures only `currentPageIndex`. Save-all renders, captures and writes each page sequentially;
-  capture/IO failure returns the already saved paths and failed page, without deleting same-run files.
-- All save batches for the same `Vault` are serialized across exporter/Modal instances. The queue covers
-  folder creation, unique batch selection, capture and binary writes, so close/reopen cannot race paths.
-- The renderer does not retain references to a reused mutable DOM frame. Each blob is completed before
-  advancing to the next page and only one final Notice summarizes the result.
-
-## Interfaces And Ownership
+## Data Contracts
 
 ```typescript
-type ShareCardSource = "chat" | "pagelet" | "selection";
-type ShareCardTheme = "light" | "dark";
+type ShareCardResourceKind =
+    | "markdown-image"
+    | "wiki-image"
+    | "html-image"
+    | "svg-reference"
+    | "css-image"
+    | "vault-embed";
+
+type ShareCardResourceStatus = "resolved" | "placeholder" | "failed";
+
+interface ShareCardResourceContext {
+    /** Resolution authority only; never rendered or included in Pagelet content. */
+    basePath?: string;
+}
+
+interface ShareCardResourceRecord {
+    id: string;
+    kind: ShareCardResourceKind;
+    reference: string;
+    status: ShareCardResourceStatus;
+    mimeType?: string;
+    byteLength?: number;
+    failureReason?: ShareCardResourceFailureReason;
+}
+
+interface ShareCardCompletenessReport {
+    complete: boolean;
+    resolvedCount: number;
+    placeholderCount: number;
+    failedCount: number;
+    uniqueResourceCount: number;
+    totalResolvedBytes: number;
+    resources: ShareCardResourceRecord[];
+}
 
 interface ShareCardData {
     content: string;
-    source: ShareCardSource;
+    source: "chat" | "pagelet" | "selection";
     sourceLabel?: string;
-    sourcePath?: string;
+    resourceContext?: ShareCardResourceContext;
+}
+
+interface LocalizedShareCardResources {
+    markdown: string;
+    report: ShareCardCompletenessReport;
 }
 
 interface CardPage {
@@ -143,117 +115,237 @@ interface CardPage {
     totalPages: number;
     content: string;
 }
-
-interface PanelShareCardRequest {
-    findings: PanelFinding[];
-}
-
-interface ShareCardSaveResult {
-    savedPaths: string[];
-    attempted: number;
-    failedPageIndex?: number;
-}
 ```
 
-- `ShareCardModal` owns UI and one busy operation. It delegates DOM/capture/write work and translates
-  outcomes; it never imports Pagelet domain types.
-- Pagelet domain → Markdown projection lives in a pure share-card helper or orchestrator adapter, not
-  in `PanelView` DOM construction. `PanelView` only sends a typed callback request.
-- Exporter accepts injected capture/clipboard seams in tests. Vault path selection is pure where
-  possible; the writer never overwrites `getAbstractFileByPath()` results and a module-local weak queue
-  serializes save transactions per `Vault` without retaining unloaded Vaults.
-- Capture uses only owner-document browser primitives and injected test seams; capture failures are logged
-  with content-free diagnostics, and user notices do not include note text.
-- Copy starts `clipboard.write()` in the originating user gesture and supplies the asynchronous capture as
-  the `ClipboardItem` PNG Promise, preserving WebKit user activation without changing failure semantics.
+`sourceLabel` is visible product copy. `resourceContext.basePath` is resolution-only authority and is
+never serialized into Pagelet payload, card DOM, notices or logs. Existing Chat/editor source paths may
+populate `basePath`; Pagelet may pass the current note path only through its orchestrator-owned context,
+not through findings or the typed `PanelShareCardRequest` content.
 
-## Lifecycle And Cleanup
+Resource records distinguish `unsupported-scheme`, `resource-not-found`, `unsupported-mime`,
+`resource-too-large`, `resource-count-limit`, `resource-total-limit`, `timeout`, `unsafe-svg`, `cycle`,
+`depth-exceeded`, `embedded-content-too-large`, `localized-output-too-large`, `subpath-not-found` and
+cancellation/read/network failures.
+Renderer and capture keep their own typed cancellation, readiness, unsafe-resource and pagination errors.
+User text and report records are not written to production logs.
 
-- `onOpen`: clear, add scoped classes, load preview owner, lock theme, start pagination token.
-- Each async render/export captures an operation token. It may update UI only if the token is current,
-  Modal is open and target still exists.
-- Renderer cleanup invalidates in-flight Markdown/frame awaits. A cancelled render throws the dedicated
-  cancellation signal before it can return a detached or already-cleaned card, and expected close/unload
-  cancellation does not create a user-visible or content-bearing error log.
-- Navigation is disabled until the target page render settles. Rapid navigation advances the token;
-  stale render completion is ignored and its Component unloaded.
-- Export sets one mutex/busy state. Duplicate clicks are no-ops; page navigation and the other export
-  action remain disabled until completion.
-- `onClose`: mark closed, invalidate tokens, unload preview/measurement/export Components, remove
-  offscreen hosts/listeners and clear references. A started explicit Vault write may finish, but it may
-  not issue stale UI updates; its exact result remains in content-free logs.
-- Open Share Card modals register in a module-local set; plugin unload closes the set before disposing
-  other runtime owners, so reload cannot leave a live Modal or capture owner behind.
+## Resource Session
 
-## Data, Privacy, Permission And Cost
+`share-card-resources.ts` owns one session per open Modal:
 
-- Input is an already-visible response/finding or explicit selection; no broader Vault read.
-- Markdown media/resource attributes are removed before the detached render is connected; the local
-  capture adapter has no proxy/network path and only captures the plugin-owned sanitized DOM.
-- No provider/network call, AI credits, analytics event, setting, history or device-local ledger.
-- Copy writes OS clipboard only after the user clicks. Save creates local PNG only after the user clicks;
-  existing files are never overwritten. No copy-failure auto-save.
+1. Scan only ordinary Markdown outside literal inline/fenced/indented/raw-code regions and HTML comments.
+   Recognize explicit Markdown images, image reference definitions, `![[...]]` embeds, raw `img`/SVG
+   image references and raw-element style `url(...)`. Normal links are not fetched.
+2. Remote `https:`/`http:` images use Obsidian `requestUrl` directly against the explicit URL. No proxy,
+   fallback host, cookie discovery, page crawl or adjacent-resource scan is allowed.
+3. Vault references resolve from `resourceContext.basePath` through MetadataCache/Vault APIs. Supported
+   image files use `readBinary`. Markdown note embed supports whole-note, heading and block anchor;
+   frontmatter is excluded for whole-note embeds. It follows only explicit nested embeds with canonical
+   cache, cycle guard and bounded depth/bytes/deadline. Cycle、depth、subpath、read 或 budget 失败变成
+   self-contained visible placeholder 并进入 incomplete report；不扫描或读取无关 Vault 文件。
+4. Allow only bounded static image MIME types: PNG, JPEG, GIF, WebP and safe SVG. Raster input must also
+   pass matching file-signature validation; a claimed MIME or extension alone is insufficient. SVG
+   containing script, event handlers, `foreignObject`, doctype, imports, encoded/relative/custom-scheme
+   references or nested external data-SVG references is rejected before conversion.
+5. Convert accepted bytes to `data:` URLs before Markdown rendering. Deduplicate I/O by canonical explicit
+   source within the Modal and cache success/failure；但每个 occurrence 仍计入 32 MiB localized-output
+   budget，重复图片或 note/DAG expansion 不能绕过内存边界。No duplicate network/Vault reads across
+   pagination, preview and multi-page export.
+6. Apply explicit-reference count、Vault `stat.size` preflight + post-read check、per-resource bytes、
+   embedded-note bytes、total bytes、localized-output bytes、depth and one shared session deadline.
+   Remote/Vault work uses bounded concurrency；一次不可取消的底层 request 超时会打开 circuit
+   breaker，拒绝尚未启动的队列，避免 lingering requests 超出 concurrency。Budgets are constants
+   covered by tests, not settings. All work observes one `AbortSignal` invalidated on close/unload.
+7. A failed explicit visual becomes a visible, inert localized placeholder and a non-complete report,
+   unless continuing would be misleading or unsafe; in that case preparation returns a typed retryable
+   error and capture is disabled.
 
-## Compatibility, Migration And Rollback
+Before any SnapDOM call, PA recursively audits DOM attributes and resource-bearing computed styles.
+`img[src/srcset]`, SVG `href/xlink:href`, poster, background/mask/list-style/content URLs and equivalent
+resource positions may contain only approved `data:` values or fragment references. Residual `http(s):`,
+`blob:`, `file:`, `app:`, `obsidian:` or custom resource schemes fail closed. Ordinary anchor links are
+made inert and are not resource loads.
 
-- Persisted state: none; uninstall/removal leaves only PNGs the user explicitly saved.
-- Desktop/mobile: fixed export target is independent of viewport; preview/actions remain responsive and
-  touch targets at least 44px on mobile. Clipboard capability is runtime-detected from the Modal owner
-  window; explicit Save works when clipboard image write is absent.
-- Obsidian reload/mount/unmount: `Component` owners and offscreen DOM are per Modal and unloaded on
-  close. No global listener or singleton capture host survives reload.
-- Browser bundle: local adapter must pass esbuild browser build, `audit:bundle` and community DOM scan.
-  No Node builtin, runtime style/HTML injection, extra package or packaged asset.
-- Rollback: remove three entry adapters and `src/share-card/*`, notice output changes and scoped CSS/
-  locale keys. No migration or cleanup command is needed; user-created PNGs remain ordinary files.
+## Markdown And Processor Boundary
+
+- Preserve headings, paragraphs, emphasis, links-as-text, lists, quotes, task state, tables, inline/fenced
+  code, image/embed tokens, safe raw SVG and static visual nodes.
+- Preserve literal code exactly; text that merely looks like media inside code never creates a manifest
+  record or resource read.
+- Collect reference-style link/image definitions outside literal code once across semantic blocks. Each
+  prepared block receives only the invisible definitions it actually uses, so separated definitions keep
+  rendering correctly without becoming visible content or rerunning a processor. Pagination may therefore
+  place a use and its source definition on different pages; invisible definition-only pages are folded into
+  an adjacent visible page and never surface as blank cards.
+- Mermaid is the only v1 fenced visual processor. Its fence info remains `mermaid`; all other info strings
+  are removed before `MarkdownRenderer`, so query/dataview/third-party code processors cannot run.
+- Remove script/style/link/base/meta/form/input/button/iframe/object/embed/audio/video and event handlers.
+  Replace user-visible unsupported media/interactive content with an inert localized placeholder instead
+  of silently deleting it.
+- Allow static `img`, sanitized inline SVG, completed Canvas and Mermaid output. Preserve the minimum
+  attributes/classes required for the stabilized visual result; strip navigation, event and external
+  resource attributes before the card can be connected to the live Modal document.
+- If `MarkdownRenderer` fails, plain-text fallback is allowed only when no approved visual resource was
+  expected. Otherwise the report is incomplete and export remains disabled or visibly placeholder-backed.
+
+## One-time Render And Stability
+
+Resources are localized once per Modal cache. Before pagination, Modal calls `prepareBlocks`; each semantic
+input block executes `MarkdownRenderer`, allowed processor, sanitize and readiness exactly once, then the
+renderer retains only an inert static prototype. Pagination probes, preview and export compose/clone those
+prototypes without executing a processor again. The exact content/appearance cache is only a bounded
+unprepared-path or controlled-fragment fallback, not the main pagination architecture. After pagination,
+`recordPreparedFinalPages()` records any final fragment-composition fallback from static prototypes only;
+it does not call `MarkdownRenderer` again.
+
+Each measured candidate carries a non-enumerable render plan containing the semantic block identity and
+exact UTF-16 source range. Before the one render, the renderer inserts collision-free inert boundary
+sentinels only at paginator-approved safe boundaries, records their post-sanitize DOM positions, and removes
+them before readiness measurement. Final fragments use DOM `Range` clones between those recorded positions;
+they never recover a fragment through `textContent.indexOf()` or word/style heuristics. A missing or
+ambiguous boundary fails closed, except for the explicit source-only test seam which is reported as an
+incomplete fallback. Boundary instrumentation is deterministically capped per block, prioritizes structural
+line/word boundaries, remains ordered, and supplies the same candidate set to the paginator so large CJK or
+fenced-code blocks cannot create unbounded sentinel DOM.
+
+Ordinary Markdown boundaries use inert element sentinels; inline/fenced code uses literal sentinels so
+CommonMark never exposes marker markup as user text or changes code semantics. Atomic visual blocks,
+including Mermaid, receive no instrumentation because pagination never consumes an internal boundary.
+Task list items are indivisible: pagination may split only before a proven same-level sibling list item,
+using a conservative quote/list-depth/marker-column structure key. Nested child items remain owned by their
+parent, and uncertain or deeper list boundaries fail closed. A selected list-item line-start boundary snaps
+to the canonical DOM position before `<li>` so neither page gains an empty list shell and task pages retain
+the correct checkbox state. An individual task item that cannot fit therefore fails closed instead of losing
+or duplicating task state.
+
+Stability waits, with one shared deadline and cancellation checks, for:
+
+- `MarkdownRenderer.render()` and its owned `Component`;
+- allowed image `decode()` / load outcome;
+- Mermaid/static processor completion;
+- `document.fonts.ready` when available;
+- two animation frames with no relevant size change.
+
+Animations/transitions are frozen inside the capture artifact. Canvas must already contain a completed
+static bitmap; tainted/unreadable Canvas is a typed failure. Every prepared prototype, Component,
+observer, timer and offscreen host belongs to the Modal renderer and is removed exactly once.
+
+## Pagination
+
+- Keep the existing measured greedy paginator and CommonMark-safe oversize text splitter for the text
+  lane. Measurement uses final card CSS, source-label occupancy and fixed `540x720` body geometry.
+- A visual block (image/embed/Mermaid/SVG/Canvas plus its explicit caption) is atomic. Page boundaries
+  never split its token, subtree or bitmap.
+- Pagination runs after localization. Its text-only probes perform no network or Vault reads; approved
+  visual blocks bypass prefix probes and reuse their exact stabilized prototype.
+- An over-height visual is proportionally constrained to the available body while preserving aspect
+  ratio. It is never cropped. If it remains invalid/illegible or cannot be measured, return typed
+  `unpageable-content` instead of a partial/empty page.
+- Every loop consumes input or fails; visible text and visual order are preserved. Existing limits remain
+  original-input 50,000 characters and 24 non-empty pages.
+- The paginator can select only source boundaries present in the prepared prototype. Dense source input is
+  sampled deterministically under the sentinel cap while retaining endpoints and forward progress; the
+  bounded set is shared by measurement and final `Range` extraction.
+- Inline code may split through literal boundaries while retaining its code wrapper. Task items split only
+  before a proven same-level task or ordinary list sibling; nested children stay with the parent and a single
+  over-height task item returns typed `unpageable-content`.
+
+## SnapDOM Capture Adapter
+
+Production uses exact `@zumer/snapdom@2.23.2`. A narrow adapter factory accepts a SnapDOM-shaped seam so
+Jest does not need to execute the package's native ESM artifact.
+
+```typescript
+const result = await snapdom(cardEl, {
+    scale: 2,
+    dpr: 1,
+    type: "png",
+    useProxy: "",
+    embedFonts: false,
+    reconcile: false,
+    outerShadows: false,
+    resolvePicturePlaceholders: false,
+    cache: "disabled",
+});
+const blob = await result.toBlob({ type: "png" });
+```
+
+The adapter verifies a non-empty `image/png` Blob. SnapDOM's internal cache is disabled and is independent
+of PA's per-Modal explicit-resource cache. SnapDOM rejection, null/non-PNG output or a resource
+audit failure becomes a typed capture error. The approved exception covers SnapDOM's audited image-
+artifact runtime style/dependency behavior only; PA source still creates no runtime `<style>` and assigns
+no `innerHTML`/`outerHTML` in Obsidian UI. SnapDOM does not receive a proxy and capture-phase HTTP/XHR/
+`requestUrl` calls must remain zero.
+
+Fixed card CSS dimensions remain `540x720`; `scale:2` with `dpr:1` produces `1080x1440`. Preview is a
+responsive clone and never the export target.
+
+## Export, UI And Lifecycle
+
+- Copy starts `clipboard.write()` in the click task and supplies the asynchronous PNG promise, preserving
+  WebKit user activation. It captures current page only and never auto-saves on failure.
+- Save captures/writes sequentially. Per-Vault queue, timestamp batch, deterministic page suffix, collision
+  avoidance and truthful partial receipts remain unchanged.
+- Modal displays Preparing, Ready, Incomplete-with-placeholders, Exporting and retryable Error states.
+  Its completeness state aggregates the resource report, every prepared/captured page's sanitization/decode
+  issues and plain-text fallback. Copy/Save success reports only transfer/write success and must not replace
+  an existing incomplete warning; one incomplete page keeps `Save all` incomplete for the whole batch.
+- One operation token/mutex prevents duplicate export and stale navigation. Closing/unloading aborts the
+  resource session and renderer. A late SnapDOM result cannot write clipboard/Vault, show Notice or mutate UI.
+- A started Vault write may finish only if it passed the current transaction cancellation checkpoint;
+  cancellation stops later pages and reports only actually created paths to content-free diagnostics.
+
+## Privacy, Compatibility And Rollback
+
+- No AI/provider call, upload, analytics, new setting or ledger. Direct remote image requests and explicit
+  Vault reads are the only new data access and are disclosed by the product contract.
+- Desktop/iOS/Android share the core path. Clipboard capability is detected on the Modal owner window;
+  Save remains available when image clipboard is unavailable.
+- Dependency/lock/license/notices, browser bundle, source community scan and deployed app smoke are release
+  gates. Desktop evidence does not imply mobile evidence.
+- Rollback removes the entire unpublished Share Card feature, or disables Share Card export while retaining
+  the last accepted product contract; it never silently restores the superseded text-first capture path.
+  Changing media fidelity, resource authority or capture runtime requires a new owner decision. Existing
+  user-created PNG files remain untouched and no data migration is required.
 
 ## Test Matrix
 
-| Requirement / AC | Unit / integration | App smoke | Failure / fallback | Evidence target |
-| --- | --- | --- | --- | --- |
-| REQ-01/02, AC-01..03 | Chat completed assistant action; Pagelet visible payload; selection check/helper | trigger all three entry points | empty/generating/dismissed/Prepared content | Tracker T-03 |
-| REQ-03, AC-04 | theme/dimensions/DOM class assertions; local rasterizer fixed-dimension seam | light/dark + narrow modal/mobile viewport | preview scale must not affect fixed export | Tracker T-02/T-05 |
-| REQ-04/05, AC-05/06 | semantic/fence/long-line/order/task-state tests; media preparation/pruning; render fallback | 50+ lines, code/list/CJK; inspect overflow | Markdown throw → plain text | Tracker T-01/T-02 |
-| REQ-06/07, AC-07/08 | clipboard absent/reject; data-URL current-page capture; unique batch; partial write | paste PNG; single/multi save; conflict | no auto-save; truthful partial notice | Tracker T-04/T-05 |
-| REQ-08/10, AC-09 | duplicate click, rapid nav, close/unload token and per-Vault queue tests | close during preparation/export; reopen | stale completion ignored; later save waits and reselects path | Tracker T-02/T-05 |
-| REQ-09, AC-10 | no proxy/media request; notices/license/bundle checks | browser console/network inspection | remove dependency if bundle/mobile gate fails | Tracker T-04/T-06 |
+| Lane | Required focused evidence |
+| --- | --- |
+| Resource scanner | code literals do not fetch; only explicit image/embed refs; normal links ignored; reference/relative/anchor resolution; no unrelated Vault read |
+| Remote/Vault | request/read once with canonical cache; stat preflight + post-read check; raster MIME + magic; explicit-count/shared-deadline/concurrency circuit breaker; 32 MiB output budget; no proxy; Vault image and bounded whole/heading/block/nested note embeds; cycle/depth/subpath/budget placeholders |
+| SVG/security | scripts/events/foreignObject/encoded-relative-custom/nested external references rejected; safe SVG retained; unsupported interactive nodes visible as placeholders |
+| Processors | Mermaid stabilizes once; ordinary fence remains code; unknown processor never runs; failure is typed/incomplete |
+| Renderer | remote/Vault image, Mermaid, SVG and completed Canvas remain; cross-block reference definitions render invisibly; raw HTML never connects before sanitize; safe standalone Mermaid may use connected staging; code-copy button is silently removed; image/fonts/quiet wait; owner cleanup exactly once |
+| Pagination | existing CJK/code/reference/no-loss suite; separated reference definitions produce no blank page; exact repeated strong/em/link/code source-range clones; inline-code literal marker; task→same-level ordinary/task boundary keeps checkbox, nested child remains atomic, first-list boundary creates no empty shell, over-height single task fails closed; bounded 50k CJK sentinel count with order/no-loss/progress; visual blocks/captions atomic and greedy; code literals never classify as visuals; oversize proportional fit or typed failure; every semantic block renders once and probes/preview/export use static clones |
+| SnapDOM adapter | exact version/options including `cache:"disabled"`; attributes plus all computed/pseudo resource URLs audited; original element identity; PNG validation; zero capture-phase HTTP |
+| Clipboard/save | current-page copy, gesture timing, no failure auto-save, unique batch, ordered pages, partial result, queue recovery |
+| Modal/integration | three eligibility paths, invisible basePath, all-page issue/fallback aggregation, success action preserves warning, rapid nav/duplicate click, close during queued resolve/render/SnapDOM/write, unload cleanup |
+| Runtime | light/dark, fixed output pixels, overflow, remote/Vault/Mermaid/SVG/Canvas pixel evidence, resource failure, copy/save in deployed test vault |
 
-## Closed Design And Review Findings
+Validation order:
 
-| ID | Severity | Original draft finding | Resolution |
-| --- | --- | --- | --- |
-| D-01 | P1 | Fixed char-count pagination can clip styled/CJK/code content and `stripFrontmatter` can delete user text | Closed: actual rendered-height fit, semantic fallback split, no frontmatter stripping |
-| D-02 | P1 | Multi-page save stores repeated references to one mutable DOM and then writes one-page batches with duplicate notices | Closed: sequential fixed offscreen render/capture/write and one summary |
-| D-03 | P1 | Copy failure silently escalates to a durable Vault write | Closed: error only; Save remains a separate explicit action |
-| D-04 | P1 | Fixed 540px preview overflows mobile; capturing transformed preview can change dimensions | Closed: responsive preview is separate from fixed offscreen export target |
-| D-05 | P2 | Direct PanelView modal import bypasses callback ownership and shares dismissed/Prepared findings | Closed: typed callback through orchestrator with visible non-Prepared projection |
-| D-06 | P2 | Async render, navigation and export lack busy/stale/close cleanup | Closed: operation token + mutex + Component/offscreen teardown |
-| D-07 | P2 | Raw Markdown may load remote media/embed content during render/capture | Closed: text-first preparation, post-render pruning, no CORS proxy |
-| D-08 | P2 | Hard-coded paths overwrite/fail on same-name files and errors can claim full success | Closed: unique batch selection and exact full/partial result notices |
-| D-09 | P1 | Third-party capture bundle introduces runtime `<style>`/`innerHTML`, conflicting with the Obsidian community release gate | Closed: remove the package and use a plugin-owned SVG/Canvas adapter with fixed pixel dimensions and no runtime HTML/style injection |
-| D-10 | P1 | Non-empty incomplete/partial Chat output and restored history could receive the completed-response action | Closed: persist `shareCardEligible` from terminal lifecycle; partial/incomplete turns fail closed and rehydrate without the action |
-| D-11 | P1 | Pagelet Review progress/error replaces the visible findings while the old share payload remains addressable | Closed: dedicated `currentShareCardFindings` returns empty during progress/error/Prepared states and orchestrator revalidates identity |
-| D-12 | P1 | Awaiting capture before `clipboard.write()` loses WebKit user activation | Closed: write begins in the click task with a PNG Promise value; copy failure still never saves |
-| D-13 | P2 | Thousands of valid short blocks cause one rendered frame per block | Closed: measured prefix binary search bounds probes while preserving the same semantic order and fit predicate |
-| D-14 | P2 | Plugin unload does not own already-open Share Card modals | Closed: registry-backed `closeAllShareCardModals()` runs at unload and is idempotent |
-| D-15 | P2 | Busy state, offscreen accessibility and light-card secondary text were visually weak | Closed: localized live Copying/Saving status, inert/aria-hidden capture host, 44px mobile targets and AA-oriented light colors |
-| D-16 | P1 | Reference-image scanning crossed whitespace into definitions/links and stopped after malformed syntax | Closed: only an adjacent reference label is consumed and malformed openers cannot suppress later neutralization |
-| D-17 | P1 | Blob-backed SVG `foreignObject` taints Canvas in WebKit, breaking PNG copy/save | Closed: encoded self-contained SVG data URL plus explicit output dimensions and transport regression |
-| D-18 | P2 | Modal-local busy state could not prevent close/reopen save races in one Vault | Closed: complete save transactions are serialized per `Vault`; delayed dual-exporter regression selects a unique second batch |
-| D-19 | P1 | Container-nested fence info could reach registered Markdown processors before post-render pruning | Closed: container-aware fence preparation covers quote/list/nested/tab continuation and resumes media neutralization when a container ends |
-| D-20 | P1 | An oversized raw Markdown block could be cut inside active syntax and change what the next page renders | Closed: deterministic fragment-safe splitting reconstructs supported wrappers and fails closed when no valid fragment fits |
-| D-21 | P1 | Pagelet callback carried `sourcePath`, contradicting the strict text-only AC-02 boundary | Closed: the Pagelet callback and modal payload contain findings-derived text only; no path field crosses the adapter |
-| D-22 | P2 | Renderer cleanup during an awaited Markdown/frame render could let a cleaned card resolve to callers | Closed: post-await cancellation checks throw a dedicated signal; close-during-render/capture regressions prove no stale card or write |
-| D-23 | P1 | Canonical `completed_with_warning` also represents provider/idle/wall-clock interrupted partial text | Closed: `provider_error`, `assistant_idle_timeout` and `wall_clock_exceeded` fail Share Card eligibility while benign completed warnings remain shareable; the explicit false flag persists across history |
-| D-24 | P2 | Removing rendered task-list checkbox inputs erased checked/unchecked meaning | Closed: task checkboxes become inert `[x]` / `[ ]` text before the general interactive-element prune |
-| D-25 | P1 | HTML-block endings and containerized indented code could leave a false paragraph open or route code literals through media rewriting | Closed: explicit HTML-block lifecycle plus container-aware `W+4` indented-code state; independent bounded CommonMark matrices found no remaining P0–P2 |
-| D-26 | P1 | Final fragment boundaries could lose trailing whitespace, split inline-code runs, separate reference definitions, normalize fence semantics, or promote an inline marker into a block | Closed: preserve-or-fail pagination, same-page reference validation, literal-code exclusion, preserved direct fence info/marker and safe fragment starts |
+1. Focused Jest suites for changed modules.
+2. `npx tsc -noEmit -skipLibCheck`, `git diff --check`, community source scan.
+3. `npm run docs:check`, `npm run lint`, exact-lock/notices, `npm ci --dry-run`, build and bundle audit.
+4. `make deploy` plus real Obsidian Desktop smoke. Use a real iOS/Android device when available; otherwise
+   record mobile capture as an explicit unverified release risk.
+5. Independent project review; fix all verified P0/P1/P2 findings before marking implementation validated.
 
-无未关闭的 P0/P1/P2 设计或 review finding。
+## Resolved Design Findings
 
-## Approval
+- D-07 closed by explicit-resource session, bounded direct reads, completeness report and residual URI audit.
+- D-09 closed by owner-approved exact SnapDOM narrow exception plus source/bundle/community/mobile gates.
+- Previous text pagination, clipboard gesture, unique save transaction, eligibility and lifecycle findings
+  remain closed and must keep their regression tests.
 
-- Design authority: User request 2026-08-04 + DEC-026
-- Approved on: 2026-08-04
-- Authorized implementation scope: B-124 Product Spec 全部 REQ/AC；stop at validated implementation，
-  without closeout/commit/push/tag/publish/release。
+No open product or technical selection blocks implementation. Any change to the exact SnapDOM version,
+proxy boundary, media fidelity, explicit-resource authority or incomplete-result behavior requires a new
+owner decision before code diverges.
+
+## Approval And Stop Point
+
+- Product/media decision: user option C, 2026-08-05.
+- Capture runtime decision: user option A, 2026-08-05.
+- Delivery mode: `implement-approved-spec`.
+- Stop at validated implementation. Closeout, commit, push, tag, publish and release require separate authority.

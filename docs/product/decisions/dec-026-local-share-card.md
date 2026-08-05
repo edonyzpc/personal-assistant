@@ -1,10 +1,17 @@
-# DEC-026 — Share Card 采用本地、显式导出的文本卡片
+# DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-08-04
-Authority: 用户于 2026-08-04 明确要求审查 Share Card 方案，并按项目规范完成设计、开发与测试
+Updated: 2026-08-05
+Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，并于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外）
 Work item: B-124
+
+> [!note] Owner decision 2026-08-05
+> 用户选择完整渲染保真：尽量保留 Obsidian 实际渲染结果，包括远程图片、Vault Embed
+> 与图表，并接受由显式内容引用触发的网络、额外读取和失败恢复边界。用户随后选择
+> capture runtime 方案 A：精确锁定 SnapDOM 2.23.2，批准仅限离屏图片文档的 runtime
+> style/已审计 dependency 模式；PA 必须预本地化显式资源，不启用 proxy，并以实际
+> community/release gate 约束发布。F-15/F-16 均已关闭。
 
 ## Context
 
@@ -15,19 +22,27 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 复用同一 DOM、固定宽度移动端预览及同名文件处理都不能直接作为实现契约。
 
 该能力不应成为新的内容队列、自动推广或外部发布通道。它只在用户主动触发时，把
-当前可见或明确选中的文本内容整理为本地图片。
+当前可见或明确选中的渲染内容整理为图片。
 
 ## Options Considered
 
 | Option | Benefits | Costs / risks | Why selected or rejected |
 | --- | --- | --- | --- |
-| A. 本地文本卡片；固定视觉、实测分页、显式复制/保存 | 与 PA 内容复用场景一致；无 provider 或外部发布；输出可预测 | 需要 DOM 测量、移动端预览缩放及导出生命周期 | Accepted；保留原方案的产品意图，同时关闭数据丢失、意外写入和移动端风险 |
-| B. 直接截图当前 Chat / Panel / 编辑器 DOM | 实现较少 | 会把 UI chrome、私密路径和主题差异带入图片；与通用截图插件重叠 | Rejected |
-| C. 直接接入系统分享、上传或社媒发布 | 操作步数少 | 引入外部状态、账号、隐私和失败恢复边界 | Rejected；不在本工作项授权范围 |
+| Text-first：移除图片、Embed 与运行型内容 | 输出可预测、无资源加载 | 丢失原始视觉内容；把 Agent 推导变成产品缩窄 | Rejected by user, 2026-08-05 |
+| Full-fidelity（对话确认的内容/媒体方案 C）：尽量保留明确内容的实际渲染结果 | 符合原始视觉分享意图；图片、Embed、图表可进入卡片 | 允许相关资源请求/读取；需要明确失败、隐私和兼容性边界 | Selected by user, 2026-08-05 |
+| Current-DOM screenshot：直接截图当前 Chat / Panel / 编辑器 DOM | 实现较少 | 会把 UI chrome、私密路径和主题差异带入图片；与通用截图插件重叠 | Rejected |
+| External sharing：直接接入系统分享、上传或社媒发布 | 操作步数少 | 引入外部状态、账号、隐私和失败恢复边界 | Rejected；不在本工作项授权范围 |
+
+### Capture Runtime
+
+| Option | Benefits | Costs / risks | Why selected or rejected |
+| --- | --- | --- | --- |
+| A. 精确锁定 `@zumer/snapdom@2.23.2`，资源由 PA 预本地化 | 完整 CSS/伪元素/SVG/Canvas capture；恢复原 spec 选型 | dependency 内含已审计 runtime style/HTML/fetch；需窄例外、完整性报告与真实全端 gate | Selected by user, 2026-08-05 |
+| B. 继续扩展 plugin-owned capture engine | 可完全控制源码模式 | 相当于长期维护 DOM-to-image engine，完整保真/WebKit/CORS 成本高 | Rejected by user, 2026-08-05 |
 
 ## Decision
 
-选择 Option A，并规定：
+选择 Full-fidelity（对话确认的内容/媒体方案 C），并规定：
 
 1. Share Card 仅由三个显式入口触发：已完成的 PA assistant Chat 回复、Pagelet Panel
    当前可分享 findings、编辑器非空选区。用户消息、生成中回复、空内容、Prepared
@@ -35,9 +50,13 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 2. v1 使用固定 `540×720` CSS card 和 2× raster density，输出 `1080×1440` PNG。卡片
    在打开时锁定当前 light/dark 主题；预览可按可用宽度缩放，但导出必须来自独立、
    未缩放的固定尺寸 DOM。品牌只保留底部 `PA · Personal Assistant`，不加入营销 CTA。
-3. 内容以文本型 Markdown 为主。标题、段落、强调、列表、引用、链接文字与代码可
-   保留；远程图片、Vault embed、iframe、音视频、canvas 与运行型 diagram 不进入
-   导出资源抓取。不得为卡片请求 CORS proxy 或扩大笔记读取范围。
+3. 卡片追求明确分享内容的完整渲染保真。除文字、Markdown 结构和 CSS 外，远程图片、
+   Vault 图片与 Markdown note embed、Mermaid/Canvas/SVG 图表及浏览器可捕获的静态视觉
+   结果均应尽量保留。Markdown note embed 支持整篇、heading 与 block anchor，只沿嵌入
+   内容中的显式 embed 有界递归，并以去重缓存、resource/byte/time/depth budget、cycle
+   guard、32 MiB localized-output budget 与取消信号限制读取。只解析输入明确引用的资源，
+   不扫描无关 Vault 内容；资源
+   失败不得被静默删除或冒充完整成功。是否使用 CORS proxy 不在本决定中授权。
 4. 分页以与最终卡片相同 CSS 和宽度进行实际 DOM 高度测量，优先在语义块边界分页；
    超高单块再按保持 Markdown 有效的行/词边界拆分。不得依赖固定字符数估算，不得
    静默截断，也不得把 YAML/thematic break 误判后删除。超出明确安全上限时应拒绝
@@ -48,16 +67,25 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 6. 导出期间按钮进入 busy/disabled 状态并阻止并发操作；关闭 Modal、切页和异步
    Markdown 渲染不得产生 stale DOM 写入。所有 render `Component`、离屏节点、事件与
    异步 owner 在关闭后清理。
-7. Share Card 不调用 AI provider、不上传、不新增设置或持久状态。唯一 durable effect
-   是用户明确点击保存后创建 PNG；复制与预览不修改 Vault。
+7. Share Card 不调用 AI provider、不上传、不新增设置或持久状态。渲染明确引用的远程
+   资源可以产生直接网络请求，Vault Embed 可以读取其引用内容，但不得扩展为无关 Vault
+   搜索。唯一 durable effect 是用户明确点击保存后创建 PNG；复制与预览不修改 Vault。
+8. Capture 使用精确锁定的 `@zumer/snapdom@2.23.2`，固定 `scale:2`、`dpr:1`、
+   `type:"png"`、`useProxy:""`、`embedFonts:false`、`reconcile:false`、
+   `outerShadows:false`、`resolvePicturePlaceholders:false`、`cache:"disabled"`。PA 在
+   capture 前用 Obsidian/Vault API 将获准的显式资源转换为本地 data URL，并单独报告
+   资源完整性；SnapDOM 只接收离屏 card DOM。其内部 cache 禁用不影响 PA 每 Modal 的
+   显式资源去重缓存。用户批准其离屏图片生成所必需的 runtime style 与已审计 dependency
+   模式，但未批准向 Obsidian live UI 注入 style、直接扫描无关资源或绕过后续
+   community/release gate。
 
 ## Consequences
 
 - Product behavior: PA 多一个低打扰的内容复用出口；Chat 动作保持完成后出现，Pagelet
   只分享当前可见且非 Prepared read-only 的 findings，编辑器选区入口仍由用户主动控制。
-- Architecture / data / safety: 新增共享 card renderer/paginator/exporter；导出使用插件自有、
-  无运行时 `<style>` / HTML 字符串注入的 SVG `foreignObject` + Canvas capture adapter，只消费
-  已净化的本地卡片 DOM，不引入网络代理或第三方 capture runtime。
+- Architecture / data / safety: 新增共享 card renderer/paginator/exporter；PA-owned resolver
+  限定显式资源并在 capture 前本地化，SnapDOM 只负责稳定 DOM → 固定像素 PNG。依赖的
+  窄例外、固定版本和真实 community/mobile gate 由 B-124 Tracker 持续验证。
 - Compatibility / migration: 无 setting 或 persisted-state migration；桌面和移动端共享
   数据契约，移动端 clipboard 不可用时仍可显式保存。
 - Work created or removed: B-124 进入 L3 Active Package；原 1,159 行实现草稿在结论
@@ -67,8 +95,7 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 
 - 真实使用证明 `1080×1440` 不适合主要分享目的，需要新的比例/模板选择。
 - 用户需要自定义品牌、颜色、字体、保存目录或无品牌导出。
-- 远程图片、Mermaid、Canvas 或 Vault embed 成为高频核心内容，且可在不扩大隐私和
-  移动端兼容风险的前提下可靠捕获。
+- 第三方插件视图、交互组件或嵌套资源无法以可接受的失败语义捕获。
 - 用户明确要求系统 share sheet 或外部发布，并接受对应账号、权限与失败恢复设计。
 
 ## Traceability
@@ -76,5 +103,5 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 - Product Spec: [B-124 Share Card Product Spec](../specs/pa-share-card-product-spec.md)
 - Active Package: [Share Card Development Track](../../development/active/share-card/README.md)
 - Architecture / SDD: [Share Card SDD](../../development/active/share-card/sdd.md)
-- Source request: User request 2026-08-04
+- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05
 - Supersedes / superseded by: supersedes the design assumptions in the removed original implementation draft; none otherwise
