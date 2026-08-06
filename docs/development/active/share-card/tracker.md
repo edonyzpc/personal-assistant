@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Validated
-Updated: 2026-08-05
+Updated: 2026-08-06
 Work item: B-124
 Authority: 本 track 的唯一执行状态、finding、验证证据与 closeout readiness。
 Product spec: [PA Share Card Product Spec](../../../product/specs/pa-share-card-product-spec.md)
@@ -11,13 +11,16 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: Validated full-fidelity implementation under approved SnapDOM option A
-- Next action: 等待用户另行授权 commit/push 或 lifecycle closeout；真实 iOS/Android 只作为后续
-  release evidence，不冒充本轮 Desktop/mobile-viewport 验证。
-- Blocker / decision needed: none；F-15/F-16 已由用户于 2026-08-05 明确关闭。
-- Last verified behavior: Chat、Pagelet、selection 三入口，13 页 measured preview，显式资源、
-  light/dark、420px 窄窗、clipboard、双主题 13 页 Vault Save、close/reopen/cleanup 与 preview/PNG
-  一致性已在部署后的 Obsidian test vault 观察；最终完整项目 gate、bundle audit 与日志检查通过。
+- Current phase: 2026-08-06 owner amendment 已完成实现、review 与当前部署验证。
+- Next action: 等待 owner 另行授权 commit、closeout、beta/stable packaging、push 或 release；本轮未执行
+  这些 Git/发布动作。
+- Blocker / decision needed: None。iPhone 证据使用 owner-approved Obsidian mobile simulation；
+  iPad 仅记录 Obsidian layout simulation。两者都不声明真实设备 touch、WKWebView、safe-area
+  或性能；真机仅为后续 release residual。
+- Last verified behavior: 当前部署在真实 Obsidian Desktop 可见窗口完成 Chat、Pagelet、editor
+  selection、Ring selection/note 四入口，英文/中文 Ring 标签、light/dark、13 页统一 `15px`
+  measured pagination、显式媒体/失败占位、Clipboard、Vault Save、离线 OFL、close/reopen cleanup；
+  iPhone `393x852` 与 iPad `820x1000` 均按模拟边界通过，最终恢复 desktop/light/en/golden note。
 
 Requirement traceability: B-124/REQ-01, B-124/REQ-02, B-124/REQ-03,
 B-124/REQ-04, B-124/REQ-05, B-124/REQ-06, B-124/REQ-07, B-124/REQ-08,
@@ -27,6 +30,9 @@ B-124/AC-09, B-124/AC-10.
 
 ## Work
 
+> T-01..T-06 及其证据只覆盖 2026-08-05 三入口基线。它们保持不改写以保留真实历史，
+> 但不能覆盖 T-07..T-09 或任何实现 2026-08-06 amendment 的新 commit。
+
 | ID | Requirement / AC | Slice | Status | Evidence |
 | --- | --- | --- | --- | --- |
 | T-01 | B-124/REQ-04/05 / AC-05/06 | Markdown/resource preparation + measured paginator | [x] Complete | focused fixtures + deployed 5071-char/13-page smoke；每页 body `603=603`，remote/Vault/nested heading/Mermaid/SVG/placeholder 均进入 preview/PNG |
@@ -35,6 +41,9 @@ B-124/AC-09, B-124/AC-10.
 | T-04 | B-124/REQ-06/07/09 / AC-07/08 | SnapDOM capture + clipboard/Vault export | [x] Complete | Copy light/dark 成功且不隐式写 Vault；light/dark 各保存 13 张有序 unique PNG，全部 `1080x1440` |
 | T-05 | B-124/AC-04..09 | CSS/locales + focused UI/runtime tests | [x] Complete | placeholder/warning 在 Copy/Save 后保留；双主题 preview/PNG、Mermaid 可读性、窄窗分页与 actions 已观察 |
 | T-06 | B-124/AC-10 | docs/notices/local gate/review/build/bundle/smoke | [x] Complete | dependency/full tests/lint/build/bundle/deploy/docs/community scan 与干净 Obsidian console/errors 均通过 |
+| T-07 | B-124/REQ-01/02/10 / AC-03/10 | Ring Share + selection-first/current-note source resolution | [x] Complete | 四项 Ring、selection 原样且无可见 filename/path、parser-valid YAML-only 剥离、note basename、file-null/空正文提示均有 focused regression；Pagelet review 无剩余 P0–P2 |
+| T-08 | B-124/REQ-03/04/09/10 / AC-04/05/10 | graphic brand + local font + adaptive pagination + visible localized Ring labels/geometry | [x] Complete | 图形 logo + `Personal Assistant`、local WOFF2/data URL/no font discovery、完整 OFL 离线 Legal、prepare-once 16→15→14、完整中英标签、desktop/iPad arc 与 phone row/column 均已实现并通过自动化/打包 gate |
+| T-09 | B-124/AC-03..10 | amendment review + focused/full gate + deployed smoke | [x] Complete | 当前 full gate、repo-local/iCloud deploy、真实 Desktop 四入口/双主题/长分页/媒体/Copy/Save/Legal/cleanup、owner-approved iPhone simulation 与 iPad layout simulation 均 PASS；旧 smoke 仅保留历史，不作为本行替代证据 |
 
 ## Findings
 
@@ -61,11 +70,17 @@ B-124/AC-09, B-124/AC-10.
 | F-19 | P1 | 完整性只看当前预览页，Copy/Save success 可覆盖 warning；排队中的 Save 在关闭后仍可能开始 folder/path mutation | 聚合所有 prepared pages 的 issue/fallback；成功仅表示传输/写入；queue/deferred mutation 前 cancellation checkpoint | modal/export focused suite + full gates | Closed |
 | F-20 | P1 | literal sentinel 清理会全局删除尚未处理的空 element sentinel，真实 selection 因 boundary marker detached 无法打开 | 维护 pending element sentinel 集合；仅在消费前移出 preserve set，空 span pruning 跳过其余 pending markers | helper regression + 5071-char/13-page deployed selection smoke | Closed |
 | F-21 | P1 | Mermaid 内嵌 `<style>` 被安全清理后，SVG node 回退为黑底且 label 对比度不足，preview/PNG 虽一致但不满足完整保真 | 删除 `<style>` 前后 diff 有限 paint/text computed properties，并在属性清理后物化安全 inline 值；外部或 unsupported resource-bearing style 进入 completeness issue | renderer regression；light/dark preview 与 `1080x1440` page-10 PNG 可读 | Closed |
+| F-22 | P1 | SnapDOM 初始 `embedFonts:true` 会让 Safari 在 `beforeSnap` 前 warm-up/document font discovery | 初始 options 即 `embedFonts:false` + empty `localFonts`；hook 只重申边界，`beforeRender` 注入唯一 data face | export lifecycle regression + production bundle | Closed |
+| F-23 | P1 | 字体只在根节点继承、footer 切回 system-ui，renderer 等待全 document fonts；coverage/release/license 分发边界不足 | scoped non-code inherit、只 `fonts.load` PA face、固定 coverage + device-local same-size glyph fallback、真实 WOFF2/name/fsType/exact set/tool/hash/bundle gates；完整 OFL 嵌入 main.js 并离线可读 | font/export/renderer/settings/audit regressions + reproducible OTF check | Closed |
+| F-24 | P2 | 15/14px 候选重复执行 Markdown processors，候选失败会丢掉有效 16px baseline | block prototypes 只 prepare 一次；不同 root size 只重测，候选失败保留已验证 16px；只有减页才接受最大较小字号 | modal/renderer regressions | Closed |
+| F-25 | P2 | 四项 Ring 的空正文禁用、file-null、标签裁切、phone toolbar 缺失降级、focus 仍自动关闭存在交互缺口 | action 始终可达并给恢复提示；要求 active file；完整 label；phone fallback 按 corner 远离 Pet；focus/touch active 时暂停 dismiss | Pagelet focused suites + independent re-review | Closed |
 
 ## Validation Log
 
-> 2026-08-04 的 text-first 验证是已被 2026-08-05 C+A 契约取代的历史证据，不作为当前
-> full-fidelity implementation 的通过依据；当前验证只认下方新增的 2026-08-05 记录。
+> 2026-08-04 的 text-first 验证是已被 2026-08-05 C+A 契约取代的历史证据。下方
+> 2026-08-05 记录真实证明三入口 full-fidelity baseline，但同样早于 2026-08-06 owner
+> amendment；它们不覆盖 amendment code、当前工作树或其后形成的 commit。只有在新实现上
+> 重跑并追加的证据，才能支持 T-07..T-09 与当前 contract。
 
 | Date | Requirement / AC | Check | Result | Evidence / residual risk |
 | --- | --- | --- | --- | --- |
@@ -95,11 +110,23 @@ B-124/AC-09, B-124/AC-10.
 | 2026-08-05 | AC-07/08/10 | real Copy + Vault Save | PASS | light page 5 与 dark page 1 Copy 均收到 clipboard success；Copy 前无 `PA-Cards` 写入。最终 light batch `152608` 与 dark batch `152844` 各 13 张，26/26 PNG 均为 `1080x1440` 且顺序/命名完整；warning 未被 success 覆盖 |
 | 2026-08-05 | AC-04/09/10 | close/reopen + narrow mobile viewport | PASS | Escape 后 modal/capture host `0/0`，同一 selection 可重开；Desktop mobile emulation + 420×850 window 下 scale `0.685185...`、document/modal horizontal overflow 0、nav/actions 全部 44px，真实翻到 page 2 后关闭；非真实 iOS/Android 触控声明 |
 | 2026-08-05 | AC-10 | final gate + bundle + deployed logs | PASS | final `make deploy`: 185 suites / 3945 tests，lint/typecheck/build；`dist/main.js` 5,042,744 bytes、gzip 1,557,501 < 1,572,864；SnapDOM 2.23.2；community scan无 match；干净 final smoke console 仅 CLI receipts、errors none |
+| 2026-08-06 | REQ-01..04/09/10 | owner amendment recorded in DEC/Product Spec/Plan/SDD | PASS (authority only) | Ring 第四项 Share、source priority/projection、品牌/字体/标签、端侧布局与整批字号已获授权；实现、自动化与 app evidence 尚未在本行声明 |
+| 2026-08-06 | REQ-01..04/09/10 / AC-03..10 | focused + full implementation gate | PASS | targeted Share/Pagelet/settings/audit suites；final `make deploy` 186 suites / 3976 tests；TypeScript、ESLint、build、diff/community scan 全绿；最新 assets copied to repo-local test vault |
+| 2026-08-06 | AC-04/09/10 | font provenance/license + bundle audit | PASS | official Source Han Serif 2.003R OTF 可复现 `065c6d…` / 1,034,300-byte WOFF2；真实 name/PostScript/fsType/exact coverage/tool/hash gate；`dist/main.js` 6,438,172 bytes、gzip 2,602,819 < 2,883,584，exact font bytes 与完整可读 OFL 均嵌入 |
+| 2026-08-06 | AC-10 | docs/notices/review | PASS | docs 168 files / 1145 links；35 runtime packages / 12 bundled resources notices；Pagelet delta review 无剩余 P0–P2；export/adaptive/font/release findings F-22..F-25 已关闭 |
+| 2026-08-06 | AC-03..10 | real Obsidian Desktop + iPhone amendment smoke | BLOCKED | macOS 锁屏；Computer Use 两次确认无法进入 Obsidian。未以 CLI、旧 smoke 或自动化替代 visual/touch/Copy/Save 声明 |
+| 2026-08-06 | AC-10 | owner mobile evidence decision | PASS | owner 明确允许本轮 iPhone 以 Obsidian mobile emulation 验证；必须标注模拟，不声明真实 iPhone touch/WKWebView/safe-area/performance，真机仅为后续 release residual |
+| 2026-08-06 | AC-03/04/07/08/09/10 | Obsidian iPhone simulation | PASS (simulation) | `dev:mobile on` + `393x852` 得到 `is-phone` 与 mobile-toolbar Pet；Ring 四项顺序正确，因全标签不可横向容纳而整组竖排，4/4 均 44px、viewport 内且中心 hit-self；模拟 touch 越界取消、520ms hold、action exactly-once 均通过；preview 无横向 overflow，Save 实写 `1080x1440` PNG。Clipboard 用户激活由同一当前部署的真实 Desktop smoke 证明；本行不声明真机能力 |
+| 2026-08-06 | AC-10 | iCloud development deploy / asset match | PASS | `make deploy-icloud` 复跑 186 suites / 3976 tests、lint/build；`main.js`、两个 manifest 与 `styles.css` 逐一 `cmp`/SHA-256 一致。仅证明同构部署，不声明真机观察 |
+| 2026-08-06 | AC-01..04/10 | current deployed Desktop entrypoints/locales/themes | PASS | 真实可见窗口实际点击已完成 assistant 的 Chat `Share as card`（`PA Chat`）、两条 provider-free visible Pagelet findings（`PA Pagelet`）、命令面板 `Share Selection as Card` 与 Ring selection/note；selection 两入口均无 filename/path，note 显示 basename；英文四标签与临时 `zh-cn` runtime hook 下 `随手记下 / 审阅 / 发现关联 / 分享为卡片` 均完整可见；light 短卡与 dark 长卡品牌、字体、对比度通过，最后恢复 light/en |
+| 2026-08-06 | AC-04..07/09/10 | current deployed long pagination/media/Clipboard | PASS | `share-card-smoke.md` note fallback 得到 dark `13` 页，13/13 body 均 `15px`、`clientHeight=scrollHeight=585`、末页保留 `SHARE-CARD-SMOKE-END`；remote/Vault image、heading/nested embed、Mermaid、static SVG 与 unavailable `data:image/svg+xml` placeholder 可见，capture DOM HTTP(S) attr 为 `0`；真实点击 page 10 Copy 后 clipboard 仅含 `1080x1440` PNG（940,095 bytes），`PA-Cards` 仍为 42。light note Copy 同样 `1080x1440` 且无 Vault write，Save 新建 `PA-Card-20260806-142048.png`（`1080x1440`） |
+| 2026-08-06 | AC-04/09/10 | Obsidian iPad simulation | PASS (simulation) | `dev:mobile on` + `820x1000` 得到 `is-tablet`；bottom-right Pet 的四项 Ring 朝内容区形成非行列内向弧，四按钮高度均 `44px`、完整在 viewport 且中心 hit-self；可见截图标签/顺序正确。随后 `dev:mobile off` 并恢复 `1865x1050` desktop；不声明真实 iPad 触控/WKWebView/safe-area/性能 |
+| 2026-08-06 | AC-09/10 | offline Legal + final cleanup/logs | PASS | 独立 Settings 窗口实际点击 `Bundled font license` → `View`；离线 Modal 显示 `PA Share Serif — SIL Open Font License 1.1`，4463-char 正文含标题、termination、AS-IS 与末尾；所有 smoke 结束后 share modal/capture host/font face/Ring 均 `0`、Panel closed、Chat active conversation `null`，active golden、desktop/light/en；fresh console 与 errors 均为空，debug off |
 
 ## Closeout Readiness
 
-- [x] Owning contract 与用户已确认边界一致。
-- [x] Required review/smoke evidence 已记录；release evidence 不在本轮授权范围。
-- [x] 无未完成的本 track 实现项；真实 iOS/Android 属后续 release evidence。
+- [x] Owning contract 与 2026-08-06 用户已确认边界一致。
+- [x] 2026-08-06 amendment 的 required review/smoke evidence 已记录。
+- [x] 无未完成的本 track 实现项。
 - [x] 稳定结论已吸收到 current contract/tests。
 - [ ] 过程文档已标记 delete-after-absorption 或 unique archive evidence。

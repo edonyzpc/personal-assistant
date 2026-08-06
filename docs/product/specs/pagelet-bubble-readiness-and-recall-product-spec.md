@@ -1,10 +1,10 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-08-02
+Updated: 2026-08-06
 Work item: B-108
-Scoped work items: B-118, B-121
-Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
+Scoped work items: B-118, B-121, B-124
+Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-026](../decisions/dec-026-local-share-card.md)
 Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delivery、empty-state 与 progressive-disclosure contract。
 
 ## Status
@@ -13,15 +13,16 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 | --- | --- |
 | Document type | Product specification |
 | Scope | Pagelet Bubble empty-state redesign, Recall/Discover unification, readiness transparency, DeliveryCandidate contract |
-| Delivery / validation status | Phase 6/B-108 substrate and B-118 repairs have recorded automated、review、deploy and bounded desktop/iPhone evidence. Post-F-13 owner admission、raw preload fail-closed and source-invalidation reconciliation pass fixtures、independent review and deployment identity; they did not add a new live owner-path smoke. Portrait/long-press manual checks passed, landscape is `NOT TESTED / accepted waiver`, and no unauthorized real provider/high-risk call is claimed. |
+| Delivery / validation status | Phase 6/B-108 substrate and B-118 repairs have recorded automated、review、deploy and bounded desktop/iPhone evidence. Post-F-13 owner admission、raw preload fail-closed and source-invalidation reconciliation pass fixtures、independent review and deployment identity; they did not add a new live owner-path smoke. B-121 portrait/long-press checks and landscape waiver describe the old three-action Ring only；they do not validate the 2026-08-06 B-124 amendment. |
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
 | Design philosophy | 安静且可信 |
-| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md) |
+| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-026](../decisions/dec-026-local-share-card.md) |
 | Historical provenance (non-authoritative) | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
-| B-121 scoped amendment | [Attention-Aware Delivery Product Spec](./pagelet-attention-aware-delivery-product-spec.md) governs device-local seen suppression and the Pet Action Ring after acknowledged Ready Empty / Intentionally Quiet. The delivered behavior passed automated、review、local/iCloud deployment、desktop smoke and iPhone portrait toolbar geometry/visual gates；the latest Ring is a 44px horizontal row, while physical landscape remains a declared residual rather than a claimed PASS. Final evidence is in the [B-121 compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md). |
+| B-121 scoped amendment | [Attention-Aware Delivery Product Spec](./pagelet-attention-aware-delivery-product-spec.md) governs device-local seen suppression and the Pet Action Ring after acknowledged Ready Empty / Intentionally Quiet. Its [compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md) remains evidence for the delivered three-action baseline only. |
+| B-124 scoped amendment | The 2026-08-06 owner amendment adds Share as the fourth Ring action, with visible EN/ZH localized labels and selection-first/current-note fallback；Desktop/iPad use an inward arc and iPhone uses a complete row when it fits or a whole-column fallback when it does not. [DEC-026](../decisions/dec-026-local-share-card.md) and the [B-124 Product Spec](./pa-share-card-product-spec.md) own content/export behavior；only the [B-124 Tracker](../../development/active/share-card/tracker.md) owns current execution evidence. |
 | Implementation record | [Historical SDD](../../archive/pagelet-bubble-readiness-and-recall-sdd.md) and [redesign tracker](../../archive/pa-product-redesign-development-tracker.md) |
 
 ---
@@ -450,8 +451,8 @@ Notes:
 - The explanation is shown only until this semantic/copy version has actually
   become visible on the current device. "Find related old notes" triggers
   user-initiated Discover from that first explanation.
-- After acknowledgement, Pet short click opens the B-121 Capture / Review /
-  Discover Action Ring instead of replaying this Bubble.
+- After acknowledgement, Pet short click opens the Capture / Review / Discover /
+  Share Action Ring instead of replaying this Bubble.
 - Explicit Quick Review/hotkey stays a Bubble entry; after acknowledgement it
   shows a terse non-teaching empty result rather than replaying this explanation
   or opening Ring.
@@ -606,7 +607,8 @@ Notes:
 
 - Every state has at most **one primary action** and at most **two secondary
   actions**.
-- No state shows more than three total action buttons.
+- No Bubble state shows more than three total action buttons. The peer Action Ring has four commands under
+  DEC-025/DEC-026 and is not a Bubble state.
 - Actions must be valid for the current state. Do not show "Prepare Memory" in
   Ready, Nothing Found. Do not show "Find related old notes" in Needs Setup.
 - View only navigates/expands current candidates and adds zero provider calls.
@@ -800,7 +802,7 @@ This iteration does NOT include:
 | --- | --- | --- | --- |
 | OD-1 | Pet visual states for Presence | Resolved for this round: no Pet state expansion | Keep only necessary existing state mapping; Pet redesign is not blocking Bubble work. |
 | OD-2 | Bubble card stack | Resolved: single-visible-card stack, max 3 cards | Default one; enable card switching only for multiple high-quality distinct candidates. |
-| OD-3 | "Intentionally Quiet" acknowledgment | Superseded by DEC-025/B-121: show the explanation once, then route Pet short click to Action Ring | B-118 and B-121 are closed；the successor passed desktop and iPhone portrait/touch smoke，with physical landscape retained as `NOT TESTED / accepted waiver`. |
+| OD-3 | "Intentionally Quiet" acknowledgment | Superseded by DEC-025/B-121: show the explanation once, then route Pet short click to Action Ring | B-118/B-121 closeout proves the old three-action baseline；the 2026-08-06 fourth Share/new geometry amendment is governed and evidenced separately by B-124. |
 | OD-4 | Preparing state: show progress numbers? | Resolved: show numbers only for larger vaults | Use a threshold such as 20+ notes. Small vaults show simple preparing copy. |
 | OD-5 | Bridge hint content for first Recall | Resolved: real delivery first; bridge as inline hint | Onboarding annotates value moments, not replaces them. |
 | OD-6 | Discover trigger from empty state | Resolved: keep routing results into Panel | Bubble is only the trigger; results remain active-note-snapshot-bound in Panel. |
@@ -855,7 +857,8 @@ This iteration does NOT include:
 | 23 | Recall Bubble action taxonomy | Only View / Later / Dismiss appear. View provider rerun = 0; Later creates one existing Review Queue item; Link/Save appear only in Tab. |
 | 24 | Quiet Recall setting and migration | Only Off/On appears, default Off; legacy true -> On and false/missing/other -> Off. Generic hints and Recap remain unchanged when it toggles. |
 | 25 | Seen delivery suppression | A Recall/Recap card is recorded only after the card carrying its exact transient receipt becomes visible in Bubble, or that receipt's target successfully renders in Detail. The receipt itself is not persisted; while the corresponding device-local seen ledger entry is retained, the delivery cannot nudge or enter proactive Bubble again. Seen gate does not filter explicit Discover/Review/Recap/Detail or source navigation, but does not guarantee historical card recovery. |
-| 26 | Action Ring ownership | After empty acknowledgement, Pet short click opens Capture / Review / Discover exactly once per action; Bubble and Ring are mutually exclusive, and long press uses the same Ring. |
+| 26 | Action Ring ownership | After empty acknowledgement, Pet short click opens Capture / Review / Discover / Share exactly once per action; Bubble and Ring are mutually exclusive, and long press uses the same Ring. The first three callbacks remain unchanged. |
+| 27 | Action Ring Share and geometry | Share selects exact nonblank editor selection before current Markdown note and then follows DEC-026/B-124. All four icons show visible localized EN/ZH labels. Desktop/iPad use an inward arc；iPhone uses a complete four-label row when it fits or a whole-column fallback when it does not；all four actions remain 44px and preserve logical/focus order. |
 
 ---
 
@@ -867,3 +870,4 @@ This iteration does NOT include:
 - [Historical Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md)
 - [Historical Pagelet Bubble Product Discussion 2026-07-05](../../archive/pagelet-bubble-product-discussion-2026-07-05.md)
 - [PA Product Information Architecture Spec](../pa-product-information-architecture-spec.md)
+- [PA Share Card Product Spec](./pa-share-card-product-spec.md)

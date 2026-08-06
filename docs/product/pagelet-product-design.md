@@ -14,15 +14,15 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. Current portrait/long-press manual checks passed; landscape is `NOT TESTED / accepted waiver`, post-F-13 owner paths did not add a new live smoke, and stable release remains separate. DEC-025/B-121 seen suppression and Action Ring are delivered and pass automated、review、local/iCloud deployment、desktop smoke and iPhone portrait toolbar geometry/visual gates；the latest iPhone Ring opens as a 44px horizontal row from below the Pet, while physical landscape remains a declared residual rather than a claimed PASS. B-121 core runtime is included in BRAT `2.9.0-beta.5`; tag-later Pagelet fixes remain on `master` without a newer beta/stable package. |
-| Last revised | 2026-08-02 |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`; tag-later Pagelet fixes remain on `master` without a newer beta/stable package. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action and replaces the current geometry contract；prior B-121 evidence does not validate that delta, whose execution evidence belongs only to the B-124 Tracker. |
+| Last revised | 2026-08-06 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
 | Write boundary | Current B-108 delivery is read-only; existing user-confirmed review-note creation uses the **Write Action Framework**; there is no current standalone Periodic Summary save contract |
 | Background preparation engine | Optional timed polling with rate-limited generic background review preparation (D032); disabled by default and enabled explicitly by the user |
 | Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup when the capability is enabled and sources are allowed, bounded to high-intent scope, and persistently disableable. The first actual Pagelet provider call uses one shared non-blocking notice; high-risk runs still block before any call ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md)) |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
-| Current decisions | D001-D039 as reconciled in this document, with DEC-017 through DEC-025 and the owning Scope Recap/Quiet Recall/B-121 specs taking precedence for B-108/B-118/B-121 |
+| Current decisions | D001-D040 as reconciled in this document, with DEC-017 through DEC-026 and the owning Scope Recap/Quiet Recall/B-121/B-124 specs taking precedence for their scopes |
 | Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
 | Technical design | See [pagelet-sdd-guide.md](../development/workflows/pagelet-sdd-guide.md); [review-assistant-sdd.md](../archive/review-assistant-sdd.md) is preserved as historical implementation context |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
@@ -73,7 +73,7 @@ flowchart LR
 
   subgraph "Quick Path"
     Pet -->|unseen delivery / explanation| Bubble["Bubble<br/>(one card by default;<br/>qualified 2-3 stack only)"]
-    Pet -->|acknowledged Ready Empty / Intentionally Quiet / long press| Ring["Action Ring<br/>(Capture / Review / Discover)"]
+    Pet -->|acknowledged Ready Empty / Intentionally Quiet / long press| Ring["Action Ring<br/>(Capture / Review / Discover / Share)"]
     Bubble -->|close| Done1["看完就走"]
     Ring -->|close or choose| Done1
   end
@@ -95,7 +95,7 @@ flowchart LR
 
 The memorable UI line (updated for Pagelet):
 
-> A recognizable little paper companion sits quietly in the corner of the workspace. Background review preparation makes valid insights ready instantly when the user asks; when it cannot, an explicit Recap open immediately gives an honest scope/source orientation. A Pet short click opens Bubble for an unseen delivery or required explanation, and opens the Capture / Review / Discover Action Ring after Ready Empty or Intentionally Quiet has been explained; the Quick Review hotkey remains an explicit Bubble entry. Only when every candidate independently clears the quality gate may the user switch through a restrained 2-to-3-card stack. Generic and Quiet Recall proactive hints remain off until enabled; high-value Scope Recap uses the separate DEC-018 default. The user can go deeper into a panel or explore connections.
+> A recognizable little paper companion sits quietly in the corner of the workspace. Background review preparation makes valid insights ready instantly when the user asks; when it cannot, an explicit Recap open immediately gives an honest scope/source orientation. A Pet short click opens Bubble for an unseen delivery or required explanation, and opens the Capture / Review / Discover / Share Action Ring after Ready Empty or Intentionally Quiet has been explained; the Quick Review hotkey remains an explicit Bubble entry. Only when every candidate independently clears the quality gate may the user switch through a restrained 2-to-3-card stack. Generic and Quiet Recall proactive hints remain off until enabled; high-value Scope Recap uses the separate DEC-018 default. The user can go deeper into a panel or explore connections.
 
 **[CHANGED from historical design]**: historical design described a linear pipeline (open -> select range -> analyze -> findings -> collect -> confirm -> note). Pagelet replaces this with progressive disclosure across four layers (Pet -> Bubble -> Panel -> Tab) and four usage scenarios.
 
@@ -315,7 +315,7 @@ not “Nudge mode”.
 
 Proactive hints (主动提示) are controlled through the access points below. The
 Pet has no right-click control for proactive hints; its 520 ms long-press Action Ring
-is reserved for Capture / Review / Discover and does not toggle hint settings.
+is reserved for Capture / Review / Discover / Share and does not toggle hint settings.
 
 | Control Point | Action | Notes |
 | --- | --- | --- |
@@ -326,7 +326,30 @@ is reserved for Capture / Review / Discover and does not toggle hint settings.
 
 Decision: **D039** — Proactive hints control placement: Settings (full config) +
 Panel header (quick toggle) + Command Palette + keyboard shortcut. The Pet
-Action Ring remains a separate Capture / Review / Discover command surface.
+Action Ring remains a separate Capture / Review / Discover / Share command surface.
+
+### Action Ring Share — [UPDATED 2026-08-06]
+
+The Ring logical and focus order is `Capture / Review / Discover / Share`. Every icon has a visible
+current-locale label: EN `Capture / Review / Discover / Share as card`; ZH `随手记下 / 审阅 /
+发现关联 / 分享为卡片`. The first three actions keep
+their current callbacks, routes and provider/data/write boundaries. Share resolves one snapshot at click:
+
+- a trim-nonempty active-editor selection wins, while its original whitespace、line endings and Markdown
+  are preserved and no filename/Vault path is shown;
+- otherwise the current active Markdown note is used under DEC-026/B-124: strip only a parser-valid leading
+  YAML frontmatter, keep the remaining body, and show basename without directory or `.md`;
+- no active Markdown note or empty projected body opens no Share Card Modal and yields a local recoverable
+  notice. Ring Share itself makes no provider call、upload or automatic Vault write.
+
+Desktop/iPad arrange the four actions on an inward arc toward content. iPhone uses one horizontal row when
+all four complete labels fit the available safe width, otherwise the whole group becomes one vertical
+column with no partial wrap. All actions remain at least `44×44px`, inside safe-area/visual viewport bounds;
+visual direction never changes the logical, keyboard or callback order.
+
+Decision: **D040** — Add Share as the fourth Action Ring command with selection-first/current-note
+resolution and the above device geometry. [DEC-026](./decisions/dec-026-local-share-card.md) and the
+[B-124 Product Spec](./specs/pa-share-card-product-spec.md) own the resulting card contract and evidence.
 
 Proactive hints behavior constraints:
 
@@ -427,7 +450,7 @@ or triggers `nudge` without a
 separately approved Review-candidate adapter. If no Bubble candidate exists,
 the first applicable readiness explanation shows one honest next action. After
 Ready Empty or Intentionally Quiet is acknowledged, later Pet short clicks open
-the Capture / Review / Discover Action Ring; explicit Quick Review/hotkey still
+the Capture / Review / Discover / Share Action Ring; explicit Quick Review/hotkey still
 opens Bubble with a terse, non-teaching empty result.
 
 #### Scenario 2: Writing Assistance (写作辅助) — [NEW]
@@ -780,7 +803,9 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 - Minimum touch target: 44x44px (iOS HIG / WCAG 2.5.5).
 - Tap follows DEC-025 state routing: unseen delivery or required explanation
   opens Bubble; an acknowledged Ready Empty or Intentionally Quiet state opens the same Capture /
-  Review / Discover Action Ring as a 520 ms long press. The Ring expands into
+  Review / Discover / Share Action Ring as a 520 ms long press. The four actions form a horizontal row
+  when their complete labels fit the available safe width, otherwise the whole group becomes a vertical
+  column. The Ring expands into
   the safe area and pauses auto-dismiss while focus/touch interaction is active.
 - No hover interactions (mobile has no hover).
 - States and animations same as desktop (4 states) but may use reduced-motion by default on low-power mode.
@@ -810,7 +835,7 @@ The Pagelet Panel is **completely redesigned** from the historical design sugges
 - Same current Pagelet feature parity as desktop; future time-range Recap is not
   implied.
 - Adapted interaction patterns (state-resolved tap; 520 ms long press for the
-  Capture / Review / Discover Action Ring; no right-click).
+  Capture / Review / Discover / Share Action Ring; no right-click).
 - Bottom-anchored surfaces (Bubble and Panel slide up from bottom edge).
 - Larger touch targets and text.
 - Respect system-level `prefers-reduced-motion` and low-power mode.
@@ -1118,8 +1143,8 @@ Background preparation transparency:
 
 | Entry | historical design | Pagelet |
 | --- | --- | --- |
-| Pet click / tap | Mascot click opens side panel | Unseen delivery or required explanation opens Bubble; acknowledged Ready Empty or Intentionally Quiet opens Capture / Review / Discover Action Ring |
-| Pet long press | N/A | A 520 ms hold opens the same Capture / Review / Discover Action Ring without consuming a pending nudge |
+| Pet click / tap | Mascot click opens side panel | Unseen delivery or required explanation opens Bubble; acknowledged Ready Empty or Intentionally Quiet opens Capture / Review / Discover / Share Action Ring |
+| Pet long press | N/A | A 520 ms hold opens the same Capture / Review / Discover / Share Action Ring without consuming a pending nudge |
 | Hotkey | User-configurable, opens panel | User-configurable, opens Bubble |
 | Command palette | `Pagelet: Review current note`, `Pagelet: Open Pagelet`, `Pagelet: Toggle mascot visibility` | Current commands are preserved where registered + new commands (see below) |
 | Proactive hints | N/A | Generic/Quiet Recall hints default off and can enter `nudge` only after opt-in; DEC-018 separately governs high-value Recap hints |
@@ -1334,7 +1359,7 @@ Pagelet considered successful if:
   success/command contract; future time-range Recap is a separate direction.
 - **Pet states**: historical design's `done` and `error` states are replaced. Users familiar with the green "done" state will see the Pet return to `idle` instead. The 4 states are resting/idle/working/nudge.
 - **Pet Action Ring is new**: Pagelet adds a 520 ms long-press Ring for Capture /
-  Review / Discover; DEC-025 also reuses it for an acknowledged Ready Empty /
+  Review / Discover / Share; DEC-025 also reuses it for an acknowledged Ready Empty /
   Intentionally Quiet short click. It is not a proactive-hints settings surface,
   and no right-click menu is added.
 
@@ -1407,7 +1432,8 @@ Pagelet considered successful if:
 | **D036** | Background preparation engine cost control | Separate rate limits and token budgets for background preparation vs foreground AI calls. Generic preload is admitted only at actual input `<=4K` and no more than 2 actual provider calls/rolling hour、20/local day; output remains 1K and any envelope breach silently skips. |
 | **D037** | Progressive disclosure layers | Four-layer content model: Pet -> Bubble -> Panel -> Tab. DEC-025's Action Ring is a peer command surface, not a fifth content layer. Bubble and Ring are mutually exclusive and close on their documented outside/Escape/Pet paths. |
 | **D038** | Generic proactive hints (主动提示) design | Quiet Recall, Pattern, and generic review hints remain opt-in and OFF by default. When ON, Pet enters `nudge` only after their own quality gates. Cooldown, no sound, no modal, no focus steal. |
-| **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet Action Ring is reserved for Capture / Review / Discover. |
+| **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet Action Ring is reserved for Capture / Review / Discover / Share. |
+| **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. All four icons show localized EN/ZH text labels. Desktop/iPad use an inward arc; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
 
 [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) is the accepted
 Scope Recap exception to D038: high-value Recap hints default on for an eligible
@@ -1476,7 +1502,7 @@ Future product definition: [Pagelet Maintenance Review Product Spec](../archive/
 | Context awareness | Manual scope selection | Pet auto-senses current note context |
 | Output form | Single: independent review note | Multi-level (Bubble -> Panel -> optional note) |
 | Interaction depth | Linear pipeline | Progressive: Pet -> Bubble -> Panel -> Tab |
-| Pet gesture | Click opens panel | Short click/tap is state-resolved between Bubble and Action Ring; 520 ms long press always opens Capture / Review / Discover Ring; no right-click menu |
+| Pet gesture | Click opens panel | Short click/tap is state-resolved between Bubble and Action Ring; 520 ms long press always opens Capture / Review / Discover / Share Ring; no right-click menu |
 | Mascot/Pet states | 4 (idle, thinking, done, error) | 4 (resting, idle, working, nudge) |
 | Pet position | N/A | Fixed corner (configurable), no drag |
 | Generic proactive hints | Rule-based reminders (badge only) | AI-driven hints remain opt-in and OFF by default; DEC-018 separately makes only quality-gated Scope Recap hints default on for an eligible bounded Recap path. |

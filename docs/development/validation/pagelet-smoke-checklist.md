@@ -31,6 +31,63 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-08-06 · B-124 Share Card owner amendment
+
+Environment:
+
+- Ref: current uncommitted `master` worktree after the 2026-08-06 Share Card
+  amendment; no commit, push, closeout, packaging, or release was performed.
+- Vault: repo-local `test/` vault with the latest `make deploy` output; Obsidian
+  1.13.4 desktop.
+- Mobile evidence: owner-approved Obsidian simulation for iPhone `393x852`;
+  iPad `820x1000` is recorded as layout simulation. Neither is physical-device
+  touch, WKWebView, safe-area, software-keyboard, or device-performance evidence.
+
+Current deployed Desktop:
+
+- PASS: visible-window interaction opened the same Share Card Modal from four
+  production entries: an existing completed Chat assistant response, two
+  provider-free visible Pagelet findings, the editor selection command through
+  Command Palette, and Action Ring Share with both selection and note fallback.
+  Selection showed no filename/path; note fallback showed only the basename.
+- PASS: English Ring labels were `Capture / Review / Discover / Share as card`.
+  A temporary, restored `zh-cn` runtime locale hook visibly rendered
+  `随手记下 / 审阅 / 发现关联 / 分享为卡片` without clipping.
+- PASS: light short-card Copy and Save succeeded. Clipboard contained one
+  `1080x1440` PNG and did not change `PA-Cards`; Save created
+  `PA-Card-20260806-142048.png`, also `1080x1440`.
+- PASS: dark `share-card-smoke.md` produced 13 pages at one `15px` body size;
+  every page measured `585px / 585px`, and the final page retained
+  `SHARE-CARD-SMOKE-END`. Remote/Vault images, note embed, Mermaid, static SVG,
+  and an unavailable-resource placeholder remained visible; capture DOM held
+  no HTTP(S) resource attribute. Copying media page 10 yielded a
+  `1080x1440` PNG and no Vault write.
+- PASS: the separate Settings window exposed `Legal / About → Bundled font
+  license → View`; the offline Modal contained the complete 4463-character OFL
+  text, including its title, termination, warranty disclaimer, and ending.
+
+Mobile-simulated Ring:
+
+- PASS: the iPhone profile mounted the Pet in the mobile toolbar. Four full
+  labels could not fit at `393px`, so the whole group used the specified
+  vertical fallback; all four buttons were 44px, within the viewport, and
+  center-hit-testable. Simulated move-cancel, 520ms hold, exactly-once Share,
+  responsive preview, and a `1080x1440` Save passed.
+- PASS: the iPad profile activated `is-tablet`; the bottom-right Pet placed the
+  four actions in a non-row/non-column inward arc toward content. Every button
+  was 44px high, fully inside the viewport, and center-hit-testable.
+
+Restored state:
+
+- PASS: Desktop/light/en, `pagelet-smoke-golden.md`, empty selection, null Chat
+  active conversation, closed Pagelet Panel, and mobile emulation off were
+  restored. Share Modal, capture host, temporary font face, and Ring counts
+  were all zero; fresh Obsidian console and error buffers were empty, then
+  debug capture was disabled.
+- Provider/data boundary: the Pagelet fixture was static and provider-free;
+  no source-note content write occurred. The only durable smoke write was the
+  explicitly clicked Share Card Save into `PA-Cards/`.
+
 ### 2026-08-02 · B-001 Pagelet Tab closeout
 
 Environment:

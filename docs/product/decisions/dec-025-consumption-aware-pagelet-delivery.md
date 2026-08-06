@@ -2,8 +2,8 @@
 
 Decision ID: DEC-025
 Status: Accepted
-Updated: 2026-08-02
-Authority: 用户于 2026-07-22 至 2026-07-27 对重复 Recall/Recap、Pet 空态与主动关闭提示后的安静状态逐项选择产品方案
+Updated: 2026-08-06
+Authority: 用户于 2026-07-22 至 2026-07-27 对重复 Recall/Recap、Pet 空态与主动关闭提示后的安静状态逐项选择产品方案，并于 2026-08-06 为 Action Ring 新增 Share 与端侧几何修订
 Work item: B-121
 
 ## Context
@@ -32,6 +32,12 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
 
 选择 Option A，并规定：
 
+> [!note] Scoped amendment 2026-08-06
+> 用户把 Action Ring 的第四项定为 Share，并要求四项显示中英本地化文字标签。前三项与 B-121 的消费感知交付规则不变；
+> Share 的内容、品牌、字体、导出与失败边界由 [DEC-026](./dec-026-local-share-card.md)
+> 和 B-124 Product Spec 承担。此前 B-121 closeout/beta/smoke 只证明三项 Ring 基线，
+> 不证明本修订已经实现或验证。
+
 1. Pagelet 为主动 Recall 与主动 Recap 分别建立 versioned
    `deliveryFingerprint`。`kind` 是指纹的一部分，Recall 与 Recap 不跨类型互相抑制。
    指纹由该类型规范化后的主要可见内容、来源集合及必要 scope identity 决定，排除
@@ -54,18 +60,27 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
 5. Ready Empty 或 Intentionally Quiet 的解释按语义和文案版本在当前设备展示一次。
    第一次短点 Pet 仍打开一条简短 Bubble；Bubble 实际可见后完成 acknowledgement。
 6. 上述空态已 acknowledgement 后，短点 Pet 不再重放空 Bubble，改为打开
-   `Capture / Review / Discover` Action Ring。有未看交付时短点仍打开 Bubble；
+   `Capture / Review / Discover / Share` Action Ring。有未看交付时短点仍打开 Bubble；
    Needs Setup、Preparing、Context Limited 等普通必要解释仍由 Bubble 承担。显式
    Recap 入口中已 eligible 的 `Recap Needs Retry` 仍优先于空态 Ring；后台失败本身
    保持安静，当前 Scope Recap command 在 Detail 渲染等价说明。520ms 长按在现有
    可交互状态下继续直接打开同一 Action Ring。
-7. Action Ring 是 Pet 的瞬时命令面，不是新的内容层或任务队列。三个动作复用既有
-   callback、provider/Data Boundary、写入与确认边界；本决定不授权新的自动运行或写入。
+7. Action Ring 是 Pet 的瞬时命令面，不是新的内容层或任务队列。顺序固定为
+   `Capture / Review / Discover / Share`；前三项复用既有 callback、provider/Data Boundary、
+   写入与确认边界。Share 在触发时优先使用当前 active Markdown editor 的非空 selection，
+   否则使用 current Markdown note，然后进入 DEC-026/B-124 的本地 preview/Copy/Save
+   流程；Ring 本身不调用 provider、不上传、不自动保存。
+8. Desktop 与 iPad 从 Pet 朝内容区形成内向弧；iPhone 在可用宽度能完整容纳四项时使用
+   横向排列，否则整组切换为纵向排列，不允许部分换行或混排。四项都是至少 `44×44px`
+   的真实 button；每项在当前 UI locale 显示文字标签，英文为 `Capture / Review / Discover /
+   Share as card`，中文为 `随手记下 / 审阅 / 发现关联 / 分享为卡片`。视觉方向不得改变固定
+   逻辑、键盘或焦点顺序，也不得覆盖 safe area 或 Obsidian 关键控件。
 
 ## Consequences
 
 - Product behavior: Pagelet 从“候选出现过一次”升级为“用户看过后不再主动重复”；
-  无新内容时，Pet 在解释一次后成为低负担的主动入口。
+  无新内容时，Pet 在解释一次后成为低负担的主动入口，并以第四项 Share 把当前 selection
+  或 note 交给既有 Share Card 流程。
 - Architecture / data / safety: 评估缓存身份、producer ticket 与交付身份必须分离；
   新 ledger 使用按设备 Vault identity 隔离的本地存储，只保存不含内容明文的 opaque hash。
 - Compatibility / migration: 现有可同步 settings 中的 Recap suppression 不导入新
@@ -76,7 +91,8 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
   B-118 保持关闭，不在原 tracker 内重开。B-121 已完成实现与验证并关闭 Active
   Package；当前行为由本决定、Product Spec、Pagelet contracts 与 focused tests 承担，
   独有终态证据保留在 compact closeout。核心 runtime 已进入 BRAT `2.9.0-beta.5`；tag
-  后 follow-up fixes 尚无更新的 beta/stable package。
+  后 follow-up fixes 尚无更新的 beta/stable package。上述证据属于修订前的三项 Ring；
+  2026-08-06 Share 与新几何由 B-124 Active Package 承担，不能后推为 B-121 已验证事实。
 
 ## Revisit Trigger
 
@@ -85,6 +101,7 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
   决定是否允许跨 kind 抑制。
 - 用户明确要求 Mac/iPhone 共享已看状态，并接受同步冲突、恢复与隐私生命周期设计。
 - Action Ring 在真实桌面或 iPhone 上比一次性空态更难发现、误触更多或遮挡编辑区域。
+- Share 使 Ring 过密、source-first 行为被误解，或端侧几何无法同时满足 44px/safe-area。
 - 设备本地 ledger 的容量或损坏率使旧内容频繁重新获得主动资格。
 
 ## Traceability
@@ -92,5 +109,7 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
 - Product Spec: [B-121 Pagelet Attention-Aware Delivery](../specs/pagelet-attention-aware-delivery-product-spec.md)
 - Related current specs: [Bubble Readiness and Recall](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)、[Quiet Recall](../specs/pa-quiet-recall-insight-timing-product-spec.md)、[Scope Recap](../specs/pa-scope-recap-theme-summary-product-spec.md)
 - Current product design: [Pagelet Product Design](../pagelet-product-design.md)
+- Share Card Decision / Product Spec: [DEC-026](./dec-026-local-share-card.md)、[B-124 Product Spec](../specs/pa-share-card-product-spec.md)
+- Current Share Card execution evidence: [B-124 Tracker](../../development/active/share-card/tracker.md)
 - Final delivery evidence: [B-121 compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md)
 - Supersedes / superseded by: supersedes B-118's deferred ordinary quiet-empty disposition and narrows the old session/producer-level once semantics; none otherwise

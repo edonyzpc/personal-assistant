@@ -1,7 +1,7 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-07-27
+Updated: 2026-08-06
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
@@ -13,6 +13,13 @@ Approval boundary: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
 B-118。SG-05/SG-06 仅以 DEC-023 为当前权威；
 用户于 2026-07-21 为 Quiet Recall 语义候选选择 DEC-024 方案 A，并为
 foreground Review / generic background preload 风险分类选择 DEC-023 方案 A。
+
+> [!note] Successor amendment 2026-08-06
+> B-118 的三项长按菜单与对应 smoke 保持历史事实，不改写为已验证四项。当前 Ring 由
+> [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md) 修订为
+> `Capture / Review / Discover / Share`，四项显示中英本地化文字标签；Share 的 selection-first/current-note 行为与验证
+> 归 [DEC-026/B-124](./pa-share-card-product-spec.md)。Desktop/iPad 使用内向弧，iPhone
+> 可容纳完整四项时横排、否则整组竖排；旧 portrait/landscape 证据不覆盖该修订。
 
 ## Problem And Product Outcome
 
@@ -139,10 +146,17 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 ### Pet 短点与长按
 
 本段保留 B-118 实施基线：当时短点在 Bubble 开/关之间稳定切换一次。DEC-025/B-121
-现已将短点分流为未看交付/必要解释 Bubble，或已确认空态后的 Action Ring。长按约
-520ms 后显示三项 Ring，松手不打开 Bubble。各 action 拥有自己的 touch/click 事件
+现已将短点分流为未看交付/必要解释 Bubble，或已确认空态后的 Action Ring。B-118/B-121
+证据中的长按约 520ms 三项 Ring 是修订前基线；2026-08-06 当前 Ring 新增第四项 Share，
+顺序为 `Capture / Review / Discover / Share`，松手不打开 Bubble。各 action 拥有自己的 touch/click 事件
 边界；选择、取消、超时、点外部和移动超阈值互不混淆。Pet 根切换计数为零，不表示
 target downstream 不能呈现结果。
+
+当前几何由 successor contract 覆盖：Desktop/iPad 从 Pet 朝内容区形成内向弧，iPhone
+可容纳完整四项时横向排列、否则整组纵向排列；四项至少 44×44px，显示当前 locale 的
+EN/ZH 文字标签且不改变逻辑/焦点顺序。Share 优先当前
+editor 的原始非空 selection，否则使用 current Markdown note，并进入 B-124 Share Card
+preview；前三项 route 与 provider/data/write 边界不变。
 
 ### Prepared Recap
 
@@ -227,7 +241,8 @@ Reduce Motion 下保留静态状态差异，不持续闪烁、跳动、脉冲或
   现行 downstream 合同改变 Bubble/Panel/Detail。`touchcancel`、移动超阈值和多点触控
   的 target/root callback 均为 0；菜单 Enter/Space 不冒泡到 Pet 根；Pet 保持现行
   约 400ms click suppression，Bubble action 保持现行 12px move threshold 与 500ms
-  click suppression。Discover target 继续进入 Panel。
+  click suppression。Discover target 继续进入 Panel。该 AC 及 B-118 evidence 只覆盖前三项；
+  第四项 Share、新 source resolver 与新几何必须以 B-124/AC-03/10 的新证据验证。
 - B-118/AC-02: prepared Recap 的 DOM 与真实桌面首屏都直接显示候选 body、可识别
   标题/来源，并通过 3 秒价值测试；Detail 可见 scope、本地化 generatedAt、coverage/
   freshness 产品文案；打开不产生重复 provider call。
@@ -342,3 +357,5 @@ standard bounded，越界安静跳过而非弹出高风险确认。调用计数�
 - Architecture contracts: [Pagelet Product Design](../pagelet-product-design.md), [Scope Recap Spec](./pa-scope-recap-theme-summary-product-spec.md), [Quiet Recall Spec](./pa-quiet-recall-insight-timing-product-spec.md), [Bubble Spec](./pagelet-bubble-readiness-and-recall-product-spec.md), [Data Boundary](./pa-data-boundary-product-spec.md), [Retrieval Habit Profile](./pa-retrieval-habit-profile-product-spec.md), [Saved Insight](./pa-saved-insight-ledger-product-spec.md)
 - Release / rollout boundary: 本 spec 授权有界实现、测试、review 与本地/真机验证；
   不授权 commit、push、tag、beta/stable publish。
+- Successor evidence boundary: B-118 closeout 与旧 B-121 smoke 不覆盖 2026-08-06 Share/new
+  geometry；当前 amendment 的执行与验证只记录在 [B-124 Tracker](../../development/active/share-card/tracker.md)。

@@ -2,8 +2,8 @@
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-08-05
-Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，并于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外）
+Updated: 2026-08-06
+Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），并于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号
 Work item: B-124
 
 > [!note] Owner decision 2026-08-05
@@ -12,6 +12,13 @@ Work item: B-124
 > capture runtime 方案 A：精确锁定 SnapDOM 2.23.2，批准仅限离屏图片文档的 runtime
 > style/已审计 dependency 模式；PA 必须预本地化显式资源，不启用 proxy，并以实际
 > community/release gate 约束发布。F-15/F-16 均已关闭。
+
+> [!note] Owner amendment 2026-08-06
+> 用户把 Pagelet Action Ring 的第四项定为 Share，并要求该入口优先分享当前编辑器的
+> 非空选区，否则分享当前 Markdown 笔记；同时锁定 selection/note 投影、图形 logo、
+> `Personal Assistant` 品牌文字、Action Ring 可见中英本地化标签、仅以本地 data URL 加载的
+> Source Han Serif、端侧 Ring 几何及 `16 → 15 → 14px` 的整批字号规则。本修订是当前
+> 产品权威；2026-08-05 的三入口验证不能替代本修订的实现与验证。
 
 ## Context
 
@@ -44,12 +51,23 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 
 选择 Full-fidelity（对话确认的内容/媒体方案 C），并规定：
 
-1. Share Card 仅由三个显式入口触发：已完成的 PA assistant Chat 回复、Pagelet Panel
-   当前可分享 findings、编辑器非空选区。用户消息、生成中回复、空内容、Prepared
-   read-only Panel 与隐藏/已 dismiss 的 Pagelet finding 不获得分享动作。
+1. Share Card 由四个显式入口触发：已完成的 PA assistant Chat 回复、Pagelet Panel
+   当前可分享 findings、编辑器非空选区命令，以及 Pagelet Action Ring 的第四项
+   `Share`。前三个入口的既有 eligibility 不变；用户消息、生成中回复、空内容、Prepared
+   read-only Panel 与隐藏/已 dismiss 的 Pagelet finding 不获得分享动作。Ring Share
+   在触发时读取当前 active Markdown editor：trim 后非空的 selection 优先，payload 保留
+   selection 原始字符、换行、空白与 Markdown，且不显示文件名或 Vault path；否则读取
+   当前 Markdown note，只在 Obsidian 能识别 frontmatter 且其 YAML 语法有效时剥离该段，
+   其余正文原样进入卡片，并显示 `file.basename`（不含目录与 `.md`）。无 active Markdown
+   note 或剥离后正文为空时不打开 Modal，只给出可恢复的本地化提示。
 2. v1 使用固定 `540×720` CSS card 和 2× raster density，输出 `1080×1440` PNG。卡片
    在打开时锁定当前 light/dark 主题；预览可按可用宽度缩放，但导出必须来自独立、
-   未缩放的固定尺寸 DOM。品牌只保留底部 `PA · Personal Assistant`，不加入营销 CTA。
+   未缩放的固定尺寸 DOM。品牌区固定为 PA 图形 logo + `Personal Assistant`，不加入营销
+   CTA。Chat/Pagelet 保留稳定产品来源文案；Ring note 显示 basename，Ring selection
+   不显示文件名或路径。卡片非代码文字以 Source Han Serif 为主字体；字体只能从插件随包本地
+   字节生成的 `data:` URL 加载，不允许外部 font URL、font CDN 或字体网络请求。字体未
+   就绪不得冒充完整成功。固定子集以外的 Unicode 只允许同字号设备本地 glyph fallback；
+   它不允许外部字体发现/请求，也不能掩盖主字体加载失败。
 3. 卡片追求明确分享内容的完整渲染保真。除文字、Markdown 结构和 CSS 外，远程图片、
    Vault 图片与 Markdown note embed、Mermaid/Canvas/SVG 图表及浏览器可捕获的静态视觉
    结果均应尽量保留。Markdown note embed 支持整篇、heading 与 block anchor，只沿嵌入
@@ -60,7 +78,10 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 4. 分页以与最终卡片相同 CSS 和宽度进行实际 DOM 高度测量，优先在语义块边界分页；
    超高单块再按保持 Markdown 有效的行/词边界拆分。不得依赖固定字符数估算，不得
    静默截断，也不得把 YAML/thematic break 误判后删除。超出明确安全上限时应拒绝
-   导出并提示缩短内容，不能截去尾部。
+   导出并提示缩短内容，不能截去尾部。正文默认 `16px`；仅当完整重分页能减少总页数时
+   才依次考虑 `15px`、`14px`，并选择第一个也就是最大的有效字号；候选须满足同一套
+   no-loss、overflow 与 24-page 安全门。15px 未减页时才评估 14px；若两个候选都不减页
+   则保持 16px。一次 batch 的所有页面、预览、复制和保存必须使用同一选定字号。
 5. 复制只复制当前预览页。复制不可用或失败时只给出可恢复提示，不自动改为写 Vault。
    保存由用户单独点击触发：单页保存当前页，多页一次保存全部页到 `PA-Cards/`；文件
    名必须避让已有文件，不能覆盖。部分写入失败时明确报告已保存数量与可重试状态。
@@ -78,23 +99,31 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
    显式资源去重缓存。用户批准其离屏图片生成所必需的 runtime style 与已审计 dependency
    模式，但未批准向 Obsidian live UI 注入 style、直接扫描无关资源或绕过后续
    community/release gate。
+9. Action Ring 保持独立瞬时命令面。顺序固定为 `Capture / Review / Discover / Share`，
+   前三项 callback、route 与 provider/data/write 边界不变。Desktop 与 iPad 从 Pet 朝
+   内容区形成内向弧；iPhone 在可用宽度能完整容纳四项时横向排列，否则整组切换为
+   纵向排列，不允许部分换行或混排。四项均为至少 `44×44px` 的真实 button，并在当前
+   UI locale 显示文字标签：英文 `Capture / Review / Discover / Share as card`，中文
+   `随手记下 / 审阅 / 发现关联 / 分享为卡片`。视觉方向不得改变逻辑、键盘或焦点顺序。
 
 ## Consequences
 
 - Product behavior: PA 多一个低打扰的内容复用出口；Chat 动作保持完成后出现，Pagelet
-  只分享当前可见且非 Prepared read-only 的 findings，编辑器选区入口仍由用户主动控制。
+  只分享当前可见且非 Prepared read-only 的 findings，编辑器选区入口仍由用户主动控制；
+  Action Ring 增加第四项 Share，并以 selection-first、current-note fallback 保持一步可达。
 - Architecture / data / safety: 新增共享 card renderer/paginator/exporter；PA-owned resolver
   限定显式资源并在 capture 前本地化，SnapDOM 只负责稳定 DOM → 固定像素 PNG。依赖的
   窄例外、固定版本和真实 community/mobile gate 由 B-124 Tracker 持续验证。
 - Compatibility / migration: 无 setting 或 persisted-state migration；桌面和移动端共享
-  数据契约，移动端 clipboard 不可用时仍可显式保存。
+  数据契约，移动端 clipboard 不可用时仍可显式保存。Source Han Serif 随插件本地提供，
+  不新增外部字体依赖或网络权限。
 - Work created or removed: B-124 进入 L3 Active Package；原 1,159 行实现草稿在结论
   吸收到本决定、Product Spec 与 Approved SDD 后删除，避免重复权威。
 
 ## Revisit Trigger
 
 - 真实使用证明 `1080×1440` 不适合主要分享目的，需要新的比例/模板选择。
-- 用户需要自定义品牌、颜色、字体、保存目录或无品牌导出。
+- 用户需要自定义品牌、颜色、字体、保存目录、来源标签或无品牌导出。
 - 第三方插件视图、交互组件或嵌套资源无法以可接受的失败语义捕获。
 - 用户明确要求系统 share sheet 或外部发布，并接受对应账号、权限与失败恢复设计。
 
@@ -103,5 +132,5 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 - Product Spec: [B-124 Share Card Product Spec](../specs/pa-share-card-product-spec.md)
 - Active Package: [Share Card Development Track](../../development/active/share-card/README.md)
 - Architecture / SDD: [Share Card SDD](../../development/active/share-card/sdd.md)
-- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05
+- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05；Action Ring/source/visual/font/layout/pagination amendment approved 2026-08-06
 - Supersedes / superseded by: supersedes the design assumptions in the removed original implementation draft; none otherwise

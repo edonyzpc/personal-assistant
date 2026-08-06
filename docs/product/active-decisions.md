@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-08-04
+Updated: 2026-08-06
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -32,8 +32,8 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 | DEC-022 | Graph、Pattern 与 Maintenance 使用有界、来源支持的 AI 增强；Writing Insight 延期 | 结构结果始终先行；标准 provider scope 默认开启并复用共享首次通知，broad/sensitive/costly 逐次确认；Maintenance AI 只预览，只有既有 move 可 confirm/apply/undo | [Decision Record](./decisions/dec-022-bounded-insight-enhancement-layer.md), [B-119 Product Spec](./specs/pa-insight-enhancement-layer-product-spec.md) | Dogfood 证明 Writing 有独立低负担价值、预算失配，或需要更宽写权限 |
 | DEC-023 | Pagelet 标准有界 provider 路径共享首次非阻断通知 | 配置 provider 后，标准 envelope 内共享一次透明通知；foreground Review 按实际允许来源 `<=1` / `>1` 分类，确认前零 quota/cost reservation；generic background preload 仅在 opt-in、changed-only、7 天、4K input/1K output、2/rolling-hour、20/local-day、只读、实际来源全部通过显式 shared Data Boundary 且无 override 时为标准有界，越界安静跳过；预算跨 reload/toggle 持久；首次高风险 Run 可同时完成首次告知，provider 信任不授予写权限 | [Decision Record](./decisions/dec-023-shared-pagelet-provider-first-use.md), [Data Boundary](./specs/pa-data-boundary-product-spec.md) | 隐私事件、opt-out 失效，或实际来源/preload envelope 无法控制风险与成本 |
 | DEC-024 | Quiet Recall 冷语义检索计入既有实际调用预算 | 保留 pure-semantic 候选；冷 query embedding 通过 DEC-023 gate 并占用现有 10/hour、50/day bucket，空检索后 evaluator/generation 为 0；index unavailable 时 metadata 只能作为显式 Discover 的本地线索 | [Decision Record](./decisions/dec-024-quiet-recall-cold-semantic-retrieval.md), [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | 本地 query embedding 达到同等质量，或空检索持续挤压高价值 evaluator 预算 |
-| DEC-025 | Pagelet 已看内容不再主动重复，已解释空态改为 Action Ring | Bubble/Detail 实际可见后，设备本地 fingerprint 只阻止同类型、同内容的 Recall/Recap 再次主动推送；seen gate 不过滤显式运行/导航，但不保存历史生成卡。Ready Empty/Intentionally Quiet 首次解释看过后，Pet 短点打开 Capture / Review / Discover Ring | [Decision Record](./decisions/dec-025-consumption-aware-pagelet-delivery.md), [B-121 Product Spec](./specs/pagelet-attention-aware-delivery-product-spec.md) | 近重复或跨类型重复仍造成干扰、用户要求跨设备已看同步，或真实设备证明 Ring 的发现/触控成本高于收益 |
-| DEC-026 | Share Card 使用本地、显式导出的完整渲染卡片 | 三个入口、固定卡片、显式 Copy/Save 与不自动发布仍是共同基础；远程图片、Vault Embed 与图表进入 v1 保真范围。capture 精确使用 SnapDOM 2.23.2；PA 先本地化显式资源、禁用 proxy，依赖例外仅限离屏图片文档 | [Decision Record](./decisions/dec-026-local-share-card.md), [B-124 Product Spec](./specs/pa-share-card-product-spec.md), [B-124 Tracker](../development/active/share-card/tracker.md) | 真实 compatibility/community gate 失败，或需改变媒体保真、资源权限、capture runtime |
+| DEC-025 | Pagelet 已看内容不再主动重复，已解释空态改为四项 Action Ring | Bubble/Detail 实际可见后，设备本地 fingerprint 只阻止同类型、同内容的 Recall/Recap 再次主动推送；seen gate 不过滤显式运行/导航。Ready Empty/Intentionally Quiet 首次解释看过后，Pet 短点打开 Capture / Review / Discover / Share Ring；四项显示中英本地化文字标签，前三项不变，Share 进入 DEC-026/B-124。Desktop/iPad 为内向弧，iPhone 可容纳时横排、否则整组竖排 | [Decision Record](./decisions/dec-025-consumption-aware-pagelet-delivery.md), [B-121 Product Spec](./specs/pagelet-attention-aware-delivery-product-spec.md), [DEC-026](./decisions/dec-026-local-share-card.md) | 近重复或跨类型重复仍造成干扰、用户要求跨设备已看同步，或四项 Ring 的发现/触控/布局成本高于收益 |
+| DEC-026 | Share Card 使用本地、显式导出的完整渲染卡片 | Chat、Pagelet、editor selection 与 Ring Share 四入口共享固定卡片和显式 Copy/Save；Ring selection 优先，否则 current note（只剥有效 YAML、显示 basename）。图形 logo + `Personal Assistant`、Ring 可见中英本地化标签、local-only Source Han Serif 与整批最大有效 16→15→14px 为固定设计。远程图片、Vault Embed 与图表进入 v1；capture 精确使用 SnapDOM 2.23.2，PA 先本地化显式资源且禁 proxy/external font | [Decision Record](./decisions/dec-026-local-share-card.md), [B-124 Product Spec](./specs/pa-share-card-product-spec.md), [B-124 Tracker](../development/active/share-card/tracker.md), [DEC-025](./decisions/dec-025-consumption-aware-pagelet-delivery.md) | 真实 compatibility/community/font/mobile gate 失败，或需改变来源优先级、媒体保真、资源权限、视觉身份、字号或 capture runtime |
 
 ## Active Architecture Decisions
 

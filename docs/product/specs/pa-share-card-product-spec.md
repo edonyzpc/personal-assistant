@@ -1,7 +1,7 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-08-05
+Updated: 2026-08-06
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
@@ -9,6 +9,12 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 > [!note] Owner decision 2026-08-05
 > 用户选择完整渲染保真（方案 C）与 SnapDOM 窄例外（方案 A）。REQ-04、REQ-05、
 > REQ-09 已据此修订；执行状态与验证证据仅以 Active Package Tracker 为准。
+
+> [!note] Owner amendment 2026-08-06
+> 用户新增 Pagelet Action Ring 的第四项 Share，并锁定 selection-first / current-note
+> fallback、有效 YAML frontmatter 剥离、basename、图形 logo、`Personal Assistant`、
+> Ring 可见中英本地化标签、local-only Source Han Serif、端侧 Ring 几何与整批自适应字号。REQ-01..04、
+> REQ-09/10 与对应 AC 已据此修订；2026-08-05 证据只证明修订前基线。
 
 ## Problem And Product Outcome
 
@@ -23,24 +29,38 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 
 ### In Scope
 
-- B-124/REQ-01: 三个入口使用同一 `ShareCardData` 契约。Chat 仅为已完成、非空的
+- B-124/REQ-01: 四个入口使用同一 `ShareCardData` 契约。Chat 仅为已完成、非空的
   assistant 回复显示低优先级 action；Pagelet 仅提交当前 visible findings，Prepared
   read-only Panel 不可分享；编辑器命令仅在 selection trim 后非空时可执行，但 payload
-  保留原始 selection 的空白、缩进与 Markdown。用户 Chat 消息、生成中内容、dismissed
-  finding、隐藏缓存与空内容不进入卡片。
+  保留原始 selection 的空白、缩进与 Markdown；Pagelet Action Ring 的第四项 Share 在
+  点击时优先采用当前 active Markdown editor 的非空 selection，否则采用当前 Markdown
+  note。用户 Chat 消息、生成中内容、dismissed finding、隐藏缓存与空内容不进入卡片。
   `completed_with_warning` 只有在 warning 不代表 provider error、assistant idle timeout
   或 wall-clock interruption 时才属于已完成；带部分文本的上述中断必须 fail closed。
-- B-124/REQ-02: Chat/Pagelet 卡片可显示稳定产品来源标签，selection 默认不显示文件名
-  或 Vault path。Pagelet findings 只组合当前可见的 title、description、insight text；
-  重复字段只输出一次，不加入隐藏 diagnostics、action、provider metadata 或来源路径。
+- B-124/REQ-02: Chat/Pagelet 卡片保留稳定产品来源文案。Ring 的 selection payload 原样
+  保留且永不显示文件名或 Vault path；note fallback 只在 leading frontmatter 被 Obsidian
+  识别且其中 YAML 语法有效时剥离该 frontmatter，其余正文原样保留，并显示 active file
+  的 basename，不显示目录或 `.md`。无 active Markdown note 或有效正文时 Share 不打开
+  Modal，并显示本地化可恢复提示。Pagelet findings 只组合当前可见的 title、description、
+  insight text；重复字段只输出一次，不加入隐藏 diagnostics、action、provider metadata
+  或来源路径。
 - B-124/REQ-03: v1 卡片固定为 `540×720` CSS px、DPR 2 PNG（`1080×1440`），提供 warm
   light 与 warm dark 两个由 Modal 打开时当前主题选定的样式。每页有一致内容区、细
-  divider、低调品牌和必要页码；预览响应 modal/viewport，导出尺寸不受预览缩放影响。
+  divider、PA 图形 logo + `Personal Assistant` 品牌和必要页码；预览响应 modal/viewport，
+  导出尺寸不受预览缩放影响。非代码文字以 Source Han Serif 为主字体，并只能从随插件提供的
+  本地字体字节生成的 `data:` URL 加载；不得引用外部字体 URL/CDN 或发起字体网络请求。
+  固定子集未覆盖的 Unicode 字符使用同字号的设备本地 serif glyph fallback；这不允许
+  外部字体发现或请求，也不替代主字体加载。主字体加载/就绪失败必须显示可重试错误，
+  不得静默换成系统/外部字体后冒充固定设计。
 - B-124/REQ-04: 渲染型 Markdown 支持 headings、paragraphs、emphasis、lists、quotes、
   links、inline/fenced code 及可捕获的视觉内容。分页必须使用最终 card CSS 的实际 rendered height，优先语义
   块边界；超高单块可继续拆分但不得丢字、重排页序或产生空页。原始内容不得因
   frontmatter-like 开头或 thematic break 被静默删除。v1 最多处理 50,000 characters / 24
-  pages；超限明确提示缩短内容，不产生截断卡片。
+  pages；超限明确提示缩短内容，不产生截断卡片。正文从 `16px` 开始；只有完整 batch
+  重分页确实减少页数时才按 `15px`、`14px` 的顺序接受更小字号，并选择最大的有效值。
+  候选还须通过同一套 no-loss、overflow 与 24-page 安全门；15px 未减页时才评估 14px，
+  两个候选都不减页则保持 16px。选定字号必须在同一 batch 的全部页面、preview、copy
+  与 save 中一致。
 - B-124/REQ-05: 远程图片、Vault 图片与 Markdown note embed、Mermaid/Canvas/SVG 图表及
   浏览器可捕获的静态视觉结果应尽量进入预览和 PNG。Markdown note embed 支持整篇、
   heading 与 block anchor，只沿显式 embed 有界递归；通过去重缓存、resource/byte/time/depth
@@ -63,11 +83,17 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   `scale:2`、`dpr:1`、`type:"png"`、`useProxy:""`、`embedFonts:false`、
   `reconcile:false`、`outerShadows:false`、`resolvePicturePlaceholders:false` 与
   `cache:"disabled"`。PA 必须在交给它之前用 Obsidian/Vault API 本地化显式资源并生成
-  完整性报告；SnapDOM 不得直接请求剩余 HTTP(S) 资源。只有用户点击 Save 才产生 Vault
-  PNG；失败后重试仍由用户决定。
+  完整性报告；Source Han Serif 同样必须在 capture 前成为本地 `data:` font，SnapDOM
+  不得直接请求剩余 HTTP(S) 资源或任何外部 font。只有用户点击 Save 才产生 Vault PNG；
+  失败后重试仍由用户决定。
 - B-124/REQ-10: Desktop、iOS 与 Android 共享核心逻辑；clipboard capability 按当前
   Modal window 运行时检测。Modal lifecycle 使用 Obsidian `Component` owner 和 owner
   document/window；plugin unload/Modal close 清理 render owner、离屏 DOM 与 pending token。
+  Action Ring 顺序固定为 `Capture / Review / Discover / Share`，前三项行为不变；Desktop
+  与 iPad 朝内容区形成内向弧；iPhone 在可用宽度能完整容纳四项时横向排列，否则整组
+  纵向排列，不混排。四项均保持至少 `44×44px` 并在当前 UI locale 显示文字标签：英文
+  `Capture / Review / Discover / Share as card`，中文 `随手记下 / 审阅 / 发现关联 /
+  分享为卡片`；视觉方向不改变逻辑、键盘或焦点顺序。
 
 ### Non-goals
 
@@ -84,7 +110,10 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 
 ```mermaid
 flowchart TD
-  A[用户触发 Chat / Pagelet / selection 入口] --> B[锁定主题并准备内容与显式资源]
+  A{用户触发哪个入口?}
+  A -->|Chat / Pagelet / selection command| B[锁定主题、字体并准备内容与显式资源]
+  A -->|Ring Share| A1[selection 优先，否则 current note]
+  A1 --> B
   B --> C[离屏实测分页]
   C -->|成功| D[响应式预览当前页]
   C -->|资源或渲染异常| E[明确占位或可重试错误]
@@ -106,9 +135,10 @@ flowchart TD
 
 ## Trust, Data And Authority
 
-- Source evidence: 起点只使用当前 assistant response、Pagelet 当前可见投影或原始 editor
-  selection；允许解析其中明确引用的远程/Vault 资源，不扫描无关笔记，也不把隐藏
-  metadata 当作分享内容。
+- Source evidence: 起点只使用当前 assistant response、Pagelet 当前可见投影、原始 editor
+  selection，或 Ring fallback 的当前 active Markdown note；selection 与 note 的优先级、
+  frontmatter/basename 投影遵守 REQ-01/02。允许解析其中明确引用的远程/Vault 资源，不
+  扫描无关笔记，也不把隐藏 metadata 当作分享内容。
 - Data sent / stored: 远程资源可产生面向其原始地址的直接网络请求，Vault Embed 可读取
   被明确引用的本地内容；不调用 AI provider、不上传卡片。Copy 写 OS clipboard，Save
   写 `PA-Cards/*.png`。
@@ -127,9 +157,14 @@ flowchart TD
 - B-124/AC-02: Pagelet 只导出当前 visible findings；dismissed/hidden finding、Prepared
   read-only content、diagnostics/action/source path 不进入 payload，空 payload 不执行分享。
 - B-124/AC-03: editor selection command 只在 trim 后非空时可执行，payload 保留原始
-  Markdown/空白且不自动暴露文件名。
-- B-124/AC-04: light/dark 预览和 PNG 均为固定设计；窄桌面/移动 viewport 可完整查看预览
-  与 44px actions，导出 blob 的像素尺寸为 `1080×1440`。
+  Markdown/空白且不自动暴露文件名。Ring Share 在同样的 nonblank selection 存在时优先
+  生成 `source:"selection"` payload；否则从 active Markdown note 生成 `source:"note"` payload，
+  只剥离有效 YAML frontmatter 并显示 basename；invalid/frontmatter-like 开头原样保留，
+  无 active Markdown 或空正文时不打开 Modal。
+- B-124/AC-04: light/dark 预览和 PNG 均显示图形 logo 与 `Personal Assistant`；Source Han
+  Serif 只由本地 data URL 提供，font network request 为 0。窄桌面/
+  移动 viewport 可完整查看预览与 44px actions，导出 blob 为 `1080×1440`。覆盖
+  `16/15/14px` 的分页 fixture 证明只在页数减少时缩小、选择最大有效字号且整批一致。
 - B-124/AC-05: 覆盖中英文、列表、引用、代码块、长段落与 50+ 行内容的测试证明顺序
   保持、无丢字/空页；运行时测量 smoke 证明每页 body 无 vertical overflow。
 - B-124/AC-06: remote image、Vault image、Markdown note embed（整篇、heading/block anchor、
@@ -144,13 +179,20 @@ flowchart TD
   preview、遗漏 cleanup 或 unhandled rejection。
 - B-124/AC-10: focused Jest、typecheck、docs/community scan、lint/build/bundle audit 通过；
   依赖精确为 SnapDOM 2.23.2，测试锁定 REQ-09 的完整选项（包括 `cache:"disabled"`）、
-  无剩余 HTTP(S) resource 进入 capture，并在已部署 Obsidian test vault 观察三个入口、
-  两种主题、分页、clipboard/save 与 preview/PNG 一致性。
+  无剩余 HTTP(S) resource/external font 进入 capture，并在已部署 Obsidian test vault 观察
+  四个入口、Ring selection/note 两条分支、可见中英本地化 action 标签、Desktop/iPad
+  内向弧、iPhone 可容纳时横排/不可容纳时整组竖排、两种主题、分页、clipboard/save 与
+  preview/PNG 一致性。2026-08-06 owner 明确允许本轮 iPhone 验证使用 Obsidian mobile
+  emulation + `393x852` phone viewport；证据必须标为模拟，不得冒充真实 iPhone/iPad
+  触控、WKWebView、safe-area 或设备性能。真实设备作为后续 release residual，不阻断
+  本轮 T-09 validated implementation。
 
 ## Open Decisions
 
-内容/媒体方案 C 与 capture runtime 方案 A 均已于 2026-08-05 确认。模板自定义、系统
-分享和外部发布仍不在 v1；当前无产品阻断决定。
+内容/媒体方案 C 与 capture runtime 方案 A 均已于 2026-08-05 确认；Action Ring、来源、
+视觉、字体、布局和分页字号修订，以及 iPhone 可用 Obsidian mobile emulation 的本轮
+验证边界，已于 2026-08-06 确认。模板自定义、系统分享和外部发布仍不在 v1；当前无产品
+阻断决定，执行与验证状态只看 Active Package Tracker。
 
 ## Delivery Handoff
 
