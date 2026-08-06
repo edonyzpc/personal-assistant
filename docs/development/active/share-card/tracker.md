@@ -1,7 +1,7 @@
 # Share Card Development Tracker
 
 Document status: Current
-Delivery status: Validating
+Delivery status: Validated
 Updated: 2026-08-05
 Work item: B-124
 Authority: 本 track 的唯一执行状态、finding、验证证据与 closeout readiness。
@@ -11,12 +11,13 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: Deployed full-fidelity runtime validation under approved SnapDOM option A
-- Next action: 完成真实 Obsidian Desktop UI/UX smoke，并记录未执行的真实移动设备证据边界。
+- Current phase: Validated full-fidelity implementation under approved SnapDOM option A
+- Next action: 等待用户另行授权 commit/push 或 lifecycle closeout；真实 iOS/Android 只作为后续
+  release evidence，不冒充本轮 Desktop/mobile-viewport 验证。
 - Blocker / decision needed: none；F-15/F-16 已由用户于 2026-08-05 明确关闭。
-- Last verified behavior: full-fidelity runtime、resource、renderer/paginator/export/modal、入口集成、
-  dependency/notices、完整项目 gate、bundle audit 与最终 `make deploy` 已通过；独立最终复审无
-  P0–P2。真实 Obsidian smoke 尚未完成，不能提前标记 implementation validated。
+- Last verified behavior: Chat、Pagelet、selection 三入口，13 页 measured preview，显式资源、
+  light/dark、420px 窄窗、clipboard、双主题 13 页 Vault Save、close/reopen/cleanup 与 preview/PNG
+  一致性已在部署后的 Obsidian test vault 观察；最终完整项目 gate、bundle audit 与日志检查通过。
 
 Requirement traceability: B-124/REQ-01, B-124/REQ-02, B-124/REQ-03,
 B-124/REQ-04, B-124/REQ-05, B-124/REQ-06, B-124/REQ-07, B-124/REQ-08,
@@ -28,12 +29,12 @@ B-124/AC-09, B-124/AC-10.
 
 | ID | Requirement / AC | Slice | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| T-01 | B-124/REQ-04/05 / AC-05/06 | Markdown/resource preparation + measured paginator | [~] In validation | explicit visual resources、bounded recursive note embeds、一次渲染 exact Range clone、视觉贪心/超高约束已过 focused/full gate；待 app smoke |
-| T-02 | B-124/REQ-03/08/10 / AC-04/09 | fixed renderer + responsive/modal lifecycle | [~] In validation | visual DOM/readiness/cancellation、整批 issue/fallback aggregation 与 owner cleanup 已过 focused/full gate；待 app smoke |
-| T-03 | B-124/REQ-01/02 / AC-01..03 | Chat/Pagelet/selection integration | [x] Complete | partial-warning Chat fail-closed; strict no-path Pagelet payload; original selection command suites |
-| T-04 | B-124/REQ-06/07/09 / AC-07/08 | SnapDOM capture + clipboard/Vault export | [~] In validation | exact dependency/options、self-contained audit、clipboard timing、serialized unique writes、取消与全页完整性已过 focused/full gate；待 app copy/save smoke |
-| T-05 | B-124/AC-04..09 | CSS/locales + focused UI/runtime tests | [~] In validation | visual/placeholder/status、greedy visual layout、跨页 warning 已部署；待真实 UI evidence |
-| T-06 | B-124/AC-10 | docs/notices/local gate/review/build/bundle/smoke | [~] In validation | docs/notices/dependency/full tests/build/bundle/deploy pass；待真实 Obsidian smoke |
+| T-01 | B-124/REQ-04/05 / AC-05/06 | Markdown/resource preparation + measured paginator | [x] Complete | focused fixtures + deployed 5071-char/13-page smoke；每页 body `603=603`，remote/Vault/nested heading/Mermaid/SVG/placeholder 均进入 preview/PNG |
+| T-02 | B-124/REQ-03/08/10 / AC-04/09 | fixed renderer + responsive/modal lifecycle | [x] Complete | fixed `540x720`、light/dark、420px scale、44px actions、warning aggregation、close/reopen 与零残留 capture host 已实测 |
+| T-03 | B-124/REQ-01/02 / AC-01..03 | Chat/Pagelet/selection integration | [x] Complete | partial-warning Chat fail-closed；strict no-path Pagelet payload；三个真实可见入口均打开统一 Modal |
+| T-04 | B-124/REQ-06/07/09 / AC-07/08 | SnapDOM capture + clipboard/Vault export | [x] Complete | Copy light/dark 成功且不隐式写 Vault；light/dark 各保存 13 张有序 unique PNG，全部 `1080x1440` |
+| T-05 | B-124/AC-04..09 | CSS/locales + focused UI/runtime tests | [x] Complete | placeholder/warning 在 Copy/Save 后保留；双主题 preview/PNG、Mermaid 可读性、窄窗分页与 actions 已观察 |
+| T-06 | B-124/AC-10 | docs/notices/local gate/review/build/bundle/smoke | [x] Complete | dependency/full tests/lint/build/bundle/deploy/docs/community scan 与干净 Obsidian console/errors 均通过 |
 
 ## Findings
 
@@ -58,6 +59,8 @@ B-124/AC-09, B-124/AC-10.
 | F-17 | P1 | 初版 full-fidelity resolver 对 Markdown note embed 仅占位；literal scanner、SVG namespace/raster validation、Vault 大文件预读、重复 occurrence 输出放大、无效引用计数与 timeout 后 lingering request 存在契约/安全缺口 | 有界递归 whole/heading/block embed；literal 零 I/O；namespace-aware strict SVG；raster magic；stat preflight + post-read；canonical cache + explicit-count/32 MiB output budget；shared deadline + bounded-concurrency circuit breaker | resource focused suite + full gates | Closed |
 | F-18 | P1 | 分页 probe 重跑 Markdown processor；视觉块被强制独占整页，code literal 可误判视觉；raw HTML 可能在 sanitize 前 connected；重复文本启发式映射、逐 code point 标记、inline-code HTML marker 与 task/list 层级边界会造成错误样式、DOM 放大、空 list shell 或状态丢失 | semantic block prepare-once + inert static clone；非枚举 exact source-range render plan + capped safe-boundary sentinel + deterministic Range clone；code 使用 literal marker；task item 仅允许经结构 key 证明的同层 sibling boundary，并 canonical snap 到 `<li>` 前；视觉贪心/isolated oversize；仅 safe standalone Mermaid 可 connected staging | renderer/paginator focused suite（含 50k CJK、重复 strong/em/link/code、task/nested-list state）+ independent delta review | Closed |
 | F-19 | P1 | 完整性只看当前预览页，Copy/Save success 可覆盖 warning；排队中的 Save 在关闭后仍可能开始 folder/path mutation | 聚合所有 prepared pages 的 issue/fallback；成功仅表示传输/写入；queue/deferred mutation 前 cancellation checkpoint | modal/export focused suite + full gates | Closed |
+| F-20 | P1 | literal sentinel 清理会全局删除尚未处理的空 element sentinel，真实 selection 因 boundary marker detached 无法打开 | 维护 pending element sentinel 集合；仅在消费前移出 preserve set，空 span pruning 跳过其余 pending markers | helper regression + 5071-char/13-page deployed selection smoke | Closed |
+| F-21 | P1 | Mermaid 内嵌 `<style>` 被安全清理后，SVG node 回退为黑底且 label 对比度不足，preview/PNG 虽一致但不满足完整保真 | 删除 `<style>` 前后 diff 有限 paint/text computed properties，并在属性清理后物化安全 inline 值；外部或 unsupported resource-bearing style 进入 completeness issue | renderer regression；light/dark preview 与 `1080x1440` page-10 PNG 可读 | Closed |
 
 ## Validation Log
 
@@ -85,11 +88,18 @@ B-124/AC-09, B-124/AC-10.
 | 2026-08-05 | AC-04..10 | final `make deploy` | PASS | 184 suites / 3,936 tests；lint/build；最新 assets copied to repo-local test vault |
 | 2026-08-05 | AC-01/10 | Obsidian CLI runtime setup | PASS | Obsidian 1.13.4；明确 `vault=test` 路径；plugin enabled/reloaded；`share-selection-as-card` 注册；准确打开 `share-card-smoke.md`；debug/mobile 已恢复 off |
 | 2026-08-05 | AC-04..09 | real Obsidian Desktop smoke | BLOCKED | macOS 当前锁屏，Computer Use 无法进入可见窗口。CLI 可打开真实 modal 且显式远程资源请求得到预期 200/404，但 `document.visibilityState=hidden`、`requestAnimationFrame` 1.5s 未触发，触发 production 5s readiness timeout；这是锁屏节流证据，不能替代解锁后的 preview/copy/save/visual interaction PASS |
+| 2026-08-05 | F-20 / AC-05 | boundary regression + deployed selection rerun | PASS after fix | 7 Share Card suites 181/181；真实 5071 chars → 13 pages，全部固定 540×720，body `clientHeight=scrollHeight=603`，末页保留 `SHARE-CARD-SMOKE-END` |
+| 2026-08-05 | F-21 / AC-06 | Mermaid cleanup fidelity | PASS after fix | 普通 render node `rgb(236,236,255)`/stroke/label computed style 经有限安全 materialization 保留；light/dark preview 与 page-10 PNG 均清晰，runtime `<style>` 仍删除 |
+| 2026-08-05 | AC-01..03/10 | deployed visible entrypoints | PASS | Chat 仅 5 条完成 assistant 回复显示 action；Pagelet 仅导出两条 visible findings、无 path/diagnostics；selection 以原始 5071-char Markdown 打开 |
+| 2026-08-05 | AC-04..06/10 | deployed preview/resources/themes | PASS | 13 页无 overflow；remote/Vault image、nested heading embed、Mermaid、static SVG 与可见 failure placeholder 进入 preview/PNG；light/dark 视觉与页码一致。whole/block/cycle/depth/Canvas 由 focused fixtures 覆盖，未冒充额外真机视觉证据 |
+| 2026-08-05 | AC-07/08/10 | real Copy + Vault Save | PASS | light page 5 与 dark page 1 Copy 均收到 clipboard success；Copy 前无 `PA-Cards` 写入。最终 light batch `152608` 与 dark batch `152844` 各 13 张，26/26 PNG 均为 `1080x1440` 且顺序/命名完整；warning 未被 success 覆盖 |
+| 2026-08-05 | AC-04/09/10 | close/reopen + narrow mobile viewport | PASS | Escape 后 modal/capture host `0/0`，同一 selection 可重开；Desktop mobile emulation + 420×850 window 下 scale `0.685185...`、document/modal horizontal overflow 0、nav/actions 全部 44px，真实翻到 page 2 后关闭；非真实 iOS/Android 触控声明 |
+| 2026-08-05 | AC-10 | final gate + bundle + deployed logs | PASS | final `make deploy`: 185 suites / 3945 tests，lint/typecheck/build；`dist/main.js` 5,042,744 bytes、gzip 1,557,501 < 1,572,864；SnapDOM 2.23.2；community scan无 match；干净 final smoke console 仅 CLI receipts、errors none |
 
 ## Closeout Readiness
 
-- [ ] Owning contract 与用户已确认边界一致。
-- [ ] Required review/smoke/release evidence 已记录。
-- [ ] 未完成项已进入 Backlog。
+- [x] Owning contract 与用户已确认边界一致。
+- [x] Required review/smoke evidence 已记录；release evidence 不在本轮授权范围。
+- [x] 无未完成的本 track 实现项；真实 iOS/Android 属后续 release evidence。
 - [x] 稳定结论已吸收到 current contract/tests。
 - [ ] 过程文档已标记 delete-after-absorption 或 unique archive evidence。

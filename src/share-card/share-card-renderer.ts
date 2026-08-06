@@ -74,6 +74,89 @@ const SAFE_VISUAL_CLASSES = [
     "media-embed",
     "mermaid",
 ];
+const MERMAID_STATIC_STYLE_PROPERTIES = [
+    "background-color",
+    "color",
+    "dominant-baseline",
+    "fill",
+    "fill-opacity",
+    "flood-color",
+    "flood-opacity",
+    "font-family",
+    "font-size",
+    "font-style",
+    "font-variant",
+    "font-weight",
+    "letter-spacing",
+    "line-height",
+    "marker-end",
+    "marker-mid",
+    "marker-start",
+    "opacity",
+    "paint-order",
+    "shape-rendering",
+    "stop-color",
+    "stop-opacity",
+    "stroke",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "stroke-opacity",
+    "stroke-width",
+    "text-align",
+    "text-anchor",
+    "text-decoration-color",
+    "text-decoration-line",
+    "text-decoration-style",
+    "text-transform",
+    "white-space",
+] as const;
+const MERMAID_FOREIGN_OBJECT_STYLE_PROPERTIES = [
+    "border-bottom-color",
+    "border-bottom-style",
+    "border-bottom-width",
+    "border-left-color",
+    "border-left-style",
+    "border-left-width",
+    "border-radius",
+    "border-right-color",
+    "border-right-style",
+    "border-right-width",
+    "border-top-color",
+    "border-top-style",
+    "border-top-width",
+    "box-sizing",
+    "display",
+    "margin-bottom",
+    "margin-left",
+    "margin-right",
+    "margin-top",
+    "overflow-wrap",
+    "padding-bottom",
+    "padding-left",
+    "padding-right",
+    "padding-top",
+    "vertical-align",
+    "word-break",
+] as const;
+const MERMAID_AUDITED_UNSUPPORTED_STYLE_PROPERTIES = [
+    "clip-path",
+    "filter",
+    "mask",
+] as const;
+const MERMAID_AUDITED_UNSUPPORTED_STYLE_PROPERTY_SET = new Set<string>(
+    MERMAID_AUDITED_UNSUPPORTED_STYLE_PROPERTIES,
+);
+const MERMAID_FRAGMENT_ONLY_STYLE_PROPERTIES = new Set([
+    "fill",
+    "marker-end",
+    "marker-mid",
+    "marker-start",
+    "stroke",
+]);
+const SAFE_MERMAID_FRAGMENT_STYLE_RE = /^url\(\s*(["']?)#[a-z_][\w:.-]*\1\s*\)$/iu;
 const RESOURCE_ATTRIBUTE_NAMES = new Set([
     "background", "href", "imagesrcset", "poster", "src", "srcset", "xlink:href",
 ]);
@@ -173,6 +256,17 @@ interface LayoutSize {
     clientHeight: number;
     clientWidth: number;
     scrollHeight: number;
+}
+
+interface MermaidComputedStyleSnapshot {
+    element: Element;
+    properties: ReadonlyMap<string, { priority: string; value: string }>;
+}
+
+interface MermaidLostStyleDeclaration {
+    property: string;
+    priority: string;
+    value: string;
 }
 
 export class ShareCardRenderCancelledError extends Error {
@@ -1007,6 +1101,7 @@ function extractShareCardBoundaries(
 
     const liveBoundaries = new Map<number, { node: Node; offset: number }>();
     const snappedBoundaries = new Map<number, ShareCardStaticDomBoundary>();
+    const pendingElementSentinels = new Set(elementSentinels.values());
     for (const sentinel of instrumentation.sentinels) {
         if (sentinel.kind === "element") {
             const element = elementSentinels.get(sentinel.sourceOffset);
@@ -1030,6 +1125,7 @@ function extractShareCardBoundaries(
                     "Share Card Markdown boundary marker was detached.",
                 );
             }
+            pendingElementSentinels.delete(element);
             element.remove();
             if (snapped) {
                 snappedBoundaries.set(sentinel.sourceOffset, snapped);
@@ -1049,6 +1145,7 @@ function extractShareCardBoundaries(
             bodyEl,
             sentinel.marker,
             ownerDocument,
+            pendingElementSentinels,
         );
         if (!boundary) {
             throw new ShareCardRenderReadinessError(
@@ -1171,6 +1268,7 @@ function removeLiteralBoundarySentinel(
     root: HTMLElement,
     marker: string,
     ownerDocument: Document,
+    preservedEmptySpans: ReadonlySet<Element>,
 ): { node: Node; offset: number } | null {
     const nodeFilter = ownerDocument.defaultView?.NodeFilter?.SHOW_TEXT ?? 4;
     const walker = ownerDocument.createTreeWalker(root, nodeFilter);
@@ -1206,7 +1304,7 @@ function removeLiteralBoundarySentinel(
         range.insertNode(anchor);
         liftAnchorOutOfEmptySpans(anchor, root);
         removeEmptyTextNodes(root);
-        removeEmptySpans(root);
+        removeShareCardEmptySpans(root, preservedEmptySpans);
         const parent = anchor.parentNode;
         if (!parent) return null;
         const offset = Array.from(parent.childNodes).indexOf(anchor);
@@ -1289,10 +1387,18 @@ function removeEmptyTextNodes(root: HTMLElement): void {
     for (const text of empty) text.remove();
 }
 
-function removeEmptySpans(root: HTMLElement): void {
+/** @internal Preserve pending boundary nodes while pruning empty syntax wrappers. */
+export function removeShareCardEmptySpans(
+    root: HTMLElement,
+    preservedElements: ReadonlySet<Element> = new Set(),
+): void {
     const spans = Array.from(root.querySelectorAll("span")).reverse();
     for (const span of spans) {
-        if ((span.textContent ?? "").length === 0 && span.childNodes.length === 0) {
+        if (
+            !preservedElements.has(span)
+            && (span.textContent ?? "").length === 0
+            && span.childNodes.length === 0
+        ) {
             span.remove();
         }
     }
@@ -1419,10 +1525,12 @@ function isSafeStandaloneMermaidMarkdown(markdown: string): boolean {
 export function sanitizeShareCardContent(bodyEl: HTMLElement): ShareCardSanitizationIssue[] {
     const issues: ShareCardSanitizationIssue[] = [];
     preserveTaskListState(bodyEl);
+    const mermaidStyles = captureMermaidComputedStyles(bodyEl);
 
     for (const element of Array.from(bodyEl.querySelectorAll(HARD_REMOVED_SELECTOR))) {
         element.remove();
     }
+    const lostMermaidStyles = collectLostMermaidStyles(bodyEl, mermaidStyles, issues);
     for (const button of Array.from(bodyEl.querySelectorAll("button"))) {
         if (button.classList.contains("copy-code-button")) button.remove();
     }
@@ -1480,7 +1588,121 @@ export function sanitizeShareCardContent(bodyEl: HTMLElement): ShareCardSanitiza
             replaceWithPlaceholder(element, "Image unavailable");
         }
     }
+    materializeLostMermaidStyles(lostMermaidStyles);
     return issues;
+}
+
+function captureMermaidComputedStyles(bodyEl: HTMLElement): MermaidComputedStyleSnapshot[] {
+    const view = bodyEl.ownerDocument.defaultView;
+    if (!view || typeof view.getComputedStyle !== "function") return [];
+
+    const elements = new Set<Element>();
+    for (const root of Array.from(
+        bodyEl.querySelectorAll(".mermaid, .block-language-mermaid"),
+    )) {
+        elements.add(root);
+        for (const element of Array.from(root.querySelectorAll("*"))) {
+            if (element.tagName.toLowerCase() !== "style") elements.add(element);
+        }
+    }
+
+    const snapshots: MermaidComputedStyleSnapshot[] = [];
+    for (const element of elements) {
+        let computed: CSSStyleDeclaration;
+        try {
+            computed = view.getComputedStyle(element);
+        } catch {
+            continue;
+        }
+        const properties = new Map<string, { priority: string; value: string }>();
+        const styleProperties = hasForeignObjectAncestor(element)
+            ? [
+                ...MERMAID_STATIC_STYLE_PROPERTIES,
+                ...MERMAID_FOREIGN_OBJECT_STYLE_PROPERTIES,
+                ...MERMAID_AUDITED_UNSUPPORTED_STYLE_PROPERTIES,
+            ]
+            : [
+                ...MERMAID_STATIC_STYLE_PROPERTIES,
+                ...MERMAID_AUDITED_UNSUPPORTED_STYLE_PROPERTIES,
+            ];
+        for (const property of styleProperties) {
+            const value = computed.getPropertyValue(property).trim();
+            if (!value) continue;
+            properties.set(property, {
+                priority: computed.getPropertyPriority(property),
+                value,
+            });
+        }
+        if (properties.size > 0) snapshots.push({ element, properties });
+    }
+    return snapshots;
+}
+
+function collectLostMermaidStyles(
+    bodyEl: HTMLElement,
+    snapshots: readonly MermaidComputedStyleSnapshot[],
+    issues: ShareCardSanitizationIssue[],
+): ReadonlyMap<Element, readonly MermaidLostStyleDeclaration[]> {
+    const view = bodyEl.ownerDocument.defaultView;
+    if (!view || typeof view.getComputedStyle !== "function") return new Map();
+
+    const lostByElement = new Map<Element, MermaidLostStyleDeclaration[]>();
+    for (const snapshot of snapshots) {
+        if (!snapshot.element.parentElement) continue;
+        let computed: CSSStyleDeclaration;
+        try {
+            computed = view.getComputedStyle(snapshot.element);
+        } catch {
+            continue;
+        }
+        const lost: MermaidLostStyleDeclaration[] = [];
+        for (const [property, declaration] of snapshot.properties) {
+            if (computed.getPropertyValue(property).trim() === declaration.value) continue;
+            if (
+                MERMAID_AUDITED_UNSUPPORTED_STYLE_PROPERTY_SET.has(property)
+                || !isSafeMermaidStaticStyle(property, declaration.value)
+            ) {
+                issues.push({
+                    tagName: snapshot.element.tagName.toLowerCase(),
+                    reason: hasOnlySafeCssResources(declaration.value)
+                        ? "unsafe-style"
+                        : "external-resource-remains",
+                });
+                continue;
+            }
+            lost.push({
+                property,
+                priority: declaration.priority,
+                value: declaration.value,
+            });
+        }
+        if (lost.length > 0) lostByElement.set(snapshot.element, lost);
+    }
+    return lostByElement;
+}
+
+function materializeLostMermaidStyles(
+    lostByElement: ReadonlyMap<Element, readonly MermaidLostStyleDeclaration[]>,
+): void {
+    for (const [element, lost] of lostByElement) {
+        if (!element.parentElement) continue;
+        const existing = element.getAttribute("style")?.trim() ?? "";
+        if (existing && !isSafeStyle(existing)) continue;
+        const declarations = lost.map(({ property, priority, value }) => (
+            `${property}: ${value}${priority ? ` !${priority}` : ""}`
+        ));
+        element.setAttribute(
+            "style",
+            [existing.replace(/;?\s*$/u, ""), ...declarations].filter(Boolean).join("; "),
+        );
+    }
+}
+
+function isSafeMermaidStaticStyle(property: string, value: string): boolean {
+    if (!isSafeStyle(`${property}:${value}`)) return false;
+    if (!value.toLowerCase().includes("url(")) return true;
+    return MERMAID_FRAGMENT_ONLY_STYLE_PROPERTIES.has(property)
+        && SAFE_MERMAID_FRAGMENT_STYLE_RE.test(value);
 }
 
 /** Backward-compatible name retained for existing callers/tests. */

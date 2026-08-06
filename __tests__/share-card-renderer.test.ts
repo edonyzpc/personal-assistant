@@ -4,7 +4,9 @@ import {
     auditVisualResourceUris,
     createShareCardVirtualDomBoundaries,
     locateShareCardSentinelTextRange,
+    removeShareCardEmptySpans,
     resolveShareCardListItemStartDomBoundary,
+    sanitizeShareCardContent,
     ShareCardRenderer,
     ShareCardRenderCancelledError,
     ShareCardRenderReadinessError,
@@ -209,6 +211,115 @@ describe("ShareCardRenderer", () => {
             endOffset: "\uE001\n".length,
         });
         expect(locateShareCardSentinelTextRange([marker, marker], marker)).toBeNull();
+    });
+
+    it("preserves pending empty boundary markers while pruning other empty spans", () => {
+        const document = new ShareCardTestDocument();
+        const root = document.createElement("div");
+        const markerWrapper = document.createElement("span");
+        const pendingMarker = document.createElement("span");
+        const emptySpan = document.createElement("span");
+        const nonEmptySpan = document.createElement("span");
+        const emptyWrapper = document.createElement("span");
+        const nestedEmptySpan = document.createElement("span");
+
+        markerWrapper.appendChild(pendingMarker);
+        emptyWrapper.appendChild(nestedEmptySpan);
+        nonEmptySpan.textContent = "keep";
+        root.appendChild(markerWrapper);
+        root.appendChild(emptySpan);
+        root.appendChild(nonEmptySpan);
+        root.appendChild(emptyWrapper);
+
+        removeShareCardEmptySpans(
+            asElement(root),
+            new Set<Element>([pendingMarker as unknown as Element]),
+        );
+
+        expect(pendingMarker.parentElement).toBe(markerWrapper);
+        expect(markerWrapper.parentElement).toBe(root);
+        expect(emptySpan.parentElement).toBeNull();
+        expect(nonEmptySpan.parentElement).toBe(root);
+        expect(nestedEmptySpan.parentElement).toBeNull();
+        expect(emptyWrapper.parentElement).toBeNull();
+    });
+
+    it("materializes Mermaid computed styles before removing its runtime style element", () => {
+        const document = new ShareCardTestDocument();
+        const body = document.createElement("div");
+        const mermaid = document.createElement("div");
+        const runtimeStyle = document.createElement("style");
+        const svg = document.createElement("svg");
+        const node = document.createElement("rect");
+        const edge = document.createElement("path");
+        const foreignObject = document.createElement("foreignObject");
+        const label = document.createElement("span");
+
+        mermaid.classList.add("mermaid");
+        label.classList.add("nodeLabel");
+        node.setAttribute("style", "background:url(https://example.com/node.png)");
+        svg.appendChild(node);
+        svg.appendChild(edge);
+        foreignObject.appendChild(label);
+        svg.appendChild(foreignObject);
+        mermaid.appendChild(runtimeStyle);
+        mermaid.appendChild(svg);
+        body.appendChild(mermaid);
+        document.body.appendChild(body);
+
+        Object.assign(document.defaultView, {
+            getComputedStyle: (element: Element) => {
+                const styled = runtimeStyle.parentElement !== null;
+                const values = new Map<string, string>();
+                if (element === node as unknown as Element) {
+                    values.set("fill", styled ? "rgb(236, 236, 255)" : "rgb(0, 0, 0)");
+                    values.set("stroke", styled ? "rgb(147, 112, 219)" : "none");
+                    values.set("display", styled ? "block" : "inline");
+                }
+                if (element === edge as unknown as Element) {
+                    values.set("fill", styled ? "url(https://example.com/fill.svg)" : "none");
+                    values.set("marker-end", styled ? "url(#arrowhead)" : "none");
+                    values.set("clip-path", styled ? "url(#clip)" : "none");
+                    values.set("filter", styled ? "url(https://example.com/filter.svg)" : "none");
+                }
+                if (element === label as unknown as Element) {
+                    values.set("color", styled ? "rgb(51, 51, 51)" : "rgb(15, 15, 15)");
+                    values.set("display", styled ? "inline-block" : "inline");
+                    values.set("margin-top", styled ? "2px" : "0px");
+                    values.set("padding-left", styled ? "4px" : "0px");
+                    values.set("text-align", styled ? "center" : "start");
+                }
+                return {
+                    getPropertyPriority: () => "",
+                    getPropertyValue: (property: string) => values.get(property) ?? "",
+                } as unknown as CSSStyleDeclaration;
+            },
+        });
+
+        const issues = sanitizeShareCardContent(asElement(body));
+        expect(issues).toHaveLength(4);
+        expect(issues).toEqual(expect.arrayContaining([
+            { tagName: "path", reason: "unsafe-style" },
+            { tagName: "path", reason: "external-resource-remains" },
+            { tagName: "rect", reason: "unsafe-style" },
+        ]));
+        expect(issues.filter((issue) => (
+            issue.tagName === "path" && issue.reason === "external-resource-remains"
+        ))).toHaveLength(2);
+        expect(runtimeStyle.parentElement).toBeNull();
+        expect(node.getAttribute("style")).toContain("fill: rgb(236, 236, 255)");
+        expect(node.getAttribute("style")).toContain("stroke: rgb(147, 112, 219)");
+        expect(node.getAttribute("style")).not.toContain("display");
+        expect(edge.getAttribute("style")).toContain("marker-end: url(#arrowhead)");
+        expect(edge.getAttribute("style")).not.toContain("fill");
+        expect(edge.getAttribute("style")).not.toContain("clip-path");
+        expect(edge.getAttribute("style")).not.toContain("https://example.com");
+        expect(label.getAttribute("style")).toContain("color: rgb(51, 51, 51)");
+        expect(label.getAttribute("style")).toContain("display: inline-block");
+        expect(label.getAttribute("style")).toContain("margin-top: 2px");
+        expect(label.getAttribute("style")).toContain("padding-left: 4px");
+        expect(label.getAttribute("style")).toContain("text-align: center");
+        expect(auditVisualResourceUris(asElement(body))).toEqual([]);
     });
 
     it("renders the fixed card structure, measures overflow and aborts its handle", async () => {
