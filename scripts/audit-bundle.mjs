@@ -4,9 +4,10 @@ import { join } from "node:path";
 import process from "node:process";
 
 const DEFAULT_INPUT = "dist/main.js";
-// Informational budget — bundle size is not a hard release gate per D9. The 1.5 MB ceiling
-// leaves ~30% headroom above the post-v2.0.0 baseline (~1.14 MB gzip) for Ops Agent growth.
-const DEFAULT_GZIP_BUDGET_BYTES = 1.5 * 1024 * 1024;
+// Informational budget — bundle size is not a hard release gate per D9. The 3.5 MB ceiling
+// accommodates the post-v2.0.0 baseline (~1.14 MB), Ops Agent growth, and the embedded
+// Source Han Serif SC font subset (~1.4 MB woff2) used by Share Card.
+const DEFAULT_GZIP_BUDGET_BYTES = 3.5 * 1024 * 1024;
 // Match the full set of Node builtins so transitive imports (`@langchain/community`, etc.)
 // don't sneak into the mobile bundle when only fs/path/child_process are whitelisted.
 const NODE_BUILTIN_NAMES = "fs|path|child_process|os|crypto|stream|url|net|tls|http|https|zlib|querystring|readline|buffer|events|util|tty|dns|fs\\/promises|stream\\/promises|module|process|worker_threads";
