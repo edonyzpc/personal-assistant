@@ -8,6 +8,7 @@ import {
     ShareCardRenderer,
     type ShareCardRenderOptions,
 } from "./share-card-renderer";
+import { getShareCardLocalFonts } from "./share-card-font";
 
 export const SHARE_CARD_FOLDER = "PA-Cards";
 
@@ -47,7 +48,7 @@ export class ShareCardClipboardUnavailableError extends Error {
 
 const shareCardSaveTails = new WeakMap<Vault, Promise<void>>();
 
-const SNAPDOM_SHARE_CARD_OPTIONS = Object.freeze({
+const SNAPDOM_SHARE_CARD_BASE_OPTIONS: SnapdomOptions = {
     scale: 2,
     dpr: 1,
     type: "png",
@@ -57,7 +58,20 @@ const SNAPDOM_SHARE_CARD_OPTIONS = Object.freeze({
     outerShadows: false,
     resolvePicturePlaceholders: false,
     cache: "disabled",
-} satisfies SnapdomOptions);
+};
+
+let cachedSnapdomOptions: SnapdomOptions | null = null;
+
+async function getShareCardSnapdomOptions(): Promise<SnapdomOptions> {
+    if (cachedSnapdomOptions) return cachedSnapdomOptions;
+    const localFonts = await getShareCardLocalFonts().catch(() => undefined);
+    if (localFonts) {
+        cachedSnapdomOptions = { ...SNAPDOM_SHARE_CARD_BASE_OPTIONS, localFonts };
+        return cachedSnapdomOptions;
+    }
+    return SNAPDOM_SHARE_CARD_BASE_OPTIONS;
+}
+
 
 const CAPTURE_RESOURCE_ATTRIBUTES = new Set([
     "background",
@@ -138,7 +152,8 @@ function assertSelfContainedCssUrls(cssValue: string): void {
 export function createSnapdomShareCardCapture(snapdomLike: SnapdomLike): ShareCardCapture {
     return async (element) => {
         assertShareCardElementIsSelfContained(element);
-        const result = await snapdomLike(element, SNAPDOM_SHARE_CARD_OPTIONS);
+        const options = await getShareCardSnapdomOptions();
+        const result = await snapdomLike(element, options);
         const blob = await result.toBlob({ type: "png" });
         if (blob.type !== "image/png") {
             throw new Error(`Share Card capture returned ${blob.type || "an unknown MIME type"}.`);

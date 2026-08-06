@@ -1,3 +1,8 @@
+jest.mock("../src/share-card/share-card-font", () => ({
+    registerShareCardFontFace: jest.fn().mockResolvedValue(undefined),
+    unregisterShareCardFontFace: jest.fn(),
+}));
+
 import { Notice, type App } from "obsidian";
 import {
     ShareCardModal,

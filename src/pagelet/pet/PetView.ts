@@ -8,7 +8,7 @@
  * state via `setState()`.
  */
 
-import { Platform } from "obsidian";
+import { Platform, setIcon } from "obsidian";
 import type {
     ActionRingCloseReason,
     PetCallbacks,
@@ -45,12 +45,14 @@ export function getPetActionRingLabels(locale: PageletLocale): {
     capture: string;
     review: string;
     discover: string;
+    shareCard: string;
 } {
     return {
         ariaLabel: pageletT("pagelet.pet.actionRing.ariaLabel", locale),
         capture: pageletT("pagelet.pet.actionRing.capture", locale),
         review: pageletT("pagelet.pet.actionRing.review", locale),
         discover: pageletT("pagelet.pet.actionRing.discover", locale),
+        shareCard: pageletT("pagelet.pet.actionRing.shareCard", locale),
     };
 }
 
@@ -152,37 +154,40 @@ export function intersectActionRingViewport(
     };
 }
 
-const DESKTOP_ACTION_RING_OFFSETS: Record<
-    PetCorner,
-    readonly ActionRingItemPosition[]
-> = {
-    "bottom-right": [
-        { left: -118, top: -30 },
-        { left: -110, top: -86 },
-        { left: -58, top: -122 },
-    ],
-    "bottom-left": [
-        { left: 38, top: -30 },
-        { left: 46, top: -86 },
-        { left: -4, top: -122 },
-    ],
-    "top-right": [
-        { left: -118, top: -14 },
-        { left: -110, top: 42 },
-        { left: -58, top: 78 },
-    ],
-    "top-left": [
-        { left: 38, top: -14 },
-        { left: 46, top: 42 },
-        { left: -4, top: 78 },
-    ],
-};
+/**
+ * Compute arc positions that fan items AWAY from the screen edge (into the
+ * interior). The opening/gap in the arc faces the corner direction.
+ */
+export function computeArcPositions(
+    corner: PetCorner,
+    itemCount: number,
+    radius = 90,
+): ActionRingItemPosition[] {
+    if (itemCount < 1) return [];
+    if (itemCount === 1) return [{ left: 0, top: -radius }];
+    const interiorAngle: Record<PetCorner, number> = {
+        "bottom-right": -(3 * Math.PI) / 4,
+        "bottom-left": -Math.PI / 4,
+        "top-right": (3 * Math.PI) / 4,
+        "top-left": Math.PI / 4,
+    };
+    const center = interiorAngle[corner];
+    const ARC_SPAN = Math.PI;
+    const arcStart = center - ARC_SPAN / 2;
+    return Array.from({ length: itemCount }, (_, i) => {
+        const angle = arcStart + (ARC_SPAN * i) / (itemCount - 1);
+        return {
+            left: Math.round(radius * Math.cos(angle)),
+            top: Math.round(radius * Math.sin(angle)),
+        };
+    });
+}
 
 /**
- * Resolve three positions inside the current visual viewport. The preferred
- * desktop result is an inward arc. Phone-toolbar actions form a horizontal row
- * beneath the Pet and degrade to a compact column only when their full labels
- * cannot fit without clipping or overlap.
+ * Resolve positions inside the current visual viewport. The preferred desktop
+ * result is an inward arc. Phone-toolbar actions form a horizontal row beneath
+ * the Pet and degrade to a compact column only when their full labels cannot
+ * fit without clipping or overlap.
  */
 export function computeActionRingLayout(input: {
     viewport: ActionRingLayoutRect;
@@ -236,7 +241,14 @@ export function computeActionRingLayout(input: {
         });
     }
 
-    const preferredOffsets = DESKTOP_ACTION_RING_OFFSETS[input.corner];
+    const distToEdge = Math.min(
+        anchorCenterX - minLeft,
+        maxRight - anchorCenterX,
+        anchorCenterY - minTop,
+        maxBottom - anchorCenterY,
+    );
+    const radius = Math.min(90, Math.max(50, distToEdge - 22));
+    const preferredOffsets = computeArcPositions(input.corner, sizes.length, radius);
     const preferredOrigin = { left: anchorCenterX, top: anchorCenterY };
     const preferred = sizes.map((size, index) => {
         const offset = preferredOffsets[index] ?? { left: 0, top: 0 };
@@ -1322,24 +1334,34 @@ export class PetView implements PetRenderer {
         };
 
         const items: Array<{
-            action: "capture" | "review" | "discover";
+            action: "capture" | "review" | "discover" | "shareCard";
+            icon: string;
             label: string;
             callback: (() => void) | undefined;
         }> = [
             {
                 action: "capture",
+                icon: "notebook-pen",
                 label: labels.capture,
                 callback: this._callbacks.onQuickCaptureOpen,
             },
             {
                 action: "review",
+                icon: "sparkles",
                 label: labels.review,
                 callback: this._callbacks.onReviewCurrentNote,
             },
             {
                 action: "discover",
+                icon: "git-branch",
                 label: labels.discover,
                 callback: this._callbacks.onDiscoverConnections,
+            },
+            {
+                action: "shareCard",
+                icon: "share-2",
+                label: labels.shareCard,
+                callback: this._callbacks.onShareCard,
             },
         ];
 
@@ -1348,7 +1370,9 @@ export class PetView implements PetRenderer {
             btn.className = "pa-pagelet-action-ring-item";
             btn.setAttribute("type", "button");
             btn.setAttribute("data-action", item.action);
-            btn.textContent = item.label;
+            btn.setAttribute("aria-label", item.label);
+            btn.title = item.label;
+            setIcon(btn, item.icon);
             const cb = item.callback;
             if (!cb) {
                 btn.setAttribute("disabled", "");

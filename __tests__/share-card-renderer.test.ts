@@ -340,9 +340,8 @@ describe("ShareCardRenderer", () => {
 
         expect(render.cardEl.classList.contains("pa-share-card")).toBe(true);
         expect(render.cardEl.classList.contains("is-dark")).toBe(true);
-        expect(render.cardEl.querySelector(".pa-share-card-source")?.textContent).toBe("PA Chat");
-        expect(render.cardEl.querySelector(".pa-share-card-brand")?.textContent)
-            .toBe("PA · Personal Assistant");
+        expect(render.cardEl.querySelector(".pa-share-card-source-hint")?.textContent).toBe("· PA Chat");
+        expect(render.cardEl.querySelector(".pa-share-card-brand-row")).toBeTruthy();
         expect(render.cardEl.querySelector(".pa-share-card-page-number")?.textContent).toBe("2 / 3");
         expect(renderMock).toHaveBeenCalledTimes(1);
         expect(renderMock.mock.calls[0]?.[1]).toBe("# 安静且可信");

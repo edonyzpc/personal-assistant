@@ -20,6 +20,7 @@ export interface PetCallbacks {
     onQuickCaptureOpen?: () => void;
     onReviewCurrentNote?: () => void;
     onDiscoverConnections?: () => void;
+    onShareCard?: () => void;
     onActionRingWillOpen?: () => void;
     onActionRingClosed?: (reason: ActionRingCloseReason) => void;
 }

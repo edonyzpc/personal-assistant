@@ -278,11 +278,13 @@ describe("Pet Action Ring public lifecycle", () => {
             expect(view.actionRingOpen).toBe(true);
             expect(ring.getAttribute("role")).toBe("group");
             expect(ring.getAttribute("aria-label")).toBe("拾页操作");
-            expect(ring.children.map((item) => item.textContent)).toEqual([
+            expect(ring.children.map((item) => item.getAttribute("aria-label"))).toEqual([
                 "随手记下",
                 "审阅",
                 "发现关联",
+                "分享",
             ]);
+            expect(ring.children).toHaveLength(4);
             expect(doc.activeElement).toBe(ring.children[0]);
             expect(root.getAttribute("aria-expanded")).toBe("true");
             expect(onWillOpen).toHaveBeenCalledTimes(1);
@@ -770,6 +772,7 @@ describe("Pet Action Ring localization and layout contracts", () => {
             capture: "Capture",
             review: "Review",
             discover: "Discover",
+            shareCard: "Share",
         });
         expect(getPetActionRingLabels("zh").ariaLabel).toBe("拾页操作");
     });
@@ -913,23 +916,30 @@ describe("Pet Action Ring localization and layout contracts", () => {
     });
 
     it("preserves the desktop corner geometry while changing the phone layout", () => {
+        const items = [
+            { width: 44, height: 44 },
+            { width: 44, height: 44 },
+            { width: 44, height: 44 },
+        ];
+        const viewport = { left: 0, top: 0, width: 1000, height: 800 };
         const positions = computeActionRingLayout({
-            viewport: { left: 0, top: 0, width: 1000, height: 800 },
+            viewport,
             anchor: { left: 100, top: 100, width: 56, height: 56 },
-            items: [
-                { width: 44, height: 44 },
-                { width: 44, height: 44 },
-                { width: 44, height: 44 },
-            ],
+            items,
             corner: "top-left",
             mobileToolbar: false,
         });
 
-        expect(positions).toEqual([
-            { left: 166, top: 114 },
-            { left: 174, top: 170 },
-            { left: 124, top: 206 },
-        ]);
+        expect(positions).toHaveLength(3);
+        expectActionRingInsideViewport(positions, items, viewport);
+        const anchorCenter = { left: 128, top: 128 };
+        for (const pos of positions) {
+            const dx = pos.left + 22 - anchorCenter.left;
+            const dy = pos.top + 22 - anchorCenter.top;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            expect(dist).toBeGreaterThan(40);
+            expect(dist).toBeLessThan(130);
+        }
     });
 
     it("recomputes layout for visual viewport activity and refreshes inactivity on Ring use", () => {

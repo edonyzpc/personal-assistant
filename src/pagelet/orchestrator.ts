@@ -2603,6 +2603,7 @@ export class PageletOrchestrator {
                     onQuickCaptureOpen: () => this.host.openQuickCapture(),
                     onReviewCurrentNote: () => { void this.runExplicitDeepDiscover(); },
                     onDiscoverConnections: () => { void this.runExplicitDeepDiscover(); },
+                    onShareCard: () => this.shareActiveNoteOrSelectionAsCard(),
                     onActionRingWillOpen: () => {
                         this.bubbleView?.close({ restoreFocus: false });
                     },
@@ -2633,6 +2634,22 @@ export class PageletOrchestrator {
         // arrived while the Ring was open must regain Pet ownership after
         // both passive and action closes.
         this.reconcilePetNudge();
+    }
+
+    private shareActiveNoteOrSelectionAsCard(): void {
+        const view = this.host.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view) return;
+        const editor = view.editor;
+        const selection = editor?.getSelection()?.trim() ?? "";
+        const basePath = view.file?.path;
+        const content = selection.length > 0 ? selection : (editor?.getValue() ?? "");
+        if (content.trim().length === 0) return;
+        new ShareCardModal(this.host.app, {
+            content,
+            source: selection.length > 0 ? "selection" : "pagelet",
+            sourceLabel: selection.length > 0 ? undefined : view.file?.basename,
+            ...(basePath ? { resourceContext: { basePath } } : {}),
+        }).open();
     }
 
     /** Show the Bubble via the BubbleCoordinator. Suppressed by Focus Mode. */

@@ -215,4 +215,6 @@ export async function flushShareCardTasks(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 }

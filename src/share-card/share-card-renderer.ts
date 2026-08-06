@@ -17,6 +17,13 @@ import {
     type ShareCardTheme,
     stripInlineCode,
 } from "./share-card-types";
+import {
+    SHARE_CARD_LOGO_SVG,
+    SHARE_CARD_CURSIVE_PA_SVG,
+    SHARE_CARD_NOISE_DATA_URI,
+    SHARE_CARD_ORNAMENT_BR_SVG,
+    SHARE_CARD_ORNAMENT_TL_SVG,
+} from "./share-card-assets";
 
 const HARD_REMOVED_SELECTOR = ["script", "style", "link", "base", "meta"].join(",");
 const PLACEHOLDER_SELECTOR = [
@@ -173,6 +180,7 @@ export interface ShareCardRenderOptions {
     sourceLabel?: string;
     sourcePath?: string;
     host?: HTMLElement;
+    fontSize?: number;
 }
 
 export type ShareCardSanitizationReason =
@@ -870,23 +878,48 @@ export class ShareCardRenderer {
             options.theme === "dark" ? "is-dark" : "is-light",
         );
 
-        if (options.sourceLabel) {
-            const sourceEl = this.ownerDocument.createElement("div");
-            sourceEl.classList.add("pa-share-card-source");
-            sourceEl.textContent = options.sourceLabel;
-            cardEl.appendChild(sourceEl);
+        if (options.fontSize) {
+            cardEl.style.setProperty(
+                "--pa-share-card-font-size",
+                `${options.fontSize}px`,
+            );
         }
+
+        const ornamentTl = this.ownerDocument.createElement("div");
+        ornamentTl.classList.add("pa-share-card-ornament", "is-top-left");
+        ornamentTl.innerHTML = SHARE_CARD_ORNAMENT_TL_SVG;
+        cardEl.appendChild(ornamentTl);
+
+        const ornamentBr = this.ownerDocument.createElement("div");
+        ornamentBr.classList.add("pa-share-card-ornament", "is-bottom-right");
+        ornamentBr.innerHTML = SHARE_CARD_ORNAMENT_BR_SVG;
+        cardEl.appendChild(ornamentBr);
+
+        const noiseEl = this.ownerDocument.createElement("div");
+        noiseEl.classList.add("pa-share-card-noise");
+        noiseEl.style.backgroundImage = `url("${SHARE_CARD_NOISE_DATA_URI}")`;
+        cardEl.appendChild(noiseEl);
+
         cardEl.appendChild(bodyEl);
 
         const footerEl = this.ownerDocument.createElement("div");
         footerEl.classList.add("pa-share-card-footer");
+
         const dividerEl = this.ownerDocument.createElement("div");
         dividerEl.classList.add("pa-share-card-divider");
         footerEl.appendChild(dividerEl);
-        const brandEl = this.ownerDocument.createElement("div");
-        brandEl.classList.add("pa-share-card-brand");
-        brandEl.textContent = "PA · Personal Assistant";
-        footerEl.appendChild(brandEl);
+
+        const brandRow = this.ownerDocument.createElement("div");
+        brandRow.classList.add("pa-share-card-brand-row");
+        brandRow.innerHTML = SHARE_CARD_LOGO_SVG + SHARE_CARD_CURSIVE_PA_SVG;
+        if (options.sourceLabel) {
+            const sourceHint = this.ownerDocument.createElement("span");
+            sourceHint.classList.add("pa-share-card-source-hint");
+            sourceHint.textContent = `· ${options.sourceLabel}`;
+            brandRow.appendChild(sourceHint);
+        }
+        footerEl.appendChild(brandRow);
+
         if (page.totalPages > 1) {
             const pageNumberEl = this.ownerDocument.createElement("div");
             pageNumberEl.classList.add("pa-share-card-page-number");

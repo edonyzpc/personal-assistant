@@ -637,10 +637,11 @@ describe("PetView task kind", () => {
                 internals.startQuickCaptureHold();
                 jest.advanceTimersByTime(520);
                 const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
-                expect(menu?.children.map((item) => item.textContent)).toEqual([
+                expect(menu?.children.map((item) => item.getAttribute("aria-label"))).toEqual([
                     "Capture",
                     "Review",
                     "Discover",
+                    "Share",
                 ]);
 
                 menu?.children[index]?.dispatch("click");

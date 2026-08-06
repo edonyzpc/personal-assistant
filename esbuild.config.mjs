@@ -76,12 +76,12 @@ const inlineSqliteWorkerPlugin = {
 // ~941KB (decoded Uint8Array no longer eagerly built) and users who never touch the Memory
 // feature save the full payload permanently after GC.
 const lazyBinaryPlugin = {
-	name: "lazy-binary-wasm",
+	name: "lazy-binary",
 	setup(build) {
 		// No onResolve: let esbuild's default resolver walk node_modules so bare imports
 		// like `@sqliteai/sqlite-wasm/sqlite3.wasm` end up with an absolute on-disk path.
 		// onLoad in the default `file` namespace then handles the bytes.
-		build.onLoad({ filter: /\.wasm$/ }, async (args) => {
+		build.onLoad({ filter: /\.(wasm|woff2)$/ }, async (args) => {
 			const bytes = await readFile(args.path);
 			const base64 = bytes.toString("base64");
 			return {
@@ -89,7 +89,7 @@ const lazyBinaryPlugin = {
 var _b64 = ${JSON.stringify(base64)};
 var _decoded = null;
 var _decoding = null;
-export default function getSqliteWasmBinary() {
+export default function getBinary() {
     if (_decoded !== null) return _decoded;
     var b = atob(_b64);
     _decoded = new Uint8Array(b.length);
@@ -97,7 +97,7 @@ export default function getSqliteWasmBinary() {
     _b64 = null;
     return _decoded;
 }
-export function getSqliteWasmBinaryAsync() {
+export function getBinaryAsync() {
     if (_decoded !== null) return Promise.resolve(_decoded);
     if (_decoding !== null) return _decoding;
     _decoding = Promise.resolve().then(() => {
@@ -110,6 +110,9 @@ export function getSqliteWasmBinaryAsync() {
     });
     return _decoding;
 }
+export var getSqliteWasmBinary = getBinary;
+export var getSqliteWasmBinaryAsync = getBinaryAsync;
+export var getShareCardFontBinaryAsync = getBinaryAsync;
 `,
 				loader: "js",
 				watchFiles: [args.path],

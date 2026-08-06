@@ -4,6 +4,10 @@ import { Modal, Notice, setIcon, type App } from "obsidian";
 import { getPluginUiLanguage, pluginT } from "../locales/plugin";
 import { prepareShareCardMarkdown } from "./share-card-markdown";
 import {
+    registerShareCardFontFace,
+    unregisterShareCardFontFace,
+} from "./share-card-font";
+import {
     ShareCardResourceAbortedError,
     createShareCardResourceCache,
     localizeShareCardResources,
@@ -171,6 +175,9 @@ export class ShareCardModal extends Modal {
         this.resourceController?.abort();
         this.resourceController = null;
         this.resourceCache = null;
+        if (openShareCardModals.size === 0) {
+            unregisterShareCardFontFace(this.contentEl.ownerDocument);
+        }
         this.completenessReport = null;
         this.preparedCompleteness = {
             sanitizationIssueCount: 0,
@@ -213,6 +220,12 @@ export class ShareCardModal extends Modal {
         });
         if (!this.isCurrent(token)) return;
         this.completenessReport = localized.report;
+        try {
+            await registerShareCardFontFace(this.contentEl.ownerDocument);
+        } catch {
+            // Font unavailable — fall back to system fonts silently.
+        }
+        if (!this.isCurrent(token)) return;
         const prepared = (this.dependencies.prepareMarkdown ?? prepareShareCardMarkdown)(
             localized.markdown,
         );
@@ -226,15 +239,41 @@ export class ShareCardModal extends Modal {
             : (content: string, pageIndex: number) => (
                 renderer.fits(content, pageIndex, renderOptions)
             );
-        const pages = await (this.dependencies.paginate ?? paginateShareCardMarkdown)(
+        let pages = await (this.dependencies.paginate ?? paginateShareCardMarkdown)(
             prepared.blocks,
             fit,
             { originalCharacterCount: this.data.content.length },
         );
         if (!this.isCurrent(token)) return;
 
+        let finalRenderOptions = renderOptions;
+        if (pages.length > 1 && typeof renderer.createPreparedFitPredicate === "function") {
+            const REDUCED_FONT_SIZES = [15, 14] as const;
+            for (const fontSize of REDUCED_FONT_SIZES) {
+                if (!this.isCurrent(token)) return;
+                const reducedOptions = { ...renderOptions, fontSize };
+                const reducedFit = renderer.createPreparedFitPredicate(
+                    prepared.blocks,
+                    reducedOptions,
+                );
+                const reducedPages = await (
+                    this.dependencies.paginate ?? paginateShareCardMarkdown
+                )(
+                    prepared.blocks,
+                    reducedFit,
+                    { originalCharacterCount: this.data.content.length },
+                );
+                if (!this.isCurrent(token)) return;
+                if (reducedPages.length < pages.length) {
+                    pages = reducedPages;
+                    finalRenderOptions = reducedOptions;
+                    break;
+                }
+            }
+        }
+
         if (typeof renderer.recordPreparedFinalPages === "function") {
-            renderer.recordPreparedFinalPages(pages, renderOptions);
+            renderer.recordPreparedFinalPages(pages, finalRenderOptions);
         }
         this.refreshPreparedCompleteness(renderer);
         this.pages = pages;
@@ -242,12 +281,12 @@ export class ShareCardModal extends Modal {
             this.app,
             this.contentEl.ownerDocument,
             renderer,
-            renderOptions,
+            finalRenderOptions,
         ) ?? new ShareCardExporter(
             this.app,
             this.contentEl.ownerDocument,
             renderer,
-            renderOptions,
+            finalRenderOptions,
             { signal: controller.signal },
         );
         this.contentEl.setAttribute("aria-busy", "false");
