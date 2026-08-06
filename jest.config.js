@@ -120,6 +120,7 @@ module.exports = {
     // still expects a string payload (it's wrapped in new Blob([...])), so it keeps the
     // legacy asset-string mock — do not merge the two.
     "\\.wasm$": "<rootDir>/__mocks__/wasm-binary-fn.js",
+    "\\.woff2$": "<rootDir>/__mocks__/woff2-binary-fn.js",
     "\\?worker-source$": "<rootDir>/__mocks__/asset-string.js",
     "^@sqlite\\.org/sqlite-wasm$": "<rootDir>/__mocks__/sqlite-wasm.js",
   },
@@ -211,7 +212,7 @@ module.exports = {
 
   // A map from regular expressions to paths to transformers
   transform: {
-    "\\.md$": "<rootDir>/__mocks__/text-transformer.cjs",
+    "\\.(md|txt)$": "<rootDir>/__mocks__/text-transformer.cjs",
   },
 
   // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation

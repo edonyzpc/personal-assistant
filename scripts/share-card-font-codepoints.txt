@@ -1,0 +1,44 @@
+# Share Card bundled serif coverage.
+#
+# `GB2312-LEVEL-1` expands deterministically to the 3,755 common Simplified Chinese
+# characters encoded by rows 16-55 (B0A1-D7F9). The remaining ranges cover Latin,
+# common publishing symbols, CJK punctuation, Hiragana, Bopomofo, and full-width forms.
+
+20-7E
+A0-A9
+AE
+B0-B1
+B7
+D7
+F7
+2010-2016
+2018-201A
+201C-201E
+2020-2022
+2025-2027
+2030
+2032-2033
+2035
+2039-203B
+20AC
+2103
+2122
+2190-2199
+21D2
+2212
+221A
+221E
+2260
+2264-2265
+25A0-25A1
+25B2-25B3
+25C6-25C7
+25CB
+2605-2606
+3000-303F
+3041-3096
+3099-309F
+3105-312F
+GB2312-LEVEL-1
+FF01-FF5E
+FFE0-FFE5

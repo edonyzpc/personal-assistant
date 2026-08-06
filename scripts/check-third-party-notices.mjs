@@ -1,5 +1,12 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import process from "node:process";
+import { parseShareCardFontCodePoints } from "./share-card-font-coverage.mjs";
+import { shareCardFontManifest } from "./share-card-font-manifest.mjs";
+
+const require = createRequire(import.meta.url);
+const fontkit = require("fontkit");
 
 const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
 const notices = readFileSync("THIRD_PARTY_NOTICES.md", "utf8");
@@ -39,6 +46,13 @@ const externalRuntimeNoticeSources = new Map([
 ]);
 
 const bundledResourceNoticeByPath = new Map([
+  [
+    shareCardFontManifest.subset.outputPath,
+    {
+      license: "OFL-1.1",
+      provenance: shareCardFontManifest.noticeProvenance,
+    },
+  ],
   [
     "skills/obsidian-markdown/SKILL.md",
     {
@@ -190,6 +204,7 @@ function collectBundledResourcePaths() {
   for (const match of bundledSkillsSource.matchAll(importPattern)) {
     resourcePaths.add(match[1]);
   }
+  resourcePaths.add(shareCardFontManifest.subset.outputPath);
   return [...resourcePaths].sort();
 }
 
@@ -245,6 +260,101 @@ const { rows: bundledResourceRows, duplicates: duplicateBundledResourceRows } = 
 const errors = [];
 const expectedRows = new Set();
 const expectedBundledResourceRows = new Set();
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function verifyShareCardFontResource() {
+  const { upstream, subset, tools } = shareCardFontManifest;
+  for (const path of [subset.outputPath, subset.coveragePath, upstream.licensePath]) {
+    if (!existsSync(path)) {
+      errors.push(`Share Card font provenance path is missing: ${path}`);
+      return;
+    }
+  }
+  const output = readFileSync(subset.outputPath);
+  const coverage = readFileSync(subset.coveragePath);
+  const license = readFileSync(upstream.licensePath);
+  if (output.byteLength !== subset.outputBytes) {
+    errors.push(`Share Card font byte size is stale: expected ${subset.outputBytes}, got ${output.byteLength}`);
+  }
+  if (sha256(output) !== subset.outputSha256) {
+    errors.push("Share Card font SHA-256 does not match its manifest.");
+  }
+  if (sha256(coverage) !== subset.coverageSha256) {
+    errors.push("Share Card font coverage SHA-256 does not match its manifest.");
+  }
+  if (sha256(license) !== upstream.licenseSha256) {
+    errors.push("Source Han Serif license SHA-256 does not match its manifest.");
+  }
+  if (rootPackage.devDependencies?.["subset-font"] !== tools.subsetFont) {
+    errors.push(`subset-font must be pinned exactly to ${tools.subsetFont}.`);
+  }
+  if (rootPackage.devDependencies?.fontkit !== tools.fontkit) {
+    errors.push(`fontkit must be pinned exactly to ${tools.fontkit}.`);
+  }
+  for (const [packagePath, expectedVersion] of [
+    ["node_modules/subset-font", tools.subsetFont],
+    ["node_modules/fontverter", tools.fontverter],
+    ["node_modules/fontkit", tools.fontkit],
+  ]) {
+    if (packages[packagePath]?.version !== expectedVersion) {
+      errors.push(`${packagePath} must resolve exactly to ${expectedVersion}.`);
+    }
+  }
+  try {
+    const expectedCodePoints = parseShareCardFontCodePoints(coverage.toString("utf8"));
+    if (expectedCodePoints.length !== subset.characterCount) {
+      errors.push(`Share Card font coverage count is stale: expected ${subset.characterCount}, got ${expectedCodePoints.length}.`);
+    }
+    const font = fontkit.create(output);
+    if (font.familyName !== subset.familyName) {
+      errors.push(`Share Card font family is stale: expected ${subset.familyName}, got ${font.familyName}.`);
+    }
+    if (font.postscriptName !== subset.postscriptName) {
+      errors.push(`Share Card font PostScript name is stale: expected ${subset.postscriptName}, got ${font.postscriptName}.`);
+    }
+    const actualCodePoints = new Set(font.characterSet);
+    const allowedExtraCodePoints = subset.allowedExtraCodePoints ?? [];
+    const exactExpectedCodePoints = new Set([...expectedCodePoints, ...allowedExtraCodePoints]);
+    const missingCodePoints = [...exactExpectedCodePoints]
+      .filter((codePoint) => !actualCodePoints.has(codePoint));
+    if (missingCodePoints.length > 0) {
+      const sample = missingCodePoints.slice(0, 8)
+        .map((codePoint) => `U+${codePoint.toString(16).toUpperCase()}`)
+        .join(", ");
+      errors.push(`Share Card font is missing ${missingCodePoints.length} coverage code points: ${sample}.`);
+    }
+    const unexpectedCodePoints = [...actualCodePoints]
+      .filter((codePoint) => !exactExpectedCodePoints.has(codePoint));
+    if (unexpectedCodePoints.length > 0 || actualCodePoints.size !== subset.outputCharacterCount) {
+      const sample = unexpectedCodePoints.slice(0, 8)
+        .map((codePoint) => `U+${codePoint.toString(16).toUpperCase()}`)
+        .join(", ");
+      errors.push(`Share Card font has unexpected character coverage: ${sample || `${actualCodePoints.size} characters`}.`);
+    }
+    const fsType = font["OS/2"]?.fsType;
+    if (!fsType || fsType.noEmbedding || fsType.noSubsetting || fsType.bitmapOnly) {
+      errors.push("Share Card font metadata does not permit embedding and subsetting.");
+    }
+  } catch (error) {
+    errors.push(`Share Card font could not be parsed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  for (const marker of [
+    upstream.sourceSha256,
+    subset.coverageSha256,
+    subset.outputSha256,
+    readFileSync(upstream.licensePath, "utf8").trim(),
+  ]) {
+    if (!notices.includes(marker)) {
+      errors.push("THIRD_PARTY_NOTICES.md is missing Share Card font provenance or license text.");
+      break;
+    }
+  }
+}
+
+verifyShareCardFontResource();
 
 if (bundledResourcePaths.length === 0) {
   errors.push("Could not derive bundled skill resource paths from src/ai-services/bundled-skills.ts.");

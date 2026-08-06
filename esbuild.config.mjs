@@ -69,12 +69,9 @@ const inlineSqliteWorkerPlugin = {
 	},
 };
 
-// Lazy wasm loader: keeps the ~1.25MB base64 payload in the bundle (no separate file —
-// Obsidian plugins ship as a single main.js), but defers atob+Uint8Array decoding to first
-// use. After decoding the base64 string is nulled so GC can reclaim ~1.25MB. Trade-off vs
-// the previous esbuild `binary` loader: same bundle size, but plugin-load heap drops by
-// ~941KB (decoded Uint8Array no longer eagerly built) and users who never touch the Memory
-// feature save the full payload permanently after GC.
+// Lazy binary loader: keeps WASM/font base64 in the bundle (Obsidian plugins ship as one
+// main.js), but defers conversion until first use. WASM becomes a Uint8Array; Share Card
+// consumes its WOFF2 as a data URL directly, avoiding an atob -> bytes -> btoa round trip.
 const lazyBinaryPlugin = {
 	name: "lazy-binary",
 	setup(build) {
@@ -89,6 +86,7 @@ const lazyBinaryPlugin = {
 var _b64 = ${JSON.stringify(base64)};
 var _decoded = null;
 var _decoding = null;
+var _fontDataUrl = null;
 export default function getBinary() {
     if (_decoded !== null) return _decoded;
     var b = atob(_b64);
@@ -112,7 +110,13 @@ export function getBinaryAsync() {
 }
 export var getSqliteWasmBinary = getBinary;
 export var getSqliteWasmBinaryAsync = getBinaryAsync;
-export var getShareCardFontBinaryAsync = getBinaryAsync;
+export function getShareCardFontDataUrlAsync() {
+    if (_fontDataUrl !== null) return Promise.resolve(_fontDataUrl);
+    if (_b64 === null) return Promise.reject(new Error("Bundled font base64 is unavailable."));
+    _fontDataUrl = "data:font/woff2;base64," + _b64;
+    _b64 = null;
+    return Promise.resolve(_fontDataUrl);
+}
 `,
 				loader: "js",
 				watchFiles: [args.path],
@@ -161,6 +165,7 @@ const mainContext = await context({
 		'.js': 'js',
 		'.jsx': 'jsx',
 		'.md': 'text',
+		'.txt': 'text',
 		// `.wasm` is handled by `lazyBinaryPlugin` (see plugin block above) — not via the
 		// `binary` loader anymore. The plugin keeps the base64 string inline but defers
 		// atob+Uint8Array decoding until first use, saving ~941KB of plugin-load heap and

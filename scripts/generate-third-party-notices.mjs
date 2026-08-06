@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { shareCardFontManifest } from "./share-card-font-manifest.mjs";
 
 const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
 const packages = lock.packages ?? {};
@@ -157,6 +158,36 @@ function runtimeInventoryMarkdown(inventory) {
   ].join("\n");
 }
 
+function bundledBinaryResourceMarkdown() {
+  const { upstream, subset, noticeProvenance } = shareCardFontManifest;
+  const licenseText = readFileSync(upstream.licensePath, "utf8").trim();
+  return [
+    "## Bundled Binary Resource Provenance",
+    "",
+    "Binary resources embedded in `main.js` are fixed by source, generator input,",
+    "output size, SHA-256, and their complete redistribution license.",
+    "",
+    "| Resource | License | Provenance |",
+    "| --- | --- | --- |",
+    `| \`${subset.outputPath}\` | \`OFL-1.1\` | ${noticeProvenance} |`,
+    "",
+    "### PA Share Serif (derived from Adobe Source Han Serif)",
+    "",
+    `- Upstream release: <${upstream.releaseUrl}>`,
+    `- Upstream source: \`${upstream.sourcePath}\``,
+    `- Upstream SHA-256: \`${upstream.sourceSha256}\``,
+    `- Coverage input: \`${subset.coveragePath}\` (SHA-256 \`${subset.coverageSha256}\`)`,
+    `- Generated output: \`${subset.outputPath}\` (${subset.outputBytes} bytes; SHA-256 \`${subset.outputSha256}\`)`,
+    `- Generator: \`scripts/build-share-card-font.mjs\`; \`subset-font@${shareCardFontManifest.tools.subsetFont}\`; \`fontkit@${shareCardFontManifest.tools.fontkit}\``,
+    `- License source: \`${upstream.licensePath}\``,
+    "",
+    "~~~text",
+    licenseText,
+    "~~~",
+    "",
+  ].join("\n");
+}
+
 function runtimeLicenseNoticeMarkdown(inventory) {
   const sections = [
     "## Runtime License Notices",
@@ -213,10 +244,12 @@ if (inventoryStart < 0) {
 }
 
 const inventory = collectRuntimePackages();
-const prefix = current.slice(0, inventoryStart).trimEnd();
+const binaryStart = current.indexOf("## Bundled Binary Resource Provenance");
+const prefix = current.slice(0, binaryStart >= 0 ? binaryStart : inventoryStart).trimEnd();
 const next = [
   prefix,
   "",
+  bundledBinaryResourceMarkdown(),
   runtimeInventoryMarkdown(inventory),
   runtimeLicenseNoticeMarkdown(inventory),
 ].join("\n");

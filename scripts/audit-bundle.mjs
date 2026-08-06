@@ -2,12 +2,12 @@ import { gzipSync } from "node:zlib";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
+import { shareCardFontManifest } from "./share-card-font-manifest.mjs";
 
 const DEFAULT_INPUT = "dist/main.js";
-// Informational budget — bundle size is not a hard release gate per D9. The 3.5 MB ceiling
-// accommodates the post-v2.0.0 baseline (~1.14 MB), Ops Agent growth, and the embedded
-// Source Han Serif SC font subset (~1.4 MB woff2) used by Share Card.
-const DEFAULT_GZIP_BUDGET_BYTES = 3.5 * 1024 * 1024;
+// Hard release gate with bounded headroom above the verified Share Card build
+// (2,600,021 gzip bytes, including the 1,034,300-byte bundled font).
+const DEFAULT_GZIP_BUDGET_BYTES = 2.75 * 1024 * 1024;
 // Match the full set of Node builtins so transitive imports (`@langchain/community`, etc.)
 // don't sneak into the mobile bundle when only fs/path/child_process are whitelisted.
 const NODE_BUILTIN_NAMES = "fs|path|child_process|os|crypto|stream|url|net|tls|http|https|zlib|querystring|readline|buffer|events|util|tty|dns|fs\\/promises|stream\\/promises|module|process|worker_threads";
@@ -30,6 +30,12 @@ export async function auditBundle(options = {}) {
     const input = options.input ?? DEFAULT_INPUT;
     const gzipBudgetBytes = options.gzipBudgetBytes ?? DEFAULT_GZIP_BUDGET_BYTES;
     const failOnNodeBuiltins = options.failOnNodeBuiltins ?? true;
+    const requireBundledShareCardFont = options.requireBundledShareCardFont
+        ?? input === DEFAULT_INPUT;
+    const shareCardFontPath = options.shareCardFontPath
+        ?? shareCardFontManifest.subset.outputPath;
+    const shareCardFontLicensePath = options.shareCardFontLicensePath
+        ?? shareCardFontManifest.upstream.licensePath;
     let text;
     try {
         text = await readFile(input, "utf8");
@@ -53,11 +59,24 @@ export async function auditBundle(options = {}) {
     const resourceAudit = options.resourceDir
         ? await auditResourceDir(options.resourceDir, options.resourceGzipBudgetBytes)
         : undefined;
+    const shareCardFontAudit = requireBundledShareCardFont
+        ? await auditBundledShareCardFont(text, shareCardFontPath, shareCardFontLicensePath)
+        : {
+            required: false,
+            path: shareCardFontPath,
+            embeddedExactBytes: null,
+            licensePath: shareCardFontLicensePath,
+            embeddedReadableLicense: null,
+        };
 
     return {
         ok: !overBudget
             && !(failOnNodeBuiltins && hasNodeBuiltins)
             && !hasDynamicScriptElementCreations
+            && (!shareCardFontAudit.required || (
+                shareCardFontAudit.embeddedExactBytes
+                && shareCardFontAudit.embeddedReadableLicense
+            ))
             && (resourceAudit ? !resourceAudit.overBudget : true),
         input,
         exists: true,
@@ -67,6 +86,7 @@ export async function auditBundle(options = {}) {
         overBudget,
         nodeBuiltinReferences: nodeBuiltinMatches,
         dynamicScriptElementCreations: dynamicScriptElementMatches,
+        shareCardFontAudit,
         ...(resourceAudit ? { resourceAudit } : {}),
     };
 }
@@ -78,6 +98,9 @@ function parseArgs(args) {
         failOnNodeBuiltins: true,
         resourceDir: undefined,
         resourceGzipBudgetBytes: undefined,
+        requireBundledShareCardFont: undefined,
+        shareCardFontPath: shareCardFontManifest.subset.outputPath,
+        shareCardFontLicensePath: shareCardFontManifest.upstream.licensePath,
     };
     for (let index = 0; index < args.length; index++) {
         const arg = args[index];
@@ -91,9 +114,15 @@ function parseArgs(args) {
             options.resourceDir = requireValue(args[++index], arg);
         } else if (arg === "--resource-gzip-budget-bytes") {
             options.resourceGzipBudgetBytes = Number(requireValue(args[++index], arg));
+        } else if (arg === "--require-share-card-font") {
+            options.requireBundledShareCardFont = true;
+        } else if (arg === "--share-card-font") {
+            options.shareCardFontPath = requireValue(args[++index], arg);
+        } else if (arg === "--share-card-font-license") {
+            options.shareCardFontLicensePath = requireValue(args[++index], arg);
         } else if (arg === "--help") {
             process.stdout.write([
-                "Usage: node scripts/audit-bundle.mjs [--input dist/main.js] [--budget-gzip-bytes 81920] [--allow-node-builtins] [--resource-dir skills --resource-gzip-budget-bytes 61440]",
+                "Usage: node scripts/audit-bundle.mjs [--input dist/main.js] [--budget-gzip-bytes 81920] [--allow-node-builtins] [--require-share-card-font] [--share-card-font path] [--share-card-font-license path] [--resource-dir skills --resource-gzip-budget-bytes 61440]",
                 "",
             ].join("\n"));
             process.exit(0);
@@ -111,6 +140,44 @@ function parseArgs(args) {
         throw new Error("--resource-gzip-budget-bytes must be a positive number");
     }
     return options;
+}
+
+async function auditBundledShareCardFont(bundleText, fontPath, licensePath) {
+    try {
+        const [fontBytes, licenseText] = await Promise.all([
+            readFile(fontPath),
+            readFile(licensePath, "utf8"),
+        ]);
+        return {
+            required: true,
+            path: fontPath,
+            bytes: fontBytes.byteLength,
+            embeddedExactBytes: bundleText.includes(fontBytes.toString("base64")),
+            licensePath,
+            embeddedReadableLicense: bundleContainsReadableText(bundleText, licenseText),
+        };
+    } catch (error) {
+        return {
+            required: true,
+            path: fontPath,
+            bytes: null,
+            embeddedExactBytes: false,
+            licensePath,
+            embeddedReadableLicense: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
+function bundleContainsReadableText(bundleText, expectedText) {
+    if (bundleText.includes(expectedText)) return true;
+    const unescapedBundle = bundleText
+        .replace(/\\r/gu, "\r")
+        .replace(/\\n/gu, "\n")
+        .replace(/\\"/gu, '"')
+        .replace(/\\'/gu, "'")
+        .replace(/\\\\/gu, "\\");
+    return unescapedBundle.includes(expectedText);
 }
 
 function requireValue(value, flag) {
