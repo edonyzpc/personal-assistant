@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.7](https://github.com/edonyzpc/personal-assistant/compare/2.9.0-beta.6...2.9.0-beta.7) (2026-08-06)
+
+### Features
+- share-card: implement local share card generation and exports
+- pagelet: use Obsidian MarkdownRenderer for discover insight text and refactor SOURCES as collapsible chips
+- share-card: integrate local resource pipeline and refresh sharing runtime
+- quick-capture: add note template system for new file creation
+
+### Fix
+- pagelet: enable Save and Expand buttons in discover panel
+- share-card: correct code span backtick escape and wiki-link pagination
+- dependencies: override vulnerable transitive dev dependencies
+- address review findings from share-card iteration
+- address review findings from note-template system
+- share-card: preserve pending sentinels and materialize mermaid styles
+
+### Improvements
+- pagelet: widen panel to 460px and add source chip styles
+- consolidate duplicate utilities and remove dead code
+
+### Docs
+- share-card: add implementation spec for PA content share card feature
+- guides: add 2.9.0-beta.6 user trial guide
+- share-card: add B-124 decision and lifecycle documentation
+- share-card: add snapdom deviation analysis for Codex handoff
+- governance: align PA lifecycle instructions for share-card planning
+- share-card: consolidate Snapdom-based share-card design and execution artifacts
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
