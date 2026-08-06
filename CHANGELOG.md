@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.8](https://github.com/edonyzpc/personal-assistant/compare/2.9.0-beta.7...2.9.0-beta.8) (2026-08-06)
+
+### Features
+- share-card: visual redesign with paper/wood metaphor and action ring arc layout
+- share-card: implement local share card rendering and settings flow
+
+### Improvements
+- raise bundle gzip budget to 3.5MB for embedded serif font
+- share-card: add font assets pipeline and notice auditing
+
+### Docs
+- share-card: update spec and tracker for local share card rollout
+- release: record release process path migration
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
