@@ -2,99 +2,119 @@
 
 import type { LocalFont } from "@zumer/snapdom";
 
-const FONT_FAMILY = "Source Han Serif SC";
+/** Internal family name avoids Adobe's reserved `Source` font name for this modified subset. */
+export const SHARE_CARD_FONT_FAMILY = "PA Share Serif";
 
-let fontDataUrl: string | null = null;
-let fontFace: FontFace | null = null;
-let loadPromise: Promise<string> | null = null;
-let registerPromise: Promise<void> | null = null;
-
-async function decodeFontBinary(): Promise<string> {
-    // @ts-expect-error -- binary handled by lazyBinaryPlugin in esbuild
-    const { getBinaryAsync } = await import("./source-han-serif-sc-subset.woff2");
-    const binary: Uint8Array = await getBinaryAsync();
-    let encoded = "";
-    const chunk = 32768;
-    for (let offset = 0; offset < binary.length; offset += chunk) {
-        encoded += String.fromCharCode(
-            ...binary.subarray(offset, Math.min(offset + chunk, binary.length)),
-        );
-    }
-    return `data:font/woff2;base64,${btoa(encoded)}`;
+interface DocumentFontState {
+    face: FontFace | null;
+    loading: Promise<void>;
+    references: number;
+    added: boolean;
 }
 
-/**
- * Lazy-load and decode the bundled Source Han Serif SC subset.
- * Returns a data-URL suitable for FontFace and SnapDOM localFonts.
- * The decoded result is cached; subsequent calls return immediately.
- */
+let fontDataUrl: string | null = null;
+let loadPromise: Promise<string> | null = null;
+const documentFontStates = new WeakMap<Document, DocumentFontState>();
+
+async function loadBundledFontDataUrl(): Promise<string> {
+    const { getShareCardFontDataUrlAsync } = await import(
+        "./source-han-serif-sc-subset.woff2"
+    );
+    return getShareCardFontDataUrlAsync();
+}
+
+/** Lazy-load and decode the bundled Source Han Serif-derived subset. */
 export async function loadShareCardFont(): Promise<string> {
     if (fontDataUrl) return fontDataUrl;
     if (!loadPromise) {
-        loadPromise = decodeFontBinary().then((url) => {
+        loadPromise = loadBundledFontDataUrl().then((url) => {
             fontDataUrl = url;
             return url;
-        }).catch((err) => {
+        }).catch((error) => {
             loadPromise = null;
-            throw err;
+            throw error;
         });
     }
     return loadPromise;
 }
 
 /**
- * Register the card font via the FontFace API so the browser uses it for
- * layout measurement during pagination. Call once before rendering card pages.
- * The renderer's existing `waitForFonts()` awaits `document.fonts.ready`.
+ * Acquire one per-Document FontFace reference for preview measurement.
+ * Concurrent modals share one load; the final release removes only that document's face.
  */
 export async function registerShareCardFontFace(doc: Document): Promise<void> {
-    if (fontFace) return;
-    if (!registerPromise) {
-        registerPromise = (async () => {
-            const url = await loadShareCardFont();
-            const face = new FontFace(FONT_FAMILY, `url(${url})`, {
-                weight: "400",
-                style: "normal",
-                display: "swap",
-            });
-            (doc.fonts as unknown as Set<FontFace>).add(face);
-            await face.load();
-            fontFace = face;
-        })().catch((err) => {
-            registerPromise = null;
-            throw err;
-        });
+    let state = documentFontStates.get(doc);
+    if (!state) {
+        state = createDocumentFontState(doc);
+        documentFontStates.set(doc, state);
     }
-    return registerPromise;
-}
-
-/**
- * Remove the registered FontFace to reclaim browser memory (~6MB).
- * Call when the Share Card modal closes.
- */
-export function unregisterShareCardFontFace(doc: Document): void {
-    if (!fontFace) return;
+    state.references += 1;
     try {
-        (doc.fonts as unknown as Set<FontFace>).delete(fontFace);
-    } catch {
-        // Ignore if already removed or not supported
+        await state.loading;
+    } catch (error) {
+        state.references = Math.max(0, state.references - 1);
+        if (state.references === 0 && documentFontStates.get(doc) === state) {
+            documentFontStates.delete(doc);
+        }
+        throw error;
     }
-    fontFace = null;
 }
 
-/**
- * Build the SnapDOM `localFonts` array for card PNG capture.
- * SnapDOM embeds this data into the SVG intermediate representation,
- * ensuring the serif font renders in the final PNG regardless of system fonts.
- */
-export async function getShareCardLocalFonts(): Promise<LocalFont[]> {
-    const src = await loadShareCardFont();
-    return [
-        {
-            family: FONT_FAMILY,
-            src,
+/** Release one FontFace reference. Safe to call while the face is still loading. */
+export function unregisterShareCardFontFace(doc: Document): void {
+    const state = documentFontStates.get(doc);
+    if (!state || state.references === 0) return;
+    state.references -= 1;
+    if (state.references > 0) return;
+    if (state.face && state.added) {
+        try {
+            (doc.fonts as unknown as Set<FontFace>).delete(state.face);
+        } catch {
+            // The owner document may already be tearing down.
+        }
+        state.added = false;
+    }
+    if (documentFontStates.get(doc) === state) documentFontStates.delete(doc);
+}
+
+function createDocumentFontState(doc: Document): DocumentFontState {
+    const state: DocumentFontState = {
+        face: null,
+        loading: Promise.resolve(),
+        references: 0,
+        added: false,
+    };
+    state.loading = (async () => {
+        const url = await loadShareCardFont();
+        const FontFaceCtor = doc.defaultView?.FontFace ?? globalThis.FontFace;
+        if (typeof FontFaceCtor !== "function") {
+            throw new Error("FontFace API is unavailable for Share Card rendering.");
+        }
+        const face = new FontFaceCtor(SHARE_CARD_FONT_FAMILY, `url(${url})`, {
             weight: "400",
             style: "normal",
-        },
-    ];
+            display: "swap",
+        });
+        await face.load();
+        state.face = face;
+        if (state.references > 0 && documentFontStates.get(doc) === state) {
+            (doc.fonts as unknown as Set<FontFace>).add(face);
+            state.added = true;
+        }
+    })();
+    return state;
+}
+
+/** Build the exact local face descriptor used to generate SnapDOM artifact CSS. */
+export async function getShareCardLocalFonts(): Promise<LocalFont[]> {
+    const src = await loadShareCardFont();
+    if (!src.startsWith("data:font/woff2;base64,")) {
+        throw new Error("Share Card bundled font must be an inline WOFF2 data URL.");
+    }
+    return [{
+        family: SHARE_CARD_FONT_FAMILY,
+        src,
+        weight: "400",
+        style: "normal",
+    }];
 }

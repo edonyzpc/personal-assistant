@@ -74,8 +74,12 @@ class FakeElement {
     }
 
     focus(): void {
+        const previous = this.ownerDocument.activeElement;
+        if (previous === this) return;
         this.focusCount += 1;
         this.ownerDocument.activeElement = this;
+        previous?.dispatch("focusout", { relatedTarget: this });
+        this.dispatch("focusin", { relatedTarget: previous });
     }
 
     remove(): void {
@@ -177,11 +181,14 @@ type Fixture = {
     onCapture: jest.Mock;
     onReview: jest.Mock;
     onDiscover: jest.Mock;
+    onShare: jest.Mock;
     onWillOpen: jest.Mock;
     onClosed: jest.Mock;
 };
 
-function withFixture(run: (fixture: Fixture) => void): void {
+function withFixture(
+    run: (fixture: Fixture) => void,
+): void {
     jest.useFakeTimers();
     const globals = globalThis as typeof globalThis & { activeDocument?: Document };
     const previousDocument = globals.activeDocument;
@@ -196,6 +203,7 @@ function withFixture(run: (fixture: Fixture) => void): void {
     const onCapture = jest.fn();
     const onReview = jest.fn();
     const onDiscover = jest.fn();
+    const onShare = jest.fn();
     const onWillOpen = jest.fn();
     const onClosed = jest.fn();
     const view = new PetView({
@@ -204,6 +212,7 @@ function withFixture(run: (fixture: Fixture) => void): void {
             onQuickCaptureOpen: onCapture,
             onReviewCurrentNote: onReview,
             onDiscoverConnections: onDiscover,
+            onShareCard: onShare,
             onActionRingWillOpen: onWillOpen,
             onActionRingClosed: onClosed,
         },
@@ -245,6 +254,7 @@ function withFixture(run: (fixture: Fixture) => void): void {
             onCapture,
             onReview,
             onDiscover,
+            onShare,
             onWillOpen,
             onClosed,
         });
@@ -282,8 +292,12 @@ describe("Pet Action Ring public lifecycle", () => {
                 "随手记下",
                 "审阅",
                 "发现关联",
-                "分享",
+                "分享为卡片",
             ]);
+            expect(ring.children.map((item) => (
+                item.children.find((child) => child.className === "pa-pagelet-action-ring-label")
+                    ?.textContent
+            ))).toEqual(["随手记下", "审阅", "发现关联", "分享为卡片"]);
             expect(ring.children).toHaveLength(4);
             expect(doc.activeElement).toBe(ring.children[0]);
             expect(root.getAttribute("aria-expanded")).toBe("true");
@@ -317,7 +331,7 @@ describe("Pet Action Ring public lifecycle", () => {
     });
 
     it("refreshes the inactivity timer when a long press repeats while open", () => {
-        withFixture(({ root, view, onWillOpen, onClosed }) => {
+        withFixture(({ doc, root, view, onWillOpen, onClosed }) => {
             view.openActionRing();
             jest.advanceTimersByTime(2000);
             root.dispatch("pointerdown", {
@@ -338,6 +352,7 @@ describe("Pet Action Ring public lifecycle", () => {
             root.dispatch("click");
 
             expect(onWillOpen).toHaveBeenCalledTimes(1);
+            doc.createElement().focus();
             jest.advanceTimersByTime(2999);
             expect(view.actionRingOpen).toBe(true);
             jest.advanceTimersByTime(1);
@@ -346,17 +361,18 @@ describe("Pet Action Ring public lifecycle", () => {
         });
     });
 
-    it("keeps native Tab and Shift+Tab traversal while treating both as activity", () => {
-        withFixture(({ root, view }) => {
+    it("keeps native Tab traversal and pauses dismissal while focus remains inside", () => {
+        withFixture(({ doc, root, view }) => {
             view.openActionRing();
             const first = ringOf(root).children[0];
 
-            jest.advanceTimersByTime(2500);
+            jest.advanceTimersByTime(6000);
+            expect(view.actionRingOpen).toBe(true);
             const forward = first.dispatch("keydown", { key: "Tab" });
             expect(forward.defaultPrevented).toBe(false);
-            jest.advanceTimersByTime(2500);
             const reverse = first.dispatch("keydown", { key: "Tab", shiftKey: true });
             expect(reverse.defaultPrevented).toBe(false);
+            doc.createElement().focus();
             jest.advanceTimersByTime(2999);
             expect(view.actionRingOpen).toBe(true);
             jest.advanceTimersByTime(1);
@@ -772,7 +788,7 @@ describe("Pet Action Ring localization and layout contracts", () => {
             capture: "Capture",
             review: "Review",
             discover: "Discover",
-            shareCard: "Share",
+            shareCard: "Share as card",
         });
         expect(getPetActionRingLabels("zh").ariaLabel).toBe("拾页操作");
     });
@@ -797,6 +813,9 @@ describe("Pet Action Ring localization and layout contracts", () => {
         expect(css).toContain("env(safe-area-inset-left,0px)");
         expect(css).toContain("min-width: 44px;");
         expect(css).toContain("min-height: 44px;");
+        expect(css).not.toMatch(/\.pa-pagelet-action-ring-label\s*\{/);
+        expect(css).not.toMatch(/\.pa-pagelet-action-ring-item\s*\{[\s\S]*?max-width:\s*min\(112px/);
+        expect(css).toContain(".pa-pagelet-action-ring-item:nth-child(4)");
         expect(css).toContain(".pa-pagelet-action-ring-item:focus-visible");
         expect(css).toMatch(
             /body\.is-mobile \.pa-pagelet-pet--mobile-toolbar \.pa-pagelet-action-ring-item:nth-child\(2\) \{[\s\S]*?--pa-action-ring-y: 0px;/,
@@ -841,6 +860,34 @@ describe("Pet Action Ring localization and layout contracts", () => {
         });
 
         expectActionRingInsideViewport(positions, items, viewport);
+    });
+
+    it("places a bottom-corner iPhone fallback column above the Pet", () => {
+        const viewport = { left: 0, top: 0, width: 390, height: 844 };
+        const anchor = { left: 338, top: 792, width: 44, height: 44 };
+        const sizes = [
+            { width: 82, height: 44 },
+            { width: 78, height: 44 },
+            { width: 94, height: 44 },
+            { width: 136, height: 44 },
+        ];
+
+        const positions = computeActionRingLayout({
+            viewport,
+            anchor,
+            items: sizes,
+            corner: "bottom-right",
+            mobileToolbar: true,
+            mobileToolbarMounted: false,
+        });
+
+        expect(positions).toHaveLength(4);
+        positions.forEach((position, index) => {
+            const size = sizes[index]!;
+            expect(position.top + size.height).toBeLessThanOrEqual(anchor.top - 8);
+            expect(position.left).toBeGreaterThanOrEqual(8);
+            expect(position.left + size.width).toBeLessThanOrEqual(382);
+        });
     });
 
     it("lays out the phone actions in one row from beneath the Pet toward the right", () => {
@@ -940,6 +987,91 @@ describe("Pet Action Ring localization and layout contracts", () => {
             expect(dist).toBeGreaterThan(40);
             expect(dist).toBeLessThan(130);
         }
+    });
+
+    it.each([
+        "top-left",
+        "top-right",
+        "bottom-right",
+        "bottom-left",
+    ] as const)("keeps four labelled desktop actions on the inward %s arc", (corner) => {
+        const viewport = { left: 0, top: 0, width: 1024, height: 768 };
+        const anchor = {
+            left: corner.endsWith("right") ? 944 : 24,
+            top: corner.startsWith("bottom") ? 688 : 24,
+            width: 56,
+            height: 56,
+        };
+        const items = [
+            { width: 96, height: 44 },
+            { width: 88, height: 44 },
+            { width: 104, height: 44 },
+            { width: 136, height: 44 },
+        ];
+        const positions = computeActionRingLayout({
+            viewport,
+            anchor,
+            items,
+            corner,
+            mobileToolbar: false,
+        });
+
+        expectActionRingInsideViewport(positions, items, viewport);
+        const anchorCenterX = anchor.left + anchor.width / 2;
+        const anchorCenterY = anchor.top + anchor.height / 2;
+        positions.forEach((position, index) => {
+            const item = items[index];
+            if (!item) throw new Error("missing Action Ring item size");
+            const centerX = position.left + item.width / 2;
+            const centerY = position.top + item.height / 2;
+            expect(corner.endsWith("left") ? centerX >= anchorCenterX : centerX <= anchorCenterX)
+                .toBe(true);
+            expect(corner.startsWith("top") ? centerY >= anchorCenterY : centerY <= anchorCenterY)
+                .toBe(true);
+        });
+        expect(new Set(positions.map((position) => position.left)).size).toBeGreaterThan(2);
+        expect(new Set(positions.map((position) => position.top)).size).toBeGreaterThan(2);
+    });
+
+    it("keeps four full phone labels in one row when they fit", () => {
+        const viewport = { left: 0, top: 0, width: 430, height: 932 };
+        const items = [
+            { width: 82, height: 44 },
+            { width: 78, height: 44 },
+            { width: 94, height: 44 },
+            { width: 136, height: 44 },
+        ];
+        const positions = computeActionRingLayout({
+            viewport,
+            anchor: { left: 16, top: 52, width: 44, height: 44 },
+            items,
+            corner: "top-left",
+            mobileToolbar: true,
+        });
+
+        expect(new Set(positions.map((position) => position.top)).size).toBe(1);
+        expectActionRingInsideViewport(positions, items, viewport);
+    });
+
+    it("stacks four full phone labels vertically when a row cannot fit", () => {
+        const viewport = { left: 0, top: 0, width: 390, height: 844 };
+        const items = [
+            { width: 82, height: 44 },
+            { width: 78, height: 44 },
+            { width: 94, height: 44 },
+            { width: 136, height: 44 },
+        ];
+        const positions = computeActionRingLayout({
+            viewport,
+            anchor: { left: 16, top: 36, width: 44, height: 44 },
+            items,
+            corner: "top-left",
+            mobileToolbar: true,
+        });
+
+        expect(new Set(positions.map((position) => position.left)).size).toBe(1);
+        expect(new Set(positions.map((position) => position.top)).size).toBe(4);
+        expectActionRingInsideViewport(positions, items, viewport);
     });
 
     it("recomputes layout for visual viewport activity and refreshes inactivity on Ring use", () => {

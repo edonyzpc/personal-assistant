@@ -10,8 +10,14 @@
  * {@link BackgroundPreparationCoordinator}.
  */
 
-import { Notice, TFile, normalizePath } from "obsidian";
-import { MarkdownView } from "obsidian";
+import {
+    getFrontMatterInfo,
+    MarkdownView,
+    Notice,
+    parseYaml,
+    TFile,
+    normalizePath,
+} from "obsidian";
 import type { WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
@@ -71,6 +77,7 @@ import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
 import { serializePageletFindings } from "../share-card/share-card-markdown";
 import { ShareCardModal } from "../share-card/share-card-modal";
+import type { ShareCardData } from "../share-card/share-card-types";
 import { pageletAgentInsightToDeliveryCandidate } from "./agent/delivery-adapter";
 import type { PageletAgentDeliveryCandidate } from "./agent/delivery-adapter";
 import type { PageletDeepDiscoverControllerResult } from "./agent/types";
@@ -2638,18 +2645,43 @@ export class PageletOrchestrator {
 
     private shareActiveNoteOrSelectionAsCard(): void {
         const view = this.host.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!view) return;
+        if (!view?.file) {
+            new Notice(this.t("pagelet.notice.shareCardNoMarkdown"), 4000);
+            this.petView?.rootEl?.focus();
+            return;
+        }
+        const data = this.projectShareCardData(view);
+        if (!data) {
+            new Notice(this.t("pagelet.notice.shareCardEmpty"), 4000);
+            view.editor?.focus();
+            return;
+        }
+        new ShareCardModal(this.host.app, data).open();
+    }
+
+    private projectShareCardData(view: MarkdownView): ShareCardData | null {
+        const file = view.file;
+        if (!file) return null;
         const editor = view.editor;
-        const selection = editor?.getSelection()?.trim() ?? "";
-        const basePath = view.file?.path;
-        const content = selection.length > 0 ? selection : (editor?.getValue() ?? "");
-        if (content.trim().length === 0) return;
-        new ShareCardModal(this.host.app, {
+        const rawSelection = editor?.getSelection?.() ?? "";
+        const basePath = file.path;
+        if (rawSelection.trim().length > 0) {
+            return {
+                content: rawSelection,
+                source: "selection",
+                ...(basePath ? { resourceContext: { basePath } } : {}),
+            };
+        }
+
+        const rawNote = editor?.getValue?.() ?? "";
+        const content = stripValidYamlFrontmatter(rawNote);
+        if (content.trim().length === 0) return null;
+        return {
             content,
-            source: selection.length > 0 ? "selection" : "pagelet",
-            sourceLabel: selection.length > 0 ? undefined : view.file?.basename,
+            source: "note",
+            sourceLabel: file.basename,
             ...(basePath ? { resourceContext: { basePath } } : {}),
-        }).open();
+        };
     }
 
     /** Show the Bubble via the BubbleCoordinator. Suppressed by Focus Mode. */
@@ -3833,6 +3865,21 @@ export class PageletOrchestrator {
 
     /** Handle Bubble dismiss. Hook exists for future telemetry. */
     private handleBubbleDismiss(): void { /* no-op */ }
+}
+
+function stripValidYamlFrontmatter(markdown: string): string {
+    const info = getFrontMatterInfo(markdown);
+    if (!info.exists) return markdown;
+    try {
+        parseYaml(info.frontmatter);
+    } catch {
+        return markdown;
+    }
+    const contentStart = Math.min(
+        markdown.length,
+        Math.max(0, info.contentStart ?? 0),
+    );
+    return markdown.slice(contentStart);
 }
 
 function successfulReceiptIds(result: OperationsExecutionResult): string[] {

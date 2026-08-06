@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { SnapdomOptions, SnapdomPlugin } from "@zumer/snapdom";
 import type { App, Vault } from "obsidian";
 import {
     ShareCardClipboardUnavailableError,
@@ -27,12 +28,17 @@ describe("Share Card export", () => {
         const element = asElement(document.createElement("div"));
         const pngBlob = new Blob(["png"], { type: "image/png" });
         const toBlob = jest.fn(async () => pngBlob);
-        const snapdomLike = jest.fn(async () => ({ toBlob })) as unknown as SnapdomLike;
+        const snapdom = jest.fn(async (_element: Element, _options?: SnapdomOptions) => ({
+            toBlob,
+        }));
+        const snapdomLike = snapdom as unknown as SnapdomLike;
 
         await expect(createSnapdomShareCardCapture(snapdomLike)(element))
             .resolves.toBe(pngBlob);
 
-        expect(snapdomLike).toHaveBeenCalledWith(element, {
+        expect(snapdom).toHaveBeenCalledTimes(1);
+        const options = snapdom.mock.calls[0]![1] as SnapdomOptions;
+        expect(options).toMatchObject({
             scale: 2,
             dpr: 1,
             type: "png",
@@ -43,7 +49,55 @@ describe("Share Card export", () => {
             resolvePicturePlaceholders: false,
             cache: "disabled",
         });
+        expect(options.localFonts).toEqual([]);
+        expect(options.plugins).toHaveLength(1);
+        expect(options.plugins?.[0]).toEqual(expect.objectContaining({
+            name: "pa-share-card-local-font-only",
+            beforeSnap: expect.any(Function),
+            beforeRender: expect.any(Function),
+        }));
         expect(toBlob).toHaveBeenCalledWith({ type: "png" });
+    });
+
+    it("disables document font discovery before SnapDOM and injects only the bundled font", async () => {
+        const document = new ShareCardTestDocument();
+        const element = asElement(document.createElement("div"));
+        const lifecycle: string[] = [];
+        const snapdom = jest.fn(async (_element: Element, options?: SnapdomOptions) => {
+            const plugin = options?.plugins?.[0] as SnapdomPlugin | undefined;
+            expect(plugin?.name).toBe("pa-share-card-local-font-only");
+            const runtimeOptions = { ...options } as SnapdomOptions;
+            const context = {
+                element,
+                options: runtimeOptions,
+                fontsCSS: "@font-face{src:url(https://example.com/remote.woff2)}",
+            } as unknown as Parameters<NonNullable<SnapdomPlugin["beforeSnap"]>>[0]
+                & { options: SnapdomOptions };
+
+            // Safari font warm-up runs before beforeSnap, so the initial
+            // options must already forbid document-wide discovery.
+            if (context.options.embedFonts) lifecycle.push("document-font-warmup");
+            await plugin?.beforeSnap?.(context);
+            lifecycle.push("beforeSnap");
+            expect(context.options.embedFonts).toBe(false);
+            expect(context.options.localFonts).toEqual([]);
+
+            if (context.options.embedFonts) lifecycle.push("document-font-discovery");
+            await plugin?.beforeRender?.(context);
+            lifecycle.push("beforeRender");
+            expect(context.fontsCSS).toContain("font-family:\"PA Share Serif\"");
+            expect(context.fontsCSS).toContain("data:font/woff2;base64,d09GMg==");
+            expect(context.fontsCSS).not.toMatch(/https?:\/\//u);
+            expect(context.fontsCSS?.match(/@font-face/gu)).toHaveLength(1);
+
+            return {
+                toBlob: async () => new Blob(["png"], { type: "image/png" }),
+            };
+        });
+
+        await createSnapdomShareCardCapture(snapdom as unknown as SnapdomLike)(element);
+
+        expect(lifecycle).toEqual(["beforeSnap", "beforeRender"]);
     });
 
     it("fails closed before SnapDOM when a capture resource is not self-contained", async () => {

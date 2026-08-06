@@ -27,6 +27,24 @@ export class ShareCardTestElement {
         setProperty: (key: string, value: string): void => {
             this.style.values.set(key, value);
         },
+        removeProperty: (key: string): string => {
+            const previous = this.style.values.get(key) ?? "";
+            this.style.values.delete(key);
+            const inlineStyle = this.attributes.get("style");
+            if (inlineStyle !== undefined) {
+                const declarations = inlineStyle.split(";").map((part) => part.trim()).filter(Boolean);
+                const retained = declarations.filter((declaration) => (
+                    declaration.slice(0, declaration.indexOf(":"))
+                        .trim().toLowerCase() !== key.toLowerCase()
+                ));
+                if (retained.length > 0) {
+                    this.attributes.set("style", retained.join("; "));
+                } else {
+                    this.attributes.delete("style");
+                }
+            }
+            return previous;
+        },
     };
     parentElement: ShareCardTestElement | null = null;
     textContent = "";

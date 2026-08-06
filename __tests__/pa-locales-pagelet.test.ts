@@ -95,6 +95,15 @@ describe("pageletT lookup", () => {
         expect(zh).toContain("另行删除对应消息或对话");
     });
 
+    it("localizes the visible Share Card action and its local feedback", () => {
+        expect(pageletT("pagelet.pet.actionRing.shareCard", "en")).toBe("Share as card");
+        expect(pageletT("pagelet.pet.actionRing.shareCard", "zh")).toBe("分享为卡片");
+        expect(pageletT("pagelet.notice.shareCardNoMarkdown", "en")).toContain("Markdown");
+        expect(pageletT("pagelet.notice.shareCardNoMarkdown", "zh")).toContain("Markdown");
+        expect(pageletT("pagelet.notice.shareCardEmpty", "en")).toContain("select text");
+        expect(pageletT("pagelet.notice.shareCardEmpty", "zh")).toContain("选择文字");
+    });
+
     it("fully discloses Pagelet provider first use in English and Chinese", () => {
         const en = pageletT("pagelet.provider.firstUseNotification", "en", { provider: "Example AI" });
         const zh = pageletT("pagelet.provider.firstUseNotification", "zh", { provider: "示例服务商" });

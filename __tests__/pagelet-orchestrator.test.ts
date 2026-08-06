@@ -20,8 +20,25 @@ jest.mock("obsidian", () => {
         }
     }
 
+    class MockMarkdownView {}
+
+    const getFrontMatterInfo = (markdown: string) => {
+        const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
+        return {
+            contentStart: match?.[0].length ?? 0,
+            exists: match !== null,
+            frontmatter: match?.[1] ?? "",
+        };
+    };
+
     return {
+        getFrontMatterInfo,
+        MarkdownView: MockMarkdownView,
         Notice: jest.fn(),
+        parseYaml: (yaml: string) => {
+            if (yaml.includes("[unfinished")) throw new Error("Invalid YAML");
+            return {};
+        },
         TFile: MockTFile,
         normalizePath: (path: string) => path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/g, ""),
     };
@@ -1655,6 +1672,162 @@ describe("PageletOrchestrator attention-aware delivery integration", () => {
         expect(panelView.close).toHaveBeenCalledTimes(1);
         expect(secondEscape.defaultPrevented).toBe(true);
         expect(competingDocumentCaptureListener).not.toHaveBeenCalled();
+    });
+});
+
+describe("Pagelet Share Card action", () => {
+    type ShareEditor = {
+        getSelection: jest.Mock<() => string>;
+        getValue: jest.Mock<() => string>;
+        focus: jest.Mock<() => void>;
+    };
+
+    function makeShareView(input: {
+        selection?: string;
+        note?: string;
+        path?: string;
+    } = {}): { editor: ShareEditor; file: TFile | null } {
+        return {
+            editor: {
+                getSelection: jest.fn(() => input.selection ?? ""),
+                getValue: jest.fn(() => input.note ?? ""),
+                focus: jest.fn(),
+            },
+            file: makeTFile(input.path ?? "notes/current.md"),
+        };
+    }
+
+    function shareInternals(host: PageletHost, view: unknown) {
+        const workspace = host.app.workspace as unknown as {
+            getActiveViewOfType: jest.Mock<() => unknown>;
+        };
+        workspace.getActiveViewOfType = jest.fn(() => view);
+        return new PageletOrchestrator(host) as unknown as {
+            petView: { rootEl: { focus(): void } | null } | null;
+            shareActiveNoteOrSelectionAsCard(): void;
+        };
+    }
+
+    it("preserves a non-empty raw editor selection and hides note identity", () => {
+        jest.clearAllMocks();
+        const rawSelection = "\n  selected **text**  \n";
+        const host = makeHost();
+        const view = makeShareView({
+            selection: rawSelection,
+            note: "unsaved whole note",
+            path: "drafts/Private title.md",
+        });
+        const internals = shareInternals(host, view);
+
+        internals.shareActiveNoteOrSelectionAsCard();
+
+        const modalCalls = (ShareCardModal as unknown as jest.Mock).mock.calls;
+        expect(modalCalls).toHaveLength(1);
+        expect(modalCalls[0]?.[1]).toEqual({
+            content: rawSelection,
+            source: "selection",
+            resourceContext: { basePath: "drafts/Private title.md" },
+        });
+        expect(modalCalls[0]?.[1]).not.toHaveProperty("sourceLabel");
+    });
+
+    it("shares the unsaved note body after valid YAML and shows only its basename", () => {
+        jest.clearAllMocks();
+        const host = makeHost();
+        const view = makeShareView({
+            note: "---\ntags: [private]\n---\n\n# Unsaved draft\nBody\n",
+            path: "drafts/Today.md",
+        });
+        const internals = shareInternals(host, view);
+
+        internals.shareActiveNoteOrSelectionAsCard();
+
+        const data = (ShareCardModal as unknown as jest.Mock).mock.calls[0]?.[1];
+        expect(data).toEqual({
+            content: "\n# Unsaved draft\nBody\n",
+            source: "note",
+            sourceLabel: "Today",
+            resourceContext: { basePath: "drafts/Today.md" },
+        });
+    });
+
+    it("keeps malformed frontmatter-like text because Obsidian does not recognize it as YAML", () => {
+        jest.clearAllMocks();
+        const host = makeHost();
+        const malformed = "---\ntags: [unfinished\n# Draft\n";
+        const internals = shareInternals(host, makeShareView({ note: malformed }));
+
+        internals.shareActiveNoteOrSelectionAsCard();
+
+        expect((ShareCardModal as unknown as jest.Mock).mock.calls[0]?.[1]).toEqual(
+            expect.objectContaining({ content: malformed, source: "note" }),
+        );
+    });
+
+    it("keeps a closed frontmatter block when its YAML is invalid", () => {
+        jest.clearAllMocks();
+        const host = makeHost();
+        const malformed = "---\ntags: [unfinished\n---\n# Draft\n";
+        const internals = shareInternals(host, makeShareView({ note: malformed }));
+
+        internals.shareActiveNoteOrSelectionAsCard();
+
+        expect((ShareCardModal as unknown as jest.Mock).mock.calls[0]?.[1]).toEqual(
+            expect.objectContaining({ content: malformed, source: "note" }),
+        );
+    });
+
+    it("reports an empty or YAML-only note and restores editor focus", () => {
+        jest.clearAllMocks();
+        const host = makeHost();
+        const view = makeShareView({ note: "---\ntags: [private]\n---\n \n\t" });
+        const internals = shareInternals(host, view);
+
+        internals.shareActiveNoteOrSelectionAsCard();
+
+        expect(ShareCardModal).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith(
+            "Add note text or select text before sharing it as a card.",
+            4000,
+        );
+        expect(view.editor.focus).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a missing Markdown view and returns focus to the Pet", () => {
+        jest.clearAllMocks();
+        const host = makeHost();
+        const internals = shareInternals(host, null);
+        const focus = jest.fn();
+        internals.petView = { rootEl: { focus } };
+
+        internals.shareActiveNoteOrSelectionAsCard();
+
+        expect(ShareCardModal).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith(
+            "Open a Markdown note before sharing it as a card.",
+            4000,
+        );
+        expect(focus).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats a Markdown view without an active file as no Markdown note", () => {
+        jest.clearAllMocks();
+        const host = makeHost();
+        const view = makeShareView({ note: "stale editor text" });
+        view.file = null;
+        const internals = shareInternals(host, view);
+        const focus = jest.fn();
+        internals.petView = { rootEl: { focus } };
+
+        internals.shareActiveNoteOrSelectionAsCard();
+
+        expect(ShareCardModal).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith(
+            "Open a Markdown note before sharing it as a card.",
+            4000,
+        );
+        expect(focus).toHaveBeenCalledTimes(1);
+        expect(view.editor.focus).not.toHaveBeenCalled();
     });
 });
 

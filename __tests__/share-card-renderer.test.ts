@@ -315,11 +315,33 @@ describe("ShareCardRenderer", () => {
         expect(edge.getAttribute("style")).not.toContain("clip-path");
         expect(edge.getAttribute("style")).not.toContain("https://example.com");
         expect(label.getAttribute("style")).toContain("color: rgb(51, 51, 51)");
+        expect(label.getAttribute("style")).not.toContain("font-family");
         expect(label.getAttribute("style")).toContain("display: inline-block");
         expect(label.getAttribute("style")).toContain("margin-top: 2px");
         expect(label.getAttribute("style")).toContain("padding-left: 4px");
         expect(label.getAttribute("style")).toContain("text-align: center");
         expect(auditVisualResourceUris(asElement(body))).toEqual([]);
+    });
+
+    it("removes content-owned font declarations so every card uses one bundled family", () => {
+        const document = new ShareCardTestDocument();
+        const body = document.createElement("div");
+        const paragraph = document.createElement("p");
+        paragraph.setAttribute(
+            "style",
+            "color: rgb(10, 20, 30); font-family: Remote Serif; font: 12px Remote Serif",
+        );
+        const svg = document.createElement("svg");
+        const label = document.createElement("text");
+        label.setAttribute("font-family", "Remote Sans");
+        svg.appendChild(label);
+        body.appendChild(paragraph);
+        body.appendChild(svg);
+
+        expect(sanitizeShareCardContent(asElement(body))).toEqual([]);
+
+        expect(paragraph.getAttribute("style")).toBe("color: rgb(10, 20, 30)");
+        expect(label.getAttribute("font-family")).toBeNull();
     });
 
     it("renders the fixed card structure, measures overflow and aborts its handle", async () => {
@@ -336,12 +358,20 @@ describe("ShareCardRenderer", () => {
             theme: "dark",
             sourceLabel: "PA Chat",
             sourcePath: "notes/source.md",
+            fontSize: 15,
         });
 
         expect(render.cardEl.classList.contains("pa-share-card")).toBe(true);
         expect(render.cardEl.classList.contains("is-dark")).toBe(true);
+        expect((render.cardEl as unknown as ShareCardTestElement).style.values.get(
+            "--pa-share-card-font-size",
+        )).toBe("15px");
         expect(render.cardEl.querySelector(".pa-share-card-source-hint")?.textContent).toBe("· PA Chat");
         expect(render.cardEl.querySelector(".pa-share-card-brand-row")).toBeTruthy();
+        expect(render.cardEl.querySelector(".pa-share-card-brand-row")?.querySelector("svg"))
+            .toBeTruthy();
+        expect(render.cardEl.querySelector(".pa-share-card-brand-name")?.textContent)
+            .toBe("Personal Assistant");
         expect(render.cardEl.querySelector(".pa-share-card-page-number")?.textContent).toBe("2 / 3");
         expect(renderMock).toHaveBeenCalledTimes(1);
         expect(renderMock.mock.calls[0]?.[1]).toBe("# 安静且可信");
@@ -503,7 +533,7 @@ describe("ShareCardRenderer", () => {
         renderer.cleanup();
     });
 
-    it("prepares each semantic block once and reuses static clones for fit, preview and export", async () => {
+    it("prepares each semantic block once and reuses static clones across root font sizes", async () => {
         const document = new ShareCardTestDocument();
         const unload = jest.spyOn(Component.prototype, "unload");
         const connectedDuringRender: boolean[] = [];
@@ -515,21 +545,28 @@ describe("ShareCardRenderer", () => {
             waitForFrame: async () => undefined,
         });
         const blocks = ["before", "![chart](data:image/png;base64,AAAA)", "after"];
-        const options = { theme: "light" as const };
+        const prepareOptions = { theme: "light" as const, fontSize: 16 };
+        const finalOptions = { theme: "light" as const, fontSize: 15 };
 
-        await renderer.prepareBlocks(blocks, options);
-        await expect(renderer.fits(blocks.join("\n\n"), 0, options)).resolves.toBe(true);
+        await renderer.prepareBlocks(blocks, prepareOptions);
+        const fits = renderer.createPreparedFitPredicate(finalOptions);
+        await expect(fits(blocks.join("\n\n"), 0)).resolves.toBe(true);
         const preview = await renderer.renderPage({
             content: blocks.join("\n\n"),
             pageIndex: 0,
             totalPages: 1,
-        }, options);
+        }, finalOptions);
+        expect((preview.cardEl as unknown as ShareCardTestElement).style.values.get(
+            "--pa-share-card-font-size",
+        )).toBe("15px");
+        expect(preview.fits()).toBe(true);
         preview.cleanup();
         const exportRender = await renderer.renderPage({
             content: blocks.join("\n\n"),
             pageIndex: 0,
             totalPages: 1,
-        }, options);
+        }, finalOptions);
+        expect(exportRender.fits()).toBe(true);
         exportRender.cleanup();
 
         expect(renderMock).toHaveBeenCalledTimes(blocks.length);
@@ -672,7 +709,8 @@ describe("ShareCardRenderer", () => {
         });
         const content = Array.from({ length: 80 }, (_, index) => `word-${index}`).join(" ");
         const options = { theme: "light" as const };
-        const fits = renderer.createPreparedFitPredicate([content], options);
+        await renderer.prepareBlocks([content], options);
+        const fits = renderer.createPreparedFitPredicate(options);
 
         const pages = await paginateShareCardMarkdown([content], fits);
         expect(pages.length).toBeGreaterThan(1);
@@ -1213,8 +1251,8 @@ describe("ShareCardRenderer", () => {
     it("waits for image decode, fonts and two stable frames only once per cache key", async () => {
         const document = new ShareCardTestDocument();
         const decode = jest.fn(async () => undefined);
-        const fontsReady = Promise.resolve();
-        Object.assign(document, { fonts: { ready: fontsReady } });
+        const loadFont = jest.fn(async () => ([{} as FontFace]));
+        Object.assign(document, { fonts: { load: loadFont } });
         renderMock.mockImplementationOnce(async (_app, _markdown, element) => {
             const image = document.createElement("img") as unknown as HTMLImageElement;
             image.setAttribute("src", "data:image/webp;base64,AAAA");
@@ -1235,6 +1273,8 @@ describe("ShareCardRenderer", () => {
 
         expect(renderMock).toHaveBeenCalledTimes(1);
         expect(decode).toHaveBeenCalledTimes(1);
+        expect(loadFont).toHaveBeenCalledTimes(1);
+        expect(loadFont).toHaveBeenCalledWith('400 16px "PA Share Serif"', "PA");
         expect(waitForFrame).toHaveBeenCalledTimes(2);
         preview.cleanup();
         renderer.cleanup();

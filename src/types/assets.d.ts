@@ -9,7 +9,16 @@ declare module "*.wasm" {
     export function getSqliteWasmBinaryAsync(): Promise<Uint8Array>;
 }
 
+declare module "*.woff2" {
+    export function getShareCardFontDataUrlAsync(): Promise<string>;
+}
+
 declare module "*.md" {
+    const source: string;
+    export default source;
+}
+
+declare module "*.txt" {
     const source: string;
     export default source;
 }

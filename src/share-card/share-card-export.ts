@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import type { SnapdomOptions } from "@zumer/snapdom";
+import type { SnapdomOptions, SnapdomPlugin } from "@zumer/snapdom";
 import { normalizePath, type App, type Vault } from "obsidian";
 import { type CardPage, type ShareCardSaveResult } from "./share-card-types";
 import {
@@ -53,6 +53,8 @@ const SNAPDOM_SHARE_CARD_BASE_OPTIONS: SnapdomOptions = {
     dpr: 1,
     type: "png",
     useProxy: "",
+    // Safari performs font warm-up before plugin hooks. Keep discovery off
+    // from the first SnapDOM call; beforeRender injects the one approved face.
     embedFonts: false,
     reconcile: false,
     outerShadows: false,
@@ -60,16 +62,51 @@ const SNAPDOM_SHARE_CARD_BASE_OPTIONS: SnapdomOptions = {
     cache: "disabled",
 };
 
-let cachedSnapdomOptions: SnapdomOptions | null = null;
+let cachedSnapdomOptionsPromise: Promise<SnapdomOptions> | null = null;
 
 async function getShareCardSnapdomOptions(): Promise<SnapdomOptions> {
-    if (cachedSnapdomOptions) return cachedSnapdomOptions;
-    const localFonts = await getShareCardLocalFonts().catch(() => undefined);
-    if (localFonts) {
-        cachedSnapdomOptions = { ...SNAPDOM_SHARE_CARD_BASE_OPTIONS, localFonts };
-        return cachedSnapdomOptions;
+    if (!cachedSnapdomOptionsPromise) {
+        cachedSnapdomOptionsPromise = getShareCardLocalFonts().then((localFonts) => {
+            const font = localFonts[0];
+            if (!font || localFonts.length !== 1) {
+                throw new Error("Share Card capture requires exactly one bundled font.");
+            }
+            if (!font.src.startsWith("data:font/woff2;base64,")) {
+                throw new Error("Share Card capture font must be a local WOFF2 data URL.");
+            }
+            const fontCss = [
+                "@font-face{",
+                `font-family:${JSON.stringify(font.family)};`,
+                `src:url(${JSON.stringify(font.src)}) format("woff2");`,
+                `font-weight:${font.weight ?? "400"};`,
+                `font-style:${font.style ?? "normal"};`,
+                "font-display:block;",
+                "}",
+            ].join("");
+            const localOnlyFontPlugin: SnapdomPlugin = {
+                name: "pa-share-card-local-font-only",
+                beforeSnap(context) {
+                    // SnapDOM 2.23.2 discovers fonts across ownerDocument when this remains true.
+                    // Disable discovery inside capture; beforeRender below supplies the approved data URL.
+                    const runtimeContext = context as typeof context & { options: SnapdomOptions };
+                    runtimeContext.options.embedFonts = false;
+                    runtimeContext.options.localFonts = [];
+                },
+                beforeRender(context) {
+                    context.fontsCSS = fontCss;
+                },
+            };
+            return {
+                ...SNAPDOM_SHARE_CARD_BASE_OPTIONS,
+                localFonts: [],
+                plugins: [localOnlyFontPlugin],
+            };
+        }).catch((error) => {
+            cachedSnapdomOptionsPromise = null;
+            throw error;
+        });
     }
-    return SNAPDOM_SHARE_CARD_BASE_OPTIONS;
+    return cachedSnapdomOptionsPromise;
 }
 
 

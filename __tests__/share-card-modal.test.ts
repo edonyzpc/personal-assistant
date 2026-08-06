@@ -10,6 +10,10 @@ import {
     detectShareCardTheme,
     type ShareCardModalDependencies,
 } from "../src/share-card/share-card-modal";
+import {
+    registerShareCardFontFace,
+    unregisterShareCardFontFace,
+} from "../src/share-card/share-card-font";
 import { ShareCardClipboardUnavailableError } from "../src/share-card/share-card-export";
 import type { ShareCardExporter } from "../src/share-card/share-card-export";
 import type {
@@ -40,9 +44,13 @@ type NoticeConstructor = typeof Notice & {
 
 describe("ShareCardModal", () => {
     const notices = (Notice as NoticeConstructor).messages;
+    const registerFont = jest.mocked(registerShareCardFontFace);
+    const unregisterFont = jest.mocked(unregisterShareCardFontFace);
 
     beforeEach(() => {
         notices.length = 0;
+        registerFont.mockReset().mockResolvedValue(undefined);
+        unregisterFont.mockReset();
     });
 
     afterEach(() => {
@@ -139,6 +147,207 @@ describe("ShareCardModal", () => {
             expect.objectContaining({ host: asElement(scale) }),
         );
         modal.onClose();
+    });
+
+    it.each([
+        ["uses 15px when it is the largest size that reduces page count", { 16: 3, 15: 2, 14: 1 }, 15, [16, 15]],
+        ["uses 14px only when 15px does not reduce page count", { 16: 3, 15: 3, 14: 2 }, 14, [16, 15, 14]],
+        ["keeps the validated 16px baseline when neither smaller size reduces pages", { 16: 3, 15: 3, 14: 3 }, 16, [16, 15, 14]],
+    ])("%s", async (_label, counts, expectedFontSize, expectedProbedFontSizes) => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const createPreparedFitPredicate = jest.fn((
+            options: { fontSize?: number },
+        ) => Object.assign(jest.fn(async () => true), {
+            fontSize: options.fontSize ?? 16,
+        }));
+        const prepareBlocks = jest.fn(async () => undefined);
+        Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
+        const paginate = jest.fn(async (
+            _blocks: readonly string[],
+            fit: { fontSize: number },
+        ) => createPages(counts[fit.fontSize as keyof typeof counts]));
+        const exporter = createExporter();
+        const createExporterMock = jest.fn(() => exporter);
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one\n\ntwo", blocks: ["one", "two"] }),
+            paginate: paginate as unknown as NonNullable<ShareCardModalDependencies["paginate"]>,
+            createRenderer: () => renderer,
+            createExporter: createExporterMock,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        await flushShareCardTasks();
+
+        expect(createExporterMock).toHaveBeenCalledWith(
+            expect.anything(),
+            asDocument(document),
+            renderer,
+            expect.objectContaining({ fontSize: expectedFontSize }),
+        );
+        expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
+            expect.any(Array),
+            expect.objectContaining({ fontSize: expectedFontSize }),
+        );
+        expect(renderer.renderPage).toHaveBeenLastCalledWith(
+            expect.objectContaining({ pageIndex: 0 }),
+            expect.objectContaining({ fontSize: expectedFontSize }),
+        );
+
+        const nav = document.body.querySelector(".pa-share-card-nav")!;
+        nav.children[2]!.click();
+        await flushShareCardTasks();
+        for (const [, options] of renderer.renderPage.mock.calls) {
+            expect(options).toEqual(expect.objectContaining({ fontSize: expectedFontSize }));
+        }
+        expect(prepareBlocks).toHaveBeenCalledTimes(1);
+        expect(prepareBlocks).toHaveBeenCalledWith(
+            ["one", "two"],
+            expect.objectContaining({ fontSize: 16 }),
+        );
+        expect(createPreparedFitPredicate.mock.calls.map(([options]) => options.fontSize))
+            .toEqual(expectedProbedFontSizes);
+        modal.onClose();
+    });
+
+    it("keeps the explicit 16px appearance when the original content is one page", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const createPreparedFitPredicate = jest.fn(() => Object.assign(
+            jest.fn(async () => true),
+            { fontSize: 16 },
+        ));
+        const prepareBlocks = jest.fn(async () => undefined);
+        Object.assign(renderer, {
+            createPreparedFitPredicate,
+            prepareBlocks,
+        });
+        const createExporterMock = jest.fn(() => createExporter());
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => renderer,
+            createExporter: createExporterMock,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+
+        expect(createPreparedFitPredicate).toHaveBeenCalledTimes(1);
+        expect(prepareBlocks).toHaveBeenCalledTimes(1);
+        expect(createExporterMock).toHaveBeenCalledWith(
+            expect.anything(),
+            asDocument(document),
+            renderer,
+            expect.objectContaining({ fontSize: 16 }),
+        );
+        modal.onClose();
+    });
+
+    it("keeps the validated 16px batch when a smaller-size probe fails", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const prepareBlocks = jest.fn(async () => undefined);
+        const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
+            Object.assign(jest.fn(async () => true), {
+                fontSize: options.fontSize ?? 16,
+            })
+        ));
+        Object.assign(renderer, { createPreparedFitPredicate, prepareBlocks });
+        const candidateError = new Error("15px probe failed");
+        const paginate = jest.fn(async (
+            _blocks: readonly string[],
+            fit: { fontSize: number },
+        ) => {
+            if (fit.fontSize === 15) throw candidateError;
+            return createPages(3);
+        });
+        const createExporterMock = jest.fn(() => createExporter());
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one\n\ntwo", blocks: ["one", "two"] }),
+            paginate: paginate as unknown as NonNullable<ShareCardModalDependencies["paginate"]>,
+            createRenderer: () => renderer,
+            createExporter: createExporterMock,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        await flushShareCardTasks();
+
+        expect(prepareBlocks).toHaveBeenCalledTimes(1);
+        expect(createPreparedFitPredicate.mock.calls.map(([options]) => options.fontSize))
+            .toEqual([16, 15]);
+        expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
+            createPages(3),
+            expect.objectContaining({ fontSize: 16 }),
+        );
+        expect(createExporterMock).toHaveBeenCalledWith(
+            expect.anything(),
+            asDocument(document),
+            renderer,
+            expect.objectContaining({ fontSize: 16 }),
+        );
+        expect(renderer.renderPage).toHaveBeenCalledWith(
+            expect.objectContaining({ pageIndex: 0 }),
+            expect.objectContaining({ fontSize: 16 }),
+        );
+        expect(warn).toHaveBeenCalledWith(
+            "Share Card adaptive sizing failed; using validated 16px pagination.",
+            candidateError,
+        );
+
+        modal.onClose();
+        warn.mockRestore();
+    });
+
+    it("fails closed when the bundled preview font cannot load", async () => {
+        const document = new ShareCardTestDocument();
+        const createExporterMock = jest.fn(() => createExporter());
+        registerFont.mockRejectedValueOnce(new Error("font decode failed"));
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => createRenderer(document, []),
+            createExporter: createExporterMock,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+
+        expect(document.body.querySelector(".pa-share-card-status")!.textContent)
+            .toContain("Could not prepare");
+        expect(createExporterMock).not.toHaveBeenCalled();
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
+        modal.onClose();
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases the font exactly once when the modal closes during loading", async () => {
+        const document = new ShareCardTestDocument();
+        let resolveFont!: () => void;
+        registerFont.mockImplementationOnce(() => new Promise<void>((resolve) => {
+            resolveFont = resolve;
+        }));
+        const createExporterMock = jest.fn(() => createExporter());
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => createRenderer(document, []),
+            createExporter: createExporterMock,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        expect(registerFont).toHaveBeenCalledTimes(1);
+        modal.onClose();
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
+
+        resolveFont();
+        await flushShareCardTasks();
+        expect(createExporterMock).not.toHaveBeenCalled();
+        expect(unregisterFont).toHaveBeenCalledTimes(1);
     });
 
     it("localizes explicit resources with invisible base-path context before pagination", async () => {
@@ -752,4 +961,12 @@ function createExporter(overrides: Partial<{
         })),
         ...overrides,
     } as unknown as ShareCardExporter;
+}
+
+function createPages(count: number): CardPage[] {
+    return Array.from({ length: count }, (_, pageIndex) => ({
+        content: `page ${pageIndex + 1}`,
+        pageIndex,
+        totalPages: count,
+    }));
 }

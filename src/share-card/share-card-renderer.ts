@@ -18,12 +18,11 @@ import {
     stripInlineCode,
 } from "./share-card-types";
 import {
-    SHARE_CARD_LOGO_SVG,
-    SHARE_CARD_CURSIVE_PA_SVG,
+    createShareCardLogo,
+    createShareCardOrnament,
     SHARE_CARD_NOISE_DATA_URI,
-    SHARE_CARD_ORNAMENT_BR_SVG,
-    SHARE_CARD_ORNAMENT_TL_SVG,
 } from "./share-card-assets";
+import { SHARE_CARD_FONT_FAMILY } from "./share-card-font";
 
 const HARD_REMOVED_SELECTOR = ["script", "style", "link", "base", "meta"].join(",");
 const PLACEHOLDER_SELECTOR = [
@@ -89,7 +88,6 @@ const MERMAID_STATIC_STYLE_PROPERTIES = [
     "fill-opacity",
     "flood-color",
     "flood-opacity",
-    "font-family",
     "font-size",
     "font-style",
     "font-variant",
@@ -300,15 +298,16 @@ export class ShareCardUnsafeResourceError extends Error {
 
 /**
  * Owns the stabilized visual prototypes and fixed-size card clones created by
- * one Modal. A prototype is rendered exactly once for a content/appearance key;
- * pagination probes, preview and export clone it without rerunning processors.
+ * one Modal. A prototype is rendered exactly once for a content/processing
+ * appearance key; root font-size probes, preview and export clone it without
+ * rerunning processors.
  */
 export class ShareCardRenderer {
     private readonly activeRenders = new Set<ShareCardRenderHandle>();
     private readonly prototypeCache = new Map<string, Promise<ShareCardRenderPrototype>>();
     private readonly ownedPrototypes = new Set<ShareCardRenderPrototype>();
     private preparedBlocks: PreparedShareCardBlock[] | null = null;
-    private preparedAppearanceKey: string | null = null;
+    private preparedPrototypeKey: string | null = null;
     private preparedFinalPageUsedPlainTextFallback = false;
     private readonly constrainedPreparedPages = new Set<string>();
     private readonly waitForFrame: (ownerDocument: Document) => Promise<void>;
@@ -422,18 +421,17 @@ export class ShareCardRenderer {
         }
     }
 
-    /**
-     * Render every semantic input block once, then retain only inert static DOM.
-     * Pagination, preview and export compose clones from this bounded input set.
-     */
+    /** Create a root-size fit probe from the retained inert block prototypes. */
     createPreparedFitPredicate(
-        blocks: readonly string[],
         options: Omit<ShareCardRenderOptions, "host">,
     ): ShareCardFitPredicate {
-        const preparation = this.prepareBlocks(blocks, options);
-        void preparation.catch(() => undefined);
+        this.assertActive();
+        if (!this.hasPreparedAppearance(options)) {
+            throw new ShareCardRenderReadinessError(
+                "Share Card blocks are not prepared for this appearance.",
+            );
+        }
         return async (content, pageIndex, context?: ShareCardFitContext) => {
-            await preparation;
             return this.fits(
                 content,
                 pageIndex,
@@ -476,6 +474,10 @@ export class ShareCardRenderer {
         }
     }
 
+    /**
+     * Render every semantic input block once, then retain only inert static DOM.
+     * Pagination, preview and export compose clones from this bounded input set.
+     */
     async prepareBlocks(
         blocks: readonly string[],
         options: Omit<ShareCardRenderOptions, "host">,
@@ -515,7 +517,7 @@ export class ShareCardRenderer {
             throw error;
         }
         this.preparedBlocks = prepared;
-        this.preparedAppearanceKey = appearanceKey(options);
+        this.preparedPrototypeKey = staticPrototypeKey(options);
         this.constrainedPreparedPages.clear();
     }
 
@@ -526,7 +528,7 @@ export class ShareCardRenderer {
         this.cancelPending();
         for (const render of [...this.activeRenders]) render.cleanup();
         this.preparedBlocks = null;
-        this.preparedAppearanceKey = null;
+        this.preparedPrototypeKey = null;
         this.preparedFinalPageUsedPlainTextFallback = false;
         for (const prototype of [...this.ownedPrototypes]) this.disposePrototype(prototype);
         this.ownedPrototypes.clear();
@@ -708,7 +710,14 @@ export class ShareCardRenderer {
 
     private async waitForFonts(deadline: number): Promise<void> {
         const fonts = this.ownerDocument.fonts;
-        if (fonts?.ready) await this.awaitActive(fonts.ready.then(() => undefined), deadline);
+        if (!fonts?.load) return;
+        const loaded = await this.awaitActive(
+            fonts.load(`400 16px "${SHARE_CARD_FONT_FAMILY}"`, "PA"),
+            deadline,
+        );
+        if (Array.isArray(loaded) && loaded.length === 0) {
+            throw new ShareCardRenderReadinessError("Share Card local font is not available.");
+        }
     }
 
     private async waitForStableLayout(bodyEl: HTMLElement, deadline: number): Promise<void> {
@@ -754,7 +763,7 @@ export class ShareCardRenderer {
 
     private hasPreparedAppearance(options: Omit<ShareCardRenderOptions, "host">): boolean {
         return this.preparedBlocks !== null
-            && this.preparedAppearanceKey === appearanceKey(options);
+            && this.preparedPrototypeKey === staticPrototypeKey(options);
     }
 
     private isPreparedSingleVisual(page: CardPage): boolean {
@@ -855,7 +864,7 @@ export class ShareCardRenderer {
             this.disposePrototype(block.prototype);
         }
         this.preparedBlocks = null;
-        this.preparedAppearanceKey = null;
+        this.preparedPrototypeKey = null;
         this.preparedFinalPageUsedPlainTextFallback = false;
         this.constrainedPreparedPages.clear();
     }
@@ -887,12 +896,12 @@ export class ShareCardRenderer {
 
         const ornamentTl = this.ownerDocument.createElement("div");
         ornamentTl.classList.add("pa-share-card-ornament", "is-top-left");
-        ornamentTl.innerHTML = SHARE_CARD_ORNAMENT_TL_SVG;
+        ornamentTl.appendChild(createShareCardOrnament(this.ownerDocument));
         cardEl.appendChild(ornamentTl);
 
         const ornamentBr = this.ownerDocument.createElement("div");
         ornamentBr.classList.add("pa-share-card-ornament", "is-bottom-right");
-        ornamentBr.innerHTML = SHARE_CARD_ORNAMENT_BR_SVG;
+        ornamentBr.appendChild(createShareCardOrnament(this.ownerDocument));
         cardEl.appendChild(ornamentBr);
 
         const noiseEl = this.ownerDocument.createElement("div");
@@ -911,7 +920,11 @@ export class ShareCardRenderer {
 
         const brandRow = this.ownerDocument.createElement("div");
         brandRow.classList.add("pa-share-card-brand-row");
-        brandRow.innerHTML = SHARE_CARD_LOGO_SVG + SHARE_CARD_CURSIVE_PA_SVG;
+        brandRow.appendChild(createShareCardLogo(this.ownerDocument));
+        const brandName = this.ownerDocument.createElement("span");
+        brandName.classList.add("pa-share-card-brand-name");
+        brandName.textContent = "Personal Assistant";
+        brandRow.appendChild(brandName);
         if (options.sourceLabel) {
             const sourceHint = this.ownerDocument.createElement("span");
             sourceHint.classList.add("pa-share-card-source-hint");
@@ -952,7 +965,7 @@ function preparedPageKey(page: CardPage): string {
         : `content:${page.content}`;
 }
 
-function appearanceKey(options: Omit<ShareCardRenderOptions, "host">): string {
+function staticPrototypeKey(options: Omit<ShareCardRenderOptions, "host">): string {
     return JSON.stringify([
         options.theme,
         options.sourceLabel ?? "",
@@ -1806,7 +1819,18 @@ function sanitizeElementAttributes(
             if (!isSafeStyle(value)) {
                 element.removeAttribute(attributeName);
                 issues.push({ tagName, reason: "unsafe-style" });
+            } else {
+                const styledElement = element as HTMLElement | SVGElement;
+                styledElement.style.removeProperty("font");
+                styledElement.style.removeProperty("font-family");
+                if (!styledElement.getAttribute("style")?.trim()) {
+                    styledElement.removeAttribute("style");
+                }
             }
+            continue;
+        }
+        if (normalizedName === "font-family") {
+            element.removeAttribute(attributeName);
             continue;
         }
         if (tagName === "a" && (normalizedName === "href" || normalizedName === "target")) {

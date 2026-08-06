@@ -5,7 +5,12 @@ import { readFileSync } from "fs";
 import { Platform } from "obsidian";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
-import { getPetAriaLabel, PetView, resolvePetMountTarget } from "../src/pagelet/pet/PetView";
+import {
+    getPetAriaLabel,
+    PetView,
+    resolvePetMountTarget,
+    usesPhoneActionRingLayout,
+} from "../src/pagelet/pet/PetView";
 
 afterEach(() => {
     jest.useRealTimers();
@@ -641,7 +646,7 @@ describe("PetView task kind", () => {
                     "Capture",
                     "Review",
                     "Discover",
-                    "Share",
+                    "Share as card",
                 ]);
 
                 menu?.children[index]?.dispatch("click");
@@ -1024,8 +1029,14 @@ describe("PetView hold-menu input boundary", () => {
         });
     });
 
-    it("dismisses the menu after 3s without executing any action", () => {
+    it("pauses dismissal while focused and dismisses 3s after focus leaves", () => {
         withMountedHoldMenu((fixture) => {
+            jest.advanceTimersByTime(6000);
+            expect(fixture.root.children).toContain(fixture.menu);
+
+            const outside = fixture.doc.createElement();
+            outside.focus();
+            fixture.items[0].dispatch("focusout", { relatedTarget: outside } as never);
             jest.advanceTimersByTime(2999);
             expect(fixture.root.children).toContain(fixture.menu);
             expect(fixture.doc.listenerCount("pointerdown")).toBe(1);
@@ -1265,6 +1276,7 @@ describe("PetView mobile toolbar mounting", () => {
             insertAfterEl: null,
             mobileToolbar: false,
         });
+        expect(usesPhoneActionRingLayout(fixture.containerEl.ownerDocument)).toBe(true);
     });
 
     it("keeps desktop pets in the Markdown content container", () => {

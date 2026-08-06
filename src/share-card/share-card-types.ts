@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /** The source surface that opened a Share Card. */
-export type ShareCardSource = "chat" | "pagelet" | "selection";
+export type ShareCardSource = "chat" | "pagelet" | "selection" | "note";
 
 /** The visual theme is locked when the Share Card modal opens. */
 export type ShareCardTheme = "light" | "dark";

@@ -64,6 +64,31 @@ import {
     type GeneratedNotePolicy,
     type ProviderDisclosureReason,
 } from "./pa/contracts";
+import SOURCE_HAN_SERIF_OFL_TEXT from "../licenses/source-han-serif-OFL-1.1.txt";
+
+export const BUNDLED_SHARE_CARD_FONT_LICENSE_TEXT = SOURCE_HAN_SERIF_OFL_TEXT;
+
+class BundledFontLicenseModal extends Modal {
+    constructor(
+        app: App,
+        private readonly title: string,
+    ) {
+        super(app);
+    }
+
+    onOpen(): void {
+        this.modalEl.addClass("pa-bundled-font-license-modal-shell");
+        this.titleEl.setText(this.title);
+        const licenseEl = this.contentEl.createEl("pre", {
+            cls: "pa-bundled-font-license-text",
+        });
+        licenseEl.textContent = BUNDLED_SHARE_CARD_FONT_LICENSE_TEXT;
+    }
+
+    onClose(): void {
+        this.contentEl.empty();
+    }
+}
 
 export interface ResizeStyle {
     width: number,
@@ -2872,6 +2897,19 @@ export class SettingTab extends PluginSettingTab {
             "plugin.settings.legal.thirdPartyNotices.desc",
             legalLinks.thirdPartyNotices,
         );
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.legal.fontLicense.name"))
+            .setDesc(this.t("plugin.settings.legal.fontLicense.desc"))
+            .addButton((button) => {
+                button
+                    .setButtonText(this.t("plugin.settings.legal.fontLicense.view"))
+                    .onClick(() => {
+                        new BundledFontLicenseModal(
+                            this.app,
+                            this.t("plugin.settings.legal.fontLicense.title"),
+                        ).open();
+                    });
+            });
         this.addLegalLink(
             parentEl,
             "plugin.settings.legal.networkPrivacy.name",

@@ -30,6 +30,7 @@ import {
     SHARE_CARD_FOLDER,
     ShareCardClipboardUnavailableError,
     ShareCardExporter,
+    type ShareCardExportAppearance,
 } from "./share-card-export";
 import {
     ShareCardRenderCancelledError,
@@ -55,11 +56,7 @@ export interface ShareCardModalDependencies {
         app: App,
         ownerDocument: Document,
         renderer: ShareCardRenderer,
-        appearance: {
-            theme: ShareCardTheme;
-            sourceLabel?: string;
-            sourcePath?: string;
-        },
+        appearance: ShareCardExportAppearance,
     ) => ShareCardExporter;
 }
 
@@ -69,6 +66,8 @@ export class ShareCardModal extends Modal {
     private theme: ShareCardTheme = "light";
     private renderer: ShareCardRenderer | null = null;
     private exporter: ShareCardExporter | null = null;
+    private appearance: ShareCardExportAppearance | null = null;
+    private fontRegistrationHeld = false;
     private previewRender: ShareCardRenderHandle | null = null;
     private statusEl: HTMLElement | null = null;
     private viewportEl: HTMLElement | null = null;
@@ -107,6 +106,8 @@ export class ShareCardModal extends Modal {
         this.busy = false;
         this.pages = [];
         this.currentPageIndex = 0;
+        this.appearance = null;
+        this.fontRegistrationHeld = false;
         this.completenessReport = null;
         this.preparedCompleteness = {
             sanitizationIssueCount: 0,
@@ -175,8 +176,9 @@ export class ShareCardModal extends Modal {
         this.resourceController?.abort();
         this.resourceController = null;
         this.resourceCache = null;
-        if (openShareCardModals.size === 0) {
+        if (this.fontRegistrationHeld) {
             unregisterShareCardFontFace(this.contentEl.ownerDocument);
+            this.fontRegistrationHeld = false;
         }
         this.completenessReport = null;
         this.preparedCompleteness = {
@@ -191,6 +193,7 @@ export class ShareCardModal extends Modal {
         this.renderer?.cleanup();
         this.renderer = null;
         this.exporter = null;
+        this.appearance = null;
         this.pages = [];
         this.resetElementReferences();
         clearElement(this.contentEl);
@@ -220,10 +223,15 @@ export class ShareCardModal extends Modal {
         });
         if (!this.isCurrent(token)) return;
         this.completenessReport = localized.report;
+        this.fontRegistrationHeld = true;
         try {
             await registerShareCardFontFace(this.contentEl.ownerDocument);
-        } catch {
-            // Font unavailable — fall back to system fonts silently.
+        } catch (error) {
+            if (this.fontRegistrationHeld) {
+                unregisterShareCardFontFace(this.contentEl.ownerDocument);
+                this.fontRegistrationHeld = false;
+            }
+            throw error;
         }
         if (!this.isCurrent(token)) return;
         const prepared = (this.dependencies.prepareMarkdown ?? prepareShareCardMarkdown)(
@@ -233,9 +241,15 @@ export class ShareCardModal extends Modal {
             theme: this.theme,
             sourceLabel: this.data.sourceLabel,
             sourcePath: this.data.resourceContext?.basePath,
+            fontSize: 16,
         };
-        const fit = typeof renderer.createPreparedFitPredicate === "function"
-            ? renderer.createPreparedFitPredicate(prepared.blocks, renderOptions)
+        const usesPreparedRenderer = typeof renderer.createPreparedFitPredicate === "function";
+        if (usesPreparedRenderer) {
+            await renderer.prepareBlocks(prepared.blocks, renderOptions);
+            if (!this.isCurrent(token)) return;
+        }
+        const fit = usesPreparedRenderer
+            ? renderer.createPreparedFitPredicate(renderOptions)
             : (content: string, pageIndex: number) => (
                 renderer.fits(content, pageIndex, renderOptions)
             );
@@ -247,22 +261,29 @@ export class ShareCardModal extends Modal {
         if (!this.isCurrent(token)) return;
 
         let finalRenderOptions = renderOptions;
-        if (pages.length > 1 && typeof renderer.createPreparedFitPredicate === "function") {
+        if (pages.length > 1 && usesPreparedRenderer) {
             const REDUCED_FONT_SIZES = [15, 14] as const;
             for (const fontSize of REDUCED_FONT_SIZES) {
                 if (!this.isCurrent(token)) return;
                 const reducedOptions = { ...renderOptions, fontSize };
-                const reducedFit = renderer.createPreparedFitPredicate(
-                    prepared.blocks,
-                    reducedOptions,
-                );
-                const reducedPages = await (
-                    this.dependencies.paginate ?? paginateShareCardMarkdown
-                )(
-                    prepared.blocks,
-                    reducedFit,
-                    { originalCharacterCount: this.data.content.length },
-                );
+                let reducedPages: CardPage[];
+                try {
+                    const reducedFit = renderer.createPreparedFitPredicate(reducedOptions);
+                    reducedPages = await (
+                        this.dependencies.paginate ?? paginateShareCardMarkdown
+                    )(
+                        prepared.blocks,
+                        reducedFit,
+                        { originalCharacterCount: this.data.content.length },
+                    );
+                } catch (error) {
+                    if (!this.isCurrent(token)) return;
+                    console.warn(
+                        "Share Card adaptive sizing failed; using validated 16px pagination.",
+                        error,
+                    );
+                    break;
+                }
                 if (!this.isCurrent(token)) return;
                 if (reducedPages.length < pages.length) {
                     pages = reducedPages;
@@ -277,6 +298,7 @@ export class ShareCardModal extends Modal {
         }
         this.refreshPreparedCompleteness(renderer);
         this.pages = pages;
+        this.appearance = finalRenderOptions;
         this.exporter = this.dependencies.createExporter?.(
             this.app,
             this.contentEl.ownerDocument,
@@ -373,7 +395,8 @@ export class ShareCardModal extends Modal {
         const renderer = this.renderer;
         const host = this.previewScaleEl;
         const page = this.pages[this.currentPageIndex];
-        if (!renderer || !host || !page) return false;
+        const appearance = this.appearance;
+        if (!renderer || !host || !page || !appearance) return false;
 
         const token = this.nextToken();
         const previousRender = this.previewRender;
@@ -381,9 +404,7 @@ export class ShareCardModal extends Modal {
         let render: ShareCardRenderHandle;
         try {
             render = await renderer.renderPage(page, {
-                theme: this.theme,
-                sourceLabel: this.data.sourceLabel,
-                sourcePath: this.data.resourceContext?.basePath,
+                ...appearance,
                 host,
             });
         } catch (error) {

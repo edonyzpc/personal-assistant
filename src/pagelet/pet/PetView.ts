@@ -62,8 +62,7 @@ export type PetMountTarget = {
     mobileToolbar: boolean;
 };
 
-export function resolvePetMountTarget(containerEl: HTMLElement): PetMountTarget {
-    const doc = containerEl.ownerDocument ?? getPlatformDocument();
+export function usesPhoneActionRingLayout(doc: Document): boolean {
     const win = doc.defaultView ?? getOptionalPlatformWindow();
     const viewportWidth = win?.innerWidth ?? doc.documentElement.clientWidth;
     const viewportHeight = win?.innerHeight ?? doc.documentElement.clientHeight;
@@ -74,8 +73,12 @@ export function resolvePetMountTarget(containerEl: HTMLElement): PetMountTarget 
     const isDesktopPhoneSimulation = Platform.isDesktop
         && doc.body.classList.contains("is-mobile")
         && shortEdge <= 600;
-    const isPhoneLayout = Platform.isPhone || isDesktopPhoneSimulation;
-    if (!isPhoneLayout) {
+    return Platform.isPhone || isDesktopPhoneSimulation;
+}
+
+export function resolvePetMountTarget(containerEl: HTMLElement): PetMountTarget {
+    const doc = containerEl.ownerDocument ?? getPlatformDocument();
+    if (!usesPhoneActionRingLayout(doc)) {
         return { mountEl: containerEl, insertAfterEl: null, mobileToolbar: false };
     }
 
@@ -155,8 +158,8 @@ export function intersectActionRingViewport(
 }
 
 /**
- * Compute arc positions that fan items AWAY from the screen edge (into the
- * interior). The opening/gap in the arc faces the corner direction.
+ * Compute quarter-arc positions that fan items away from the screen edge and
+ * into the visible Markdown surface.
  */
 export function computeArcPositions(
     corner: PetCorner,
@@ -164,18 +167,22 @@ export function computeArcPositions(
     radius = 90,
 ): ActionRingItemPosition[] {
     if (itemCount < 1) return [];
-    if (itemCount === 1) return [{ left: 0, top: -radius }];
-    const interiorAngle: Record<PetCorner, number> = {
-        "bottom-right": -(3 * Math.PI) / 4,
-        "bottom-left": -Math.PI / 4,
-        "top-right": (3 * Math.PI) / 4,
-        "top-left": Math.PI / 4,
+    const interiorArc: Record<PetCorner, readonly [number, number]> = {
+        "top-left": [0, Math.PI / 2],
+        "top-right": [Math.PI / 2, Math.PI],
+        "bottom-right": [Math.PI, (3 * Math.PI) / 2],
+        "bottom-left": [-Math.PI / 2, 0],
     };
-    const center = interiorAngle[corner];
-    const ARC_SPAN = Math.PI;
-    const arcStart = center - ARC_SPAN / 2;
+    const [arcStart, arcEnd] = interiorArc[corner];
+    if (itemCount === 1) {
+        const angle = (arcStart + arcEnd) / 2;
+        return [{
+            left: Math.round(radius * Math.cos(angle)),
+            top: Math.round(radius * Math.sin(angle)),
+        }];
+    }
     return Array.from({ length: itemCount }, (_, i) => {
-        const angle = arcStart + (ARC_SPAN * i) / (itemCount - 1);
+        const angle = arcStart + ((arcEnd - arcStart) * i) / (itemCount - 1);
         return {
             left: Math.round(radius * Math.cos(angle)),
             top: Math.round(radius * Math.sin(angle)),
@@ -195,6 +202,7 @@ export function computeActionRingLayout(input: {
     items: readonly ActionRingItemSize[];
     corner: PetCorner;
     mobileToolbar: boolean;
+    mobileToolbarMounted?: boolean;
     gutter?: number;
     safeAreaInsets?: Partial<ActionRingSafeAreaInsets>;
 }): ActionRingItemPosition[] {
@@ -219,6 +227,9 @@ export function computeActionRingLayout(input: {
     }));
 
     if (input.mobileToolbar) {
+        const mobileToolbarMounted = input.mobileToolbarMounted ?? true;
+        const placeBelow = mobileToolbarMounted || input.corner.startsWith("top-");
+        const alignRight = !mobileToolbarMounted && input.corner.endsWith("-right");
         const horizontal = buildMobileToolbarHorizontalActionRingLayout({
             sizes,
             anchor: input.anchor,
@@ -227,6 +238,8 @@ export function computeActionRingLayout(input: {
             maxRight,
             maxBottom,
             gutter,
+            placeBelow,
+            alignRight,
         });
         if (!actionRingPositionsOverlap(horizontal, sizes)) return horizontal;
 
@@ -238,26 +251,26 @@ export function computeActionRingLayout(input: {
             maxRight,
             maxBottom,
             gutter,
+            placeBelow,
+            alignRight,
         });
     }
 
-    const distToEdge = Math.min(
-        anchorCenterX - minLeft,
-        maxRight - anchorCenterX,
-        anchorCenterY - minTop,
-        maxBottom - anchorCenterY,
+    const maxRadius = Math.max(
+        88,
+        Math.hypot(maxRight - minLeft, maxBottom - minTop),
     );
-    const radius = Math.min(90, Math.max(50, distToEdge - 22));
-    const preferredOffsets = computeArcPositions(input.corner, sizes.length, radius);
-    const preferredOrigin = { left: anchorCenterX, top: anchorCenterY };
-    const preferred = sizes.map((size, index) => {
-        const offset = preferredOffsets[index] ?? { left: 0, top: 0 };
-        return clampActionRingPosition({
-            left: preferredOrigin.left + offset.left,
-            top: preferredOrigin.top + offset.top,
-        }, size, { minLeft, minTop, maxRight, maxBottom });
-    });
-    if (!actionRingPositionsOverlap(preferred, sizes)) return preferred;
+    for (let radius = 88; radius <= maxRadius; radius += 8) {
+        const preferredOffsets = computeArcPositions(input.corner, sizes.length, radius);
+        const preferred = sizes.map((size, index) => {
+            const offset = preferredOffsets[index] ?? { left: 0, top: 0 };
+            return clampActionRingPosition({
+                left: anchorCenterX + offset.left - size.width / 2,
+                top: anchorCenterY + offset.top - size.height / 2,
+            }, size, { minLeft, minTop, maxRight, maxBottom });
+        });
+        if (!actionRingPositionsOverlap(preferred, sizes)) return preferred;
+    }
 
     const horizontal = buildHorizontalActionRingFallback({
         sizes,
@@ -289,6 +302,8 @@ function buildMobileToolbarHorizontalActionRingLayout(input: {
     maxRight: number;
     maxBottom: number;
     gutter: number;
+    placeBelow: boolean;
+    alignRight: boolean;
 }): ActionRingItemPosition[] {
     const availableWidth = Math.max(0, input.maxRight - input.minLeft);
     const widthSum = input.sizes.reduce((sum, item) => sum + item.width, 0);
@@ -301,13 +316,17 @@ function buildMobileToolbarHorizontalActionRingLayout(input: {
         : 0;
     const totalWidth = widthSum + gap * Math.max(0, input.sizes.length - 1);
     let cursor = clamp(
-        input.anchor.left,
+        input.alignRight
+            ? input.anchor.left + input.anchor.width - totalWidth
+            : input.anchor.left,
         input.minLeft,
         Math.max(input.minLeft, input.maxRight - totalWidth),
     );
     const maxHeight = Math.max(44, ...input.sizes.map((item) => item.height));
     const top = clamp(
-        input.anchor.top + input.anchor.height + input.gutter,
+        input.placeBelow
+            ? input.anchor.top + input.anchor.height + input.gutter
+            : input.anchor.top - input.gutter - maxHeight,
         input.minTop,
         Math.max(input.minTop, input.maxBottom - maxHeight),
     );
@@ -330,6 +349,8 @@ function buildMobileToolbarVerticalActionRingFallback(input: {
     maxRight: number;
     maxBottom: number;
     gutter: number;
+    placeBelow: boolean;
+    alignRight: boolean;
 }): ActionRingItemPosition[] {
     const availableHeight = Math.max(0, input.maxBottom - input.minTop);
     const heightSum = input.sizes.reduce((sum, item) => sum + item.height, 0);
@@ -342,13 +363,17 @@ function buildMobileToolbarVerticalActionRingFallback(input: {
         : 0;
     const totalHeight = heightSum + gap * Math.max(0, input.sizes.length - 1);
     let cursor = clamp(
-        input.anchor.top + input.anchor.height + input.gutter,
+        input.placeBelow
+            ? input.anchor.top + input.anchor.height + input.gutter
+            : input.anchor.top - input.gutter - totalHeight,
         input.minTop,
         Math.max(input.minTop, input.maxBottom - totalHeight),
     );
     const maxWidth = Math.max(44, ...input.sizes.map((item) => item.width));
     const left = clamp(
-        input.anchor.left,
+        input.alignRight
+            ? input.anchor.left + input.anchor.width - maxWidth
+            : input.anchor.left,
         input.minLeft,
         Math.max(input.minLeft, input.maxRight - maxWidth),
     );
@@ -948,7 +973,7 @@ export class PetView implements PetRenderer {
         this.scheduleActionRingFocusRestore();
     }
 
-    /** Open the three-action Ring. Re-opening only refreshes its inactivity timer. */
+    /** Open the action Ring. Re-opening only refreshes its inactivity timer. */
     openActionRing(): void {
         if (this._destroyed || !this._rootEl) return;
         this.clearActionRingFocusRestoreTimer();
@@ -1373,6 +1398,10 @@ export class PetView implements PetRenderer {
             btn.setAttribute("aria-label", item.label);
             btn.title = item.label;
             setIcon(btn, item.icon);
+            const visibleLabel = doc.createElement("span");
+            visibleLabel.className = "pa-pagelet-action-ring-label";
+            visibleLabel.textContent = item.label;
+            btn.appendChild(visibleLabel);
             const cb = item.callback;
             if (!cb) {
                 btn.setAttribute("disabled", "");
@@ -1457,8 +1486,9 @@ export class PetView implements PetRenderer {
                     ?? doc.documentElement.clientHeight,
             };
             const buttons = Array.from(ring.children) as HTMLElement[];
-            const mobileToolbar = this.mobileToolbarMounted();
-            const containerRect = !mobileToolbar
+            const mobileToolbarMounted = this.mobileToolbarMounted();
+            const phoneLayout = usesPhoneActionRingLayout(doc);
+            const containerRect = !mobileToolbarMounted
                 && typeof this._containerEl?.getBoundingClientRect === "function"
                 ? this._containerEl.getBoundingClientRect()
                 : null;
@@ -1498,13 +1528,14 @@ export class PetView implements PetRenderer {
                     };
                 }),
                 corner: this._corner,
-                mobileToolbar,
+                mobileToolbar: phoneLayout,
+                mobileToolbarMounted,
                 safeAreaInsets,
             });
-            const originLeft = mobileToolbar
+            const originLeft = mobileToolbarMounted
                 ? rootRect.left
                 : rootRect.left + rootRect.width / 2;
-            const originTop = mobileToolbar
+            const originTop = mobileToolbarMounted
                 ? rootRect.top + rootRect.height + ACTION_RING_VIEWPORT_GUTTER_PX
                 : rootRect.top + rootRect.height / 2;
             buttons.forEach((button, index) => {
@@ -1555,26 +1586,49 @@ export class PetView implements PetRenderer {
 
     private installActionRingActivityListeners(ring: HTMLElement): void {
         this._actionRingActivityCleanup?.();
+        const pause = () => this.clearActionRingDismissTimer();
+        const resume = () => this.refreshActionRingDismissTimer();
         const refresh = () => this.refreshActionRingDismissTimer();
-        const eventNames = ["focusin", "keydown", "pointerdown", "pointermove", "touchstart"] as const;
-        for (const eventName of eventNames) {
-            ring.addEventListener(eventName, refresh, { passive: true });
-        }
+        ring.addEventListener("focusin", pause, { passive: true });
+        ring.addEventListener("focusout", resume, { passive: true });
+        ring.addEventListener("keydown", refresh, { passive: true });
+        ring.addEventListener("pointerdown", pause, { passive: true });
+        ring.addEventListener("pointermove", refresh, { passive: true });
+        ring.addEventListener("pointerup", resume, { passive: true });
+        ring.addEventListener("pointercancel", resume, { passive: true });
+        ring.addEventListener("touchstart", pause, { passive: true });
+        ring.addEventListener("touchend", resume, { passive: true });
+        ring.addEventListener("touchcancel", resume, { passive: true });
         this._actionRingActivityCleanup = () => {
-            for (const eventName of eventNames) {
-                ring.removeEventListener(eventName, refresh);
-            }
+            ring.removeEventListener("focusin", pause);
+            ring.removeEventListener("focusout", resume);
+            ring.removeEventListener("keydown", refresh);
+            ring.removeEventListener("pointerdown", pause);
+            ring.removeEventListener("pointermove", refresh);
+            ring.removeEventListener("pointerup", resume);
+            ring.removeEventListener("pointercancel", resume);
+            ring.removeEventListener("touchstart", pause);
+            ring.removeEventListener("touchend", resume);
+            ring.removeEventListener("touchcancel", resume);
             if (this._actionRingActivityCleanup) this._actionRingActivityCleanup = null;
         };
     }
 
     private refreshActionRingDismissTimer(): void {
         this.clearActionRingDismissTimer();
-        if (!this.actionRingOpen) return;
+        if (!this.actionRingOpen || this.actionRingHasFocus()) return;
         this._actionRingDismissTimer = setPlatformTimeout(() => {
             this._actionRingDismissTimer = null;
+            if (this.actionRingHasFocus()) return;
             this.closeActionRing(true, "passive");
         }, ACTION_RING_DISMISS_MS);
+    }
+
+    private actionRingHasFocus(): boolean {
+        const ring = this._actionRingEl;
+        if (!ring) return false;
+        const activeElement = ring.ownerDocument?.activeElement ?? null;
+        return Boolean(activeElement && ring.contains(activeElement));
     }
 
     private clearActionRingDismissTimer(): void {

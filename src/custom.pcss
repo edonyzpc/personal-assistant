@@ -6334,9 +6334,10 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
+	gap: 6px;
 	min-width: 44px;
 	min-height: 44px;
-	max-width: min(112px,calc(100vw - 16px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px)));
+	max-width: calc(100vw - 16px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px));
 	padding: 0 12px;
 	border: 1px solid var(--background-modifier-border,#3a3a3a);
 	border-radius: 999px;
@@ -6362,6 +6363,10 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	animation-delay: .05s;
 }
 
+.pa-pagelet-action-ring-item:nth-child(4) {
+	animation-delay: .075s;
+}
+
 .pa-pagelet-pet[data-corner=bottom-right] .pa-pagelet-action-ring-item:nth-child(1) {
 	--pa-action-ring-x: -118px;
 	--pa-action-ring-y: -30px;
@@ -6375,6 +6380,11 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 .pa-pagelet-pet[data-corner=bottom-right] .pa-pagelet-action-ring-item:nth-child(3) {
 	--pa-action-ring-x: -58px;
 	--pa-action-ring-y: -122px;
+}
+
+.pa-pagelet-pet[data-corner=bottom-right] .pa-pagelet-action-ring-item:nth-child(4) {
+	--pa-action-ring-x: -18px;
+	--pa-action-ring-y: -146px;
 }
 
 .pa-pagelet-pet[data-corner=bottom-left] .pa-pagelet-action-ring-item:nth-child(1) {
@@ -6392,6 +6402,11 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	--pa-action-ring-y: -122px;
 }
 
+.pa-pagelet-pet[data-corner=bottom-left] .pa-pagelet-action-ring-item:nth-child(4) {
+	--pa-action-ring-x: 22px;
+	--pa-action-ring-y: -146px;
+}
+
 .pa-pagelet-pet[data-corner=top-right] .pa-pagelet-action-ring-item:nth-child(1) {
 	--pa-action-ring-x: -118px;
 	--pa-action-ring-y: -14px;
@@ -6407,6 +6422,11 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	--pa-action-ring-y: 78px;
 }
 
+.pa-pagelet-pet[data-corner=top-right] .pa-pagelet-action-ring-item:nth-child(4) {
+	--pa-action-ring-x: -18px;
+	--pa-action-ring-y: 102px;
+}
+
 .pa-pagelet-pet[data-corner=top-left] .pa-pagelet-action-ring-item:nth-child(1) {
 	--pa-action-ring-x: 38px;
 	--pa-action-ring-y: -14px;
@@ -6420,6 +6440,11 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 .pa-pagelet-pet[data-corner=top-left] .pa-pagelet-action-ring-item:nth-child(3) {
 	--pa-action-ring-x: -4px;
 	--pa-action-ring-y: 78px;
+}
+
+.pa-pagelet-pet[data-corner=top-left] .pa-pagelet-action-ring-item:nth-child(4) {
+	--pa-action-ring-x: 22px;
+	--pa-action-ring-y: 102px;
 }
 
 .pa-pagelet-action-ring-item:hover {
@@ -6470,6 +6495,11 @@ body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-action-ring-item:nth-
 
 body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-action-ring-item:nth-child(3) {
 	--pa-action-ring-x: 184px;
+	--pa-action-ring-y: 0px;
+}
+
+body.is-mobile .pa-pagelet-pet--mobile-toolbar .pa-pagelet-action-ring-item:nth-child(4) {
+	--pa-action-ring-x: 288px;
 	--pa-action-ring-y: 0px;
 }
 
@@ -7903,19 +7933,23 @@ body.is-mobile .pa-quick-capture-modal__input {
 	border: 1px solid rgba(139, 34, 82, .1);
 	border-radius: 18px;
 	color: var(--pa-share-card-text);
-	font-family:
-		"Source Han Serif SC",
-		"Noto Serif CJK SC",
-		"Avenir Next",
-		"PingFang SC",
-		system-ui,
-		sans-serif;
+	font-family: "PA Share Serif", serif;
 	font-size: var(--pa-share-card-font-size, 16px);
-	font-synthesis: none;
+	font-synthesis: weight;
 	line-height: 1.7;
 	letter-spacing: 0.01em;
 	text-rendering: optimizeLegibility;
 	-webkit-font-smoothing: antialiased;
+}
+
+/* Keep every non-code label on the bundled primary face. Characters outside
+ * the fixed subset use only the device-local serif fallback at the inherited
+ * batch size; SnapDOM font discovery remains disabled. */
+.pa-share-card .pa-share-card-body,
+.pa-share-card .pa-share-card-body :not(pre):not(code):not(kbd):not(samp),
+.pa-share-card .pa-share-card-footer,
+.pa-share-card .pa-share-card-footer * {
+	font-family: inherit;
 }
 
 .pa-share-card-static,
@@ -7960,6 +7994,10 @@ body.is-mobile .pa-quick-capture-modal__input {
 .pa-share-card-ornament.is-bottom-right {
 	bottom: 12px;
 	right: 12px;
+}
+
+.pa-share-card-ornament.is-bottom-right svg {
+	transform: rotate(180deg);
 }
 
 .pa-share-card-noise {
@@ -8199,7 +8237,7 @@ body.is-mobile .pa-quick-capture-modal__input {
 	gap: 10px;
 	margin-top: 24px;
 	color: var(--pa-share-card-muted);
-	font-family: system-ui, sans-serif;
+	font-family: inherit;
 	font-size: 12px;
 	line-height: 16px;
 }
@@ -8217,6 +8255,11 @@ body.is-mobile .pa-quick-capture-modal__input {
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
+}
+
+.pa-share-card-brand-name {
+	font-weight: 600;
+	letter-spacing: .02em;
 }
 
 .pa-share-card-brand-row svg {
@@ -8310,6 +8353,28 @@ body.is-mobile .pa-quick-capture-modal__input {
 .pa-share-card-actions button[aria-busy="true"],
 .pa-share-card-modal[data-busy="true"] .pa-share-card-actions button:disabled {
 	cursor: progress;
+}
+
+.pa-bundled-font-license-modal-shell {
+	width: min(720px, calc(100vw - 32px));
+	max-width: calc(100vw - 32px);
+}
+
+.pa-bundled-font-license-text {
+	box-sizing: border-box;
+	max-height: min(68vh, 680px);
+	margin: 12px 0 0;
+	padding: 12px;
+	overflow: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.45;
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 
 .pa-share-card-nav button:focus-visible,

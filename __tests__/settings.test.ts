@@ -391,6 +391,7 @@ import {
     STATISTICS_SYNC_SETTING_DESC,
     SettingTab,
     buildPaLegalLinks,
+    BUNDLED_SHARE_CARD_FONT_LICENSE_TEXT,
     deriveDisplayPreset,
     isFreshInstall,
     isLegacyV1Install,
@@ -3621,6 +3622,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 'License',
                 'Notices',
                 'Third-party notices',
+                'Bundled font license',
                 'Network and privacy disclosure',
             ]));
             expect(names).not.toContain('Terms');
@@ -3642,6 +3644,21 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 expect(openMock).toHaveBeenLastCalledWith(expectedUrl, '_blank', 'noopener,noreferrer');
             }
             expect(openMock).toHaveBeenCalledTimes(expectedLinks.size);
+            const fontLicenseButton = records.find(
+                (record) => record.name === 'Bundled font license',
+            )?.buttons[0];
+            expect(fontLicenseButton?.text).toBe('View');
+            expect(BUNDLED_SHARE_CARD_FONT_LICENSE_TEXT).toContain(
+                "SIL OPEN FONT LICENSE Version 1.1",
+            );
+            const normalizedFontLicense = BUNDLED_SHARE_CARD_FONT_LICENSE_TEXT
+                .replace(/\s+/gu, " ");
+            expect(normalizedFontLicense).toContain(
+                "provided that each copy contains the above copyright notice and this license",
+            );
+            expect(BUNDLED_SHARE_CARD_FONT_LICENSE_TEXT).toContain(
+                "THE FONT SOFTWARE IS PROVIDED \"AS IS\"",
+            );
         } finally {
             if (originalWindow) {
                 Object.defineProperty(globalThis, 'window', {
