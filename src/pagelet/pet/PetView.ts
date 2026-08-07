@@ -164,7 +164,7 @@ export function intersectActionRingViewport(
 export function computeArcPositions(
     corner: PetCorner,
     itemCount: number,
-    radius = 90,
+    radius = 64,
 ): ActionRingItemPosition[] {
     if (itemCount < 1) return [];
     const interiorArc: Record<PetCorner, readonly [number, number]> = {
@@ -256,11 +256,11 @@ export function computeActionRingLayout(input: {
         });
     }
 
-    const maxRadius = Math.max(
-        88,
-        Math.hypot(maxRight - minLeft, maxBottom - minTop),
+    const maxRadius = Math.min(
+        108,
+        Math.max(88, Math.hypot(maxRight - minLeft, maxBottom - minTop)),
     );
-    for (let radius = 88; radius <= maxRadius; radius += 8) {
+    for (let radius = 64; radius <= maxRadius; radius += 4) {
         const preferredOffsets = computeArcPositions(input.corner, sizes.length, radius);
         const preferred = sizes.map((size, index) => {
             const offset = preferredOffsets[index] ?? { left: 0, top: 0 };
