@@ -2,6 +2,152 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0](https://github.com/edonyzpc/personal-assistant/compare/2.8.4...2.9.0) (2026-08-08)
+
+### Features
+- core: add low-burden PA and pagelet runtime modules
+- pa: redesign pagelet workflows for quiet recall and onboarding
+- pagelet: unify delivery candidates and migrate recap runtime
+- pagelet: add foreground protection and consent migration
+- pagelet: UI/UX optimization and audit findings
+- pagelet: add level-2 memory auto-confirm pipeline
+- pagelet: improve review panel and memory governance UI states
+- memory-control-center: implement memory control center and governance pipeline
+- skills: automate PA project lifecycle routing
+- settings: add responsive navigation and aligned controls
+- pagelet: add LLM-based 'why now' reasoning to Quiet Recall
+- pagelet: add LLM-driven insights to Scope Recap
+- pagelet: add context action zone to Bubble
+- pagelet: expand Pet long-press to 3-item menu
+- pagelet: add 5 card styles and hover micro-interactions to Detail View
+- pagelet: wire LLM callbacks into production Recap and Recall flows
+- pagelet: complete B-108 dogfood runtime flow
+- release: enforce master-sourced beta packaging
+- pagelet: harden provider-first review and recall execution
+- pagelet: add explicit language resolution to all pagelet prompts
+- pagelet: add attention-aware delivery orchestration runtime
+- pagelet: add Pagelet Deep Discover runtime pipeline
+- operations: complete B-101 Step 2 runtime and chat save flow
+- operations-agent: complete step3 chat and pagelet handoff runtime
+- share-card: implement local share card generation and exports
+- pagelet: use Obsidian MarkdownRenderer for discover insight text and refactor SOURCES as collapsible chips
+- share-card: integrate local resource pipeline and refresh sharing runtime
+- quick-capture: add note template system for new file creation
+- share-card: visual redesign with paper/wood metaphor and action ring arc layout
+- share-card: implement local share card rendering and settings flow
+- share-card: auto-enlarge font for short content and improve paper texture
+- share-card: add inline folder picker for save destination
+- share-card: reuse export font and modal destination semantics
+
+### Fix
+- vss: preserve snapshot consistency during refresh
+- featured-image: add timeout to LLM prompt generation call
+- pagelet: address review findings — remove CSS leak and add timeout safety
+- vss: quote unsafe FTS query tokens
+- memory-ui: make recall interactions safe and contextual
+- pagelet: anchor mobile pet to active note toolbar
+- pagelet: align font-sizes with Obsidian system CSS variables
+- pagelet: address review findings from code review
+- remove unused imports flagged by lint
+- test: use relative timestamp in memory governance bootstrap test
+- pagelet: isolate Pet hold-menu touch ownership from root toggle (B-118/F-01)
+- pagelet: redesign Recap delivery, remove Modal, wire shared provider gate (B-118/F-02,F-03,F-05,F-06,F-07,F-10)
+- pagelet: complete reduced-motion coverage and typography floor (B-118/F-04,F-08)
+- chat: normalize chat icon sizes
+- chat: overlay code copy buttons
+- chat: allow selecting message text
+- ui: remove black border around plugin update notification
+- pagelet: resolve pet background, nudge click, and bubble dismiss issues
+- pagelet: resolve Deep Discover runtime issues from code review
+- pagelet: enforce quota for explicit Deep Discover runs
+- pagelet: enable Save and Expand buttons in discover panel
+- share-card: correct code span backtick escape and wiki-link pagination
+- dependencies: override vulnerable transitive dev dependencies
+- address review findings from share-card iteration
+- address review findings from note-template system
+- share-card: preserve pending sentinels and materialize mermaid styles
+- pagelet: reduce pet action ring button spacing
+- release: decouple release docs gate from lifecycle status
+- release: satisfy community source scan
+
+### Improvements
+- agents: setup skills infrastructure and validation
+- pagelet: restructure Tab with section renderers, remove Weekly Review
+- release: harden BRAT beta release workflow
+- agents: add skills and playbooks
+- pa: cache backlink map with 30s TTL
+- smoke: add pagelet D6 memory runtime smoke coverage
+- mobile: remove obsidian mobile debug helper
+- add GitHub workflow for memory center pipeline
+- skills: harden validation and review workflows
+- docs: enforce documentation lifecycle integrity
+- css: refresh generated plugin stylesheet
+- integrate UI/UX optimizations
+- governance: remove Linear workflow
+- docs: slim lifecycle and archive management
+- skills: refine docs lifecycle and smoke helper guidance
+- pagelet: widen panel to 460px and add source chip styles
+- consolidate duplicate utilities and remove dead code
+- raise bundle gzip budget to 3.5MB for embedded serif font
+- share-card: add font assets pipeline and notice auditing
+- share-card,pagelet: update action ring fallbacks and share card themes
+
+### Docs
+- pa: add product research and planning specs
+- pa: add product spec development plan
+- pa: add PR review report and address re-review findings
+- pa: add product redesign decisions, development plan, and SDD tracker
+- pa: export active decisions from memory system
+- pa: add commercialization analysis with competitive references
+- memory-control-center: add specs, sdd, tracker and review docs
+- governance: reorganize project documentation lifecycle
+- ui-ux: record targeted memory audit closeout
+- settings: define responsive layout optimization
+- product: add v2.9 dogfooding analysis and action plan
+- dev: add validation handoff for Pagelet v2.9 LLM integration
+- register new docs in product and development indexes
+- pagelet: record B-108 dogfood follow-up design and lifecycle
+- pagelet: align B-108 deferred scope and beta authorization
+- pagelet: close B-108 after BRAT beta validation
+- governance: adopt master-first branch management
+- product: add DEC-021 and B-118 hardening contracts
+- active: add B-118 Pagelet UI/UX handoff package
+- pagelet: add B-118 SDD, update tracker and North Star provider trust model
+- discovery: add B-119 Insight Enhancement Layer discovery brief, codex handoff, and backlog entry
+- docs: synchronize insight and pagelet docs packages
+- pagelet: update B-118 lifecycle, specs and decision records
+- archive: add disposition entries from 2.8.4 docs check
+- development: add process weight analysis for token/performance optimization
+- proposals: add Pagelet Agent and Operations capability proposals
+- pagelet: migrate docs to attention-aware delivery lifecycle
+- proposals: add PA Agent evolution proposals and implementation handoff
+- backlog: repair Deep Discover delivery docs for step1 closure
+- pagelet: add Deep Discover code review results
+- pagelet: record repaired Deep Discover dogfood
+- pagelet: close Deep Discover validation gate
+- operations: close B-123 and B-101 Step 2 governance artifacts
+- operations-agent: update step3 architecture and docs tracking
+- operations-agent: add step3 visible-window evidence
+- pagelet: close b121 attention-aware delivery
+- close out B-001 Pagelet Tab
+- share-card: add implementation spec for PA content share card feature
+- guides: add 2.9.0-beta.6 user trial guide
+- share-card: add B-124 decision and lifecycle documentation
+- share-card: add snapdom deviation analysis for Codex handoff
+- governance: align PA lifecycle instructions for share-card planning
+- share-card: consolidate Snapdom-based share-card design and execution artifacts
+- share-card: update spec and tracker for local share card rollout
+- release: record release process path migration
+- retrieval: add retrieval pipeline optimization SDD, plan, and tracker
+- share-card: close out B-124 architecture and spec authority
+
+### Tests
+- memory: add error recovery test for preparation guard
+- pagelet: add B-108 dogfood follow-up coverage
+- pagelet: add B-118 smoke runner and validation checklist
+- pagelet: add Deep Discover runtime regression coverage
+- operations-agent: add handoff and operations service tests
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
