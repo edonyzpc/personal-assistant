@@ -293,6 +293,33 @@ export class ShareCardModal extends Modal {
             }
         }
 
+        if (pages.length === 1 && usesPreparedRenderer) {
+            const ENLARGED_FONT_SIZES = [18, 20, 22] as const;
+            for (const fontSize of ENLARGED_FONT_SIZES) {
+                if (!this.isCurrent(token)) return;
+                const enlargedOptions = { ...renderOptions, fontSize };
+                try {
+                    const enlargedFit = renderer.createPreparedFitPredicate(enlargedOptions);
+                    const enlargedPages = await (
+                        this.dependencies.paginate ?? paginateShareCardMarkdown
+                    )(
+                        prepared.blocks,
+                        enlargedFit,
+                        { originalCharacterCount: this.data.content.length },
+                    );
+                    if (!this.isCurrent(token)) return;
+                    if (enlargedPages.length === 1) {
+                        pages = enlargedPages;
+                        finalRenderOptions = enlargedOptions;
+                    } else {
+                        break;
+                    }
+                } catch {
+                    break;
+                }
+            }
+        }
+
         if (typeof renderer.recordPreparedFinalPages === "function") {
             renderer.recordPreparedFinalPages(pages, finalRenderOptions);
         }

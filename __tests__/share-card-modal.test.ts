@@ -233,14 +233,15 @@ describe("ShareCardModal", () => {
 
         modal.onOpen();
         await flushShareCardTasks();
+        await flushShareCardTasks();
 
-        expect(createPreparedFitPredicate).toHaveBeenCalledTimes(1);
+        expect(createPreparedFitPredicate).toHaveBeenCalledTimes(4);
         expect(prepareBlocks).toHaveBeenCalledTimes(1);
         expect(createExporterMock).toHaveBeenCalledWith(
             expect.anything(),
             asDocument(document),
             renderer,
-            expect.objectContaining({ fontSize: 16 }),
+            expect.objectContaining({ fontSize: 22 }),
         );
         modal.onClose();
     });
