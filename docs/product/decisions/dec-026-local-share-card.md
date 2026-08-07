@@ -2,8 +2,8 @@
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-08-06
-Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），并于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号
+Updated: 2026-08-07
+Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则
 Work item: B-124
 
 > [!note] Owner decision 2026-08-05
@@ -19,6 +19,13 @@ Work item: B-124
 > `Personal Assistant` 品牌文字、Action Ring 可见中英本地化标签、仅以本地 data URL 加载的
 > Source Han Serif、端侧 Ring 几何及 `16 → 15 → 14px` 的整批字号规则。本修订是当前
 > 产品权威；2026-08-05 的三入口验证不能替代本修订的实现与验证。
+
+> [!note] Owner amendment 2026-08-07
+> 用户明确选择以当前 `master` 为准：单页短内容可在 `18 / 20 / 22px` 中选择仍保持
+> 单页的最大字号；多页内容继续从 `16px` 出发，仅在减少页数时接受 `15 / 14px`，
+> 且同一 batch 的 preview、copy 与 save 始终使用同一字号。保存目录在每次 Modal 内
+> 可选、不持久化，默认使用有效的 Vault attachment folder，否则回退 `PA-Cards`；
+> Desktop/iPad Ring 优先内向弧，标签空间不足时整组降级为紧凑横排或竖排。
 
 ## Context
 
@@ -78,13 +85,17 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 4. 分页以与最终卡片相同 CSS 和宽度进行实际 DOM 高度测量，优先在语义块边界分页；
    超高单块再按保持 Markdown 有效的行/词边界拆分。不得依赖固定字符数估算，不得
    静默截断，也不得把 YAML/thematic break 误判后删除。超出明确安全上限时应拒绝
-   导出并提示缩短内容，不能截去尾部。正文默认 `16px`；仅当完整重分页能减少总页数时
-   才依次考虑 `15px`、`14px`，并选择第一个也就是最大的有效字号；候选须满足同一套
-   no-loss、overflow 与 24-page 安全门。15px 未减页时才评估 14px；若两个候选都不减页
-   则保持 16px。一次 batch 的所有页面、预览、复制和保存必须使用同一选定字号。
+   导出并提示缩短内容，不能截去尾部。分页先以 `16px` 建立有效 baseline；多页内容仅当
+   完整重分页能减少总页数时才依次考虑 `15px`、`14px`，并选择第一个也就是最大的有效
+   较小字号。若结果为单页，则依次评估 `18px`、`20px`、`22px`，选择仍能保持单页的
+   最大字号。所有候选都须满足同一套 no-loss、overflow 与 24-page 安全门；候选失败保留
+   最近的有效结果。一次 batch 的所有页面、预览、复制和保存必须使用同一选定字号。
 5. 复制只复制当前预览页。复制不可用或失败时只给出可恢复提示，不自动改为写 Vault。
-   保存由用户单独点击触发：单页保存当前页，多页一次保存全部页到 `PA-Cards/`；文件
-   名必须避让已有文件，不能覆盖。部分写入失败时明确报告已保存数量与可重试状态。
+   保存由用户单独点击触发：单页保存当前页，多页一次保存全部页。Modal 每次打开时，
+   保存目录默认采用 Vault 中有效的 attachment folder；不可用、为空或为以 `.` 开头的
+   相对路径配置时回退 `PA-Cards`。用户可在本次 Modal 内选择已有目录、输入新目录或选择
+   Vault 根目录，该选择不写入插件设置。文件名必须避让已有文件，不能覆盖；部分写入
+   失败时明确报告已保存数量、实际目录与可重试状态。
 6. 导出期间按钮进入 busy/disabled 状态并阻止并发操作；关闭 Modal、切页和异步
    Markdown 渲染不得产生 stale DOM 写入。所有 render `Component`、离屏节点、事件与
    异步 owner 在关闭后清理。
@@ -100,11 +111,12 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
    模式，但未批准向 Obsidian live UI 注入 style、直接扫描无关资源或绕过后续
    community/release gate。
 9. Action Ring 保持独立瞬时命令面。顺序固定为 `Capture / Review / Discover / Share`，
-   前三项 callback、route 与 provider/data/write 边界不变。Desktop 与 iPad 从 Pet 朝
-   内容区形成内向弧；iPhone 在可用宽度能完整容纳四项时横向排列，否则整组切换为
-   纵向排列，不允许部分换行或混排。四项均为至少 `44×44px` 的真实 button，并在当前
-   UI locale 显示文字标签：英文 `Capture / Review / Discover / Share as card`，中文
-   `随手记下 / 审阅 / 发现关联 / 分享为卡片`。视觉方向不得改变逻辑、键盘或焦点顺序。
+   前三项 callback、route 与 provider/data/write 边界不变。Desktop 与 iPad 优先从 Pet
+   朝内容区形成内向弧；完整标签无法在可用空间内无重叠容纳时，整组降级为紧凑横排或
+   竖排，不允许部分混排。iPhone 在可用宽度能完整容纳四项时横向排列，否则整组切换为
+   纵向排列。四项均为至少 `44×44px` 的真实 button，并在当前 UI locale 显示文字标签：
+   英文 `Capture / Review / Discover / Share as card`，中文 `随手记下 / 审阅 / 发现关联 /
+   分享为卡片`。视觉方向不得改变逻辑、键盘或焦点顺序。
 
 ## Consequences
 
@@ -113,24 +125,24 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
   Action Ring 增加第四项 Share，并以 selection-first、current-note fallback 保持一步可达。
 - Architecture / data / safety: 新增共享 card renderer/paginator/exporter；PA-owned resolver
   限定显式资源并在 capture 前本地化，SnapDOM 只负责稳定 DOM → 固定像素 PNG。依赖的
-  窄例外、固定版本和真实 community/mobile gate 由 B-124 Tracker 持续验证。
-- Compatibility / migration: 无 setting 或 persisted-state migration；桌面和移动端共享
+  窄例外、固定版本和真实 community/mobile gate 由当前 Architecture、tests 与验证清单约束。
+- Compatibility / migration: 无 setting 或 persisted-state migration；Modal 内目录选择不持久化；桌面和移动端共享
   数据契约，移动端 clipboard 不可用时仍可显式保存。Source Han Serif 随插件本地提供，
   不新增外部字体依赖或网络权限。
-- Work created or removed: B-124 进入 L3 Active Package；原 1,159 行实现草稿在结论
-  吸收到本决定、Product Spec 与 Approved SDD 后删除，避免重复权威。
+- Work created or removed: B-124 已完成实现、验证与显式 closeout；稳定行为吸收到本决定、
+  Product Spec、Current Architecture、focused tests 与验证清单，Active Package 过程文档删除。
 
 ## Revisit Trigger
 
 - 真实使用证明 `1080×1440` 不适合主要分享目的，需要新的比例/模板选择。
-- 用户需要自定义品牌、颜色、字体、保存目录、来源标签或无品牌导出。
+- 用户需要持久保存目录偏好，或自定义品牌、颜色、字体、来源标签或无品牌导出。
 - 第三方插件视图、交互组件或嵌套资源无法以可接受的失败语义捕获。
 - 用户明确要求系统 share sheet 或外部发布，并接受对应账号、权限与失败恢复设计。
 
 ## Traceability
 
 - Product Spec: [B-124 Share Card Product Spec](../specs/pa-share-card-product-spec.md)
-- Active Package: [Share Card Development Track](../../development/active/share-card/README.md)
-- Architecture / SDD: [Share Card SDD](../../development/active/share-card/sdd.md)
-- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05；Action Ring/source/visual/font/layout/pagination amendment approved 2026-08-06
+- Current Architecture: [Share Card Architecture](../../architecture/share-card-architecture.md)
+- Validation evidence: [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md)
+- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05；Action Ring/source/visual/font/layout/pagination amendment approved 2026-08-06；current `master` behavior selected as final authority 2026-08-07
 - Supersedes / superseded by: supersedes the design assumptions in the removed original implementation draft; none otherwise

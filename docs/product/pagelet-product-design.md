@@ -2,7 +2,7 @@
 
 > [!note] Current authority is this design together with the
 > [PA Product North Star](./pa-product-north-star.md), [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
-> through [DEC-025](./decisions/dec-025-consumption-aware-pagelet-delivery.md),
+> through [DEC-026](./decisions/dec-026-local-share-card.md),
 > the [B-108 owning Scope Recap spec](./specs/pa-scope-recap-theme-summary-product-spec.md),
 > and the [B-121 Attention-Aware Delivery spec](./specs/pagelet-attention-aware-delivery-product-spec.md).
 > Archive discussions are provenance only, never the current baseline.
@@ -14,8 +14,8 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`; tag-later Pagelet fixes remain on `master` without a newer beta/stable package. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action and replaces the current geometry contract；prior B-121 evidence does not validate that delta, whose execution evidence belongs only to the B-124 Tracker. |
-| Last revised | 2026-08-06 |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. |
+| Last revised | 2026-08-07 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
 | Write boundary | Current B-108 delivery is read-only; existing user-confirmed review-note creation uses the **Write Action Framework**; there is no current standalone Periodic Summary save contract |
@@ -328,7 +328,7 @@ Decision: **D039** — Proactive hints control placement: Settings (full config)
 Panel header (quick toggle) + Command Palette + keyboard shortcut. The Pet
 Action Ring remains a separate Capture / Review / Discover / Share command surface.
 
-### Action Ring Share — [UPDATED 2026-08-06]
+### Action Ring Share — [UPDATED 2026-08-07]
 
 The Ring logical and focus order is `Capture / Review / Discover / Share`. Every icon has a visible
 current-locale label: EN `Capture / Review / Discover / Share as card`; ZH `随手记下 / 审阅 /
@@ -342,14 +342,17 @@ their current callbacks, routes and provider/data/write boundaries. Share resolv
 - no active Markdown note or empty projected body opens no Share Card Modal and yields a local recoverable
   notice. Ring Share itself makes no provider call、upload or automatic Vault write.
 
-Desktop/iPad arrange the four actions on an inward arc toward content. iPhone uses one horizontal row when
-all four complete labels fit the available safe width, otherwise the whole group becomes one vertical
-column with no partial wrap. All actions remain at least `44×44px`, inside safe-area/visual viewport bounds;
+Desktop/iPad prefer an inward arc toward content; if all complete labels cannot fit without overlap, the
+whole group falls back to a compact row or column. iPhone uses one horizontal row when all four complete
+labels fit the available safe width, otherwise the whole group becomes one vertical column with no partial
+wrap. All actions remain at least `44×44px`, inside safe-area/visual viewport bounds;
 visual direction never changes the logical, keyboard or callback order.
 
 Decision: **D040** — Add Share as the fourth Action Ring command with selection-first/current-note
-resolution and the above device geometry. [DEC-026](./decisions/dec-026-local-share-card.md) and the
-[B-124 Product Spec](./specs/pa-share-card-product-spec.md) own the resulting card contract and evidence.
+resolution and the above device geometry. [DEC-026](./decisions/dec-026-local-share-card.md), the
+[B-124 Product Spec](./specs/pa-share-card-product-spec.md), [Share Card Architecture](../architecture/share-card-architecture.md)
+and the [smoke checklist](../development/validation/pagelet-smoke-checklist.md) own the resulting current
+contract and validation evidence.
 
 Proactive hints behavior constraints:
 
@@ -1433,7 +1436,7 @@ Pagelet considered successful if:
 | **D037** | Progressive disclosure layers | Four-layer content model: Pet -> Bubble -> Panel -> Tab. DEC-025's Action Ring is a peer command surface, not a fifth content layer. Bubble and Ring are mutually exclusive and close on their documented outside/Escape/Pet paths. |
 | **D038** | Generic proactive hints (主动提示) design | Quiet Recall, Pattern, and generic review hints remain opt-in and OFF by default. When ON, Pet enters `nudge` only after their own quality gates. Cooldown, no sound, no modal, no focus steal. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet Action Ring is reserved for Capture / Review / Discover / Share. |
-| **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. All four icons show localized EN/ZH text labels. Desktop/iPad use an inward arc; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
+| **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. All four icons show localized EN/ZH text labels. Desktop/iPad prefer an inward arc and use a whole-group compact row/column fallback when complete labels cannot fit without overlap; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
 
 [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) is the accepted
 Scope Recap exception to D038: high-value Recap hints default on for an eligible

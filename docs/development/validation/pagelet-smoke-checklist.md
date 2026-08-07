@@ -31,6 +31,63 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-08-07 · B-124 Share Card closeout
+
+Environment:
+
+- Ref: current uncommitted `master` worktree after the 2026-08-07 owner amendment
+  and closeout fixes；no commit, push, beta/stable packaging or release was performed.
+- Vault: repo-local `test/` with current `make deploy` output；Obsidian 1.13.4 desktop.
+- Mobile evidence: owner-approved Obsidian iPhone simulation at `393x852` only；this
+  is not physical-device touch, WKWebView, safe-area, keyboard or performance evidence.
+
+Implementation and app gate:
+
+- PASS: Share Card Modal/export focused suites passed 62/62, including
+  `18/20/22px` largest-fitting selection、candidate-failure rollback、one appearance
+  across preview/Copy/Save、attachment-folder defaults、`PA-Cards` fallback、custom/new/root
+  destinations、empty input、file occupancy and collision avoidance.
+- PASS: TypeScript, diff/community DOM source scan and final `make deploy` passed；the
+  deploy ran 186 Jest suites / 3992 tests, lint, build and copied the current assets
+  into the test vault.
+- PASS: the current plugin reloaded enabled from the deployed assets. Final fresh
+  console/error capture after the affected interactions was empty.
+
+Current deployed Desktop:
+
+- PASS: visible interaction opened the four-action Ring from the Pagelet Pet. At the
+  current full-label widths it used one compact horizontal row rather than an
+  overlapping arc；order and labels remained `Capture / Review / Discover / Share as card`.
+- PASS: clicking visible `Share as card` opened the note-fallback Modal. The current
+  neutral paper texture and brand were visible without clipping；the one-page fixture
+  selected `20px`, the largest of `18/20/22px` that still fit, while the fixed card
+  remained `540x720` CSS px.
+- PASS: the directory control exposed the accessible name `Save to` through a real
+  `label/for` association. The test vault attachment setting `/` appeared as the
+  default. Visible Save created one root-level PNG, reported `Saved to /. Images saved: 1`,
+  and the artifact measured `1080x1440`. The generated smoke artifact was removed
+  from the test vault after inspection.
+
+iPhone simulation:
+
+- PASS: the four complete labels used one vertical group at `393x852`. All four
+  buttons were exactly 44px high, inside the viewport, non-overlapping and
+  center-hit-testable；document horizontal overflow was zero.
+- PASS: visible Share opened the responsive Modal. Preview scale was
+  `0.6388888888888888`, root/modal horizontal overflow was zero, the selected body
+  size remained `20px`, and the default root directory retained the accessible
+  `Save to` label. No second Vault write was performed.
+
+Boundary and cleanup:
+
+- Share Card itself made no provider request. Opening the changed test fixture before
+  the Share interaction also allowed the already-enabled Pagelet background path to
+  finish an unrelated quiet Deep Discover run with provider `qwen`, model
+  `deepseek-v4-flash`, over `pagelet-smoke-golden.md`；it was not used as Share Card
+  evidence and made no source-note write.
+- PASS: final state restored desktop `1865x1050`, mobile emulation off and debug off；
+  Share Modal、capture host and Action Ring counts were all zero.
+
 ### 2026-08-06 · B-124 Share Card owner amendment
 
 Environment:

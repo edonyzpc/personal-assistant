@@ -2,8 +2,8 @@
 
 Decision ID: DEC-025
 Status: Accepted
-Updated: 2026-08-06
-Authority: 用户于 2026-07-22 至 2026-07-27 对重复 Recall/Recap、Pet 空态与主动关闭提示后的安静状态逐项选择产品方案，并于 2026-08-06 为 Action Ring 新增 Share 与端侧几何修订
+Updated: 2026-08-07
+Authority: 用户于 2026-07-22 至 2026-07-27 对重复 Recall/Recap、Pet 空态与主动关闭提示后的安静状态逐项选择产品方案，于 2026-08-06 为 Action Ring 新增 Share 与端侧几何修订，并于 2026-08-07 接受当前 `master` 的紧凑布局 fallback
 Work item: B-121
 
 ## Context
@@ -38,6 +38,10 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
 > 和 B-124 Product Spec 承担。此前 B-121 closeout/beta/smoke 只证明三项 Ring 基线，
 > 不证明本修订已经实现或验证。
 
+> [!note] Scoped amendment 2026-08-07
+> Desktop/iPad 继续优先使用内向弧；完整标签无法无重叠容纳时，四项整组降级为紧凑
+> 横排或竖排。用户明确接受当前 `master` 行为，B-121 的前三项逻辑与权限边界不变。
+
 1. Pagelet 为主动 Recall 与主动 Recap 分别建立 versioned
    `deliveryFingerprint`。`kind` 是指纹的一部分，Recall 与 Recap 不跨类型互相抑制。
    指纹由该类型规范化后的主要可见内容、来源集合及必要 scope identity 决定，排除
@@ -70,11 +74,12 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
    写入与确认边界。Share 在触发时优先使用当前 active Markdown editor 的非空 selection，
    否则使用 current Markdown note，然后进入 DEC-026/B-124 的本地 preview/Copy/Save
    流程；Ring 本身不调用 provider、不上传、不自动保存。
-8. Desktop 与 iPad 从 Pet 朝内容区形成内向弧；iPhone 在可用宽度能完整容纳四项时使用
-   横向排列，否则整组切换为纵向排列，不允许部分换行或混排。四项都是至少 `44×44px`
-   的真实 button；每项在当前 UI locale 显示文字标签，英文为 `Capture / Review / Discover /
-   Share as card`，中文为 `随手记下 / 审阅 / 发现关联 / 分享为卡片`。视觉方向不得改变固定
-   逻辑、键盘或焦点顺序，也不得覆盖 safe area 或 Obsidian 关键控件。
+8. Desktop 与 iPad 优先从 Pet 朝内容区形成内向弧；完整标签无法在可用空间内无重叠
+   容纳时，四项整组降级为紧凑横排或竖排。iPhone 在可用宽度能完整容纳四项时使用
+   横向排列，否则整组切换为纵向排列，不允许部分混排。四项都是至少 `44×44px` 的
+   真实 button；每项在当前 UI locale 显示文字标签，英文为 `Capture / Review / Discover /
+   Share as card`，中文为 `随手记下 / 审阅 / 发现关联 / 分享为卡片`。视觉方向不得改变
+   固定逻辑、键盘或焦点顺序，也不得覆盖 safe area 或 Obsidian 关键控件。
 
 ## Consequences
 
@@ -92,7 +97,8 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
   Package；当前行为由本决定、Product Spec、Pagelet contracts 与 focused tests 承担，
   独有终态证据保留在 compact closeout。核心 runtime 已进入 BRAT `2.9.0-beta.5`；tag
   后 follow-up fixes 尚无更新的 beta/stable package。上述证据属于修订前的三项 Ring；
-  2026-08-06 Share 与新几何由 B-124 Active Package 承担，不能后推为 B-121 已验证事实。
+  2026-08-06 Share 与新几何由 B-124 承担，不能后推为 B-121 已验证事实；B-124 现已
+  closeout，当前行为由 DEC-026、Product Spec、Architecture、tests 与验证清单承担。
 
 ## Revisit Trigger
 
@@ -110,6 +116,7 @@ Ready Empty Bubble 和 `Find related old notes`。这使 Pet 在没有新价值�
 - Related current specs: [Bubble Readiness and Recall](../specs/pagelet-bubble-readiness-and-recall-product-spec.md)、[Quiet Recall](../specs/pa-quiet-recall-insight-timing-product-spec.md)、[Scope Recap](../specs/pa-scope-recap-theme-summary-product-spec.md)
 - Current product design: [Pagelet Product Design](../pagelet-product-design.md)
 - Share Card Decision / Product Spec: [DEC-026](./dec-026-local-share-card.md)、[B-124 Product Spec](../specs/pa-share-card-product-spec.md)
-- Current Share Card execution evidence: [B-124 Tracker](../../development/active/share-card/tracker.md)
+- Current Share Card architecture: [Share Card Architecture](../../architecture/share-card-architecture.md)
+- Current Share Card validation evidence: [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md)
 - Final delivery evidence: [B-121 compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md)
 - Supersedes / superseded by: supersedes B-118's deferred ordinary quiet-empty disposition and narrows the old session/producer-level once semantics; none otherwise

@@ -1,7 +1,7 @@
 # Pagelet Attention-Aware Delivery Product Spec
 
 Document status: Approved
-Updated: 2026-08-06
+Updated: 2026-08-07
 Work item: B-121
 Scoped amendment work item: B-124
 Decision: [DEC-025 — Pagelet 采用消费感知的主动交付与空态 Action Ring](../decisions/dec-025-consumption-aware-pagelet-delivery.md)
@@ -12,6 +12,10 @@ Authority: Pagelet 已看去重、空态 acknowledgement、Pet 短点分流与 A
 > Action Ring 新增第四项 Share，固定为 selection-first/current-note fallback、可见中英本地化标签，并更新
 > Desktop/iPad 与 iPhone 几何。B-121 的 seen/acknowledgement 与前三项行为不变；Share
 > 的内容/导出合同由 DEC-026/B-124 承担。旧 B-121 三项 Ring 证据不覆盖本修订。
+
+> [!note] Owner amendment 2026-08-07
+> Desktop/iPad Ring 优先使用内向弧；完整标签无法无重叠容纳时，四项整组降级为紧凑
+> 横排或竖排。用户明确接受当前 `master` 行为；其余 B-121 合同不变。
 
 ## Problem And Product Outcome
 
@@ -58,9 +62,10 @@ Authority: Pagelet 已看去重、空态 acknowledgement、Pet 短点分流与 A
   pointer leave、leaf 切换或 unmount 都取消；一次取消在本次 gesture 内永久失效。短点、
   长按、touch 后 synthetic click 与 action button 必须保持 callback exactly once、Pet
   root toggle zero，并在 teardown 清理 timer/listener。
-- B-121/REQ-08: Ring 以 Pet 为锚点向可用区域展开：Desktop 与 iPad 从 Pet 朝内容区
-  形成内向弧；iPhone 在可用宽度能完整容纳四项时横向排列，否则整组切换为纵向排列，
-  不允许部分换行或混排。四个真实 button 均至少 44×44px，并在当前 UI locale 显示文字
+- B-121/REQ-08: Ring 以 Pet 为锚点向可用区域展开：Desktop 与 iPad 优先从 Pet 朝内容区
+  形成内向弧；完整标签无法无重叠容纳时，四项整组降级为紧凑横排或竖排。iPhone 在
+  可用宽度能完整容纳四项时横向排列，否则整组切换为纵向排列，不允许部分混排。
+  四个真实 button 均至少 44×44px，并在当前 UI locale 显示文字
   标签：英文 `Capture / Review / Discover / Share as card`，中文 `随手记下 / 审阅 /
   发现关联 / 分享为卡片`。它们保持固定逻辑顺序，
   位于 visual viewport/safe area 内且不覆盖 Obsidian 关键控件；视觉方向不得改变 callback、
@@ -189,8 +194,9 @@ Ring 保持三个既有动作，并新增第四项 Share；逻辑与焦点顺序
 | Discover | 主动查找相关旧笔记；结果继续进入 Panel/Detail |
 | Share | 优先分享当前 editor 非空 selection，否则分享 current Markdown note；进入 DEC-026/B-124 的本地卡片流程 |
 
-视觉形态依据设备与可用空间展开：Desktop/iPad 从 Pet 朝内容区形成内向弧；iPhone 在
-四个完整标签能安全容纳时横向排列，否则整组纵向排列。不得为了保持形状而遮挡编辑器、
+视觉形态依据设备与可用空间展开：Desktop/iPad 优先从 Pet 朝内容区形成内向弧，完整
+标签无法无重叠容纳时整组降级为紧凑横排或竖排；iPhone 在四个完整标签能安全容纳时
+横向排列，否则整组纵向排列。不得为了保持形状而遮挡编辑器、
 滚动条、侧栏、toolbar 或 safe area。Ring 使用带本地化 accessible name 的 button group，
 不假装成内容卡或系统菜单；Pet 通过 `aria-controls` / `aria-expanded` 表达其开关关系。
 
@@ -235,7 +241,8 @@ Ring 保持三个既有动作，并新增第四项 Share；逻辑与焦点顺序
 - B-121/AC-10: mouse、single-touch 与 keyboard 的四个 action 各执行一次，Pet root
   toggle 为零；移动超过 12px、第二指、cancel、pointer leave、leaf 切换与 unmount 均
   永久取消本次 gesture，并清理 timer/listener。
-- B-121/AC-11: Desktop/iPad 四角内向弧、iPhone 四项完整可容纳时横排/否则整组竖排、
+- B-121/AC-11: Desktop/iPad 四角内向弧优先且空间不足时整组 compact fallback、iPhone
+  四项完整可容纳时横排/否则整组竖排、
   safe area 与窄/浅 viewport 下四个动作均不溢出且至少 44×44px，并显示正确 EN/ZH 文字标签；Shift+F10/Context Menu key、
   `aria-expanded`/`aria-controls`、首项 focus、Tab/Shift+Tab、Escape 返回 Pet 与 reduced
   motion 全部可用，视觉方向不改变逻辑顺序。
@@ -252,12 +259,14 @@ Ring 保持三个既有动作，并新增第四项 Share；逻辑与焦点顺序
 None. 用户于 2026-07-22 选择首次空态解释后显示 Ring、已看内容只禁止主动再推送、
 已看状态仅当前设备生效；并于 2026-07-27 确认 Intentionally Quiet 在说明看过后也使用
 同一 Ring。用户于 2026-08-06 再确认第四项 Share、selection-first/note fallback 与
-Desktop/iPad 内向弧、iPhone 可容纳时横排/否则整组竖排。
+端侧布局，并于 2026-08-07 接受 Desktop/iPad 内向弧优先、空间不足时整组 compact
+fallback；iPhone 保持可容纳时横排、否则整组竖排。
 
 ## Delivery Evidence
 
 - Historical three-action evidence: [B-121 compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md)。该证据不覆盖 2026-08-06 Share 或新几何。
-- Current amendment execution/evidence: [B-124 Tracker](../../development/active/share-card/tracker.md)。
+- Current amendment architecture: [Share Card Architecture](../../architecture/share-card-architecture.md)。
+- Current amendment evidence: [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md)。
 - Architecture contracts: 复用 Pagelet device-local Vault storage identity；实现应把
   delivery identity/ledger、owner admission、Bubble/Detail visibility commit 与 Pet
   interaction resolver 分层，避免把 seen 混入 evaluator cache 或 RHP。

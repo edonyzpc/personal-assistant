@@ -1,7 +1,7 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-08-06
+Updated: 2026-08-07
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
@@ -18,8 +18,9 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 > B-118 的三项长按菜单与对应 smoke 保持历史事实，不改写为已验证四项。当前 Ring 由
 > [DEC-025](../decisions/dec-025-consumption-aware-pagelet-delivery.md) 修订为
 > `Capture / Review / Discover / Share`，四项显示中英本地化文字标签；Share 的 selection-first/current-note 行为与验证
-> 归 [DEC-026/B-124](./pa-share-card-product-spec.md)。Desktop/iPad 使用内向弧，iPhone
-> 可容纳完整四项时横排、否则整组竖排；旧 portrait/landscape 证据不覆盖该修订。
+> 归 [DEC-026/B-124](./pa-share-card-product-spec.md)。Desktop/iPad 优先使用内向弧，
+> 完整标签无法无重叠容纳时整组 compact fallback；iPhone 可容纳完整四项时横排、
+> 否则整组竖排。旧 portrait/landscape 证据不覆盖该修订。
 
 ## Problem And Product Outcome
 
@@ -152,8 +153,9 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 边界；选择、取消、超时、点外部和移动超阈值互不混淆。Pet 根切换计数为零，不表示
 target downstream 不能呈现结果。
 
-当前几何由 successor contract 覆盖：Desktop/iPad 从 Pet 朝内容区形成内向弧，iPhone
-可容纳完整四项时横向排列、否则整组纵向排列；四项至少 44×44px，显示当前 locale 的
+当前几何由 successor contract 覆盖：Desktop/iPad 优先从 Pet 朝内容区形成内向弧，
+完整标签无法无重叠容纳时整组降级为紧凑横排或竖排；iPhone 可容纳完整四项时横向
+排列、否则整组纵向排列。四项至少 44×44px，显示当前 locale 的
 EN/ZH 文字标签且不改变逻辑/焦点顺序。Share 优先当前
 editor 的原始非空 selection，否则使用 current Markdown note，并进入 B-124 Share Card
 preview；前三项 route 与 provider/data/write 边界不变。
@@ -358,4 +360,5 @@ standard bounded，越界安静跳过而非弹出高风险确认。调用计数�
 - Release / rollout boundary: 本 spec 授权有界实现、测试、review 与本地/真机验证；
   不授权 commit、push、tag、beta/stable publish。
 - Successor evidence boundary: B-118 closeout 与旧 B-121 smoke 不覆盖 2026-08-06 Share/new
-  geometry；当前 amendment 的执行与验证只记录在 [B-124 Tracker](../../development/active/share-card/tracker.md)。
+  geometry；当前 amendment 由 [Share Card Architecture](../../architecture/share-card-architecture.md)
+  与 [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md) 承接。

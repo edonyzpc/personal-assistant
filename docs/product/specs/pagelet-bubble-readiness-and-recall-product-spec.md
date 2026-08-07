@@ -1,7 +1,7 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-08-06
+Updated: 2026-08-07
 Work item: B-108
 Scoped work items: B-118, B-121, B-124
 Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-026](../decisions/dec-026-local-share-card.md)
@@ -13,7 +13,7 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 | --- | --- |
 | Document type | Product specification |
 | Scope | Pagelet Bubble empty-state redesign, Recall/Discover unification, readiness transparency, DeliveryCandidate contract |
-| Delivery / validation status | Phase 6/B-108 substrate and B-118 repairs have recorded automated、review、deploy and bounded desktop/iPhone evidence. Post-F-13 owner admission、raw preload fail-closed and source-invalidation reconciliation pass fixtures、independent review and deployment identity; they did not add a new live owner-path smoke. B-121 portrait/long-press checks and landscape waiver describe the old three-action Ring only；they do not validate the 2026-08-06 B-124 amendment. |
+| Delivery / validation status | Phase 6/B-108 substrate and B-118 repairs have recorded automated、review、deploy and bounded desktop/iPhone evidence. Post-F-13 owner admission、raw preload fail-closed and source-invalidation reconciliation pass fixtures、independent review and deployment identity; they did not add a new live owner-path smoke. B-121 portrait/long-press checks and landscape waiver describe the old three-action Ring only；B-124 separately delivered and validated the four-action amendment, then closed on 2026-08-07. |
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
 | Design philosophy | 安静且可信 |
@@ -22,7 +22,7 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
 | B-121 scoped amendment | [Attention-Aware Delivery Product Spec](./pagelet-attention-aware-delivery-product-spec.md) governs device-local seen suppression and the Pet Action Ring after acknowledged Ready Empty / Intentionally Quiet. Its [compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md) remains evidence for the delivered three-action baseline only. |
-| B-124 scoped amendment | The 2026-08-06 owner amendment adds Share as the fourth Ring action, with visible EN/ZH localized labels and selection-first/current-note fallback；Desktop/iPad use an inward arc and iPhone uses a complete row when it fits or a whole-column fallback when it does not. [DEC-026](../decisions/dec-026-local-share-card.md) and the [B-124 Product Spec](./pa-share-card-product-spec.md) own content/export behavior；only the [B-124 Tracker](../../development/active/share-card/tracker.md) owns current execution evidence. |
+| B-124 scoped amendment | The 2026-08-06 owner amendment adds Share as the fourth Ring action, with visible EN/ZH localized labels and selection-first/current-note fallback. The 2026-08-07 amendment keeps Desktop/iPad inward-arc-first geometry with a whole-group compact row/column fallback when labels cannot fit without overlap；iPhone uses a complete row when it fits or a whole-column fallback when it does not. [DEC-026](../decisions/dec-026-local-share-card.md), the [B-124 Product Spec](./pa-share-card-product-spec.md), [Share Card Architecture](../../architecture/share-card-architecture.md) and the [smoke checklist](../../development/validation/pagelet-smoke-checklist.md) own the current contract and evidence. |
 | Implementation record | [Historical SDD](../../archive/pagelet-bubble-readiness-and-recall-sdd.md) and [redesign tracker](../../archive/pa-product-redesign-development-tracker.md) |
 
 ---
@@ -858,7 +858,7 @@ This iteration does NOT include:
 | 24 | Quiet Recall setting and migration | Only Off/On appears, default Off; legacy true -> On and false/missing/other -> Off. Generic hints and Recap remain unchanged when it toggles. |
 | 25 | Seen delivery suppression | A Recall/Recap card is recorded only after the card carrying its exact transient receipt becomes visible in Bubble, or that receipt's target successfully renders in Detail. The receipt itself is not persisted; while the corresponding device-local seen ledger entry is retained, the delivery cannot nudge or enter proactive Bubble again. Seen gate does not filter explicit Discover/Review/Recap/Detail or source navigation, but does not guarantee historical card recovery. |
 | 26 | Action Ring ownership | After empty acknowledgement, Pet short click opens Capture / Review / Discover / Share exactly once per action; Bubble and Ring are mutually exclusive, and long press uses the same Ring. The first three callbacks remain unchanged. |
-| 27 | Action Ring Share and geometry | Share selects exact nonblank editor selection before current Markdown note and then follows DEC-026/B-124. All four icons show visible localized EN/ZH labels. Desktop/iPad use an inward arc；iPhone uses a complete four-label row when it fits or a whole-column fallback when it does not；all four actions remain 44px and preserve logical/focus order. |
+| 27 | Action Ring Share and geometry | Share selects exact nonblank editor selection before current Markdown note and then follows DEC-026/B-124. All four icons show visible localized EN/ZH labels. Desktop/iPad prefer an inward arc and use a whole-group compact row/column fallback when labels cannot fit without overlap；iPhone uses a complete four-label row when it fits or a whole-column fallback when it does not；all four actions remain 44px and preserve logical/focus order. |
 
 ---
 

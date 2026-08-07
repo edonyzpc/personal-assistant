@@ -21,6 +21,10 @@
 - [Statistics v3](./statistics-v3-plan.md)
 - [Settings current status](./settings-status.md)
 
+## Share Card
+
+- [Share Card architecture](./share-card-architecture.md)
+
 ## 更新规则
 
 - 当前代码是事实基线；文档描述目标但尚未实现时，必须明确标成 proposal 或 future。
