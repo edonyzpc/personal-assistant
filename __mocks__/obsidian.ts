@@ -289,6 +289,23 @@ export class TAbstractFile {
     }
 }
 
+export class TFolder extends TAbstractFile {
+    children: TAbstractFile[] = [];
+}
+
+export class AbstractInputSuggest<T = unknown> {
+    app: App;
+    inputEl: HTMLElement;
+    constructor(app: App, inputEl: HTMLElement) {
+        this.app = app;
+        this.inputEl = inputEl;
+    }
+    getSuggestions(_query: string): T[] { return []; }
+    renderSuggestion(_item: T, _el: HTMLElement): void {}
+    selectSuggestion(_item: T): void {}
+    close(): void {}
+}
+
 export class TFile extends TAbstractFile {
     stat: { mtime: number; ctime: number; size?: number };
     extension: string;

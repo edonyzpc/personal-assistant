@@ -266,20 +266,22 @@ export class ShareCardExporter {
         await copyShareCardBlob(blobPromise, this.ownerDocument);
     }
 
-    async savePages(pages: readonly CardPage[]): Promise<ShareCardSaveResult> {
+    async savePages(pages: readonly CardPage[], folder?: string): Promise<ShareCardSaveResult> {
         this.assertActive();
         const attempted = pages.length;
         if (attempted === 0) return { savedPaths: [], attempted: 0 };
+        const targetFolder = folder ?? SHARE_CARD_FOLDER;
 
         return enqueueShareCardSave(this.app.vault, async () => {
             this.assertActive();
-            await ensureShareCardFolder(this.app.vault, () => this.assertActive());
+            await ensureShareCardFolder(this.app.vault, targetFolder, () => this.assertActive());
             this.assertActive();
             const paths = await selectUniqueShareCardBatchPaths(
                 this.app.vault,
                 pages.length,
                 this.now(),
                 () => this.assertActive(),
+                targetFolder,
             );
             this.assertActive();
             const savedPaths: string[] = [];
@@ -350,14 +352,15 @@ export function createShareCardBatchBaseName(now: Date): string {
 export function createShareCardBatchPaths(
     baseName: string,
     pageCount: number,
+    folder: string = SHARE_CARD_FOLDER,
 ): string[] {
     if (!Number.isInteger(pageCount) || pageCount < 1) return [];
     if (pageCount === 1) {
-        return [normalizePath(`${SHARE_CARD_FOLDER}/${baseName}.png`)];
+        return [normalizePath(`${folder}/${baseName}.png`)];
     }
     const width = Math.max(2, String(pageCount).length);
     return Array.from({ length: pageCount }, (_, pageIndex) => normalizePath(
-        `${SHARE_CARD_FOLDER}/${baseName}-page-${String(pageIndex + 1).padStart(width, "0")}.png`,
+        `${folder}/${baseName}-page-${String(pageIndex + 1).padStart(width, "0")}.png`,
     ));
 }
 
@@ -366,12 +369,13 @@ export async function selectUniqueShareCardBatchPaths(
     pageCount: number,
     now: Date,
     assertActive: () => void = () => undefined,
+    folder: string = SHARE_CARD_FOLDER,
 ): Promise<string[]> {
     const timestampBase = createShareCardBatchBaseName(now);
     for (let attempt = 1; attempt <= 10_000; attempt += 1) {
         assertActive();
         const baseName = attempt === 1 ? timestampBase : `${timestampBase}-${attempt}`;
-        const paths = createShareCardBatchPaths(baseName, pageCount);
+        const paths = createShareCardBatchPaths(baseName, pageCount, folder);
         const occupied = await Promise.all(paths.map(async (path) => {
             assertActive();
             const exists = await vaultPathExists(vault, path);
@@ -386,10 +390,12 @@ export async function selectUniqueShareCardBatchPaths(
 
 async function ensureShareCardFolder(
     vault: Vault,
+    folder: string = SHARE_CARD_FOLDER,
     assertActive: () => void = () => undefined,
 ): Promise<void> {
     assertActive();
-    const normalizedFolder = normalizePath(SHARE_CARD_FOLDER);
+    const normalizedFolder = normalizePath(folder);
+    if (!normalizedFolder) return;
     const existing = vault.getAbstractFileByPath(normalizedFolder);
     if (existing) {
         if ("children" in existing) return;

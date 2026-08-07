@@ -8329,6 +8329,37 @@ body.is-mobile .pa-quick-capture-modal__input {
 	text-align: center;
 }
 
+.pa-share-card-folder-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.pa-share-card-folder-label {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+.pa-share-card-folder-input {
+	flex: 1 1 0;
+	min-width: 0;
+	padding: 4px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+	font-family: var(--font-monospace);
+}
+
+.pa-share-card-folder-input:focus {
+	border-color: var(--interactive-accent);
+	outline: none;
+}
+
 .pa-share-card-actions {
 	display: flex;
 	flex: 0 0 auto;

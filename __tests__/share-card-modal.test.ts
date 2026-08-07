@@ -493,7 +493,7 @@ describe("ShareCardModal", () => {
         await flushShareCardTasks();
 
         const status = document.body.querySelector(".pa-share-card-status")!;
-        expect(savePages).toHaveBeenCalledWith(pages);
+        expect(savePages).toHaveBeenCalledWith(pages, expect.any(String));
         expect(notices).toHaveLength(1);
         expect(String(notices[0]!.message)).toContain("Images saved: 2");
         expect(status.textContent).toContain("placeholder (1)");
@@ -684,7 +684,7 @@ describe("ShareCardModal", () => {
         await flushShareCardTasks();
 
         expect(copyCurrentPage).toHaveBeenCalledWith(pages[1]);
-        expect(savePages).toHaveBeenCalledWith(pages);
+        expect(savePages).toHaveBeenCalledWith(pages, expect.any(String));
         expect(notices).toHaveLength(2);
         expect(String(notices[0]!.message)).toContain("copied");
         expect(String(notices[1]!.message)).toContain("Images saved: 3");

@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { Modal, Notice, setIcon, type App } from "obsidian";
+import { AbstractInputSuggest, Modal, Notice, normalizePath, setIcon, type App, type TFolder } from "obsidian";
 import { getPluginUiLanguage, pluginT } from "../locales/plugin";
 import { prepareShareCardMarkdown } from "./share-card-markdown";
 import {
@@ -78,6 +78,7 @@ export class ShareCardModal extends Modal {
     private pageIndicatorEl: HTMLElement | null = null;
     private copyButton: HTMLButtonElement | null = null;
     private saveButton: HTMLButtonElement | null = null;
+    private folderInputEl: HTMLInputElement | null = null;
     private ownerWindow: Window | null = null;
     private resourceController: AbortController | null = null;
     private resourceCache: ShareCardResourceCache | null = null;
@@ -379,6 +380,22 @@ export class ShareCardModal extends Modal {
     }
 
     private createActions(ownerDocument: Document): void {
+        const folderRow = ownerDocument.createElement("div");
+        folderRow.classList.add("pa-share-card-folder-row");
+        const folderLabel = ownerDocument.createElement("span");
+        folderLabel.classList.add("pa-share-card-folder-label");
+        folderLabel.textContent = t("plugin.shareCard.saveFolder");
+        folderRow.appendChild(folderLabel);
+        const folderInput = ownerDocument.createElement("input");
+        folderInput.type = "text";
+        folderInput.classList.add("pa-share-card-folder-input");
+        folderInput.value = resolveShareCardDefaultFolder(this.app);
+        folderInput.spellcheck = false;
+        folderRow.appendChild(folderInput);
+        this.folderInputEl = folderInput;
+        this.contentEl.appendChild(folderRow);
+        attachFolderSuggest(this.app, folderInput);
+
         const actionsEl = ownerDocument.createElement("div");
         actionsEl.classList.add("pa-share-card-actions");
 
@@ -489,21 +506,25 @@ export class ShareCardModal extends Modal {
         const exporter = this.exporter;
         if (!exporter || this.pages.length === 0 || this.busy) return;
         const pages = this.pages.length === 1 ? [this.pages[0]!] : [...this.pages];
+        const rawFolder = this.folderInputEl?.value?.trim();
+        const folder = normalizePath(
+            rawFolder !== undefined && rawFolder !== "" ? rawFolder : SHARE_CARD_FOLDER,
+        );
         const token = this.beginBusy(this.saveButton, t("plugin.shareCard.saving"));
         try {
-            const result = await exporter.savePages(pages);
+            const result = await exporter.savePages(pages, folder);
             if (!this.isCurrent(token)) return;
             let message: string;
             if (result.savedPaths.length === result.attempted) {
                 message = t("plugin.shareCard.saveSuccess", {
                     count: result.savedPaths.length,
-                    path: SHARE_CARD_FOLDER,
+                    path: folder,
                 });
             } else if (result.savedPaths.length > 0) {
                 message = t("plugin.shareCard.savePartial", {
                     saved: result.savedPaths.length,
                     attempted: result.attempted,
-                    path: SHARE_CARD_FOLDER,
+                    path: folder,
                 });
             } else {
                 message = t("plugin.shareCard.saveFailed");
@@ -654,6 +675,7 @@ export class ShareCardModal extends Modal {
         this.pageIndicatorEl = null;
         this.copyButton = null;
         this.saveButton = null;
+        this.folderInputEl = null;
     }
 }
 
@@ -679,4 +701,44 @@ export function detectShareCardTheme(ownerDocument: Document): ShareCardTheme {
 
 function clearElement(element: HTMLElement): void {
     while (element.firstChild) element.removeChild(element.firstChild);
+}
+
+function resolveShareCardDefaultFolder(app: App): string {
+    try {
+        const vaultConfig = app.vault as typeof app.vault & { getConfig?: (key: string) => unknown };
+        const attachmentFolder = vaultConfig.getConfig?.("attachmentFolderPath");
+        if (
+            typeof attachmentFolder === "string"
+            && attachmentFolder.trim()
+            && !attachmentFolder.startsWith(".")
+        ) {
+            return attachmentFolder.trim();
+        }
+    } catch { /* vault config unavailable */ }
+    return SHARE_CARD_FOLDER;
+}
+
+function attachFolderSuggest(app: App, inputEl: HTMLInputElement): void {
+    if (!AbstractInputSuggest) return;
+    class FolderSuggest extends AbstractInputSuggest<TFolder> {
+        getSuggestions(query: string): TFolder[] {
+            const lowerQuery = query.toLowerCase();
+            const folders = this.app.vault.getAllFolders();
+            if (!lowerQuery) return folders.slice(0, 30);
+            return folders
+                .filter((f) => f.path.toLowerCase().includes(lowerQuery))
+                .slice(0, 30);
+        }
+
+        renderSuggestion(folder: TFolder, el: HTMLElement): void {
+            el.setText(folder.path || "/");
+        }
+
+        selectSuggestion(folder: TFolder): void {
+            inputEl.value = folder.path || "/";
+            inputEl.dispatchEvent(new Event("input"));
+            this.close();
+        }
+    }
+    new FolderSuggest(app, inputEl);
 }

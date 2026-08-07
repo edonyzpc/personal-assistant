@@ -35,6 +35,7 @@
     "plugin.shareCard.previousPage": "上一页",
     "plugin.shareCard.nextPage": "下一页",
     "plugin.shareCard.copyCurrentPage": "复制当前页",
+    "plugin.shareCard.saveFolder": "保存到",
     "plugin.shareCard.saveImage": "保存图片",
     "plugin.shareCard.saveAllPages": "保存全部页面",
     "plugin.shareCard.copying": "正在复制当前页…",
