@@ -752,7 +752,7 @@ const redactForLog = (value: unknown, seen = new WeakSet<object>()): unknown => 
     );
 };
 
-const debug = (enabled: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+const debug = (enabled: boolean, ...msg: unknown[]) => {
     if (enabled) console.log(...msg.map((item: unknown) => redactForLog(item)));
 };
 
@@ -10366,7 +10366,7 @@ export class PluginManager extends Plugin {
         this.log("Memory extraction consent migration: feature was enabled but consent is unconfirmed; emitted one-time Notice");
     }
 
-    log(...msg: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    log(...msg: unknown[]): void {
         debug(this.settings.debug, ...msg);
     }
 

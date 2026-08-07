@@ -30,7 +30,7 @@ export interface PersistedSourceRef extends ReplaySourceRef {
     retrievalOutcomeId?: string;
 }
 
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- Persisted source references explicitly reject ASCII control characters.
 const CONTROL_CHARS_RE = /[\x00-\x1f]/;
 const FORBIDDEN_PERSISTED_TEXT_KEYS = new Set([
     "excerpt",

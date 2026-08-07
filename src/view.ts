@@ -9,7 +9,7 @@ export enum ViewType {
 
 export class ViewResize {
     resized: boolean;
-    log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    log: (...msg: unknown[]) => void;
     plugin: PluginManager;
     private viewType: ViewType;
     private viewDataType = {
@@ -18,7 +18,7 @@ export class ViewResize {
 
     constructor(plugin: PluginManager, type: ViewType) {
         this.resized = false;
-        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.log = (...msg: unknown[]) => plugin.log(...msg);
         this.plugin = plugin;
         this.viewType = type;
     }

@@ -23,9 +23,9 @@ const SUPPORTED_EFFECTS = new Set<GovernedMemoryClaim["effect"]>([
     "collaboration_default",
 ]);
 const ALLOWED_MEMORY_TYPES = new Set<string>(MEMORY_TYPES);
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- Claim text preserves allowed whitespace while stripping unsafe control characters.
 const CLAIM_CONTROL_CHARS_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- Scalar metadata strips every ASCII control character before projection.
 const SCALAR_CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/g;
 
 const ACTION_AUTHORITY_PATTERNS: readonly RegExp[] = [

@@ -383,7 +383,7 @@ export class AIUtils {
         cleaned = cleaned.replace(/%%[\s\S]*?%%/g, '');
         cleaned = cleaned.replace(/\[\[[\w-]+\.[a-z]{1,}\]\]/g, '');
         // 恢复代码块 — \x00 用作私有占位符分隔符，不会与用户文档内容冲突
-        // eslint-disable-next-line no-control-regex
+        // eslint-disable-next-line no-control-regex -- The private NUL-delimited token restores only placeholders created above.
         cleaned = cleaned.replace(/\x00CB(\d+)\x00/g, (_, i) => codeBlockPlaceholders[Number(i)]);
         return cleaned;
     }

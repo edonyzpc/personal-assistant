@@ -2202,7 +2202,7 @@ export class VSS {
 
         const deadline = Date.now() + waitMs;
         let lastError: unknown;
-        // eslint-disable-next-line no-constant-condition
+        // eslint-disable-next-line no-constant-condition -- Retry termination is governed by success and deadline exits inside the loop.
         while (true) {
             const sqliteIndex = this.createSqliteIndex();
             try {

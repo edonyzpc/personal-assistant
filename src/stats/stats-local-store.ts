@@ -242,8 +242,10 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
                     // detect the missing store and fall back to UnavailableStatsLocalStore.
                     // Throwing here would abort the upgrade transaction, which is acceptable,
                     // but logging + delegating to the init-time guard keeps a single recovery path.
-                    // eslint-disable-next-line no-console
-                    console.error("[stats-local-store] schema upgrade failed:", error);
+                    const consoleLogger = globalThis.console;
+                    if (typeof consoleLogger?.error === "function") {
+                        consoleLogger.error("[stats-local-store] schema upgrade failed:", error);
+                    }
                 }
             };
             request.onsuccess = () => {

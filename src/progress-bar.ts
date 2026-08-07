@@ -7,7 +7,7 @@ import { getPlatformDocument } from "./platform-dom";
 import { generateRandomString, icons } from './utils';
 
 export class ProgressBar {
-    private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private log: (...msg: unknown[]) => void;
     private noticeEl: DocumentFragment;
     private steps: number;
     private totalSteps: number;
@@ -19,7 +19,7 @@ export class ProgressBar {
     private notice!: Notice;
 
     constructor(plugin: PluginManager, ID: string, total: number) {
-        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.log = (...msg: unknown[]) => plugin.log(...msg);
         this.idNumber = generateRandomString();
         this.gridID = `div-${ID}-progress-bar-grid-${this.idNumber}`;
         this.gridDivID = `div-${ID}-progress-bar-${this.idNumber}`;

@@ -31,6 +31,11 @@ import { VIEW_TYPE_LLM } from "../../chat/view-type";
 import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
 import type { ResearchCallbacks, ResearchRequest } from "./types";
 
+interface ChatPromptView {
+    prefillComposer?: (prompt: string) => boolean;
+    setInputText?: (prompt: string) => void;
+}
+
 export class ResearchManager {
     constructor(
         private readonly app: App,
@@ -153,16 +158,15 @@ export class ResearchManager {
         leaf: ReturnType<App["workspace"]["getLeavesOfType"]>[number],
         prompt: string,
     ): boolean {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Chat view API is untyped
-        const view = leaf.view as any;
+        const view = leaf.view as unknown as ChatPromptView | null;
         if (!view) return false;
 
         // Chat views may expose
         // `setInputText`. Try both, preferring `prefillComposer`.
-        if (typeof view?.prefillComposer === "function") {
-            return view.prefillComposer(prompt) as boolean;
+        if (typeof view.prefillComposer === "function") {
+            return view.prefillComposer(prompt);
         }
-        if (typeof view?.setInputText === "function") {
+        if (typeof view.setInputText === "function") {
             view.setInputText(prompt);
             return true;
         }

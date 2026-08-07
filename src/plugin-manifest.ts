@@ -8,6 +8,10 @@ import { ProgressBar } from "./progress-bar";
 import { getPluginManifests, isPluginEnabled, enablePluginAndSave } from "./obsidian-internals";
 import { setPlatformTimeout } from "./platform-dom";
 
+interface CommunityPlugin {
+    id: string;
+    repo: string;
+}
 
 export class PluginsUpdater implements ObsidianManifest {
     items: Manifest[];
@@ -15,18 +19,18 @@ export class PluginsUpdater implements ObsidianManifest {
     app: App;
     private TagName = 'tag_name';
     private commandPlugin: PluginManager;
-    private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private log: (...msg: unknown[]) => void;
     private totalPlugins: number;
     private checkedPlugins: number;
     // json object of obsidian community plugins,
     // and source is in https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json
-    private communityPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private communityPlugins: CommunityPlugin[] | null = null;
     private progressBar: ProgressBar;
 
     constructor(app: App, plugin: PluginManager) {
         this.app = app;
         this.commandPlugin = plugin;
-        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.log = (...msg: unknown[]) => plugin.log(...msg);
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases@master/community-plugins.json`;
         this.items = [];
         for (const m of Object.values(getPluginManifests(app))) {
@@ -60,7 +64,7 @@ export class PluginsUpdater implements ObsidianManifest {
             // cache the community plugins json
             const communityPluginsJson = await this.getCommunityPluginsJson();
             if (communityPluginsJson) {
-                this.communityPlugins = JSON.parse(communityPluginsJson);
+                this.communityPlugins = JSON.parse(communityPluginsJson) as CommunityPlugin[];
             } else {
                 this.log("fail to get commnity plugin json file from jsdelivr");
                 return null;

@@ -121,7 +121,7 @@ class SectionWidget extends WidgetType {
 
 class SectionWordCountEditorPlugin implements PluginValue {
     decorations: DecorationSet;
-    lineCounts: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+    lineCounts: number[] = [];
 
     constructor(view: EditorView) {
         const plugin = view.state.field(pluginField);
@@ -187,7 +187,7 @@ class SectionWordCountEditorPlugin implements PluginValue {
 
                 const nextFromLine = tempDoc.lineAt(from);
                 const nextToLine = tempDoc.lineAt(nextTo);
-                const lines: any[] = [];// eslint-disable-line @typescript-eslint/no-explicit-any
+                const lines: number[] = [];
 
                 for (let i = nextFromLine.number; i <= nextToLine.number; i++) {
                     lines.push(getWordCount(tempDoc.line(i).text));

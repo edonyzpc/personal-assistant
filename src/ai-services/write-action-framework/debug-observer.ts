@@ -18,7 +18,7 @@ import type { DebugEvent, DebugObserver } from "./types";
 
 /** Production default. Discards every event. Constant-time, allocation-free. */
 export class NoopDebugObserver implements DebugObserver {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- The interface requires the event parameter, but this sink intentionally discards it.
     emit(_event: DebugEvent): void {
         /* intentionally empty */
     }
@@ -34,9 +34,12 @@ export const NOOP_DEBUG_OBSERVER: DebugObserver = new NoopDebugObserver();
  */
 export class ConsoleDebugObserver implements DebugObserver {
     constructor(
-        private readonly logger: (...args: unknown[]) => void = (...args) =>
-            // eslint-disable-next-line no-console
-            console.debug(...args),
+        private readonly logger: (...args: unknown[]) => void = (...args) => {
+            const consoleLogger = globalThis.console;
+            if (typeof consoleLogger?.debug === "function") {
+                consoleLogger.debug(...args);
+            }
+        },
         private readonly prefix: string = "[write-action-framework]",
     ) {}
 

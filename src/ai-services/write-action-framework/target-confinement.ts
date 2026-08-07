@@ -133,7 +133,7 @@ export function validateAllowedRoots(
         // time so a misconfigured caller cannot slip past the candidate-side
         // guard via a sanitizer that strips control chars from the candidate
         // but trusts the root verbatim.
-        // eslint-disable-next-line no-control-regex
+        // eslint-disable-next-line no-control-regex -- Confinement roots must reject raw ASCII control bytes before normalization.
         if (/[\x00-\x1f]/.test(root)) {
             throw new ConfinementConfigError("control_char", root, root);
         }
@@ -233,7 +233,7 @@ export function validateTargetConfinementSync(
     // 2. Control characters (NUL through 0x1F). Detect on raw input before any
     // normalization to catch payloads that try to smuggle bytes past trim/replace.
     // (Step 1 — empty/whitespace — is the two `empty_path` returns above.)
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- Candidate paths must reject raw ASCII control bytes before normalization.
     if (/[\x00-\x1f]/.test(candidate)) {
         return { ok: false, reason: "control_char" };
     }

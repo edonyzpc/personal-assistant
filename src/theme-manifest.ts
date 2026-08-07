@@ -23,6 +23,11 @@ interface ThemeManifest extends Manifest {
     latestRelease?: ThemeRelease;
 }
 
+interface CommunityTheme {
+    name: string;
+    repo: string;
+}
+
 interface ObsidianCustomCss {
     readThemes?: (reloadTheme?: boolean) => Promise<void> | void;
     reloadTheme?: () => Promise<void> | void;
@@ -33,8 +38,8 @@ export class ThemeUpdater implements ObsidianManifest {
     URLCDN: string;
     app: App;
     private commandPlugin: PluginManager;
-    private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    private communityThemes: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private log: (...msg: unknown[]) => void;
+    private communityThemes: CommunityTheme[] | null;
     private TagName = 'tag_name';
     private totalThemes: number;
     private checkedThemes: number;
@@ -46,7 +51,7 @@ export class ThemeUpdater implements ObsidianManifest {
         themeUpdater.items = await themeUpdater.listThemes(themeUpdater.app);
         const themeJson = await themeUpdater.getCommunityThemesJson();
         if (themeJson) {
-            themeUpdater.communityThemes = JSON.parse(themeJson);
+            themeUpdater.communityThemes = JSON.parse(themeJson) as CommunityTheme[];
         } else {
             new Notice(pluginT("plugin.theme.networkIssue", getPluginUiLanguage()), 500);
         }
@@ -104,7 +109,8 @@ export class ThemeUpdater implements ObsidianManifest {
         this.app = app;
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases@master/community-css-themes.json`;
         this.commandPlugin = plugin;
-        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.log = (...msg: unknown[]) => plugin.log(...msg);
+        this.communityThemes = null;
         this.totalThemes = 0;
         this.checkedThemes = 0;
         this.items = [];
@@ -121,7 +127,7 @@ export class ThemeUpdater implements ObsidianManifest {
             // cache the community plugins json
             const communityThemesJson = await this.getCommunityThemesJson();
             if (communityThemesJson) {
-                this.communityThemes = JSON.parse(communityThemesJson);
+                this.communityThemes = JSON.parse(communityThemesJson) as CommunityTheme[];
             } else {
                 this.log("fail to get commnity theme json file");
                 return null;

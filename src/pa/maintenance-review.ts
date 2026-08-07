@@ -113,7 +113,7 @@ export type MaintenanceProposalValidationResult =
     | { ok: false; reason: string };
 
 const DEFAULT_INBOX_FOLDERS = ["Inbox", "Quick Capture", "0.unsorted", "unsorted", "Unsorted"] as const;
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- Sanitizing file stems requires matching otherwise invisible ASCII control characters.
 const INVALID_FILE_STEM_CHARS_RE = /[<>:"/\\|?*\x00-\x1f]/g;
 const STOPWORDS = new Set([
     "about", "after", "again", "also", "because", "before", "between", "could", "from",

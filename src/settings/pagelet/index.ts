@@ -507,7 +507,7 @@ export function normalizeReviewsFolder(
     // the raw byte that tripped the check is visible in `input` if a logger
     // wants it. U+007F (DEL) is grouped with the C0 controls because it is
     // equally hostile to filesystem and terminal display.
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- Deliberately reject C0 and DEL bytes in persisted vault paths.
     if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "control_chars", input: trimmed };
     }

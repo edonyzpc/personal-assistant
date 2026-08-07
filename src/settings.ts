@@ -261,10 +261,10 @@ export interface PluginManagerSettings {
         }
     }[];
     enableMetadataUpdating: boolean;
-    metadatas: { key: string, value: any, t: string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
+    metadatas: { key: string, value: string, t: string }[];
     metadataExcludePath: string[];
-    cachePluginRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
-    cacheThemeRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    cachePluginRepo: Record<string, string>;
+    cacheThemeRepo: Record<string, string>;
     statisticsType: string;
     statsPath: string;
     statisticsVaultId: string;
@@ -921,8 +921,11 @@ function normalizeGraphColorArray(value: unknown, fallback: PluginManagerSetting
 function normalizeMetadataArray(value: unknown, fallback: PluginManagerSettings["metadatas"]): PluginManagerSettings["metadatas"] {
     if (!Array.isArray(value)) return JSON.parse(JSON.stringify(fallback));
     return value
-        .filter((entry): entry is { key: string; value: unknown; t: string } =>
-            isRecord(entry) && typeof entry.key === "string" && typeof entry.t === "string")
+        .filter((entry): entry is { key: string; value: string; t: string } =>
+            isRecord(entry)
+            && typeof entry.key === "string"
+            && typeof entry.value === "string"
+            && typeof entry.t === "string")
         .map((entry) => ({
             key: entry.key,
             value: entry.value,
@@ -965,7 +968,7 @@ export function updateQwenResponseOptionAvailability(
 
 export class SettingTab extends PluginSettingTab {
     plugin: PluginManager;
-    private log;
+    private log: (...msg: unknown[]) => void;
 
     // Sub-containers for incremental rebuilds (avoids full display() re-render).
     private providerConfigContainer: HTMLDivElement | null = null;
@@ -1019,7 +1022,7 @@ export class SettingTab extends PluginSettingTab {
     constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
         this.plugin = plugin;
-        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.log = (...msg: unknown[]) => plugin.log(...msg);
     }
 
     openGroup(groupId: string, memoryTargetId?: string): void {
@@ -2392,7 +2395,7 @@ export class SettingTab extends PluginSettingTab {
 
         const container = this.metadataContainer;
         // deep copy metadata for rendering
-        const metas: { key: string, value: any }[] = JSON.parse(JSON.stringify(plugin.settings.metadatas)); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const metas = JSON.parse(JSON.stringify(plugin.settings.metadatas)) as PluginManagerSettings["metadatas"];
         const doc = getPlatformDocument();
         const nameEl1 = doc.createDocumentFragment();
         nameEl1.createSpan({ text: "---" });
@@ -2431,7 +2434,7 @@ export class SettingTab extends PluginSettingTab {
         // clicks Add without touching the dropdown gets a valid type instead of
         // undefined being persisted to data.json.
         let key = "";
-        let value: any = ""; // eslint-disable-line @typescript-eslint/no-explicit-any
+        let value = "";
         let t = "string";
         // Track the input components so the Add handler can reset their visible
         // value after a successful save — otherwise the form retains the just-

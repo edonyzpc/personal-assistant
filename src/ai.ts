@@ -82,7 +82,7 @@ export class AssistantFeaturedImageHelper {
     private editor: Editor
     private view: MarkdownView
     private plugin: PluginManager
-    private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private log: (...msg: unknown[]) => void;
     private aiService: AIService;
 
     constructor(
