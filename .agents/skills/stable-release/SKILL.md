@@ -117,7 +117,8 @@ make release VERSION=<target-version>
 
 Do not pass `SKIP_CHECKS=1` or `--skip-checks`. Do not use `make deploy` as a
 substitute: `make release` must run its own whitespace, notices, coverage test,
-lint, build, and bundle-audit checks.
+release-critical docs, lint, build, and bundle-audit checks. Full lifecycle
+`docs:check` findings are reported separately and do not block publication.
 
 Verify:
 

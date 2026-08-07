@@ -71,6 +71,10 @@ When asked to prepare or explain a beta:
    - `make publish VERSION=<target-version>` only when the user asked to publish
      and the publish preflight below passes.
 
+The release command uses the release-critical documentation gate. Full
+`docs:check` lifecycle/status findings remain a separate CI and maintenance
+signal and must not block beta or stable publication.
+
 `scripts/release.mjs` enforces both the matching `beta/<target-version>` name and
 the pre-release `HEAD == master` source invariant.
 

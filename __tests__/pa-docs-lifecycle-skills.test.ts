@@ -84,6 +84,13 @@ describe("PA lifecycle skill forward contracts", () => {
         expect(documentationWorkflow).toContain("不得回填为“当初已批准”");
     });
 
+    it("keeps lifecycle health independent from release qualification", () => {
+        expect(docsSkill).toContain("independent from version publication");
+        expect(governanceContract).toContain("版本发布不得强绑定项目文档状态");
+        expect(documentationWorkflow).toContain("不是 beta/stable 的发布资格门");
+        expect(documentationWorkflow).toContain("`npm run docs:check:release`");
+    });
+
     it("fails closed on an archive collision", () => {
         expect(docsSkill).toContain("If a chosen archive destination already exists, fail closed");
         expect(sddSkill).toContain("If a selected archive path exists, fail closed");

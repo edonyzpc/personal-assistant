@@ -127,6 +127,9 @@ npm run docs:check
 git diff --check
 ```
 
+This lifecycle gate is independent from version publication. Report its findings
+separately; lifecycle status must not block a beta or stable release.
+
 Docs-only work does not require Build or Obsidian smoke. Report changed
 authorities, validation, unresolved decisions, and ungranted Git/release
 actions; do not explain the hierarchy unless asked.

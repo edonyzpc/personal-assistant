@@ -66,13 +66,18 @@ describe("scripts/release.mjs", () => {
         expect(output).toContain("Do not add code or documentation commits on the beta branch.");
     });
 
-    it("checks tagged releases against the previous reachable tag with full history", () => {
-        const workflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
+    it("uses the lightweight documentation gate for local and tagged releases", () => {
+        const releaseScript = readFileSync(join(process.cwd(), "scripts/release.mjs"), "utf8");
+        const releaseWorkflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
+        const ciWorkflow = readFileSync(join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 
-        expect(workflow).toContain("fetch-depth: 0");
-        expect(workflow).toContain('git describe --tags --abbrev=0 "${GITHUB_SHA}^"');
-        expect(workflow).toContain('git rev-list --max-parents=0 "${GITHUB_SHA}"');
-        expect(workflow).toContain("DOCS_CHECK_BASE: ${{ steps.docs-base.outputs.base }}");
+        expect(releaseScript).toContain('run("npm", ["run", "docs:check:release"]);');
+        expect(releaseScript).not.toContain("DOCS_CHECK_BASE");
+        expect(releaseWorkflow).toContain("fetch-depth: 0");
+        expect(releaseWorkflow).toContain("run: npm run docs:check:release");
+        expect(releaseWorkflow).not.toContain("DOCS_CHECK_BASE");
+        expect(ciWorkflow).toContain("run: npm run docs:check");
+        expect(ciWorkflow).toContain("DOCS_CHECK_BASE");
     });
 
     it("guards prerelease tags against the current origin/master parent", () => {

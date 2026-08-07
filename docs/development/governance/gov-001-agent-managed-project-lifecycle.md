@@ -2,11 +2,11 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-08-04
+Updated: 2026-08-07
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
-Bootstrap source: 用户于 2026-07-12 直接授权 docs/Agent/checker lifecycle remediation；2026-07-21 又明确取消 PA 项目内的 Linear Skill 与默认流程，并要求降低 Agent 的文档/token 维护负担；2026-08-04 要求将 Share Card 未经确认的技术选型和产品边界偏差吸收为项目规范与长期记忆。B-115 保持为该长期治理 contract 的稳定 ID。
+Bootstrap source: 用户于 2026-07-12 直接授权 docs/Agent/checker lifecycle remediation；2026-07-21 又明确取消 PA 项目内的 Linear Skill 与默认流程，并要求降低 Agent 的文档/token 维护负担；2026-08-04 要求将 Share Card 未经确认的技术选型和产品边界偏差吸收为项目规范与长期记忆；2026-08-07 明确决定版本发布不得强绑定项目文档状态。B-115 保持为该长期治理 contract 的稳定 ID。
 
 ## Context And Selected Governance Choice
 
@@ -26,11 +26,12 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 - B-115/REQ-02: 用户明确要求持久记录，或事项需要产品决策、进入 Roadmap/版本候选、开始跨会话研究/执行时，必须创建或复用唯一 `B-xxx`；不要求外部 issue 或双向链接。
 - B-115/REQ-03: 显式 review-only、analysis-only 或 no-file-changes 必须成为全局零写入覆盖规则。
 - B-115/REQ-04: plan/implement、continue、closeout 与 archive 必须使用确定性的授权终点、目标解析和冲突 fail-closed 规则。
-- B-115/REQ-05: docs moves、authority deletion、Backlog removal、Closeout disposition
-  与 tag release 必须由可执行 gate 证明信息连续性；Active delivery 保持
+- B-115/REQ-05: docs moves、authority deletion、Backlog removal 与 Closeout disposition
+  必须由独立的文档/CI gate 证明信息连续性；Active delivery 保持
   `1 Now + 1 Next`、Feature Home link-only、Tracker-only status，且不创建独立
   handoff/closeout 文档。未入链、未索引、无稳定身份的过程草稿可由 checker 证明后
-  直接删除；例行 turn 必须按任务读取最小当前 authority。
+  直接删除；例行 turn 必须按任务读取最小当前 authority。beta/stable 发布只校验
+  公开/发布关键文档，不得依赖 lifecycle status 或跨 tag 文档连续性。
 - B-115/REQ-06: 用户提供的 spec 或 current authority 明确命名的技术选型与产品、数据、
   媒体边界必须视为 binding constraint，直到显式 superseding decision 生效。“分析/设计
   并实现”不授权 Agent 静默替换选型、缩窄或扩大能力边界。Material deviation 必须在
@@ -52,10 +53,11 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 - B-115/AC-01: 前向 contract test 同时证明 REQ-01 与 REQ-02：casual idea 零 repo 写入；明确记录或 promotion 场景只创建/复用最小 repo Backlog ID；项目内不存在 Linear Skill 路由。
 - B-115/AC-02: review-only/no-file-changes 路由测试证明 repo、Archive 与外部系统均为零写入。
 - B-115/AC-03: plan-and-implement、缺失 Plan/SDD bootstrap、零/多 Active Package continue 场景都有唯一模式与 stop point；archive collision fail closed。
-- B-115/AC-04: checker 对失效当前链接、无关 basename、外部 disposition、无 current
+- B-115/AC-04: 完整 lifecycle checker 对失效当前链接、无关 basename、外部 disposition、无 current
   入链 Archive、超出 `1 Now + 1 Next`、Feature Home 状态镜像、Active
-  handoff/closeout、`T-xxx` 删除和无 baseline tag release fail closed；同时允许删除
-  baseline 无入链、无稳定身份的过程草稿。
+  handoff/closeout、`T-xxx` 删除和不可用显式 baseline fail closed；同时允许删除
+  baseline 无入链、无稳定身份的过程草稿。release checker 不读取上述 lifecycle 状态，
+  且 focused release test 证明常规 CI 仍保留完整 `docs:check`。
 - B-115/AC-05: B-115 可从 docs index → Development index → Governance index/GOV-001
   定位；Tracker 独占执行状态与跨会话 handoff，Plan/SDD 按复杂度创建，`Validated`
   自动触发 closeout 询问，过程 artifact 吸收后默认删除，且不伪造 Product
@@ -72,7 +74,7 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 | B-115/REQ-01 + B-115/REQ-02 / B-115/AC-01 | [Documentation Workflow — Capture](../documentation-workflow.md#1-capture-与-backlog) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 | B-115/REQ-03 / B-115/AC-02 | [Documentation Workflow — authorization](../documentation-workflow.md#自然语言入口与授权) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 | B-115/REQ-04 / B-115/AC-03 | [Documentation Workflow — Active Package](../documentation-workflow.md#3-active-package) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
-| B-115/REQ-05 / B-115/AC-04 | [Documentation Workflow — validation](../documentation-workflow.md#验证门) | [`check-docs-script.test.ts`](../../../__tests__/check-docs-script.test.ts)、[`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
+| B-115/REQ-05 / B-115/AC-04 | [Documentation Workflow — validation](../documentation-workflow.md#验证门) | [`check-docs-script.test.ts`](../../../__tests__/check-docs-script.test.ts)、[`check-release-docs-script.test.ts`](../../../__tests__/check-release-docs-script.test.ts)、[`release-script.test.ts`](../../../__tests__/release-script.test.ts)、[`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 | Engineering bootstrap / B-115/AC-05 | [Documentation Workflow](../documentation-workflow.md) | Current Governance index + focused contract tests |
 | B-115/REQ-06 / B-115/AC-06 | [Documentation Workflow — authorization](../documentation-workflow.md#自然语言入口与授权) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 

@@ -155,10 +155,10 @@ function validateVersion(targetVersion, currentVersion) {
   }
 }
 
-function runChecks(previousReleaseTag) {
+function runChecks() {
   run("git", ["diff", "--check"]);
   run("npm", ["run", "check:third-party-notices"]);
-  run("npm", ["run", "docs:check"], { env: { DOCS_CHECK_BASE: previousReleaseTag } });
+  run("npm", ["run", "docs:check:release"]);
   run("npm", ["test", "--", "--runInBand", "--coverage"]);
   run("npm", ["run", "lint"]);
   run("npm", ["run", "build"]);
@@ -240,7 +240,7 @@ async function main() {
   }
 
   if (!options.skipChecks) {
-    runChecks(currentVersion);
+    runChecks();
   }
 
   upsertChangelogSection("CHANGELOG.md", targetVersion, releaseSection);

@@ -31,6 +31,9 @@ Sources:
   `main.js`, `manifest.json`, and `styles.css`.
 - GitHub Releases created from prerelease tags are marked as prerelease by the
   release workflow.
+- Beta and stable release gates use `npm run docs:check:release` for public and
+  release-critical documents only. Full lifecycle `docs:check` findings remain
+  regular-CI/documentation work and do not block publication.
 - Stable changelog generation ignores prerelease tags by default, so the stable
   release notes still cover the full change range from the previous stable tag.
 

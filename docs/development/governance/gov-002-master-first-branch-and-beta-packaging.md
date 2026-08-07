@@ -2,11 +2,11 @@
 
 Document status: Current
 Governance ID: GOV-002
-Updated: 2026-07-21
+Updated: 2026-08-07
 Work item: B-117
 Authority: PA 仓库的代码、测试、研究/设计文档、工程治理与 BRAT beta 分支来源规则；不定义 PA runtime 或用户产品行为。
 
-Bootstrap source: 用户于 2026-07-19 直接决定：所有代码修改与研究产物先通过 PR 或直接提交进入 `master`，BRAT beta 再从已验证的 `master` 创建专用包装分支。B-117 是直接 engineering authorization，不要求外部 intake 来源。
+Bootstrap source: 用户于 2026-07-19 直接决定：所有代码修改与研究产物先通过 PR 或直接提交进入 `master`，BRAT beta 再从已验证的 `master` 创建专用包装分支；2026-08-07 进一步决定发布资格不得强绑定项目文档生命周期状态。B-117 是直接 engineering authorization，不要求外部 intake 来源。
 
 ## Context And Selected Governance Choice
 
@@ -28,6 +28,7 @@ flowchart LR
 - B-117/REQ-03: beta 分支只允许由 release tooling 创建一个版本/CHANGELOG/NOTICE 等 prerelease 包装提交及对应 tag；该提交不得合并或 rebase 回 `master`。
 - B-117/REQ-04: beta 反馈修复必须先进入 `master`；需要重新测试时从更新后的 `master` 创建新的 `beta/<next-version>`，不得改写已发布 beta 分支或 tag。
 - B-117/REQ-05: stable release 始终直接从已验证 `master` 创建；允许 PR merge 或用户授权的 direct commit，两者不形成不同发布通道。
+- B-117/REQ-06: beta/stable 发布只把 source/tag、版本/包装完整性、公开与法律文档、tests/lint/build/bundle 及 Community `Error` 作为硬门；Backlog、Discovery、Active Package、Tracker、Decision/Spec/Governance 状态和跨 tag 文档连续性只由独立 docs/CI gate 管理，不得阻断发布。
 
 ## Non-goals
 
@@ -35,6 +36,7 @@ flowchart LR
 - NG-02: 不追溯改写 `2.9.0-beta.1`、`2.9.0-beta.2` 或其他已发布历史。
 - NG-03: 不授权 push、tag、publish、force-push 或 stable release。
 - NG-04: 不修改 PA runtime、数据/隐私边界、Obsidian UI 或用户行为。
+- NG-05: 不弱化常规 CI 与文档维护中的完整 `docs:check`。
 
 ## Acceptance Criteria
 
@@ -42,16 +44,18 @@ flowchart LR
 - B-117/AC-02: prerelease release/dry-run 在 beta HEAD 不等于 `master` 时 fail closed，从 `master` 精确切出的匹配 beta 分支可通过来源门禁。
 - B-117/AC-03: prerelease publish 只接受 tag/HEAD 为 `master` 之上唯一直接 release commit、本地 `master` 等于实时查询的 `origin/master`、版本 metadata 一致且 commit 只含完整生成包装文件；beta branch + tag 原子推送。
 - B-117/AC-04: GitHub release workflow 对 prerelease tag 重复校验 release parent 仍属于当前 `origin/master` 历史、匹配 beta ref、版本 metadata 与完整包装文件集合；正常并发快进可接受，分叉/重写与手工不完整包装被拒绝。
-- B-117/AC-05: 当前文档保留已发布 beta.2 的真实历史，不把新政策伪装成旧发布事实；focused tests、docs check 与 diff check 通过。
+- B-117/AC-05: 当前文档保留已发布 beta.2 的真实历史，不把新政策伪装成旧发布事实；focused tests、release docs check 与 diff check 通过。
+- B-117/AC-06: 本地 release 与 GitHub tag workflow 都只调用 `docs:check:release`；release checker 不读取 lifecycle status，常规 CI 仍调用完整 `docs:check`。
 
 ## Traceability
 
 | Requirement / AC | Design | Delivery evidence |
 | --- | --- | --- |
-| B-117/REQ-01 + B-117/REQ-05 / B-117/AC-01 | [Release Process](../../operations/release-process.md) + [BRAT process](../../operations/brat-beta-testing.md) | Current repo instructions and docs gate |
+| B-117/REQ-01 + B-117/REQ-05 / B-117/AC-01 | [Release Process](../../operations/release-process.md) + [BRAT process](../../operations/brat-beta-testing.md) | Current repo instructions and release gate |
 | B-117/REQ-02 / B-117/AC-02 | [`release.mjs`](../../../scripts/release.mjs) source gate | [`release-script.test.ts`](../../../__tests__/release-script.test.ts) |
 | B-117/REQ-03 + B-117/REQ-04 / B-117/AC-03 + B-117/AC-04 | [`publish-release.mjs`](../../../scripts/publish-release.mjs) + [release workflow](../../../.github/workflows/release.yml) | [`publish-release-script.test.ts`](../../../__tests__/publish-release-script.test.ts) |
 | B-117/AC-05 | Current release/changelog behavior | [`changelog-script.test.ts`](../../../__tests__/changelog-script.test.ts) |
+| B-117/REQ-06 / B-117/AC-06 | [Release Process — gate levels](../../operations/release-process.md#release-gate-levels) | [`check-release-docs-script.test.ts`](../../../__tests__/check-release-docs-script.test.ts)、[`release-script.test.ts`](../../../__tests__/release-script.test.ts) |
 
 ## Authority And Change Boundary
 

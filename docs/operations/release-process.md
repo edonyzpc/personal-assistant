@@ -30,7 +30,7 @@ make publish VERSION=1.6.6
 2. Verifies the target version is valid, greater than `package.json`, and not already tagged. For prereleases, it also requires the matching `beta/<VERSION>` branch with pre-release `HEAD` exactly equal to local `master`.
 3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
 4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
-5. Runs `git diff --check`, `npm run check:third-party-notices`, `DOCS_CHECK_BASE=<current-version-tag> npm run docs:check`, `npm test -- --runInBand --coverage`, `npm run lint`, `npm run build`, and `npm run audit:bundle`.
+5. Runs `git diff --check`, `npm run check:third-party-notices`, `npm run docs:check:release`, `npm test -- --runInBand --coverage`, `npm run lint`, `npm run build`, and `npm run audit:bundle`.
 6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, `CHANGELOG.md`, and release-tag references in `NOTICE`.
 7. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
 8. Creates annotated tag `x.y.z`.
@@ -40,9 +40,17 @@ Set `SKIP_CHECKS=1` or pass `--skip-checks` only when checks have already been r
 ## Release Gate Levels
 
 Routine open-source client releases should stay lightweight. Every release
-keeps the automated package/license, notice, documentation workflow, test,
-lint, build, and bundle audit checks green. Dependency changes also require regenerating third-party notices
+keeps the automated package/license, notice, release-critical documentation,
+test, lint, build, and bundle audit checks green. Dependency changes also require regenerating third-party notices
 with `npm run generate:third-party-notices`.
+
+`npm run docs:check:release` verifies only public/release-critical documents and
+their direct local links. It does not inspect Backlog, Discovery, Active Package,
+Tracker, Decision/Spec/Governance status, `1 Now + 1 Next`, Archive reachability,
+or cross-tag documentation continuity. The full `npm run docs:check` remains the
+documentation-maintenance and regular-CI gate; its lifecycle findings are
+reported and repaired independently, but they do not decide whether a beta or
+stable version is publishable.
 
 The 2.8.0 AGPL migration has extra one-time checks for prospective licensing,
 historical tag non-relicensing, contributor/template provenance, and the
