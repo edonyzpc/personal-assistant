@@ -270,7 +270,7 @@ export class ShareCardExporter {
         this.assertActive();
         const attempted = pages.length;
         if (attempted === 0) return { savedPaths: [], attempted: 0 };
-        const targetFolder = folder ?? SHARE_CARD_FOLDER;
+        const targetFolder = normalizeShareCardFolder(folder ?? SHARE_CARD_FOLDER);
 
         return enqueueShareCardSave(this.app.vault, async () => {
             this.assertActive();
@@ -355,12 +355,14 @@ export function createShareCardBatchPaths(
     folder: string = SHARE_CARD_FOLDER,
 ): string[] {
     if (!Number.isInteger(pageCount) || pageCount < 1) return [];
+    const normalizedFolder = normalizeShareCardFolder(folder);
+    const prefix = normalizedFolder ? `${normalizedFolder}/` : "";
     if (pageCount === 1) {
-        return [normalizePath(`${folder}/${baseName}.png`)];
+        return [normalizePath(`${prefix}${baseName}.png`)];
     }
     const width = Math.max(2, String(pageCount).length);
     return Array.from({ length: pageCount }, (_, pageIndex) => normalizePath(
-        `${folder}/${baseName}-page-${String(pageIndex + 1).padStart(width, "0")}.png`,
+        `${prefix}${baseName}-page-${String(pageIndex + 1).padStart(width, "0")}.png`,
     ));
 }
 
@@ -394,7 +396,7 @@ async function ensureShareCardFolder(
     assertActive: () => void = () => undefined,
 ): Promise<void> {
     assertActive();
-    const normalizedFolder = normalizePath(folder);
+    const normalizedFolder = normalizeShareCardFolder(folder);
     if (!normalizedFolder) return;
     const existing = vault.getAbstractFileByPath(normalizedFolder);
     if (existing) {
@@ -413,6 +415,11 @@ async function ensureShareCardFolder(
     assertActive();
     await vault.createFolder(normalizedFolder);
     assertActive();
+}
+
+function normalizeShareCardFolder(folder: string): string {
+    const normalizedFolder = normalizePath(folder.trim());
+    return normalizedFolder === "/" ? "" : normalizedFolder;
 }
 
 async function vaultPathExists(vault: Vault, path: string): Promise<boolean> {

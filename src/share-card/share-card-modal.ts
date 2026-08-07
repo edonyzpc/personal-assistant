@@ -154,7 +154,7 @@ export class ShareCardModal extends Modal {
         this.contentEl.appendChild(this.viewportEl);
 
         this.createNavigation(ownerDocument);
-        this.createActions(ownerDocument);
+        this.createActions(ownerDocument, titleId);
         this.ownerWindow?.addEventListener("resize", this.handleResize);
 
         const token = this.nextToken();
@@ -379,15 +379,18 @@ export class ShareCardModal extends Modal {
         this.contentEl.appendChild(navEl);
     }
 
-    private createActions(ownerDocument: Document): void {
+    private createActions(ownerDocument: Document, titleId: string): void {
         const folderRow = ownerDocument.createElement("div");
         folderRow.classList.add("pa-share-card-folder-row");
-        const folderLabel = ownerDocument.createElement("span");
+        const folderLabel = ownerDocument.createElement("label");
         folderLabel.classList.add("pa-share-card-folder-label");
         folderLabel.textContent = t("plugin.shareCard.saveFolder");
-        folderRow.appendChild(folderLabel);
         const folderInput = ownerDocument.createElement("input");
+        const folderInputId = `${titleId}-save-folder`;
+        folderLabel.setAttribute("for", folderInputId);
+        folderRow.appendChild(folderLabel);
         folderInput.type = "text";
+        folderInput.id = folderInputId;
         folderInput.classList.add("pa-share-card-folder-input");
         folderInput.value = resolveShareCardDefaultFolder(this.app);
         folderInput.spellcheck = false;
@@ -507,9 +510,10 @@ export class ShareCardModal extends Modal {
         if (!exporter || this.pages.length === 0 || this.busy) return;
         const pages = this.pages.length === 1 ? [this.pages[0]!] : [...this.pages];
         const rawFolder = this.folderInputEl?.value?.trim();
-        const folder = normalizePath(
-            rawFolder !== undefined && rawFolder !== "" ? rawFolder : SHARE_CARD_FOLDER,
-        );
+        const selectedFolder = rawFolder !== undefined && rawFolder !== ""
+            ? rawFolder
+            : SHARE_CARD_FOLDER;
+        const folder = selectedFolder === "/" ? "/" : normalizePath(selectedFolder);
         const token = this.beginBusy(this.saveButton, t("plugin.shareCard.saving"));
         try {
             const result = await exporter.savePages(pages, folder);
@@ -707,12 +711,14 @@ function resolveShareCardDefaultFolder(app: App): string {
     try {
         const vaultConfig = app.vault as typeof app.vault & { getConfig?: (key: string) => unknown };
         const attachmentFolder = vaultConfig.getConfig?.("attachmentFolderPath");
+        const trimmedFolder = typeof attachmentFolder === "string"
+            ? attachmentFolder.trim()
+            : "";
         if (
-            typeof attachmentFolder === "string"
-            && attachmentFolder.trim()
-            && !attachmentFolder.startsWith(".")
+            trimmedFolder
+            && !trimmedFolder.startsWith(".")
         ) {
-            return attachmentFolder.trim();
+            return trimmedFolder;
         }
     } catch { /* vault config unavailable */ }
     return SHARE_CARD_FOLDER;

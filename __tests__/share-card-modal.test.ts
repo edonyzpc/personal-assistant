@@ -80,11 +80,15 @@ describe("ShareCardModal", () => {
         const viewport = document.body.querySelector(".pa-share-card-preview-viewport")!;
         const actions = document.body.querySelector(".pa-share-card-actions")!;
         const title = document.body.querySelector("h2")!;
+        const folderLabel = document.body.querySelector(".pa-share-card-folder-label")!;
+        const folderInput = document.body.querySelector(".pa-share-card-folder-input")!;
         expect(status.textContent).toContain("Preparing");
         expect(status.getAttribute("role")).toBe("status");
         expect(status.getAttribute("aria-live")).toBe("polite");
         expect((modal.modalEl as unknown as ShareCardTestElement).getAttribute("aria-labelledby"))
             .toBe(title.id);
+        expect(folderLabel.tagName).toBe("label");
+        expect(folderLabel.getAttribute("for")).toBe(folderInput.id);
         expect(viewport.hidden).toBe(true);
         expect(actions.children.every((child) => child.disabled)).toBe(true);
         expect(document.listenerCount("resize")).toBe(1);
@@ -150,6 +154,73 @@ describe("ShareCardModal", () => {
     });
 
     it.each([
+        ["uses the configured attachment folder", "Attachments", "Attachments"],
+        ["uses the configured Vault root", "/", "/"],
+        ["falls back for an empty attachment setting", "", "PA-Cards"],
+        ["falls back for a current-note-relative attachment setting", "./", "PA-Cards"],
+        ["falls back for a nested relative attachment setting", " ./assets ", "PA-Cards"],
+        ["falls back for a parent-relative attachment setting", "../assets", "PA-Cards"],
+        ["falls back for a non-string attachment setting", null, "PA-Cards"],
+    ])("%s", (_label, attachmentFolderPath, expectedFolder) => {
+        const document = new ShareCardTestDocument();
+        const getConfig = jest.fn(() => attachmentFolderPath);
+        const app = {
+            vault: {
+                getConfig,
+                getAllFolders: jest.fn(() => []),
+            },
+        } as unknown as App;
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => createRenderer(document, []),
+            createExporter: () => createExporter(),
+        }, undefined, app);
+
+        modal.onOpen();
+
+        const folderInput = document.body.querySelector(".pa-share-card-folder-input")!;
+        expect((folderInput as unknown as { value: string }).value).toBe(expectedFolder);
+        expect(getConfig).toHaveBeenCalledWith("attachmentFolderPath");
+        modal.onClose();
+    });
+
+    it("routes custom, Vault-root, and empty save destinations without persisting them", async () => {
+        const document = new ShareCardTestDocument();
+        const savePages = jest.fn(async (_pages: readonly CardPage[], folder = "") => ({
+            savedPaths: [`${folder || "/"}/card.png`],
+            attempted: 1,
+        }));
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => createPages(1),
+            createRenderer: () => createRenderer(document, []),
+            createExporter: () => createExporter({ savePages }),
+        });
+        modal.onOpen();
+        await flushShareCardTasks();
+        await flushShareCardTasks();
+
+        const folderInput = (
+            document.body.querySelector(".pa-share-card-folder-input")!
+        ) as unknown as { value: string };
+        const saveButton = document.body.querySelector(".pa-share-card-actions")!.children[1]!;
+
+        for (const folder of ["Cards/Shared", "/", ""]) {
+            folderInput.value = folder;
+            saveButton.click();
+            await flushShareCardTasks();
+        }
+
+        expect(savePages.mock.calls.map(([, folder]) => folder)).toEqual([
+            "Cards/Shared",
+            "/",
+            "PA-Cards",
+        ]);
+        modal.onClose();
+    });
+
+    it.each([
         ["uses 15px when it is the largest size that reduces page count", { 16: 3, 15: 2, 14: 1 }, 15, [16, 15]],
         ["uses 14px only when 15px does not reduce page count", { 16: 3, 15: 3, 14: 2 }, 14, [16, 15, 14]],
         ["keeps the validated 16px baseline when neither smaller size reduces pages", { 16: 3, 15: 3, 14: 3 }, 16, [16, 15, 14]],
@@ -211,12 +282,18 @@ describe("ShareCardModal", () => {
         modal.onClose();
     });
 
-    it("keeps the explicit 16px appearance when the original content is one page", async () => {
+    it.each([
+        ["uses 22px when every enlarged candidate fits", { 16: 1, 18: 1, 20: 1, 22: 1 }, 22, [16, 18, 20, 22]],
+        ["uses 20px when 22px no longer fits", { 16: 1, 18: 1, 20: 1, 22: 2 }, 20, [16, 18, 20, 22]],
+        ["uses 18px when 20px no longer fits", { 16: 1, 18: 1, 20: 2, 22: 2 }, 18, [16, 18, 20]],
+        ["keeps 16px when 18px no longer fits", { 16: 1, 18: 2, 20: 2, 22: 2 }, 16, [16, 18]],
+    ])("%s", async (_label, counts, expectedFontSize, expectedProbedFontSizes) => {
         const document = new ShareCardTestDocument();
         const renderer = createRenderer(document, []);
-        const createPreparedFitPredicate = jest.fn(() => Object.assign(
-            jest.fn(async () => true),
-            { fontSize: 16 },
+        const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
+            Object.assign(jest.fn(async () => true), {
+                fontSize: options.fontSize ?? 16,
+            })
         ));
         const prepareBlocks = jest.fn(async () => undefined);
         Object.assign(renderer, {
@@ -224,9 +301,13 @@ describe("ShareCardModal", () => {
             prepareBlocks,
         });
         const createExporterMock = jest.fn(() => createExporter());
+        const paginate = jest.fn(async (
+            _blocks: readonly string[],
+            fit: { fontSize: number },
+        ) => createPages(counts[fit.fontSize as keyof typeof counts]));
         const modal = createModal(document, {
             prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
-            paginate: async () => createPages(1),
+            paginate: paginate as unknown as NonNullable<ShareCardModalDependencies["paginate"]>,
             createRenderer: () => renderer,
             createExporter: createExporterMock,
         });
@@ -235,16 +316,86 @@ describe("ShareCardModal", () => {
         await flushShareCardTasks();
         await flushShareCardTasks();
 
-        expect(createPreparedFitPredicate).toHaveBeenCalledTimes(4);
+        expect(createPreparedFitPredicate.mock.calls.map(([options]) => options.fontSize))
+            .toEqual(expectedProbedFontSizes);
         expect(prepareBlocks).toHaveBeenCalledTimes(1);
+        expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
+            createPages(1),
+            expect.objectContaining({ fontSize: expectedFontSize }),
+        );
+        expect(renderer.renderPage).toHaveBeenCalledWith(
+            expect.objectContaining({ pageIndex: 0 }),
+            expect.objectContaining({ fontSize: expectedFontSize }),
+        );
         expect(createExporterMock).toHaveBeenCalledWith(
             expect.anything(),
             asDocument(document),
             renderer,
-            expect.objectContaining({ fontSize: 22 }),
+            expect.objectContaining({ fontSize: expectedFontSize }),
         );
         modal.onClose();
     });
+
+    it.each([
+        [18, 16, [16, 18]],
+        [20, 18, [16, 18, 20]],
+        [22, 20, [16, 18, 20, 22]],
+    ])(
+        "keeps the last validated size when the %ipx enlarged-size probe fails",
+        async (failedFontSize, expectedFontSize, expectedProbedFontSizes) => {
+            const document = new ShareCardTestDocument();
+            const renderer = createRenderer(document, []);
+            const createPreparedFitPredicate = jest.fn((options: { fontSize?: number }) => (
+                Object.assign(jest.fn(async () => true), {
+                    fontSize: options.fontSize ?? 16,
+                })
+            ));
+            Object.assign(renderer, {
+                createPreparedFitPredicate,
+                prepareBlocks: jest.fn(async () => undefined),
+            });
+            const paginate = jest.fn(async (
+                _blocks: readonly string[],
+                fit: { fontSize: number },
+            ) => {
+                if (fit.fontSize === failedFontSize) {
+                    throw new Error(`${failedFontSize}px probe failed`);
+                }
+                return createPages(1);
+            });
+            const createExporterMock = jest.fn(() => createExporter());
+            const modal = createModal(document, {
+                prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+                paginate: paginate as unknown as NonNullable<
+                    ShareCardModalDependencies["paginate"]
+                >,
+                createRenderer: () => renderer,
+                createExporter: createExporterMock,
+            });
+
+            modal.onOpen();
+            await flushShareCardTasks();
+            await flushShareCardTasks();
+
+            expect(createPreparedFitPredicate.mock.calls.map(([options]) => options.fontSize))
+                .toEqual(expectedProbedFontSizes);
+            expect(renderer.recordPreparedFinalPages).toHaveBeenCalledWith(
+                createPages(1),
+                expect.objectContaining({ fontSize: expectedFontSize }),
+            );
+            expect(renderer.renderPage).toHaveBeenCalledWith(
+                expect.objectContaining({ pageIndex: 0 }),
+                expect.objectContaining({ fontSize: expectedFontSize }),
+            );
+            expect(createExporterMock).toHaveBeenCalledWith(
+                expect.anything(),
+                asDocument(document),
+                renderer,
+                expect.objectContaining({ fontSize: expectedFontSize }),
+            );
+            modal.onClose();
+        },
+    );
 
     it("keeps the validated 16px batch when a smaller-size probe fails", async () => {
         const document = new ShareCardTestDocument();
@@ -883,8 +1034,9 @@ function createModal(
         sourceLabel: "PA Chat",
         resourceContext: { basePath: "source.md" },
     },
+    app: App = {} as App,
 ): ShareCardModal {
-    const modal = new ShareCardModal({} as App, data, dependencies);
+    const modal = new ShareCardModal(app, data, dependencies);
     const contentEl = document.createElement("div");
     const modalEl = document.createElement("div");
     modalEl.appendChild(contentEl);
@@ -947,7 +1099,7 @@ function createRenderer(
 
 function createExporter(overrides: Partial<{
     copyCurrentPage: (page: CardPage) => Promise<void>;
-    savePages: (pages: readonly CardPage[]) => Promise<{
+    savePages: (pages: readonly CardPage[], folder?: string) => Promise<{
         savedPaths: string[];
         attempted: number;
         failedPageIndex?: number;

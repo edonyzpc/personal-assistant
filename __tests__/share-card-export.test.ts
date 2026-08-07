@@ -16,6 +16,7 @@ import {
     ShareCardRenderCancelledError,
     type ShareCardRenderer,
 } from "../src/share-card/share-card-renderer";
+import type { CardPage } from "../src/share-card/share-card-types";
 import {
     ShareCardTestDocument,
     asDocument,
@@ -404,6 +405,106 @@ describe("Share Card export", () => {
         expect(cleanup).toHaveBeenCalledTimes(2);
     });
 
+    it("reuses the chosen font size for copy and a new custom-folder save", async () => {
+        const document = new ShareCardTestDocument();
+        const write = jest.fn(async (items: unknown[]) => {
+            const item = items[0] as { items: Record<string, Blob | PromiseLike<Blob>> };
+            await item.items["image/png"];
+        });
+        document.defaultView.navigator.clipboard = { write };
+        document.defaultView.ClipboardItem = class ClipboardItemMock {
+            constructor(readonly items: Record<string, Blob | PromiseLike<Blob>>) {}
+        } as unknown as typeof ClipboardItem;
+
+        const cleanup = jest.fn();
+        const renderPage = jest.fn(async (
+            _page: CardPage,
+            _appearance: { fontSize?: number },
+        ) => ({
+            cardEl: asElement(document.createElement("div")),
+            cleanup,
+        }));
+        const renderer = { renderPage } as unknown as ShareCardRenderer;
+        const createFolder = jest.fn(async () => undefined);
+        const createBinary = jest.fn(async () => undefined);
+        const vault = {
+            getAbstractFileByPath: jest.fn(() => null),
+            adapter: {
+                exists: jest.fn(async () => false),
+                stat: jest.fn(async () => null),
+            },
+            createFolder,
+            createBinary,
+        } as unknown as Vault;
+        const capture = jest.fn(async () => new Blob(["page"], { type: "image/png" }));
+        const exporter = new ShareCardExporter(
+            { vault } as App,
+            asDocument(document),
+            renderer,
+            { theme: "light", fontSize: 20 },
+            { capture, now: () => new Date("2026-08-04T01:02:03.000Z") },
+        );
+        const page = { content: "one", pageIndex: 0, totalPages: 1 };
+
+        await exporter.copyCurrentPage(page);
+        await expect(exporter.savePages([page], "Cards/Shared")).resolves.toEqual({
+            savedPaths: ["Cards/Shared/PA-Card-20260804-010203.png"],
+            attempted: 1,
+        });
+
+        expect(renderPage).toHaveBeenCalledTimes(2);
+        for (const [, appearance] of renderPage.mock.calls) {
+            expect(appearance).toEqual(expect.objectContaining({ fontSize: 20 }));
+        }
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(createFolder).toHaveBeenCalledWith("Cards/Shared");
+        expect(createBinary).toHaveBeenCalledWith(
+            "Cards/Shared/PA-Card-20260804-010203.png",
+            expect.any(ArrayBuffer),
+        );
+        expect(cleanup).toHaveBeenCalledTimes(2);
+    });
+
+    it("writes a Vault-root selection without creating a folder", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = {
+            renderPage: jest.fn(async () => ({
+                cardEl: asElement(document.createElement("div")),
+                cleanup: jest.fn(),
+            })),
+        } as unknown as ShareCardRenderer;
+        const createFolder = jest.fn(async () => undefined);
+        const createBinary = jest.fn(async () => undefined);
+        const vault = {
+            getAbstractFileByPath: jest.fn(() => null),
+            adapter: { exists: jest.fn(async () => false) },
+            createFolder,
+            createBinary,
+        } as unknown as Vault;
+        const exporter = new ShareCardExporter(
+            { vault } as App,
+            asDocument(document),
+            renderer,
+            { theme: "light", fontSize: 22 },
+            {
+                capture: async () => new Blob(["page"], { type: "image/png" }),
+                now: () => new Date("2026-08-04T01:02:03.000Z"),
+            },
+        );
+
+        await expect(exporter.savePages([
+            { content: "one", pageIndex: 0, totalPages: 1 },
+        ], "/")).resolves.toEqual({
+            savedPaths: ["PA-Card-20260804-010203.png"],
+            attempted: 1,
+        });
+        expect(createFolder).not.toHaveBeenCalled();
+        expect(createBinary).toHaveBeenCalledWith(
+            "PA-Card-20260804-010203.png",
+            expect.any(ArrayBuffer),
+        );
+    });
+
     it("discards a late SnapDOM result after the render owner is cancelled", async () => {
         const document = new ShareCardTestDocument();
         const controller = new AbortController();
@@ -772,12 +873,12 @@ describe("Share Card export", () => {
         ]));
     });
 
-    it("refuses to treat an existing file as the output folder", async () => {
+    it("refuses to treat an existing file as a custom output folder", async () => {
         const document = new ShareCardTestDocument();
         const renderer = { renderPage: jest.fn() } as unknown as ShareCardRenderer;
         const createBinary = jest.fn();
         const vault = {
-            getAbstractFileByPath: jest.fn(() => ({ path: "PA-Cards" })),
+            getAbstractFileByPath: jest.fn(() => ({ path: "Cards/Shared" })),
             adapter: { exists: jest.fn(async () => true), stat: jest.fn() },
             createFolder: jest.fn(),
             createBinary,
@@ -791,7 +892,7 @@ describe("Share Card export", () => {
 
         await expect(exporter.savePages([
             { content: "one", pageIndex: 0, totalPages: 1 },
-        ])).rejects.toThrow("occupied by a file");
+        ], "Cards/Shared")).rejects.toThrow("occupied by a file");
         expect(vault.createFolder).not.toHaveBeenCalled();
         expect(createBinary).not.toHaveBeenCalled();
         expect(renderer.renderPage).not.toHaveBeenCalled();
