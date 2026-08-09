@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
+
+### Fix
+- settings: avoid iOS keychain freeze in settings
+
 ## [2.9.1](https://github.com/edonyzpc/personal-assistant/compare/2.9.0...2.9.1) (2026-08-09)
 
 ### Fix
