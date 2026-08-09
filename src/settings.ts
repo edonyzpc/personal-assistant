@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Modal, Notice, PluginSettingTab, SecretComponent, Setting, debounce, setIcon } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting, debounce } from "obsidian";
 
 import type { PluginManager } from "./plugin"
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
@@ -21,7 +21,7 @@ import {
 import { getPageletUiLanguage } from "./locales/pagelet";
 import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
 import { LEGACY_CONFIG_DIR } from "./obsidian-paths";
-import { getPlatformDocument, setPlatformTimeout } from "./platform-dom";
+import { getPlatformDocument } from "./platform-dom";
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from "./ai-services/capability-types";
 import {
     QUICK_CAPTURE_DEFAULTS,
@@ -979,10 +979,7 @@ export class SettingTab extends PluginSettingTab {
     private graphColorsContainer: HTMLDivElement | null = null;
     private metadataContainer: HTMLDivElement | null = null;
     private featuredImageContainer: HTMLDivElement | null = null;
-    private secretPickerObserver: MutationObserver | null = null;
-    private patchedSecretPickerEditButtons = new WeakSet<HTMLElement>();
-    private secretPickerEditClickHandler: ((event: MouseEvent) => void) | null = null;
-    private secretPickerDocument: Document | null = null;
+    private apiTokenSecretModal: (Modal & { closeSafely(): void }) | null = null;
     private memoryControlCenterGeneration = 0;
     private pendingMemoryControlCenterTargetId: string | null = null;
     private settingsNavigationButtons = new Map<string, HTMLButtonElement>();
@@ -1216,13 +1213,21 @@ export class SettingTab extends PluginSettingTab {
         this.startSettingsNavigation(groups.map((group) => group.id));
         this.startSettingsNavigationOffsetTracking(jump);
         this.markFormControlSettings(containerEl);
-        this.startSecretPickerObserver();
     }
 
     hide(): void {
         // Obsidian invokes hide() when the user closes the settings tab.
         this.stopSettingsNavigation();
-        this.stopSecretPickerObserver();
+        const apiTokenSecretModal = this.apiTokenSecretModal;
+        try {
+            apiTokenSecretModal?.closeSafely();
+        } catch {
+            this.log("Failed to close API token editor with Settings");
+        } finally {
+            if (this.apiTokenSecretModal === apiTokenSecretModal) {
+                this.apiTokenSecretModal = null;
+            }
+        }
         this.memoryControlCenterGeneration += 1;
         const doc = (this.containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
         doc.body?.classList.remove("pa-settings-tab-open");
@@ -1470,104 +1475,6 @@ export class SettingTab extends PluginSettingTab {
         this.containerEl.style?.removeProperty("--pa-settings-mobile-nav-offset");
     }
 
-    private startSecretPickerObserver(): void {
-        this.stopSecretPickerObserver();
-        const doc = getPlatformDocument();
-        this.secretPickerEditClickHandler = (event: MouseEvent) => {
-            const target = event.target as HTMLElement | null;
-            const action = target?.closest<HTMLElement>(".modal .suggestion-item .clickable-icon");
-            const row = action?.closest<HTMLElement>(".suggestion-item");
-            if (!action || !row || !this.isSecretPickerRow(row)) {
-                return;
-            }
-
-            const actions = row.findAll(".clickable-icon");
-            if (actions.length < 2 || action !== actions[actions.length - 1]) {
-                return;
-            }
-
-            event.preventDefault();
-            event.stopPropagation();
-            event.stopImmediatePropagation();
-            const secretId = this.getSecretIdFromPickerRow(row);
-            if (!secretId) {
-                new Notice(this.t("plugin.settings.secret.cannotDetermine"), 4000);
-                return;
-            }
-            this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
-        };
-        if (typeof doc.addEventListener === "function") {
-            this.secretPickerDocument = doc;
-            doc.addEventListener("click", this.secretPickerEditClickHandler, true);
-        }
-        if (!doc.body || typeof MutationObserver === "undefined") {
-            return;
-        }
-        this.secretPickerObserver = new MutationObserver(() => {
-            this.patchSecretPickerActions();
-        });
-        this.secretPickerObserver.observe(doc.body, {
-            childList: true,
-            subtree: true,
-        });
-        this.scheduleSecretPickerPatch();
-    }
-
-    private stopSecretPickerObserver(): void {
-        this.secretPickerObserver?.disconnect();
-        this.secretPickerObserver = null;
-        if (this.secretPickerEditClickHandler) {
-            if (typeof this.secretPickerDocument?.removeEventListener === "function") {
-                this.secretPickerDocument.removeEventListener("click", this.secretPickerEditClickHandler, true);
-            }
-            this.secretPickerEditClickHandler = null;
-        }
-        this.secretPickerDocument = null;
-        this.patchedSecretPickerEditButtons = new WeakSet<HTMLElement>();
-    }
-
-    private patchSecretPickerActions(): void {
-        const rows = getPlatformDocument().body?.findAll(".modal .suggestion-item") ?? [];
-        rows.forEach((row) => {
-            if (!this.isSecretPickerRow(row)) {
-                return;
-            }
-            this.markSecretPickerRow(row);
-            const actions = row.findAll(".clickable-icon");
-            if (actions.length < 2) {
-                return;
-            }
-            const editAction = actions[actions.length - 1];
-            if (!editAction) {
-                return;
-            }
-
-            editAction.classList.add("pa-secret-edit-action");
-            editAction.setAttribute("aria-label", this.t("plugin.settings.secret.edit"));
-            editAction.setAttribute("title", this.t("plugin.settings.secret.edit"));
-            if (!editAction.querySelector(".lucide-pencil, [data-icon='pencil']")) {
-                editAction.replaceChildren();
-                setIcon(editAction, "pencil");
-            }
-            if (this.patchedSecretPickerEditButtons.has(editAction)) {
-                return;
-            }
-
-            this.patchedSecretPickerEditButtons.add(editAction);
-            editAction.addEventListener("click", (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                event.stopImmediatePropagation();
-                const secretId = this.getSecretIdFromPickerRow(row);
-                if (!secretId) {
-                    new Notice(this.t("plugin.settings.secret.cannotDetermine"), 4000);
-                    return;
-                }
-                this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
-            }, true);
-        });
-    }
-
     private markFormControlSettings(containerEl: HTMLElement): void {
         const settings = containerEl.findAll(".setting-item");
         settings.forEach((settingEl) => {
@@ -1616,145 +1523,25 @@ export class SettingTab extends PluginSettingTab {
         });
     }
 
-    private markSecretPickerRow(row: HTMLElement): void {
-        row.classList.add("pa-secret-picker-row");
-        row.closest<HTMLElement>(".modal")?.classList.add("pa-secret-picker-modal");
-        if (row.querySelector(".lucide-eye, [data-icon='eye']")) {
-            row.classList.add("pa-secret-row-has-eye");
-        } else {
-            row.classList.remove("pa-secret-row-has-eye");
-        }
-    }
-
-    private scheduleSecretPickerPatch(): void {
-        [0, 25, 75, 150, 300, 600, 1000].forEach((delay) => {
-            setPlatformTimeout(() => this.patchSecretPickerActions(), delay);
-        });
-    }
-
-    private isSecretPickerRow(row: HTMLElement): boolean {
-        return row.classList.contains("suggestion-secret-key")
-            || !!row.querySelector(".suggestion-secret-text")
-            || /\bpa-api-token(?:-[a-z0-9-]+)?\b/.test(row.textContent ?? "");
-    }
-
-    private getSecretIdFromPickerRow(row: HTMLElement): string | null {
-        const title = row.querySelector<HTMLElement>(".suggestion-title")?.textContent?.trim();
-        if (title && /^[a-z0-9-]+$/.test(title)) {
-            return title;
-        }
-        return row.textContent?.match(/\b[a-z0-9]+(?:-[a-z0-9]+)*\b/)?.[0] ?? null;
-    }
-
-    private openSecretEditorViaAddSecret(secretId: string, pickerModal?: HTMLElement | null): void {
-        const secretValue = this.app.secretStorage.getSecret(secretId) ?? "";
-        const modal = pickerModal ?? this.findSecretPickerModal();
-        const addSecretButton = modal ? this.findAddSecretButton(modal) : null;
-        if (!addSecretButton) {
-            new Notice(this.t("plugin.settings.secret.openFailed", { secretId }), 4000);
-            return;
-        }
-
-        addSecretButton.click();
-        this.prefillAddSecretModal(secretId, secretValue, 0);
-    }
-
-    private findAddSecretButton(modal: HTMLElement): HTMLElement | null {
-        return modal.findAll("button, .clickable-icon")
-            .find((element) => {
-                const text = element.textContent?.trim();
-                return text === "Add secret..." || text === "Add secret…";
-            }) ?? null;
-    }
-
-    private findSecretPickerModal(): HTMLElement | null {
-        const body = getPlatformDocument().body;
-        if (!body?.classList.contains("pa-settings-tab-open")) return null;
-        const modal = body.findAll(".modal")
-            .reverse()
-            .find((modal) => modal.findAll(".suggestion-item").some((row) => this.isSecretPickerRow(row))) ?? null;
-        modal?.classList.add("pa-secret-picker-modal");
-        return modal;
-    }
-
-    private prefillAddSecretModal(secretId: string, secretValue: string, attempt: number): void {
-        const maxAttempts = 12;
-        const modal = this.findAddSecretModal();
-        if (modal) {
-            const inputs = this.findInputElements(modal);
-            const idInput = this.findSecretIdInput(inputs);
-            const secretInput = this.findSecretValueInput(inputs, idInput);
-            if (idInput && secretInput) {
-                this.setNativeInputValue(idInput, secretId);
-                this.setNativeInputValue(secretInput, secretValue);
-                idInput.readOnly = true;
-                idInput.addClass("pa-secret-edit-id-input");
-                secretInput.focus();
-                secretInput.select();
-                return;
-            }
-        }
-
-        if (attempt >= maxAttempts) {
-            new Notice(this.t("plugin.settings.secret.addOpened", { secretId }), 5000);
-            return;
-        }
-        setPlatformTimeout(() => this.prefillAddSecretModal(secretId, secretValue, attempt + 1), 100);
-    }
-
-    private findAddSecretModal(): HTMLElement | null {
-        return (getPlatformDocument().body?.findAll(".modal") ?? [])
-            .reverse()
-            .find((modal) => {
-                const title = modal.querySelector("h1, h2, h3, .modal-title")?.textContent?.trim();
-                const inputs = this.findInputElements(modal);
-                const hasSecretIdInput = inputs.some((input) => input.placeholder === "secret-name");
-                return inputs.length >= 2 && (hasSecretIdInput || title === "Add secret" || title === "Edit secret");
-            }) ?? null;
-    }
-
-    private findInputElements(root: HTMLElement): HTMLInputElement[] {
-        return root.findAll("input").filter((element): element is HTMLInputElement =>
-            element.tagName.toLowerCase() === "input",
-        );
-    }
-
-    private findSecretIdInput(inputs: HTMLInputElement[]): HTMLInputElement | null {
-        return inputs.find((input) =>
-            input.placeholder === "secret-name"
-            || input.getAttr("aria-label")?.toLowerCase().includes("id")
-        ) ?? inputs[0] ?? null;
-    }
-
-    private findSecretValueInput(
-        inputs: HTMLInputElement[],
-        idInput: HTMLInputElement | null,
-    ): HTMLInputElement | null {
-        return inputs.find((input) =>
-            input !== idInput
-            && (
-                input.placeholder.startsWith("sk-")
-                || input.type === "password"
-                || input.getAttr("aria-label")?.toLowerCase().includes("secret")
-            )
-        ) ?? inputs.find((input) => input !== idInput) ?? null;
-    }
-
-    private setNativeInputValue(input: HTMLInputElement, value: string): void {
-        input.value = value;
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-
     private openApiTokenSecretEditor(): void {
+        if (this.apiTokenSecretModal) {
+            return;
+        }
         const plugin = this.plugin;
         const app = this.app;
         const secretId = plugin.getAPITokenSecretId();
         const existing = plugin.getConfiguredAPITokenSecret() ?? "";
         const translate = this.t.bind(this);
         const rebuildProviderConfig = () => this.rebuildProviderConfig();
+        const releaseModal = (modal: Modal) => {
+            if (this.apiTokenSecretModal === modal) {
+                this.apiTokenSecretModal = null;
+            }
+        };
 
         class ApiTokenSecretModal extends Modal {
+            private disposed = false;
+
             onOpen(): void {
                 const { contentEl } = this;
                 contentEl.empty();
@@ -1783,6 +1570,10 @@ export class SettingTab extends PluginSettingTab {
                     .addText((text) => {
                         secretInput = text.inputEl;
                         text.inputEl.type = "password";
+                        text.inputEl.autocomplete = "off";
+                        text.inputEl.autocapitalize = "none";
+                        text.inputEl.spellcheck = false;
+                        text.inputEl.setAttribute("autocorrect", "off");
                         text.setPlaceholder("sk-...");
                         text.setValue(existing);
                         text.onChange((value) => {
@@ -1810,125 +1601,103 @@ export class SettingTab extends PluginSettingTab {
 
                 new Setting(contentEl)
                     .addButton((button) => {
+                        let saving = false;
+                        let completed = false;
                         button
                             .setButtonText(translate("plugin.settings.apiToken.modal.save"))
                             .setCta()
                             .onClick(async () => {
-                                const value = secretValue.trim();
-                                if (value === "") {
-                                    if (!existing) {
-                                        this.close();
-                                        return;
-                                    }
-                                    const confirmed = await confirmUserAction(app, {
-                                        title: translate("plugin.settings.ai.apiToken.remove.title"),
-                                        message: translate("plugin.settings.ai.apiToken.remove.message"),
-                                        confirmText: translate("plugin.settings.ai.apiToken.remove.confirm"),
-                                        cancelText: translate("plugin.settings.ai.apiToken.remove.cancel"),
-                                    });
-                                    if (!confirmed) {
-                                        return;
-                                    }
-                                    plugin.setAPITokenSecret("");
-                                    rebuildProviderConfig();
-                                    this.close();
+                                if (saving || completed) {
                                     return;
                                 }
-                                plugin.setAPITokenSecret(value);
-                                rebuildProviderConfig();
-                                this.close();
-                                new Notice(translate("plugin.settings.apiToken.modal.saved"), 3000);
+                                saving = true;
+                                button.setDisabled(true);
+                                try {
+                                    const value = secretValue.trim();
+                                    if (value === "") {
+                                        if (!existing) {
+                                            this.closeSafely();
+                                            return;
+                                        }
+                                        let confirmed = false;
+                                        try {
+                                            confirmed = await confirmUserAction(app, {
+                                                title: translate("plugin.settings.ai.apiToken.remove.title"),
+                                                message: translate("plugin.settings.ai.apiToken.remove.message"),
+                                                confirmText: translate("plugin.settings.ai.apiToken.remove.confirm"),
+                                                cancelText: translate("plugin.settings.ai.apiToken.remove.cancel"),
+                                            });
+                                        } catch {
+                                            plugin.log("Failed to confirm API token removal");
+                                            new Notice(translate("plugin.settings.apiToken.modal.saveFailed"), 4000);
+                                            return;
+                                        }
+                                        if (!confirmed || this.disposed) {
+                                            return;
+                                        }
+                                    }
+
+                                    try {
+                                        plugin.setAPITokenSecret(value);
+                                    } catch {
+                                        plugin.log("Failed to save API token");
+                                        new Notice(translate("plugin.settings.apiToken.modal.saveFailed"), 4000);
+                                        return;
+                                    }
+                                    completed = true;
+                                    try {
+                                        rebuildProviderConfig();
+                                    } catch {
+                                        plugin.log("Failed to refresh API token setting");
+                                    }
+                                    this.closeSafely();
+                                    if (value !== "") {
+                                        new Notice(translate("plugin.settings.apiToken.modal.saved"), 3000);
+                                    }
+                                } finally {
+                                    saving = false;
+                                    button.setDisabled(false);
+                                }
                             });
                     })
                     .addButton((button) => {
                         button
                             .setButtonText(translate("plugin.settings.apiToken.modal.cancel"))
-                            .onClick(() => this.close());
+                            .onClick(() => this.closeSafely());
                     });
+            }
 
-                setPlatformTimeout(() => {
-                    secretInput?.focus();
-                    secretInput?.select();
-                }, 0);
+            onClose(): void {
+                this.disposed = true;
+                this.contentEl.empty();
+                releaseModal(this);
+            }
+
+            closeSafely(): void {
+                this.disposed = true;
+                try {
+                    this.close();
+                } catch {
+                    this.contentEl.empty();
+                    this.modalEl.remove();
+                    this.containerEl.remove();
+                    plugin.log("Failed to close API token editor");
+                } finally {
+                    releaseModal(this);
+                }
             }
         }
 
-        new ApiTokenSecretModal(this.app).open();
-    }
-
-    private renameSecretComponentLinkButton(container: HTMLElement): void {
-        const maybeContainer = container as HTMLElement & {
-            addClass?: (cls: string) => void;
-            closest?: (selector: string) => Element | null;
-        };
-        maybeContainer.addClass?.("pa-api-token-secret-component");
-
-        const root = maybeContainer.closest?.(".setting-item") ?? container;
-
-        const bindKeychainButton = (button: HTMLElement) => {
-            if (button.dataset.paApiTokenKeychainPatched === "true") {
-                return;
-            }
-            button.dataset.paApiTokenKeychainPatched = "true";
-            button.addEventListener("click", (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                event.stopImmediatePropagation();
-                this.openApiTokenSecretEditor();
-            }, true);
-        };
-
-        const rename = () => {
-            const keychainLabel = this.t("plugin.settings.apiToken.openKeychain");
-            const candidates = root.findAll(
-                "button, .clickable-icon, .setting-item-control *",
-            );
-            let renamed = false;
-            candidates.forEach((element) => {
-                const text = element.textContent?.trim();
-                if (text !== "Link..." && text !== "Link…") {
-                    return;
-                }
-                const button = element.closest("button") as HTMLElement | null ?? element;
-                const setText = (button as HTMLElement & { setText?: (value: string) => void }).setText;
-                if (setText) {
-                    setText.call(button, keychainLabel);
-                } else {
-                    button.textContent = keychainLabel;
-                }
-                (button as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-api-token-keychain-button");
-                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("aria-label", keychainLabel);
-                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("title", keychainLabel);
-                button.classList.add("pa-api-token-keychain-button");
-                button.setAttribute("aria-label", keychainLabel);
-                button.setAttribute("title", keychainLabel);
-                bindKeychainButton(button);
-                renamed = true;
-            });
-            const keychainButtons = candidates.filter((element) => element.textContent?.trim() === keychainLabel);
-            keychainButtons.forEach((element) => bindKeychainButton(element.closest("button") as HTMLElement | null ?? element));
-            return renamed || keychainButtons.length > 0;
-        };
-
-        rename();
-        [0, 50, 150, 300, 600].forEach((delay) => {
-            setPlatformTimeout(rename, delay);
-        });
-
-        if (typeof MutationObserver === "undefined") {
-            return;
+        const modal = new ApiTokenSecretModal(this.app);
+        this.apiTokenSecretModal = modal;
+        try {
+            modal.open();
+        } catch {
+            modal.closeSafely();
+            releaseModal(modal);
+            plugin.log("Failed to open API token editor");
+            new Notice(translate("plugin.settings.apiToken.modal.openFailed"), 4000);
         }
-        const observer = new MutationObserver(() => {
-            if (rename()) {
-                observer.disconnect();
-            }
-        });
-        observer.observe(root, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-        });
-        setPlatformTimeout(() => observer.disconnect(), 1500);
     }
 
     private renderHeader(parentEl: HTMLElement): void {
@@ -2689,37 +2458,13 @@ export class SettingTab extends PluginSettingTab {
         new Setting(container)
             .setName(this.t("plugin.settings.ai.apiToken.name"))
             .setDesc(this.t("plugin.settings.ai.apiToken.desc"))
-            .addComponent((el) => {
-                const secret = new SecretComponent(this.app, el);
-                const existing = plugin.getConfiguredAPITokenSecret();
-                if (hasSecretValue(existing)) {
-                    secret.setValue(existing);
-                }
-                this.renameSecretComponentLinkButton(el);
-                secret.onChange(async (value: string) => {
-                    if (value === "") {
-                        const stored = plugin.getConfiguredAPITokenSecret();
-                        if (!hasSecretValue(stored)) {
-                            return;
-                        }
-                        const confirmed = await confirmUserAction(this.app, {
-                            title: this.t("plugin.settings.ai.apiToken.remove.title"),
-                            message: this.t("plugin.settings.ai.apiToken.remove.message"),
-                            confirmText: this.t("plugin.settings.ai.apiToken.remove.confirm"),
-                            cancelText: this.t("plugin.settings.ai.apiToken.remove.cancel"),
-                        });
-                        if (!confirmed) {
-                            secret.setValue(stored);
-                            return;
-                        }
-                        // SecretStorage exposes only setSecret — writing "" is
-                        // the equivalent of clearing the token.
-                        plugin.setAPITokenSecret("");
-                        return;
-                    }
-                    plugin.setAPITokenSecret(value);
-                });
-                return secret;
+            .addButton((button) => {
+                const hasToken = hasSecretValue(plugin.getConfiguredAPITokenSecret());
+                button
+                    .setButtonText(this.t(hasToken
+                        ? "plugin.settings.apiToken.modal.editTitle"
+                        : "plugin.settings.apiToken.modal.addTitle"))
+                    .onClick(() => this.openApiTokenSecretEditor());
             });
 
         new Setting(container)

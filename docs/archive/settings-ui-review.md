@@ -46,7 +46,7 @@ This review is historical. The current branch has addressed the highest-risk Set
 | P2-19 Settings copy typos | Partially fixed | The default Local Graph notice and Featured Image settings copy have been cleaned up; a broader copy pass is still useful. |
 | P2-29 Legacy `modelName` field | Fixed | `modelName` has been removed from default settings and is deleted during migration after preserving a non-default legacy value in `chatModelName`. |
 
-API Token now uses a dedicated Add secret-style editor for edits from Settings. Native SecretComponent picker CSS is still scoped as a mitigation for long secret rows, but generic keychain-picker reveal behavior on real iPhone should remain a manual smoke item if that picker is used outside the API Token editor.
+API Token now uses a PA-owned Add/Edit editor backed by the existing vault-scoped SecretStorage ID. Settings no longer instantiates `SecretComponent`, patches the native picker DOM, or ships picker-specific CSS. Real-iPhone password-input, keyboard, and AutoFill behavior remains a manual smoke item.
 
 ---
 

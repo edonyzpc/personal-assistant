@@ -65,18 +65,34 @@ jest.mock('obsidian', () => ({
     Modal: class {
         app: unknown;
         contentEl: HTMLElement;
+        containerEl: HTMLElement;
+        modalEl: HTMLElement;
+        closed = false;
         constructor(app: unknown) {
             this.app = app;
             this.contentEl = document.createElement('div');
+            this.containerEl = document.createElement('div');
+            this.modalEl = document.createElement('div');
         }
         open() {
             const globalObj = globalThis as typeof globalThis & { __paModalInstances?: unknown[] };
             globalObj.__paModalInstances = globalObj.__paModalInstances ?? [];
             globalObj.__paModalInstances.push(this);
+            const openError = (globalThis as typeof globalThis & { __paModalOpenError?: unknown })
+                .__paModalOpenError;
+            if (openError) {
+                throw openError;
+            }
             (this as unknown as { onOpen?: () => void }).onOpen?.();
             return this;
         }
         close() {
+            const closeError = (globalThis as typeof globalThis & { __paModalCloseError?: unknown })
+                .__paModalCloseError;
+            if (closeError) {
+                throw closeError;
+            }
+            this.closed = true;
             (this as unknown as { onClose?: () => void }).onClose?.();
         }
     },
@@ -93,7 +109,13 @@ jest.mock('obsidian', () => ({
                 onChange?: (value: string) => unknown;
             }>;
             buttons: Array<{ text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> }>;
-            texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
+            texts: Array<{
+                value?: unknown;
+                placeholder?: string;
+                onChange?: (value: string) => unknown;
+                setValueCalls: unknown[];
+                inputEl?: HTMLInputElement & { addClass: (cls: string) => unknown };
+            }>;
             colorPickers: Array<{ value?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
         };
 
@@ -113,7 +135,13 @@ jest.mock('obsidian', () => ({
                         onChange?: (value: string) => unknown;
                     }>;
                     buttons: Array<{ text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> }>;
-                    texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
+                    texts: Array<{
+                        value?: unknown;
+                        placeholder?: string;
+                        onChange?: (value: string) => unknown;
+                        setValueCalls: unknown[];
+                        inputEl?: HTMLInputElement & { addClass: (cls: string) => unknown };
+                    }>;
                     colorPickers: Array<{ value?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
                 }>;
             };
@@ -175,6 +203,7 @@ jest.mock('obsidian', () => ({
                 placeholder?: string;
                 onChange?: (value: string) => unknown;
                 setValueCalls: unknown[];
+                inputEl?: HTMLInputElement & { addClass: (cls: string) => unknown };
             } = { setValueCalls: [] };
             this.record.texts.push(text);
             const inputEl = {
@@ -185,7 +214,12 @@ jest.mock('obsidian', () => ({
                 dispatchEvent: jest.fn(),
                 focus: jest.fn(),
                 select: jest.fn(),
+                autocomplete: '',
+                autocapitalize: '',
+                spellcheck: true,
+                setAttribute: jest.fn(),
             } as unknown as HTMLInputElement & { addClass: (cls: string) => unknown };
+            text.inputEl = inputEl;
             const textComponent = {
                 inputEl,
                 setPlaceholder: (value: string) => {
@@ -348,25 +382,6 @@ jest.mock('obsidian', () => ({
 	            return this;
 	        }
     },
-    SecretComponent: class {
-        constructor(_app: unknown, _el: unknown) {
-            const globalObj = globalThis as typeof globalThis & {
-                __paSecretRecords?: Array<{ value?: string; onChange?: (value: string) => unknown }>;
-            };
-            globalObj.__paSecretRecords = globalObj.__paSecretRecords ?? [];
-            const record: { value?: string; onChange?: (value: string) => unknown } = {};
-            globalObj.__paSecretRecords.push(record);
-            (this as unknown as { __record: typeof record }).__record = record;
-        }
-        setValue(value: string) {
-            (this as unknown as { __record: { value?: string } }).__record.value = value;
-            return this;
-        }
-        onChange(cb: (value: string) => unknown) {
-            (this as unknown as { __record: { onChange?: (value: string) => unknown } }).__record.onChange = cb;
-            return this;
-        }
-    },
 }));
 
 jest.mock('../src/confirm', () => {
@@ -484,11 +499,11 @@ class MockDomNode {
         return child;
     }
 
-    remove() {
+    remove = jest.fn(() => {
         // The bounded Settings DOM mock does not keep parent pointers. Tests
         // only need removal to be safe when cancelling an inline editor.
         this.children = [];
-    }
+    });
 
     appendText(text: string) {
         this.innerText += text;
@@ -590,6 +605,7 @@ type MockTextRecord = {
     placeholder?: string;
     onChange?: (value: string) => unknown;
     setValueCalls: unknown[];
+    inputEl?: HTMLInputElement & { addClass: (cls: string) => unknown };
 };
 type MockColorPickerRecord = {
     value?: string;
@@ -616,6 +632,24 @@ function getMockSettingRecords(): MockSettingRecord[] {
     const globalObj = globalThis as typeof globalThis & { __paSettingRecords?: MockSettingRecord[] };
     globalObj.__paSettingRecords = globalObj.__paSettingRecords ?? [];
     return globalObj.__paSettingRecords;
+}
+
+function getMockModalInstances(): Array<{
+    closed: boolean;
+    close(): void;
+    containerEl: { remove: jest.Mock };
+    modalEl: { remove: jest.Mock };
+}> {
+    const globalObj = globalThis as typeof globalThis & {
+        __paModalInstances?: Array<{
+            closed: boolean;
+            close(): void;
+            containerEl: { remove: jest.Mock };
+            modalEl: { remove: jest.Mock };
+        }>;
+    };
+    globalObj.__paModalInstances = globalObj.__paModalInstances ?? [];
+    return globalObj.__paModalInstances;
 }
 
 function installMockDocument() {
@@ -797,6 +831,8 @@ beforeEach(() => {
     getMockSettingRecords().length = 0;
     getMockDebounceRecords().length = 0;
     delete (globalThis as typeof globalThis & { __paModalInstances?: unknown[] }).__paModalInstances;
+    delete (globalThis as typeof globalThis & { __paModalOpenError?: unknown }).__paModalOpenError;
+    delete (globalThis as typeof globalThis & { __paModalCloseError?: unknown }).__paModalCloseError;
     installMockDocument();
 });
 
@@ -977,6 +1013,7 @@ describe('PA Agent telemetry settings', () => {
         expect(css).not.toMatch(/\.setting-item-control\s+\.checkbox-container\s*{[^}]*min-(?:height|width):\s*44px;/);
         expect(css).not.toContain('.pa-settings-group > :not(summary)');
         expect(css).not.toContain('.pa-settings-nav');
+        expect(css).not.toMatch(/suggestion-secret|keychain-list-results|pa-secret-picker/);
     });
 });
 
@@ -1490,13 +1527,6 @@ describe('Phase 2 P0 data integrity', () => {
     });
 });
 
-type SecretRecord = { value?: string; onChange?: (value: string) => unknown };
-function getMockSecretRecords(): SecretRecord[] {
-    const globalObj = globalThis as typeof globalThis & { __paSecretRecords?: SecretRecord[] };
-    globalObj.__paSecretRecords = globalObj.__paSecretRecords ?? [];
-    return globalObj.__paSecretRecords;
-}
-
 function setMockConfirmDecision(decision: boolean | undefined) {
     const globalObj = globalThis as typeof globalThis & { __paConfirmDecision?: boolean };
     if (decision === undefined) {
@@ -1638,8 +1668,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
     beforeEach(() => {
         setMockConfirmDecision(undefined);
-        const records = getMockSecretRecords();
-        records.length = 0;
         (confirmUserAction as jest.Mock).mockClear();
     });
 
@@ -3887,64 +3915,98 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(options?.message).toContain('API token is kept');
     });
 
-    it('ignores an empty API token change when no token is stored', async () => {
+    it('opens one guarded API token modal without programmatic focus', async () => {
         const plugin = makePlugin({ aiProvider: 'qwen' });
-        const app = makeMockApp();
-        const tab = new SettingTab(app as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
 
-        const secretRecords = getMockSecretRecords();
-        expect(secretRecords).toHaveLength(1);
-        const secret = secretRecords[0];
-        expect(secret.onChange).toBeDefined();
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        expect(apiTokenButton?.text).toBe('Add API token');
+        expect(apiTokenButton?.onClick).toBeDefined();
 
-        await secret.onChange!('');
+        await apiTokenButton!.onClick!();
+        await apiTokenButton!.onClick!();
 
-        expect(confirmUserAction).not.toHaveBeenCalled();
-        expect(app.secretStorage.setSecret).not.toHaveBeenCalled();
+        expect(getMockModalInstances()).toHaveLength(1);
+        const modalSecretInput = getMockSettingRecords()
+            .flatMap((record) => record.texts)
+            .find((text) => text.placeholder === 'sk-...');
+        expect(modalSecretInput?.inputEl?.type).toBe('password');
+        expect(modalSecretInput?.inputEl?.autocomplete).toBe('off');
+        expect(modalSecretInput?.inputEl?.autocapitalize).toBe('none');
+        expect(modalSecretInput?.inputEl?.spellcheck).toBe(false);
+        expect(modalSecretInput?.inputEl?.setAttribute).toHaveBeenCalledWith('autocorrect', 'off');
+        expect(modalSecretInput?.inputEl?.focus).not.toHaveBeenCalled();
+        expect(modalSecretInput?.inputEl?.select).not.toHaveBeenCalled();
         expect(plugin.setAPITokenSecret).not.toHaveBeenCalled();
-        expect(plugin.clearTokenCache).not.toHaveBeenCalled();
+
+        getMockModalInstances()[0].close();
+        await apiTokenButton!.onClick!();
+        expect(getMockModalInstances()).toHaveLength(2);
     });
 
-    it('requires confirmation before clearing an existing API token', async () => {
+    it('keeps an existing API token when removal confirmation is canceled', async () => {
         setMockConfirmDecision(false);
         const plugin = makePlugin({ aiProvider: 'qwen' });
-        const app = makeMockApp();
         plugin.getConfiguredAPITokenSecret.mockReturnValue('sk-existing-token');
-        const tab = new SettingTab(app as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
 
-        const secret = getMockSecretRecords()[0];
-        expect(secret.value).toBe('sk-existing-token');
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        expect(apiTokenButton?.text).toBe('Edit API token');
+        await apiTokenButton!.onClick!();
 
-        await secret.onChange!('');
+        const modalSecretInput = getMockSettingRecords()
+            .flatMap((record) => record.texts)
+            .find((text) => text.placeholder === 'sk-...');
+        expect(modalSecretInput?.value).toBe('sk-existing-token');
+        modalSecretInput!.onChange!('');
+        const saveButton = [...getMockSettingRecords()]
+            .reverse()
+            .flatMap((record) => record.buttons)
+            .find((button) => button.text === 'Save');
+        await saveButton!.onClick!();
 
         expect(confirmUserAction).toHaveBeenCalledTimes(1);
-        expect(app.secretStorage.setSecret).not.toHaveBeenCalled();
         expect(plugin.setAPITokenSecret).not.toHaveBeenCalled();
-        expect(secret.value).toBe('sk-existing-token');
-        expect(plugin.clearTokenCache).not.toHaveBeenCalled();
+        expect(saveButton?.disabled).toBe(false);
     });
 
-    it('clears API token through the plugin secret helper after confirmation', async () => {
+    it('clears an existing API token only after confirmation', async () => {
         setMockConfirmDecision(true);
         const plugin = makePlugin({ aiProvider: 'qwen' });
-        const app = makeMockApp();
         plugin.getConfiguredAPITokenSecret.mockReturnValue('sk-existing-token');
-        const tab = new SettingTab(app as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
 
-        const secret = getMockSecretRecords()[0];
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        await apiTokenButton!.onClick!();
+        const modalSecretInput = getMockSettingRecords()
+            .flatMap((record) => record.texts)
+            .find((text) => text.placeholder === 'sk-...');
+        modalSecretInput!.onChange!('');
+        const saveButton = [...getMockSettingRecords()]
+            .reverse()
+            .flatMap((record) => record.buttons)
+            .find((button) => button.text === 'Save');
 
-        await secret.onChange!('');
+        await saveButton!.onClick!();
+        await saveButton!.onClick!();
 
         expect(plugin.setAPITokenSecret).toHaveBeenCalledWith('');
+        expect(plugin.setAPITokenSecret).toHaveBeenCalledTimes(1);
     });
 
-    it('refreshes the visible token row after saving through the custom API token modal', async () => {
+    it('saves once and refreshes the token button through the real click entrypoint', async () => {
         let storedToken: string | null = null;
         const plugin = makePlugin({ aiProvider: 'qwen' });
         const app = makeMockApp();
@@ -3957,10 +4019,11 @@ describe('Phase 3 IA reorder + provider UX', () => {
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
 
-        expect(getMockSecretRecords()).toHaveLength(1);
-        expect(getMockSecretRecords()[0].value).toBeUndefined();
-
-        (tab as unknown as { openApiTokenSecretEditor(): void }).openApiTokenSecretEditor();
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        expect(apiTokenButton?.text).toBe('Add API token');
+        await apiTokenButton!.onClick!();
         const modalSecretInput = getMockSettingRecords()
             .flatMap((record) => record.texts)
             .find((text) => text.placeholder === 'sk-...');
@@ -3973,11 +4036,189 @@ describe('Phase 3 IA reorder + provider UX', () => {
             .find((button) => button.text === 'Save');
         expect(saveButton?.onClick).toBeDefined();
         await saveButton!.onClick!();
+        await saveButton!.onClick!();
 
         expect(plugin.setAPITokenSecret).toHaveBeenCalledWith('sk-modal-token');
-        const secretRecords = getMockSecretRecords();
-        expect(secretRecords).toHaveLength(2);
-        expect(secretRecords[1].value).toBe('sk-modal-token');
+        expect(plugin.setAPITokenSecret).toHaveBeenCalledTimes(1);
+        const latestApiTokenRecord = [...getMockSettingRecords()]
+            .reverse()
+            .find((record) => record.name === 'API Token');
+        expect(latestApiTokenRecord?.buttons[0]?.text).toBe('Edit API token');
+    });
+
+    it('closes the token modal and releases its guard when Settings hides', async () => {
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        Object.assign(containerEl, {
+            ownerDocument: {
+                body: {
+                    classList: {
+                        add: jest.fn(),
+                        remove: jest.fn(),
+                        contains: jest.fn(() => false),
+                    },
+                },
+            },
+        });
+        tab.containerEl = containerEl as never;
+        tab.display();
+
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        await apiTokenButton!.onClick!();
+        expect(getMockModalInstances()).toHaveLength(1);
+
+        tab.hide();
+        await apiTokenButton!.onClick!();
+
+        expect(getMockModalInstances()).toHaveLength(2);
+    });
+
+    it('does not remove a token if Settings closes during confirmation and modal close throws', async () => {
+        let resolveRemoval: ((confirmed: boolean) => void) | undefined;
+        (confirmUserAction as jest.Mock).mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+            resolveRemoval = resolve;
+        }));
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        plugin.getConfiguredAPITokenSecret.mockReturnValue('sk-existing-token');
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        Object.assign(containerEl, {
+            ownerDocument: {
+                body: {
+                    classList: {
+                        add: jest.fn(),
+                        remove: jest.fn(),
+                        contains: jest.fn(() => false),
+                    },
+                },
+            },
+        });
+        tab.containerEl = containerEl as never;
+        tab.display();
+
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        await apiTokenButton!.onClick!();
+        const modalSecretInput = getMockSettingRecords()
+            .flatMap((record) => record.texts)
+            .find((text) => text.placeholder === 'sk-...');
+        modalSecretInput!.onChange!('');
+        const saveButton = [...getMockSettingRecords()]
+            .reverse()
+            .flatMap((record) => record.buttons)
+            .find((button) => button.text === 'Save');
+
+        const pendingSave = saveButton!.onClick!() as Promise<unknown>;
+        await Promise.resolve();
+        (globalThis as typeof globalThis & { __paModalCloseError?: unknown }).__paModalCloseError =
+            new Error('close failed');
+        tab.hide();
+        resolveRemoval!(true);
+        await pendingSave;
+
+        expect(plugin.setAPITokenSecret).not.toHaveBeenCalled();
+        expect(getMockModalInstances()[0].closed).toBe(false);
+        expect(getMockModalInstances()[0].modalEl.remove).toHaveBeenCalledTimes(1);
+        expect(getMockModalInstances()[0].containerEl.remove).toHaveBeenCalledTimes(1);
+        expect(plugin.log).toHaveBeenCalledWith('Failed to close API token editor');
+    });
+
+    it('keeps the token modal retryable after a safe storage-write failure', async () => {
+        const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
+        Notice.mockClear();
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        plugin.setAPITokenSecret.mockImplementationOnce(() => {
+            throw new Error('write failed');
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        await apiTokenButton!.onClick!();
+        const modalSecretInput = getMockSettingRecords()
+            .flatMap((record) => record.texts)
+            .find((text) => text.placeholder === 'sk-...');
+        modalSecretInput!.onChange!('sk-sensitive-token');
+        const saveButton = [...getMockSettingRecords()]
+            .reverse()
+            .flatMap((record) => record.buttons)
+            .find((button) => button.text === 'Save');
+
+        await saveButton!.onClick!();
+
+        expect(saveButton?.disabled).toBe(false);
+        expect(plugin.log).toHaveBeenCalledWith('Failed to save API token');
+        expect(JSON.stringify(plugin.log.mock.calls)).not.toContain('sk-sensitive-token');
+        expect(Notice).toHaveBeenCalledWith('Could not save the API token. Try again.', 4000);
+
+        await saveButton!.onClick!();
+        expect(plugin.setAPITokenSecret).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports a saved token even if refreshing the Settings row fails', async () => {
+        const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
+        Notice.mockClear();
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        await apiTokenButton!.onClick!();
+        const modalSecretInput = getMockSettingRecords()
+            .flatMap((record) => record.texts)
+            .find((text) => text.placeholder === 'sk-...');
+        modalSecretInput!.onChange!('sk-sensitive-token');
+        const saveButton = [...getMockSettingRecords()]
+            .reverse()
+            .flatMap((record) => record.buttons)
+            .find((button) => button.text === 'Save');
+        jest.spyOn(
+            tab as unknown as { rebuildProviderConfig(): void },
+            'rebuildProviderConfig',
+        ).mockImplementationOnce(() => {
+            throw new Error('refresh failed');
+        });
+
+        await saveButton!.onClick!();
+
+        expect(plugin.setAPITokenSecret).toHaveBeenCalledWith('sk-sensitive-token');
+        expect(plugin.log).toHaveBeenCalledWith('Failed to refresh API token setting');
+        expect(JSON.stringify(plugin.log.mock.calls)).not.toContain('sk-sensitive-token');
+        expect(Notice).toHaveBeenCalledWith('API token saved.', 3000);
+        expect(Notice).not.toHaveBeenCalledWith('Could not save the API token. Try again.', 4000);
+        expect(getMockModalInstances()[0].closed).toBe(true);
+    });
+
+    it('cleans up a partially opened token modal and allows retry', async () => {
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        (globalThis as typeof globalThis & { __paModalOpenError?: unknown }).__paModalOpenError =
+            new Error('open failed');
+
+        await apiTokenButton!.onClick!();
+
+        expect(getMockModalInstances()).toHaveLength(1);
+        expect(getMockModalInstances()[0].closed).toBe(true);
+        expect(plugin.log).toHaveBeenCalledWith('Failed to open API token editor');
+
+        delete (globalThis as typeof globalThis & { __paModalOpenError?: unknown }).__paModalOpenError;
+        await apiTokenButton!.onClick!();
+        expect(getMockModalInstances()).toHaveLength(2);
     });
 });
 

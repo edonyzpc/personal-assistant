@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-06-28
+Updated: 2026-08-09
 
 ## Status
 
@@ -22,6 +22,9 @@ Highest-risk Settings issues are no longer open:
 
 - API token migration clears legacy persisted token fields after SecretStorage
   handling.
+- API token editing uses a PA-owned modal over the existing vault-scoped
+  SecretStorage ID. It does not patch Obsidian's private Keychain picker DOM or
+  programmatically focus the password field when the modal opens.
 - Numeric settings use safe parsing and bounds.
 - Metadata add form initializes, validates, and resets values.
 - Runtime-only settings state is not persisted.
