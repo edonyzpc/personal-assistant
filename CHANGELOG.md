@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.1](https://github.com/edonyzpc/personal-assistant/compare/2.9.0...2.9.1) (2026-08-09)
+
+### Fix
+- plugin: guard startup migration when data.json is missing
+
 ## [2.9.0](https://github.com/edonyzpc/personal-assistant/compare/2.8.4...2.9.0) (2026-08-08)
 
 ### Features
