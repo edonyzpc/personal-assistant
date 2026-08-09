@@ -1124,6 +1124,283 @@ describe('Memory governance plugin bootstrap', () => {
         };
     }
 
+    function createPluginDataJsonHarness(initial: Record<string, unknown> | null) {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        let persistedText = initial === null ? null : JSON.stringify(initial);
+        const temporaryFiles = new Map<string, string>();
+        let beforeCopy: (() => void) | null = null;
+        let beforeProcess: (() => void) | null = null;
+        let beforeRead: (() => void) | null = null;
+        const missingFileError = () => Object.assign(new Error('data.json is missing'), { code: 'ENOENT' });
+        const existingFileError = () => Object.assign(new Error('data.json already exists'), { code: 'EEXIST' });
+        const adapter = {
+            read: jest.fn(async () => {
+                const callback = beforeRead;
+                beforeRead = null;
+                callback?.();
+                if (persistedText === null) throw missingFileError();
+                return persistedText;
+            }),
+            write: jest.fn(async (path: string, data: string) => {
+                temporaryFiles.set(path, data);
+            }),
+            copy: jest.fn(async (sourcePath: string, _destinationPath: string) => {
+                beforeCopy?.();
+                beforeCopy = null;
+                if (persistedText !== null) throw existingFileError();
+                const source = temporaryFiles.get(sourcePath);
+                if (source === undefined) throw missingFileError();
+                persistedText = source;
+            }),
+            remove: jest.fn(async (path: string) => {
+                temporaryFiles.delete(path);
+            }),
+            process: jest.fn(async (_path: string, mutate: (data: string) => string) => {
+                const callback = beforeProcess;
+                beforeProcess = null;
+                callback?.();
+                if (persistedText === null) throw missingFileError();
+                persistedText = mutate(persistedText);
+                return persistedText;
+            }),
+        };
+        plugin.app = {
+            ...createMigrationApp(),
+            vault: {
+                configDir: '.obsidian',
+                adapter,
+            },
+        };
+        plugin.manifest = {
+            id: 'personal-assistant',
+            dir: '.obsidian/plugins/personal-assistant',
+        };
+        plugin.loadData = jest.fn(async () => (
+            persistedText === null ? null : JSON.parse(persistedText)
+        ));
+        plugin.saveData = jest.fn(async (next: unknown) => {
+            persistedText = JSON.stringify(next);
+        });
+        plugin.log = jest.fn();
+        plugin.settingsSaveTail = null;
+        plugin.settingsChangeListeners = new Set();
+        plugin.unloading = false;
+        return {
+            plugin,
+            adapter,
+            readPersisted: () => persistedText === null ? null : JSON.parse(persistedText),
+            writePersisted: (next: Record<string, unknown>) => {
+                persistedText = JSON.stringify(next);
+            },
+            beforeNextCopy: (callback: () => void) => { beforeCopy = callback; },
+            beforeNextProcess: (callback: () => void) => { beforeProcess = callback; },
+            beforeNextRead: (callback: () => void) => { beforeRead = callback; },
+        };
+    }
+
+    function freshMigrationSettings() {
+        return {
+            ...rawSettings(),
+            aiProvider: '',
+            statisticsVaultId: '',
+            reviewQueue: { enabled: true, items: [] },
+            memoryGovernance: { records: [] },
+            confirmedMemoryCount: 0,
+            memoryAutoAcceptPaused: false,
+        };
+    }
+
+    it('creates missing plugin data before the fresh-install migration transaction', async () => {
+        const { plugin, adapter, readPersisted } = createPluginDataJsonHarness(null);
+
+        await plugin.loadSettings();
+        plugin.settings = freshMigrationSettings();
+        await plugin.migrateSettings();
+
+        expect(plugin.saveData).not.toHaveBeenCalled();
+        expect(adapter.write).toHaveBeenCalledTimes(1);
+        const temporaryPath = adapter.write.mock.calls[0][0];
+        expect(temporaryPath).toMatch(
+            /^\.obsidian\/plugins\/personal-assistant\/data\.json\.init-.+\.tmp$/,
+        );
+        expect(adapter.write).toHaveBeenCalledWith(temporaryPath, '{}');
+        expect(adapter.copy).toHaveBeenCalledWith(
+            temporaryPath,
+            '.obsidian/plugins/personal-assistant/data.json',
+        );
+        expect(adapter.remove).toHaveBeenCalledWith(temporaryPath);
+        expect(adapter.process).toHaveBeenCalledTimes(1);
+        expect(adapter.process).toHaveBeenCalledWith(
+            '.obsidian/plugins/personal-assistant/data.json',
+            expect.any(Function),
+        );
+        expect(readPersisted()).toMatchObject({
+            aiProvider: '',
+            statisticsVaultId: expect.any(String),
+        });
+        expect(plugin.settings.statisticsVaultId).not.toBe('');
+        expect(plugin.legacyMemoryCompatibilityBarrier.isActive()).toBe(true);
+    });
+
+    it('keeps an existing empty data file on the atomic migration path', async () => {
+        const { plugin, adapter } = createPluginDataJsonHarness({});
+
+        await plugin.loadSettings();
+        plugin.settings = freshMigrationSettings();
+        await plugin.migrateSettings();
+
+        expect(plugin.saveData).not.toHaveBeenCalled();
+        expect(adapter.write).not.toHaveBeenCalled();
+        expect(adapter.copy).not.toHaveBeenCalled();
+        expect(adapter.process).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves plugin data that appears during fresh initialization', async () => {
+        const {
+            plugin,
+            adapter,
+            readPersisted,
+            writePersisted,
+            beforeNextCopy,
+        } = createPluginDataJsonHarness(null);
+        const concurrent = {
+            ...rawSettings(),
+            statisticsVaultId: '',
+        };
+        beforeNextCopy(() => writePersisted(concurrent));
+
+        await plugin.loadSettings();
+        await plugin.migrateSettings();
+
+        expect(adapter.copy).toHaveBeenCalledTimes(1);
+        expect(plugin.saveData).not.toHaveBeenCalled();
+        expect(adapter.process).toHaveBeenCalledTimes(1);
+        expect(readPersisted()).toMatchObject({
+            aiProvider: 'openai',
+            statisticsVaultId: expect.any(String),
+            memoryGovernance: concurrent.memoryGovernance,
+            reviewQueue: concurrent.reviewQueue,
+            confirmedMemoryCount: concurrent.confirmedMemoryCount,
+            memoryAutoAcceptPaused: concurrent.memoryAutoAcceptPaused,
+        });
+    });
+
+    it('reloads plugin data that changes after fresh initialization but before migration', async () => {
+        const {
+            plugin,
+            adapter,
+            readPersisted,
+            writePersisted,
+            beforeNextProcess,
+        } = createPluginDataJsonHarness(null);
+        const concurrent = {
+            ...rawSettings(),
+            statisticsVaultId: '',
+        };
+
+        await plugin.loadSettings();
+        plugin.settings = freshMigrationSettings();
+        beforeNextProcess(() => writePersisted(concurrent));
+        await plugin.migrateSettings();
+
+        expect(adapter.process).toHaveBeenCalledTimes(2);
+        expect(plugin.saveData).not.toHaveBeenCalled();
+        expect(readPersisted()).toMatchObject({
+            aiProvider: 'openai',
+            statisticsVaultId: expect.any(String),
+            memoryGovernance: concurrent.memoryGovernance,
+            reviewQueue: concurrent.reviewQueue,
+            confirmedMemoryCount: concurrent.confirmedMemoryCount,
+            memoryAutoAcceptPaused: concurrent.memoryAutoAcceptPaused,
+        });
+    });
+
+    it('fails closed when plugin data keeps changing during startup migration', async () => {
+        const {
+            plugin,
+            adapter,
+            readPersisted,
+            writePersisted,
+            beforeNextProcess,
+        } = createPluginDataJsonHarness(null);
+        let revision = 0;
+        const replaceBeforeProcess = () => {
+            writePersisted({
+                ...rawSettings(),
+                statisticsVaultId: '',
+                author: `remote-${revision}`,
+            });
+            revision += 1;
+            beforeNextProcess(replaceBeforeProcess);
+        };
+
+        await plugin.loadSettings();
+        plugin.settings = freshMigrationSettings();
+        beforeNextProcess(replaceBeforeProcess);
+
+        await expect(plugin.migrateSettings()).rejects.toThrow(
+            'Plugin settings changed while startup migration was running.',
+        );
+
+        expect(adapter.process).toHaveBeenCalledTimes(3);
+        expect(plugin.saveData).not.toHaveBeenCalled();
+        expect(readPersisted()).toMatchObject({
+            author: 'remote-2',
+            statisticsVaultId: '',
+            memoryGovernance: rawSettings().memoryGovernance,
+        });
+    });
+
+    it('reloads when plugin data changes between migration write and readback', async () => {
+        const {
+            plugin,
+            adapter,
+            readPersisted,
+            writePersisted,
+            beforeNextRead,
+        } = createPluginDataJsonHarness({
+            ...rawSettings(),
+            statisticsVaultId: '',
+        });
+
+        await plugin.loadSettings();
+        beforeNextRead(() => writePersisted({
+            ...rawSettings(),
+            statisticsVaultId: '',
+            author: 'remote-after-write',
+        }));
+        await plugin.migrateSettings();
+
+        expect(adapter.process).toHaveBeenCalledTimes(2);
+        expect(readPersisted()).toMatchObject({
+            author: 'remote-after-write',
+            statisticsVaultId: expect.any(String),
+            memoryGovernance: rawSettings().memoryGovernance,
+        });
+    });
+
+    it('does not overwrite plugin data when the initial read is indeterminate', async () => {
+        const { plugin } = createPluginDataJsonHarness({ existing: true });
+        plugin.loadData = jest.fn(async () => undefined);
+
+        await plugin.loadSettings();
+
+        expect(plugin.saveData).not.toHaveBeenCalled();
+        expect(plugin.app.vault.adapter.write).not.toHaveBeenCalled();
+    });
+
+    it('fails startup when missing plugin data cannot be copied into place', async () => {
+        const { plugin, adapter } = createPluginDataJsonHarness(null);
+        const error = Object.assign(new Error('data.json is not writable'), { code: 'EACCES' });
+        adapter.copy.mockRejectedValueOnce(error);
+
+        await expect(plugin.loadSettings()).rejects.toBe(error);
+
+        expect(plugin.saveData).not.toHaveBeenCalled();
+        expect(adapter.remove).toHaveBeenCalledTimes(1);
+        expect(adapter.process).not.toHaveBeenCalled();
+    });
+
     async function createGovernedUseGateHarness() {
         const persisted = rawSettings();
         Object.assign(persisted, {

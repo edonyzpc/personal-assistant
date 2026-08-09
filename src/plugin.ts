@@ -435,6 +435,13 @@ class MemoryGovernanceBootstrapError extends Error {
     }
 }
 
+class PluginDataJsonMigrationConflictError extends Error {
+    constructor() {
+        super("Plugin settings changed while startup migration was running.");
+        this.name = "PluginDataJsonMigrationConflictError";
+    }
+}
+
 export function createMemoryGovernanceOpaqueVaultKey(
     statisticsVaultId: string,
     deviceVaultScope: string,
@@ -1153,6 +1160,10 @@ function cloneSerializable<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function fingerprintPluginData(value: unknown): string {
+    return value === undefined ? "undefined" : stableStringify(value);
+}
+
 function readVaultInsightsInjectionNoticeFlag(): boolean {
     try {
         return getPlatformLocalStorage()?.getItem(VAULT_INSIGHTS_INJECTION_NOTICE_KEY) === "1";
@@ -1286,6 +1297,7 @@ export class PluginManager extends Plugin {
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private settingsSaveTail: Promise<void> | null = null;
+    private settingsMigrationBaselineFingerprint: string | null = null;
     private memoryQueueAuditPromise: Promise<void> | null = null;
     private hoverPopoverObserver: MutationObserver | null = null;
     private resizeDebounceTimer: TimeoutHandle | null = null;
@@ -10112,7 +10124,11 @@ export class PluginManager extends Plugin {
     }
 
     async loadSettings() {
-        const loaded = await this.loadData();
+        let loaded = await this.loadData();
+        if (loaded === null) {
+            loaded = await this.initializeMissingPluginDataJson();
+        }
+        this.settingsMigrationBaselineFingerprint = fingerprintPluginData(loaded);
         this.legacyMemoryCompatibilityBarrier = new LegacyMemoryCompatibilityBarrier(loaded);
         this.legacyMemoryPayload = this.legacyMemoryCompatibilityBarrier.snapshot();
         const fresh = isFreshInstall(loaded);
@@ -10218,7 +10234,12 @@ export class PluginManager extends Plugin {
             await this.saveData(this.settings);
             return;
         }
+        const migrationBaseline = this.settingsMigrationBaselineFingerprint ?? null;
         const processed = await this.processPluginDataJson((persisted) => {
+            if (migrationBaseline !== null
+                && fingerprintPluginData(persisted) !== migrationBaseline) {
+                throw new PluginDataJsonMigrationConflictError();
+            }
             const composed = barrier.composeForSave(this.settings, persisted);
             if (!composed.ok) {
                 this.memoryGovernanceBootstrapErrorCode = composed.errorCode;
@@ -10226,6 +10247,10 @@ export class PluginManager extends Plugin {
             }
             return composed.payload;
         });
+        if (migrationBaseline !== null
+            && fingerprintPluginData(processed.written) !== fingerprintPluginData(processed.readback)) {
+            throw new PluginDataJsonMigrationConflictError();
+        }
         if (!barrier.refreshFromPersisted(processed.readback)) {
             throw new MemoryGovernanceBootstrapError("legacy_save_collision");
         }
@@ -10272,6 +10297,42 @@ export class PluginManager extends Plugin {
                 `plugins/${this.manifest?.id?.trim() || "personal-assistant"}`,
             );
         return normalizePath(`${pluginDir}/data.json`);
+    }
+
+    private async initializeMissingPluginDataJson(): Promise<unknown> {
+        const adapter = this.app.vault.adapter;
+        const dataPath = this.getPluginDataJsonPath();
+        const temporaryPath = normalizePath(
+            `${dataPath}.init-${createStatisticsVaultId()}.tmp`,
+        );
+        let temporaryWritten = false;
+        try {
+            await adapter.write(temporaryPath, "{}");
+            temporaryWritten = true;
+            try {
+                // DataAdapter.copy() must fail when the destination exists, so
+                // a Sync arrival or another plugin instance cannot be replaced
+                // by this fresh-install seed.
+                await adapter.copy(temporaryPath, dataPath);
+            } catch (error) {
+                const concurrent = await this.loadData();
+                if (concurrent !== null && concurrent !== undefined) return concurrent;
+                throw error;
+            }
+            const created = await this.loadData();
+            if (created === null || created === undefined) {
+                throw new Error("Failed to initialize Personal Assistant settings storage.");
+            }
+            return created;
+        } finally {
+            if (temporaryWritten) {
+                try {
+                    await adapter.remove(temporaryPath);
+                } catch (error) {
+                    this.log("Failed to clean up settings initialization file", error);
+                }
+            }
+        }
     }
 
     private async processPluginDataJson(
@@ -11418,6 +11479,27 @@ export class PluginManager extends Plugin {
      * 迁移旧版本设置到新版本
      */
     private async migrateSettings(): Promise<void> {
+        const maxAttempts = 3;
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            try {
+                await this.migrateSettingsOnce();
+                this.settingsMigrationBaselineFingerprint = null;
+                return;
+            } catch (error) {
+                if (!(error instanceof PluginDataJsonMigrationConflictError)) {
+                    this.settingsMigrationBaselineFingerprint = null;
+                    throw error;
+                }
+                if (attempt === maxAttempts - 1) {
+                    this.settingsMigrationBaselineFingerprint = null;
+                    throw error;
+                }
+                await this.loadSettings();
+            }
+        }
+    }
+
+    private async migrateSettingsOnce(): Promise<void> {
         try {
             let changed = false;
             const settingsWithLegacyModel = this.settings as PluginManagerSettings & { modelName?: unknown };
