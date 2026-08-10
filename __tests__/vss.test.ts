@@ -880,7 +880,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(embedDocuments.mock.calls.map(call => call[0].length)).toEqual([10, 10, 1]);
         expect(createEmbeddings).toHaveBeenCalledWith(1024, expect.objectContaining({
             batchSize: 10,
-            maxConcurrency: 1,
+            maxConcurrency: 3,
             maxRetries: 0,
         }));
         expect(index.upsertFile).toHaveBeenCalledTimes(21);

@@ -2343,11 +2343,21 @@ export class VSS {
     ): Promise<number[][]> {
         const policy = this.getEmbeddingBatchPolicy();
         const embeddingsModelProvider = getEmbeddingsModel ?? this.createEmbeddingsModelProvider(policy.createOptions);
-        const embeddings: number[][] = [];
+        const batches: string[][] = [];
         for (let i = 0; i < texts.length; i += policy.maxBatchItems) {
+            batches.push(texts.slice(i, i + policy.maxBatchItems));
+        }
+        const concurrency = policy.createOptions.maxConcurrency ?? 1;
+        const embeddings: number[][] = [];
+        for (let g = 0; g < batches.length; g += concurrency) {
             this.assertActive();
-            const batch = texts.slice(i, i + policy.maxBatchItems);
-            embeddings.push(...await this.embedDocumentsWithRetry(batch, embeddingsModelProvider, policy));
+            const group = batches.slice(g, g + concurrency);
+            const results = await Promise.all(
+                group.map(batch => this.embedDocumentsWithRetry(batch, embeddingsModelProvider, policy)),
+            );
+            for (const result of results) {
+                embeddings.push(...result);
+            }
             this.assertActive();
         }
         return embeddings;
@@ -2410,7 +2420,7 @@ export class VSS {
                 retryDelaysMs,
                 createOptions: {
                     batchSize: 10,
-                    maxConcurrency: 1,
+                    maxConcurrency: 3,
                     maxRetries: 0,
                 },
             };

@@ -8,7 +8,7 @@ import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 import type { VSSChunk } from "./types";
 
 export const EMBEDDING_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000];
-export const QWEN_TEXT_EMBEDDING_SAFE_TPM = 900_000;
+export const QWEN_TEXT_EMBEDDING_SAFE_TPM = 1_000_000;
 
 export type EmbeddingsModel = Awaited<ReturnType<AIUtils["createEmbeddings"]>>;
 export type EmbeddingsModelProvider = () => Promise<EmbeddingsModel>;
