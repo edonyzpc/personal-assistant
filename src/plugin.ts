@@ -1294,6 +1294,7 @@ export class PluginManager extends Plugin {
     private backlinkMapCache: { map: Map<string, string[]>; builtAt: number } | null = null;
     private static readonly BACKLINK_MAP_TTL_MS = 30_000;
     private token: string = "";
+    private hasTokenCached: boolean | null = null;
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private settingsSaveTail: Promise<void> | null = null;
@@ -1691,6 +1692,10 @@ export class PluginManager extends Plugin {
 
     private async onLayoutReady(): Promise<void> {
         if (this.unloading) return;
+
+        if (this.hasTokenCached === null && this.settings.aiProvider) {
+            this.hasTokenCached = hasSecretValue(this.getConfiguredAPITokenSecret());
+        }
 
         this.setupHoverPopoverObserver();
         await this.initializeMemorySubsystem();
@@ -10151,6 +10156,7 @@ export class PluginManager extends Plugin {
             // defaulting to qwen. The Settings UI renders a "Choose your
             // AI provider" prompt while aiProvider is empty.
             this.settings.aiProvider = "";
+            this.hasTokenCached = false;
         }
         // Detect when a pre-existing `pagelet.reviewsFolder` was just coerced
         // by the now-stricter validator (e.g. an early-beta user stored a path
@@ -11727,10 +11733,15 @@ export class PluginManager extends Plugin {
             }
         }
         this.clearTokenCache();
+        this.hasTokenCached = hasSecretValue(value);
     }
 
     hasConfiguredAPIToken(): boolean {
         return hasSecretValue(this.getConfiguredAPITokenSecret());
+    }
+
+    hasTokenCachedValue(): boolean | null {
+        return this.hasTokenCached;
     }
 
     getAISetupIssue(): string | null {
@@ -11752,15 +11763,18 @@ export class PluginManager extends Plugin {
         }
         const token = this.getConfiguredAPITokenSecret();
         if (!hasSecretValue(token)) {
+            this.hasTokenCached = false;
             new Notice(this.t("plugin.notice.apiTokenNotConfigured"), 5000);
             return "";
         }
+        this.hasTokenCached = true;
         this.token = token;
         return token;
     }
 
     clearTokenCache(): void {
         this.token = "";
+        this.hasTokenCached = null;
     }
 }
 

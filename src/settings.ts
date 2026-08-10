@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Modal, Notice, PluginSettingTab, Setting, debounce } from "obsidian";
+import { App, Modal, Notice, Platform, PluginSettingTab, Setting, debounce } from "obsidian";
 
 import type { PluginManager } from "./plugin"
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
@@ -2288,12 +2288,8 @@ export class SettingTab extends PluginSettingTab {
                     plugin.settings.statisticsType = value;
                     await plugin.saveSettings();
 
-                    // popup view
-                    const leaf = this.app.workspace.getLeaf("window");
-                    await leaf.setViewState({
-                        type: STAT_PREVIEW_TYPE,
-                        active: false,
-                    });
+                    const leaf = this.app.workspace.getLeaf(Platform.isDesktop ? "window" : true);
+                    await leaf.setViewState({ type: STAT_PREVIEW_TYPE, active: !Platform.isDesktop });
                     await this.app.workspace.revealLeaf(leaf);
                 });
             });
@@ -2459,7 +2455,7 @@ export class SettingTab extends PluginSettingTab {
             .setName(this.t("plugin.settings.ai.apiToken.name"))
             .setDesc(this.t("plugin.settings.ai.apiToken.desc"))
             .addButton((button) => {
-                const hasToken = hasSecretValue(plugin.getConfiguredAPITokenSecret());
+                const hasToken = plugin.hasTokenCachedValue() ?? hasSecretValue(plugin.getConfiguredAPITokenSecret());
                 button
                     .setButtonText(this.t(hasToken
                         ? "plugin.settings.apiToken.modal.editTitle"

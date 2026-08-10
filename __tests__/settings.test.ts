@@ -820,6 +820,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         showAiInsights: jest.fn(),
         getAPITokenSecretId: jest.fn(() => 'pa-api-token-vault-test'),
         getConfiguredAPITokenSecret: jest.fn<() => string | null>(() => null),
+        hasTokenCachedValue: jest.fn<() => boolean | null>(() => null),
         setAPITokenSecret: jest.fn(),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
