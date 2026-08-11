@@ -11,7 +11,9 @@ import {
     type PaAgentModelInput,
     type PaAgentModelStreamChunk,
 } from "../src/ai-services/pa-agent-loop";
+import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
 import type { AgentEvent } from "../src/ai-services/chat-types";
+import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy";
 
 describe("PaAgentLoop", () => {
     beforeEach(() => {
@@ -70,6 +72,363 @@ describe("PaAgentLoop", () => {
             "model:1",
             "release:1",
         ]);
+    });
+
+    it("prepares request-local model input before every logical provider turn", async () => {
+        const preparedTurns: number[] = [];
+        const modelInputs: PaAgentModelInput[] = [];
+        const loop = new PaAgentLoop({
+            runId: "run-request-gate",
+            userInput: "use memory",
+            prepareModelInput: async (input) => {
+                preparedTurns.push(input.turnIndex);
+                return {
+                    ...input,
+                    transcript: input.transcript.map((message) => message.role === "toolResult"
+                        ? {
+                            ...message,
+                            content: { ...message.content, promptText: "GATED MEMORY" },
+                        }
+                        : message),
+                };
+            },
+            model: {
+                stream: async function* (input) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: "toolcall_delta",
+                            id: "memory-call",
+                            name: "search_memory",
+                            input: { query: "x" },
+                            index: 0,
+                        } as const;
+                        return;
+                    }
+                    yield { type: "text_delta", text: "Done." } as const;
+                },
+            },
+            toolExecutor: {
+                execute: async () => ({ outcome: "success", promptText: "STALE MEMORY" }),
+            },
+            hostPolicy: {
+                afterTurn: (summary) => summary.status === "tool_results_ready"
+                    ? { action: "continue", reason: "tool_results_ready" }
+                    : { action: "stop", status: "completed", reason: "done" },
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        await loop.run();
+
+        expect(preparedTurns).toEqual([0, 1]);
+        expect(modelInputs[1]?.transcript.find((message) => message.role === "toolResult"))
+            .toMatchObject({ content: { promptText: "GATED MEMORY" } });
+        expect(modelInputs[1]?.prepareForProviderRetry).toEqual(expect.any(Function));
+    });
+
+    it("bounds provider-input revalidation by the soft deadline and preserves finalization", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const reserveEvents: Array<{ stage: string; remainingMs: number }> = [];
+            let preparationSignal: AbortSignal | undefined;
+            const loop = new PaAgentLoop({
+                runId: "run-provider-preparation-deadline",
+                userInput: "use memory",
+                prepareModelInput: (input) => {
+                    if (input.toolMode === "final_answer_only") return Promise.resolve(input);
+                    preparationSignal = input.signal;
+                    return new Promise((_resolve, reject) => {
+                        input.signal?.addEventListener("abort", () => {
+                            const error = new Error("provider preparation aborted");
+                            error.name = "AbortError";
+                            reject(error);
+                        }, { once: true });
+                    });
+                },
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        yield { type: "text_delta", text: "Final answer." } as const;
+                    },
+                },
+                hostPolicy: {
+                    afterTurn: (summary) => summary.diagnostics.some((item) => (
+                        item.type === "finalization_reserve_reached"
+                    ))
+                        ? {
+                            action: "continue" as const,
+                            reason: "corrective_turn" as const,
+                            toolMode: "final_answer_only" as const,
+                        }
+                        : { action: "stop" as const, status: "completed" as const, reason: "done" },
+                },
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                onFinalizationReserve: (event) => reserveEvents.push(event),
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(preparationSignal?.aborted).toBe(true);
+            expect(modelInputs).toHaveLength(1);
+            expect(modelInputs[0]?.toolMode).toBe("final_answer_only");
+            expect(result.status).toBe("completed");
+            expect(result.turns[0]?.diagnostics).toEqual([
+                expect.objectContaining({ type: "finalization_reserve_reached" }),
+            ]);
+            expect(reserveEvents.map((event) => event.stage)).toEqual(["entered", "completed"]);
+            expect(reserveEvents.every((event) => event.remainingMs >= 0)).toBe(true);
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("runs the reserved final-answer turn with the production Required Capability policy", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Use Memory to answer this.",
+                availableCapabilities: new Set<"search_memory">(["search_memory"]),
+                classification: {
+                    items: [{
+                        capability: "search_memory",
+                        confidence: 1,
+                        level: "required",
+                        reason: "explicit Memory request",
+                    }],
+                },
+            });
+            const loop = new PaAgentLoop({
+                runId: "run-production-policy-provider-deadline",
+                userInput: "Use Memory to answer this.",
+                prepareModelInput: (input) => {
+                    if (input.turnIndex !== 1 || input.toolMode === "final_answer_only") {
+                        return Promise.resolve(input);
+                    }
+                    return new Promise((_resolve, reject) => {
+                        input.signal?.addEventListener("abort", () => {
+                            const error = new Error("provider preparation aborted");
+                            error.name = "AbortError";
+                            reject(error);
+                        }, { once: true });
+                    });
+                },
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        if (input.turnIndex === 0) {
+                            yield {
+                                type: "toolcall_delta",
+                                id: "memory-call",
+                                name: "search_memory",
+                                input: { query: "launch" },
+                                index: 0,
+                            } as const;
+                            return;
+                        }
+                        yield { type: "text_delta", text: "Final answer from available context." } as const;
+                    },
+                },
+                toolExecutor: {
+                    execute: async () => ({
+                        outcome: "success",
+                        promptText: "Memory observation",
+                    }),
+                },
+                hostPolicy: policy.hostPolicy,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([
+                undefined,
+                "final_answer_only",
+            ]);
+            expect(result.turns.map((turn) => turn.status)).toEqual([
+                "tool_results_ready",
+                "incomplete",
+                "completed",
+            ]);
+            expect(result.committedFinalText).toBe("Final answer from available context.");
+            expect(result.status).toBe("completed");
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("stops after one empty Loop-reserved turn under the production Required Capability policy", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const reserveEvents: Array<{ stage: string; remainingMs: number }> = [];
+            const execute = jest.fn(async () => ({
+                outcome: "success" as const,
+                promptText: "Memory observation",
+            }));
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Use Memory to answer this.",
+                availableCapabilities: new Set<"search_memory">(["search_memory"]),
+                classification: {
+                    items: [{
+                        capability: "search_memory",
+                        confidence: 1,
+                        level: "required",
+                        reason: "explicit Memory request",
+                    }],
+                },
+            });
+            const loop = new PaAgentLoop({
+                runId: "run-production-policy-empty-reserve",
+                userInput: "Use Memory to answer this.",
+                prepareModelInput: (input) => {
+                    if (input.turnIndex !== 1 || input.toolMode === "final_answer_only") {
+                        return Promise.resolve(input);
+                    }
+                    return new Promise((_resolve, reject) => {
+                        input.signal?.addEventListener("abort", () => {
+                            const error = new Error("provider preparation aborted");
+                            error.name = "AbortError";
+                            reject(error);
+                        }, { once: true });
+                    });
+                },
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        if (input.turnIndex === 0) {
+                            yield {
+                                type: "toolcall_delta",
+                                id: "memory-call-empty-reserve",
+                                name: "search_memory",
+                                input: { query: "launch" },
+                                index: 0,
+                            } as const;
+                        }
+                    },
+                },
+                toolExecutor: { execute },
+                hostPolicy: policy.hostPolicy,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                onFinalizationReserve: (event) => reserveEvents.push(event),
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([
+                undefined,
+                "final_answer_only",
+            ]);
+            expect(execute).toHaveBeenCalledTimes(1);
+            expect(result.status).toBe("incomplete");
+            expect(result.endPayload).toMatchObject({
+                reason: "finalization_reserve_exhausted",
+            });
+            expect(reserveEvents.map((event) => event.stage)).toEqual(["entered", "exhausted"]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("rejects tools and stops after one Loop-reserved turn under the production Pagelet policy", async () => {
+        jest.useFakeTimers();
+        try {
+            const startedAt = Date.now();
+            const modelInputs: PaAgentModelInput[] = [];
+            const execute = jest.fn(async () => ({
+                outcome: "success" as const,
+                promptText: "Anchor observation",
+                sourceRecords: [{
+                    kind: "context-used" as const,
+                    dedupKey: "notes/anchor.md",
+                    path: "notes/anchor.md",
+                }],
+            }));
+            const loop = new PaAgentLoop({
+                runId: "run-pagelet-policy-reserved-tool",
+                userInput: "discover",
+                prepareModelInput: (input) => {
+                    if (input.turnIndex !== 1 || input.toolMode === "final_answer_only") {
+                        return Promise.resolve(input);
+                    }
+                    return new Promise((_resolve, reject) => {
+                        input.signal?.addEventListener("abort", () => {
+                            const error = new Error("provider preparation aborted");
+                            error.name = "AbortError";
+                            reject(error);
+                        }, { once: true });
+                    });
+                },
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        yield {
+                            type: "toolcall_delta",
+                            id: input.toolMode === "final_answer_only"
+                                ? "forbidden-reserved-tool"
+                                : "anchor-tool",
+                            name: input.toolMode === "final_answer_only"
+                                ? "inspect_obsidian_note"
+                                : "get_current_note_context",
+                            input: input.toolMode === "final_answer_only"
+                                ? { path: "notes/other.md" }
+                                : { mode: "full" },
+                            index: 0,
+                        } as const;
+                    },
+                },
+                toolExecutor: { execute },
+                hostPolicy: new PageletLeadDrivenPolicy({
+                    anchorPath: "notes/anchor.md",
+                    maxTurns: 10,
+                    maxToolCalls: 10,
+                    maxWallClockMs: 100,
+                    now: Date.now,
+                    startedAt,
+                    finalizationReserveMs: 30,
+                }),
+                maxTurns: 10,
+                maxToolCalls: 10,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([
+                undefined,
+                "final_answer_only",
+            ]);
+            expect(execute).toHaveBeenCalledTimes(1);
+            expect(result.status).toBe("incomplete");
+            expect(result.endPayload).toMatchObject({
+                reason: "finalization_reserve_exhausted",
+                diagnostics: expect.arrayContaining([
+                    expect.objectContaining({ type: "final_answer_only_violation" }),
+                ]),
+            });
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("releases the turn lease when cancellation stops an active turn", async () => {
@@ -203,13 +562,9 @@ describe("PaAgentLoop", () => {
                 turnIndex: 0,
                 toolMode: "final_answer_only",
             });
-            expect(policySummaries[0]).toMatchObject({
-                status: "incomplete",
-                diagnostics: [expect.objectContaining({
-                    type: "finalization_reserve_reached",
-                    finalizationReserveMs: 30,
-                })],
-            });
+            // The Loop owns the single reserved turn and its terminal result;
+            // Host policy cannot schedule a second final-only provider call.
+            expect(policySummaries).toEqual([]);
         } finally {
             jest.useRealTimers();
         }

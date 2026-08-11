@@ -8,6 +8,7 @@
     "module": "ESNext",
     "target": "ES2020",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "allowJs": true,
     "importHelpers": true,

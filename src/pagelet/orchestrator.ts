@@ -78,7 +78,9 @@ import type { PageletHost } from "./PageletHost";
 import { serializePageletFindings } from "../share-card/share-card-markdown";
 import { ShareCardModal } from "../share-card/share-card-modal";
 import type { ShareCardData } from "../share-card/share-card-types";
-import { pageletAgentInsightToDeliveryCandidate } from "./agent/delivery-adapter";
+import {
+    pageletAgentCollectionToDeliveryCandidates,
+} from "./agent/delivery-adapter";
 import type { PageletAgentDeliveryCandidate } from "./agent/delivery-adapter";
 import type { PageletDeepDiscoverControllerResult } from "./agent/types";
 import { resolveRelatedMarkdownNote } from "./related-note";
@@ -170,10 +172,11 @@ export class PageletOrchestrator {
     private readonly activityDebounceTimers = new Map<string, PlatformTimeoutHandle>();
     private currentMarkdownAnchorPath: string | null = null;
     private agentInsightCandidate: PageletAgentDeliveryCandidate | null = null;
+    private pendingAgentInsightCandidates: PageletAgentDeliveryCandidate[] = [];
     private agentInsightAnchorPath: string | null = null;
     private agentInsightPolicyIdentity: string | null = null;
     private openAgentInsightCandidate: PageletAgentDeliveryCandidate | null = null;
-    private agentInsightNudgeKey: string | null = null;
+    private readonly agentInsightNudgeKeys = new Set<string>();
     private agentInsightActionState: PageletInsightActionState = { kind: "idle" };
     private agentInsightActionToken = 0;
     private agentInsightActionAbortController: AbortController | null = null;
@@ -326,10 +329,9 @@ export class PageletOrchestrator {
             onAgentInsightView: (candidate) => this.openAgentInsightPanel(
                 candidate as PageletAgentDeliveryCandidate,
             ),
-            onAgentInsightLater: () => {
-                this.agentInsightNudgeKey = null;
-                this.reconcilePetNudge();
-            },
+            onAgentInsightLater: (candidate) => this.dismissAgentInsightNudge(
+                candidate as PageletAgentDeliveryCandidate,
+            ),
             onNudgePresented: (ticket) => this.handleNudgePresented(ticket),
             getUnconvincingRecallCount: () => this.unconvincingRecallCount,
             isDeliverySeen: (receipt) => this.attentionStore.isSeen(receipt),
@@ -898,7 +900,7 @@ export class PageletOrchestrator {
     }
 
     private clearGenericNudgeAdmissions(): void {
-        this.agentInsightNudgeKey = null;
+        this.agentInsightNudgeKeys.clear();
         this.patternDetectionNudgeAdmissionKey = null;
         this.onboardingNudgeAdmissionKey = null;
     }
@@ -1097,18 +1099,37 @@ export class PageletOrchestrator {
         return Boolean(receipt && this.attentionStore.isSeen(receipt));
     }
 
+    private agentInsightTicketKey(candidate: Pick<PageletAgentDeliveryCandidate, "id">): string {
+        return `${NudgeOwner.AgentInsight}:${candidate.id}`;
+    }
+
+    private dismissAgentInsightNudge(candidate: PageletAgentDeliveryCandidate): void {
+        this.agentInsightNudgeKeys.delete(this.agentInsightTicketKey(candidate));
+        this.reconcilePetNudge();
+    }
+
     private currentAgentInsightCandidate(): PageletAgentDeliveryCandidate | null {
         this.invalidateAgentInsightIfPolicyChanged();
-        const candidate = this.agentInsightCandidate;
+        let candidate = this.agentInsightCandidate;
+        if (
+            candidate
+            && this.deliveryCandidateIsSeen(candidate)
+            && this.pendingAgentInsightCandidates.length > 0
+        ) {
+            this.agentInsightNudgeKeys.delete(this.agentInsightTicketKey(candidate));
+            this.agentInsightCandidate = this.pendingAgentInsightCandidates.shift() ?? null;
+            candidate = this.agentInsightCandidate;
+        }
         return candidate && !this.deliveryCandidateIsSeen(candidate) ? candidate : null;
     }
 
     private clearAgentInsight(options: { closePanel?: boolean } = {}): void {
         this.cancelPendingAgentInsightAction();
         this.agentInsightCandidate = null;
+        this.pendingAgentInsightCandidates = [];
         this.agentInsightAnchorPath = null;
         this.agentInsightPolicyIdentity = null;
-        this.agentInsightNudgeKey = null;
+        this.agentInsightNudgeKeys.clear();
         if (options.closePanel && this.openAgentInsightCandidate) {
             this.openAgentInsightCandidate = null;
             this.panelView?.close();
@@ -1116,7 +1137,11 @@ export class PageletOrchestrator {
     }
 
     private invalidateAgentInsightIfPolicyChanged(): void {
-        if (!this.agentInsightCandidate && !this.openAgentInsightCandidate) return;
+        if (
+            !this.agentInsightCandidate
+            && this.pendingAgentInsightCandidates.length === 0
+            && !this.openAgentInsightCandidate
+        ) return;
         const current = this.host.getDeepDiscoverPolicyIdentity?.() ?? null;
         if (current === this.agentInsightPolicyIdentity) return;
         this.clearAgentInsight({ closePanel: true });
@@ -1132,20 +1157,37 @@ export class PageletOrchestrator {
         ].some((source) => changed.has(normalizePath(source.path))));
         const invalidatesCurrent = touches(this.agentInsightCandidate);
         const invalidatesOpen = touches(this.openAgentInsightCandidate);
+        const invalidatedCandidates = [
+            ...(invalidatesCurrent && this.agentInsightCandidate
+                ? [this.agentInsightCandidate]
+                : []),
+            ...this.pendingAgentInsightCandidates.filter(touches),
+        ];
+        const pendingBefore = this.pendingAgentInsightCandidates.length;
+        this.pendingAgentInsightCandidates = this.pendingAgentInsightCandidates.filter((candidate) => (
+            !touches(candidate)
+        ));
+        const invalidatesPending = pendingBefore !== this.pendingAgentInsightCandidates.length;
+        for (const candidate of invalidatedCandidates) {
+            this.agentInsightNudgeKeys.delete(this.agentInsightTicketKey(candidate));
+        }
         if (invalidatesCurrent || invalidatesOpen) this.cancelPendingAgentInsightAction();
         if (invalidatesCurrent) {
-            this.agentInsightCandidate = null;
-            this.agentInsightAnchorPath = null;
-            this.agentInsightNudgeKey = null;
+            this.agentInsightCandidate = this.pendingAgentInsightCandidates.shift() ?? null;
+            if (!this.agentInsightCandidate) this.agentInsightAnchorPath = null;
         }
         if (invalidatesOpen) {
             this.openAgentInsightCandidate = null;
             this.panelView?.close();
         }
-        if (!this.agentInsightCandidate && !this.openAgentInsightCandidate) {
+        if (
+            !this.agentInsightCandidate
+            && this.pendingAgentInsightCandidates.length === 0
+            && !this.openAgentInsightCandidate
+        ) {
             this.agentInsightPolicyIdentity = null;
         }
-        if (invalidatesCurrent || invalidatesOpen) this.reconcilePetNudge();
+        if (invalidatesCurrent || invalidatesOpen || invalidatesPending) this.reconcilePetNudge();
     }
 
     private handleMarkdownModify(path: string): void {
@@ -1170,16 +1212,20 @@ export class PageletOrchestrator {
 
     private currentAdmittedNudgeTickets(): NudgeTicket[] {
         const tickets: NudgeTicket[] = [];
-        const agentInsight = this.currentAgentInsightCandidate();
-        if (
-            agentInsight
-            && this.agentInsightNudgeKey === `${NudgeOwner.AgentInsight}:${agentInsight.id}`
-        ) {
-            tickets.push({
-                key: this.agentInsightNudgeKey,
-                owner: NudgeOwner.AgentInsight,
-                candidate: agentInsight,
-            });
+        this.currentAgentInsightCandidate();
+        for (const agentInsight of [
+            this.agentInsightCandidate,
+            ...this.pendingAgentInsightCandidates,
+        ]) {
+            if (!agentInsight || this.deliveryCandidateIsSeen(agentInsight)) continue;
+            const key = this.agentInsightTicketKey(agentInsight);
+            if (this.agentInsightNudgeKeys.has(key)) {
+                tickets.push({
+                    key,
+                    owner: NudgeOwner.AgentInsight,
+                    candidate: agentInsight,
+                });
+            }
         }
         const preparedRecap = this.currentPreparedRecapNudgeCandidate();
         if (preparedRecap) {
@@ -1993,17 +2039,28 @@ export class PageletOrchestrator {
         }
         const routeToken = ++this.foregroundRouteToken;
         this.transitionPet("analysis-start", "connection");
+        let result: PageletDeepDiscoverControllerResult | undefined;
         try {
-            const result = await this.host.runDeepDiscover({
+            result = await this.host.runDeepDiscover({
                 path,
                 triggerReason: "explicit",
                 force: true,
             });
-            if (!this.isCurrentForegroundRoute(routeToken)) return;
-            const accepted = this.acceptDeepDiscoverResult(result, {
-                path,
-                proactive: false,
-            });
+            if (!this.isCurrentForegroundRoute(routeToken)) {
+                this.host.discardDeepDiscoverResult?.(result);
+                return;
+            }
+            let acceptedCandidates: readonly PageletAgentDeliveryCandidate[] = [];
+            const accepted = this.acceptDeepDiscoverResult(
+                result,
+                { path, proactive: false },
+                (candidates) => { acceptedCandidates = candidates; },
+            );
+            if (!this.isCurrentForegroundRoute(routeToken)) {
+                this.host.discardDeepDiscoverResult?.(result);
+                return;
+            }
+            this.host.acknowledgeDeepDiscoverResult?.(result, acceptedCandidates);
             if (accepted) {
                 this.openAgentInsightPanel(accepted);
                 return;
@@ -2020,6 +2077,7 @@ export class PageletOrchestrator {
                 new Notice(this.t("pagelet.panel.status.error"), 5000);
             }
         } catch (error) {
+            if (result) this.host.discardDeepDiscoverResult?.(result);
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.host.log("Pagelet Deep Discover foreground run failed", {
                 error: error instanceof Error ? error.name : "unknown",
@@ -2034,48 +2092,60 @@ export class PageletOrchestrator {
     private acceptDeepDiscoverResult(
         result: PageletDeepDiscoverControllerResult,
         options: { path: string; proactive: boolean },
+        onAccepted?: (candidates: readonly PageletAgentDeliveryCandidate[]) => void,
     ): PageletAgentDeliveryCandidate | null {
         if (result.status !== "verified" && result.status !== "cache-hit") return null;
         if (result.insight.anchor.path !== options.path) return null;
         const policyIdentity = this.host.getDeepDiscoverPolicyIdentity?.() ?? null;
         if (
-            (this.agentInsightCandidate || this.openAgentInsightCandidate)
+            (
+                this.agentInsightCandidate
+                || this.pendingAgentInsightCandidates.length > 0
+                || this.openAgentInsightCandidate
+            )
             && this.agentInsightPolicyIdentity !== policyIdentity
         ) {
             this.clearAgentInsight({ closePanel: true });
         }
-        const candidate = pageletAgentInsightToDeliveryCandidate(
-            result.insight,
+        const candidates = pageletAgentCollectionToDeliveryCandidates(
+            result.collection,
             getPageletUiLanguage(),
         );
+        const candidate = candidates[0];
+        if (!candidate) return null;
         const actionCandidateId = "candidateId" in this.agentInsightActionState
             ? this.agentInsightActionState.candidateId
             : null;
         if (
-            this.agentInsightCandidate?.id !== candidate.id
-            && this.openAgentInsightCandidate?.id !== candidate.id
-            && actionCandidateId !== candidate.id
+            !candidates.some((next) => next.id === this.agentInsightCandidate?.id)
+            && !candidates.some((next) => next.id === this.openAgentInsightCandidate?.id)
+            && !candidates.some((next) => next.id === actionCandidateId)
             && !this.agentInsightActionMustRemainReachable()
         ) {
             this.cancelPendingAgentInsightAction();
         }
         this.agentInsightCandidate = candidate;
+        this.pendingAgentInsightCandidates = candidates.slice(1);
         this.agentInsightAnchorPath = result.insight.anchor.path;
         this.agentInsightPolicyIdentity = policyIdentity;
-        this.agentInsightNudgeKey = null;
+        this.agentInsightNudgeKeys.clear();
 
-        if (
-            options.proactive
-            && !this.deliveryCandidateIsSeen(candidate)
+        const admissionCandidates = options.proactive
             && this.host.settings.pagelet.petVisible
             && !this.host.settings.focusMode
-            && this.proactiveHints.onInsightsReady()
-        ) {
-            this.agentInsightNudgeKey = `${NudgeOwner.AgentInsight}:${candidate.id}`;
+            ? candidates.filter((next) => !this.deliveryCandidateIsSeen(next))
+            : [];
+        for (const next of admissionCandidates) {
+            if (this.proactiveHints.onInsightsReady()) {
+                this.agentInsightNudgeKeys.add(this.agentInsightTicketKey(next));
+            }
+        }
+        if (this.agentInsightNudgeKeys.size > 0) {
             this.transitionPet("insights-ready");
         } else {
             this.reconcilePetNudge();
         }
+        onAccepted?.(candidates);
         return candidate;
     }
 
@@ -2089,7 +2159,7 @@ export class PageletOrchestrator {
         if (this.panelView?.isOpen && candidate.deliveryReceipt) {
             this.attentionStore.markSeen(candidate.deliveryReceipt, "detail");
         }
-        this.agentInsightNudgeKey = null;
+        this.agentInsightNudgeKeys.delete(this.agentInsightTicketKey(candidate));
         this.reconcilePetNudge();
     }
 
@@ -2387,10 +2457,17 @@ export class PageletOrchestrator {
     }
 
     private retireAgentInsightCandidate(candidateId: string): void {
-        if (this.agentInsightCandidate?.id !== candidateId) return;
-        this.agentInsightCandidate = null;
-        this.agentInsightAnchorPath = null;
-        this.agentInsightNudgeKey = null;
+        this.agentInsightNudgeKeys.delete(`${NudgeOwner.AgentInsight}:${candidateId}`);
+        if (this.agentInsightCandidate?.id === candidateId) {
+            this.agentInsightCandidate = this.pendingAgentInsightCandidates.shift() ?? null;
+        } else {
+            const before = this.pendingAgentInsightCandidates.length;
+            this.pendingAgentInsightCandidates = this.pendingAgentInsightCandidates.filter((candidate) => (
+                candidate.id !== candidateId
+            ));
+            if (before === this.pendingAgentInsightCandidates.length) return;
+        }
+        if (!this.agentInsightCandidate) this.agentInsightAnchorPath = null;
         this.reconcilePetNudge();
     }
 
@@ -3140,9 +3217,7 @@ export class PageletOrchestrator {
     private handleNudgePresented(ticket: NudgeTicket): void {
         switch (ticket.owner) {
             case NudgeOwner.AgentInsight:
-                if (this.agentInsightNudgeKey === ticket.key) {
-                    this.agentInsightNudgeKey = null;
-                }
+                this.agentInsightNudgeKeys.delete(ticket.key);
                 return;
             case NudgeOwner.PreparedRecap:
                 if (this.preparedRecapNudgeFingerprint === ticket.candidate.id) {

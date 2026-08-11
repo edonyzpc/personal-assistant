@@ -1,13 +1,17 @@
 # PA Active Vault Indexer Product Spec
 
-Updated: 2026-07-11
+Document status: Approved
+Updated: 2026-08-11
+Work item: B-125
+Decision: [DEC-027 — 采用有界、汇合感知的检索恢复](../decisions/dec-027-bounded-retrieval-recovery.md)
+Authority: Active Vault Indexer 的共享 retrieval behavior、surface policy、source/evidence contract 与 B-125 scoped requirements；早于 stable Backlog ID 的 bounded v1 baseline 继续保留其历史来源。
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Bounded v1 and AVI deepening slices implemented; future extensions remain gated |
+| Delivery status | Bounded v1 and AVI deepening slices have shipped；current DEC-027/B-125 execution status and validation evidence live only in the [B-125 Tracker](../../development/active/retrieval-optimization/tracker.md) |
 | Primary surfaces | Chat, Pagelet, Memory, Maintenance Review |
 | Feature family | Active Vault Indexer / Retrieval Substrate |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -25,7 +29,9 @@ retrieve, rank, explain, and verify vault evidence.
 
 This document reflects the one-question-at-a-time product decisions confirmed on
 2026-06-28. It is now a durable contract for the implemented bounded slices;
-explicit future scope still requires a new SDD.
+explicit future scope still requires a new SDD. DEC-027 is a dated B-125 scoped
+amendment; its target behavior is current product authority, while delivery
+status remains solely in the B-125 Tracker.
 
 ## Confirmed Decisions
 
@@ -38,6 +44,10 @@ explicit future scope still requires a new SDD.
 | AVI-D5 | Evidence-insufficient retrieval uses explicit statuses. | PA can answer with evidence, partial evidence, needs-scope, conflict, no-evidence, or blocked-by-privacy states. |
 | AVI-D6 | Active Vault Indexer is shared across surfaces, with surface-specific policies. | Chat, Pagelet, Maintenance, Memory, Scope Recap, and periodic summaries share sourceRefs, exclusions, outcomes, why-shown, and replay metadata. |
 | AVI-D7 | First implementation focus is substrate standardization, then Pagelet, then Chat. | Prioritize sourceRefs, retrieval outcomes, lanes, policies, exclusions, why-shown, and replay metadata first; after that, connect Pagelet, then Chat. |
+| AVI-D8 | Reranker model selection is deterministic and invalid output fails open. | Use configured policy model, otherwise Chat model; only a valid explicit `none_relevant` can hide all candidates, so provider/parser failures do not manufacture no-evidence. |
+| AVI-D9 | Structure retrieval uses additive Local、Deep Breadth and multi-seed Convergence lanes. | Complete one-hop semantic validation protects local recall；Top-3 distinct-note PPR preserves deeper breadth while rewarding notes supported by at least two seeds；semantic evidence and source validation remain mandatory. |
+| AVI-D10 | Chat and Pagelet use Host-owned, run-scoped single recovery. | Chat automatically retries a valid miss once; Pagelet may use the same one-shot recovery to find a first or second independent insight and returns 0–2 insights rather than filling a quota. |
+| AVI-D11 | B-125 ships the `CHAR-PHRASE` CJK lexical profile family. | Index and query share adjacency-preserving CJK character normalization. It prioritizes continuous-text lexical recall；Phase 0B must measure and contain substring-collision candidates through fusion/reranking rather than switching back to dictionary word boundaries without a new decision. |
 
 ## 1. Product Decision
 
@@ -157,7 +167,12 @@ Rerank:
 
 - Boost same folder, shared tag, backlink/outlink, alias, selected scope, and recent activity.
 - Do not let structure override missing or weak source evidence.
-- Excluded folders/tags are hard filters, not rank penalties.
+- Excluded folders/tags are hard result/evidence filters, not rank penalties.
+- For the B-125 model-assisted relevance gate, select the configured policy
+  model or, only when none is configured, the Chat model. A rerank invokes one
+  selected model; failure never cascades into a hidden second model call.
+- Only a structurally valid, explicit `none_relevant` may clear the candidate
+  set. Timeout, malformed or contradictory output preserves the bounded input.
 
 Explanation:
 
@@ -284,8 +299,8 @@ The substrate is shared; policies are surface-specific.
 
 | Surface | Policy focus | Notes |
 | --- | --- | --- |
-| Chat | fast, question-directed, evidence-aware | current note + relevant notes; broad query uses plan-first |
-| Pagelet | scope-first review | visible included/skipped sources; supports insight/review queues |
+| Chat | fast, question-directed, evidence-aware | current note + relevant notes; broad query uses plan-first; a valid miss receives one Host-owned automatic relaxed retry |
+| Pagelet | scope-first review | visible included/skipped sources; one run may return 0–2 independently validated insights and may spend at most one Host-owned relaxed retry |
 | Maintenance Review | action safety | affected scope, link/path impact, source evidence, undo context |
 | Memory | admission safety | sourceRefs, scope, validity, conflict checks |
 | Scope Recap / periodic summaries | bounded reflection | recent activity, selected scope, unresolved questions, memory conflicts |
@@ -380,6 +395,13 @@ Hard exclusions:
 - folders excluded in PA settings
 - tags such as `#private`, `#no-ai`, `#no-review` when configured
 
+Under DEC-027, these remain hard seed、candidate、result、sourceRef、provider、UI
+and replay exclusions. A PPR traversal may use at most one excluded Markdown
+node as a local opaque bridge between allowed notes. The bridge contributes no
+content or identity outside the transient traversal frame; generated notes、
+attachments and consecutive excluded nodes can never bridge. This is not a
+per-run override and grants no read, send or display permission.
+
 Provider boundary:
 
 - Manual broad retrieval should show sources-to-check before provider calls.
@@ -393,6 +415,150 @@ Storage boundary:
 - Markdown notes remain source of truth.
 - Generated summaries, theme recaps, and derived graph state are not user source
   data unless explicitly saved as vault artifacts.
+
+### 10.1 B-125 Scoped Retrieval Optimization
+
+The following requirements are the stable product/data contract for B-125.
+Algorithm details and implementation ownership live in the approved
+[B-125 SDD](../../development/active/retrieval-optimization/sdd.md).
+
+#### Requirements
+
+- **B-125/REQ-01 — Strict, available-model reranking.** Zero candidates produce
+  deterministic `none_relevant` without a model call. One or more candidates
+  are reranked with the configured policy model, otherwise the configured Chat
+  model. The selected model is called once. Timeout, provider failure,
+  malformed output, invalid indices or verdict/ranking contradiction fail open;
+  only valid explicit `none_relevant` can hide the complete set.
+- **B-125/REQ-02 — Bounded evidence projection.** Direct candidates are capped
+  at 12 unique paths and graph candidates at 6, for at most 18 unique reranker
+  candidates. `MemorySearchResult.candidates` stays Host-internal. The answer
+  model sees at most 8 final documents, sources derived only from those
+  documents and necessary control signals；candidate/rejected-ledger paths、
+  excerpts、nested documents、graph scores and bridge identities are excluded.
+  A valid reranker may freely mix direct and graph. Fail-open preserves direct
+  hybrid order before graph cosine order and applies no cross-origin score
+  decay or forced graph reservation.
+- **B-125/REQ-03 — Additive local、breadth and convergence structure recall.**
+  At most three different Markdown note/path seeds run separate PPR on one
+  shared boundary graph. `Local` gives every eligible one-transition note a
+  query-cosine chance before truncation；`Deep Breadth` uses the equal-weight
+  mean and excludes Local only from candidate selection, not propagation；
+  `Convergence` uses the second-largest per-seed score and may overlap either
+  lane. Each non-empty eligible lane nominates at most one path, overlap consumes
+  one graph seat without replacement debt, and remaining graph capacity is
+  filled by cosine up to six. Full CEPS subgraph extraction is out of scope.
+- **B-125/REQ-04 — One opaque excluded bridge.** One excluded Markdown node may
+  participate only as a transient local topology bridge. It never becomes a
+  seed, candidate, result, source, why-shown reason or provider input, and its
+  body、excerpt、title、path and metadata never enter output、diagnostics、
+  telemetry or replay. Generated notes、attachments、consecutive excluded
+  nodes and a second excluded node in the same restart excursion are blocked.
+- **B-125/REQ-05 — Host-owned single recovery.** Chat Host Policy automatically
+  spends at most one relaxed retry after valid `none_relevant`; partial evidence
+  is retained and retries only when it is insufficient for the unresolved need.
+  Pagelet owns a separate run-scoped token. `MemorySearchTool` carries no
+  session/run retry ledger. Explicit user time constraints survive retry. A
+  valid-none retry reuses the first validated query and its frozen lexical plan;
+  no second keyword extraction、semantic rewrite or path/title concatenation is
+  allowed. Its run-scoped rejected-evidence ledger covers only the actual
+  Boundary-safe reranker input and identifies the pair `canonical path` plus
+  `reranker-visible evidence fingerprint`. Relaxed candidate admission is novel
+  path first、changed evidence only as backfill；exact repeats cannot re-enter
+  reranker/final evidence.
+  Suppressed paths remain graph transition states. Old direct seeds may be used
+  only as topology-only fallback roots when the relaxed direct stage produces no
+  fresh seed；they never fill otherwise empty seed slots.
+- **B-125/REQ-06 — Pagelet depth without quota pressure.** A Pagelet run returns
+  0–2 insights. Zero insights may use the single retry to seek the first. One
+  insight may use it only when a concrete unresolved lead exists, to seek a
+  second insight that is not a paraphrase and independently passes source
+  grounding、currentness、novelty and value gates. Without an explicit time
+  constraint Pagelet may explore across time.
+- **B-125/REQ-07 — Query-aligned source chunks and dependency-aware failure.**
+  Graph paths reuse the invocation's query embedding locally to select up to
+  three indexed chunks per path. No re-embedding or whole-note retrieval occurs
+  in this stage. PPR-only failure discards Deep Breadth/Convergence but may keep
+  a completely and safely cosine-ranked Local lane；shared snapshot、Boundary、
+  embedding or Worker failure discards all graph expansion. A high-degree Local
+  lane is never returned as an adjacency-ordered prefix when complete scoring
+  cannot fit its deterministic work budget.
+- **B-125/REQ-08 — Lexical correctness before retrieval tuning.** SQLite FTS5
+  remains the local lexical engine and RRF remains the default vector/lexical
+  fusion. CJK indexing and querying use one deterministic normalization over a
+  derived local FTS surface；the one-sided character-phrase mismatch is not an
+  allowed baseline. OD-06A selects `CHAR-PHRASE`: index/query both normalize CJK
+  grapheme-character units and preserve continuous-run adjacency/order. The
+  target can independently rank title、heading、body and a bounded path-derived
+  signal. Physical token encoding/columns、column weights、strict/OR query
+  strategy、candidate depth and RRF parameters require fixtures after correctness
+  is restored. No new semantic retry rewrite、SPLADE or external search engine is
+  introduced by B-125. Phase 0A compared deterministic bigram plus indexed
+  unigram fallback、symmetric character phrase and an explicit-locale/fingerprinted
+  `Intl.Segmenter` challenger；trigram was a known-limitation control. That runner
+  produced an eligible shortlist；the owner subsequently selected the profile.
+
+#### Acceptance Criteria
+
+- **B-125/AC-01:** Fixtures prove policy-model priority、Chat-model selection
+  only when policy is absent、zero-candidate zero-call behavior、single-candidate
+  reranking、valid verdict handling, and fail-open behavior for every invalid or
+  failed response class. No failure performs a second model call.
+- **B-125/AC-02:** The answer-model observation contains no `candidates`,
+  candidate excerpt/anchor, PPR score/lane or bridge identity. Reranker input is
+  at most 18 unique paths；one standard/retry recovery episode exposes one
+  cumulative projection of at most 8 final documents；every visible source is
+  derived from a final document, no candidate-only source exists, and Pagelet's
+  visible source projection is deduplicated by canonical path. Fixtures prove a
+  valid ranking may mix origins, while every fail-open class uses direct hybrid
+  order followed by graph cosine order with no cross-origin decay/reservation.
+- **B-125/AC-03:** Tests cover complete one-hop cosine-before-truncation；Local
+  exclusion from Deep Breadth candidates but retention in PPR propagation；
+  one/two/three-seed breadth and convergence；multi-seed aggregation before
+  truncation；no `max` merge or absolute `0.02` relevance gate；membership-aware
+  one-per-lane nominations、overlap dedupe without replacement debt、cosine
+  backfill and final graph≤6. Lane workset/high-degree constants require fixture
+  and slowest-supported-device calibration rather than being fixed by this AC.
+- **B-125/AC-04:** `allowed A → excluded Markdown B → allowed C` can surface C
+  when C independently passes all gates. Two excluded nodes、generated notes
+  and attachments cannot bridge; spies over provider input、result DTO、source
+  refs、logs、telemetry and replay contain no B identity or content.
+- **B-125/AC-05:** A Chat valid miss automatically retries exactly once;
+  malformed/fail-open results and unrelated later searches remain standard.
+  Partial documents survive retry, and explicit date/range filters are retained.
+  Fixtures prove same-query/frozen-lexical-plan reuse、an empty ledger for a
+  deterministic zero-candidate miss、direct bounded overfetch and exact-repeat
+  filtering before every direct/graph candidate-selecting truncation、novel-before-
+  changed admission、no exact repeat in reranker/final evidence、full propagation
+  through a rejected allowed path, and topology-only old-seed fallback only when
+  there is no fresh direct seed. Recovery state is
+  episode-local and never appears in provider input、model observation、logs or
+  replay.
+- **B-125/AC-06:** Pagelet fixtures finish legally with 0、1 or 2 insights;
+  cover zero-to-first and one-plus-concrete-lead-to-second recovery; prove one
+  run token only and reject duplicate/rephrased second findings.
+- **B-125/AC-07:** The same query embedding selects each path's top three chunks
+  by `score DESC, chunkIndex ASC`. Fixtures distinguish PPR-only failure, which
+  may preserve a safely completed Local lane, from shared snapshot/Boundary/
+  embedding/Worker failure, which returns direct-only. Local budget overflow
+  returns no biased prefix；no path uses file-head substitution、re-embedding or
+  an unhandled failure.
+- **B-125/AC-08:** Real sqlite-wasm MATCH fixtures cover Chinese、English、mixed
+  CJK/kana、title、heading、path basename、error code and long-note cases, and
+  prove the index/query normalization is identical. Retrieval-quality fixtures
+  report FTS-only Recall@K、pre-reranker hybrid Recall@12、final Recall@8/MRR and
+  unique-path recall before selecting AND/OR、field weights、candidate depth or
+  RRF constants. Slowest-supported-device checks record p95 latency、derived
+  index size and rebuild/incremental-update cost. A profile upgrade rebuilds
+  only local derived FTS state from allowed existing chunk records, with no
+  provider call、re-embedding or Markdown mutation. Selected-profile normalization
+  canaries are verified across supported desktop/mobile runtimes and a fingerprint
+  change requires a versioned derived rebuild. Phase 0A freezes labels before
+  registering strategies；its primary admission gate uses common strict query
+  semantics, while OR is deferred to Phase 0B calibration. A candidate enters OD-06A consideration
+  only when all core CJK cases reach Top-8、English/code does not regress、MATCH
+  errors stay zero and equal-weight metadata fields make title/heading/path-only
+  relevant notes reachable. Passing does not automatically choose a winner.
 
 ## 11. Relationship To Current Memory/VSS
 
@@ -530,9 +696,35 @@ reuse proven sourceRefs, outcome statuses, exclusions, and why-shown behavior.
 - Add theme/community summaries only after drift and source coverage are measurable.
 - Keep graph visualization and entity ontology out of MVP.
 
-## 14. Open Questions
+## 14. Resolved B-125 Choice And Open Questions
 
-- Should BM25 be added as a first-class lane or treated as part of semantic/hybrid retrieval?
+OD-06A was owner-confirmed on 2026-08-08: ship the `CHAR-PHRASE` CJK profile
+family. All three candidates passed the original Phase 0A admission gate；the
+separate context-boundary evidence showed CHAR/BIGRAM retained both selected
+continuous-text hard positives while INTL's lexical leg missed both, and the
+25k deterministic scale evidence showed CHAR materially smaller/faster to build
+than BIGRAM. INTL remained smallest and often fastest per query but traded away
+the selected lexical recall cases. The evidence and its non-production/current-
+macOS-only boundaries live in the
+[B-125 Tracker](../../development/active/retrieval-optimization/tracker.md#phase-0a-decision-evidence).
+
+B-125 EC-02 then calibrates FTS physical fields/weights、strict-versus-broad
+query breadth、RRF parameter/leg weight、candidate depth and lexical deadline.
+These are engineering questions unless no configuration meets the confirmed
+quality、cost、device、budget or Data Boundary gates.
+
+There are no remaining B-125 retrieval-behavior or runtime-architecture choices.
+The rollout support boundary is only partially resolved: on 2026-08-11 the owner
+set `minimumIPhoneModel=iPhone 15`. This does not by itself choose a
+slowest-device performance representative or define the supported software floor.
+`minimumIOSVersion`、`minimumObsidianVersion` and an exact
+`representativeDevice` with `representsFloor=true` remain required before EC-02
+and T-10 can close. Xcode/Instruments and performance are currently deferred,
+not passed or waived. These rollout choices select evidence baselines and do not
+change the approved retrieval behavior above.
+
+The following are non-blocking future Active Vault Indexer questions:
+
 - What minimum heading/block precision is realistic for current Markdown parsing?
 - Should Pagelet-generated review notes be excluded by default from all retrieval or only from Pagelet review?
 - How should broad retrieval behave on mobile when indexing is unavailable or stale?

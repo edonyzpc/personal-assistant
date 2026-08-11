@@ -20,7 +20,15 @@ export interface VSSOperationSummary {
     storagePersisted?: boolean;
 }
 
-export type VSSProgressPhase = "scanning" | "embedding" | "writing" | "retrying" | "ready";
+export type VSSProgressPhase =
+    | "scanning"
+    | "embedding"
+    | "writing"
+    | "retrying"
+    | "lexical-rebuilding"
+    | "finalizing"
+    | "cancelling"
+    | "ready";
 
 export interface VSSProgressEvent {
     phase: VSSProgressPhase;
@@ -32,11 +40,26 @@ export interface VSSProgressEvent {
     failed?: number;
     currentFile?: string;
     retryDelayMs?: number;
+    lexicalRowsDone?: number;
+    lexicalRowsTotal?: number;
 }
 
 export interface VSSOperationOptions {
     silent?: boolean;
     onProgress?: (event: VSSProgressEvent) => void;
+}
+
+export interface VSSLexicalRebuildOptions extends VSSOperationOptions {
+    signal?: AbortSignal;
+    batchSize?: number;
+}
+
+export interface VSSLexicalRebuildSummary {
+    aborted: boolean;
+    rowsProcessed: number;
+    rowsTotal: number;
+    generation?: number;
+    reason?: string;
 }
 
 export interface VSSFlushOptions extends VSSOperationOptions {

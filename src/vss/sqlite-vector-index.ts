@@ -1,17 +1,39 @@
 import type {
     EmbeddingProfile,
+    LexicalIndexStatus,
+    LexicalSearchBudget,
+    LexicalRebuildBatchResult,
+    LexicalRebuildScopeBatchResult,
+    LexicalRebuildStartResult,
+    IndexedPathEvidenceGenerationResult,
+    PathEvidenceGenerationRef,
+    RankGraphCandidatesOptions,
+    RankedPathRequestControl,
+    RankedPathRequestResult,
     VectorIndex,
     VectorIndexPathLookupOptions,
     VectorIndexStatus,
     VectorSearchResult,
+    VectorHybridSearchResult,
+    VectorHybridSearchOptions,
     VSSChunk,
     VSSFileRecord,
     VSSFileState,
     VSSIndexStats,
+    VectorIndexDeleteOptions,
 } from "./types";
-import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-protocol";
+import type {
+    SqliteWorkerControlMessage,
+    SqliteWorkerRequest,
+    SqliteWorkerResponse,
+} from "./sqlite-worker-protocol";
 import { toError } from "../error-utils";
+import { createAbortError } from "../ai-services/chat-utils";
 import { clearPlatformTimeout, decodePlatformBase64, getPlatformLocation, setPlatformTimeout } from "../platform-dom";
+import {
+    RETRIEVAL_CALIBRATION_PROFILE,
+    type RetrievalSearchRuntimeParameters,
+} from "./retrieval-calibration";
 
 const SQLITE_DISPOSE_WORKER_READY_TIMEOUT_MS = 2_000;
 const SQLITE_DISPOSE_MESSAGE_TIMEOUT_MS = 2_000;
@@ -24,6 +46,8 @@ export interface SqliteVectorIndexOptions {
     opfsVfsName?: string;
     wasmUrl?: string;
     workerFactory?: (url: string) => Worker | Promise<Worker>;
+    lexicalProfileEnabled?: boolean;
+    lexicalBoundaryFingerprint?: string;
 }
 
 export class SqliteVectorIndex implements VectorIndex {
@@ -34,6 +58,8 @@ export class SqliteVectorIndex implements VectorIndex {
     private readonly opfsVfsName: string | undefined;
     private readonly wasmUrl: string | undefined;
     private readonly workerFactory: ((url: string) => Worker | Promise<Worker>) | undefined;
+    private readonly lexicalProfileEnabled: boolean;
+    private readonly lexicalBoundaryFingerprint: string | undefined;
     private worker: Worker | null = null;
     private workerReady: Promise<Worker> | null = null;
     private readonly terminatedWorkers = new WeakSet<Worker>();
@@ -42,6 +68,8 @@ export class SqliteVectorIndex implements VectorIndex {
     private queue: Promise<void> = Promise.resolve();
     private disposed = false;
     private disposePromise: Promise<void> | null = null;
+    private readonly activeGraphRequests = new Set<string>();
+    private readonly cancelledGraphRequests = new Set<string>();
     private pending = new Map<number, {
         resolve: (value: unknown) => void;
         reject: (reason?: unknown) => void;
@@ -55,6 +83,8 @@ export class SqliteVectorIndex implements VectorIndex {
         this.opfsVfsName = options.opfsVfsName;
         this.wasmUrl = options.wasmUrl;
         this.workerFactory = options.workerFactory;
+        this.lexicalProfileEnabled = options.lexicalProfileEnabled === true;
+        this.lexicalBoundaryFingerprint = options.lexicalBoundaryFingerprint;
     }
 
     async initialize(profile: EmbeddingProfile): Promise<VectorIndexStatus> {
@@ -68,6 +98,8 @@ export class SqliteVectorIndex implements VectorIndex {
             legacyOpfsDirectory: this.legacyOpfsDirectory,
             opfsVfsName: this.opfsVfsName,
             wasmUrl,
+            lexicalProfileEnabled: this.lexicalProfileEnabled,
+            lexicalBoundaryFingerprint: this.lexicalBoundaryFingerprint,
         }));
     }
 
@@ -79,8 +111,8 @@ export class SqliteVectorIndex implements VectorIndex {
         return this.enqueue(() => this.send<null>("updateFileMetadata", { fileState }).then(() => undefined));
     }
 
-    deleteFile(path: string): Promise<void> {
-        return this.enqueue(() => this.send<null>("deleteFile", { path }).then(() => undefined));
+    deleteFile(path: string, options?: VectorIndexDeleteOptions): Promise<void> {
+        return this.enqueue(() => this.send<null>("deleteFile", { path, options }).then(() => undefined));
     }
 
     listFilePaths(): Promise<string[]> {
@@ -108,9 +140,261 @@ export class SqliteVectorIndex implements VectorIndex {
         k: number,
         fusionTopK: number,
         temporalFilter?: { since?: number; until?: number },
+        lexicalSkipReason?: string,
+        lexicalBoundaryFingerprint?: string,
+        lexicalBudget?: LexicalSearchBudget,
+        excludedPathGenerations?: PathEvidenceGenerationRef[],
+        retrieval?: RetrievalSearchRuntimeParameters,
+        options: VectorHybridSearchOptions = {},
     ): Promise<VectorSearchResult[]> {
-        return this.enqueue(() => this.send<VectorSearchResult[]>("searchHybrid", {
-            queryEmbedding, ftsQuery, k, fusionTopK, temporalFilter,
+        return this.searchHybridDetailed(
+            queryEmbedding,
+            ftsQuery,
+            k,
+            fusionTopK,
+            temporalFilter,
+            lexicalSkipReason,
+            lexicalBoundaryFingerprint,
+            lexicalBudget,
+            excludedPathGenerations,
+            retrieval,
+            options,
+        )
+            .then((result) => result.results);
+    }
+
+    searchHybridDetailed(
+        queryEmbedding: number[],
+        ftsQuery: string | null,
+        k: number,
+        fusionTopK: number,
+        temporalFilter?: { since?: number; until?: number },
+        lexicalSkipReason?: string,
+        lexicalBoundaryFingerprint?: string,
+        lexicalBudget?: LexicalSearchBudget,
+        excludedPathGenerations?: PathEvidenceGenerationRef[],
+        retrieval?: RetrievalSearchRuntimeParameters,
+        options: VectorHybridSearchOptions = {},
+    ): Promise<VectorHybridSearchResult> {
+        return this.enqueue(() => this.send<VectorHybridSearchResult>("searchHybrid", {
+            queryEmbedding,
+            ftsQuery,
+            k,
+            fusionTopK,
+            temporalFilter,
+            lexicalSkipReason,
+            lexicalBoundaryFingerprint,
+            lexicalBudget,
+            excludedPathGenerations,
+            ...(retrieval ? { retrieval } : {}),
+        }, options.signal), options.signal);
+    }
+
+    getPathEvidenceGenerations(
+        paths: string[],
+        maxPathsPerBatch: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
+        maxChunksScanned: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxChunksScanned,
+    ): Promise<IndexedPathEvidenceGenerationResult> {
+        return this.enqueue(() => this.send<IndexedPathEvidenceGenerationResult>("getPathEvidenceGenerations", {
+            paths,
+            maxPathsPerBatch,
+            maxChunksScanned,
+        }));
+    }
+
+    rankGraphCandidates(
+        queryEmbedding: number[],
+        paths: string[],
+        control: RankedPathRequestControl,
+        options: RankGraphCandidatesOptions = {},
+    ): Promise<RankedPathRequestResult> {
+        const uniquePaths = [...new Set(paths.filter(Boolean))].sort(compareCodePoint);
+        assertGraphRankRequest(queryEmbedding, uniquePaths, control);
+        if (options.signal?.aborted) {
+            return Promise.reject(createVectorIndexError("graph-rank-aborted", "Graph candidate ranking was aborted."));
+        }
+
+        const requestKey = graphRequestKey(control.requestId, control.runEpoch);
+        const queuedAt = Date.now();
+        safeGraphDiagnostic(options, { state: "queued" });
+        if (this.activeGraphRequests.has(requestKey)) {
+            return Promise.reject(createVectorIndexError(
+                "graph-rank-request-duplicate",
+                "Graph candidate ranking request id is already active.",
+            ));
+        }
+        this.activeGraphRequests.add(requestKey);
+        let settle: {
+            resolve: (value: RankedPathRequestResult) => void;
+            reject: (reason?: unknown) => void;
+        } | null = null;
+        let callerSettled = false;
+        const settleResolve = (value: RankedPathRequestResult) => {
+            if (callerSettled) return;
+            callerSettled = true;
+            settle?.resolve(value);
+        };
+        const settleReject = (reason: unknown) => {
+            if (callerSettled) return;
+            callerSettled = true;
+            settle?.reject(reason);
+        };
+        const onAbort = () => {
+            safeGraphDiagnostic(options, { state: "cancel_requested", accepted: 0 });
+            this.cancelGraphRank(control.requestId, control.runEpoch);
+            settleReject(createVectorIndexError("graph-rank-aborted", "Graph candidate ranking was aborted."));
+        };
+        options.signal?.addEventListener("abort", onAbort, { once: true });
+
+        const queued = this.enqueue(async () => {
+            const queueWaitMs = Math.max(0, Date.now() - queuedAt);
+            safeGraphDiagnostic(options, { state: "dispatched", queueWaitMs });
+            if (this.cancelledGraphRequests.has(requestKey) || options.signal?.aborted) {
+                throw createVectorIndexError("graph-rank-aborted", "Graph candidate ranking was aborted.");
+            }
+            if (Date.now() >= control.absoluteDeadlineMs) {
+                throw createVectorIndexError("graph-rank-deadline", "Graph candidate ranking deadline elapsed before dispatch.");
+            }
+            let workerResponseReceived = false;
+            let result: RankedPathRequestResult;
+            try {
+                result = await this.send<RankedPathRequestResult>("rankGraphCandidates", {
+                    queryEmbedding,
+                    paths: uniquePaths,
+                    control,
+                });
+                workerResponseReceived = true;
+            } catch (error) {
+                if (!workerResponseReceived && getVectorIndexErrorCode(error) === "graph-rank-aborted") {
+                    safeGraphDiagnostic(options, { state: "cancel_observed", accepted: 0 });
+                }
+                throw error;
+            }
+            validateGraphRankResult(result, uniquePaths, control, this.cancelledGraphRequests.has(requestKey));
+            return {
+                ...result,
+                diagnostics: {
+                    batchCount: result.diagnostics?.batchCount ?? 0,
+                    chunkCount: result.diagnostics?.chunkCount ?? 0,
+                    workerDurationMs: result.diagnostics?.workerDurationMs ?? 0,
+                    maxBatchDurationMs: result.diagnostics?.maxBatchDurationMs ?? 0,
+                    queueWaitMs,
+                },
+            };
+        });
+
+        const cleanup = () => {
+            options.signal?.removeEventListener("abort", onAbort);
+            this.activeGraphRequests.delete(requestKey);
+            this.cancelledGraphRequests.delete(requestKey);
+        };
+        queued.then(
+            (value) => {
+                cleanup();
+                if (callerSettled) {
+                    safeGraphDiagnostic(options, { state: "late_discarded", accepted: 0 });
+                } else {
+                    safeGraphDiagnostic(options, { state: "settled", queueWaitMs: value.diagnostics?.queueWaitMs, accepted: 1 });
+                }
+                settleResolve(value);
+            },
+            (error) => {
+                cleanup();
+                safeGraphDiagnostic(options, {
+                    state: callerSettled ? "late_discarded" : "settled",
+                    accepted: 0,
+                });
+                settleReject(error);
+            },
+        );
+        return new Promise<RankedPathRequestResult>((resolve, reject) => {
+            settle = { resolve, reject };
+            if (callerSettled) {
+                reject(createVectorIndexError("graph-rank-aborted", "Graph candidate ranking was aborted."));
+            }
+        });
+    }
+
+    /** Mark locally first, then post directly without entering the main data queue. */
+    cancelGraphRank(requestId: string, runEpoch: string): void {
+        const requestKey = graphRequestKey(requestId, runEpoch);
+        if (
+            !this.activeGraphRequests.has(requestKey)
+            || this.cancelledGraphRequests.has(requestKey)
+        ) return;
+        this.cancelledGraphRequests.add(requestKey);
+        const message: SqliteWorkerControlMessage = {
+            type: "cancelGraphRank",
+            payload: { requestId, runEpoch },
+        };
+        const post = (worker: Worker) => {
+            if (
+                this.disposed
+                || this.worker !== worker
+                || !this.activeGraphRequests.has(requestKey)
+                || !this.cancelledGraphRequests.has(requestKey)
+            ) return;
+            try {
+                worker.postMessage(message);
+            } catch {
+                // The data request will fail through the normal worker lifecycle.
+            }
+        };
+        if (this.worker) {
+            post(this.worker);
+        } else if (this.workerReady) {
+            void this.workerReady.then(post, () => undefined);
+        }
+    }
+
+    getLexicalStatus(): Promise<LexicalIndexStatus> {
+        return this.enqueue(() => this.send<LexicalIndexStatus>("getLexicalStatus", {}));
+    }
+
+    beginLexicalRebuild(
+        profileId: "char-phrase-v1",
+        runtimeCanaryFingerprint: string,
+        scopeFingerprint: string,
+        expectedPathCount: number,
+    ): Promise<LexicalRebuildStartResult> {
+        return this.enqueue(() => this.send<LexicalRebuildStartResult>("beginLexicalRebuild", {
+            profileId,
+            runtimeCanaryFingerprint,
+            scopeFingerprint,
+            expectedPathCount,
+        }));
+    }
+
+    appendLexicalScopeBatch(
+        rebuildId: string,
+        paths: string[],
+    ): Promise<LexicalRebuildScopeBatchResult> {
+        return this.enqueue(() => this.send<LexicalRebuildScopeBatchResult>("appendLexicalScopeBatch", {
+            rebuildId,
+            paths,
+        }));
+    }
+
+    appendLexicalRebuildBatch(
+        rebuildId: string,
+        afterRowId: number,
+        limit: number,
+    ): Promise<LexicalRebuildBatchResult> {
+        return this.enqueue(() => this.send<LexicalRebuildBatchResult>("appendLexicalRebuildBatch", {
+            rebuildId,
+            afterRowId,
+            limit,
+        }));
+    }
+
+    finalizeLexicalRebuild(rebuildId: string): Promise<LexicalIndexStatus> {
+        return this.enqueue(() => this.send<LexicalIndexStatus>("finalizeLexicalRebuild", { rebuildId }));
+    }
+
+    abortLexicalRebuild(rebuildId: string, failureReason?: string): Promise<LexicalIndexStatus> {
+        return this.enqueue(() => this.send<LexicalIndexStatus>("abortLexicalRebuild", {
+            rebuildId,
+            failureReason,
         }));
     }
 
@@ -139,23 +423,36 @@ export class SqliteVectorIndex implements VectorIndex {
         return this.disposePromise;
     }
 
-    private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    private enqueue<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
         if (this.disposed) {
             return Promise.reject(createDisposedError());
         }
+        if (signal?.aborted) {
+            return Promise.reject(createAbortError());
+        }
         const runOperation = () => {
             this.assertActive();
+            if (signal?.aborted) throw createAbortError();
             return operation();
         };
         const run = this.queue.then(runOperation, runOperation);
+        // Keep the serialized queue bound to the underlying Worker response.
+        // Hybrid search has no Worker-side cancel message, so abort rejects the
+        // caller immediately while a dispatched request drains in isolation.
         this.queue = run.then(() => undefined, () => undefined);
-        return run;
+        return waitForAbortableQueueResult(run, signal);
     }
 
-    private async send<T>(type: SqliteWorkerRequest["type"], payload: object): Promise<T> {
+    private async send<T>(
+        type: SqliteWorkerRequest["type"],
+        payload: object,
+        signal?: AbortSignal,
+    ): Promise<T> {
         this.assertActive();
+        if (signal?.aborted) throw createAbortError();
         const worker = await this.ensureWorker();
         this.assertActive();
+        if (signal?.aborted) throw createAbortError();
         const id = this.nextId++;
         const request = { id, type, payload } as SqliteWorkerRequest;
         return new Promise<T>((resolve, reject) => {
@@ -178,6 +475,8 @@ export class SqliteVectorIndex implements VectorIndex {
 
     private async disposeUnlocked(): Promise<void> {
         this.disposed = true;
+        this.activeGraphRequests.clear();
+        this.cancelledGraphRequests.clear();
         const disposedError = createDisposedError();
         this.rejectPending(disposedError);
 
@@ -360,14 +659,157 @@ export class SqliteVectorIndex implements VectorIndex {
     }
 }
 
+function safeGraphDiagnostic(
+    options: RankGraphCandidatesOptions,
+    event: Parameters<NonNullable<RankGraphCandidatesOptions["onDiagnostic"]>>[0],
+): void {
+    try {
+        options.onDiagnostic?.(event);
+    } catch {
+        // Measurement must never alter index control flow.
+    }
+}
+
+function getVectorIndexErrorCode(error: unknown): string {
+    if (!error || typeof error !== "object") return "";
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : "";
+}
+
 export function createVectorIndexError(code: string, message: string): Error {
     const error = new Error(message);
     (error as Error & { code: string }).code = code;
     return error;
 }
 
+function assertGraphRankRequest(
+    queryEmbedding: readonly number[],
+    paths: readonly string[],
+    control: RankedPathRequestControl,
+): void {
+    if (
+        !control.requestId
+        || !control.runEpoch
+        || !control.sourceEpoch
+        || !Number.isFinite(control.absoluteDeadlineMs)
+    ) {
+        throw createVectorIndexError("graph-rank-control-invalid", "Graph candidate ranking control is incomplete.");
+    }
+    if (queryEmbedding.length === 0 || queryEmbedding.some((value) => !Number.isFinite(value))) {
+        throw createVectorIndexError("graph-rank-embedding-invalid", "Graph candidate ranking requires a finite query embedding.");
+    }
+    if (
+        !Number.isInteger(control.maxPathsPerBatch)
+        || control.maxPathsPerBatch <= 0
+        || !Number.isInteger(control.maxCandidatePaths)
+        || control.maxCandidatePaths <= 0
+        || !Number.isInteger(control.maxChunksScanned)
+        || control.maxChunksScanned <= 0
+        || paths.length > control.maxCandidatePaths
+    ) {
+        throw createVectorIndexError("graph-rank-budget-invalid", "Graph candidate ranking exceeds its request envelope.");
+    }
+}
+
+function validateGraphRankResult(
+    result: RankedPathRequestResult,
+    requestedPaths: readonly string[],
+    control: RankedPathRequestControl,
+    cancelled: boolean,
+): void {
+    if (cancelled) {
+        throw createVectorIndexError("graph-rank-aborted", "Discarded a graph candidate ranking result after cancellation.");
+    }
+    if (Date.now() >= control.absoluteDeadlineMs) {
+        throw createVectorIndexError("graph-rank-deadline", "Discarded a graph candidate ranking result after its deadline.");
+    }
+    if (
+        result.requestId !== control.requestId
+        || result.runEpoch !== control.runEpoch
+        || result.sourceEpoch !== control.sourceEpoch
+    ) {
+        throw createVectorIndexError("graph-rank-epoch-mismatch", "Graph candidate ranking result belongs to another invocation.");
+    }
+    const resultPaths = result.paths.map((entry) => entry.path);
+    if (
+        resultPaths.length !== requestedPaths.length
+        || resultPaths.some((path, index) => path !== requestedPaths[index])
+    ) {
+        throw createVectorIndexError("graph-rank-path-mismatch", "Graph candidate ranking result does not match the allowed path set.");
+    }
+    for (const entry of result.paths) {
+        if (
+            !entry.pathEvidenceGeneration
+            || !Number.isFinite(entry.maxScore)
+            || entry.chunks.length === 0
+            || entry.chunks.length > 3
+        ) {
+            throw createVectorIndexError("graph-rank-result-invalid", "Graph candidate ranking returned invalid path scores.");
+        }
+        for (let index = 0; index < entry.chunks.length; index += 1) {
+            const chunk = entry.chunks[index];
+            if (
+                !Number.isInteger(chunk.chunkIndex)
+                || !Number.isFinite(chunk.score)
+                || chunk.doc.metadata?.path !== entry.path
+                || Number(chunk.doc.metadata?.chunkIndex) !== chunk.chunkIndex
+                || chunk.doc.metadata?.pathEvidenceGeneration !== entry.pathEvidenceGeneration
+                || (index > 0 && compareRankedChunk(entry.chunks[index - 1], chunk) > 0)
+            ) {
+                throw createVectorIndexError("graph-rank-result-invalid", "Graph candidate ranking returned malformed chunks.");
+            }
+        }
+    }
+}
+
+function compareRankedChunk(
+    left: { score: number; chunkIndex: number },
+    right: { score: number; chunkIndex: number },
+): number {
+    return right.score - left.score || left.chunkIndex - right.chunkIndex;
+}
+
+function graphRequestKey(requestId: string, runEpoch: string): string {
+    return `${runEpoch}\u0000${requestId}`;
+}
+
+function compareCodePoint(left: string, right: string): number {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function createDisposedError(): Error {
     return createVectorIndexError("sqlite-vector-index-disposed", "SQLite vector index has been disposed.");
+}
+
+function waitForAbortableQueueResult<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(createAbortError());
+    return new Promise<T>((resolve, reject) => {
+        const cleanup = () => signal.removeEventListener("abort", onAbort);
+        const onAbort = () => {
+            cleanup();
+            reject(createAbortError());
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) {
+            onAbort();
+            return;
+        }
+        promise.then(
+            (value) => {
+                cleanup();
+                if (signal.aborted) {
+                    reject(createAbortError());
+                } else {
+                    resolve(value);
+                }
+            },
+            (error) => {
+                cleanup();
+                reject(error);
+            },
+        );
+    });
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

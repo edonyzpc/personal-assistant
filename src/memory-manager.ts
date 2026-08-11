@@ -25,11 +25,12 @@ export type MemoryPlanReason =
     | "changed-notes"
     | "local-memory-missing"
     | "settings-changed"
+    | "lexical-profile-stale"
     | "unavailable";
 
 export interface MemoryMaintenancePlan {
     reason: MemoryPlanReason;
-    action: "none" | "refresh" | "rebuild";
+    action: "none" | "refresh" | "rebuild" | "rebuild-lexical";
     notesToCheck: number;
     notesLikelyToUpdate?: number;
     verificationPending?: number;
@@ -52,6 +53,8 @@ export interface MemoryPreparationStatus {
     filesTotal?: number;
     chunksEmbedded?: number;
     chunksTotal?: number;
+    lexicalRowsDone?: number;
+    lexicalRowsTotal?: number;
     failed?: number;
     startedAt: number;
 }
@@ -97,6 +100,7 @@ interface ActivePreparationIdentity {
     id: number;
     action: MemoryPreparationAction;
     lifecycleVersion: number;
+    controller?: AbortController;
 }
 interface ActivePreparationRun extends ActivePreparationIdentity {
     promise: Promise<MemoryPrepareResult>;
@@ -138,7 +142,22 @@ export const MEMORY_APPROVAL_SECTIONS = [
     },
 ];
 
-function getLocalizedMemoryApprovalSections(locale: PluginLocale): typeof MEMORY_APPROVAL_SECTIONS {
+function getLocalizedMemoryApprovalSections(
+    plan: MemoryMaintenancePlan,
+    locale: PluginLocale,
+): typeof MEMORY_APPROVAL_SECTIONS {
+    if (plan.action === "rebuild-lexical") {
+        return [
+            {
+                title: pluginT("plugin.memory.approval.section.lexicalData.title", locale),
+                body: pluginT("plugin.memory.approval.section.lexicalData.body", locale),
+            },
+            {
+                title: pluginT("plugin.memory.approval.section.lexicalLocal.title", locale),
+                body: pluginT("plugin.memory.approval.section.lexicalLocal.body", locale),
+            },
+        ];
+    }
     return [
         {
             title: pluginT("plugin.memory.approval.section.data.title", locale),
@@ -174,6 +193,7 @@ export function getMemoryApprovalCopy(
         "changed-notes": pluginT("plugin.memory.approval.title.changedNotes", locale),
         "local-memory-missing": pluginT("plugin.memory.approval.title.localMissing", locale),
         "settings-changed": pluginT("plugin.memory.approval.title.settingsChanged", locale),
+        "lexical-profile-stale": pluginT("plugin.memory.approval.title.lexicalChanged", locale),
         "unavailable": pluginT("plugin.memory.approval.title.unavailable", locale),
     };
 
@@ -181,7 +201,9 @@ export function getMemoryApprovalCopy(
         title: titleByReason[plan.reason],
         primaryAction: plan.action === "refresh"
             ? pluginT("plugin.memory.approval.primary.update", locale)
-            : pluginT("plugin.memory.approval.primary.prepare", locale),
+            : plan.action === "rebuild-lexical"
+                ? pluginT("plugin.memory.approval.primary.rebuildSearch", locale)
+                : pluginT("plugin.memory.approval.primary.prepare", locale),
         secondaryAction: context === "chat"
             ? pluginT("plugin.memory.approval.secondary.answerNow", locale)
             : pluginT("plugin.memory.approval.secondary.notNow", locale),
@@ -234,6 +256,8 @@ export class MemoryManager {
             filesTotal: this.activePreparationStatus.filesTotal,
             chunksEmbedded: this.activePreparationStatus.chunksEmbedded,
             chunksTotal: this.activePreparationStatus.chunksTotal,
+            lexicalRowsDone: this.activePreparationStatus.lexicalRowsDone,
+            lexicalRowsTotal: this.activePreparationStatus.lexicalRowsTotal,
             failed: this.activePreparationStatus.failed,
             startedAt: this.activePreparationStatus.startedAt,
         };
@@ -291,12 +315,12 @@ export class MemoryManager {
         }
     }
 
-    stopAutoMaintenance(): void {
+    stopAutoMaintenance(): Promise<void> {
+        const activePreparation = this.activePreparationRun;
         this.started = false;
         this.shuttingDown = true;
         this.lifecycleVersion++;
-        this.activePreparationRun = null;
-        this.activePreparationStatus = null;
+        activePreparation?.controller?.abort();
         if (this.autoFlushTimer) {
             clearPlatformTimeout(this.autoFlushTimer);
             this.autoFlushTimer = null;
@@ -316,6 +340,10 @@ export class MemoryManager {
         while (this.cleanupListeners.length > 0) {
             this.cleanupListeners.pop()?.();
         }
+        return activePreparation?.action === "rebuild-lexical" ? activePreparation.promise.then(
+            () => undefined,
+            () => undefined,
+        ) : Promise.resolve();
     }
 
     scheduleAutoFlush(reason: string, delayMs = QUIET_AUTO_FLUSH_DELAY_MS): void {
@@ -410,10 +438,14 @@ export class MemoryManager {
             }
         }
 
+        const canUseExistingMemory = plan.action === "rebuild-lexical";
+
         if (this.isAnswerNowCoolingDown()) {
             return {
-                decision: "answer-now",
-                message: memoryT("plugin.memory.message.notUsed"),
+                decision: canUseExistingMemory ? "use-memory" : "answer-now",
+                message: canUseExistingMemory
+                    ? memoryT("plugin.memory.message.usingLastPrepared")
+                    : memoryT("plugin.memory.message.notUsed"),
             };
         }
 
@@ -425,8 +457,10 @@ export class MemoryManager {
         if (decision === "answer-now") {
             this.lastAnswerNowAt = Date.now();
             return {
-                decision: "answer-now",
-                message: memoryT("plugin.memory.message.notUsed"),
+                decision: canUseExistingMemory ? "use-memory" : "answer-now",
+                message: canUseExistingMemory
+                    ? memoryT("plugin.memory.message.usingLastPrepared")
+                    : memoryT("plugin.memory.message.notUsed"),
             };
         }
 
@@ -437,8 +471,10 @@ export class MemoryManager {
         if (!result.ok) {
             new Notice(result.message ?? memoryT("plugin.memory.error.prepareFailedAnswerNow"), 7000);
             return {
-                decision: "answer-now",
-                message: result.message ?? memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+                decision: canUseExistingMemory ? "use-memory" : "answer-now",
+                message: canUseExistingMemory
+                    ? memoryT("plugin.memory.message.usingLastPrepared")
+                    : result.message ?? memoryT("plugin.memory.message.prepareFailedAnswerNow"),
             };
         }
 
@@ -468,6 +504,7 @@ export class MemoryManager {
             id: this.nextPreparationId++,
             action: requestedAction,
             lifecycleVersion: this.lifecycleVersion,
+            controller: new AbortController(),
         };
         const run = Promise.resolve().then(() => this.runPreparation(plan, activeIdentity));
         this.activePreparationRun = { ...activeIdentity, promise: run };
@@ -494,6 +531,8 @@ export class MemoryManager {
                 filesTotal: event?.filesTotal,
                 chunksEmbedded: event?.chunksEmbedded,
                 chunksTotal: event?.chunksTotal,
+                lexicalRowsDone: event?.lexicalRowsDone,
+                lexicalRowsTotal: event?.lexicalRowsTotal,
                 failed: event?.failed,
                 startedAt,
             };
@@ -505,10 +544,20 @@ export class MemoryManager {
                 message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
             };
         }
-        const progress = createMemoryProgressNotice(memoryT("plugin.memory.progress.preparing"));
+        const progress = createMemoryProgressNotice(
+            action === "rebuild-lexical"
+                ? memoryT("plugin.memory.progress.rebuildingSearch")
+                : memoryT("plugin.memory.progress.preparing"),
+            action === "rebuild-lexical"
+                ? () => activePreparation.controller?.abort()
+                : undefined,
+        );
         setActiveStatus(memoryT("plugin.memory.progress.preparing"));
         const updateProgress = createMemoryProgressUpdater(progress.notice, () => !this.isLifecycleCurrent(lifecycleToken));
         const updateProgressAndStatus = (event: VSSProgressEvent) => {
+            if (event.phase === "finalizing" && progress.cancelButton) {
+                progress.cancelButton.disabled = true;
+            }
             updateProgress(event);
             const text = formatMemoryProgressEvent(event);
             if (text) {
@@ -516,6 +565,28 @@ export class MemoryManager {
             }
         };
         try {
+            if (action === "rebuild-lexical") {
+                const lexicalSummary = await this.vss.rebuildLexicalIndex({
+                    silent: true,
+                    signal: activePreparation.controller?.signal,
+                    onProgress: updateProgressAndStatus,
+                });
+                if (!this.isLifecycleCurrent(lifecycleToken) || lexicalSummary.aborted) {
+                    return {
+                        ok: false,
+                        partial: false,
+                        message: lexicalSummary.aborted
+                            ? memoryT("plugin.memory.progress.cancelled")
+                            : memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+                    };
+                }
+                setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.ready"));
+                setActiveStatus(memoryT("plugin.memory.progress.ready"));
+                new Notice(memoryT("plugin.memory.notice.searchReadyNotesUnchanged"), 3000);
+                this.host.notifyStatusChanged();
+                return { ok: true, partial: false };
+            }
+
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
             setActiveStatus(memoryT("plugin.memory.progress.checking"));
             const summary = plan.action === "refresh"
@@ -776,7 +847,9 @@ export class MemoryManager {
     }
 
     private getPreparationAction(plan: MemoryMaintenancePlan): MemoryPreparationAction {
-        return plan.action === "refresh" ? "refresh" : "rebuild";
+        if (plan.action === "refresh") return "refresh";
+        if (plan.action === "rebuild-lexical") return "rebuild-lexical";
+        return "rebuild";
     }
 
     private canReuseActivePreparation(activePreparation: ActivePreparationRun, requestedAction: MemoryPreparationAction): boolean {
@@ -897,7 +970,7 @@ export class MemoryApprovalModal extends Modal {
             text: pluginT("plugin.memory.approval.intro", locale),
         });
 
-        for (const section of getLocalizedMemoryApprovalSections(locale)) {
+        for (const section of getLocalizedMemoryApprovalSections(this.plan, locale)) {
             this.addSection(section.title, section.body);
         }
 
@@ -960,13 +1033,24 @@ export class MemoryApprovalModal extends Modal {
     }
 }
 
-function createMemoryProgressNotice(title: string): { notice: Notice } {
+function createMemoryProgressNotice(
+    title: string,
+    onCancel?: () => void,
+): { notice: Notice; cancelButton?: HTMLButtonElement } {
     const fragment = getPlatformDocument().createDocumentFragment();
     const wrapper = fragment.createEl("div", { attr: { class: "pa-notice" } });
     const header = wrapper.createDiv({ cls: "pa-notice__header" });
     const spinner = header.createDiv({ cls: "pa-notice__spinner" });
     spinner.createSpan({ text: "" });
     header.createSpan({ text: title, attr: { class: "pa-notice__text" } });
+    let cancelButton: HTMLButtonElement | undefined;
+    if (onCancel) {
+        cancelButton = header.createEl("button", {
+            text: memoryT("plugin.memory.approval.cancel"),
+            attr: { type: "button" },
+        });
+        cancelButton.addEventListener("click", onCancel, { once: true });
+    }
     wrapper.createDiv({ cls: "pa-notice__body" });
     const notice = new Notice(fragment, 0);
     notice.messageEl.addClass("pa-notice-shell");
@@ -977,7 +1061,7 @@ function createMemoryProgressNotice(title: string): { notice: Notice } {
         border: "none",
         padding: "0",
     });
-    return { notice };
+    return { notice, cancelButton };
 }
 
 function setMemoryProgressStep(notice: Notice, text: string): void {
@@ -997,7 +1081,7 @@ function createMemoryProgressUpdater(notice: Notice, shouldStop: () => boolean =
         const text = formatMemoryProgressEvent(event);
         if (!text) return;
         const now = Date.now();
-        const force = event.phase === "retrying" || event.phase === "ready";
+        const force = event.phase === "retrying" || event.phase === "finalizing" || event.phase === "ready";
         if (!force && now - lastUpdatedAt < 350) return;
         lastUpdatedAt = now;
         setMemoryProgressStep(notice, text);
@@ -1011,6 +1095,19 @@ function formatMemoryProgressEvent(event: VSSProgressEvent): string {
     }
     if (event.phase === "ready") {
         return "Ready";
+    }
+    if (event.phase === "cancelling") {
+        return memoryT("plugin.memory.progress.cancelling");
+    }
+    if (event.phase === "finalizing") {
+        return memoryT("plugin.memory.progress.finalizingSearch");
+    }
+    if (event.phase === "lexical-rebuilding") {
+        return formatCountProgress(
+            memoryT("plugin.memory.progress.rebuildingSearch"),
+            event.lexicalRowsDone,
+            event.lexicalRowsTotal,
+        );
     }
     if (event.phase === "writing") {
         return formatCountProgress("Saving memory", event.filesDone, event.filesTotal);

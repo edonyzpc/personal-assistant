@@ -14,11 +14,20 @@ import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from '../src/ai-services/
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
 import type { AgentRunCoordinatorPort } from '../src/ai-services/agent-run-coordinator';
 import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
-import type { AgentEvent as CanonicalAgentEvent, ChatMessage, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
+import type {
+    AgentEvent as CanonicalAgentEvent,
+    ChatMessage,
+    LegacyAgentEvent as AgentEvent,
+    MemorySearchResult,
+} from '../src/ai-services/chat-types';
 import type { OperationsIntent } from '../src/ai-services/operations/types';
 import type { OperationsSession } from '../src/ai-services/operations/operations-service';
 import { OperationsToolProvider } from '../src/ai-services/operations/operations-tool-provider';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
+import {
+    RetrievalDiagnosticsController,
+    type RetrievalDiagnosticSurface,
+} from '../src/ai-services/retrieval-diagnostics';
 import {
     BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
@@ -275,7 +284,6 @@ function createPlugin(overrides: {
         getAPIToken: jest.fn(async () => 'sk-SECRET_TOKEN_SENTINEL'),
         isOperationsAgentEnabled: overrides.operationsAgentEnabled ?? false,
         getMemoryExtractionPromptContext: jest.fn(() => overrides.memoryExtractionPromptContext),
-        getResolvedLinks: jest.fn(() => overrides.resolvedLinks),
         agentRunCoordinator: overrides.agentRunCoordinator,
     };
 }
@@ -339,6 +347,42 @@ function extractSerializedToolContextBlocks(input: string | undefined): string[]
     return [...(input ?? '').matchAll(/<tool_context tool="[^"]+">\n[\s\S]*?\n<\/tool_context>/g)]
         .map((match) => match[0]);
 }
+
+describe('retrieval diagnostics surface ownership', () => {
+    it('binds the complete Chat turn to chat diagnostics', async () => {
+        const controller = new RetrievalDiagnosticsController(
+            () => 0,
+            () => 0,
+            () => 'chat-surface-session',
+        );
+        const session = controller.start();
+        const requestedSurfaces: RetrievalDiagnosticSurface[] = [];
+        const plugin = createPlugin();
+        Object.assign(plugin, {
+            createRetrievalDiagnosticRecorder: (surface: RetrievalDiagnosticSurface) => {
+                requestedSurfaces.push(surface);
+                return controller.createRecorder(surface);
+            },
+        });
+        mockCreateChatModel.mockResolvedValue(createStreamModel('Chat answer.'));
+        const runtime = createRuntime(plugin, false, { skillContextProvider: null });
+
+        await runtime.streamTurn({
+            prompt: 'private chat prompt sentinel',
+            memoryMode: 'auto',
+            onEvent: jest.fn(),
+        });
+
+        const snapshot = controller.snapshot(session.sessionId);
+        expect(requestedSurfaces.length).toBeGreaterThan(0);
+        expect(new Set(requestedSurfaces)).toEqual(new Set(['chat']));
+        expect(snapshot.events.length).toBeGreaterThan(0);
+        expect(snapshot.events.every((event) => event.surface === 'chat')).toBe(true);
+        expect(new Set(snapshot.events.map((event) => event.runId)).size).toBe(1);
+        expect(snapshot.events[0]?.runId).toMatch(/^run_[a-z0-9]+_[a-z0-9]+$/);
+        expect(JSON.stringify(snapshot)).not.toContain('private chat prompt sentinel');
+    });
+});
 
 function extractPlannerRegistryDefinitions(input: unknown): Array<Record<string, unknown>> {
     const text = typeof (input as { input?: unknown })?.input === 'string'
@@ -648,6 +692,163 @@ describe('ChatService.streamLLM integration', () => {
         )).rejects.toMatchObject({ name: 'AbortError' });
 
         expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('links the reserved-turn deadline signal to the provider transport', async () => {
+        jest.useFakeTimers();
+        try {
+            let streamCall = 0;
+            let firstProviderSignal: AbortSignal | undefined;
+            const model = {
+                bindTools: jest.fn(() => model),
+                stream: jest.fn((_input: unknown, config?: { signal?: AbortSignal }) => {
+                    streamCall += 1;
+                    if (streamCall === 1) {
+                        firstProviderSignal = config?.signal;
+                        return {
+                            async *[Symbol.asyncIterator]() {
+                                await new Promise<void>((resolve) => {
+                                    if (config?.signal?.aborted) {
+                                        resolve();
+                                        return;
+                                    }
+                                    config?.signal?.addEventListener('abort', () => resolve(), { once: true });
+                                });
+                            },
+                        };
+                    }
+                    return {
+                        async *[Symbol.asyncIterator]() {
+                            yield { content: 'Final answer.' };
+                        },
+                    };
+                }),
+                invoke: jest.fn(async () => ({ content: 'Fallback answer.' })),
+            };
+            mockCreateChatModel.mockResolvedValue(model);
+            const runtime = createRuntime(createPlugin(), false, {
+                skillContextProvider: null,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+            });
+            const events: AgentEvent[] = [];
+
+            const run = runtime.streamTurn({
+                prompt: 'hello',
+                memoryMode: 'auto',
+                onEvent: (event) => events.push(event),
+            });
+            await flushMicrotasks(12);
+            await jest.advanceTimersByTimeAsync(70);
+            await run;
+
+            expect(firstProviderSignal).toBeInstanceOf(AbortSignal);
+            expect(firstProviderSignal?.aborted).toBe(true);
+            expect(model.stream).toHaveBeenCalledTimes(2);
+            expect(events.some((event) => event.kind === 'answer-complete')).toBe(true);
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('revalidates Memory after deferred Chat model construction before the first stream', async () => {
+        const stalePath = 'notes/revoked-during-model.md';
+        const staleBody = 'REVOKED CHAT MEMORY BODY';
+        const staleMemory: MemorySearchResult = {
+            usedMemory: true,
+            query: 'launch',
+            documents: [{
+                content: staleBody,
+                score: 0.9,
+                source: { path: stalePath, chunkIndex: 0, score: 0.9 },
+            }],
+            sources: [{ path: stalePath, chunkIndex: 0, score: 0.9 }],
+            candidates: [],
+            hasAnswerableContent: true,
+            memoryEvidenceState: 'evidence',
+            rerankVerdict: 'relevant',
+            needsMoreEvidence: false,
+        };
+        const unavailableMemory: MemorySearchResult = {
+            ...staleMemory,
+            usedMemory: false,
+            documents: [],
+            sources: [],
+            candidates: [],
+            hasAnswerableContent: false,
+            memoryEvidenceState: 'unavailable',
+            retrievalGuidance: 'Memory evidence is currently unavailable.',
+            operationalReason: 'final_source_changed',
+        };
+        const planningModel = {
+            bindTools: jest.fn(() => planningModel),
+            stream: jest.fn(async function* () {
+                yield {
+                    tool_call_chunks: [{
+                        index: 0,
+                        id: 'memory-before-deferred-model',
+                        name: 'search_memory',
+                        args: JSON.stringify({ query: 'launch' }),
+                    }],
+                };
+            }),
+            invoke: jest.fn(),
+        };
+        const providerInputs: unknown[] = [];
+        const finalModel = {
+            bindTools: jest.fn(() => finalModel),
+            stream: jest.fn(async function* (input: unknown) {
+                providerInputs.push(input);
+                yield { content: 'Safe final answer.' };
+            }),
+            invoke: jest.fn(),
+        };
+        let resolveFinalModel!: (model: unknown) => void;
+        let markFinalModelRequested!: () => void;
+        const finalModelRequested = new Promise<void>((resolve) => {
+            markFinalModelRequested = resolve;
+        });
+        const deferredFinalModel = new Promise<unknown>((resolve) => {
+            resolveFinalModel = resolve;
+        });
+        let modelCreation = 0;
+        mockCreateChatModel.mockImplementation(async () => {
+            modelCreation += 1;
+            if (modelCreation === 1) return planningModel;
+            markFinalModelRequested();
+            return deferredFinalModel;
+        });
+        const runtime = createRuntime(createPlugin(), false, { skillContextProvider: null });
+        let sourceRevoked = false;
+        const memoryTool = (runtime as unknown as {
+            memoryTool: {
+                search: (...args: unknown[]) => Promise<MemorySearchResult>;
+                revalidateForProvider: (
+                    result: MemorySearchResult,
+                    signal?: AbortSignal,
+                ) => Promise<MemorySearchResult>;
+            };
+        }).memoryTool;
+        memoryTool.search = jest.fn(async () => staleMemory);
+        memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult): Promise<MemorySearchResult> => (
+            sourceRevoked ? unavailableMemory : result
+        ));
+
+        const run = runtime.streamTurn({
+            prompt: 'Use Memory for launch.',
+            memoryMode: 'auto',
+            onEvent: () => undefined,
+        });
+        await finalModelRequested;
+        sourceRevoked = true;
+        resolveFinalModel(finalModel);
+        await run;
+
+        expect(providerInputs).toHaveLength(1);
+        expect(JSON.stringify(providerInputs[0])).not.toContain(stalePath);
+        expect(JSON.stringify(providerInputs[0])).not.toContain(staleBody);
+        expect(memoryTool.revalidateForProvider).toHaveBeenCalledTimes(2);
     });
 
     it('routes a simple PA canonical turn from model chunk to onChunk callback', async () => {

@@ -10,6 +10,7 @@ Authority: [Owner decision record](../proposal-review-response-2026-07-28.md)
 Restart condition: B-123 已由 owner 于 2026-08-01 关闭；本文永久保留为 Step 1 source-verified design 与最终验证依据。
 Handoff: [Implementation Handoff Brief](../implementation-handoff.md)
 Direction: [Pagelet Agent proposal](./pagelet-agent-proposal.md)
+Successor noted: 2026-08-08 [DEC-027](../../../product/decisions/dec-027-bounded-retrieval-recovery.md) / [B-125 SDD](../../active/retrieval-optimization/sdd.md) approves a planned 0–2 insight collection and run-scoped single retrieval retry. It supersedes this document's single-result target only after B-125 implementation; none of the B-123 validation below is evidence for that successor behavior.
 
 ## 1. Scope
 

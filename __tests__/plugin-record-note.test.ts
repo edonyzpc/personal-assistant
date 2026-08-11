@@ -324,6 +324,9 @@ const createVaultEventDispatchHarness = () => {
     const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
     plugin.registerEvent = jest.fn();
     plugin.app = {
+        metadataCache: {
+            on: jest.fn(() => ({})),
+        },
         vault: {
             on: jest.fn((name: string, callback: (...args: unknown[]) => Promise<void>) => {
                 vaultHandlers.set(name, callback);
@@ -679,6 +682,9 @@ describe('plugin startup view registration', () => {
         } as unknown as typeof MutationObserver;
 
         plugin.app = {
+            metadataCache: {
+                on: jest.fn(() => ({})),
+            },
             vault: {
                 configDir: '.obsidian',
                 on: jest.fn((event: string, callback: (file: unknown) => unknown) => {
@@ -6650,6 +6656,115 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         expect(harness.invoke).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
         expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
+    it('invalidates smoke evidence only for a forced explicit host attempt', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const clear = jest.fn();
+        const controller = new AbortController();
+        controller.abort();
+        plugin.deepDiscoverSmokeEvidence = { clear };
+
+        await plugin.runPageletDeepDiscover({
+            path: 'notes/background.md',
+            triggerReason: 'leave-note',
+            signal: controller.signal,
+        });
+        expect(clear).not.toHaveBeenCalled();
+
+        await plugin.runPageletDeepDiscover({
+            path: 'notes/foreground.md',
+            triggerReason: 'explicit',
+            force: true,
+            signal: controller.signal,
+        });
+        expect(clear).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the latest production smoke evidence when the controller resets', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const clear = jest.fn();
+        plugin.deepDiscoverControllerEpoch = 4;
+        plugin.deepDiscoverScheduler = null;
+        plugin.deepDiscoverSmokeEvidence = {
+            clear,
+            snapshot: jest.fn(async () => ({ runId: 'stale-run' })),
+        };
+
+        plugin.resetDeepDiscoverController();
+
+        expect(clear).toHaveBeenCalledTimes(1);
+        expect(plugin.deepDiscoverControllerEpoch).toBe(5);
+    });
+
+    it('rebuilds an existing scheduler across retrieval flags absent-to-on-to-off', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            pagelet: {
+                enabled: true,
+                deepDiscoverEnabled: true,
+                excludedFolders: [],
+                excludedTags: [],
+                excludedPatterns: [],
+                reviewsFolder: 'Pagelet Reviews',
+            },
+            dataBoundary: {
+                excludedFolders: [],
+                excludedTags: [],
+                generatedNotePolicy: 'exclude-generated',
+            },
+            aiProvider: 'openai',
+            aiProviderPreset: 'openai',
+            baseURL: 'https://api.openai.com/v1',
+            webSearchEnabled: false,
+            licenseTier: 'free',
+            chatModelName: 'gpt-4o-mini',
+            policyModelName: '',
+            embeddingModelName: 'text-embedding-3-small',
+            qwenThinkingEnabled: false,
+        };
+        plugin.getPageletSettingsWithDataBoundary = () => plugin.settings.pagelet;
+        plugin.getMemoryDataBoundaryFingerprint = () => 'boundary:test';
+        plugin.getPageletLocale = () => 'en';
+        plugin.deepDiscoverControllerEpoch = 10;
+        plugin.deepDiscoverControllerInitialization = null;
+        plugin.deepDiscoverControllerInitializationIdentity = null;
+
+        const absentIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
+        const disposeAbsent = jest.fn();
+        plugin.deepDiscoverScheduler = { dispose: disposeAbsent };
+        plugin.deepDiscoverControllerPolicyIdentitySnapshot = absentIdentity;
+
+        plugin.settings.retrievalOptimizationFlags = {
+            lexicalProfile: true,
+            strictReranker: true,
+            graphPpr: true,
+            relaxedRecovery: true,
+        };
+        const enabledIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
+        plugin.syncPageletDeepDiscoverControllerIdentity();
+        expect(enabledIdentity).not.toBe(absentIdentity);
+        expect(disposeAbsent).toHaveBeenCalledTimes(1);
+        expect(plugin.deepDiscoverScheduler).toBeNull();
+        expect(plugin.deepDiscoverControllerEpoch).toBe(11);
+
+        const disposeEnabled = jest.fn();
+        plugin.deepDiscoverScheduler = { dispose: disposeEnabled };
+        plugin.deepDiscoverControllerPolicyIdentitySnapshot = enabledIdentity;
+        plugin.settings.retrievalOptimizationFlags = {
+            lexicalProfile: false,
+            strictReranker: false,
+            graphPpr: false,
+            relaxedRecovery: false,
+        };
+        const disabledIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
+        plugin.syncPageletDeepDiscoverControllerIdentity();
+        expect(disabledIdentity).toBe(absentIdentity);
+        expect(disposeEnabled).toHaveBeenCalledTimes(1);
+        expect(plugin.deepDiscoverScheduler).toBeNull();
+        expect(plugin.deepDiscoverControllerEpoch).toBe(12);
     });
 });
 

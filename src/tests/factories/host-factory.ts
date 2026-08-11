@@ -89,6 +89,17 @@ export function createAiServiceHost(
         ensureReadyForChat: async () => ({ decision: "use-memory" }),
         searchHybrid: async () => [],
         getChunksByPath: async () => [],
+        rankGraphCandidates: async (_queryEmbedding, _paths, control) => ({
+            requestId: control.requestId,
+            runEpoch: control.runEpoch,
+            sourceEpoch: control.sourceEpoch,
+            paths: [],
+        }),
+        cancelGraphCandidateRank: () => undefined,
+        getPathEvidenceGenerations: async () => ({
+            sourceEpoch: "test-source-epoch",
+            paths: [],
+        }),
         ...memorySearchOverrides,
     };
 
@@ -99,7 +110,7 @@ export function createAiServiceHost(
         getAPIToken: async () => "test-token",
         getMemoryExtractionPromptContext: () => undefined,
         memorySearch,
-        getResolvedLinks: () => undefined,
+        getMemoryEvidenceEpoch: () => "test-memory-evidence-epoch",
         ...hostOverrides,
         isOperationsAgentEnabled: hostOverrides.isOperationsAgentEnabled ?? settings.operationsAgentEnabled,
     };

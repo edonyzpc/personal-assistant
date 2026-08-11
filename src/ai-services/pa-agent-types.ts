@@ -84,6 +84,16 @@ export interface PaAgentToolBatchPreparationResult {
 
 export interface PaAgentToolExecutor {
     execute(input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult>;
+    /**
+     * Optional Host-owned duplicate key computed from the successful
+     * `prepareAndValidate` output. The dispatcher must prefer this over raw
+     * model arguments so aliases and harmless normalization share one call.
+     * Returning `undefined` keeps the raw key (for example, invalid input).
+     */
+    getCanonicalToolCallKey?(
+        toolCall: PaAgentToolCall,
+        context: { userInput: string },
+    ): string | undefined;
     prepareBatch?(
         input: PaAgentToolBatchPreparationInput,
     ): Promise<PaAgentToolBatchPreparationResult | void>;

@@ -4,7 +4,7 @@ import {
 } from "./anchor-snapshot";
 import { normalizePageletInsightBody } from "./pagelet-agent-cache";
 import {
-    PAGELET_NO_INSIGHT,
+    isPageletNoInsightTerminal,
     type PageletAgentQualityGateResult,
     type PageletAgentRunResult,
     type PageletAgentSourceMaterial,
@@ -18,7 +18,9 @@ const CONTENT_EVIDENCE_TOOLS = new Set([
     "read_note_outline",
 ]);
 
-const DEEP_FINDING_LANGUAGE = /(?:矛盾|冲突|变化|演进|转变|缺口|遗漏|风险|因为|导致|意味着|因此|假设|行动|需要|应当|趋势|反例|contradict|conflict|changed?|evolv|shift|gap|missing|risk|because|caus|impl(?:y|ies)|therefore|assumption|should|action|trade[- ]?off|counterexample)/iu;
+const DEEP_FINDING_LANGUAGE = /(?:(?:根因|原因)\s*(?:是|为|在于)|矛盾|冲突|变化|演进|转变|缺口|遗漏|风险|因为|导致|意味着|因此|假设|行动|需要|应当|趋势|反例|contradict|conflict|changed?|evolv|shift|gap|missing|risk|because|caus|impl(?:y|ies)|therefore|assumption|should|action|trade[- ]?off|counterexample)/iu;
+
+const NUMBERED_INSIGHT_HEADING = /^\s{0,3}#{1,6}[ \t]+(?:insight|洞察)[ \t]*([12])(?=[ \t]*(?:[:：.)、\-–—]|$))/iu;
 
 const STOP_WORDS = new Set([
     "the", "and", "for", "from", "that", "this", "with", "into", "about",
@@ -27,7 +29,12 @@ const STOP_WORDS = new Set([
 ]);
 
 export interface PageletAgentQualityGateOptions {
-    run: PageletAgentRunResult;
+    run: Pick<
+        PageletAgentRunResult,
+        "finalText" | "anchor" | "sourceSnapshots" | "sourceTools" | "toolProvenance"
+    >;
+    /** Evaluate an unchanged natural-Markdown staged candidate instead of terminal text. */
+    body?: string;
     sourceMaterials: ReadonlyMap<string, PageletAgentSourceMaterial>;
     readCurrentSourceSnapshot(
         path: string,
@@ -53,9 +60,10 @@ export interface PageletAgentQualityGateOptions {
 export async function evaluatePageletAgentQuality(
     options: PageletAgentQualityGateOptions,
 ): Promise<PageletAgentQualityGateResult> {
-    const body = options.run.finalText.trim();
+    const body = (options.body ?? options.run.finalText).trim();
     if (!body) return reject("empty");
-    if (body === PAGELET_NO_INSIGHT) return reject("no-insight");
+    if (isPageletNoInsightTerminal(body)) return reject("no-insight");
+    if (hasBundledNumberedInsightHeadings(body)) return reject("bundled-insights");
 
     const anchorPath = options.run.anchor.path;
     if (!anchorWasRead(options.run, anchorPath)) return reject("anchor-not-read");
@@ -89,7 +97,7 @@ export async function evaluatePageletAgentQuality(
         if (!runSnapshot || !material || !sameSourceSnapshot(runSnapshot, material)) {
             return reject("stale-source");
         }
-        if (path !== anchorPath && !hasContentEvidenceTool(options.run, path)) {
+        if (path !== anchorPath && !hasPageletContentEvidenceTool(options.run.sourceTools, path)) {
             return reject("unsupported-source");
         }
         if (!hasEvidenceOverlap(body, material.content, path)) {
@@ -101,7 +109,7 @@ export async function evaluatePageletAgentQuality(
         }
         verifiedSources.push({ ...runSnapshot });
     }
-    verifiedSources.sort((left, right) => left.path.localeCompare(right.path));
+    verifiedSources.sort((left, right) => compareCodePoint(left.path, right.path));
 
     if (isOnlyShallowKnownLinks(
         body,
@@ -126,7 +134,39 @@ export async function evaluatePageletAgentQuality(
     };
 }
 
-function anchorWasRead(run: PageletAgentRunResult, anchorPath: string): boolean {
+export function resolvePageletInsightSourcePaths(
+    body: string,
+    successfulPaths: readonly string[],
+): { paths: string[]; hasUngroundedPath: boolean } {
+    const resolved = resolveBodyReferences(body, successfulPaths);
+    return {
+        paths: [...resolved.citedPaths].sort(compareCodePoint),
+        hasUngroundedPath: resolved.hasUngroundedPath,
+    };
+}
+
+export function arePageletAgentInsightsDistinct(
+    first: Pick<Extract<PageletAgentQualityGateResult, { accepted: true }>, "normalizedBody" | "sources">,
+    second: Pick<Extract<PageletAgentQualityGateResult, { accepted: true }>, "normalizedBody" | "sources">,
+): boolean {
+    if (first.normalizedBody === second.normalizedBody) return false;
+    const firstClaim = normalizeClaimForComparison(first.normalizedBody);
+    const secondClaim = normalizeClaimForComparison(second.normalizedBody);
+    if (!firstClaim || !secondClaim || firstClaim === secondClaim) return false;
+
+    const shorter = firstClaim.length <= secondClaim.length ? firstClaim : secondClaim;
+    const longer = shorter === firstClaim ? secondClaim : firstClaim;
+    if (longer.includes(shorter) && shorter.length / longer.length >= 0.58) return false;
+
+    const similarity = jaccard(claimTerms(firstClaim), claimTerms(secondClaim));
+    const sameEvidence = sourceIdentity(first.sources) === sourceIdentity(second.sources);
+    return similarity < (sameEvidence ? 0.62 : 0.78);
+}
+
+function anchorWasRead(
+    run: Pick<PageletAgentRunResult, "toolProvenance">,
+    anchorPath: string,
+): boolean {
     return run.toolProvenance.some((entry) => (
         !entry.isError
         && entry.toolName === "get_current_note_context"
@@ -134,9 +174,69 @@ function anchorWasRead(run: PageletAgentRunResult, anchorPath: string): boolean 
     ));
 }
 
-function hasContentEvidenceTool(run: PageletAgentRunResult, path: string): boolean {
-    const tools = run.sourceTools.get(path);
+export function hasPageletContentEvidenceTool(
+    sourceTools: Pick<PageletAgentRunResult, "sourceTools">["sourceTools"],
+    path: string,
+): boolean {
+    const tools = sourceTools.get(path);
     return Boolean(tools && [...tools].some((tool) => CONTENT_EVIDENCE_TOOLS.has(tool)));
+}
+
+/**
+ * Fail closed only for the explicit protocol shape observed in production:
+ * one draft containing both numbered Insight 1/2 headings. This deliberately
+ * does not split Markdown or infer sections from ordinary headings/body text.
+ */
+function hasBundledNumberedInsightHeadings(body: string): boolean {
+    const numbered = new Set<string>();
+    for (const line of body.replace(/\r\n?/g, "\n").split("\n")) {
+        const match = line.match(NUMBERED_INSIGHT_HEADING);
+        if (match?.[1]) numbered.add(match[1]);
+        if (numbered.has("1") && numbered.has("2")) return true;
+    }
+    return false;
+}
+
+function normalizeClaimForComparison(value: string): string {
+    return value
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/`[^`\n]*\.md`/giu, " ")
+        .replace(/!?\[\[[^\]\n]+\]\]/gu, " ")
+        .replace(/!?\[[^\]\n]*\]\([^\n)]+\)/gu, " ")
+        .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+        .replace(/[\p{P}\p{S}]+/gu, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
+}
+
+function claimTerms(value: string): Set<string> {
+    const terms = new Set<string>();
+    for (const match of value.matchAll(/[a-z0-9][a-z0-9_-]{2,}/g)) {
+        if (!STOP_WORDS.has(match[0])) terms.add(match[0]);
+    }
+    for (const match of value.matchAll(/[\p{Script=Han}]{2,}/gu)) {
+        const codePoints = Array.from(match[0]);
+        for (let index = 0; index < codePoints.length - 1; index += 1) {
+            terms.add(codePoints.slice(index, index + 2).join(""));
+        }
+    }
+    return terms;
+}
+
+function jaccard(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
+    if (left.size === 0 || right.size === 0) return 0;
+    let intersection = 0;
+    for (const value of left) if (right.has(value)) intersection += 1;
+    return intersection / (left.size + right.size - intersection);
+}
+
+function sourceIdentity(sources: readonly PageletAgentSourceSnapshot[]): string {
+    return [...new Set(sources.map((source) => source.path))].sort(compareCodePoint).join("\u0000");
+}
+
+function compareCodePoint(left: string, right: string): number {
+    return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function hasEvidenceOverlap(body: string, content: string, path: string): boolean {
@@ -167,9 +267,9 @@ function evidenceTerms(value: string): Set<string> {
         if (!STOP_WORDS.has(match[0])) terms.add(match[0]);
     }
     for (const match of normalized.matchAll(/[\p{Script=Han}]{2,}/gu)) {
-        const token = match[0];
-        for (let index = 0; index < token.length - 1; index += 1) {
-            const bigram = token.slice(index, index + 2);
+        const codePoints = Array.from(match[0]);
+        for (let index = 0; index < codePoints.length - 1; index += 1) {
+            const bigram = codePoints.slice(index, index + 2).join("");
             if (!STOP_WORDS.has(bigram)) terms.add(bigram);
         }
     }

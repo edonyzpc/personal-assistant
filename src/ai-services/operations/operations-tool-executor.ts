@@ -41,6 +41,9 @@ export function createOperationsStagingToolExecutor(
     options: OperationsStagingToolExecutorOptions,
 ): PaAgentToolExecutor {
     return {
+        getCanonicalToolCallKey: (toolCall, context) => (
+            options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
+        ),
         getExecutionMode: (toolName) => (
             isCoreWriteToolName(toolName)
                 ? "sequential"

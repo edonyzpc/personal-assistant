@@ -1,0 +1,583 @@
+{
+  "version": 1,
+  "description": "Frozen algorithm-independent Phase 0A lexical evidence corpus for B-125.",
+  "rows": [
+    {
+      "id": "cjk-recall-0",
+      "path": "notes/cjk-recall.md",
+      "chunkIndex": 0,
+      "title": "检索召回率",
+      "heading": "定义",
+      "body": "召回率衡量检索系统找回相关内容的能力。"
+    },
+    {
+      "id": "team-call-0",
+      "path": "negatives/team-call.md",
+      "chunkIndex": 0,
+      "title": "团队通知",
+      "heading": "集合",
+      "body": "团队将在下午召集成员开会。"
+    },
+    {
+      "id": "return-home-0",
+      "path": "negatives/return-home.md",
+      "chunkIndex": 0,
+      "title": "返程记录",
+      "heading": "今天",
+      "body": "他晚上回来整理房间。"
+    },
+    {
+      "id": "machine-learning-0",
+      "path": "notes/machine-learning.md",
+      "chunkIndex": 0,
+      "title": "模型基础",
+      "heading": "训练",
+      "body": "机器学习通过数据训练模型并发现规律。"
+    },
+    {
+      "id": "machine-maintenance-0",
+      "path": "negatives/machine-maintenance.md",
+      "chunkIndex": 0,
+      "title": "设备维护",
+      "heading": "机器",
+      "body": "机器需要定期清洁和保养。"
+    },
+    {
+      "id": "study-method-0",
+      "path": "negatives/study-method.md",
+      "chunkIndex": 0,
+      "title": "学习方法",
+      "heading": "复习",
+      "body": "学习需要间隔复习和主动回忆。"
+    },
+    {
+      "id": "chinese-retrieval-0",
+      "path": "notes/chinese-retrieval.md",
+      "chunkIndex": 0,
+      "title": "中文搜索质量",
+      "heading": "召回优化",
+      "body": "提高中文检索召回率需要一致的索引分词和查询分词。"
+    },
+    {
+      "id": "english-retrieval-quality-0",
+      "path": "negatives/english-retrieval-quality.md",
+      "chunkIndex": 0,
+      "title": "English retrieval quality",
+      "heading": "Precision",
+      "body": "English retrieval precision is measured with labelled examples."
+    },
+    {
+      "id": "chinese-input-0",
+      "path": "negatives/chinese-input.md",
+      "chunkIndex": 0,
+      "title": "中文输入",
+      "heading": "键盘",
+      "body": "中文输入法可以提高打字速度。"
+    },
+    {
+      "id": "react-performance-0",
+      "path": "notes/react-performance.md",
+      "chunkIndex": 0,
+      "title": "前端性能",
+      "heading": "渲染",
+      "body": "React渲染性能可以通过减少无效更新来改善。"
+    },
+    {
+      "id": "react-native-0",
+      "path": "negatives/react-native.md",
+      "chunkIndex": 0,
+      "title": "React Native",
+      "heading": "移动开发",
+      "body": "React Native 用于构建跨平台应用。"
+    },
+    {
+      "id": "render-art-0",
+      "path": "negatives/render-art.md",
+      "chunkIndex": 0,
+      "title": "离线渲染",
+      "heading": "图像",
+      "body": "渲染器将场景转换为静态图片。"
+    },
+    {
+      "id": "retrieval-latency-0",
+      "path": "notes/retrieval-latency.md",
+      "chunkIndex": 0,
+      "title": "Search performance",
+      "heading": "Latency",
+      "body": "Retrieval latency should be measured at the candidate boundary."
+    },
+    {
+      "id": "network-latency-0",
+      "path": "negatives/network-latency.md",
+      "chunkIndex": 0,
+      "title": "Network performance",
+      "heading": "Latency",
+      "body": "Network latency depends on routing and distance."
+    },
+    {
+      "id": "retrieval-precision-0",
+      "path": "negatives/retrieval-precision.md",
+      "chunkIndex": 0,
+      "title": "Search evaluation",
+      "heading": "Precision",
+      "body": "Retrieval precision counts relevant results among returned items."
+    },
+    {
+      "id": "opfs-lock-error-0",
+      "path": "notes/opfs-lock-error.md",
+      "chunkIndex": 0,
+      "title": "Storage error reference",
+      "heading": "Lock handling",
+      "body": "When ERR_OPFS_LOCKED occurs, close the stale database handle before retrying."
+    },
+    {
+      "id": "opfs-quota-error-0",
+      "path": "negatives/opfs-quota-error.md",
+      "chunkIndex": 0,
+      "title": "Storage quota reference",
+      "heading": "Quota handling",
+      "body": "ERR_OPFS_QUOTA means local storage capacity is exhausted."
+    },
+    {
+      "id": "lock-file-0",
+      "path": "negatives/lock-file.md",
+      "chunkIndex": 0,
+      "title": "Lock file notes",
+      "heading": "Cleanup",
+      "body": "A lock file coordinates writers during a local update."
+    },
+    {
+      "id": "ios-version-0",
+      "path": "notes/ios-version.md",
+      "chunkIndex": 0,
+      "title": "Release compatibility",
+      "heading": "iOS",
+      "body": "In iOS 2.8.4 the migration guide is published at example.com for testing."
+    },
+    {
+      "id": "ios-old-version-0",
+      "path": "negatives/ios-old-version.md",
+      "chunkIndex": 0,
+      "title": "Previous release",
+      "heading": "iOS",
+      "body": "iOS 2.8.3 used the earlier storage profile."
+    },
+    {
+      "id": "example-org-0",
+      "path": "negatives/example-org.md",
+      "chunkIndex": 0,
+      "title": "Documentation mirror",
+      "heading": "Website",
+      "body": "The public mirror is hosted at example.org."
+    },
+    {
+      "id": "title-index-migration-0",
+      "path": "metadata/title-index-migration.md",
+      "chunkIndex": 0,
+      "title": "渐进式索引迁移",
+      "heading": "说明",
+      "body": "这份说明记录本地数据维护方式。"
+    },
+    {
+      "id": "title-ui-migration-0",
+      "path": "negatives/title-ui-migration.md",
+      "chunkIndex": 0,
+      "title": "渐进式界面迁移",
+      "heading": "说明",
+      "body": "这份说明记录界面调整方式。"
+    },
+    {
+      "id": "title-index-rebuild-0",
+      "path": "negatives/title-index-rebuild.md",
+      "chunkIndex": 0,
+      "title": "索引重建检查",
+      "heading": "说明",
+      "body": "这份说明记录例行检查方式。"
+    },
+    {
+      "id": "heading-fallback-0",
+      "path": "metadata/heading-fallback.md",
+      "chunkIndex": 0,
+      "title": "实验运行手册",
+      "heading": "回退策略",
+      "body": "当实验失败时按此执行。"
+    },
+    {
+      "id": "heading-retry-0",
+      "path": "negatives/heading-retry.md",
+      "chunkIndex": 0,
+      "title": "实验重试手册",
+      "heading": "重试策略",
+      "body": "失败后可以执行一次重试。"
+    },
+    {
+      "id": "body-fallback-0",
+      "path": "negatives/body-fallback.md",
+      "chunkIndex": 0,
+      "title": "异常处理",
+      "heading": "说明",
+      "body": "系统失败后执行回退，但这里没有专门的策略章节。"
+    },
+    {
+      "id": "path-opfs-lock-0",
+      "path": "runbooks/storage/opfs-lock.md",
+      "chunkIndex": 0,
+      "title": "本地存储运行手册",
+      "heading": "步骤",
+      "body": "本页描述如何安全关闭旧句柄。"
+    },
+    {
+      "id": "path-opfs-quota-0",
+      "path": "runbooks/storage/opfs-quota.md",
+      "chunkIndex": 0,
+      "title": "容量运行手册",
+      "heading": "步骤",
+      "body": "本页描述如何清理本地缓存。"
+    },
+    {
+      "id": "path-worker-lock-0",
+      "path": "runbooks/worker/lock.md",
+      "chunkIndex": 0,
+      "title": "后台任务运行手册",
+      "heading": "步骤",
+      "body": "本页描述如何重启后台任务。"
+    },
+    {
+      "id": "japanese-search-0",
+      "path": "notes/japanese-search.md",
+      "chunkIndex": 0,
+      "title": "日本語の検索品質",
+      "heading": "調整",
+      "body": "日本語検索のチューニングでは単語境界と再現率を確認する。"
+    },
+    {
+      "id": "japanese-input-0",
+      "path": "negatives/japanese-input.md",
+      "chunkIndex": 0,
+      "title": "日本語入力",
+      "heading": "キーボード",
+      "body": "日本語入力の設定を変更する。"
+    },
+    {
+      "id": "japanese-translation-0",
+      "path": "negatives/japanese-translation.md",
+      "chunkIndex": 0,
+      "title": "翻訳メモ",
+      "heading": "文章",
+      "body": "チューニングという単語を英語へ翻訳する。"
+    },
+    {
+      "id": "cat-note-0",
+      "path": "notes/cat.md",
+      "chunkIndex": 0,
+      "title": "动物观察",
+      "heading": "宠物",
+      "body": "猫喜欢在窗边晒太阳。"
+    },
+    {
+      "id": "cat-recall-0",
+      "path": "notes/cat-recall.md",
+      "chunkIndex": 0,
+      "title": "宠物记忆检索",
+      "heading": "猫的召回",
+      "body": "猫的召回结果应该同时满足单字和双字查询条件。"
+    },
+    {
+      "id": "dog-note-0",
+      "path": "negatives/dog.md",
+      "chunkIndex": 0,
+      "title": "动物观察",
+      "heading": "宠物",
+      "body": "狗喜欢在公园里散步。"
+    },
+    {
+      "id": "bird-note-0",
+      "path": "negatives/bird.md",
+      "chunkIndex": 0,
+      "title": "动物观察",
+      "heading": "宠物",
+      "body": "鸟喜欢停在树枝上。"
+    },
+    {
+      "id": "link-graph-order-0",
+      "path": "notes/link-graph-order.md",
+      "chunkIndex": 0,
+      "title": "结构检索",
+      "heading": "链接图谱",
+      "body": "链接图谱用于发现多条笔记之间的结构关系。"
+    },
+    {
+      "id": "graph-link-reversed-0",
+      "path": "negatives/graph-link-reversed.md",
+      "chunkIndex": 0,
+      "title": "图谱界面",
+      "heading": "图谱链接",
+      "body": "图谱链接展示在关系视图中。"
+    },
+    {
+      "id": "link-and-graph-separated-0",
+      "path": "negatives/link-and-graph-separated.md",
+      "chunkIndex": 0,
+      "title": "关系说明",
+      "heading": "结构",
+      "body": "链接可以连接笔记，而图谱负责显示整体关系。"
+    },
+    {
+      "id": "xiaohongshu-0",
+      "path": "notes/xiaohongshu.md",
+      "chunkIndex": 0,
+      "title": "平台研究",
+      "heading": "小红书",
+      "body": "小红书的内容检索依赖短文本和标签。"
+    },
+    {
+      "id": "little-red-book-0",
+      "path": "negatives/little-red-book.md",
+      "chunkIndex": 0,
+      "title": "绘本故事",
+      "heading": "小红的书",
+      "body": "小红的书放在桌面上。"
+    },
+    {
+      "id": "red-book-cover-0",
+      "path": "negatives/red-book-cover.md",
+      "chunkIndex": 0,
+      "title": "装帧记录",
+      "heading": "封面",
+      "body": "红书封面采用了白色字体。"
+    },
+    {
+      "id": "rare-han-name-0",
+      "path": "notes/rare-han-name.md",
+      "chunkIndex": 0,
+      "title": "生僻字测试",
+      "heading": "𠮷野家",
+      "body": "𠮷野家这个名称包含补充平面的汉字。"
+    },
+    {
+      "id": "common-han-name-0",
+      "path": "negatives/common-han-name.md",
+      "chunkIndex": 0,
+      "title": "常用字测试",
+      "heading": "吉野家",
+      "body": "吉野家使用的是常见汉字。"
+    },
+    {
+      "id": "rare-han-person-0",
+      "path": "negatives/rare-han-person.md",
+      "chunkIndex": 0,
+      "title": "姓名记录",
+      "heading": "𠮷野",
+      "body": "𠮷野参加了今天的会议。"
+    },
+    {
+      "id": "retrieval-budget-0",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 0,
+      "title": "检索预算",
+      "heading": "候选池",
+      "body": "检索预算限制候选池的第一阶段规模。"
+    },
+    {
+      "id": "retrieval-budget-1",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 1,
+      "title": "检索预算",
+      "heading": "重排",
+      "body": "检索预算还限制进入重排模型的候选数量。"
+    },
+    {
+      "id": "retrieval-budget-2",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 2,
+      "title": "检索预算",
+      "heading": "输出",
+      "body": "检索预算最终限制模型可见的文档数量。"
+    },
+    {
+      "id": "retrieval-budget-3",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 3,
+      "title": "检索预算",
+      "heading": "向量",
+      "body": "检索预算约束向量候选。"
+    },
+    {
+      "id": "retrieval-budget-4",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 4,
+      "title": "检索预算",
+      "heading": "词法",
+      "body": "检索预算约束词法候选。"
+    },
+    {
+      "id": "retrieval-budget-5",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 5,
+      "title": "检索预算",
+      "heading": "图谱",
+      "body": "检索预算约束图谱候选。"
+    },
+    {
+      "id": "retrieval-budget-6",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 6,
+      "title": "检索预算",
+      "heading": "融合",
+      "body": "检索预算约束融合候选。"
+    },
+    {
+      "id": "retrieval-budget-7",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 7,
+      "title": "检索预算",
+      "heading": "排序",
+      "body": "检索预算约束排序候选。"
+    },
+    {
+      "id": "retrieval-budget-8",
+      "path": "notes/retrieval-budget.md",
+      "chunkIndex": 8,
+      "title": "检索预算",
+      "heading": "投影",
+      "body": "检索预算约束投影候选。"
+    },
+    {
+      "id": "budget-comparison-0",
+      "path": "notes/budget-comparison.md",
+      "chunkIndex": 0,
+      "title": "候选深度比较",
+      "heading": "检索预算",
+      "body": "这个对照说明不同检索预算如何改变唯一笔记召回。"
+    },
+    {
+      "id": "financial-budget-0",
+      "path": "negatives/financial-budget.md",
+      "chunkIndex": 0,
+      "title": "年度预算",
+      "heading": "财务",
+      "body": "年度预算用于安排设备采购。"
+    }
+  ],
+  "cases": [
+    {
+      "id": "cjk-two-character",
+      "group": "cjk",
+      "query": "召回",
+      "relevantPaths": ["notes/cjk-recall.md"],
+      "forbiddenPaths": ["negatives/team-call.md", "negatives/return-home.md"]
+    },
+    {
+      "id": "cjk-four-character",
+      "group": "cjk",
+      "query": "机器学习",
+      "relevantPaths": ["notes/machine-learning.md"],
+      "forbiddenPaths": ["negatives/machine-maintenance.md", "negatives/study-method.md"]
+    },
+    {
+      "id": "cjk-natural-sentence",
+      "group": "cjk",
+      "query": "提高中文检索、召回率。",
+      "relevantPaths": ["notes/chinese-retrieval.md"],
+      "forbiddenPaths": ["negatives/english-retrieval-quality.md", "negatives/chinese-input.md"]
+    },
+    {
+      "id": "mixed-cjk-latin",
+      "group": "cjk",
+      "query": "React渲染性能",
+      "relevantPaths": ["notes/react-performance.md"],
+      "forbiddenPaths": ["negatives/react-native.md", "negatives/render-art.md"]
+    },
+    {
+      "id": "japanese-kanji-kana",
+      "group": "cjk",
+      "query": "日本語検索 チューニング",
+      "relevantPaths": ["notes/japanese-search.md"],
+      "forbiddenPaths": ["negatives/japanese-input.md", "negatives/japanese-translation.md"]
+    },
+    {
+      "id": "cjk-single-character",
+      "group": "cjk",
+      "query": "猫",
+      "relevantPaths": ["notes/cat.md"],
+      "forbiddenPaths": ["negatives/dog.md", "negatives/bird.md"]
+    },
+    {
+      "id": "cjk-mixed-unigram-bigram",
+      "group": "cjk",
+      "query": "猫 召回",
+      "relevantPaths": ["notes/cat-recall.md"],
+      "forbiddenPaths": ["notes/cat.md", "notes/cjk-recall.md"]
+    },
+    {
+      "id": "cjk-order-and-adjacency",
+      "group": "cjk",
+      "query": "链接图谱",
+      "relevantPaths": ["notes/link-graph-order.md"],
+      "forbiddenPaths": ["negatives/graph-link-reversed.md", "negatives/link-and-graph-separated.md"]
+    },
+    {
+      "id": "cjk-proper-name-ambiguity",
+      "group": "cjk",
+      "query": "小红书",
+      "relevantPaths": ["notes/xiaohongshu.md"],
+      "forbiddenPaths": ["negatives/little-red-book.md", "negatives/red-book-cover.md"]
+    },
+    {
+      "id": "cjk-supplementary-han",
+      "group": "cjk",
+      "query": "𠮷野家",
+      "relevantPaths": ["notes/rare-han-name.md"],
+      "forbiddenPaths": ["negatives/common-han-name.md", "negatives/rare-han-person.md"]
+    },
+    {
+      "id": "english-ordinary",
+      "group": "english_safety",
+      "query": "retrieval latency",
+      "relevantPaths": ["notes/retrieval-latency.md"],
+      "forbiddenPaths": ["negatives/network-latency.md", "negatives/retrieval-precision.md"]
+    },
+    {
+      "id": "english-error-code",
+      "group": "english_safety",
+      "query": "ERR_OPFS_LOCKED",
+      "relevantPaths": ["notes/opfs-lock-error.md"],
+      "forbiddenPaths": ["negatives/opfs-quota-error.md", "negatives/lock-file.md"]
+    },
+    {
+      "id": "english-version-domain",
+      "group": "english_safety",
+      "query": "iOS 2.8.4 example.com",
+      "relevantPaths": ["notes/ios-version.md"],
+      "forbiddenPaths": ["negatives/ios-old-version.md", "negatives/example-org.md"]
+    },
+    {
+      "id": "metadata-title-only",
+      "group": "metadata",
+      "query": "渐进式索引迁移",
+      "relevantPaths": ["metadata/title-index-migration.md"],
+      "forbiddenPaths": ["negatives/title-ui-migration.md", "negatives/title-index-rebuild.md"]
+    },
+    {
+      "id": "metadata-heading-only",
+      "group": "metadata",
+      "query": "回退策略",
+      "relevantPaths": ["metadata/heading-fallback.md"],
+      "forbiddenPaths": ["negatives/heading-retry.md", "negatives/body-fallback.md"]
+    },
+    {
+      "id": "metadata-path-only",
+      "group": "metadata",
+      "query": "opfs lock",
+      "relevantPaths": ["runbooks/storage/opfs-lock.md"],
+      "forbiddenPaths": ["runbooks/storage/opfs-quota.md", "runbooks/worker/lock.md"]
+    },
+    {
+      "id": "long-note-chunk-crowding",
+      "group": "diagnostic",
+      "query": "检索预算",
+      "relevantPaths": ["notes/retrieval-budget.md", "notes/budget-comparison.md"],
+      "forbiddenPaths": ["negatives/financial-budget.md", "negatives/retrieval-precision.md"]
+    }
+  ]
+}

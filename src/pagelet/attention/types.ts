@@ -54,6 +54,8 @@ export interface RecapDeliveryReceiptInput {
 }
 
 export interface ReviewDeliveryReceiptInput {
+    /** Stable Deep Discover insight identity; optional for legacy review callers. */
+    insightId?: string | null;
     locale?: string | null;
     title?: string | null;
     body?: string | null;

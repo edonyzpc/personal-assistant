@@ -301,6 +301,13 @@ export interface PluginManagerSettings {
     memoryExtractionIncludeVaultInsights: boolean;
     memoryExtractionConsent: MemoryExtractionConsentSettings;
     vssCacheExcludePath: string[];
+    /** Internal rollback controls for B-125. Absent values use build defaults. */
+    retrievalOptimizationFlags?: {
+        lexicalProfile?: boolean;
+        strictReranker?: boolean;
+        graphPpr?: boolean;
+        relaxedRecovery?: boolean;
+    };
     /** Operations Agent mode (Beta): allow staged, user-confirmed core vault writes. */
     operationsAgentEnabled: boolean;
     /** Offer at most one quiet save suggestion in a qualifying conversation. */
@@ -562,6 +569,25 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.previewTags = normalizeStringArray(loadedObject.previewTags, DEFAULT_SETTINGS.previewTags);
     merged.metadataExcludePath = normalizeStringArray(loadedObject.metadataExcludePath, DEFAULT_SETTINGS.metadataExcludePath);
     merged.vssCacheExcludePath = normalizeStringArray(loadedObject.vssCacheExcludePath, DEFAULT_SETTINGS.vssCacheExcludePath);
+    const loadedRetrievalFlags = isRecord(loadedObject.retrievalOptimizationFlags)
+        ? loadedObject.retrievalOptimizationFlags
+        : undefined;
+    merged.retrievalOptimizationFlags = loadedRetrievalFlags
+        ? {
+            lexicalProfile: typeof loadedRetrievalFlags.lexicalProfile === "boolean"
+                ? loadedRetrievalFlags.lexicalProfile
+                : undefined,
+            strictReranker: typeof loadedRetrievalFlags.strictReranker === "boolean"
+                ? loadedRetrievalFlags.strictReranker
+                : undefined,
+            graphPpr: typeof loadedRetrievalFlags.graphPpr === "boolean"
+                ? loadedRetrievalFlags.graphPpr
+                : undefined,
+            relaxedRecovery: typeof loadedRetrievalFlags.relaxedRecovery === "boolean"
+                ? loadedRetrievalFlags.relaxedRecovery
+                : undefined,
+        }
+        : undefined;
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);

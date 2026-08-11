@@ -15,8 +15,10 @@ jest.mock('obsidian', () => {
     class MockPlugin { }
     class MockTFile {
         path: string;
+        extension: string;
         constructor(path: string) {
             this.path = path;
+            this.extension = path.includes('.') ? path.split('.').pop() ?? '' : '';
         }
     }
     return {
@@ -100,6 +102,8 @@ const DATA_BOUNDARY_DEFAULTS = {
     excludedFolders: [] as string[],
     excludedTags: [] as string[],
     generatedNotePolicy: "exclude-generated" as const,
+    providerDisclosureReasons: [] as string[],
+    cleanupGroups: [] as string[],
 };
 
 const buildHarness = (
@@ -116,7 +120,10 @@ const buildHarness = (
                 getMarkdownFiles: () => FakeFile[];
                 getAbstractFileByPath: (path: string) => FakeFile | null;
             };
-            metadataCache: { getFileCache: (file: FakeFile) => unknown };
+            metadataCache: {
+                getFileCache: (file: FakeFile) => unknown;
+                resolvedLinks?: Record<string, Record<string, number>>;
+            };
         };
         settings: {
             vssCacheExcludePath: string[] | undefined;
@@ -124,6 +131,11 @@ const buildHarness = (
         };
         getVSSFiles: () => FakeFile[];
         isDataBoundaryAllowedPath: (path: string) => boolean;
+        isMemoryProviderPathAllowed: (path: string) => boolean;
+        createMemoryGraphBoundarySnapshotSource: (consumer: "chat" | "pagelet") => {
+            getEpoch: () => string;
+            classifyPath: (path: string) => string;
+        } | undefined;
     };
     plugin.app = {
         vault: {
@@ -145,6 +157,21 @@ const buildHarness = (
 };
 
 describe('PluginManager.getVSSFiles', () => {
+    it('uses both Memory path exclusions and the shared Data Boundary at the provider seam', () => {
+        const files = [
+            { path: 'notes/keep.md' },
+            { path: 'memory-private/secret.md' },
+            { path: 'shared-private/secret.md' },
+        ];
+        const plugin = buildHarness(files, ['memory-private/'], {
+            dataBoundary: { excludedFolders: ['shared-private'] },
+        });
+
+        expect(plugin.isMemoryProviderPathAllowed('notes/keep.md')).toBe(true);
+        expect(plugin.isMemoryProviderPathAllowed('memory-private/secret.md')).toBe(false);
+        expect(plugin.isMemoryProviderPathAllowed('shared-private/secret.md')).toBe(false);
+    });
+
     it('returns an empty array when the vault has no markdown files', () => {
         const plugin = buildHarness([], ['.obsidian']);
         expect(plugin.getVSSFiles()).toEqual([]);
@@ -252,5 +279,51 @@ describe('PluginManager.getVSSFiles', () => {
         expect(plugin.isDataBoundaryAllowedPath('notes/tagged.md')).toBe(false);
         expect(plugin.isDataBoundaryAllowedPath('Reviews/generated.md')).toBe(false);
         expect(plugin.isDataBoundaryAllowedPath('notes/missing.md')).toBe(true);
+    });
+
+    it('classifies graph paths as allowed, opaque, or hard-blocked at the Host seam', () => {
+        const FileCtor = TFile as unknown as { new(path: string): FakeFile };
+        const allowed = new FileCtor('notes/allowed.md');
+        const excluded = new FileCtor('private/bridge.md');
+        const generated = new FileCtor('.pagelet/generated.md');
+        const attachment = new FileCtor('assets/image.png');
+        const plugin = buildHarness(
+            [allowed, excluded, generated, attachment],
+            [],
+            {
+                dataBoundary: { excludedFolders: ['private'] },
+                metadataByPath: {
+                    '.pagelet/generated.md': { frontmatter: { pagelet: 'true' } },
+                },
+            },
+        );
+        plugin.app.metadataCache.resolvedLinks = {
+            'notes/allowed.md': {
+                'private/bridge.md': 1,
+                '.pagelet/generated.md': 1,
+                'assets/image.png': 1,
+                'notes/missing.md': 1,
+            },
+        };
+        (plugin as unknown as { memoryGraphTopologyEpoch: number }).memoryGraphTopologyEpoch = 0;
+
+        const source = plugin.createMemoryGraphBoundarySnapshotSource('chat');
+        expect(source?.classifyPath('notes/allowed.md')).toBe('allowed_markdown');
+        expect(source?.classifyPath('private/bridge.md')).toBe('opaque_excluded_markdown');
+        expect(source?.classifyPath('.pagelet/generated.md')).toBe('blocked');
+        expect(source?.classifyPath('assets/image.png')).toBe('blocked');
+        expect(source?.classifyPath('notes/missing.md')).toBe('blocked');
+    });
+
+    it('changes the graph epoch when exact Memory path-prefix semantics change', () => {
+        const plugin = buildHarness([], ['private/']);
+        plugin.app.metadataCache.resolvedLinks = {};
+        (plugin as unknown as { memoryGraphTopologyEpoch: number }).memoryGraphTopologyEpoch = 7;
+        const source = plugin.createMemoryGraphBoundarySnapshotSource('chat');
+        const before = source?.getEpoch();
+
+        plugin.settings.vssCacheExcludePath = ['private'];
+
+        expect(source?.getEpoch()).not.toBe(before);
     });
 });

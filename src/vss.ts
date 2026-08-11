@@ -2,9 +2,17 @@
 
 export { buildFtsQuery, VSS } from "./vss/vss-core";
 export type { VSSChangeObservation, VSSRefreshStatus } from "./vss/vss-core";
-export type { VSSMemoryStatus, VSSMemoryStatusSnapshot } from "./vss/types";
+export type {
+    LexicalIndexStatus,
+    LexicalProfileMarker,
+    LexicalProfileState,
+    VSSMemoryStatus,
+    VSSMemoryStatusSnapshot,
+} from "./vss/types";
 export type {
     VSSFlushOptions,
+    VSSLexicalRebuildOptions,
+    VSSLexicalRebuildSummary,
     VSSOperationOptions,
     VSSOperationSummary,
     VSSProgressEvent,

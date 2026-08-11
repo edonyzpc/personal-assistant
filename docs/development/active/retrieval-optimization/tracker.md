@@ -1,131 +1,525 @@
 # Retrieval Pipeline Optimization — Development Tracker
 
-Document status: Active
-Updated: 2026-08-07
+Document status: Current
+Delivery status: Validating
+Updated: 2026-08-11
+Work item: B-125
+Authority: 本 track 的唯一执行状态、finding、验证证据与 closeout readiness。
+Product spec: [PA Active Vault Indexer — B-125](../../../product/specs/pa-active-vault-indexer-product-spec.md#101-b-125-scoped-retrieval-optimization)
 Plan: [Delivery Plan](./plan.md)
 SDD: [Software Design Document](./sdd.md)
 
-## Progress Summary
+## Current Snapshot
 
-| Phase | Status | Started | Completed | Notes |
-|-------|--------|---------|-----------|-------|
-| Phase 1: Self-RAG 反思 | Pending | — | — | |
-| Phase 2: PPR 图扩展 | Pending | — | — | |
-| Phase 3: 单次重试 | Pending | — | — | |
+- Current phase: Phase 0B、1、2 and 3 runtime implementation、the currently
+  authorized device-independent validation and the scoped current App/OPFS/
+  Darwin/iOS functional slices are complete；the work remains in
+  `Validating`. The latest full `make deploy` gate passes 206 suites /
+  4,814 tests plus lint/build, and the focused runner/verifier/performance-fixture/
+  iOS gate passes 4 suites / 390 tests.
+  `dist/main.js`、the repo-local test-vault plugin and the iCloud test-vault
+  plugin byte-match at
+  `ada371a9d1d8a761e91ce5128ad266f9ce7904e1cd542e024a589a35e7551cd9`.
+  The local and iCloud iOS runtime bundles byte-match at
+  `73f45f898617fb47f6399db732afd8ab5f7440ffe3e3d90740ee0609227ef279`
+  and bind that exact plugin artifact plus the current checkout production
+  binding. The atomic local production provenance has SHA-256
+  `655f1900be05dcb5f27f3860ed56bf4ed62a178365827416cff9e8a6a6300fca`
+  and binds 385 production inputs at
+  `41174c64836efd26ad277c2e52747f4dfc84fcddec8770a483bf0a9a0475ff33`.
+  Current-artifact App、OPFS full-restart、Darwin exact-renderer and real-iOS
+  functional receipts are now captured against `ada371a9…`. Windows/Linux、
+  performance and post-freeze scored/structured acceptance remain open；none of
+  the current functional slices is an aggregate rollout PASS.
+- Current App receipt `test/retrieval-optimization-smoke-result.json` has SHA-256
+  `d8e4cacb6fb2e4c647c2ed872d2c4f4c1faeb11e28a1eb8b0836a3471ed97430`,
+  started `2026-08-11T14:01:55.269Z` and finished
+  `2026-08-11T14:13:54.945Z`. It binds plugin loaded/disk `ada371a9…` and runner
+  `bbce8a16…`; Recovery、five lexical cases、graph depth/convergence、opaque
+  boundary、calendar-year temporal and Pagelet 0/1/2 all pass. Its overall remains
+  `BLOCKED` only by the unfrozen device/performance plan、unbound qualified
+  performance workload、six scored-ranking cases and structured temporal
+  acceptance. The current verifier reports `failures=[]` and
+  `integrityErrors=[]`；this is a current functional App slice, not rollout or
+  performance acceptance.
+- Next action: the owner fixed `minimumIPhoneModel=iPhone 15` and explicitly
+  deferred Xcode/Instruments and performance. The 18 device-derived thresholds、
+  performance representative、slow-device sessions and atomic threshold/reranker
+  freeze therefore remain open；only after that freeze may the six scored
+  rankings、structured temporal acceptance and standard `23` / retry `12 + 11` /
+  cancellation `1` performance sessions be recorded. Current Mac App、OPFS
+  full-restart and Darwin exact-renderer functional slices are complete. The
+  current iOS canary remains complete through real-device observation、iPhone
+  Mirroring and Safari Web Inspector；it closes only the current WKWebView
+  segmentation/functional slice. Until a reviewed Instruments converter exists,
+  both the
+  runner and standalone verifier force external process-memory evidence to
+  `BLOCKED / external_memory_converter_unverified`; raw JSON/export hashes cannot
+  satisfy a required metric. Windows/Linux exact-renderer receipts remain external
+  gates.
+- Blocker / decision needed: `minimumIOSVersion`、`minimumObsidianVersion` and
+  an exact performance `representativeDevice` with `representsFloor=true` remain
+  undefined. A decision input is now prepared, but is not approved or frozen:
+  `minimumIOSVersion=17.0` is the least software floor consistent with the
+  owner-selected iPhone 15 family（[launched with iOS 17](https://www.apple.com/newsroom/2023/09/apple-debuts-iphone-15-and-iphone-15-plus/)），and
+  `minimumObsidianVersion=1.11.4` matches the current plugin manifest floor.
+  That tuple has not been validated on an exact floor configuration；the current
+  iOS 26.6 / Obsidian 1.13.6 observation cannot prove it. No Xcode installation、
+  process-footprint capture or performance run
+  is attempted under the current owner decision. Commit、push、tag、publish、
+  release and closeout authority remain ungranted. Cleanup is complete：the exact
+  `data.json` / `community-plugins.json` baselines are restored、PA is disabled、
+  dev debug/mobile emulation are off、the temporary `9229` endpoint is closed and
+  Obsidian is reopened normally.
+- Current evidence tooling: source and repo-local test-vault smoke runners
+  byte-match at
+  `bbce8a167b565a1dadd67da7d77218aafbcefc4be82931baf74b7c74c85d0a41`;
+  the manifest SHA-256 is
+  `4be0c391317e061084acda37f3896143b95892b06b7cf2ffa92a1677e3045a99`.
+  The v5 pack contains 62 frozen fixture files；all 64 prepared artifacts
+  (fixtures、manifest and runner) are unchanged on dry-run, all 16 temporal mtimes
+  match, and the canonical fixture bundle SHA-256 is
+  `d1f6e928ede4df50c3846ffd6e2d75fe620d5d01e7de4a3e20019ee1ec61f18e`.
+  Automated evidence closes loaded-vs-disk、run ID、cancellation、settings and
+  final-write integrity. The successful `finalize()` result is the snapshot captured
+  inside the one committed final write；a failed final write is terminal non-`PASS`,
+  releases reversible guards and permits a fresh recorder. Device plan v9
+  additionally binds the exact qualified standard/retry/cancellation workload to
+  fresh live Chat turns while persisting only content-free IDs、counts and opaque
+  correlations. The external memory path currently records only fail-closed
+  provenance: without a reviewed raw-export converter, runner and verifier both
+  require `external_memory_converter_unverified / BLOCKED`, including for exact-
+  shape or forged `unsupported + PASS` metric input. The desktop schema-v2 receipt
+  contract binds the
+  renderer's loaded plugin identity and vault artifact to the same current
+  `dist/main.js`；a receipt missing that binding fails closed.
+  Finalization is an evidence cutoff, not a permanent currentness guarantee:
+  acceptance must re-hash the current runner、`dist` and vault-loaded artifact
+  against the receipt or remain `BLOCKED`. Current App receipt `d8e4cacb…` binds
+  plugin `ada371a9…` and runner `bbce8a16…`. Current OPFS baseline
+  `3d34e3201d57f4233fd978e993a04275957d012e3b07cde11b0d1dc5bbe0e534`
+  and receipt
+  `ad5937e43c71af2e70fd3a02a29a51e2e389ade95e30c74e813bb0d160b8d8c3`
+  bind runner `eb1eab22…` and plugin `ada371a9…`; the
+  `2026-08-11T14:22:53.715Z`–`14:26:02.413Z` / `188698 ms` window passes all
+  `43/43` stable fields and changes renderer PID、main-process identity and
+  `timeOrigin` across a full Obsidian restart. Current Darwin receipt
+  `test/fts-runtime-receipt-darwin.json` has SHA-256
+  `f351539d06b94d48fb65613f5478bb5a9cb5b79d96674ce908df331a9061be88`
+  and `generatedAt=2026-08-11T14:28:23.576Z`; exact `darwin/arm64`
+  `app://obsidian.md` renderer verification passes against plugin `ada371a9…`.
+  Multi-platform verification is `BLOCKED` only by missing win32/linux with
+  `failures=[]` and `diagnostics=[]`.
+  The final `data.json` and `community-plugins.json` baseline hashes are restored
+  to `e8b10e8c…` / `a92e89fc…`; PA is disabled、dev debug/mobile emulation are
+  off、the temporary CDP endpoint is closed and Obsidian is reopened normally.
+  The current `ada371a9…` provider-free lifecycle smoke proves absent/default-off
+  → exact four flags on → absent/default-off, unload rejection of a captured late
+  diagnostic completion, a fresh epoch-1 zero-event session after re-enable, zero
+  observed `globalThis.fetch` attempts during a sequence that invoked no provider
+  path（without claiming coverage of Obsidian `requestUrl`）and unchanged 126-file
+  Markdown aggregate content. The older
+  `8376de3d…` lifecycle row remains historical.
+  The read-only
+  `node scripts/retrieval-evidence-receipt-verify.mjs --json` verifier now
+  independently re-hashes the current plugin、runner、manifest、OPFS runner、
+  bound OPFS baseline and all frozen fixture files/temporal mtimes；it also
+  recomputes the sealed OPFS evidence、raw restart identity、43 stable fields
+  and durable-storage semantics. The current checkout returns `BLOCKED / exit 2`
+  only for `app_receipt_overall_blocked` and
+  `app_performance_workload_not_pass`, with `failures=[]` and
+  `integrityErrors=[]`；the current App/OPFS bindings、all `62/62` fixture files
+  and all `16/16` temporal mtimes match.
+  Its scope is explicit：
+  App evidence is unsealed artifact-binding/structural consistency only；it does
+  not authenticate the App receipt、recompute its Recovery digest or prove a
+  live process. The current real-iOS receipt at
+  `test/fts-ios-runtime-receipt.json` has SHA-256
+  `3cfbc14c20bd823eb42c76155075ead87838d4e397afb2abb263d4983251d488`、
+  payload SHA-256
+  `7f64996e4af2c06a64e2886c127dc731103f244a7aa20c20f8e40e0b8b5e38b8`
+  and `generatedAt=2026-08-11T13:55:29.885Z`. Inside its ten-minute capture
+  window the verifier returned `PASS / exit 0` with
+  `blockers=[]`、`failures=[]` and `diagnostics=[]`, binding Obsidian `1.13.6`、
+  loaded/disk/current-dist plugin `ada371a9…`、bundle `73f45f89…` and opaque
+  device identity `b14cf5ac…`. Its operator observation records
+  `realDeviceObserved=true`、`iphoneMirroringObserved=true` and
+  `safariWebInspectorObserved=true`. The base capture remains
+  `CANDIDATE / UNATTESTED` with `hardwareAttestationClaimed=false`；this closes
+  only current iOS runtime segmentation/functional behavior and does not prove
+  the exact iPhone model、actual iOS version、floor representation、performance/
+  Xcode or a minimum supported iOS/Obsidian version. Its runtime canary reports
+  `host=browser-renderer` with `versions`、`processPlatform` and `processArch`
+  all `null`；it does not establish an iOS `process.getProcessMemoryInfo()` source,
+  so no-Xcode process-footprint acceptance remains unproven. The receipt is deliberately
+  time-bounded：after ten minutes a replay must return stale by design, so the
+  saved file is not a permanently replayable PASS. The prior `70200fa3…` /
+  `ea0b809e…` / `5e3a7140…` capture remains historical in the validation log.
+  These slices still do not prove
+  Windows/Linux、slow-device or post-freeze quality/performance acceptance.
 
-## Phase 1: Self-RAG Retrieval Quality Gate
+## Pre-freeze Readiness Packet
 
-### Tasks
+This packet closes the review work that does not require an unlocked App or a
+physical device. It is **not** a frozen measurement plan and cannot be imported
+as runtime evidence. The current-source real-sqlite calibration was rerun over
+81 rows、14 cases、4 holdouts and 120 configurations；integrity and every RRF
+source permutation pass, and the winner remains exactly
+`clause_OR/body_favor/compact/k30_equal`（8 vector / 12 lexical / 18 fusion，
+BM25 `1.25 / 1.25 / 2 / .25`，RRF `k=30` with equal leg weights）. Its Node +
+in-memory timing remains diagnostic only and cannot populate OPFS/device gates.
 
-| # | Task | Status | Commit | Notes |
-|---|------|--------|--------|-------|
-| 1.1 | 添加 `RerankVerdict` 类型到 `src/ai-services/chat-types.ts` | Pending | | |
-| 1.2 | 扩展 `MemorySearchResult` 接口（rerankVerdict + filteredCandidatePaths） | Pending | | |
-| 1.3 | 修改 `RERANK_SYSTEM_PROMPT` 添加 verdict 指令 | Pending | | |
-| 1.4 | 重写 `parseRerankResponse` → 返回 `RerankResult`；修复空 ranking bug | Pending | | |
-| 1.5 | 修改 `rerankCandidates` 返回类型为 `RerankResult` | Pending | | |
-| 1.6 | 修改 `searchVss` 消费 verdict：none_relevant 时清空 documents + 填充 filteredCandidatePaths | Pending | | |
-| 1.7 | 修改 `getToolResultControlMetadata` 传递 rerankVerdict | Pending | | |
-| 1.8 | 添加 `memoryStrictRelevanceFilter` feature flag 到 settings | Pending | | |
-| 1.9 | 新建 `__tests__/memory-search-rerank.test.ts` 覆盖所有 verdict 场景 | Pending | | |
-| 1.10 | 运行 `make deploy` 确认全链路通过 | Pending | | |
-| 1.11 | 回归测试：现有 memory 相关测试全部通过 | Pending | | |
+The following five threshold values are device-independent structural
+invariants and are ready to be copied unchanged into the eventual atomic freeze:
 
-### Exit Criteria
+| Required metric | Pre-reviewed threshold | Reason |
+| --- | --- | --- |
+| `retrieval.deadlineExceededCount` | `p95Max: 0` | a trusted performance episode cannot exceed its deadline |
+| `retrieval.cancelRequestedCount` | `p95Min: 1` | the isolated cancellation probe must request cancellation |
+| `retrieval.cancelObservedCount` | `p95Min: 1` | the same Worker request must observe cancellation |
+| `retrieval.acceptedAfterCancelCount` | `p95Max: 0` | no terminal result may be accepted after cancellation |
+| `retrieval.lateDiscardCount` | `p95Min: 1` | the late result must be observed and discarded |
 
-- [ ] `parseRerankResponse({"ranking":[], "verdict":"none_relevant"}, candidates)` 返回 `{ candidates: [], verdict: "none_relevant" }`
-- [ ] `parseRerankResponse({"ranking":[0,1]}, candidates)` 返回 `{ candidates: [c0, c1], verdict: "relevant" }` （无 verdict 字段向后兼容）
-- [ ] none_relevant 结果的 `filteredCandidatePaths` 包含被过滤候选的路径
-- [ ] `make deploy` 通过
-- [ ] 现有 `__tests__/` 无回归
+The selected-reranker gate is pre-reviewed as absolute `minimumMrr: 1.0` with
+`flagOffBaselineMrr` and `maximumMrrRegression` left `null`. The six frozen cases
+each require their target at rank 1；historical explicit-notes slices are only the
+selection anchor, while the current artifact must still run all six cases after
+the atomic plan freeze. Optional JS heap、long-task and accepted-count metrics
+remain diagnostics and may keep null thresholds.
 
----
+The other 18 required thresholds remain intentionally pending：nine standard/
+retry retrieval and Worker latency bounds、two finalization-reserve minima、two UI
+bounds、two lexical maintenance bounds and three storage/process-memory bounds.
+The reserve contract is non-zero, but its numeric minimum still needs the same
+representative-device pilot as the other performance thresholds；neither `1 ms`
+nor current-Mac/Node timing is silently promoted to an acceptance constant.
 
-## Phase 2: PPR Graph Expansion
+Cross-platform handoff is also prepared. On each real supported desktop, use the
+same checkout and production artifact, expose only a loopback CDP endpoint, then
+capture `node scripts/fts-runtime-probe.mjs --cdp=http://127.0.0.1:<port> --json`
+as the platform receipt. After collecting darwin、win32 and linux receipts, run
+`node scripts/fts-runtime-receipt-verify.mjs --json <darwin> <win32> <linux>`.
+Missing platforms remain `BLOCKED`; a container or another platform cannot
+substitute for the exact Obsidian renderer. Current Darwin exact-renderer evidence
+passes for `ada371a9…`; only win32/linux remain missing. The fixture pack is currently 62/62
+unchanged with all 16 frozen temporal mtimes intact, and the source/test-vault
+smoke runner、manifest and OPFS runner byte-match. Copying the full retrieval pack
+to iCloud remains deferred with the performance lane. The current plugin and
+runtime bundle byte-match between local and iCloud test vaults, and the current
+`ada371a9…` / `73f45f89…` pair now has a freshness-window real-device functional
+iOS canary. It remains `CANDIDATE / UNATTESTED` and supplies no performance、
+support-floor or exact model/iOS-version evidence.
 
-### Tasks
+## Phase 0A Decision Evidence
 
-| # | Task | Status | Commit | Notes |
-|---|------|--------|--------|-------|
-| 2.1 | 新建 `src/graph/personalized-pagerank.ts`：`computePPRParams` + `personalizedPageRank` | Pending | | |
-| 2.2 | 新建 `__tests__/personalized-pagerank.test.ts`：star/clique/chain/disconnected 图测试 | Pending | | |
-| 2.3 | 新建 `src/graph/ppr-expansion.ts`：`expandByPPR` 完整流程 | Pending | | |
-| 2.4 | 在 `vss-core.ts` 添加 `_lastQueryEmbedding` transient field + getter，searchHybrid 内部赋值 | Pending | | 前置：PPR 向量验证的必要条件 |
-| 2.5 | 在 `vss-core.ts` 新增 `computeCosineSimilarityForPaths(paths, queryEmbedding)` 方法 | Pending | | |
-| 2.6 | 扩展 `AiServiceHost` 接口：添加 `computeQueryCosineSimilarity(paths: string[], queryEmbedding: number[])` | Pending | | 注意类型是 number[] 不是 Float32Array |
-| 2.7 | 在 `plugin.ts` 中实现 `computeQueryCosineSimilarity`（读取 lastQueryEmbedding） | Pending | | |
-| 2.8 | 确保 `normalizeSearchCandidates` 和 `RawSearchResult` 从 `memory-search-tool.ts` 导出 | Pending | | ppr-expansion.ts 需要 import |
-| 2.9 | 修改 `memory-search-tool.ts`：读取 lastQueryEmbedding + 条件调用 PPR / one-hop（totalEdges > 20） | Pending | | |
-| 2.10 | 扩展 `MemorySearchPort.searchHybrid` options：添加可选 `k`/`fusionTopK` 参数 | Pending | | Phase 3 前置，但在 Phase 2 中实施更自然 |
-| 2.11 | 添加 `memoryPPRExpansion` feature flag 到 settings | Pending | | |
-| 2.12 | 新建 `__tests__/ppr-expansion.test.ts`：mock 全流程测试 | Pending | | |
-| 2.13 | 性能测试：5000 节点合成图 PPR×3 < 50ms（CI 环境 < 100ms 亦可接受） | Pending | | |
-| 2.14 | 运行 `make deploy` 确认全链路通过 | Pending | | |
-| 2.15 | 回归测试：现有 memory 相关测试全部通过 | Pending | | |
-| 2.16 | Obsidian smoke：在 vault 中对有 2-3 跳链接关系的笔记提问，验证 PPR 扩展命中 | Pending | | |
+The evidence-integrity checks pass: the current production query builder
+reproduces the known CJK mismatch、trigram reproduces the short-query boundary and
+the `BIGRAM-U1` mixed unigram/bigram case actually exercises both physical legs.
 
-### Exit Criteria
+| Strategy | Core CJK | English/code | Equal-weight metadata | MATCH errors | Incremental fields FTS bytes | OD-06A result |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| current baseline | 0/10 Hit@8 | 3/3 retained | 1/3 reachable；CJK title/heading still miss | 0 | 32,768 | failing baseline only |
+| `BIGRAM-U1` | 10/10 Hit@8；first relevant rank 1 in all ten | 3/3 no regression | 3/3 reachable | 0 | 81,920 | eligible |
+| `CHAR-PHRASE` | 10/10 Hit@8；first relevant rank 1 in all ten | 3/3 no regression | 3/3 reachable | 0 | 32,768 | eligible |
+| `INTL-WORD` | 10/10 Hit@8；first relevant rank 1 in all ten | 3/3 no regression | 3/3 reachable | 0 | 32,768 | eligible |
+| trigram | misses 1/2-character and mixed-unigram cases | diagnostic only | diagnostic only | 0 | 57,344 | limitation control only |
 
-- [ ] `personalizedPageRank(center, starGraph, params)` 对所有叶子节点返回 score 差异 < 1e-6（均匀度数→均匀分数）
-- [ ] Degree-penalized PPR 中 hub 节点 (degree=20) score < 等距非 hub 节点 (degree=2) score
-- [ ] `computePPRParams` 在 avgDegree=2 时返回 alpha === 0.84，avgDegree=10 时返回 alpha === 0.6
-- [ ] `expandByPPR` 对 cosine < 0.3 的候选正确过滤
-- [ ] totalEdges ≤ 20 时走 `expandByOneHop` 路径
-- [ ] PPR×3 on 5000-node graph < 50ms (desktop benchmark)
-- [ ] `make deploy` 通过
-- [ ] 现有 `__tests__/` 无回归
+The INTL canary fingerprint for this environment is
+`7b96195ca69f2ba5539e2c2737418cb6d7c72cbead23adaff01418817cb1f806`.
+Tiny in-memory page counts and Node timing are anomaly diagnostics, not
+production/iPhone performance claims.
 
----
+The reported path metrics are canonical-path projections of each raw Top-8 chunk
+pool, matching the Phase 0A shallow lexical-candidate boundary. The long-note
+diagnostic deliberately fills all eight raw seats from one path and records
+`uniquePaths@8=1`、`duplicateChunkRatio=.875` and two-relevant-path recall `.5`；
+path-level diversity/overfetch is therefore a Phase 0B calibration requirement,
+not hidden by the Phase 0A admission gate.
 
-## Phase 3: Agentic Single-Retry Recovery
+### Pre-decision context-boundary evidence
 
-### Tasks
+The separate body-only set deliberately selects four places where word boundaries
+matter, then adds four aligned positive controls for the same query strings and
+five stable controls. It diagnoses lexical candidate admission；it is not a vault-
+level recall/precision sample and does not enter the original Phase 0A admission
+score.
 
-| # | Task | Status | Commit | Notes |
-|---|------|--------|--------|-------|
-| 3.1 | 修改 `searchVss` 添加 `isRetry` 参数 + 放宽参数（vector k=12, fusionTopK=18, PPR cosine=0.2） | Pending | | |
-| 3.2 | 添加 `lastSearchState` 到 `MemorySearchTool`（含 query + result + verdict） | Pending | | |
-| 3.3 | 修改 `search()` 方法：基于上次 verdict 判定 isRetry（非仅判断是否存在上次结果）+ query 去重 | Pending | | |
-| 3.4 | 修改 `serializeToolObservation`：none_relevant/partially_relevant 时添加 retrievalGuidance | Pending | | |
-| 3.5 | 修改 system prompt：添加 search_memory 使用指引 + retry 限制 | Pending | | |
-| 3.6 | 修改 `pa-agent-required-capability-policy.ts`：扩展 follow-up 条件支持 none_relevant 重试 | Pending | | |
-| 3.7 | 添加 `memoryRetryOnMiss` feature flag 到 settings | Pending | | |
-| 3.8 | 新建 `__tests__/memory-search-retry.test.ts` | Pending | | |
-| 3.9 | 测试：isRetry 仅在上次 verdict 为 none/partially 时触发（unrelated follow-up 不触发） | Pending | | |
-| 3.10 | 测试：retrievalGuidance 文本不出现在 agent 最终回复中 | Pending | | |
-| 3.11 | 运行 `make deploy` 确认全链路通过 | Pending | | |
-| 3.12 | Obsidian smoke：首次 miss → 重试命中验证 | Pending | | |
-| 3.13 | 回归测试：现有 memory 相关测试全部通过 | Pending | | |
+| Strategy | Selected boundary hard-positive MATCH | Selected semantic-collision avoidance | Aligned positive controls | Selected stable controls |
+| --- | ---: | ---: | ---: | ---: |
+| `BIGRAM-U1` | 2/2 | 0/2 | 4/4 | 5/5 |
+| `CHAR-PHRASE` | 2/2 | 0/2 | 4/4 | 5/5 |
+| `INTL-WORD` | 0/2 | 2/2 | 4/4 | 5/5 |
 
-### Exit Criteria
+The two hard positives are `乒乓球拍` inside a relevant `乒乓球拍卖…球拍`
+sentence and `東京大学` inside `東京大学生協`；the two deliberately irrelevant
+literal collisions are `研究生` across `研究生命` and `京都` inside `東京都`.
+Therefore CHAR/BIGRAM provide stronger continuous-literal lexical recall in these
+counterexamples but admit both semantic collisions. INTL avoids the collisions but
+its lexical leg contributes neither relevant candidate. Later vector/PPR/reranking
+may rescue or filter these cases；this evidence does not claim the final hybrid
+result has the same outcomes or estimate how often the patterns occur in a vault.
 
-- [ ] `isRetry=true` 时 hybrid search 使用 k=12
-- [ ] `isRetry=true` 时 PPR cosineThreshold=0.2
-- [ ] 相同 query string 第二次调用返回缓存结果
-- [ ] none_relevant 结果中包含 `retrievalGuidance` 字段
-- [ ] partially_relevant 结果中包含 optional guidance 字段
-- [ ] Agent 能在 none_relevant 后发起第二次 search_memory 调用（follow-up policy 允许）
-- [ ] `make deploy` 通过
-- [ ] 现有 `__tests__/` 无回归
+### Pre-decision deterministic scale evidence
 
----
+The scale corpus is deterministic and language-diverse rather than a repeated-
+sentence load test. The 25k run contains 25,000 chunks / 6,285 paths / 78,102,418
+raw UTF-8 bytes, with 13,728 Chinese、3,744 Japanese、4,983 pure-English and 2,488
+mixed-script synthetic chunks. Body length is p50 1,040、p95 3,609、max 4,000
+characters；corpus fingerprint is
+`19e942512050d67bfd053bb02e7bf3d80d13ad3fea1ad3608f45aaf6623bbf06`.
+Each profile/size/repeat ran in a fresh Node/sqlite-wasm process, with three
+Latin-rotated repeats and identical controlled-query MATCH counts.
 
-## Observability Checklist
+| Chunks | Strategy | Allocated MiB | Live MiB | Freelist MiB | Allocated/raw | Build median | Max RSS MiB | Frozen rank stability |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 2,000 | `BIGRAM-U1` | 6.55 | 6.45 | .09 | 1.127 | 2.93 s | 171.75 | PASS |
+| 2,000 | `CHAR-PHRASE` | 4.72 | 3.72 | 1.00 | .813 | 1.38 s | 168.44 | PASS |
+| 2,000 | `INTL-WORD` | 3.66 | 2.65 | 1.01 | .630 | 2.99 s | 220.59 | PASS |
+| 10,000 | `BIGRAM-U1` | 32.38 | 32.38 | 0 | 1.091 | 15.22 s | 215.67 | PASS |
+| 10,000 | `CHAR-PHRASE` | 19.24 | 18.75 | .49 | .648 | 7.13 s | 208.53 | PASS |
+| 10,000 | `INTL-WORD` | 14.62 | 13.19 | 1.43 | .492 | 15.58 s | 258.56 | PASS |
+| 25,000 | `BIGRAM-U1` | 84.20 | 81.16 | 3.05 | 1.130 | 38.69 s | 313.73 | PASS |
+| 25,000 | `CHAR-PHRASE` | 49.55 | 47.09 | 2.46 | .665 | 18.24 s | 285.61 | PASS |
+| 25,000 | `INTL-WORD` | 34.20 | 33.16 | 1.05 | .459 | 39.39 s | 323.94 | PASS |
 
-交付完成后应能通过 debug log 观察到：
+At 25k, the warm Top-8 per-query p95 values below preserve the same MATCH row
+counts across profiles:
 
-| 指标 | 来源 | 预期范围 |
-|------|------|---------|
-| verdict 分布 | reranker 输出 | relevant ~60%, partially ~20%, none ~20% |
-| PPR 耗时 | expandByPPR 计时 | <30ms desktop, <50ms mobile |
-| PPR 扩展候选数 | expandByPPR 返回 | 0-6 个（cosine 验证后） |
-| retry 触发率 | isRetry=true 的调用比例 | <15% of all search_memory calls |
-| retry 成功率 | retry 后 hasAnswerableContent=true | >30% of retries |
+| Controlled query class | MATCH rows | `BIGRAM-U1` | `CHAR-PHRASE` | `INTL-WORD` |
+| --- | ---: | ---: | ---: | ---: |
+| high-frequency | 9,980 | 9.152 ms | 11.929 ms | 8.309 ms |
+| medium-frequency | 1,872 | 2.565 ms | 3.543 ms | 2.345 ms |
+| low-frequency | 188 | .375 ms | 1.032 ms | .675 ms |
+| mixed code | 936 | 1.439 ms | 2.348 ms | 1.863 ms |
+| single character | 4,990 | 3.529 ms | 3.556 ms | 3.503 ms |
+| no hit | 0 | .047 ms | .098 ms | .046 ms |
 
----
+This is relative Node 22 + in-memory sqlite-wasm evidence, not OPFS file size、
+Obsidian Electron/mobile latency or natural-vault retrieval quality. Allocated
+pages include freelist；live pages subtract it. Build time includes profile table
+creation、transformation、insert and commit, but not chunking、embedding or a full
+Memory rebuild. Rank-stability PASS only means the frozen canaries did not regress
+after adding distractors.
 
-## Blockers And Issues
+### Pre-decision historical macOS desktop segmentation evidence
 
-| # | Issue | Severity | Status | Resolution |
-|---|-------|----------|--------|------------|
-| — | — | — | — | — |
+The same runtime-neutral frozen token canary was evaluated on the following
+hosts. All produced the same combined fingerprint
+`1f5617494c3d7f80e693e66cd88855cbd5947921215d997c4aff3b9c49f35d55`.
+
+| Host | Engine identity | ICU / Unicode | Result |
+| --- | --- | --- | --- |
+| Node 22 | Node 22.22.3 / V8 12.4 | ICU 78.2 / Unicode 17.0 | same fingerprint |
+| Node 20 | Node 20.18.1 | ICU 75.1 / Unicode 15.1 | same fingerprint |
+| VS Code Electron | Electron 42.7.1 / Node 24.18.0 | ICU 78.2 / Unicode 17.0 | same fingerprint |
+| historical macOS Obsidian renderer snapshot | shell/UA `Obsidian 1.12.7` / Electron 39.8.3 / Node 22.22.1；loaded-app API version not captured | ICU 74.2 / Unicode 15.1 | same fingerprint |
+
+The exact target was `Obsidian / app://obsidian.md/starter.html`, verified as an
+Electron renderer and bound to the installed shell/UA identity；the formal loaded
+app API version was not captured, so this historical snapshot is not a current
+exact-app receipt. Split hashes are
+grapheme `854186858b53f61dd45a88a91034c09baf07d9e96926dd5a94d75fc13716f5ef`
+and word `27c328cf06b5bde83fbd62e1cd879fc37275d7a57ad4863098b92f40686c7700`；
+the installed app exposes ICU marker `icudt74l` and ICU-data SHA-256
+`5070de99fbd8a48378543511fb7a072f85bf36f94b4f4e1d420d54be1435d6f1`.
+This proves only the frozen samples on those historical macOS hosts. It does not
+prove all `Intl.Segmenter` dictionary behavior、future runtime stability、
+Windows/Linux/iOS agreement or actual Obsidian sqlite-wasm FTS performance.
+
+Owner decision OD-06A, confirmed 2026-08-08: choose `CHAR-PHRASE` under the
+continuous-text-recall-first objective. All three profiles preserve
+strict adjacency/order and pass the original quality gate. CHAR and BIGRAM behave
+the same on the selected boundary counterexamples, while at 25k CHAR uses about
+41% less allocated space and takes about half the build time of BIGRAM；BIGRAM's
+controlled-query p95 is modestly lower in most non-trivial classes but adds no
+quality gain in the frozen evidence. INTL has the smallest index、often the lowest
+  query p95 and avoids both selected collisions, but its lexical leg misses both
+selected relevant boundary counterexamples and its scale-build cost is the
+highest. CHAR/BIGRAM still depend on Unicode grapheme segmentation, and CHAR's
+  extra collision candidates must be evaluated through fusion/reranking in Phase
+  0B. The historical macOS fingerprint match lowers one known compatibility risk but
+does not close supported-runtime coverage. The selected versioned profile remains
+the migration key, and switching it requires only a local rebuild from allowed
+chunks, with no provider call、re-embedding or Markdown mutation.
+
+## Phase Summary
+
+| Phase | Status | Requirements | Notes |
+| --- | --- | --- | --- |
+| Phase 0A — lexical evidence baseline | Complete | B-125/REQ-08 evidence prerequisite | 57 rows / 17 cases；atomic-token/strict-semantics integrity checks pass；all three candidates eligible；separate context-boundary canaries、three-repeat 2k/10k/25k scale matrix and historical macOS Obsidian segmentation comparison complete（shell/UA identity only；loaded-app API not captured） |
+| Phase 0B — corrected lexical profile | Implementation complete / rollout gated | B-125/REQ-08 | `CHAR-PHRASE`、independent lexical generations、explicit confirmation/progress/cancel、shadow switch and vector-only fallback implemented and tested；EC-02 offline calibration is provisional，device/deadline evidence remains open |
+| Phase 1 — strict rerank and projection | Implementation complete / rollout gated | B-125/REQ-01、02 | Policy-model-else-Chat selection、strict mixed ranking/fail-open、provider-tight currentness、Host-only projection and ≤8-document allocation implemented and tested；the latest finalized pre-fix v4 selected-model ranking slice is 6/6 at rank 1，while a post-fix scored-ranking App slice、reviewed thresholds、device and final rollout gates remain open |
+| Phase 2 — convergence-aware PPR | Implementation complete / rollout gated | B-125/REQ-03、04、07 | Frozen Data Boundary snapshot、opaque bridge、bounded Local/Deep/Convergence PPR、Worker cosine/deadline/cancel/late-discard and fallbacks implemented and tested；Local overflow now suppresses only inadmissible Local/Deep duplication while preserving safe multi-seed Convergence；the envelope remains provisional until T-00C/T-10 device calibration |
+| Phase 3 — Host-owned recovery and Pagelet depth | Implementation complete / rollout gated | B-125/REQ-05、06 | Chat/Pagelet separate one-shot Host recovery、shared deadline/finalization reserve、natural-Markdown Pagelet 0–2 collection and independent per-insight delivery implemented and tested. Current `ada371a9…` App receipt `d8e4cacb…` records a completed strict-partial standard attempt、one relaxed retry、cumulative projection and target plus exact Pagelet 0/1/2 PASS. Post-freeze structured temporal、scored ranking and performance gates stay under T-10 |
+
+## Work
+
+| ID | Requirement / AC | Slice | Status | Evidence |
+| --- | --- | --- | --- | --- |
+| T-00A | B-125/REQ-08 evidence prerequisite | Freeze fixtures and build a non-production real sqlite-wasm Node runner comparing current baseline、`BIGRAM-U1`、`CHAR-PHRASE`、explicit-locale/fingerprinted `INTL-WORD` and trigram limitation control；produce the confirmed quality/cost gates without changing runtime behavior | [x] | Real sqlite-wasm：57 rows / 17 cases；all three candidates core 10/10 rank-1、metadata 3/3、0 MATCH errors；8 context canaries + 5 stable controls expose substring-recall/collision tradeoff；three-repeat 2k/10k/25k scale matrix passes rank stability；the historical macOS renderer frozen segmentation matches three comparison hosts, but only shell/UA identity was captured |
+| T-00B | B-125/REQ-08 / B-125/AC-08 | Under separate implementation authority, implement the owner-confirmed `CHAR-PHRASE` profile with shared index/query normalization and a separate lexical profile/generation state；require explicit confirm/cancel/progress；populate the shadow through short exclusive Worker write batches that release the serial queues for priority foreground vector reads、journal/replay interleaved deltas, then atomically switch the canonical SQLite profile marker + active generation；preserve vector readiness on cancel/crash/failure and never re-embed、call a provider or mutate Markdown | [x] | Production implementation and focused lexical migration/marker/queue/cancel/fallback tests pass；full suite passes. Real OPFS/device rollout evidence is tracked by T-00C/T-10 |
+| T-00C | B-125/REQ-08 / B-125/AC-08 | Calibrate selected field weights、strict/OR query、unique-path pool depth、RRF parameters/leg weights and lexical deadline with retrieval quality、index cost、cross-runtime normalization canaries and slow-device evidence | [~] | The current-source 81-row / 14-case / 4-holdout / 120-configuration offline rerun reconfirms integrity、permutation stability and provisional winner `clause_OR/body_favor/compact/k30_equal` with fixture/production parity. Five cancellation/deadline structural thresholds and absolute reranker `minimumMrr: 1.0` are pre-reviewed；18 required device-derived thresholds remain deliberately unfrozen. Flag-off retains the inherited baseline and relaxed remains `inherited_unvalidated`. Device plan v9 freezes an exact qualified 47-episode workload, but external process-memory acceptance is deliberately `BLOCKED / external_memory_converter_unverified` until a reviewed Instruments converter exists. Current App `d8e4cacb…`、OPFS `ad5937e…`、Darwin `f351539d…` and iOS `3cfbc14c…` receipts close their functional/continuity/segmentation slices against `ada371a9…` while making no performance or support-floor claim. Slow-device/performance、threshold freeze、post-freeze scored ranking and win32/linux remain open |
+| T-01 | B-125/REQ-01 / B-125/AC-01 | Implement selected-model reranker、strict response envelope including an explicit partial-result `needsMoreEvidence` signal、zero-candidate deterministic result、valid mixed-origin ranking and direct-hybrid-first + graph-cosine fail-open；immediately before reranker exposure、every later Chat/Pagelet model request and final projection, live-read each candidate/observation source and revalidate its current body/hash/anchor plus combined Data Boundary policy, dropping stale or newly denied evidence | [x] | Focused model-selection/strict-envelope/fail-open/provider-tight currentness tests and full suite pass |
+| T-02 | B-125/REQ-02 / B-125/AC-02 | Enforce 12 direct + 6 graph = 18 unique reranker candidates；add answer observation projector；assemble max 8 final documents/sources | [x] | Candidate-cap、origin-mix、Host allowlist projection and ≤8-document allocation tests pass |
+| T-03 | B-125/REQ-03 / B-125/AC-03 | Implement complete Local + shared-state-graph single-seed PPR、fixed alpha、certified Deep Breadth/Convergence aggregation and bounded provisional lane worksets；put snapshot acquisition/copy/classification/fingerprint plus reachable node、edge、lifted-state、transition、memory and remaining-time work inside one preflight, then skip the whole PPR lane deterministically if any bound or absolute deadline cannot be met | [x] | Focused PPR/aggregation/preflight/budget/fallback tests pass；the Local-overflow regression proves a safe one-hop path with multi-seed support remains eligible for Convergence even when Local admission overflows；exact rollout values remain provisional under T-00C |
+| T-04 | B-125/REQ-04 / B-125/AC-04 | Implement a budget-built invocation-frozen Data Boundary classifier snapshot/epoch that distinguishes allowed Markdown、opaque excluded Markdown and blocked targets；seal only after full start/end epoch validation, permit exactly one opaque bridge, invalidate graph lanes if the snapshot changes and enforce all no-content/no-identity leakage guards | [x] | Snapshot epoch/drift、opaque-bridge and no-identity/no-content leakage tests pass |
+| T-05 | B-125/REQ-07 / B-125/AC-07 | Add invocation-scoped query embedding holder and SQLite Worker per-path cosine chunk ranking；use bounded path batches、request ID/epoch、absolute deadline and an immediate cancel registry that bypasses both main/Worker data queues；schedule each batch continuation as a new Worker macrotask so a pending cancel is observed before continuation（microtask-only yield forbidden），discard late results and apply dependency-aware fallbacks | [x] | Focused invocation-isolation、source-epoch、deadline、cancel ordering、macrotask yield and late-discard tests pass |
+| T-06 | B-125/REQ-03、B-125/REQ-07 / B-125/AC-03、B-125/AC-07 | Apply cosine gate、one-per-lane nominations、overlap-no-debt、cosine backfill、path dedupe and real chunk score propagation | [x] | Focused lane nomination/debt/backfill/dedupe/real-chunk-score tests pass |
+| T-07 | B-125/REQ-05 / B-125/AC-05 | Add run-scoped Chat recovery coordinator/executor integration、atomic one-shot automatic miss recovery、same-query/frozen-plan exact-evidence suppression、novel/changed admission、candidate-only graph suppression、zero-fresh topology seed fallback、cumulative ≤8-doc evidence and temporal propagation；only a valid strict-envelope partial with `needsMoreEvidence=true` may trigger partial retry, and every attempt must share per-run absolute deadlines/finalization reserve and teardown | [x] | Focused one-shot/token、exact-repeat、changed-evidence、cumulative observation、deadline/finalization、abort/late-discard and live-flag tests pass. The production seam is additionally verified to reuse one frozen temporal filter across A1、A2、Graph admission and cumulative projection, with fail-closed applied/violation diagnostics |
+| T-08 | B-125/REQ-06 / B-125/AC-06 | Add Pagelet Host Policy run token while preserving the existing natural-Markdown / exact `NO_INSIGHT` terminal contract；one Pagelet-only Host control may stage a verified first insight and lead, and only the Host-bound latest current partial episode sharing lead source evidence may spend the token；use stable run/episode/insight identities、independent gates and existing budget, atomically cache only non-empty 1–2, keep 0 no-write quiet, then map each insightId to an independent DeliveryCandidate/receipt/seen/dismiss/handoff/stack admission | [x] | Focused natural-terminal/latest-episode/source-overlap、0–2 cache、sibling isolation、independent delivery and flag-identity tests pass. Current App receipt `d8e4cacb…` binds plugin `ada371a9…` and records exact Pagelet 0/1/2 functional PASS, including zero-write quiet and independent one-/two-insight delivery evidence |
+| T-09 | All B-125 requirements | Add focused algorithm、provider、boundary、projection、concurrency、temporal and Pagelet tests, including lexical queue-yield/canonical-marker/confirm/cancel/atomic/crash migration、live provider revalidation、snapshot-build/preflight drift、Worker immediate cancel/late discard、Chat `needsMoreEvidence` and Pagelet natural terminal/latest-episode/independent-delivery transitions；cover feature-flag default/on/off/teardown behavior | [x] | Full `make deploy` passes 206 suites / 4,814 tests plus lint/build；the focused runner/verifier/performance-fixture/iOS gate passes 4 suites / 390 tests. `dist/main.js`、the repo-local plugin and iCloud plugin byte-match at `ada371a9d1d8a761e91ce5128ad266f9ce7904e1cd542e024a589a35e7551cd9`；the local/iCloud iOS bundle byte-matches at `73f45f89…`. Type-check、full lint、target ESLint、script syntax and whitespace checks pass. Runner source/test-vault copies are `bbce8a16…`; smoke manifest is `4be0c391…` and fixture bundle is `d1f6e928…` |
+| T-10 | All B-125 ACs | After implementation, run review、Local Validation Gate、`make deploy` and scoped Obsidian smoke；capture exact-renderer receipts on each supported desktop platform（darwin、win32、linux）、a real iOS runtime segmentation/behavior canary、slowest-supported-device P95/UI-stall gate and feature-flag default/on/off/teardown verification before rollout | [~] | Current `ada371a9…` App receipt `d8e4cacb…` records Recovery、lexical、graph-depth/convergence、opaque-boundary、calendar-year temporal and Pagelet 0/1/2 PASS. Current OPFS receipt `ad5937e…` binds a `188698 ms` full restart with `43/43` stable fields；Darwin receipt `f351539d…` passes the exact `darwin/arm64` Obsidian renderer；the current time-bounded iOS receipt binds loaded/disk/current-dist identity. A current provider-free lifecycle smoke additionally proves initial absent/Host `{}` at `retrieval-flags:1:2d47be69`、exactly `lexicalProfile` / `strictReranker` / `graphPpr` / `relaxedRecovery` on at `retrieval-flags:2:049df971`、all flags absent/Host `{}` at `retrieval-flags:3:2d47be69`, unload rejection of a captured late completion and a fresh re-enabled epoch-1 zero-event session. The sequence invokes no provider path and observes `globalThis.fetch` attempts=`0`, while explicitly not covering Obsidian `requestUrl`; all Markdown stays unchanged. The current evidence verifier returns expected `BLOCKED / exit 2` only for `app_receipt_overall_blocked` and `app_performance_workload_not_pass`, with `failures=[]` and `integrityErrors=[]`. The App overall remains blocked by the unfrozen plan、unbound performance workload、six scored rankings and structured temporal acceptance；multi-platform verification remains blocked only by missing win32/linux with no failure/diagnostic. The local provenance `655f1900…` binds 385 inputs at `41174c64…`, and verifier-only immutable-snapshot rebuild reproduces `dist/main.js` without writing it. The iOS base remains `CANDIDATE / UNATTESTED` and proves neither exact model/iOS nor floor representation. The owner sets `minimumIPhoneModel=iPhone 15`; `minimumIOSVersion`、`minimumObsidianVersion`、performance representative selection、threshold/reranker freeze、post-freeze six scored rankings、structured temporal、qualified standard `23` / retry `12 + 11` / cancellation `1` sessions and Windows/Linux remain open. Without a reviewed converter, external process-memory evidence remains forced `BLOCKED`; Xcode/Instruments and performance are explicitly deferred, not passed or waived. Receipt finalization is only an evidence cutoff；a failed final write is terminal non-`PASS` and clears reversible guards, while acceptance still must re-hash current artifacts against each committed receipt or remain `BLOCKED`. Cleanup restored exact settings/plugin baselines, disabled PA, closed temporary debug/mobile/CDP state and reopened Obsidian normally |
+| T-11 | Durable architecture | After production implementation, update current PA Agent/VSS architecture to match actual implemented ownership and explicitly separate current runtime contracts from rollout/device evidence；do not describe pending validation as shipped behavior | [x] | Current PA Agent/VSS architecture updated on 2026-08-09 to describe implemented ownership and the explicit default-off rollout boundary；no release claim |
+
+Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancelled`。
+
+## Findings
+
+| ID | Severity | Finding | Decision / fix | Verification | State |
+| --- | --- | --- | --- | --- | --- |
+| F-01 | P1 | No policy model previously bypassed rerank；invalid output could filter | DEC-027 selects policy else Chat and strict fail-open | Model-selection、strict-envelope and fail-open automated tests pass | Closed in implementation |
+| F-02 | P1 | Candidate serialization could bypass final 8-document budget | Candidate pool is Host-only；explicit answer observation projector | Candidate-cap/projector/allocation automated tests pass | Closed in implementation |
+| F-03 | P1 | Old PPR used adaptive alpha、fixed rounds、per-seed Top-8、max and `0.02` hard gate | Fixed `.75` + error bound；full per-seed score；Deep Breadth/second-largest；workset values require calibration | PPR/aggregation/bound automated tests pass；numeric rollout calibration remains T-00C | Closed in implementation / calibration open |
+| F-04 | P1 | Filter-after graph allowed unbounded excluded traversal；allowed-only graph broke useful A–B–C links | One excluded Markdown opaque bridge with zero content/identity exposure | Boundary/opaque-bridge/leakage automated tests pass | Closed in implementation |
+| F-05 | P1 | Shared `_lastQueryEmbedding` could race；file-head chunks did not represent the gate | Invocation holder + query-cosine chunks plus F-15 bounded/deadline/macrotask-cancel/late-result Worker contract | Invocation-isolation、Worker cosine/cancel/deadline tests pass | Closed in implementation |
+| F-06 | P1 | `MemorySearchTool.lastSearchState` mixed tool and run control；Pagelet lacked recovery | Separate run-scoped Chat/Pagelet Host ownership、stateless search tool and F-16 natural-Markdown 0–2 state/delivery contract | Chat/Pagelet coordinator、token、teardown and delivery tests pass | Closed in implementation |
+| F-07 | P2 | Plan allowed pure PPR if cosine embedding reuse failed | Shared embedding/Worker failure returns direct-only；PPR-only failure may retain completely validated modernized Local；never ship unvalidated pure-PPR candidates | Dependency-failure/fallback automated tests pass | Closed in implementation |
+| F-08 | P1 | Fixed PPR-only lanes/`2+2+2` could omit strong one-hop candidates and create weak replacement debt | Additive Local/Deep/Convergence；max-one nomination per eligible lane；overlap one seat/no debt；cosine fill | Lane nomination/overlap/debt/backfill automated tests pass | Closed in implementation |
+| F-09 | P1 | Current Chat Host Policy cannot inject automatic retry；empty success is treated as satisfied evidence；same-query model retry is duplicate-suppressed；two observations can exceed global evidence budget | OD-05A/EC-03/F-17 specify same-query exact-evidence suppression、per-stream hidden coordinator、strict partial trigger、atomic token、single ≤8 observation and finalization reserve | Recovery token、single observation、deadline/finalization and teardown tests pass | Closed in implementation |
+| F-12 | P1 | Coarse path-wide retry exclusion would amplify first-rerank false negatives；filter-after-cap could still expose no new candidate；removing rejected nodes would break `A → B → C` propagation | Episode-local path-generation + reranker-visible fingerprint ledger；unchanged generation push-down before worksets，changed generation gets bounded Worker/live verification；novel before changed、visible repeats never consume candidate seats；rejected allowed nodes retain propagation；old direct roots are topology-only only when fresh seeds are zero | Exact-repeat/changed-evidence/cap/topology propagation tests pass | Closed in implementation |
+| F-10 | P2 | Old cross-origin `topDirectScore × 0.4 × cosine` compared incompatible scores；fixed interleave would let model-unvalidated graph proposals preempt direct evidence in reranker failure | Valid reranker may freely mix；fail-open uses direct hybrid order then graph cosine, with no decay or forced graph reservation. Graph may be absent from final 8 only on the failure path | Mixed-origin rank/fail-open/allocation automated tests pass | Closed in implementation |
+| F-11 | P1 | `unicode61` indexes contiguous CJK as one token while the query builder emits character-separated phrases；real sqlite-wasm MATCH reproduces zero lexical hits, while current tests only assert generated strings. FTS is content-only, and the vector-first elapsed gate can silently skip starting FTS | Retain FTS5 + RRF；OD-06A selects `CHAR-PHRASE`；exact normalization and safe lexical-only migration are closed through F-13，other tuning remains EC-02 | Runtime lexical profile/migration tests pass；natural-vault/device quality remains T-00C/T-10 | Closed in implementation / rollout evidence open |
+| F-13 | P1 | The selected lexical profile was coupled ambiguously to whole-index staleness/rebuild；a monolithic exclusive Worker rebuild would also block foreground search across the three serial queues, while a non-transactional external marker could not prove an atomic generation switch | Specify an independent lexical generation、confirmation、short queued batches with foreground-read priority、delta replay、SQLite-canonical marker + active-generation transaction and vector fallback；no silent rebuild、global reset、provider/re-embedding or source mutation | Migration/queue-yield/marker/atomic-switch/cancel/crash/fallback tests pass | Closed in implementation |
+| F-14 | P1 | Path filtering before graph/rerank did not prove that provider-bound excerpts still match latest Markdown/Boundary immediately before calls；changed notes could leak stale indexed text or remain in a later answer-model transcript | Live-read/revalidate current policy、body hash、anchor/chunk identity before reranker、each later model-request projection and final sources；drop unreadable/stale/denied, MetadataCache is optimization only | Boundary-race/provider-spy/final-projection and provider-tight revalidation tests pass | Closed in implementation |
+| F-15 | P1 | The graph contract bounded neither snapshot/solver work nor Worker execution；even an out-of-queue cancel is unobservable while one synchronous Worker task keeps scheduling SQL/cosine batches | Build/seal snapshot inside the same preflight；use bounded batches、immediate cancel registry and a new Worker macrotask per continuation so pending cancel runs first；discard late results and skip unsafe whole PPR | Preflight/snapshot-drift/mid-batch cancel/macrotask/queue/late-discard tests pass | Closed in implementation |
+| F-16 | P1 | “Pagelet 0–2 insights” initially had only a collection DTO；a typed-terminal draft conflicted with B-123 natural Markdown, while model-visible episode binding and collection-to-independent-delivery identity were undefined | Keep one Agent Run、natural-Markdown/`NO_INSIGHT` terminal and existing budget；one Pagelet-only Host staging control binds internally to latest eligible source-matching partial；stable per-insight IDs、independent validation/candidates/receipts/seen state、atomic non-empty cache and zero-write quiet. A failed second never discards first | Natural-terminal/Host-binding/cache/sibling-isolation/independent-delivery tests pass；current `ada371a9…` App receipt `d8e4cacb…` records exact Pagelet 0/1/2 PASS, including zero-write quiet and independent one-/two-insight evidence | Closed in implementation / current functional slice verified |
+| F-17 | P2 | Chat partial retry had no reliable producer for `concreteUnresolvedNeed`, while real-iOS/slow-device and feature-flag lifecycle gates were not explicit | Strict reranker `needsMoreEvidence` gates partial retry；absolute run deadlines/finalization reserve、flag lifecycle、real-iOS and slowest-device gates are explicit | Partial-trigger/deadline/finalization/live-flag tests pass；current `ada371a9…` evidence records a freshness-window iOS functional PASS plus provider-free absent → exact-four-on → absent lifecycle、unload/late-result isolation and fresh epoch/session reset. Slow-device/performance remain T-10 | Closed in implementation / current iOS and live-flag lifecycle slices closed / performance open |
+| F-18 | P1 | EC-02's offline winner and provisional graph/lexical envelopes were scattered source constants；the Worker protocol could not independently express vector/lexical/fusion depths、query mode、BM25 weights and RRF parameters, so calibration-to-production parity was not provable | Add one versioned、default-off provisional runtime profile；register exact baseline/candidate parameter sets、centralize inherited graph/deadline/batch values, keep legacy overrides unlabelled and require fixture-to-runtime payload parity | Profile identity、防篡改、flag off/on VSS payload、Worker BM25/depth/RRF、rewrite delimiter and real-sqlite calibration parity tests pass；real-device acceptance remains T-00C/T-10 | Closed in implementation / calibration rollout open |
+| F-19 | P2 | AC-04 lacked one orchestration test spanning opaque topology through provider/result/replay projection, AC-07 did not explicitly distinguish solver-only Local retention from shared-dependency direct-only fallback, and the Plan had no repeatable B-125 app-smoke fixture/recorder | Add focused Host orchestration tests plus an isolated synthetic vault pack、idempotent non-deleting setup and provider-free app recorder that leaves every Chat/Pagelet and selected-reranker ranking outcome pending until observed；a blocked preflight or missing ranking case must keep the aggregate result blocked；canonical fixture/runner/plugin identities and every frozen temporal mtime must be captured；selected provider/model identity is hash-bound、source paths are canonicalized before forbidden checks、opaque evidence fails but remains redacted、and serialized writes make the finalized receipt immutable | Post-fix automated tests bind Recovery to the exact live canonical turn and fail closed on prompt/run/source/count drift. Current `ada371a9…` receipt `d8e4cacb…` records Recovery、Pagelet 0/1/2、lexical、graph、opaque-boundary and calendar-year temporal functional PASS；post-freeze scored ranking、structured temporal and performance acceptance stay under T-10 | Closed in automated evidence / current App functional slice closed / rollout evidence open |
+| F-20 | P1 | Early device receipts could accept orphan/ordered-by-count episodes、fallback PPR、cross-request cancellation and partial retry timing；they also mixed JS heap with process footprint and weakly bound iOS profiler input | Use v9 strict episode、Graph and exact-workload state machines；qualify then isolate standard `23`、retry `12 + 11` and cancellation `1` sessions；measure the full retry wall；require same-Worker cancel order、non-zero per-episode reserve、process physical footprint and fixed-path JSON plus raw Instruments evidence revalidated against device/app/runtime/plugin/runner/window identities through the cutoff | The workload/topology checks remain closed. F-24 supersedes the external-memory acceptance claim: current runner/verifier deliberately return `external_memory_converter_unverified / BLOCKED` until a reviewed converter exists. Current iOS functional segmentation、Mac OPFS continuity and Darwin exact-renderer slices pass against `ada371a9…`；thresholds、performance sessions、runtime envelope、Windows/Linux and slow-device evidence remain open | Workload topology closed / current functional device slices closed / external-memory、performance and cross-platform acceptance open |
+| F-21 | P2 | Local preflight overflow added the entire semantic one-hop set to shared early exclusions, so a safe one-hop path with support from at least two seeds could be removed from Convergence even though Local and Convergence overlap is valid | Track `semanticLocalPaths` separately from `admittedLocalPaths`；use admitted Local paths for Local-lane output, but exclude only semantic Local membership from Deep while allowing the independently certified Convergence lane to retain overlap | Focused `ppr-expansion` + MemorySearchTool orchestration regression passes 2 suites / 42 tests；type-check、target ESLint and diff check pass；independent re-review reports no remaining P0–P2；current `d8e4cacb…` App receipt records graph depth/convergence PASS | Closed in implementation / current App functional slice verified |
+| F-22 | P1/P2 | Device v8 could accept structurally correct counts from arbitrary or reused Chat workloads, and its external memory JSON was not cryptographically bound to the raw Instruments export from capture start through finalization | Upgrade to fixture v5 / device plan v9：freeze and qualify one disconnected two-wave standard/retry workload, bind every exact fresh live Chat turn to a unique diagnostics run, make any argument/order/replay drift sticky-invalid, hash the strict JSON and raw export bytes at fixed paths, require both absent at capture start, guard lifecycle changes until an explicit evidence cutoff and re-hash current disk in the standalone verifier | The historical `9184ba4b…` runner/workload/lifecycle hardening remains valid, but F-24 supersedes its no-finding conclusion for derivation: raw JSON/export byte binding alone cannot prove that samples came from Instruments. Current App/OPFS artifacts match；the verifier's `BLOCKED / exit 2` is now limited to App overall/performance-workload acceptance with no failure/integrity error | Exact workload/lifecycle and current App/OPFS functional evidence closed / external converter、performance and cross-platform acceptance open |
+| F-23 | P1/P2 | The exact temporal filter could be lost on a later provider revalidation；duplicate raw tool-call IDs could let a same-batch result emit before collision discovery；refill could retain non-exact source records；semantic zero was ambiguous with unavailable telemetry；and a live-flag/index replacement race could accept a late lexical result from a disposed or replaced index | Preserve the exact A1 temporal filter in a Host-only sink and clone it through later provider checks；use a run-scoped collision tombstone plus post-parallel/pre-emit finalizer；rebuild exact `sourceRecords` from final sources/documents or fail unavailable；reserve `documentCount: 0` for completed `semantic_none`；at every async boundary revalidate live flag、ready/profile status and captured index identity, then discard late/replaced-index results | At F-23 closure, combined focused regression passed 9 suites / 656 tests and full `make deploy` passed 206 suites / 4,812 tests；the then-current artifact snapshot is historical, while successor `ada371a9…` receipts now pass current App、OPFS、Darwin and iOS functional slices | Closed in implementation / current functional reruns closed / post-freeze acceptance open |
+| F-24 | P1/P2 | Raw Instruments bytes plus self-declared JSON could not prove sample derivation；a failed final receipt write could leave reversible guards or an ambiguous recorder terminal；and mtime/self-sealable local iOS provenance could be coordinated with stale `dist/main.js` and bundle bytes | Until a reviewed converter exists, runner and standalone verifier force `external_memory_converter_unverified / BLOCKED`, require the exact metric shape and reject `unsupported + PASS` attacks. Capture the successful final snapshot inside the committed write；on any finalization failure, make the recorder terminal non-`PASS`, release guards and allow a fresh recorder. Replace mtime freshness with atomic production provenance over content-addressed checkout inputs, then verifier-only rebuild an immutable snapshot with `write:false` and require exact dist SHA/size | Focused runner/verifier/performance-fixture/iOS regression passes 4 suites / 390 tests；full `make deploy` passes 206 suites / 4,814 tests plus lint/build. Current plugin `ada371a9…`, runner `bbce8a16…`, manifest `4be0c391…`, fixture bundle `d1f6e928…`, iOS bundle `73f45f89…` and provenance `655f1900…` are current and byte-matched where applicable. Current App `d8e4cacb…`、OPFS `ad5937e…`、Darwin `f351539d…` and iOS `3cfbc14c…` receipts bind `ada371a9…` for their scoped functional evidence | Closed in evidence automation / current functional slices verified / reviewed converter、performance and win32/linux receipts open |
+
+F-13–F-17 were implemented without reopening an owner product choice. Any future
+change that adds a second provider/model run、raises the current provider-call/token
+budget or replaces explicit confirmation with a silent lexical rebuild remains a
+material deviation and must return to the owner before implementation.
+
+## Validation Log
+
+| Date | Requirement / AC | Check | Result | Evidence / residual risk |
+| --- | --- | --- | --- | --- |
+| 2026-08-08 | Documentation authority | Owner-confirmed discussion mapped to DEC-027、AVI/Data Boundary/Pagelet contracts、SDD/Plan/Tracker；the then-scoped product/SDD cross-review found no remaining P0–P2 | PASS (superseded) | `npm run docs:check` — 169 Markdown files、1188 local links；`git diff --check` — pass. This was an intermediate docs check；the later complete-SDD approval audit below supersedes its no-finding conclusion |
+| 2026-08-08 | B-125/REQ-08 / B-125/AC-08 design authority | Owner confirmed FTS5 + RRF retention、CJK correctness-first、fixture-gated tuning and no B-125 semantic rewrite/heavy engine；the then-scoped review found no remaining P0–P2 | PASS (superseded) | Documentation/source evidence only；FTS runtime remains unchanged. F-13 and the later complete-SDD audit supersede the earlier migration-closure conclusion |
+| 2026-08-08 | Phase 0A evidence design | Owner confirmed `BIGRAM-U1` primary candidate、`CHAR-PHRASE` comparator、explicit-locale/fingerprinted `INTL-WORD` challenger、trigram limitation control、frozen-fixture isolation and shortlist-only gates；the then-scoped evidence review found no remaining P0–P2 | PASS (superseded) | Design authority and Phase 0A evidence remain valid；only the broad no-remaining-finding conclusion is superseded by the later complete-SDD audit |
+| 2026-08-08 | B-125/REQ-05 / B-125/AC-05 design authority | Owner confirmed OD-05A same-query/frozen-plan retry、episode-local exact-evidence suppression、novel-before-changed admission、cap-before-repeat filtering、rejected-path propagation and zero-fresh-only topology roots；the then-scoped review found no remaining P0–P2 | PASS (superseded) | Owner decisions remain valid；F-17 and the later complete-SDD audit supersede the earlier execution/deadline-closure conclusion. No recovery runtime evidence exists yet |
+| 2026-08-08 | T-00A / B-125/REQ-08 evidence prerequisite | Execute frozen real-sqlite-wasm FTS comparison with current production query builder and five strategy roles | PASS | `node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/fts-evidence-spike.mjs --json`；57 rows / 17 cases；evidence integrity、atomic vocabulary and common strict phrase semantics pass；baseline core CJK 0/10；BIGRAM-U1、CHAR-PHRASE and INTL-WORD core CJK 10/10 with relevant rank 1、English/code 3/3、metadata 3/3、0 MATCH errors；trigram misses 1/2-character cases；long-note raw Top-8 duplicate ratio `.875`. No production runtime/slow-device/cross-runtime claim |
+| 2026-08-08 | T-00A context-boundary follow-up | Execute the separate body-only lexical-admission canaries without adding them to the original admission score | PASS | `node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/fts-evidence-followup.mjs --mode=context --format=markdown`；BIGRAM/CHAR hard-positive MATCH 2/2 and collision avoidance 0/2；INTL 0/2 and 2/2；all profiles aligned controls 4/4、stable controls 5/5、0 MATCH errors. Deliberately selected mechanism counterexamples only；not vault-level recall/precision or final hybrid outcomes |
+| 2026-08-08 | T-00A deterministic scale follow-up | Run each profile/size/repeat in an isolated process over the frozen 2k/10k/25k language-diverse corpus | PASS | `node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/fts-evidence-followup.mjs --mode=scale --sizes=2000,10000,25000 --repeats=3 --format=markdown`；all controlled MATCH counts and frozen ranks stable. At 25k: BIGRAM 84.20/81.16 MiB allocated/live and 38.69 s build；CHAR 49.55/47.09 MiB and 18.24 s；INTL 34.20/33.16 MiB and 39.39 s. Node 22 in-memory sqlite-wasm only；not OPFS、Obsidian/mobile or natural-vault quality |
+| 2026-08-08 | T-00A desktop segmentation follow-up | Compare the same frozen grapheme/word canary across two Node generations、VS Code Electron and a historical CDP-verified Obsidian renderer | PASS | `node scripts/fts-runtime-probe.mjs --cdp=http://127.0.0.1:<isolated-port> --json`；combined/grapheme/word hashes match on Node 20、Node 22、VS Code Electron 42 and `Obsidian / app://obsidian.md/starter.html`（shell/UA `Obsidian 1.12.7`、Electron 39.8.3、ICU 74.2；loaded-app API version not captured）. Isolated temporary Obsidian profile removed after capture. Historical macOS frozen-sample evidence only；not a formal current app receipt、Windows/Linux/iOS、future runtimes or actual FTS performance |
+| 2026-08-08 | OD-06A owner decision | Choose the shipping CJK profile family after reviewing the original gate、context-boundary tradeoff、2k/10k/25k scale evidence and the then-current macOS renderer comparison | CONFIRMED | Owner selected `CHAR-PHRASE`. Selection prioritizes continuous-text lexical recall and the observed build/space balance；Phase 0B must still validate substring collisions through hybrid/rerank、supported runtimes、slow device、physical fields/weights、OR/RRF and deadline. DEC-027、Product Spec、SDD、Plan、Tracker and Decision indexes synchronized；`npm run docs:check` — 169 Markdown files / 1192 local links；`git diff --check` — pass. That historical renderer comparison captured shell/UA identity, not loaded-app API identity. No production implementation、commit or release authority |
+| 2026-08-08 | EC-01 / EC-03 engineering closure | Source-map canonical graph weighting and the current Chat runtime/dispatcher/policy/observation seams；specify the narrowest DEC-027-compatible contracts | PASS | SDD §4.3.1 and §6.1–6.2；EC-01 preserves canonical degree/mutual weight；EC-03 chooses hidden coordinator execution before one visible observation、atomic token、structured none、cumulative ≤8 merge and absolute deadlines. Source/design evidence only；no runtime implementation or tests |
+| 2026-08-08 | Complete-SDD/full-plan approval audit | Cross-review the current product、architecture、validation and source-runtime seams as one implementation contract | NOT READY (superseded) | Found F-13–F-17 and follow-up queue/Pagelet/Worker gaps. The closure re-review row below supersedes this readiness result；the findings remain useful provenance |
+| 2026-08-08 | Complete-SDD/full-plan closure re-review | Re-review F-13–F-17 plus lexical queue/marker、live provider currentness、snapshot acquisition/preflight、Worker macrotask cancel、Chat partial/lifecycle and Pagelet natural-terminal/Host-binding/independent-delivery contracts | PASS — READY FOR OWNER REVIEW | Product、architecture and validation gates report no remaining P0–P2 design blocker. SDD/Plan remain Draft；EC-02 numeric tuning、runtime/device evidence and production implementation remain pending. `npm run docs:check` — 169 Markdown files / 1192 local links；`git diff --check` — pass. No production code/build/smoke、approval or implementation authority is claimed |
+| 2026-08-08 | Complete-SDD/full-plan owner approval | Record the owner's explicit approval after the closure re-review | APPROVED | SDD and full delivery plan are `Approved`. Tracker remains `Planned`；EC-02 numeric tuning、runtime/device evidence and production implementation remain pending. This approval grants no production implementation、commit、push、tag、publish or release authority |
+| 2026-08-08 | Complete-plan implementation authority | Execute the complete owner-approved retrieval optimization Plan/SDD through implementation、focused validation、review、fix and runtime gates | AUTHORIZED | Tracker enters `Implementing` at Phase 0B. This authority includes production code and tests within the approved scope；it does not grant commit、push、tag、publish、release or closeout authority |
+| 2026-08-09 | T-00B、T-01–T-09 production implementation | Implement the approved lexical generation、strict retrieval/projector、bounded graph/PPR and Chat/Pagelet recovery contracts, then run focused algorithm/provider/boundary/concurrency/lifecycle tests | PASS | Production code for Phase 0B/1/2/3 and focused tests complete. Final independent Chat、Pagelet and graph reviews report no remaining P0–P2 finding after provider-boundary、exact-repeat、cancellation、live-flag、sibling/currentness and finalization fixes |
+| 2026-08-09 | T-09 / Local Validation Gate | Run full automated regression、static/build/docs/whitespace and Community DOM checks | PASS FOR PRE-HARDENING SNAPSHOT (superseded by the later pre-fix full gate below) | The earlier repo-local `make deploy` ran `npm test` — 201 suites / 4,335 tests、`npm run lint` and `npm run build`, then deployed that snapshot. It remains historical evidence only；the later 201 / 4,388 pre-fix full gate supersedes it |
+| 2026-08-09 | T-00C / EC-02 offline calibration | Compare physical fields/weights、strict/OR breadth、pool/RRF candidates over the frozen large-library/context/desktop corpus | PASS — OFFLINE SLICE ONLY / T-00C OPEN | 81 rows、14 cases、4 holdouts and 120 configurations evaluated. Current top candidate `clause_OR/body_favor/compact/k30_equal` has train/holdout direct Recall@12 and proxy Recall@8 = 1、OR recall = 1 and collision distractor@1 = .4. This does not close real OPFS、slow/iOS、deadline or real-reranker calibration |
+| 2026-08-09 | Completion audit / F-18–F-19 | Reconcile the approved requirements against current production plumbing、acceptance tests and executable app-smoke evidence | NOT READY (superseded) | The audit found that the provisional offline winner could not be represented by one versioned production payload and that AC-04/AC-07 plus the six-scenario app smoke lacked end-to-end fixtures. The following F-18/F-19 rows supersede this remediation status；device rollout remains independently open |
+| 2026-08-09 | F-18 versioned runtime-profile closure | Connect the exact provisional offline winner and inherited envelopes through one default-off production profile and reject drift at the Worker boundary | PASS — DEVICE CALIBRATION OPEN | `ec02-char-phrase-runtime-v1` preserves the flag-off `8/8/12 + strict/equal/k60` baseline；flag-on standard is exactly `8/12/18 + clause_OR + 1.25/1.25/2/.25 + k30 equal`；relaxed、Graph、500ms deadline and batch values remain explicitly `inherited_unvalidated`. The real-sqlite runner imports the same profile/query/RRF implementation. Device and real-reranker gates remain T-00C/T-10 |
+| 2026-08-09 | B-125/AC-04、B-125/AC-07 / F-19 automated closure | Exercise real MemorySearchTool orchestration for one opaque bridge and dependency-aware graph fallback, then validate the isolated smoke-pack setup、identity/immutability and aggregate-state guards | PASS — AUTOMATED / LIVE APP FAIL-CLOSED | Provider/result/source/recovery/projected observation/log spies contain no opaque identity/content；solver-only failure retains complete Local, while snapshot/embedding/Worker failure is direct-only. The latest finalized pre-fix v4 app receipt also records graph-depth/convergence rank 1 and forbidden hits `0`, but its aggregate result fails other structured cases and does not replace the automated provider/log leakage evidence |
+| 2026-08-09 | B-125 app-smoke fixture preparation | Prepare the versioned synthetic lexical、2–3-hop、convergence、opaque-boundary、Pagelet 0/1/2、recovery and temporal fixtures in the repo-local test vault | PASS — PREPARED / PRE-FIX RECEIPT CAPTURED / POST-FIX RERUN OPEN | Source fixture v4 contains 46 fixture files plus the canonical manifest/runner identities, six explicit notes-only ranking prompts and an isolated structured temporal-retry pack with frozen per-path mtimes. The pre-fix receipt binds manifest/runner/plugin `aed1264d…` / `296887aa…` / `7b4eb71e…`；the then-current source/test-vault runner and manifest byte-matched at `f523eaef5b6e5eb623a7dee0dede400324645501cc586c6acc9ba6a507c30e45` / `b3ec4c46bb172ab46eb45caf45ed3820b2a5bb531607e010eede234aa49d5fff`. Preparation remains complete, while post-fix deployment and live acceptance rerun are open under T-10 |
+| 2026-08-09 | B-125/AC-05 explicit temporal-range retry canary | Require an end-to-end structured canary that proves relaxed retry preserves an explicit time range | FAIL — POST-FIX AUTOMATION PASS / LIVE RERUN OPEN | Production tests verify one frozen temporal filter across A1、A2、Graph admission/Worker input and cumulative projection, with `temporalFilterApplied=1` and `temporalViolationCount=0` required at each terminal. In the pre-fix app run A1 passes those diagnostics and A2 reports the frozen filter with zero observed violations, but the relaxed child reaches its deadline and no cumulative projection exists. Production now reports `deadline / attempt_deadline` and preserves standard evidence；the ordinary temporal ranking still passes but cannot close this structured gate, and a post-fix App rerun remains required |
+| 2026-08-09 | T-00C portable runtime receipts | Produce checkout-bound exact Obsidian renderer receipts and verify the supported desktop set | PASS — HISTORICAL AUTOMATED NODE 22/ARTIFACT VERIFIER / REAL RECEIPTS WERE PENDING | The supported-runtime verifier fails closed unless the repository reference runtime is Node 22. Each schema-v2 receipt binds the renderer's plugin ID/version、vault-disk artifact and onload-cached build identity to the same current `dist/main.js` SHA/size；the multi-platform verifier rejects a stale checkout artifact or cross-platform mismatch. At this historical snapshot the supported desktop set still needed darwin、win32 and linux receipts；the current Darwin row below supersedes that part while win32/linux remain open |
+| 2026-08-09 | F-20 / v8 device measurement harness | Prove standard/retry/cancellation topology、full Graph wall、Worker timing、finalization reserve and workload-bound device envelopes without false-pass | PREPARED — AUTOMATED PASS / EXTERNAL EVIDENCE PENDING | Current focused production/instrumentation regression passes 5 suites / 162 tests；`npx tsc -noEmit -skipLibCheck`、scoped `git diff --check` and `node --check scripts/retrieval-optimization-smoke-runner.js` pass. Independent attack review reports no remaining P0–P2 after full-retry-wall、same-Worker cancel、formal identity、fail-closed count、temporal-filter and freeze-order fixes. Manifest `b125-device-measurement-v8` leaves all acceptance thresholds null, so reviewed threshold/reranker-gate freeze and real sampling remain intentionally `BLOCKED` |
+| 2026-08-09 | Pagelet `NO_INSIGHT` app finding | Prevent explanatory Markdown ending in a standalone `NO_INSIGHT` line from becoming a cached/delivered insight | PASS | Live `open-changed-note` observation exposed the false candidate. One shared terminal parser now rejects it in quality gate、controller and cache while preserving middle/inline mentions；independent review found no P0–P2；focused 47/47、type-check、lint and diff check pass. After reload, explicit Pagelet 0 is quiet with zero insights and the orchestrator has no current/pending candidate |
+| 2026-08-09 | T-10 macOS v2 selected-model app smoke（routing-mixed historical slice） | Run the isolated v2 pack against the then-freshly-deployed plugin with all four internal flags enabled only in the repo-local test vault | FAIL — SUPERSEDED FOR RANKING ACCEPTANCE | Policy reranker、Memory and lexical ready. Recovery and Pagelet 0/1 passed；Pagelet 2 returned quiet `ungrounded-path`. The six-case result was 5/6 because the bare error-code prompt made no Memory attempt；the bare Japanese observation behaved the same. This remains valid Chat-routing/Pagelet/Recovery evidence but is not FTS/reranker acceptance evidence；v3 below supersedes only that ranking interpretation |
+| 2026-08-09 | T-10 macOS v3 explicit-notes selected-model app smoke | Run the isolated v3 pack with formal runtime identity and explicit notes-only ranking prompts against the then-deployed plugin | PARTIAL — OLD-RUN EVIDENCE / RERUN REQUIRED / ROLLOUT BLOCKED | Loaded app `1.13.4` (`obsidian.apiVersion`)、shell `1.12.7`、Electron `39.8.3`、plugin `2.8.4`、policy reranker、Memory `ready`（72 documents）and lexical `ready` are hash-bound. All six rankings pass at rank 1（Recall@8/MRR `1`，forbidden `0`），including the error-code case，proving the v2 miss was routing rather than lexical retrieval. A1 strict-partial completes with eight documents and triggers one retry；A2 terminates `failed` with document counts unavailable, no projection and the standard eight sources safely retained. Pagelet v3、structured temporal retry and device measurements remain pending；receipt overall remains `PENDING`. It is bound to old manifest/runner `2d681307…` / `652f8e05…` and is debug/quality evidence only；the v4 fixture/runner must be prepared、redeployed and rerun before acceptance |
+| 2026-08-09 | T-10 local deployment and device gate | Build and deploy plugin assets to the repo-local test vault, then require supported-desktop runtime identity、post-restart desktop/OPFS、real-iOS and slow-device smoke before rollout | PARTIAL — HISTORICAL POST-FIX DEPLOY / APP RERUN WAS PENDING / ROLLOUT BLOCKED | Post-fix `make deploy` passes 201 suites / 4,406 tests、lint and build and deploys `210b7c1d…`. The latest finalized receipt was still the pre-fix one：its plugin reload confirmed Memory/lexical ready and yielded six rank-1 selected-model rankings, while Recovery、structured temporal retry and Pagelet 1/2 failed. A post-fix App receipt、device thresholds/sessions、checkout-bound supported-runtime receipts、full app restart/OPFS proof、real iOS and slow-device measurements were open at this historical snapshot. Flags were restored to absent/default-off after the isolated run；no release、commit or real-device claim |
+| 2026-08-09 | T-10 iCloud deployment / device preflight | Deploy the same pre-hardening verified assets to the iCloud `test` vault and verify the device observation preconditions without treating deployment as a real-device pass | PARTIAL — DEVICE BLOCKED | That escalated `make deploy-icloud` passed its 201-suite/lint/build gate；`main.js`、`manifest.json`、`manifest-beta.json` and `styles.css` each byte-matched `dist` for that snapshot. The synthetic v8 notes/manifest/runner were not copied into iCloud. At that preflight the Mac was locked and USB listed no iPhone/iPad；the later repo-local desktop run does not supply iPhone Mirroring/Safari Inspector/Instruments、iOS segmentation、latency/UI-stall or flag-lifecycle evidence |
+| 2026-08-09 | Docs-only consistency reconciliation | Freeze fail-closed count semantics、the precise pre-freeze Recovery vs post-freeze scored/temporal acceptance boundary、production/harness temporal evidence and historical/current receipt boundaries across Plan/SDD/Tracker | PASS — DOCS ONLY | `npm run docs:check` — 169 Markdown files / 1205 local links；scoped `git diff --check` — pass. This validates documentation structure/whitespace only and makes no current runtime、Build、Obsidian、device or rollout claim |
+| 2026-08-09 | T-09 pre-fix full gate and deployment | Run the full repository gate before the Recovery binding/deadline fixes, then deploy that exact bundle to the repo-local test vault | PASS — HISTORICAL PRE-FIX SNAPSHOT | `make deploy` — 201 Jest suites / 4,388 tests、lint and build pass；`dist/main.js` byte-matched the then-deployed test-vault plugin at `7b4eb71e…`. Later production/runner changes require a new full gate and deployment |
+| 2026-08-09 | T-10 macOS v4 exact pre-fix artifact selected-model app smoke | Run and finalize the v4 fixture against the then-deployed plugin with formal runtime、provider/model、fixture、runner and plan identities | HISTORICAL PRE-FIX FAIL — RANKING 6/6 PASS / STRUCTURED RECOVERY & PAGELET FAIL / DEVICE BLOCKED | Receipt `24eb7704…` binds plugin/runner/manifest `7b4eb71e…` / `296887aa…` / `aed1264d…` and loaded app `1.13.4` / shell `1.12.7` / Electron `39.8.3`. Six rankings are rank 1（Recall@8/MRR `1`，forbidden `0`）；manual `5/9` pass. Recovery、structured temporal retry and Pagelet 1/2 fail；Pagelet 0 passes. Frozen plan `846bb614…` still has null thresholds and incomplete/invalid performance evidence, so device overall is `BLOCKED`. Temporary test-vault settings were restored exactly after capture. This receipt predates the Recovery binding/deadline fixes and cannot prove current-source acceptance |
+| 2026-08-09 | Pre-fix receipt / Tracker consistency validation | Reconcile the finalized pre-fix receipt and its full-gate evidence into the Tracker without changing Plan/SDD authority | PASS — DOCS ONLY / SUPERSEDED FOR CURRENT STATUS | `npm run docs:check` — 169 Markdown files / 1205 local links；`git diff --check` — pass. Later post-fix source/runner changes supersede this row as current-status evidence；the historical `FAIL` / `BLOCKED` result remains provenance |
+| 2026-08-09 | B-125/AC-05 post-v4 Recovery canonical evidence binding | Bind Recovery acceptance to the same live completed canonical Chat turn instead of DOM or visible answer citations | PASS — HISTORICAL AUTOMATED SNAPSHOT / APP RERUN WAS OPEN | `recordRecoveryCase()` is parameterless and requires one exact non-streaming、non-rehydrated completed turn with a non-empty run ID and one successful visible `search_memory`. Ordered `Selected Memory` sources must set-match Memory source records and the assistant allowlist；missing/multiple/malformed/prompt/run/source/count drift leaves the case `PENDING`. At this historical snapshot the source/test-vault runner SHA was `f523eaef5b6e5eb623a7dee0dede400324645501cc586c6acc9ba6a507c30e45` and no matching App receipt existed；current receipt `d8e4cacb…` now closes the functional Recovery slice |
+| 2026-08-09 | B-125/AC-05 strict-partial projection and relaxed deadline regression | Verify cumulative Recovery projection and content-free child-deadline classification | PASS — AUTOMATED ONLY / LIVE TEMPORAL RERUN OPEN | A1=`8` + A2=`1` produces one visible cumulative eight-source observation retaining both frozen A1 evidence and the relaxed target across provider prompt、source records、`Selected Memory` and the next transcript. A relaxed child deadline reports `deadline / attempt_deadline` and preserves standard evidence rather than reporting generic failure |
+| 2026-08-09 | T-09 post-v4 focused gate | Run the post-fix Recovery/runner focused regression and static checks | PASS — FOCUSED ONLY / FULL DEPLOY AND APP RERUN PENDING | `npm test -- --runInBand __tests__/retrieval-recovery-coordinator.test.ts __tests__/pa-agent-host-tools.test.ts __tests__/retrieval-smoke-runner.test.ts` — 3 suites / 246 tests；`npx tsc -noEmit -skipLibCheck`、`npm run lint`、runner `node --check`、source/test-vault runner byte comparison and whitespace checks pass. This is automated evidence only |
+| 2026-08-09 | T-09 post-v4 full gate and deployment | Run the complete repository gate and deploy the exact post-fix bundle to the repo-local test vault | PASS — HISTORICAL RUNNER/MANIFEST SNAPSHOT / APP RERUN OPEN | `make deploy` — 201 Jest suites / 4,406 tests、lint、type-check and production build pass；`dist/main.js` byte-matches the deployed test-vault plugin at `210b7c1d…`，and that gate's runner/manifest copies matched at `bb00e96e…` / `aed1264d…`. Later evidence-artifact changes supersede only those runner/manifest identities；this proves build/deployment identity, not current Obsidian acceptance |
+| 2026-08-09 | B-125 diagnostics surface and runner gate | Require every trusted retrieval diagnostic event to bind `chat` or `pagelet`, while accepting only Chat events for standard/retry/cancellation performance evidence | PASS — AUTOMATED ONLY / LIVE APP OPEN | Pagelet-only and mixed-surface performance episodes fail closed instead of satisfying Chat performance. The then-current source/test-vault runner SHA was `f523eaef5b6e5eb623a7dee0dede400324645501cc586c6acc9ba6a507c30e45`；manifest SHA is `b3ec4c46bb172ab46eb45caf45ed3820b2a5bb531607e010eede234aa49d5fff`. No live App or device PASS is claimed |
+| 2026-08-09 | T-10 OPFS full-app restart recorder | Prepare a content-free before/after recorder that fails closed unless a real app process restart preserves the bound durable OPFS state | PREPARED — `scoped` 10 AUTOMATED TESTS PASS / REAL RESTART PENDING | Scoped automated evidence covers the recorder contract. No real Obsidian full-app restart or post-restart OPFS receipt was captured, so this does not close T-10 or device rollout |
+| 2026-08-10 | T-10 real-iOS runtime receipt prepare/verify | Prepare and fail-closed verify a checkout/plugin/device-bound content-free WKWebView runtime receipt | PREPARED — HISTORICAL `scoped` 32 AUTOMATED TESTS PASS / REAL DEVICE WAS PENDING | Base prepare/verify rejects artificial production-looking artifacts unless their bytes equal the fixed current repo `dist/main.js`；the verifier also rejects a forged matching bundle/receipt built around non-dist bytes. Device/iCloud/loaded hashes bind through that artifact, receipts older than the 10-minute window block even if re-sealed, and an optional signed `hardwareAttestationClaimed` field is accepted only when it is exactly `false`；boolean `true`、string `"true"` and `null` are rejected and reported without coercion. External signed build/session/replay assurance remains optional but strict when supplied. At this historical snapshot no fresh real-iPhone execution had been captured, so it recorded no real-iOS PASS |
+| 2026-08-09 | Current evidence-state Tracker sync | Reconcile runner/manifest identities, surface ownership and automated-only external receipt readiness without changing Plan/SDD authority | PASS — DOCS ONLY | `npm run docs:check`；scoped `git diff --check -- docs/development/active/retrieval-optimization/tracker.md` — pass. This claims no Build、Obsidian reload/restart、desktop receipt、real iOS/device or rollout PASS |
+| 2026-08-09 | T-09 final local + iCloud full gates | Run the complete final gate separately for repo-local and iCloud deployment, then compare all shipped plugin assets | PASS — HISTORICAL ARTIFACT | `make deploy` and `make deploy-icloud` each passed 203 Jest suites / 4,511 tests、lint and build. `main.js`、`manifest.json`、`manifest-beta.json` and `styles.css` byte-matched across `dist`、the repo-local test vault and the iCloud plugin directory；that historical `main.js` was `af253601ec3f344033588c86fedbf2f33ddf698aa4278f00eadcf0cb1e63e806` |
+| 2026-08-10 | T-09 prior local + iCloud full deployment | Build, deploy and compare the then-current plugin、evidence runner and iOS bundle after the production/evidence fixes | PASS — HISTORICAL ARTIFACT | `make deploy` and `make deploy-icloud` each passed 203 suites / 4,549 tests with lint/build. `main.js`、`manifest.json`、`manifest-beta.json` and `styles.css` byte-matched across `dist`、repo-local and iCloud test vaults; `main.js` was `7550ce95977861054c3996f7c3313976d284a7aaf94a2244812811f27f8a9634`. Source/test-vault runner SHA was `64a2594f6e40a388ba12459152ef625fc4419027a7c60763338626e58b3bac30`, smoke manifest `b3ec4c46…`, and local/iCloud iOS bundle `d259de01…` byte-matched. The newer `beeabe11…` local+iCloud plugin deployment supersedes this；no device acceptance is inferred |
+| 2026-08-10 | T-09 pre-Host-fallback current-source full regression | Run the full test suite after the final evidence-runner guards | PASS — HISTORICAL SOURCE SNAPSHOT | `npm test -- --runInBand` — 203 suites / 4,562 tests, exit 0. The later 4,572-test repo-local `make deploy` gate supersedes this as current-source automated evidence. No App/device acceptance is inferred |
+| 2026-08-10 | F-19/F-20 production/evidence closure | Close the current recorder identity/teardown and production diagnostic plumbing findings without promoting automation to runtime acceptance | PASS — HISTORICAL AUTOMATED SNAPSHOT | The runner binds loaded-vs-disk artifact identity、run ID、same-run cancellation and settings fingerprint. Production forwards the Pagelet finalization callback and VSS Graph diagnostics required by the recorder. Attack regression closes current-loaded-instance、transient-settings admission and reversible registry/settings sticky guards. The commit critical lock prevents in-process identity/settings drift during one final write, and any failure leaves the result non-`PASS`. Finalization defines the evidence cutoff only; acceptance re-hashes current runner、`dist` and vault-loaded artifacts against the receipt, with any mismatch `BLOCKED`, so no post-finalize permanent-currentness claim is made. Runner 208/208 and the combined focused run 4 suites / 307 tests pass. Fresh App/device receipts were still required at this historical snapshot；the current Mac/iOS rows below supersede that state |
+| 2026-08-10 | B-125/AC-06 Pagelet staged-first Host fallback | Preserve an already verified staged first insight when later exact-lead resolution rejects `NO_INSIGHT` as a protocol failure | PASS — AUTOMATED SNAPSHOT / LATER LIVE RECEIPT SUPERSEDES | The runtime returns only staged drafts on protocol failure and the controller independently re-runs quality/currentness admission instead of collapsing the result to zero. Focused Pagelet regression passed 73/73；type-check、lint and diff checks passed. The later `dc7560d6…` App functional receipt below supersedes this automated-only snapshot |
+| 2026-08-10 | T-09 prior local + iCloud staged-first deployment | Build and deploy the staged-first Host fallback artifact to the repo-local and iCloud test vaults | PASS — HISTORICAL ARTIFACT | `make deploy` and `make deploy-icloud` each passed 203 suites / 4,565 tests plus lint/build. `dist`, repo-local and iCloud plugin hashes matched at `beeabe110994720bbcae85d26446e96944256a2f85aa352770bfa98d26a95191`. The later local-only `dc7560d6…` deployment and App receipt supersede it locally；the iCloud copy remains stale and this row claims no device acceptance |
+| 2026-08-10 | T-10 prior iOS bundle preparation and staging | Generate the formal then-current bundle and bind its source/plugin identities | HISTORICAL / STALE FOR CURRENT PLUGIN | Local bundle `1f0789fd…` bound plugin `beeabe11…`; the iCloud bundle remained `d259de01…`. Both predate the later `dc7560d6…` and current `9995d495…` plugin artifacts, so neither can support a current iPhone receipt. No real-device execution or acceptance is claimed |
+| 2026-08-10 | T-10 local App partial acceptance | Preserve the saved incomplete `7550ce95…` Recovery/Pagelet evidence without promoting it to the newer artifact | HISTORICAL / DEBUG ONLY — SUPERSEDED | The unfinished receipt binds plugin `7550ce95977861054c3996f7c3313976d284a7aaf94a2244812811f27f8a9634`, records Recovery and Pagelet 0 PASS, and leaves Pagelet 1/2 PENDING. Separate operator observations remain debugging provenance only. The later `dc7560d6…` functional receipt supersedes this slice；scored-ranking and structured-temporal acceptance still remain absent |
+| 2026-08-09 | T-10 real desktop OPFS full-app restart | Prove bound durable OPFS continuity across one real Obsidian desktop full-app restart | PASS — HISTORICAL DESKTOP CONTINUITY ONLY / SUPERSEDED | The `123,209 ms` evidence window changes renderer PID、main-process PID and `timeOrigin` while preserving database/index identities and epochs `203 / 42 / 0 / 0`. Receipt evidence SHA-256 is `0222cecbe1e9d960c132d2b24dd18e0ab281b93e79b1d469dfa71b2f052926c2`. The later `dc7560d6…` OPFS and Darwin receipts below supersede it；all are now historical for `9995d495…` and never proved iOS、cross-device or performance acceptance |
+| 2026-08-09 | T-10 real iPhone WKWebView candidate capture | Preserve the pre-correction iPhone candidate without rewriting it | BLOCKED / UNATTESTED — HISTORICAL, NOT A REAL-IOS PASS | Loaded app `1.13.6` is sourced from `obsidian.apiVersion`；the plain unversioned `obsidian` UA has exact surrounding WKWebView/app identity, and loaded/plugin/bundle identities match. Its `session_challenge_missing` blocker is retained as recorded; it also lacks the new required real-iPhone Mirroring + Safari Inspector operator-observation fields. Receipt payload is `71167d3f…d488` and bundle is `ce6dc1e3…a113`. A fresh run is required; external signed build/session/replay assurance is optional supplementary evidence, never hardware attestation |
+| 2026-08-10 | T-09 prior local + iCloud Pagelet deployment | Build and deploy the Pagelet stage-shape/citation fixes to both test vaults | PASS — HISTORICAL ARTIFACT | `make deploy` and `make deploy-icloud` each passed 203 suites / 4,570 tests plus lint/build. `dist`、repo-local and iCloud `main.js` byte-matched at `dc7560d693d2ad2effb24a7aad8440ba6591d74468a94fe7d03f7b8743fc849e`; both manifests matched at `f12e21b0…` and `styles.css` at `e0f412f0…`. The later `9995d495…` deployment supersedes this artifact |
+| 2026-08-10 | B-125/AC-05/06 prior local App functional receipt | Capture exact `dc7560d6…` Recovery and Pagelet 0/1/2 behavior without promoting unfrozen acceptance evidence | PASS — HISTORICAL FUNCTIONAL SLICE / STALE FOR CURRENT ARTIFACT | Receipt SHA-256 `1242e81e5e9b8f8859cb02ab5432c4daa7ed59f08ff5ee01cc763228a5f9a46e` binds plugin loaded/disk `dc7560d6…`, runner `64a2594f…`, manifest `b3ec4c46…`, app `1.13.6`, shell `1.12.7`, Electron `39.8.3` and Node `22.22.1`. Recovery passes through one valid-none A1、one relaxed A2 and one projection. Pagelet 0/1/2 pass with exact 0/1/2 verified insight receipts and expected sources. The production change to `9995d495…` made this receipt historical；at that point no matching current-artifact App receipt existed. Smoke flags、Boundary and web/operations settings were restored to their exact pre-run state |
+| 2026-08-10 | T-10 prior desktop OPFS full-app restart | Prove `dc7560d6…` durable OPFS continuity across a real Obsidian full-app restart | PASS — HISTORICAL MACOS CONTINUITY SLICE / STALE FOR CURRENT ARTIFACT | Receipt file SHA-256 `00158c1c81c1db34abf4ea657d4bfbb0399b9ae295ec48cb055e2ada9d48928` and evidence SHA-256 `c138dd3a06138b67ced41c16c104ecaa700f14a4094edf93ffdbf63bbdbe451e` bind runner `eb1eab22…` and plugin loaded/disk `dc7560d6…`. The `230,230 ms` window changes renderer PID、main-process PID and `timeOrigin`; every stable field passes, including database/index identities and epochs `207 / 401 / 0 / 5`. Later OPFS receipts, now including current `95cfb661…`, supersede it for current acceptance |
+| 2026-08-10 | T-00C prior Darwin exact-renderer receipt | Capture the schema-v2 lexical/runtime canary in the exact Obsidian renderer and verify the then-current source profile | PASS — HISTORICAL DARWIN SLICE / STALE FOR CURRENT ARTIFACT | Receipt SHA-256 `a17093a03d6c73e2e0a54fe8972d14ff1d729908629480290d9d519dcd63229b` binds a real `darwin/arm64` Obsidian renderer, Node `22.22.1`, Electron `39.8.3`, runtime source `9e0ad1fb…`, profile bundle source `84a357f1…` and `char-phrase-v1:df9272f2ba852d8e`. It and the later `ea0b809e…` Darwin receipt remain historical for current `ada371a9…`; win32/linux also remain open |
+| 2026-08-10 | T-10 prior iOS artifact staging | Regenerate and deploy the iOS canary against the exact `dc7560d6…` plugin before device observation | PASS — HISTORICAL ASSETS / STALE FOR CURRENT PLUGIN | Formal prepare binds plugin `dc7560d6…`, runtime `9e0ad1fb…`, lexical normalizer `89b443cc…` and iOS identity contract `2ddf2a10…`. Local and iCloud bundle byte-match at `45e2dc504f611115373bb9e4ed6ead21fe6909e80502692facc5f41f13dcee28`; the later `9995d495…` plugin and `1f766a0a…` bundle supersede them. No real-device receipt is claimed |
+| 2026-08-10 | F-21 Local-overflow/Convergence correction | Preserve certified Convergence overlap when the semantic one-hop set exceeds Local admission capacity | PASS — AUTOMATED / LIVE APP RERUN OPEN | Production separates `semanticLocalPaths` from `admittedLocalPaths`, preventing Local overflow from suppressing a safe multi-seed Convergence candidate. Focused `ppr-expansion` + MemorySearchTool orchestration tests pass 2 suites / 42 tests；type-check、target ESLint and diff check pass. Independent re-review reports no remaining P0–P2 |
+| 2026-08-10 | T-09 prior local + iCloud full deployment | Build and deploy the F-21-corrected artifact to both test vaults | PASS — HISTORICAL ARTIFACT | `make deploy` and `make deploy-icloud` each pass 203 suites / 4,572 tests plus lint/build. `dist`、repo-local and iCloud `main.js` byte-matched at `9995d49592e6ea391317b675ed25bd5ef169615af92b80bbccbe0f21257b0823`; both manifests matched at `f12e21b0…` and `styles.css` at `e0f412f0…`. The later `ea0b809e…`、`8376de3d…` and current `ada371a9…` deployments supersede this snapshot |
+| 2026-08-10 | T-10 prior iOS artifact staging | Regenerate and deploy the iOS canary against the exact `9995d495…` plugin before device observation | PASS — HISTORICAL ASSETS / STALE FOR CURRENT PLUGIN | Local and iCloud bundle byte-matched at `1f766a0a750a84d5dd1464c61301fbb88092afadc21466494c4ea8567c7f714e` and bound plugin `9995d495…`. At that snapshot the newer local bundle was `5e3a7140…` bound to `ea0b809e…`, while iCloud still held this historical hash and no fresh real-iOS receipt existed. The current deployment/canary row below supersedes that state |
+| 2026-08-10 | Current artifact/finding Tracker reconciliation | Record F-21 closure、the `9995d495…` deployment and strict historical/current receipt boundaries without changing Plan/SDD authority | PASS — HISTORICAL DOCS SNAPSHOT | `npm run docs:check` — 169 Markdown files / 1205 local links；scoped `git diff --check -- docs/development/active/retrieval-optimization/tracker.md` — pass. This historical snapshot claimed no then-current-artifact App、OPFS、Darwin、Windows/Linux、real-iOS or rollout PASS |
+| 2026-08-10 | T-00C pre-freeze readiness | Re-run current-source offline calibration, pre-review device-independent threshold/reranker candidates and verify the content-free evidence tooling/fixture handoff | PASS — HISTORICAL PREPARED SNAPSHOT / DEVICE FREEZE OPEN | Real sqlite-wasm reconfirms 81 rows、14 cases、4 holdouts、120 configurations and exact provisional winner `clause_OR/body_favor/compact/k30_equal`. Deadline/cancellation invariants are fixed at `0 / 1 / 1 / 0 / 1`; selected-reranker candidate is absolute MRR `1.0`. The smoke fixture dry-run is 48/48 unchanged；runner、manifest、OPFS runner、local/iCloud plugin and iOS bundle identities match. Evidence-tool focused regression passes 4 suites / 271 tests and five runner/probe scripts pass `node --check`; type-check and docs check pass. At this historical snapshot the measurement plan remained unfrozen and no App、device or platform receipt PASS was claimed；the current functional receipt rows below supersede only that receipt state, not the open freeze/performance gates |
+| 2026-08-10 | T-08/T-00C/T-10 prior `4b1ad1cc…` local and exact-renderer receipts | Deploy and bind the then-current repo-local artifact to functional App、desktop OPFS restart and Darwin exact-renderer evidence, then restore the test environment | PARTIAL — HISTORICAL LOCAL/DARWIN SLICES / SUPERSEDED | `make deploy` passed 203 suites / 4,581 tests plus lint/build；`dist/main.js` and repo-local test-vault `main.js` byte-matched at `4b1ad1cc3d9b73a0e895cdf7140a18c1db560e5e2541fd9b2ce8d3c18a70af9c`. App receipt `c7d87211…`、OPFS receipt `44accb8a…` / evidence `6a784f1b…` and Darwin receipt `9c38de38…` passed their recorded slices. The later `ea0b809e…` local artifact and receipts supersede them for current acceptance. Slowest-device selection、threshold/reranker freeze、post-freeze ranking/temporal/performance、Windows/Linux and fresh iOS remained open |
+| 2026-08-10 | T-09 prior iCloud deployment and T-10 prior local iOS bundle prepare | Deploy the then-current plugin assets to iCloud, then prepare its local iOS receipt bundle without crossing into real-device execution | PASS — HISTORICAL LOCAL ARTIFACT / SUPERSEDED | `make deploy-icloud` passed 203 suites / 4,581 tests plus lint/build and placed `4b1ad1cc3d9b73a0e895cdf7140a18c1db560e5e2541fd9b2ce8d3c18a70af9c` in iCloud. The then-local bundle `1ed6e0fa…` bound that plugin with `realDeviceExecuted=false`. At that snapshot local source was `ea0b809e…` with bundle `5e3a7140…`, while iCloud remained on `4b1ad1cc…` / `1f766a0a…` and no real-iPhone execution was claimed. The current deployment/canary row below supersedes it |
+| 2026-08-10 | T-08/T-00C/T-09/T-10 prior repo-local evidence refresh | Deploy and bind the then-current repo-local artifact to App functional、desktop OPFS restart、Darwin exact-renderer and local iOS-preparation evidence without claiming unavailable external gates | PARTIAL — HISTORICAL LOCAL/DARWIN SLICES PASS / ROLLOUT BLOCKED | `make deploy` passed 204 suites / 4,621 tests plus lint/build；`dist/main.js` and repo-local plugin byte-matched at `ea0b809efc5d5fafec209f0f754f9c1883a0953db74c1741c36632b46be13fc5`, runner was `e5adf14a3671cdb0cdcaca6173e86121700644326dfdbc9529527b3c0880b344` and manifest was `b3ec4c46…`. App receipt `test/retrieval-optimization-smoke-result.json` SHA-256 `c2258b7429cfbca2e7db56e520a93d8c7cae68b70b5fc071c859391225a0a977`, finished `2026-08-10T16:04:02.422Z`, records Recovery and Pagelet 0/1/2 PASS；its aggregate is `BLOCKED` by `UNFROZEN` plus unrecorded manual/ranking/temporal/performance slices. OPFS receipt `95cfb6618d2890ae4336e907a9ded2bd07698587472a3bf3196f89e374338c44` / evidence `166f2465a5396600097772f70cc3a918b736df17cb2d5c71b66e6d56c706f4b0` passes a full restart with zero drift；the first failed receipt remains `/private/tmp` diagnostic-only. Darwin receipt generated `2026-08-10T16:20:03.866Z` passes exact `darwin/arm64`；multi-platform verification has zero failures and lacks only win32/linux. Local iOS bundle `5e3a7140…` was `PREPARED` and bound `ea0b809e…`; iCloud and real-device execution were still open at this snapshot. Final test-vault state exactly restored `data.json` / `community-plugins.json` baselines `e8b10e8c…` / `a92e89fc…`. The current iCloud/real-iOS row below supersedes its staging state；threshold/reranker freeze、post-freeze rankings/temporal/performance and Windows/Linux remain open |
+| 2026-08-11 | Current evidence Tracker synchronization | Replace superseded current labels and align the cross-session handoff with the exact repo-local artifacts, receipts, restored environment and still-open external gates | PASS — HISTORICAL DOCS SNAPSHOT | `npm run docs:check` — 169 Markdown files / 1205 local links；scoped `git diff --check -- docs/development/active/retrieval-optimization/tracker.md` — pass. This historical snapshot claimed no Plan/SDD/source change, iCloud deployment, real-iOS run, rollout or release |
+| 2026-08-11 | T-10 prior App feature-flag lifecycle | Prove provider-free default/on/off/disable/unload behavior and reject a captured late diagnostic completion on the then-deployed artifact | PASS — HISTORICAL LIVE APP / PROVIDER-FREE | In the repo-local `test` vault, loaded plugin `8376de3d…` begins with flags absent/default-off at epoch `1:2d47be69`, then observes all-on `2:049df971` and all-off `3:2d47be69` with exact Host snapshots. With one diagnostics event active, plugin disable clears the session；a captured late completion is discarded and the old session returns `Retrieval diagnostics session is unavailable or stale.` Re-enable creates a new instance with flags absent/default-off and a fresh zero-event session. Provider fetch attempts are `0`；the aggregate hash of all `126` Markdown files remains `7b5d3c45…`；fresh console capture contains lifecycle/debug messages only and `dev:errors` reports none. `dev:debug` and mobile emulation are off；PA is disabled；`data.json` / `community-plugins.json` return exactly to `e8b10e8c…` / `a92e89fc…` |
+| 2026-08-11 | T-10 pre-v5 App/OPFS receipt currentness verifier | Mechanically re-check the then-current saved receipt bindings against checkout/test-vault artifacts without claiming live-process state | PASS — SUPERSEDED READ-ONLY CURRENT-DISK SNAPSHOT | Before the v5/v9 evidence hardening, `node scripts/retrieval-evidence-receipt-verify.mjs --json` returned `PASS / exit 0` for the `ea0b809e…` App/OPFS evidence；fixture files `46/46`、temporal mtimes `16/16` and OPFS raw stable fields `43/43` passed. The command explicitly reported `liveProcessCurrentnessClaimed=false` and App receipt authenticity/Recovery-digest recomputation as false. The current v5/v9 row below supersedes this currentness result without rewriting the saved receipt |
+| 2026-08-11 | F-22 / v5-v9 evidence-harness hardening | Bind the exact fresh-Chat performance workload and raw Instruments export, then sync the isolated repo-local pack and re-evaluate saved evidence | PASS — HISTORICAL WORKLOAD/LIFECYCLE AUTOMATION / DERIVATION ACCEPTANCE SUPERSEDED BY F-24 | Fixture v5 adds 16 performance notes for 62 total and device plan v9；`prepare --write` creates 16、updates manifest/runner and a subsequent dry-run reports 64/64 unchanged. Source/test-vault runner SHA is `9184ba4b24cc78ef88da8b6007bf6c27d9ae283747978054a676d4b7cc930717`；manifest SHA is `4be0c391317e061084acda37f3896143b95892b06b7cf2ffa92a1677e3045a99`；fixture bundle is `d1f6e928…`. At that snapshot, independent review reported no remaining P0–P2；F-24 supersedes that conclusion only for external-memory derivation acceptance, not the exact-workload/lifecycle facts preserved here. Focused regression passes 3 suites / 348 tests and full regression passes 206 / 4,747；type-check、full lint、target ESLint、script syntax、docs and whitespace checks pass. The read-only verifier returned expected `BLOCKED / exit 2` with `failures=[]` / `integrityErrors=[]`：62/62 files、16/16 mtimes and OPFS pass, while the old v4 App receipt could not bind the new runner/manifest/workload contract. No provider、device、iCloud、release or current App acceptance was claimed |
+| 2026-08-11 | T-00C/T-10 support-floor and device-readiness refresh | Re-check whether current authorities or available hardware can close the remaining rollout gates without a new owner decision | BLOCKED — HISTORICAL PREFLIGHT / SUPERSEDED BELOW | Product Spec、Plan、SDD、release metadata and iOS identity contracts define no minimum iPhone/iOS/Obsidian tuple；`minAppVersion=1.11.4` is not a hardware/performance floor. At this preflight snapshot the Mac was locked、no USB iPhone/iPad was visible、iCloud plugin/bundle were stale and full Xcode/xctrace was absent. Safari、webinspectord and Mirroring processes alone did not prove a connected/unlocked phone、Inspector attachment or real touch. The later owner/device row supersedes the hardware-model、unlock、iCloud and functional-iOS blockers；the missing software floor and Instruments/performance boundaries remain open |
+| 2026-08-11 | T-00C/T-09/T-10 owner hardware floor、prior iCloud deployment and real-iOS canary | Sync the then-current plugin/runtime assets to iCloud, observe the real Obsidian WKWebView through iPhone Mirroring and Safari Web Inspector, verify the bound receipt, then restore the original vault | PASS — HISTORICAL REAL-IOS FUNCTIONAL SLICE / PERFORMANCE DEFERRED | Owner sets `minimumIPhoneModel=iPhone 15`. `make deploy-icloud` passed 206 suites / 4,747 tests plus lint/build；local+iCloud plugin assets byte-matched at `ea0b809e…`, and local+iCloud iOS bundle byte-matched at `5e3a7140…`. Finder/USB UI identified the physical device as iPhone 15 Pro Max on iOS 26.6；the WKWebView receipt instead formally bound iPhone platform、Obsidian `1.13.6`、opaque device identity `b14cf5ac…` and receipt SHA-256 `70200fa3…`. The UA's `iPhone OS 18_7` token was not used as actual OS authority. Inside the capture freshness window the verifier returned `PASS / exit 0` with no blocker/failure/diagnostic；a later re-run returned expected `BLOCKED / exit 2` with only `ios_base_receipt_stale`. The base receipt remains `CANDIDATE / UNATTESTED`; the recorded PASS relied on real-device、Mirroring and Inspector operator observation and made no hardware-attestation、floor-representative or performance claim. Later `8376de3d…` / `da0422cb…` staging superseded these assets；at the next snapshot, `ada371a9…` / `97378684…` still needed a fresh functional canary. F-24 below supersedes that artifact-currentness pointer. `minimumIOSVersion`、`minimumObsidianVersion`、a `representsFloor=true` performance device、Xcode/Instruments、18 device-derived thresholds、threshold/reranker freeze and all performance sessions remain open |
+| 2026-08-11 | T-03/T-05/T-07/T-08/T-10 prior implementation and App functional refresh | Close cooperative graph/VSS cancellation、reranker nested-deadline、calendar-year temporal scope and Pagelet explicit-causal-language defects, deploy the exact artifact and record the available pre-freeze App slices | PARTIAL — HISTORICAL ARTIFACT / APP AGGREGATE BLOCKED | `make deploy` and `make deploy-icloud` each passed 206 suites / 4,790 tests plus lint/build；dist、repo-local and iCloud plugin assets byte-matched at `8376de3d…`. Independent reviews reported no remaining P0–P2 in the cancellation、reranker and Pagelet fixes. App receipt `24093fdd…` binds runner `9184ba4b…` / manifest `4be0c391…` and records Pagelet 0/1/2、lexical、graph-depth/convergence and opaque-boundary PASS. Recovery contains one completed strict-partial standard attempt, no relaxed retry/projection/target and one unscoped non-Chat event, so it remains BLOCKED without proving a reranker root cause；a same-build direct temporal Chat later returns only the 2026 target, but the immutable receipt retains its conservative temporal BLOCKED. The later F-23 artifact supersedes this App/build snapshot；no cherry-pick or receipt rewrite is claimed |
+| 2026-08-11 | T-09/T-10 prior iOS preparation and device recheck | Stage the then-current plugin and WKWebView bundle without Xcode, then re-check real-device prerequisites | PREPARED — HISTORICAL ARTIFACT / NO DEVICE CLAIM | Local/iCloud plugin assets byte-match at `8376de3d…`; local/iCloud iOS bundle byte-matches at `da0422cb…` and embeds plugin `8376de3d…`, runtime canary `9e0ad1fb…`, lexical normalizer `89b443cc…` and iOS identity contract `2ddf2a10…`. The Mac subsequently re-locked and the USB device tree showed no iPhone/iPad；Safari、webinspectord and iPhone Mirroring processes alone do not prove a connected/unlocked phone、real touch or Inspector attachment. No new receipt was captured. The F-23 `ada371a9…` / `97378684…` preparation below supersedes this staging state. Xcode absence blocks Instruments/performance only, not the functional canary once the physical prerequisites are restored |
+| 2026-08-11 | B-125 receipt/rollout-authority reconciliation | Align current Recovery wording with immutable receipt fields and absorb the explicit iPhone hardware-floor decision into durable authority | PASS — DOCS ONLY | Tracker now records the observed one strict-partial standard attempt、missing retry/projection/target and one unscoped non-Chat event without inventing a malformed-reranker root cause. DEC-027、the owning Product Spec and SDD record `minimumIPhoneModel=iPhone 15` while keeping minimum iOS/Obsidian、the exact `representsFloor=true` performance device and deferred Xcode/performance gates open. `npm run docs:check` passes 169 Markdown files / 1205 local links；scoped `git diff --check` passes. No runtime、receipt、rollout or release claim is added |
+| 2026-08-11 | F-23 / T-07/T-09/T-10 late-result and evidence-integrity closeout | Preserve the exact temporal scope across turns, fail closed on same-batch raw-ID collisions and non-exact refill records, make semantic-empty telemetry unambiguous, and isolate lexical results across live-flag or index replacement | PASS — HISTORICAL AUTOMATED/DEPLOYED SNAPSHOT / LIVE RERUNS OPEN | At the F-23 snapshot, combined focused regression passed 9 suites / 656 tests and the related independent specialized reviews reported no remaining P0–P2. Full `make deploy` passed 206 suites / 4,812 tests plus lint/build. `dist/main.js`、repo-local and iCloud plugins byte-matched at `ada371a9d1d8a761e91ce5128ad266f9ce7904e1cd542e024a589a35e7551cd9`；source/test runner byte-matched at `e080d5204e43343d21eae3cf1d9c7d2bb041de823f8edec14fab3b47c8f7f22e`；manifest remained `4be0c391317e061084acda37f3896143b95892b06b7cf2ffa92a1677e3045a99`. The local/iCloud iOS bundle was `PREPARED` and byte-matched at `9737868463722210e23de19b3b5f2d6ae270b33ea73fecc801a130984f99fe43` but had no current real-device receipt. All saved App、OPFS、Darwin and iOS receipts bound older artifacts and were historical/stale；the current-disk verifier returned expected `BLOCKED / exit 2` with `failures=[]` and `integrityErrors=[]`. F-24 below supersedes this artifact/evidence-tool snapshot；current App、OPFS/Darwin and iPhone 15 functional reruns remain open. Xcode/Instruments and performance remain explicitly deferred, not passed or waived |
+| 2026-08-11 | F-24 / T-00C/T-09/T-10 evidence-integrity successor | Fail closed without a reviewed Instruments converter, make receipt finalization terminal and cleanup-safe, and replace iOS mtime/self-seal freshness with production provenance plus deterministic snapshot rebuild | PASS — AUTOMATED AND DEPLOYED / PERFORMANCE AND CROSS-PLATFORM GATES OPEN | Focused runner/verifier/performance-fixture/iOS regression passes 4 suites / 390 tests；full `make deploy` passes 206 suites / 4,814 tests plus lint/build. `dist/main.js`、repo-local and iCloud plugins byte-match at `ada371a9d1d8a761e91ce5128ad266f9ce7904e1cd542e024a589a35e7551cd9`；source/test-vault runners byte-match at `bbce8a167b565a1dadd67da7d77218aafbcefc4be82931baf74b7c74c85d0a41`；manifest is `4be0c391317e061084acda37f3896143b95892b06b7cf2ffa92a1677e3045a99` and fixture bundle is `d1f6e928ede4df50c3846ffd6e2d75fe620d5d01e7de4a3e20019ee1ec61f18e`. Local/iCloud iOS bundles byte-match at `73f45f898617fb47f6399db732afd8ab5f7440ffe3e3d90740ee0609227ef279`；atomic production provenance SHA-256 `655f1900be05dcb5f27f3860ed56bf4ed62a178365827416cff9e8a6a6300fca` binds 385 inputs at `41174c64836efd26ad277c2e52747f4dfc84fcddec8770a483bf0a9a0475ff33` and verifier-only immutable-snapshot rebuild reproduces the production artifact without writing it. Without a reviewed converter, runner and verifier force `external_memory_converter_unverified / BLOCKED`, enforce the required metric's exact shape and reject forged `unsupported + PASS`; failed finalization is terminal non-`PASS` and releases reversible guards. Current App/OPFS artifacts match and the current verifier is `BLOCKED / exit 2` only for App overall/performance-workload acceptance, with `failures=[]` and `integrityErrors=[]`. Xcode/Instruments、performance and Windows/Linux remain deferred or open, not passed or waived；the current Mac/iOS functional receipts below supersede their earlier currentness blockers |
+| 2026-08-11 | T-00C/T-09/T-10 current real-iOS functional segmentation | Observe the exact current WKWebView artifact through real-device interaction、iPhone Mirroring and Safari Web Inspector, then verify the bound receipt inside its freshness window | PASS — CURRENT REAL-IOS FUNCTIONAL SLICE / TIME-BOUNDED | Local/iCloud plugin assets byte-match current `dist/main.js` at `ada371a9d1d8a761e91ce5128ad266f9ce7904e1cd542e024a589a35e7551cd9`；local/iCloud bundles byte-match at `73f45f898617fb47f6399db732afd8ab5f7440ffe3e3d90740ee0609227ef279`. `test/fts-ios-runtime-receipt.json` SHA-256 is `3cfbc14c20bd823eb42c76155075ead87838d4e397afb2abb263d4983251d488`, payload SHA-256 is `7f64996e4af2c06a64e2886c127dc731103f244a7aa20c20f8e40e0b8b5e38b8` and `generatedAt=2026-08-11T13:55:29.885Z`. The receipt binds loaded、vault-disk and current-dist plugin `ada371a9…`、Obsidian `1.13.6` and opaque device identity `b14cf5ac…`; operator observation records real device、Mirroring and Inspector as true. Within ten minutes, the standalone verifier returns `PASS / exit 0` with `blockers=[]`、`failures=[]` and `diagnostics=[]`. The base remains `CANDIDATE / UNATTESTED` with `hardwareAttestationClaimed=false`; this proves only current iOS functional segmentation, not exact model/iOS、floor representation、performance/Xcode or minimum iOS/Obsidian support. After ten minutes the receipt must become stale by design and is not a permanently replayable PASS |
+| 2026-08-11 | T-00C/T-08/T-10 current Mac App、OPFS and Darwin evidence | Capture the current functional App slices, prove durable OPFS continuity across a full restart, capture the exact Darwin Obsidian renderer and restore the test environment | PARTIAL — CURRENT MAC FUNCTIONAL/CONTINUITY/DARWIN PASS / ROLLOUT BLOCKED | App receipt `test/retrieval-optimization-smoke-result.json` SHA-256 `d8e4cacb6fb2e4c647c2ed872d2c4f4c1faeb11e28a1eb8b0836a3471ed97430` spans `2026-08-11T14:01:55.269Z`–`14:13:54.945Z` and records Recovery、manual lexical、graph-depth/convergence、opaque-boundary、calendar-year temporal and Pagelet 0/1/2 PASS against plugin `ada371a9…`; overall remains `BLOCKED` only by the unfrozen/performance workload、scored-ranking and structured-temporal gates. OPFS baseline SHA-256 `3d34e3201d57f4233fd978e993a04275957d012e3b07cde11b0d1dc5bbe0e534` and receipt SHA-256 `ad5937e43c71af2e70fd3a02a29a51e2e389ade95e30c74e813bb0d160b8d8c3` pass a `2026-08-11T14:22:53.715Z`–`14:26:02.413Z` / `188698 ms` full restart with `43/43` stable fields, changed PID/ppid/timeOrigin, plugin `ada371a9…` and runner `eb1eab22…`. Darwin receipt `test/fts-runtime-receipt-darwin.json` SHA-256 `f351539d06b94d48fb65613f5478bb5a9cb5b79d96674ce908df331a9061be88`, generated `2026-08-11T14:28:23.576Z`, passes exact `darwin/arm64` Obsidian `app://obsidian.md` renderer with plugin `ada371a9…`; multi-platform verification is blocked only by missing win32/linux and has `failures=[]` / `diagnostics=[]`. The current evidence verifier is blocked only by `app_receipt_overall_blocked` and `app_performance_workload_not_pass`, with `failures=[]` / `integrityErrors=[]`. Cleanup restores exact `data.json` / `community-plugins.json` hashes `e8b10e8c…` / `a92e89fc…`, leaves PA disabled and dev debug/mobile off, closes CDP `9229` and reopens Obsidian normally |
+| 2026-08-11 | T-10 current provider-free feature-flag lifecycle | Prove current-artifact default/on/off/disable/unload/re-enable behavior and restore the test vault | PASS — CURRENT LIVE APP / PROVIDER-FREE / CLEANUP VERIFIED | Loaded plugin is current `ada371a9…`. Initial persistent setting is absent, Host flags are `{}` and epoch is `retrieval-flags:1:2d47be69`; all-on contains exactly `lexicalProfile=true`、`strictReranker=true`、`graphPpr=true` and `relaxedRecovery=true` at `retrieval-flags:2:049df971`; all-off returns the setting to absent、Host flags to `{}` and epoch to `retrieval-flags:3:2d47be69`. An active diagnostics session first records one event；after disable/unload, the captured late completion is discarded and the old session returns exactly `Retrieval diagnostics session is unavailable or stale.` This live evidence covers only discard of the captured diagnostics completion after unload, not a real in-flight lexical Worker；real lexical late-result isolation is covered only by focused tests. Re-enable creates a fresh current instance with flags absent、epoch 1 and a fresh session `eventCount=0`. 本序列未调用 provider path，observed `globalThis.fetch` attempts=`0`；该观察不覆盖 Obsidian `requestUrl`. All 126 Markdown files retain aggregate SHA-256 `7b5d3c454033869532eb43c448374ef9e0cc007ba7406aef61f626bd75098307`; `dev:errors` reports none. Final persistent state leaves PA disabled and restores `data.json` / `community-plugins.json` exactly to `e8b10e8c…` / `a92e89fc…`. This closes only the current live-flag lifecycle slice；performance、rankings、structured temporal and win32/linux remain open |
+
+## Current Observability And Rollout Targets
+
+Only content-free counts/timing/reason codes may be logged. Opaque bridge path、
+title、body and adjacency identity are forbidden.
+
+| Metric | Expected bound / interpretation |
+| --- | --- |
+| selected rerank model class | `policy` or `chat`; never a hidden two-model cascade |
+| lexical profile/state/reason | separate lexical profile/generation version plus content-free `awaiting_confirmation/rebuilding/ready/failed/vector_only/not_started_budget`、batch yield/foreground wait、SQLite switch/rollback reason and timing；never log query/note text |
+| lexical quality/cost | fixture-only Recall@K/MRR/unique-path、index size、rebuild/update and slow-device p95 |
+| rerank fail-open reason | enum/count only |
+| provider live revalidation | candidates checked/sent/dropped plus content-free `boundary_changed/stale_hash/stale_anchor/unreadable` counts and timing；never log text、path or title |
+| graph preflight | content-free snapshot-copy node/edge/byte plus reachable lifted-state/projected-transition counts、estimated memory/time class and whole-PPR skip reason；never log graph identity |
+| PPR iterations/error bound | per seed; converged before 50 or direct-only |
+| Worker lifecycle | request/batch/chunk、queue wait、Worker/max-batch timing；same-request cancel requested and Worker-confirmed observed、accepted-after-cancel（must be `0`）、deadline and late-discard counts；pre-failure batch/chunk/timing absent from failure/cancel responses is `unknown`, never `0`；never log path identity or chunk text |
+| lane worksets | Local/Deep/Convergence content-free counts；exact bounds pending EC-02 calibration |
+| graph/reranker/final docs | graph ≤6；reranker ≤18；documents ≤8 |
+| Chat/Pagelet relaxed retry | ≤1 per run；record content-free `needsMoreEvidence`/eligibility、deadline and finalization-reserve outcome only |
+| explicit temporal retry | the same frozen filter reaches A1、A2、Graph admission and projection；each required terminal reports `temporalFilterApplied=1` and `temporalViolationCount=0`；raw range/source identity is not logged |
+| measurement episode topology | every trusted diagnostic event requires `surface=chat|pagelet`；v9 performance acceptance uses Chat only and rejects Pagelet/mixed-surface evidence；one standard and one retry qualification precede exact fresh-Chat standard `23`、retry `12 + 11` and cancellation `1` sessions；strict ordered episode/Graph chains、unique opaque run binding、separate standard/retry p95 series and dropped-event fail-closed |
+| workload resource envelope | Target contract requires maximum-observed process physical footprint、database bytes and main-thread gap over all standard/retry sessions；optional JS heap only. iOS external profiler JSON and raw Instruments export remain fixed-path、original-byte hashed、capture-start absent and device/app/runtime/plugin/runner/window/cutoff-bound, but those bindings alone do not prove derivation. Until a reviewed converter exists, runner and verifier force `external_memory_converter_unverified / BLOCKED`, require the external metric's exact shape and reject `unsupported + PASS`; raw JSON/export hashes cannot produce process-memory acceptance |
+| Pagelet verified insights | 0、1 or 2；two is not a target |
+| Pagelet delivery candidates | 0、1 or 2 independent insight IDs；collection ID is grouping only |
+
+## Closeout Readiness
+
+- [x] Owning runtime contract 与当前实现一致，并明确 rollout flags 默认关闭；performance target 仍 deferred/open，当前 evidence harness 在 reviewed converter 可用前按更严格的 fail-closed 规则执行。
+- [ ] All B-125 ACs have focused deterministic evidence.
+- [ ] Required review、deploy and scoped Obsidian smoke evidence is recorded.
+- [x] Current PA Agent/VSS architecture reflects actual implemented ownership.
+- [ ] 未完成项已进入 Backlog。
+- [x] 已完成实现的稳定结论已吸收到 current contract/tests。
+- [ ] 过程文档已标记 delete-after-absorption 或 unique archive evidence。

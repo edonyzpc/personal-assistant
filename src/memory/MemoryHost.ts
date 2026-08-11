@@ -16,12 +16,23 @@ export interface MemoryHost {
         memoryAutoCheckBeforeChat: boolean;
         memoryApprovalPolicy: string;
         vssCacheExcludePath: string[];
+        dataBoundary?: {
+            excludedFolders: string[];
+            excludedTags: string[];
+            generatedNotePolicy: string;
+        };
         debug: boolean;
         aiProvider: string;
         chatModelName: string;
         embeddingModelName: string;
         baseURL: string;
         statisticsVaultId: string;
+        retrievalOptimizationFlags?: {
+            lexicalProfile?: boolean;
+            strictReranker?: boolean;
+            graphPpr?: boolean;
+            relaxedRecovery?: boolean;
+        };
     };
 
     /** Structured debug log (no-op when debug is false). */
@@ -35,6 +46,9 @@ export interface MemoryHost {
 
     /** Return the Markdown files that are eligible for Memory indexing. */
     getVSSFiles(): TFile[];
+
+    /** Current shared Data Boundary decision for a single vault path. */
+    isDataBoundaryAllowedPath?(path: string): boolean;
 
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;

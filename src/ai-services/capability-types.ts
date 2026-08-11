@@ -1,5 +1,6 @@
 import type { AiServiceHost } from "./AiServiceHost";
 import type {
+    ChatToolUnavailableReason,
     SourceRecord,
     SourceRecordBoundary,
     SourceRecordKind,
@@ -212,6 +213,7 @@ export function agentResultToChatToolResult(
     capabilityName: string,
     result: AgentCapabilityResult,
 ): ChatToolResult<unknown> {
+    const unavailableReason = asChatToolUnavailableReason(result.unavailableReason);
     return {
         ok: result.status === "ok",
         tool: capabilityName,
@@ -220,5 +222,20 @@ export function agentResultToChatToolResult(
         sources: result.sources,
         sourceRecords: result.sourceRecords,
         ...(result.userSafeMessage ?? result.error ? { error: result.userSafeMessage ?? result.error } : {}),
+        ...(unavailableReason ? { unavailableReason } : {}),
     };
+}
+
+function asChatToolUnavailableReason(
+    value: string | undefined,
+): ChatToolUnavailableReason | undefined {
+    switch (value) {
+        case "pagelet_stage_control_unavailable":
+        case "pagelet_stage_validation_deadline":
+        case "pagelet_stage_first_rejected":
+        case "pagelet_stage_lead_rejected":
+            return value;
+        default:
+            return undefined;
+    }
 }

@@ -1,31 +1,36 @@
 # Retrieval Pipeline Optimization
 
-Status: Active (Phase 1-3 pending implementation)
-Updated: 2026-08-07
+Document status: Current
+Updated: 2026-08-08
+Work item: B-125
+Authority: 本 track 的简短入口与 owning contract 路由。
+Decision: [DEC-027 — 采用有界、汇合感知的检索恢复](../../../product/decisions/dec-027-bounded-retrieval-recovery.md)
+Product spec: [PA Active Vault Indexer — B-125 scoped retrieval optimization](../../../product/specs/pa-active-vault-indexer-product-spec.md#101-b-125-scoped-retrieval-optimization)
+Tracker: [Development Tracker](./tracker.md)
 
-## Summary
+## Outcome And Boundary
 
-Three-phase optimization of the PA Agent's memory retrieval pipeline:
+- Outcome: 以 owner-confirmed `CHAR-PHRASE` 先修复本地 FTS5 中文 lexical correctness，
+  再让 Chat 和 Pagelet 通过共享
+  的 direct hybrid 与 additive Local / Deep Breadth / Convergence substrate，在严格
+  候选、来源、Data Boundary 和 run budget 内获得更好的一跳与 2–3 hop 召回、多 seed
+  汇合信号与一次失败恢复机会。
+- Delivery class: L3 — 改变共享 retrieval runtime、provider 输入、Data Boundary 与
+  Pagelet insight 行为。
+- Explicit non-goals: 不做完整 CEPS 子图提取、全局社区检测、用户可见 RAG/Graph
+  设置、额外模型级联、超过一次 relaxed retry、超过两个 Pagelet insights，或任何写入
+  能力；B-125 不引入 SPLADE、外部搜索引擎或 semantic retry rewrite。未来 fixture
+  只能触发新的 owner decision，不能自动扩展本 track。
 
-1. **Phase 1: Self-RAG Reflection** — Fix reranker bug, add three-level verdict (relevant/partially_relevant/none_relevant), filter garbage from agent prompt.
-2. **Phase 2: PPR Graph Expansion** — Replace one-hop link expansion with Degree-penalized Personalized PageRank. Discover structurally related notes 2-3 hops away via the vault's wikilink graph.
-3. **Phase 3: Single-Retry Recovery** — When first search fails, guide agent to retry once with relaxed parameters.
+## Artifacts
 
-## Documents
+- Tracker: [Development Tracker](./tracker.md)
+- Plan: [Delivery Plan](./plan.md)
+- SDD: [Software Design Document](./sdd.md)
+- Current product contracts:
+  [DEC-027](../../../product/decisions/dec-027-bounded-retrieval-recovery.md)、
+  [Active Vault Indexer](../../../product/specs/pa-active-vault-indexer-product-spec.md#101-b-125-scoped-retrieval-optimization)、
+  [Data Boundary](../../../product/specs/pa-data-boundary-product-spec.md)、
+  [Pagelet Product Design](../../../product/pagelet-product-design.md)
 
-| Document | Purpose |
-|----------|---------|
-| [SDD](./sdd.md) | Full design specification, decision records, algorithm code, integration details |
-| [Plan](./plan.md) | Delivery phases, dependencies, risks, validation strategy |
-| [Tracker](./tracker.md) | Per-task progress tracking and exit criteria |
-
-## Key Technical Choices
-
-- **PPR over community detection**: Query-time local expansion (no precomputation, no maintenance)
-- **Degree-penalized transitions**: Suppress hub nodes via `1/sqrt(degree(target))`
-- **Verdict-based retry detection**: Retry only triggers when previous search had poor results, not on any second search
-- **Feature flags internal only**: No user-visible settings added
-
-## Constraints
-
-See SDD "Constraints For Implementation" section for 8 hard rules that must not be violated.
+执行状态、下一步、finding 与验证证据只写 Tracker。

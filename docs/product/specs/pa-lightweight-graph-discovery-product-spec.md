@@ -1,13 +1,16 @@
 # PA Lightweight Graph-aware Discovery Product Spec
 
-Updated: 2026-07-11
+Document status: Current
+Updated: 2026-08-08
+Scoped work item: B-125
+Scoped decision: [DEC-027 — bounded retrieval recovery](../decisions/dec-027-bounded-retrieval-recovery.md)
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Bounded M12 Graph Discovery implementation complete |
+| Status | Bounded M12 Graph Discovery is the current product contract；DEC-027/B-125 defines the scoped opaque-bridge retrieval amendment. Implementation、validation and rollout status is owned only by the [B-125 Tracker](../../development/active/retrieval-optimization/tracker.md). |
 | Primary surfaces | Pagelet Review Queue, current note neighborhood |
 | Feature family | Lightweight Graph-aware Discovery |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -15,8 +18,10 @@ Updated: 2026-07-11
 | Related specs | [PA Product Information Architecture spec](../pa-product-information-architecture-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Weekly Review spec](../../archive/pa-weekly-review-product-spec.md), [Pagelet Trust Layer spec](../../archive/pagelet-trust-layer-product-spec.md), [Pagelet Maintenance Review spec](../../archive/pagelet-maintenance-review-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md) |
 
 This spec defines the lightweight graph-aware product layer on top of Active
-Vault Indexer. The bounded source-backed M12 implementation is current; a full
-knowledge-graph product remains out of scope.
+Vault Indexer. The bounded source-backed M12 contract is current; a full
+knowledge-graph product remains out of scope. DEC-027's single opaque bridge is
+a scoped retrieval contract；its execution and rollout evidence belongs to the
+B-125 Tracker rather than this product spec.
 
 Lightweight Graph-aware Discovery helps PA surface meaningful relationships
 between notes without becoming a full knowledge graph product.
@@ -226,7 +231,10 @@ Signal policy:
 - semantic similarity proposes candidates but does not prove relation
 - activity explains why now
 - source evidence grounds final card
-- excluded/private scopes are hard filters
+- excluded/private scopes are hard item/evidence filters
+- DEC-027 PPR may transiently cross one excluded, non-generated Markdown node
+  only as an opaque topology bridge; the bridge itself never contributes a
+  discovery item、edge explanation、sourceRef、path/title/content or replay identity
 
 ## 7. Conflict Pair Policy
 
@@ -330,7 +338,10 @@ Quality gates:
 - Conflict pairs cite both sides.
 - Index note candidates list source notes before creation.
 - Rejected edges are not repeatedly resurfaced unchanged.
-- Excluded/private scopes do not contribute discovery items.
+- Excluded/private scopes do not contribute discovery items or evidence. The
+  DEC-027 single opaque bridge may only help locate a final allowed candidate;
+  generated、attachment、excluded-chain traversal and bridge identity leakage
+  remain hard failures.
 
 ## 11. Phased Roadmap
 

@@ -37,6 +37,7 @@ import type {
     PageletDeepDiscoverControllerResult,
     PageletDeepDiscoverTriggerReason,
 } from "./agent/types";
+import type { PageletAgentDeliveryCandidate } from "./agent/delivery-adapter";
 import type {
     ConfirmedMemoryRecord,
     GraphDiscoveryRunResult,
@@ -183,6 +184,15 @@ export interface PageletHost {
         force?: boolean;
         signal?: AbortSignal;
     }): Promise<PageletDeepDiscoverControllerResult>;
+
+    /** Commit content-free smoke evidence only after current-route acceptance. */
+    acknowledgeDeepDiscoverResult?(
+        result: PageletDeepDiscoverControllerResult,
+        acceptedCandidates: readonly PageletAgentDeliveryCandidate[],
+    ): void;
+
+    /** Reject a controller result superseded before Orchestrator acceptance. */
+    discardDeepDiscoverResult?(result: PageletDeepDiscoverControllerResult): void;
 
     /** Cancel active/pending Deep Discover work and clear in-memory derived content. */
     cancelDeepDiscover?(): void;

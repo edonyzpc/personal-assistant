@@ -2,9 +2,29 @@
 
 import type { App } from "obsidian";
 
+import type { GraphBoundarySnapshotSource } from "../graph/graph-boundary-snapshot";
 import type { MemorySearchPort } from "../memory/MemorySearchPort";
 import type { AgentRunCoordinatorPort } from "./agent-run-coordinator";
 import type { AgentCapabilityTier } from "./capability-types";
+import type {
+    RetrievalDiagnosticEventInput,
+    RetrievalDiagnosticRecorder,
+    RetrievalDiagnosticSurface,
+} from "./retrieval-diagnostics";
+
+export interface RetrievalOptimizationFlags {
+    lexicalProfile?: boolean;
+    strictReranker?: boolean;
+    graphPpr?: boolean;
+    relaxedRecovery?: boolean;
+}
+
+export interface LatestMemorySourceMaterial {
+    path: string;
+    markdown: string;
+    mtime: number;
+    size: number;
+}
 
 /**
  * Narrow host interface for AI services.
@@ -28,6 +48,7 @@ export interface AiServiceHost {
         webSearchEnabled: boolean;
         licenseTier: AgentCapabilityTier;
         memoryEnabled: boolean;
+        retrievalOptimizationFlags?: RetrievalOptimizationFlags;
         operationsAgentEnabled: boolean;
         operationsProactiveSaveSuggestionsEnabled: boolean;
         operationsAuditIncludeContent: boolean;
@@ -37,6 +58,39 @@ export interface AiServiceHost {
 
     /** Structured debug log (no-op when debug is false). */
     log(message: string, ...args: unknown[]): void;
+
+    /**
+     * Local, content-free calibration sink. The surface is a separate trusted
+     * argument so event producers cannot relabel an event through its payload.
+     * It is a no-op unless explicitly activated.
+     */
+    recordRetrievalDiagnostic?(
+        surface: RetrievalDiagnosticSurface,
+        event: RetrievalDiagnosticEventInput,
+    ): void;
+
+    /** Invocation-scoped, surface-bound sink; late completions cannot enter a later session. */
+    createRetrievalDiagnosticRecorder?(
+        surface: RetrievalDiagnosticSurface,
+    ): RetrievalDiagnosticRecorder | undefined;
+
+    /** Chat-only, diagnostics-session-bound cancellation probe for a dispatched graph Worker. */
+    scheduleArmedGraphWorkerCancellation?(
+        surface: RetrievalDiagnosticSurface,
+        cancel: () => void,
+    ): boolean;
+
+    /** Live retrieval gate for runtimes whose settings object is an invocation snapshot. */
+    isGraphPprEnabled?(): boolean;
+
+    /** Live retrieval flags; never infer enabled from a stale runtime settings snapshot. */
+    getRetrievalOptimizationFlags?(): Readonly<RetrievalOptimizationFlags>;
+
+    /** Stable identity for the current retrieval-flag policy. */
+    getRetrievalOptimizationEpoch?(): string;
+
+    /** Observe persisted settings changes; the returned function must detach the listener. */
+    onSettingsChanged?(listener: () => void | Promise<void>): () => void;
 
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;
@@ -50,11 +104,25 @@ export interface AiServiceHost {
     /** Search/read Memory through a narrow port. */
     readonly memorySearch: MemorySearchPort;
 
-    /** Return Obsidian resolved links for graph-aware tools. */
-    getResolvedLinks(): Record<string, Record<string, number>> | undefined;
+    /**
+     * Return one invocation-local, epoch-checked graph source. The classifier
+     * is Host-owned so excluded Markdown can remain opaque without exposing it
+     * as provider evidence, while generated/non-Markdown paths stay blocked.
+     */
+    getGraphBoundarySnapshotSource?(): GraphBoundarySnapshotSource | undefined;
+
+    /**
+     * Content/privacy epoch for one consumer. It changes on vault mutations and
+     * Data Boundary policy changes, allowing a bounded group of latest-source
+     * reads to be sealed before provider use.
+     */
+    getMemoryEvidenceEpoch?(): string;
 
     /** Whether a vault path may be used as Memory evidence under current privacy settings. */
     isDataBoundaryAllowedPath?(path: string): boolean;
+
+    /** Stable latest Markdown read after the current consumer's full Data Boundary policy. */
+    readLatestMemorySource?(path: string, signal?: AbortSignal): Promise<LatestMemorySourceMaterial | null>;
 
     /** Optional capacity-one coordinator shared by Chat and Pagelet Agent runs. */
     readonly agentRunCoordinator?: AgentRunCoordinatorPort;

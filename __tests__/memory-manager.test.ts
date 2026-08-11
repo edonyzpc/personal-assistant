@@ -7,10 +7,11 @@ import {
     getMemoryApprovalCopy,
     type MemoryMaintenancePlan,
 } from '../src/memory-manager';
-import type { VSSMemoryStatusSnapshot } from '../src/vss';
+import type { VSSLexicalRebuildSummary, VSSMemoryStatusSnapshot, VSSProgressEvent } from '../src/vss';
 
 const mockNoticeMessages: string[] = [];
 const mockProgressSteps: string[] = [];
+const mockProgressButtons: Array<{ disabled: boolean }> = [];
 const mockSettingGroups: Array<Array<{ text?: string; click?: () => void; cta?: boolean }>> = [];
 
 const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -18,6 +19,7 @@ const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-esl
         children: [] as any[], // eslint-disable-line @typescript-eslint/no-explicit-any
         textContent: '',
         addClass: jest.fn(),
+        addEventListener: jest.fn(),
         empty: jest.fn(() => {
             element.children.length = 0;
             element.textContent = '';
@@ -25,6 +27,10 @@ const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-esl
         createEl: jest.fn((_tag: string, options?: { text?: string }) => {
             const child = mockCreateDomElement();
             if (options?.text) child.textContent = options.text;
+            if (_tag === 'button') {
+                child.disabled = false;
+                mockProgressButtons.push(child);
+            }
             element.children.push(child);
             return child;
         }),
@@ -172,6 +178,15 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
             })),
             refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
             rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
+            rebuildLexicalIndex: jest.fn(async (_options?: {
+                signal?: AbortSignal;
+                onProgress?: (event: VSSProgressEvent) => void;
+            }): Promise<VSSLexicalRebuildSummary> => ({
+                aborted: false,
+                rowsProcessed: 2,
+                rowsTotal: 2,
+                generation: 1,
+            })),
         },
         saveSettings: jest.fn(async () => undefined),
         notifyStatusChanged: jest.fn(),
@@ -193,6 +208,7 @@ const createManager = (plugin: ReturnType<typeof createPlugin>) => new MemoryMan
 
 beforeEach(() => {
     mockSettingGroups.length = 0;
+    mockProgressButtons.length = 0;
 });
 
 const createMockDomElement = mockCreateDomElement;
@@ -677,6 +693,101 @@ describe('MemoryManager command decisions', () => {
             ]));
         } finally {
             nowSpy.mockRestore();
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
+    it('runs a lexical-only rebuild without provider auto-refresh authorization', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plan = createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        plugin.vss.rebuildLexicalIndex.mockImplementation(async (options) => {
+            options?.onProgress?.({ phase: 'lexical-rebuilding', lexicalRowsDone: 1, lexicalRowsTotal: 2 });
+            options?.onProgress?.({ phase: 'finalizing', lexicalRowsDone: 2, lexicalRowsTotal: 2 });
+            options?.onProgress?.({ phase: 'ready', lexicalRowsDone: 2, lexicalRowsTotal: 2 });
+            return { aborted: false, rowsProcessed: 2, rowsTotal: 2, generation: 1 };
+        });
+        const manager = createManager(plugin);
+
+        try {
+            await expect(manager.prepareMemory(plan)).resolves.toEqual({ ok: true, partial: false });
+            expect(plugin.vss.rebuildLexicalIndex).toHaveBeenCalledWith(expect.objectContaining({
+                silent: true,
+                signal: expect.any(AbortSignal),
+                onProgress: expect.any(Function),
+            }));
+            expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.updateMemorySetting).not.toHaveBeenCalled();
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
+            expect(mockProgressSteps).toEqual(expect.arrayContaining([
+                'Updating Memory search 1/2',
+                'Finishing local search setup',
+                'Ready',
+            ]));
+            expect(mockProgressButtons.at(-1)?.disabled).toBe(true);
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
+    it('aborts an in-flight lexical rebuild when Memory maintenance stops', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plan = createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        let observedSignal: AbortSignal | undefined;
+        plugin.vss.rebuildLexicalIndex.mockImplementation(async (options) => {
+            observedSignal = options?.signal;
+            return await new Promise((resolve) => {
+                options?.signal?.addEventListener('abort', () => resolve({
+                    aborted: true,
+                    rowsProcessed: 1,
+                    rowsTotal: 2,
+                    reason: 'aborted',
+                }), { once: true });
+            });
+        });
+        const manager = createManager(plugin);
+
+        try {
+            const preparing = manager.prepareMemory(plan);
+            await Promise.resolve();
+            await Promise.resolve();
+            manager.stopAutoMaintenance();
+
+            expect(observedSignal?.aborted).toBe(true);
+            await expect(preparing).resolves.toMatchObject({ ok: false, partial: false });
+            expect(plugin.updateMemorySetting).not.toHaveBeenCalled();
+        } finally {
+            manager.stopAutoMaintenance();
             if (originalDocument) {
                 Object.defineProperty(globalThis, 'document', originalDocument);
             } else {

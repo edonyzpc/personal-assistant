@@ -2,10 +2,9 @@ import { describe, expect, it } from "@jest/globals";
 
 import { buildFtsQuery } from "../src/vss/fts-query-builder";
 
-describe("buildFtsQuery (Intl.Segmenter path)", () => {
-    it("converts CJK words to phrase queries", () => {
-        const result = buildFtsQuery("渲染优化")!;
-        expect(result).toContain('"渲 染"');
+describe("buildFtsQuery (CHAR-PHRASE)", () => {
+    it("converts a continuous CJK run to one atomic-token phrase", () => {
+        expect(buildFtsQuery("渲染优化")).toBe('"c6e32 c67d3 c4f18 c5316"');
     });
 
     it("keeps Latin words as bare terms", () => {
@@ -13,10 +12,7 @@ describe("buildFtsQuery (Intl.Segmenter path)", () => {
     });
 
     it("produces CJK phrases and Latin bare terms for mixed input", () => {
-        const result = buildFtsQuery("React 渲染性能")!;
-        expect(result).toMatch(/^React /);
-        expect(result).toContain('"渲 染"');
-        expect(result).toContain('"性 能"');
+        expect(buildFtsQuery("React 渲染性能")).toBe('React "c6e32 c67d3 c6027 c80fd"');
     });
 
     it("keeps code identifiers as bare terms", () => {
@@ -49,9 +45,23 @@ describe("buildFtsQuery (Intl.Segmenter path)", () => {
         expect(buildFtsQuery("React or hooks")).toBe('React "or" hooks');
     });
 
-    it("quotes tokens containing colons", () => {
-        const result = buildFtsQuery("key:value")!;
-        expect(result).toContain('"key:value"');
+    it("treats common punctuation as a token boundary", () => {
+        expect(buildFtsQuery("key:value")).toBe("key value");
+    });
+
+    it("uses production clause delimiters for the provisional clause_OR candidate", () => {
+        expect(buildFtsQuery("差旅报销，电子发票", "clause_OR")).toBe(
+            '("c5dee c65c5 c62a5 c9500") OR ("c7535 c5b50 c53d1 c7968")',
+        );
+        expect(buildFtsQuery("差旅报销;电子发票", "clause_OR")).toBe(
+            '("c5dee c65c5 c62a5 c9500") OR ("c7535 c5b50 c53d1 c7968")',
+        );
+    });
+
+    it("does not reinterpret space-separated rewrite keywords as OR clauses", () => {
+        const query = buildFtsQuery("差旅报销 电子发票", "clause_OR");
+        expect(query).not.toContain(" OR ");
+        expect(query).toBe('"c5dee c65c5 c62a5 c9500" "c7535 c5b50 c53d1 c7968"');
     });
 
     it("quotes version and date tokens that are unsafe FTS5 barewords", () => {
@@ -70,7 +80,7 @@ describe("buildFtsQuery (Intl.Segmenter path)", () => {
 
     it("treats single CJK character as bare token (no phrase)", () => {
         const result = buildFtsQuery("的")!;
-        expect(result).toBe("的");
+        expect(result).toBe("c7684");
         expect(result).not.toContain('"');
     });
 

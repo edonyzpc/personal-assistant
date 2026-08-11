@@ -1,8 +1,11 @@
 # Retrieval Pipeline Optimization — Delivery Plan
 
 Document status: Approved
-Updated: 2026-08-07
+Updated: 2026-08-08
+Work item: B-125
 Authority: 本 track 的交付顺序、依赖、风险、验证策略与 stop point。
+Decision: [DEC-027](../../../product/decisions/dec-027-bounded-retrieval-recovery.md)
+Product spec: [PA Active Vault Indexer — B-125](../../../product/specs/pa-active-vault-indexer-product-spec.md#101-b-125-scoped-retrieval-optimization)
 SDD: [Software Design Document](./sdd.md)
 Tracker: [Development Tracker](./tracker.md)
 
@@ -10,146 +13,504 @@ Tracker: [Development Tracker](./tracker.md)
 
 ### Goals
 
-1. 修复 reranker 的 correctness bug（空 ranking 回退返回全量 candidates）
-2. 引入三级 verdict 信号，让 agent 和下游逻辑知道检索结果的质量
-3. 利用 Obsidian vault 已有的 wikilink 图谱，通过 PPR 算法发现 2-3 跳的结构性相关笔记
-4. 当首次检索失败时，引导 agent 以放宽参数重试一次
+1. 以 owner-confirmed `CHAR-PHRASE` 修复 FTS5 CJK 索引/query token 不同构，建立可
+   评测的 title/heading/body/path lexical surface，并保留 BM25 + RRF 的轻量本地架构。
+2. 修复 reranker 空 ranking、模型选择、invalid-output 与候选泄漏问题。
+3. 通过 additive Local / Deep Breadth / Convergence 三条候选 lane，提高一跳、
+   2–3 hop 与多 seed 汇合候选召回，同时保持 semantic/source evidence gate。
+4. 在不读取 excluded 内容的前提下，允许一个 excluded Markdown opaque bridge 保留
+   有价值的本地链接拓扑。
+5. 由 Chat/Pagelet Host Policy 各自管理一次 run-scoped relaxed retry；Pagelet 可返回
+   0–2 个独立验证 insights。
+6. reranker/model 异常 fail open 并保留有界 direct + graph 候选；PPR-only 异常仅
+   丢弃 Deep/Convergence，共享 graph/Boundary/embedding/Worker 异常才 direct-only。
 
 ### Non-goals
 
-- 不做全局社区检测（Louvain/Leiden/Label Propagation）
-- 不做 Adaptive 路由分级（Phase 4 已砍掉）
-- 不暴露用户可见的 Settings（只有内部 flag）
-- 不做 Mobile 平台降级
-- 不修改 RequiredCapabilityPolicy 的整体架构（只扩展 follow-up 条件）
-- 不引入新的 LLM 调用（Phase 1 合并到 reranker，Phase 2 无 LLM，Phase 3 复用已有 agent loop）
+- 不做 Louvain/Leiden/community snapshot 或全局 graph product。
+- 不实现 CEPS `EXTRACT`、downhill DAG、path DP、connector budget 或 subgraph `H`。
+- 不向模型暴露完整 candidate pool、PPR score、lane 或 opaque bridge identity。
+- 不新增第二次 reranker model fallback call，不超过一次 relaxed retry。
+- 不把两个 Pagelet insights 当作配额，不用模板补齐。
+- 不读取 whole note 代替 query-aligned chunk selection，不重新 embedding query。
+- B-125 不引入 SPLADE、外部搜索引擎、默认 trigram CJK surface 或新的 semantic retry
+  rewrite；未来 fixture 只能触发新的 owner decision，不能自动扩展本 track。
+- 不增加写入、Operations 或 Vault/source schema；不做跨设备或用户数据迁移。允许
+  versioned device-local derived FTS index rebuild。
+- 不以全局 VSS schema/profile bump、清空 chunks/vectors 或重新 embedding 代替独立的
+  lexical profile migration；不把已知 index/query 不同构的旧 FTS 称为 hybrid fallback。
 
-## Dependencies And Source Surface
+## Delivery Slices
 
-### 文件依赖（已用 rg 验证）
+| Phase | Outcome | Primary requirement | Exit gate | Stop point |
+| --- | --- | --- | --- | --- |
+| Phase 0A — lexical evidence baseline | real sqlite-wasm MATCH harness compares current baseline、`BIGRAM-U1` primary candidate、`CHAR-PHRASE` deterministic comparator、explicit-locale/fingerprinted `INTL-WORD` challenger and trigram limitation control；no production behavior change | B-125/REQ-08 evidence prerequisite | frozen CJK/English/mixed/title/heading/path/error-code/long-note labels；candidate Top-8/English-safety/error-free/metadata-reachability gates；quality/cost report | passing only produces an OD-06A shortlist；evidence不足时不选择 shipping profile；不得用已知失效的中文 FTS 选择 rewrite、RRF 或 graph 参数 |
+| Phase 0B — corrected lexical profile | owner-confirmed `CHAR-PHRASE` exact shared index/query normalization；independent `lexicalProfileVersion`；explicitly confirmed lexical-only shadow rebuild and atomic switch；separately rankable title/heading/body/bounded path；BM25 + RRF | B-125/REQ-08 | real MATCH regression；confirm/cancel/progress、crash/abort、concurrent incremental-write、Recall/cost/supported-runtime/slow-device gates | stale/rebuilding/failed lexical state uses honest vector/direct-only；never global reset、provider call、re-embedding or source mutation |
+| Phase 1 — strict rerank and projection | deterministic zero-candidate result；policy-or-Chat model selection；strict parser including partial `needsMoreEvidence`；latest-Markdown candidate materialization and Boundary/currentness revalidation before provider and final projection；direct-first fail-open；Host-only pool；8-document allocator | B-125/REQ-01、02 | focused unit/integration tests + typecheck + provider leakage/currentness spies | unavailable/invalid rerank keeps bounded direct-hybrid-first → graph-cosine candidates；newly excluded/stale candidates are dropped, never sent or cited |
+| Phase 2 — convergence-aware PPR | immutable three-class Boundary snapshot/epoch；complete Local cosine；fixed-alpha error-driven Deep Breadth/Convergence；whole-PPR graph/state/memory/deadline preflight；cancelable bounded Worker；membership nomination + cosine fill → graph≤6 | B-125/REQ-03、04、07 | algorithm/boundary/Worker cancellation + supported-runtime/iOS/slowest-device performance gates | unsafe/changed snapshot or shared embedding/Worker failure is direct-only；PPR preflight/solver failure drops all Deep/Convergence；safe complete Local may remain |
+| Phase 3 — Host-owned recovery and Pagelet depth | per-Chat-stream one-token coordinator；single cumulative evidence projection；strict partial retry producer；stable-identity exact-repeat push-down；same-run Pagelet Host staging control while terminal output stays natural Markdown；atomic non-empty 0–2 insight collection；temporal preservation | B-125/REQ-05、06 | coordinator/finalization reserve、push-down、Pagelet natural-Markdown 0/1/2/cache/delivery、flag default/off/teardown tests + deployed Obsidian smoke | no retry when token、deadline/reserve、currentness、time scope、stable identity or independent lead cannot be proved；MemorySearchTool remains stateless |
 
-| 模块 | 路径 | 改动类型 |
-|------|------|---------|
-| Memory search tool | `src/ai-services/memory-search-tool.ts` | 修改（Phase 1/2/3） |
-| Chat types | `src/ai-services/chat-types.ts` | 修改（Phase 1） |
-| Host tools | `src/ai-services/pa-agent-host-tools.ts` | 修改（Phase 1/3） |
-| Agent prompts | `src/ai-services/pa-agent-prompts.ts` | 修改（Phase 3） |
-| Required capability policy | `src/ai-services/pa-agent-required-capability-policy.ts` | 修改（Phase 3） |
-| AI service host interface | `src/ai-services/AiServiceHost.ts` | 修改（Phase 2） |
-| VSS core | `src/vss/vss-core.ts` | 修改（Phase 2，暴露 cosine 查询） |
-| Plugin host impl | `src/plugin.ts` | 修改（Phase 2，实现 computeQueryCosineSimilarity） |
-| Settings | `src/settings.ts` | 修改（Phase 1/2/3，添加 feature flags） |
-| PPR algorithm | `src/graph/personalized-pagerank.ts` | **新建**（Phase 2） |
-| PPR expansion | `src/graph/ppr-expansion.ts` | **新建**（Phase 2） |
+Phase 0A evidence → OD-06A `CHAR-PHRASE` selection → Phase 0B → Phase 1 → Phase 2 → Phase 3。
+Phase 0A 只建立 evidence，不改变 production runtime；Phase 0B 才实现 owner-confirmed
+profile，避免形成“必须先实施才能批准实施”的循环。Phase 2 依赖 Phase 1 的 bounded reranker input；
+Phase 3 依赖 Phase 1 的可信 verdict 和 Phase 2 的 relaxed graph path，但在 PPR 安全
+降级时仍可通过 direct hybrid relaxed 参数执行一次恢复。OD-05A 已确认复用首次 query/
+lexical plan，并以 exact-evidence replay suppression 在候选席位上推动新证据；B-125 不
+新增 semantic rewrite。Host 自动执行、partial evidence 合并和 deadline 已由 SDD
+EC-03 在已确认语义内收束为工程合同，无需新增 owner 选择。
 
-### 外部依赖
+## Engineering Closure Contracts
 
-无新增外部依赖。所有实现使用现有技术栈（TypeScript, LangChain, SQLite/WASM）。
+这些合同收束完整 SDD 审查发现的 source-derived 缺口；它们不改变已确认产品边界，也不
+把 EC-02 的任何 tuning 数值批准为 shipping/default。为让同一候选可以做生产 parity、
+OPFS、真机与真实 reranker 评测，离线 winner 可以作为 versioned、default-off、明确
+`provisional` 的 dormant flag-on payload 接入；这只是验证载体，不是 rollout 决定。
 
-### 测试文件
+### Phase 0B lexical profile and migration
 
-| 测试 | 路径 | Phase |
-|------|------|-------|
-| Rerank parsing | `__tests__/memory-search-rerank.test.ts` | 新建 (Phase 1) |
-| PPR algorithm | `__tests__/personalized-pagerank.test.ts` | 新建 (Phase 2) |
-| PPR expansion | `__tests__/ppr-expansion.test.ts` | 新建 (Phase 2) |
-| Retry mechanism | `__tests__/memory-search-retry.test.ts` | 新建 (Phase 3) |
-| 现有回归 | `__tests__/memory-manager.test.ts` 等 | 必须通过 |
+1. `CHAR-PHRASE` 的 index/query 共享纯函数必须固定为：先 NFC；再用
+   `Intl.Segmenter("und", { granularity: "grapheme" })` 切分；只把
+   `Script_Extensions=Han|Hiragana|Katakana` 且包含 Unicode Letter/Mark 的 grapheme
+   编码为 `c` + 各 code point 小写十六进制（多 code point 以 `x` 连接）的原子 token；
+   连续 CJK query 使用相邻 phrase。CJK punctuation/separator 不得成为 lexical atom，
+   非 CJK 继续走经 NFC 与安全转义的 `unicode61` 词法面。不得在 B-125 中静默扩展到
+   Hangul 或换用 locale-dependent word segmentation。
+2. 引入独立 `lexicalProfileVersion`，不得复用 embedding profile signature 或全局
+   `VSS_SCHEMA_VERSION`。至少区分 `stale`、`awaiting_confirmation`、`rebuilding`、
+   `ready`、`failed`、`unavailable`；非 `ready` 时禁止查询已知不同构的旧 FTS，继续
+   vector/direct-only。
+3. potentially costly profile rebuild 由 `MemoryManager` 呈现显式 confirm/cancel/progress：
+   说明仅重建 device-local derived lexical index、笔记不变、不会调用 provider/重新
+   embedding，并报告本地时间/空间成本。取消或失败不阻塞 vector retrieval。
+4. 重建通过可释放 VSS exclusive write queue 的 bounded Worker batches，从当前 Boundary-
+   allowed `vss_chunks` 构建 shadow generation；不得发一个占住现有三层串行队列的
+   monolithic request。foreground vector/chunk read 在 batch 间优先 interleave，最长只等
+   一个 calibrated batch。不得 reset/delete/replace chunks、vectors 或 files。
+5. migration coordinator 跨 batch 持有 logical epoch；interleaved upsert/delete/rename 在
+   primary transaction 同时记录 migration delta/dirty epoch，切换前 replay，或使 shadow
+   失效。完整 row/vocab/profile 验证后，用一次短 transaction 同时切换 SQLite canonical
+   `LexicalProfileMarker` 与 active generation；IndexedDB 仅镜像，不是 readiness authority。
+   crash/abort 丢弃 incomplete generation；`ready` 后 chunk/lexical 继续同事务，永不 mixed。
 
-## Phases
+### Provider currentness and Data Boundary
 
-| Phase | Outcome | Scope | Exit gate | Stop point |
-|-------|---------|-------|-----------|------------|
-| **Phase 1: Self-RAG 反思** | Reranker 输出三级 verdict；bug fix；filteredCandidatePaths 暴露 | `memory-search-tool.ts`, `chat-types.ts`, `pa-agent-host-tools.ts`, `settings.ts` | 单元测试通过 + `make deploy` 通过 + 现有 memory 测试不回归 | 如果 policy model 无法稳定输出 verdict JSON → 降级为二级（去掉 partially_relevant） |
-| **Phase 2: PPR 图扩展** | PPR 替代 one-hop；自适应参数；向量交叉验证 | 新建 `src/graph/` 目录 + 修改 `memory-search-tool.ts`, `AiServiceHost.ts`, `vss-core.ts`, `plugin.ts`, `settings.ts` | 单元测试通过 + PPR 性能 <50ms (5000节点图) + `make deploy` 通过 | 如果 `computeQueryCosineSimilarity` 无法复用已有 embedding → 先交付不带向量验证的纯 PPR 版本 |
-| **Phase 3: 单次重试** | none_relevant 时引导 agent 重试；放宽参数；query 去重 | `memory-search-tool.ts`, `pa-agent-host-tools.ts`, `pa-agent-prompts.ts`, `pa-agent-required-capability-policy.ts`, `settings.ts` | 单元测试通过 + 集成测试（首次 miss → 重试 hit）+ `make deploy` 通过 | 如果 agent 频繁重试相同 query（去重失效）→ 关闭 `memoryRetryOnMiss` flag |
+1. 在 reranker provider 调用前，Host 对最多 18 个候选读取 latest Markdown，按 Chat/
+   Pagelet 当前组合 policy 重新判断 path、inline/frontmatter tag、generated policy 与
+   content hash/anchor/stable chunk identity；只有 live-readable、allowed、current 的
+   query-aligned excerpts 可进入 provider。MetadataCache 只是优化，不能作为允许证明。
+   这次 live read 是 provider safety/currentness gate，不得被 Worker 用来以 whole-note
+   similarity 代替 query-aligned indexed chunks。
+2. Worker 返回后、reranker 返回后以及 final documents/sources/insights 投影前，复核
+   immutable snapshot epoch 或重新 materialize；变化、缺失或 newly denied 的候选直接
+   丢弃。Sources 只能从最终存活文档派生，opaque identity/content 永不进入 provider、
+   observation、log、replay 或 why-shown。每个后续 Chat/Pagelet model request 组装
+   context 时，还必须以 Host-only snapshot handle 对已投影 Memory 文档再次 live-read/
+   revalidate 并重写 allowlist observation；不能把旧 transcript text 当成允许证明。
+3. reranker strict envelope 为 `partially_relevant` 提供必填 boolean
+   `needsMoreEvidence`。只有 schema-valid `true` 可作为 partial retry 的确定 producer；
+   missing/type mismatch/contradiction 走既有 fail-open 且不授权 retry，partial 文档始终
+   保留。该字段只决定是否需要更多相同-query 证据，不是 query rewrite。
 
-### Phase 间依赖
+### Boundary graph, PPR and Worker
 
-```
-Phase 1 ──→ Phase 2（Phase 2 的 PPR 扩展候选需要经过 Phase 1 的 reranker verdict 过滤）
-Phase 1 ──→ Phase 3（Phase 3 依赖 verdict 信号触发重试）
-Phase 2 ─ ─ → Phase 3（soft dependency: Phase 3 的 PPR cosineThreshold 放宽只有 Phase 2 存在时才有意义；
-                        但 Phase 3 的 k/fusionTopK 放宽 + retry 逻辑独立于 Phase 2 可以单独工作）
-```
+1. 共享 classifier 返回 `allowed_markdown | opaque_excluded_markdown | blocked` 和
+   immutable snapshot `epoch/fingerprint`：普通 excluded Markdown 仅 opaque；excluded
+   generated、attachment、missing/non-vault/non-Markdown 均 blocked；仅既有 policy
+   明确允许的 generated Markdown 才是 allowed。snapshot copy/canonicalization/
+   classification/fingerprint 自身也在 node/edge/bytes/deadline/epoch preflight 内；只在
+   start/end epoch 一致且全量通过后 seal。Worker/final seam 发现变化时丢弃所有 graph
+   lanes，禁止 filter-after traversal。
+2. PPR 构图/solver 前对 canonical reachable nodes、edges、projected lifted states/
+   transitions、memory 与 remaining absolute deadline 做确定性全图 preflight。任何一项
+   超出经 EC-02/slow-device 校准的上限，都跳过整个 PPR（Deep + Convergence），不得以
+   adjacency/insertion prefix 截图；只有独立完成自身 preflight 与全量 cosine 的 Local
+   才可保留。
+3. Worker request 携带 request id、invocation/cancel epoch 与 absolute deadline；path/
+   chunk fetch 使用经 EC-02 校准的 bounded batches，禁止 unbounded SQL `IN` 或无截止
+   rank。cancel 走不进入 main/Worker data queues 的 immediate control registry；每个
+   batch 后的 continuation 必须进入新 Worker macrotask，让 pending cancel handler 先运行，
+   禁止同步 loop 或仅 microtask yield。Host 忽略 deadline/epoch 后的 late result，teardown
+   后它不得占用下一次调用或改变 active lexical generation。
+4. relaxed exact-repeat suppression 首先使用 coherent chunk 写入时生成且绑定 indexed
+   source hash/revision 的 query-independent `pathEvidenceGeneration`；只有 index/current-
+   source revision 与 run epoch 均一致时，才在 SQL/Worker candidate admission 与 graph
+   workset 前 push down 确定未变化的 repeat。unknown/dirty/mismatched revision 和 generation
+   变化的路径再经 bounded Worker probe 与 latest-
+   source materialization 计算 reranker-visible fingerprint，visible repeat 继续跳过并按
+   deterministic lane order refill。不得为判断重复先做无界 Worker rank；repeat 仍可保留
+   为 Boundary-allowed topology state，但不能占 candidate-selecting workset、direct/
+   graph/reranker seat。
 
-**推荐交付顺序：Phase 1 → Phase 2 → Phase 3**
+### Chat and Pagelet run state
 
-- Phase 1 是后续两个 Phase 的硬前置条件。
-- Phase 2 和 Phase 3 的硬依赖关系：Phase 2 中实施 `searchHybrid` 的 `k`/`fusionTopK` 接口扩展（task 2.10），Phase 3 依赖这个接口来传递放宽的 k=12/fusionTopK=18。
-- Phase 3 的 PPR cosineThreshold 放宽是 soft dependency：当 PPR 禁用（one-hop fallback）时，该参数无效果，Phase 3 其他功能仍然工作。
-- 建议串行以减少合并冲突（两者都改 `memory-search-tool.ts`）。
+1. 每个 Chat stream run 新建 recovery coordinator，原子持有 one-token ledger、search
+   episode、frozen query/lexical plan、absolute deadline 和非零 finalization reserve；
+   success/error/abort/timeout/supersede/unload 后 teardown。只有 valid none，或 valid
+   partial + `needsMoreEvidence=true`，可在 reserve 仍可满足时消费一次 token；hidden
+   attempt 与首次证据合并为一个 currentness-revalidated ≤8-document observation。
+2. Pagelet 保持同一个 canonical agent run/model loop，不启动第二个 agent、第二模型
+   fallback，也不提高既有 max turns/provider budget。Terminal 继续使用 owner-approved
+   natural Markdown / exact `NO_INSIGHT`；寻找第二个 insight 只能调用一次 Pagelet-only
+   `stage_pagelet_insight` Host control，提交通过初步 gate 的自然 Markdown provisional
+   insight 与可验证 unresolved lead。若请求 relaxed，Host 只绑定此前 latest current、
+   与 lead source evidence 相交的 eligible partial episode，并复用其 query/lexical plan；
+   episode ID 保持 Host-only。否则只允许 existing-budget standard tools，不授予 relaxed。
+3. 每个 Pagelet insight 独立通过 natural-Markdown body/source/currentness/novelty/value/delivery gate；
+   第二个还需 distinct claim/evidence mapping，不能只是改写。Identity 必须包含 normalized
+   claim hash + body hash + canonical source identities，避免同源不同文本或同 claim 改写
+   被错误复用。Cache/version、controller、quality gate 与 delivery adapter 只在 run 结束
+   时原子提交非空 collection；第二项失败时只提交已验证第一项，0 insight 保持 quiet、
+   不写 cache/seen/delivery，任何 partial write 不得暴露未验证结果。`collectionId` 只负责
+   cache/run grouping；每条 insight 以自己的 `insightId` 生成独立 `DeliveryCandidate`，
+   receipt/seen/dismiss/handoff/stack admission 互不连带。
+
+## Source Surface
+
+实施前以当前源码复核最终符号；下面记录 ownership，而不是承诺每个文件都必须修改。
+
+| Ownership | Expected source surface |
+| --- | --- |
+| FTS profile、exact CJK normalization、BM25 fields/query and lexical-only shadow generation | `src/vss/fts-query-builder.ts`、`src/vss/sqlite-worker.ts`、VSS independent lexical profile/generation/operation-queue seams |
+| Lexical rebuild confirmation/progress/cancel and honest fallback | `src/memory-manager.ts` + existing Memory prepare/update UI seam；no provider/re-embedding path |
+| Lexical field source projection | `src/vss/markdown-chunker.ts` or a derived-index projection seam；original display/embedding chunks stay unchanged |
+| Rank fusion | `src/vss/rrf.ts` + VSS hybrid orchestration；RRF remains the B-125 fusion contract |
+| Search orchestration、candidate/document allocation、internal result | `src/ai-services/memory-search-tool.ts`、`src/ai-services/chat-types.ts` |
+| Latest-Markdown candidate materialization and pre/post-provider revalidation | existing vault read + shared Data Boundary/currentness/content-hash seam；must precede provider input and final projection |
+| Answer-model observation projection and Chat control metadata | `src/ai-services/pa-agent-host-tools.ts`、capability/source projection seam；must run before generic serialization |
+| Chat recovery orchestration | per-stream-run Chat recovery coordinator、executor hidden-attempt seam and one cumulative observation；owns token/deadline/finalization reserve/teardown |
+| Reranker model selection | current policy/chat model adapter and `AiServiceHost` seam |
+| PPR algorithm and boundary state graph | `src/graph/personalized-pagerank.ts`、`src/graph/ppr-expansion.ts` or equivalent existing boundary |
+| Invocation-scoped query embedding、stable chunk identity and cancelable local path/chunk scoring | `src/vss/vss-core.ts`、`src/vss/sqlite-worker.ts`、current vector-index interfaces |
+| Pagelet retry ledger、natural-Markdown staging control、internal insight collection、cache/delivery projection | `src/pagelet/agent/*`、Pagelet Host/lead policy/controller/quality gate/cache/delivery adapter |
+| Three-state Data Boundary snapshot/classification | existing shared Data Boundary path/generated/source policy seam；immutable invocation epoch/fingerprint |
+| Settings rollback flags | existing internal settings/default merge only；no user-visible control |
+
+## Confirmed Budgets And Parameters
+
+| Contract | Value |
+| --- | ---: |
+| direct unique candidates | 12 |
+| graph unique candidates | 6 |
+| total unique reranker candidates | 18 |
+| distinct PPR seeds | up to 3 |
+| Local/Deep/Convergence post-aggregation worksets | bounded；exact limits pending EC-02 calibration |
+| graph final allocation | each eligible lane nominates at most 1；overlap has no replacement debt；remaining capacity by cosine |
+| chunks retained per candidate upstream | up to 3 |
+| final answer-model documents | 8 |
+| Pagelet insights per run | 0–2 |
+| relaxed retries per Agent/Pagelet run | 1 |
+| PPR follow probability `alpha` | 0.75 |
+| PPR target final L1 error bound | 0.001 |
+| PPR max iterations | 50 |
+
+No per-seed truncation is allowed. Local/Deep/Convergence worksets and the total
+pre-cosine work envelope are implementation safety limits that require fixture
+and slowest-supported-device calibration；they are not fixed by the confirmed
+Decision. All final budgets are ceilings and never require filling.
+
+以下是旧草案的 tuning 候选，不是已批准的 shipping 参数：normal/relaxed cosine
+`0.3/0.2`、vector `k 8/12`、`fusionTopK 12/18`。它们可以进入 versioned、default-off、
+`provisional` 的验证 plumbing，但只有在 SDD EC-02 的 fixture、真实 reranker、
+slow-device/real-iOS calibration 记录通过后，才可成为 rollout/default 候选。
+
+## Dependencies And Sequencing
+
+1. 先把 exact `CHAR-PHRASE` normalizer、independent lexical profile state machine、
+   Memory confirmation UI 与 shadow-generation migration 做成一个可单独 rollback 的
+   Phase 0B slice；以真实 sqlite-wasm fixtures 证明同构、atomic switch、crash recovery、
+   concurrent incremental writes 与 honest vector-only fallback，再校准 fields/BM25/OR/
+   RRF/deadline。
+2. 再建立 strict rerank envelope（含 partial `needsMoreEvidence`）、latest-Markdown live
+   materialization 与 answer observation projector，防止 stale/newly excluded 或 graph
+   candidates 通过 provider/final serialization 绕过 Boundary/currentness/budget。
+3. 再实现 invocation-scoped query embedding holder、stable chunk identity 和带 bounded
+   batch/absolute deadline/cancel epoch 的 Worker path/chunk ranking；在取消、late result、
+   teardown 与 concurrent query 安全可用前不得启用 PPR/retry。
+4. 用三态 classifier 冻结 immutable Boundary snapshot，再完成 canonical graph/PPR
+   full-work preflight 与 solver；三个 seeds 共用同图、alpha、convergence rule。任一全图
+   node/edge/lifted-state/memory/deadline gate 失败，都 whole-PPR fallback。
+5. 建立完整 Local、聚合 Deep Breadth/Convergence、应用 calibrated worksets、cosine gate、
+   lane max-one nominations 与 cosine backfill，再接入 strict reranker 和 two-pass
+   document allocator；全链路在 provider/final seam 复核 live Boundary/currentness。
+6. 最后接入 per-Chat-stream recovery coordinator 与 Pagelet Host Policy。Chat 按 OD-05A
+   复用 query/lexical plan，以首次已存 stable identity 在 cap/Worker rank 前 push down exact
+   replay，并保留 rejected path 的图传播；实现自动 hidden attempt、非零 finalization
+   reserve、累计 documents≤8 与 teardown。Pagelet 在同一 agent run 内用一次 Host
+   staging control 固定自然 Markdown 第一条并尝试第二独立 lead；terminal contract 不变，
+   Host 内部把 single-result shape 原子升级为非空 1–2 collection，0 继续 quiet。
+7. 每个 Phase 的内部 rollback flag 在 default merge、explicit on/off、abort/unload teardown
+   与 stale/late-result isolation tests 通过前保持开发态 default-off；只有对应 exit gate 和
+   owner-approved implementation/release lane 完成后，才能单独决定 shipping default。
 
 ## Risks And Rollback
 
-| Risk | Prevention | Detection | Rollback / fallback |
-|------|-----------|-----------|---------------------|
-| Policy model 无法稳定输出 verdict JSON | Prompt 中明确 JSON 格式；`parseVerdict` 对未知值 fallback 到 "relevant" | 单元测试 mock 各种 malformed output；观察 debug log 中 verdict 分布 | `memoryStrictRelevanceFilter: false` → 恢复旧 parseRerankResponse 行为 |
-| PPR 在极大 vault (10000+ notes) 性能超标 | 计算量 O(E × iterations × 3 seeds)；iterations 上限 18 | 性能测试 benchmark；runtime log PPR 耗时 | `memoryPPRExpansion: false` → fallback 到 one-hop |
-| PPR 扩展引入大量不相关候选，reranker 负载增加 | cosine gate (≥0.3) 和 maxExpansions (6) 限制候选数量 | 观察 reranker 输入候选数量变化；延迟 P99 | 降低 maxExpansions 或提高 cosineThreshold |
-| Agent 用完全相同的 query 重试（死循环） | query 去重缓存；prompt "Do not retry more than once" | 观察同一 session 内 search_memory 调用次数 | `memoryRetryOnMiss: false` → 去掉 guidance |
-| 向量交叉验证无法复用已有 query embedding | 设计要求 searchHybrid 暴露 queryEmbedding 引用 | 编译时类型检查 | 先交付不带向量验证的 PPR；后续补充 cosine gate |
-| Phase 3 prompt 变更影响 agent 在其他场景的行为 | 指引语限定在 search_memory 使用范围内；不影响其他工具 | 回归测试现有 agent 行为 test suite | 移除 prompt 中新增的段落 |
+| Risk | Prevention / detection | Runtime fallback / rollback |
+| --- | --- | --- |
+| CJK FTS 继续零召回、normalization/runtime drift 或 profile 重建代价过高 | exact NFC/grapheme/atom golden vectors、real sqlite-wasm MATCH、independent profile version、supported-runtime fingerprint、Recall@K/index-size/rebuild/update/p95 gate | discard incomplete shadow generation；vector/direct-only；no provider call、re-embedding or Markdown mutation |
+| lexical rebuild crash、阻塞前台 search 或增量写形成 mixed generation | short queued batches + foreground read priority、SQLite-canonical marker/switch、shadow row/vocab checks、delta replay、abort/rename/upsert/delete race fixtures | 保持前一有效 selected generation；否则 lexical unavailable + vector-only；never monolithic queue hold/global VSS reset |
+| FTS 因 vector scan 超时被静默跳过 | explicit lexical state/reason/timing、EC-02 deadline calibration and slow-device fixture | vector/direct fallback；不得把未运行 FTS 记录为 empty lexical result |
+| stale/newly excluded excerpt 进入 reranker 或 final source | latest-Markdown materialization、pre/post-provider epoch/hash/anchor revalidation、MetadataCache-lag/provider spies | drop changed/denied candidate；不足时保留其他 current candidates 或诚实 none；never send/cite stale body |
+| Reranker 误过滤、partial 无可靠 retry producer 或模型失败级联 | strict envelope、一模型一次调用、`needsMoreEvidence` required-boolean matrix、invalid/timeout/origin-order tests | fail open direct-first；invalid partial 不授权 retry；关闭 strict-none flag 不恢复旧 parser bug或跨-origin decay |
+| 去掉 `0.02` 后远端弱节点增加 | calibrated lane worksets/high-degree envelope、cosine、reranker、graph≤6 | 关闭 PPR；未来可引入经评测的 lane-specific threshold，无数据迁移 |
+| opaque bridge 泄漏、classifier 混淆或 Boundary 在运行中变化 | three-state classifier、immutable epoch/fingerprint、`(path, opaqueUsed)` state graph、provider/DTO/log/replay negative spies | 丢弃全部 graph lanes；不得把 blocked 降为 opaque 或做 unrestricted filter-after traversal |
+| PPR 全图资源超限、不收敛或概率质量漂移 | node/edge/lifted-state/transition/memory/deadline preflight、certified error bound、max50、finite/nonnegative/mass invariants、no prefix/pruning fixtures | skip whole PPR（Deep + Convergence）；仅保留依赖安全且完整 cosine 的 Local |
+| Local 高 degree 产生顺序偏置或超预算 | deterministic full-lane preflight、batched cosine、no prefix fixture | 整条 Local lane 跳过；安全 PPR lanes 可继续 |
+| query embedding 并发串线 | invocation-scoped output holder、并发不同 query fixture | holder/Worker 不可用即 direct-only；禁止 shared last field |
+| Worker 无界 batch、cancel 排在任务后、deadline 后仍占队列或返回 file-head/late result | bounded SQL batches、absolute deadline、immediate out-of-data-queue cancel registry、request epoch、deterministic abort checks、real cosine/order/late-result tests | discard whole unsafe Worker result；direct-only；不得 file-head/whole-note/late-generation fallback |
+| retry 增加延迟、侵占 final answer 时间或串 stream run | per-stream Host one-token coordinator、non-zero finalization reserve、abort/wall-clock/teardown 优先、tool stateless | 不启动或中止 retry；保留 first evidence，standard retrieval 不受影响 |
+| path-wide suppression 放大首轮 reranker false-negative 或切断 A–B–C 图路径 | episode-local path+evidence fingerprint、novel→changed admission、exact repeat candidate-only suppression、rejected path 保留传播 | 关闭 relaxed retry；不得删除 Boundary-allowed graph state |
+| cap/Worker rank 后才识别 exact repeat，造成无界工作或 relaxed retry 空转 | first-attempt stored stable chunk identity、SQL/Worker/workset push-down、cap 前分类、only-zero-fresh topology-root fixtures | 该 attempt deterministic none；不得复活首轮 rejected evidence 或先全量 rank 再过滤 |
+| Chat empty success 未触发 recovery、同 query 被去重或双 observation 超预算 | retrieval-specific outcome、atomic run coordinator、host execution seam、single cumulative ≤8-doc projection、finalization reserve | 关闭 Chat retry；保留 standard retrieval evidence |
+| Pagelet staging control 变成 rigid terminal schema、错误绑定 search episode、两条共用 delivery identity、第二 run/超预算，或为凑两个而重复 | terminal natural-Markdown golden tests、Host-only latest-eligible binding、Pagelet-only one-shot control、existing budgets、per-item body/source/identity/candidate tests | 不 continuation 或只提交已验证第一项；0 insight 不写 cache/seen/delivery；一条 seen/dismiss 不影响另一条，never expose partial cache write |
+| rollback flag 默认漂移、disable/unload 后仍接受异步结果 | explicit default/merge/on/off tests、teardown aborts、epoch invalidation、listener/timer/cache cleanup spies | keep phase default-off / disabled；drop late results without mutating later run or lexical generation |
+| 显式时间范围在 rewrite 中丢失 | temporal-intent propagation tests | 拒绝该 relaxed retry，保留首轮 partial/direct evidence |
+| source 与 final docs 不一致 | two-pass allocator、path+chunk dedupe、sources-from-final-only | omit invalid source/document；不得从 candidate pool补 source |
 
 ## Validation Strategy
 
-### Focused tests
+### Focused automated gates
 
-- **Phase 1**: `parseRerankResponse` 单元测试覆盖所有 verdict 组合 + 空 ranking + 无 verdict 字段 + malformed JSON
-- **Phase 2**: `personalizedPageRank` 单元测试覆盖 star/clique/chain/disconnected 图结构；`expandByPPR` 集成测试 mock 全流程
-- **Phase 3**: retry 检测 + 参数放宽 + query 去重
+- Phase 0A: frozen algorithm-independent fixtures + real sqlite-wasm Node 22
+  runner；same body/BM25/Top-K/strict semantics；OR deferred to Phase 0B；equal-
+  weight metadata reachability separately；vector/RRF/reranker/rewrite/deadline
+  disabled；all core CJK Hit@8、English/code no-regression、zero MATCH errors and
+  title/heading/path-only reachability。Report path Hit@1/3/8、MRR、Recall/
+  Precision@8、unique-path/duplicate-chunk、vocab/query diagnostics、index bytes
+  and Node warm p50/p95；do not claim slow-device performance or a winner。
+- Phase 0B: exact NFC/grapheme/script/Letter-Mark/hex-atom golden vectors run on
+  every supported runtime；selected profile real MATCH regression；independent
+  lexical version and state transitions；explicit confirm/cancel/progress；shadow
+  generation short-batch queue yielding、foreground-search priority、row/vocab/
+  profile validation + same-SQLite-transaction marker/switch；crash/abort/late
+  epoch/delta replay/concurrent upsert/delete/rename fixtures；zero global reset/
+  provider/re-embedding/source mutation；FTS Recall@K、hybrid Recall@12、final Recall@8/MRR、unique-path、
+  index/rebuild/incremental-update and slowest-device p95 evidence。
+- Phase 1: model selection、0/1/N candidate、strict verdict + required
+  `needsMoreEvidence` matrix、valid cross-origin mixing、timeout/error direct-
+  hybrid-first + graph-cosine fail-open with no decay/reservation、18-candidate
+  bound、observation projection、two-pass 8-document assembly；latest-body/hash/
+  anchor and just-added inline/frontmatter/generated/path exclusion fixtures prove
+  stale/denied excerpts never reach provider or final sources。
+- Phase 2: immutable three-state Boundary snapshot/epoch、opaque bridge、complete
+  Local cosine-before-truncation、fixed alpha、error-bound convergence、mass
+  invariants、m=1/2/3 aggregation；snapshot acquisition + reachable node/edge/
+  lifted-state/transition/memory/deadline preflight and whole-PPR fallback；calibrated work envelopes、one-per-lane
+  nomination/overlap/no-debt/cosine fill；bounded Worker batches、absolute deadline/
+  out-of-data-queue immediate cancel registry、macrotask continuation（microtask-only
+  negative fixture）、epoch/late-result rejection、chunk ordering、parallel embedding isolation
+  and dependency-aware failures。
+- Phase 3: per-stream Chat valid-none automatic exactly once；partial retries only
+  with strict `needsMoreEvidence=true`；atomic token arbitration、same query/frozen
+  lexical plan、first-attempt stable chunk identity、SQL/Worker/workset push-down
+  before cap/rank、novel-before-changed admission、rejected-path graph propagation、
+  old direct seeds as topology-only roots only when fresh seeds are zero；one
+  currentness-revalidated cumulative documents≤8 observation、non-zero finalization
+  reserve、unrelated standard search、temporal preservation and full teardown。
+  Pagelet covers natural-Markdown terminal 0/1/2、one same-run Host staging control
+  for a verified second lead、latest-eligible Host binding、per-item gates、claim/
+  body identity hashes、atomic non-empty cache/version/controller、two independent
+  delivery candidates/receipts/seen states、zero-write quiet and no increase to
+  existing max turns/provider budget。
+- Cross-cutting: Data Boundary before/after Worker/provider/final projection；no
+  bridge identity/content in provider/observation/log/replay；sources derive only
+  from final documents；feature flags assert explicit development/shipping defaults、
+  independent on/off behavior and abort/unload teardown with zero accepted late
+  result。
 
-### Type/lint/build gate
+### Local gate
 
-```bash
-make deploy   # 包含 tsc + eslint + esbuild，全链路必须通过
-```
+先跑最接近的 focused Jest suites，再执行 Local Validation Gate。共享 Memory/VSS/
+Pagelet runtime 全部完成后才运行 `make deploy`；docs-only 更新不运行 Build 或 smoke。
 
-### Obsidian smoke
+### Supported-runtime and slowest-device gate
 
-每个 Phase 交付后，在 Obsidian 中实际运行：
-1. 对 vault 中已知笔记提问 → 验证检索命中
-2. 提问明显无关内容 → 验证 none_relevant 过滤生效
-3. Phase 2：对 vault 中有 2-3 跳链接关系的笔记提问 → 验证 PPR 扩展找到它们
-4. Phase 3：提问一个存在但首次搜不到的笔记（措辞完全不同）→ 验证 agent 重试后找到
+1. Run deterministic normalization/profile fingerprints on repository Node 22,
+   the current supported Obsidian desktop renderer and the supported iOS WKWebView;
+   retain Node 20/other desktop comparison as a compatibility canary, not as a
+   substitute for supported-runtime evidence. Any fingerprint drift requires a
+   new lexical generation and blocks rollout.
+   - Each desktop platform produces one schema-v2 exact-renderer receipt with
+     [`fts-runtime-probe.mjs`](../../../../scripts/fts-runtime-probe.mjs). The
+     receipt must prove a real `app://obsidian.md` renderer and bind the actual
+     platform/runtime fingerprint plus the bundled production
+     `char-phrase-v1` artifact.
+   - Rollout requires one `darwin`、one `win32` and one `linux` receipt from the
+     same checkout/artifact, verified together by
+     [`fts-runtime-receipt-verify.mjs`](../../../../scripts/fts-runtime-receipt-verify.mjs).
+     Missing renderer/case/artifact evidence is `BLOCKED`; selected-profile or
+     grapheme drift is `FAIL`; word-boundary-only drift remains diagnostic.
+     These receipts do not substitute for iOS、OPFS、quality or performance
+     evidence.
+2. Run real sqlite-wasm Phase 0B rebuild/query/incremental-update evidence and the
+   Phase 2 graph/Worker + Phase 3 retry path on the slowest supported device. Record
+   p50/p95、peak derived-index size/memory、maximum UI/main-thread stall、deadline/
+   cancellation outcome and finalization-reserve preservation. Exact acceptance
+   thresholds and batch/workset/deadline values remain EC-02 calibration, not
+   approved constants in this Plan.
+   - Use the versioned `b125-device-measurement-v9` plan: nearest-rank
+     percentiles、3 warmup samples and 20 measured samples. All device thresholds
+     and either a selected-reranker minimum-MRR or flag-off non-regression gate
+     must be reviewed and frozen before **any scored ranking、structured explicit-
+     temporal acceptance canary or performance evidence** is recorded. A null
+     threshold、late threshold change、missing sample or unsupported required
+     metric keeps the receipt `BLOCKED`；ranking/temporal-acceptance evidence
+     recorded before that freeze cannot be imported into the frozen run. An
+     isolated Recovery functional/debug canary may run before freeze, but it is
+     unscored and cannot satisfy any threshold、MRR or ranking acceptance gate.
+   - Freeze three stages across four isolated content-free sessions: exactly 23
+     standard one-attempt retrieval episodes；exactly 23 two-attempt retry episodes
+     split deterministically into `12 + 11` sessions；then exactly one cancellation
+     probe. Standard and retry each keep their own 3-warmup + 20-measured latency、
+     Graph、queue/batch and finalization-reserve series. A retry episode requires
+     its cumulative projection；the two distributions are never merged.
+   - Freeze the exact `performanceWorkload` as part of that same plan. Before
+     starting the timed envelope, qualify the dedicated two-wave fixture once in
+     standard mode and once in retry mode with the selected reranker：both must
+     complete the full Graph chain, and the retry qualification must preserve
+     standard partial evidence while adding the fresh sufficient target. Every
+     timed episode then runs the manifest-selected prompt in a fresh live Chat and
+     is recorded immediately against the same opaque diagnostics `runId`；wrong
+     prompts、rehydrated or reused turns、duplicate run identities、unbound episodes
+     or stage/order drift invalidate the whole workload. The receipt stores only
+     frozen workload IDs、classes、counts and content-free correlation hashes，not
+     prompts、paths or note text.
+   - Each performance episode starts at `recovery_standard` and ends only at one
+     legal finalization boundary. Orphan、duplicate、out-of-order、early or repeated
+     finalization events invalidate the whole stage；`reserve_protected` is only a
+     diagnostic event, while `reserve_not_entered` is the legal boundary for a run
+     that never entered the reserved turn. Every successful Graph attempt must be
+     the strict snapshot start/complete → preflight start/complete → PPR start →
+     one-to-three completed seed terminals → completed aggregate → pre-Worker
+     workset → Worker start/accepted completion → final-workset sequence. Missing、
+     fallback、deadline、extra or out-of-order events cannot produce a full-Graph
+     performance sample.
+   - The cancellation session proves same-episode cancel requested、Worker-
+     confirmed cancel observed、late-result discard and zero accepted-after-
+     cancel as structural invariants independent of permissive thresholds. No
+     session may borrow、truncate、supplement or selectively rerun events from
+     another；any dropped event or capacity overflow blocks the whole receipt.
+   - A start/stop runtime envelope must begin before the first performance event
+     and cover all three performance sessions. It records required maximum-
+     observed process physical footprint and database samples at one-second
+     intervals plus main-thread scheduling gaps at 50 ms, with a ten-minute
+     absolute cap；JS heap is optional diagnostic evidence only. Operator-entered
+     point values and percentile rAF gaps cannot satisfy these peak/maximum gates.
+   - On iOS, if the runtime process-memory source is unavailable, the only allowed
+     substitute is the multi-point profiler artifact at
+     `retrieval-smoke/evidence/system-memory-envelope.json` plus its bound raw
+     Instruments export at
+     `retrieval-smoke/evidence/system-memory-envelope.instruments.xml`. The runner
+     reads and hashes both files as raw bytes and binds `physical_footprint_bytes` in bytes to the
+     exact Obsidian process/app build、plugin and runner artifacts、device identity、
+     iOS runtime family and the complete performance-envelope window. A manual
+     peak、another platform or a stale/changed artifact remains `BLOCKED`.
+     This fixed-path JSON must be generated by a conversion tool from a real Xcode
+     Instruments export captured over that same runtime envelope：the workflow
+     must not provide a fillable JSON template，and the operator must not type、
+     copy or synthesize `samples`. Neither file may exist before profiler capture
+     begins；after the runner binds them，a create/modify/delete/rename event or a
+     byte mismatch in either file remains sticky and blocks `finalize()`. The
+     final receipt records both byte digests and rechecks them at its evidence
+     cutoff. Those hashes prove only that the converted artifact and raw export
+     stayed byte-stable after binding；they do not authenticate the original
+     Instruments trace or turn operator-entered values into evidence.
+3. Desktop success cannot close the iOS gate. Use a real supported iOS device for
+   the final runtime smoke；if the platform lacks the required Worker/cancellation/
+   segmentation behavior or misses the calibrated p95 gate, keep the affected
+   Phase flag off and preserve the preceding safe fallback.
 
-### Real-device / community / release gate
+### App smoke after implementation
 
-- Dogfooding 期间观察 debug log 中 verdict 分布、PPR 耗时、retry 触发率
-- 稳定后移除 feature flag 默认值的显式设置（让 default true 生效）
-- 随下一个常规版本发布
+Use the versioned synthetic pack in
+[`__fixtures__/retrieval-smoke`](../../../../__fixtures__/retrieval-smoke) and
+prepare it with
+[`scripts/prepare-retrieval-optimization-smoke.mjs`](../../../../scripts/prepare-retrieval-optimization-smoke.mjs).
+The in-app
+[`retrieval-optimization-smoke-runner.js`](../../../../scripts/retrieval-optimization-smoke-runner.js)
+may automate only provider-free preconditions and evidence recording；Chat、Pagelet
+and device observations remain explicit `PASS`/`FAIL`/`BLOCKED` entries and must
+never be inferred from fixture setup or unit tests. The runner must validate the
+canonical per-file digest manifest and every frozen temporal fixture mtime before observation、
+capture manifest/fixture/runner/loaded-plugin artifact identities in the receipt、treat any blocked
+precondition as aggregate `BLOCKED`, and reject all case mutation after finalization.
 
-## Implementation Notes For Codex
+Real selected-model quality uses the runner's six frozen ranking cases. Run them
+with the actually selected `policy`-else-Chat reranker, then record the exact
+final Memory source-chip path order（最多 8）instead of judging relevance from the
+answer prose. The receipt computes final Recall@8、MRR and forbidden-source count
+with all six cases as the fixed denominator；a missing case stays `BLOCKED`, while
+a missing relevant source or any forbidden/opaque source is `FAIL`. This is
+end-to-end selected-model evidence, not a raw model-score claim, and the runner
+must not call the provider or infer a ranking result itself. The selected
+provider/model descriptor is hash-bound while only its `policy|chat` class is
+shown；any mid-run settings drift invalidates the measurement. Source paths are
+canonicalized before forbidden checks, and result writes are serialized before
+the immutable final receipt.
 
-### 文档更新
+All six scored cases use frozen, explicit `只从我的笔记` prompts so this gate
+measures Memory retrieval/reranking instead of Chat's optional semantic-first
+tool routing. Record a scored case only after observing a `search_memory`
+attempt；if Memory was never invoked, leave the case `PENDING/BLOCKED` and record
+that separately as routing/protocol evidence rather than a lexical miss. Bare
+error-code and Japanese probes remain non-scored routing observations and do not
+enter Recall@8、MRR、required manual PASS/FAIL or the rollout aggregate.
 
-Phase 2 完成后需要更新 `docs/architecture/vss-sqlite-wasm-architecture.md`：
-- 新增 `lastQueryEmbedding` transient field 的说明
-- 新增 `computeCosineSimilarityForPaths` 方法的说明
-- 新增 `searchHybrid` options 中 `k`/`fusionTopK` 可选参数的说明
+Receipt counts are fail-closed. Only a `completed + semantic_none +
+documentCount === 0` terminal is a zero-document result；a positive count requires
+`completed + no reason + documentCount > 0`. A legacy `completed + no reason + 0`
+tuple、failed attempt、missing field、`null` or otherwise unavailable count remains
+`null`/`unavailable`；it must never satisfy a none/empty gate.
 
-### 编码约定
+For a combined quality/device run, load the runner first and freeze the reviewed
+device thresholds plus reranker gate before recording any of the six scored
+rankings or the structured explicit-temporal acceptance canary. Those two
+acceptance slices run only after freeze and before the workload performance
+envelope. The independent Chat Recovery functional/debug canary may run before
+freeze；it is evidence for recovery topology only and never enters threshold、MRR
+or ranking acceptance. Any diagnostics session used while collecting post-freeze
+acceptance evidence is staging only：stop and discard it，then start a fresh empty
+standard-performance session and verify that it contains no inherited event
+before starting the runtime envelope. Execute 23 standard one-
+attempt episodes；call `beginRetryPerformance()` and execute the first 12 two-
+attempt episodes；call `continueRetryPerformance()` and execute the remaining 11.
+Stop the envelope only after both retry batches；when iOS needs external process-
+footprint evidence, bind the fixed-path artifact from that same window；then call
+`beginCancellationProbe()` and execute exactly one isolated cancellation episode.
+Use `captureRetrievalDiagnostics()` for an intermediate projection or
+`stopRetrievalDiagnostics()` to seal the active stage；`finalize()` also stops the
+active stage automatically. Diagnostics collect only allowlisted phase/outcome/
+reason/count/timing fields and never call a provider or turn a manual/ranking case
+into `PASS`. Each event carries only the runtime-generated opaque Agent run id
+needed to bind that diagnostic episode to the same live canonical Chat turn；it
+must never contain a query、path、title or source identity. Missing diagnostics、
+capacity overflow、session or run identity drift、mixed
+or out-of-order episodes、an incomplete Graph chain or an envelope that does not
+cover the exact standard + retry workload remains aggregate `BLOCKED`.
 
-- 遵循 `AGENTS.md` 中的所有开发规范
-- commit 使用 Conventional Commits 格式
-- 不添加 Co-Authored-By trailer
-- 必须 `git commit -s` 签名
-- 验证用 `make deploy` 而非 `npm test`
+1. FTS：中文、标题/heading、英文错误码可进入 direct candidate pool；profile rebuild
+   不触发 provider 或 Markdown 变更，lexical unavailable 时诚实降级。
+2. Chat：首次 valid miss 自动 relaxed retry，最多一次；partial 证据保留。
+3. PPR：已知 2–3 hop 与 two-seed convergence fixture 可召回，弱/无关内容被 cosine/
+   reranker 拒绝。
+4. Data Boundary：allowed–excluded–allowed 可只显示最终 allowed note；任何位置不出现
+   bridge identity/content。
+5. Pagelet：分别观察合法 0、1、2 insight 终态；第二 insight 不是第一的改写，sources
+   可打开且 current。
+6. 显式时间范围 retry 不越界；无显式范围的 Pagelet 可命中旧笔记。前者必须由独立、
+   structured、显式 notes-only canary 证明：冻结 2026 时间范围，A1 必须是可触发恢复的
+   strict partial/valid none，恰好消费一次 A2，完成 cumulative projection；2026 relaxed
+   target 必须进入最终 source evidence，而强匹配的 2020 forbidden distractor 在 standard、
+   relaxed 与 final evidence 中均不得出现。只验证普通 temporal ranking、自由文本判断或
+   缺失 attempt/source topology 不能关闭该 gate；automated runner/fixture contract
+   不能替代重新部署后的 current-app observation，取得对应 receipt 前保持
+   `PENDING/BLOCKED`。
 
-### 交付粒度
+## Approval And Action Boundary
 
-- 每个 Phase 至少一个独立 commit（可以多个，按模块拆分）
-- Phase 内的 commit 顺序：types/interfaces → algorithm → integration → tests
-- 每个 commit 必须通过 `make deploy`
-
-### 不要做的事
-
-参见 SDD 末尾的 "Constraints For Implementation (Codex)" 段落（8 条硬约束）。
-
----
-
-## Approval
-
-- Plan authority: edonyzpc
-- Approved on: 2026-08-07
-- Authorized implementation scope: Phase 1 → Phase 2 → Phase 3 串行交付
+- Original plan authority: edonyzpc, 2026-08-07.
+- DEC-027 amendments confirmed sequentially by the owner on 2026-08-08.
+- Complete SDD and full delivery plan approved by edonyzpc on 2026-08-08.
+  Document status is `Approved`；current execution status and validation evidence
+  live only in the Tracker.
+- This plan authorizes no production runtime implementation、commit、push、tag、
+  publish or release.

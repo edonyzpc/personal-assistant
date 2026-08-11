@@ -345,36 +345,51 @@ function makeVerifiedDeepDiscoverResult(
         size: 120,
         contentHash: "b".repeat(64),
     };
-    return {
-        status: "verified",
-        insight: {
-            body: [
-                "## Release assumptions conflict",
-                `\`${anchorPath}\` requires feedback before release, while`,
-                "`notes/related.md` shows that direct release amplifies risk.",
-            ].join("\n"),
-            normalizedBody: "release assumptions conflict",
+    const insightId = `deep-${anchorPath}`;
+    const collectionId = `collection-${anchorPath}`;
+    const insight = {
+        insightId,
+        collectionId,
+        body: [
+            "## Release assumptions conflict",
+            `\`${anchorPath}\` requires feedback before release, while`,
+            "`notes/related.md` shows that direct release amplifies risk.",
+        ].join("\n"),
+        normalizedBody: "release assumptions conflict",
+        normalizedClaim: "release assumptions conflict",
+        bodyHash: "body-hash",
+        claimHash: "claim-hash",
+        anchor,
+        sources: [anchor, related],
+        sourceRefs: [{ path: anchorPath }, { path: related.path }],
+        cacheIdentity: {
+            pipelineVersion: "pagelet-deep-discover-v2" as const,
             anchor,
             sources: [anchor, related],
-            sourceRefs: [{ path: anchorPath }, { path: related.path }],
-            cacheIdentity: {
-                pipelineVersion: "pagelet-deep-discover-v1",
-                anchor,
-                sources: [anchor, related],
-                dataBoundaryIdentity: "boundary-test",
-                providerPolicyIdentity: "provider-test",
-                modelIdentity: "test:model",
-                locale: "en",
-            },
-            cacheIdentityHash: `deep-${anchorPath}`,
-            triggerReason,
-            preparedAt: Date.parse("2026-07-31T00:00:00.000Z"),
-            metrics: {
-                modelTurns: 3,
-                toolCalls: 9,
-                wallTimeMs: 1_200,
-            },
-            webObservations: [],
+            dataBoundaryIdentity: "boundary-test",
+            providerPolicyIdentity: "provider-test",
+            modelIdentity: "test:model",
+            locale: "en",
+        },
+        cacheIdentityHash: `deep-${anchorPath}`,
+        triggerReason,
+        preparedAt: Date.parse("2026-07-31T00:00:00.000Z"),
+        metrics: {
+            modelTurns: 3,
+            toolCalls: 9,
+            wallTimeMs: 1_200,
+        },
+        webObservations: [],
+    };
+    return {
+        status: "verified",
+        insight,
+        insights: [insight],
+        collection: {
+            collectionId,
+            anchor,
+            insights: [insight],
+            preparedAt: insight.preparedAt,
         },
     };
 }
@@ -525,6 +540,78 @@ function makeMemoryRecord(overrides: Partial<ConfirmedMemoryRecord> = {}): Confi
 }
 
 describe("PageletOrchestrator Deep Discover migration", () => {
+    it("acknowledges the exact candidates accepted on the current foreground route", async () => {
+        const result = makeVerifiedDeepDiscoverResult();
+        const acknowledgeDeepDiscoverResult = jest.fn<NonNullable<
+            PageletHost["acknowledgeDeepDiscoverResult"]
+        >>();
+        const host = makeHost({
+            runDeepDiscover: async () => result,
+            acknowledgeDeepDiscoverResult,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+
+        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+
+        expect(acknowledgeDeepDiscoverResult).toHaveBeenCalledTimes(1);
+        const [acknowledgedResult, candidates] = acknowledgeDeepDiscoverResult.mock.calls[0]!;
+        expect(acknowledgedResult).toBe(result);
+        expect(candidates).toHaveLength(1);
+        expect(candidates[0]).toMatchObject({
+            id: result.status === "verified" ? result.insight.insightId : "unreachable",
+            deliveryReceipt: { kind: "review" },
+        });
+    });
+
+    it.each([
+        [{ status: "quiet", reason: "no-insight" } as const],
+        [{ status: "stale", reason: "evidence-epoch-changed" } as const],
+        [{ status: "denied", reason: "data-boundary" } as const],
+        [{ status: "limit", reason: "limit" } as const],
+    ])("acknowledges a current-route terminal outcome without candidates: %o", async (result) => {
+        const acknowledgeDeepDiscoverResult = jest.fn<NonNullable<
+            PageletHost["acknowledgeDeepDiscoverResult"]
+        >>();
+        const host = makeHost({
+            runDeepDiscover: async () => result,
+            acknowledgeDeepDiscoverResult,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+
+        await Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+
+        expect(acknowledgeDeepDiscoverResult).toHaveBeenCalledWith(result, []);
+    });
+
+    it("discards a controller result superseded before foreground acceptance", async () => {
+        let finishRun: ((result: PageletDeepDiscoverControllerResult) => void) | undefined;
+        const result = makeVerifiedDeepDiscoverResult();
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(() => (
+            new Promise((resolve) => { finishRun = resolve; })
+        ));
+        const acknowledgeDeepDiscoverResult = jest.fn<NonNullable<
+            PageletHost["acknowledgeDeepDiscoverResult"]
+        >>();
+        const discardDeepDiscoverResult = jest.fn<NonNullable<
+            PageletHost["discardDeepDiscoverResult"]
+        >>();
+        const host = makeHost({
+            runDeepDiscover,
+            acknowledgeDeepDiscoverResult,
+            discardDeepDiscoverResult,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+
+        const pending = Promise.resolve(orchestrator.getCommandCallbacks().onReviewCurrent());
+        await Promise.resolve();
+        (orchestrator as unknown as { foregroundRouteToken: number }).foregroundRouteToken += 1;
+        finishRun?.(result);
+        await pending;
+
+        expect(discardDeepDiscoverResult).toHaveBeenCalledWith(result);
+        expect(acknowledgeDeepDiscoverResult).not.toHaveBeenCalled();
+    });
+
     it("routes every stable provider-backed entry to one controller and never calls legacy providers", async () => {
         const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
             status: "quiet",
@@ -702,7 +789,17 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => (
             makeVerifiedDeepDiscoverResult("edit-idle")
         ));
-        const host = makeHost({ runDeepDiscover });
+        const acknowledgeDeepDiscoverResult = jest.fn<NonNullable<
+            PageletHost["acknowledgeDeepDiscoverResult"]
+        >>();
+        const discardDeepDiscoverResult = jest.fn<NonNullable<
+            PageletHost["discardDeepDiscoverResult"]
+        >>();
+        const host = makeHost({
+            runDeepDiscover,
+            acknowledgeDeepDiscoverResult,
+            discardDeepDiscoverResult,
+        });
         host.settings.pagelet.proactiveHints = true;
         const orchestrator = new PageletOrchestrator(host);
         const internals = orchestrator as unknown as {
@@ -726,7 +823,158 @@ describe("PageletOrchestrator Deep Discover migration", () => {
                 candidate: expect.objectContaining({ kind: "review" }),
             }),
         ]);
+        expect(acknowledgeDeepDiscoverResult).not.toHaveBeenCalled();
+        expect(discardDeepDiscoverResult).not.toHaveBeenCalled();
         expect(Notice).not.toHaveBeenCalled();
+    });
+
+    it("keeps two collection insights on independent candidate and seen state", () => {
+        const host = makeHost();
+        host.settings.pagelet.proactiveHints = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const result = makeVerifiedDeepDiscoverResult("edit-idle");
+        if (result.status !== "verified") throw new Error("expected verified fixture");
+        const collectionId = "collection-two-independent";
+        result.insight.collectionId = collectionId;
+        const second = {
+            ...result.insight,
+            insightId: "deep-notes/current.md-second",
+            collectionId,
+            body: "## Rollback gap\n`notes/current.md` and `notes/related.md` reveal a distinct rollback risk.",
+            normalizedBody: "rollback gap distinct rollback risk",
+            normalizedClaim: "rollback gap distinct rollback risk",
+            bodyHash: "second-body",
+            claimHash: "second-claim",
+        };
+        result.insights = [result.insight, second];
+        result.collection = {
+            collectionId,
+            anchor: result.insight.anchor,
+            insights: result.insights,
+            preparedAt: result.insight.preparedAt,
+        };
+        const internals = orchestrator as unknown as {
+            acceptDeepDiscoverResult(
+                result: PageletDeepDiscoverControllerResult,
+                options: { path: string; proactive: boolean },
+            ): PageletAgentDeliveryCandidate | null;
+            currentAgentInsightCandidate(): PageletAgentDeliveryCandidate | null;
+            currentAdmittedNudgeTickets(): NudgeTicket[];
+            dismissAgentInsightNudge(candidate: PageletAgentDeliveryCandidate): void;
+            pendingAgentInsightCandidates: PageletAgentDeliveryCandidate[];
+            bubbleCoordinator: {
+                currentNudgeTickets(): NudgeTicket[];
+            };
+            attentionStore: {
+                markSeen(receipt: NonNullable<PageletAgentDeliveryCandidate["deliveryReceipt"]>, source: "detail"): void;
+            };
+        };
+
+        const first = internals.acceptDeepDiscoverResult(result, {
+            path: "notes/current.md",
+            proactive: true,
+        });
+        expect(first?.id).toBe(result.insight.insightId);
+        expect(internals.pendingAgentInsightCandidates.map((candidate) => candidate.id)).toEqual([
+            second.insightId,
+        ]);
+        expect(first?.deliveryReceipt).not.toEqual(
+            internals.pendingAgentInsightCandidates[0]?.deliveryReceipt,
+        );
+        expect(internals.currentAdmittedNudgeTickets().map((ticket) => (
+            ticket.owner === NudgeOwner.AgentInsight ? ticket.candidate.id : ticket.key
+        ))).toEqual([result.insight.insightId, second.insightId]);
+        expect(internals.bubbleCoordinator.currentNudgeTickets().map((ticket) => ticket.key)).toEqual([
+            `${NudgeOwner.AgentInsight}:${result.insight.insightId}`,
+            `${NudgeOwner.AgentInsight}:${second.insightId}`,
+        ]);
+        internals.dismissAgentInsightNudge(first!);
+        expect(internals.currentAgentInsightCandidate()?.id).toBe(result.insight.insightId);
+        expect(internals.bubbleCoordinator.currentNudgeTickets()).toEqual([
+            expect.objectContaining({
+                owner: NudgeOwner.AgentInsight,
+                candidate: expect.objectContaining({ id: second.insightId }),
+            }),
+        ]);
+        if (!first?.deliveryReceipt) throw new Error("expected first delivery receipt");
+        internals.attentionStore.markSeen(first.deliveryReceipt, "detail");
+
+        expect(internals.currentAgentInsightCandidate()?.id).toBe(second.insightId);
+        expect(internals.pendingAgentInsightCandidates).toHaveLength(0);
+        expect(internals.currentAdmittedNudgeTickets()).toEqual([
+            expect.objectContaining({
+                owner: NudgeOwner.AgentInsight,
+                candidate: expect.objectContaining({ id: second.insightId }),
+            }),
+        ]);
+        expect(internals.bubbleCoordinator.currentNudgeTickets()).toEqual([
+            expect.objectContaining({
+                owner: NudgeOwner.AgentInsight,
+                candidate: expect.objectContaining({ id: second.insightId }),
+            }),
+        ]);
+
+        internals.dismissAgentInsightNudge(
+            internals.currentAgentInsightCandidate()!,
+        );
+        expect(internals.currentAdmittedNudgeTickets()).toHaveLength(0);
+        expect(internals.currentAgentInsightCandidate()?.id).toBe(second.insightId);
+    });
+
+    it("keeps the first admitted insight when only the second delivery becomes stale", () => {
+        const host = makeHost();
+        const orchestrator = new PageletOrchestrator(host);
+        const result = makeVerifiedDeepDiscoverResult("edit-idle");
+        if (result.status !== "verified") throw new Error("expected verified fixture");
+        const collectionId = "collection-independent-stale-second";
+        result.insight.collectionId = collectionId;
+        const third = {
+            path: "notes/third.md",
+            mtime: 102,
+            size: 130,
+            contentHash: "c".repeat(64),
+        };
+        const second = {
+            ...result.insight,
+            insightId: "deep-notes/current.md-second-stale",
+            collectionId,
+            body: "## Rollback gap\n`notes/current.md` and `notes/third.md` reveal a distinct rollback risk.",
+            normalizedBody: "rollback gap distinct rollback risk",
+            normalizedClaim: "rollback gap distinct rollback risk",
+            bodyHash: "second-stale-body",
+            claimHash: "second-stale-claim",
+            sources: [result.insight.anchor, third],
+            sourceRefs: [{ path: result.insight.anchor.path }, { path: third.path }],
+            cacheIdentity: {
+                ...result.insight.cacheIdentity,
+                sources: [result.insight.anchor, third],
+            },
+        };
+        result.insights = [result.insight, second];
+        result.collection = {
+            collectionId,
+            anchor: result.insight.anchor,
+            insights: result.insights,
+            preparedAt: result.insight.preparedAt,
+        };
+        const internals = orchestrator as unknown as {
+            acceptDeepDiscoverResult(
+                result: PageletDeepDiscoverControllerResult,
+                options: { path: string; proactive: boolean },
+            ): PageletAgentDeliveryCandidate | null;
+            invalidateAgentInsightForPaths(paths: readonly string[]): void;
+            currentAgentInsightCandidate(): PageletAgentDeliveryCandidate | null;
+            pendingAgentInsightCandidates: PageletAgentDeliveryCandidate[];
+        };
+
+        const first = internals.acceptDeepDiscoverResult(result, {
+            path: "notes/current.md",
+            proactive: true,
+        });
+        internals.invalidateAgentInsightForPaths([third.path]);
+
+        expect(internals.currentAgentInsightCandidate()?.id).toBe(first?.id);
+        expect(internals.pendingAgentInsightCandidates).toHaveLength(0);
     });
 
     it("opens verified explicit free-form output in a read-only Panel with every source", async () => {
@@ -1053,6 +1301,9 @@ describe("PageletOrchestrator Deep Discover migration", () => {
 
         const changedResult = makeVerifiedDeepDiscoverResult();
         if (changedResult.status !== "verified") throw new Error("expected verified fixture");
+        changedResult.insight.insightId = "deep-notes/current.md-after-write";
+        changedResult.insight.collectionId = "collection-notes/current.md-after-write";
+        changedResult.collection.collectionId = changedResult.insight.collectionId;
         changedResult.insight.cacheIdentityHash = "deep-notes/current.md-after-write";
         changedResult.insight.anchor = {
             ...changedResult.insight.anchor,

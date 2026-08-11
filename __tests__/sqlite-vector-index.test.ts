@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { SqliteVectorIndex } from '../src/vss/sqlite-vector-index';
-import type { SqliteWorkerRequest, SqliteWorkerResponse } from '../src/vss/sqlite-worker-protocol';
+import type {
+    SqliteWorkerMessage,
+    SqliteWorkerResponse,
+} from '../src/vss/sqlite-worker-protocol';
 import type { VSSIndexStats } from '../src/vss/types';
+import { RETRIEVAL_CALIBRATION_PROFILE } from '../src/vss/retrieval-calibration';
 
 const originalWorker = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
 const originalFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
@@ -20,8 +24,8 @@ class MockWorker {
     onmessage: ((event: MessageEvent<SqliteWorkerResponse>) => void) | null = null;
     onerror: ((event: ErrorEvent) => void) | null = null;
     terminate = jest.fn();
-    postMessage = jest.fn((request: SqliteWorkerRequest) => {
-        if (!this.respond) return;
+    postMessage = jest.fn((request: SqliteWorkerMessage) => {
+        if (!this.respond || !("id" in request)) return;
         queueMicrotask(() => {
             this.onmessage?.({
                 data: {
@@ -45,6 +49,18 @@ class MockWorker {
             lineno: 12,
             colno: 3,
         } as ErrorEvent);
+    }
+
+    succeedRequest(id: number, result: unknown): void {
+        this.onmessage?.({
+            data: { id, ok: true, result },
+        } as MessageEvent<SqliteWorkerResponse>);
+    }
+
+    failRequest(id: number, code: string): void {
+        this.onmessage?.({
+            data: { id, ok: false, error: { code, message: code } },
+        } as MessageEvent<SqliteWorkerResponse>);
     }
 }
 
@@ -211,19 +227,38 @@ describe('SqliteVectorIndex worker recovery', () => {
             { score: 0.032, distance: 0, doc: { pageContent: 'chunk1', metadata: { path: 'a.md', chunkIndex: 0 } } },
             { score: 0.016, distance: 0, doc: { pageContent: 'chunk2', metadata: { path: 'b.md', chunkIndex: 0 } } },
         ];
-        const worker = new MockWorker(true, hybridResults);
+        const worker = new MockWorker(true, {
+            results: hybridResults,
+            lexical: { attempted: true, state: 'ready', matchedRows: 2 },
+        });
         const index = new SqliteVectorIndex({
             workerUrl: 'vss-sqlite-worker.js',
             workerFactory: () => worker as unknown as Worker,
         });
 
         const embedding = [0.1, 0.2, 0.3];
-        const results = await index.searchHybrid(embedding, '"渲 染"', 8, 12);
+        const lexicalBudget = { startedAtMs: 100, deadlineAtMs: 600 };
+        const results = await index.searchHybrid(
+            embedding,
+            '"渲 染"',
+            8,
+            12,
+            undefined,
+            undefined,
+            undefined,
+            lexicalBudget,
+        );
 
         expect(results).toEqual(hybridResults);
         expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'searchHybrid',
-            payload: { queryEmbedding: embedding, ftsQuery: '"渲 染"', k: 8, fusionTopK: 12 },
+            payload: expect.objectContaining({
+                queryEmbedding: embedding,
+                ftsQuery: '"渲 染"',
+                k: 8,
+                fusionTopK: 12,
+                lexicalBudget,
+            }),
         }));
     });
 
@@ -232,7 +267,10 @@ describe('SqliteVectorIndex worker recovery', () => {
             configurable: true,
             value: class { },
         });
-        const worker = new MockWorker(true, []);
+        const worker = new MockWorker(true, {
+            results: [],
+            lexical: { attempted: false, state: 'ready', reason: 'query_empty' },
+        });
         const index = new SqliteVectorIndex({
             workerUrl: 'vss-sqlite-worker.js',
             workerFactory: () => worker as unknown as Worker,
@@ -244,6 +282,156 @@ describe('SqliteVectorIndex worker recovery', () => {
         expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'searchHybrid',
             payload: { queryEmbedding: [0.1], ftsQuery: null, k: 8, fusionTopK: 12 },
+        }));
+    });
+
+    it('rejects an aborted queued hybrid search without dispatching it to the Worker', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        const blocker = index.getStats();
+        const blockerRequest = await waitForWorkerRequest(worker, 'getStats');
+        const controller = new AbortController();
+        const queued = index.searchHybridDetailed(
+            [0.1],
+            null,
+            8,
+            12,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { signal: controller.signal },
+        );
+        const rejected = expect(queued).rejects.toMatchObject({ name: 'AbortError' });
+
+        controller.abort();
+        await rejected;
+        worker.succeedRequest(blockerRequest.id, readyStats);
+        await blocker;
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(worker.postMessage.mock.calls.map((call) => call[0])).toEqual([
+            expect.objectContaining({ type: 'getStats' }),
+        ]);
+    });
+
+    it('discards an active hybrid late result and isolates the next queued search', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        const controller = new AbortController();
+        const first = index.searchHybridDetailed(
+            [0.1],
+            '"stale"',
+            8,
+            12,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { signal: controller.signal },
+        );
+        const firstRequest = await waitForWorkerRequest(worker, 'searchHybrid');
+        const firstRejected = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+
+        controller.abort();
+        await firstRejected;
+        const second = index.searchHybridDetailed([0.2], '"fresh"', 8, 12);
+        let secondSettled = false;
+        void second.then(
+            () => { secondSettled = true; },
+            () => { secondSettled = true; },
+        );
+        await Promise.resolve();
+        expect(secondSettled).toBe(false);
+        expect(worker.postMessage.mock.calls.filter((call) => call[0].type === 'searchHybrid')).toHaveLength(1);
+
+        worker.succeedRequest(firstRequest.id, {
+            results: [{ score: 1, doc: { pageContent: 'stale', metadata: { path: 'stale.md' } } }],
+            sourceEpoch: 'stale-epoch',
+            lexical: { attempted: true, state: 'ready', matchedRows: 99 },
+        });
+        const secondRequest = await waitForWorkerRequest(worker, 'searchHybrid', firstRequest.id);
+        worker.succeedRequest(secondRequest.id, {
+            results: [{ score: 0.5, doc: { pageContent: 'fresh', metadata: { path: 'fresh.md' } } }],
+            sourceEpoch: 'fresh-epoch',
+            lexical: { attempted: true, state: 'ready', matchedRows: 1 },
+        });
+
+        await expect(second).resolves.toMatchObject({
+            sourceEpoch: 'fresh-epoch',
+            results: [expect.objectContaining({
+                doc: expect.objectContaining({ metadata: expect.objectContaining({ path: 'fresh.md' }) }),
+            })],
+        });
+    });
+
+    it('sends independent versioned retrieval parameters without changing legacy aliases', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(true, {
+            results: [],
+            lexical: { attempted: true, state: 'ready', matchedRows: 0 },
+        });
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        const retrieval = RETRIEVAL_CALIBRATION_PROFILE.candidate.standard;
+
+        await index.searchHybrid(
+            [0.1],
+            '"c5dee c65c5"',
+            retrieval.vectorRaw,
+            retrieval.fusionRaw,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            retrieval,
+        );
+
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'searchHybrid',
+            payload: expect.objectContaining({
+                k: 8,
+                fusionTopK: 18,
+                retrieval: {
+                    profileId: 'ec02-char-phrase-runtime-v1',
+                    profileVersion: 1,
+                    variant: 'candidate',
+                    mode: 'standard',
+                    provisional: true,
+                    evidence: 'offline_provisional_winner',
+                    vectorRaw: 8,
+                    lexicalRaw: 12,
+                    fusionRaw: 18,
+                    queryMode: 'clause_OR',
+                    bm25Weights: [1.25, 1.25, 2, 0.25],
+                    rrf: { k: 30, sourceWeights: [1, 1] },
+                },
+            }),
         }));
     });
 
@@ -268,6 +456,198 @@ describe('SqliteVectorIndex worker recovery', () => {
         expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'getChunksByPath',
             payload: { paths: ['a.md', 'b.md'], limitPerPath: 2 },
+        }));
+    });
+
+    it('posts graph cancellation immediately even while the data queue is blocked', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        void index.getStats();
+        await waitForPostMessage(worker);
+        const controller = new AbortController();
+        const control = {
+            requestId: 'rank-1',
+            runEpoch: 'run-1',
+            sourceEpoch: 'source-1',
+            absoluteDeadlineMs: Date.now() + 10_000,
+            maxPathsPerBatch: 16,
+            maxCandidatePaths: 32,
+            maxChunksScanned: 256,
+        };
+        const diagnostics: Array<{ state: string; accepted?: 0 | 1 }> = [];
+        const ranked = index.rankGraphCandidates([1, 0], ['a.md'], control, {
+            signal: controller.signal,
+            onDiagnostic: (event) => diagnostics.push(event),
+        });
+        controller.abort();
+
+        await expect(ranked).rejects.toMatchObject({ code: 'graph-rank-aborted' });
+        expect(worker.postMessage.mock.calls.map((call) => call[0])).toEqual([
+            expect.objectContaining({ type: 'getStats' }),
+            {
+                type: 'cancelGraphRank',
+                payload: { requestId: 'rank-1', runEpoch: 'run-1' },
+            },
+        ]);
+        expect(diagnostics).toContainEqual(expect.objectContaining({
+            state: 'cancel_requested',
+            accepted: 0,
+        }));
+        expect(diagnostics).not.toContainEqual(expect.objectContaining({ state: 'cancel_observed' }));
+    });
+
+    it('rejects a graph result that does not prove the requested source epoch', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(true, {
+            requestId: 'rank-2',
+            runEpoch: 'run-1',
+            sourceEpoch: 'stale-source',
+            paths: [{ path: 'a.md', maxScore: 1, chunks: [] }],
+        });
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        await expect(index.rankGraphCandidates([1, 0], ['a.md'], {
+            requestId: 'rank-2',
+            runEpoch: 'run-1',
+            sourceEpoch: 'source-2',
+            absoluteDeadlineMs: Date.now() + 10_000,
+            maxPathsPerBatch: 16,
+            maxCandidatePaths: 32,
+            maxChunksScanned: 256,
+        })).rejects.toMatchObject({ code: 'graph-rank-epoch-mismatch' });
+    });
+
+    it('cleans graph registries before success/error settlement and ignores repeated late cancels', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        const firstControl = graphControl('rank-success');
+        const successDiagnostics: Array<{ state: string; accepted?: 0 | 1 }> = [];
+        const succeeded = index.rankGraphCandidates([1, 0], ['a.md'], firstControl, {
+            onDiagnostic: (event) => successDiagnostics.push(event),
+        });
+        const firstRequest = await waitForWorkerRequest(worker, 'rankGraphCandidates');
+        worker.succeedRequest(firstRequest.id, graphResult(firstControl, ['a.md']));
+        await expect(succeeded).resolves.toMatchObject({ requestId: 'rank-success' });
+        expect(graphRegistrySizes(index)).toEqual({ active: 0, cancelled: 0 });
+        expect(successDiagnostics).toContainEqual(expect.objectContaining({
+            state: 'settled',
+            accepted: 1,
+        }));
+
+        const successPostCount = worker.postMessage.mock.calls.length;
+        index.cancelGraphRank(firstControl.requestId, firstControl.runEpoch);
+        index.cancelGraphRank(firstControl.requestId, firstControl.runEpoch);
+        expect(worker.postMessage).toHaveBeenCalledTimes(successPostCount);
+
+        const secondControl = graphControl('rank-error');
+        const failed = index.rankGraphCandidates([1, 0], ['a.md'], secondControl);
+        const secondRequest = await waitForWorkerRequest(worker, 'rankGraphCandidates', firstRequest.id);
+        worker.failRequest(secondRequest.id, 'graph-rank-worker-error');
+        await expect(failed).rejects.toMatchObject({ code: 'graph-rank-worker-error' });
+        expect(graphRegistrySizes(index)).toEqual({ active: 0, cancelled: 0 });
+
+        const errorPostCount = worker.postMessage.mock.calls.length;
+        index.cancelGraphRank(secondControl.requestId, secondControl.runEpoch);
+        index.cancelGraphRank(secondControl.requestId, secondControl.runEpoch);
+        expect(worker.postMessage).toHaveBeenCalledTimes(errorPostCount);
+    });
+
+    it('cleans graph registries after a cancelled request returns a late success', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        const control = graphControl('rank-cancelled');
+        const controller = new AbortController();
+        const diagnostics: Array<{ state: string; accepted?: 0 | 1 }> = [];
+        const ranked = index.rankGraphCandidates([1, 0], ['a.md'], control, {
+            signal: controller.signal,
+            onDiagnostic: (event) => diagnostics.push(event),
+        });
+        const request = await waitForWorkerRequest(worker, 'rankGraphCandidates');
+
+        controller.abort();
+        await expect(ranked).rejects.toMatchObject({ code: 'graph-rank-aborted' });
+        expect(worker.postMessage.mock.calls.map((call) => call[0])).toContainEqual({
+            type: 'cancelGraphRank',
+            payload: { requestId: control.requestId, runEpoch: control.runEpoch },
+        });
+
+        worker.succeedRequest(request.id, graphResult(control, ['a.md']));
+        await waitForGraphRegistriesEmpty(index);
+        expect(graphRegistrySizes(index)).toEqual({ active: 0, cancelled: 0 });
+        expect(diagnostics).toContainEqual(expect.objectContaining({
+            state: 'late_discarded',
+            accepted: 0,
+        }));
+        expect(diagnostics).not.toContainEqual(expect.objectContaining({ state: 'cancel_observed' }));
+
+        const postCount = worker.postMessage.mock.calls.length;
+        index.cancelGraphRank(control.requestId, control.runEpoch);
+        index.cancelGraphRank(control.requestId, control.runEpoch);
+        expect(worker.postMessage).toHaveBeenCalledTimes(postCount);
+    });
+
+    it('reports cancel_observed only after the dispatched Worker rejects with graph-rank-aborted', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        const control = graphControl('rank-worker-cancelled');
+        const controller = new AbortController();
+        const diagnostics: Array<{ state: string; accepted?: 0 | 1 }> = [];
+        const ranked = index.rankGraphCandidates([1, 0], ['a.md'], control, {
+            signal: controller.signal,
+            onDiagnostic: (event) => diagnostics.push(event),
+        });
+        const request = await waitForWorkerRequest(worker, 'rankGraphCandidates');
+
+        controller.abort();
+        await expect(ranked).rejects.toMatchObject({ code: 'graph-rank-aborted' });
+        worker.failRequest(request.id, 'graph-rank-aborted');
+        await waitForGraphRegistriesEmpty(index);
+
+        expect(diagnostics).toContainEqual(expect.objectContaining({
+            state: 'cancel_requested',
+            accepted: 0,
+        }));
+        expect(diagnostics).toContainEqual(expect.objectContaining({
+            state: 'cancel_observed',
+            accepted: 0,
+        }));
+        expect(diagnostics).toContainEqual(expect.objectContaining({
+            state: 'late_discarded',
+            accepted: 0,
         }));
     });
 
@@ -324,3 +704,77 @@ describe('SqliteVectorIndex worker recovery', () => {
         expect(worker.terminate).toHaveBeenCalledTimes(1);
     });
 });
+
+function graphControl(requestId: string) {
+    return {
+        requestId,
+        runEpoch: 'run-registry',
+        sourceEpoch: 'source-registry',
+        absoluteDeadlineMs: Date.now() + 10_000,
+        maxPathsPerBatch: 16,
+        maxCandidatePaths: 32,
+        maxChunksScanned: 256,
+    };
+}
+
+function graphResult(control: ReturnType<typeof graphControl>, paths: string[]) {
+    return {
+        requestId: control.requestId,
+        runEpoch: control.runEpoch,
+        sourceEpoch: control.sourceEpoch,
+        paths: paths.map((path) => ({
+            path,
+            pathEvidenceGeneration: `generation:${path}`,
+            maxScore: 1,
+            chunks: [{
+                chunkIndex: 0,
+                score: 1,
+                doc: {
+                    pageContent: `content:${path}`,
+                    metadata: {
+                        path,
+                        chunkIndex: 0,
+                        pathEvidenceGeneration: `generation:${path}`,
+                    },
+                },
+            }],
+        })),
+    };
+}
+
+async function waitForWorkerRequest(
+    worker: MockWorker,
+    type: Extract<SqliteWorkerMessage, { id: number }>['type'],
+    afterId = 0,
+): Promise<Extract<SqliteWorkerMessage, { id: number }>> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const request = worker.postMessage.mock.calls
+            .map((call) => call[0])
+            .find((candidate): candidate is Extract<SqliteWorkerMessage, { id: number }> => (
+                'id' in candidate && candidate.id > afterId && candidate.type === type
+            ));
+        if (request) return request;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error(`Worker request ${type} was not posted.`);
+}
+
+function graphRegistrySizes(index: SqliteVectorIndex): { active: number; cancelled: number } {
+    const internal = index as unknown as {
+        activeGraphRequests: Set<string>;
+        cancelledGraphRequests: Set<string>;
+    };
+    return {
+        active: internal.activeGraphRequests.size,
+        cancelled: internal.cancelledGraphRequests.size,
+    };
+}
+
+async function waitForGraphRegistriesEmpty(index: SqliteVectorIndex): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const sizes = graphRegistrySizes(index);
+        if (sizes.active === 0 && sizes.cancelled === 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error('Graph request registries did not drain.');
+}
