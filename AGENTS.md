@@ -276,10 +276,11 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 - Release gates validate only release-critical documentation through
   `npm run docs:check:release`; they must not depend on Backlog, Discovery,
   Active Package, Tracker, Decision, or other lifecycle status.
-- Keep the full `npm run docs:check` in documentation maintenance and regular
-  CI. Report lifecycle findings separately; do not use them to block a beta or
-  stable release whose source, runtime, packaging, legal, and Community gates
-  pass.
+- Keep the full `npm run docs:check` in documentation maintenance and as an
+  advisory step in regular CI. Keep lifecycle findings visible, but do not let
+  them stop Test/Lint/Build/Audit or fail the CI job by themselves. Do not use
+  them to block a beta or stable release whose source, runtime, packaging,
+  legal, and Community gates pass.
 - Preview without writing files: `make release-dry-run VERSION=x.y.z`.
 - Create local release commit and annotated tag: `make release VERSION=x.y.z`.
 - Publish only after explicit user request or confirmation: `make publish VERSION=x.y.z`.

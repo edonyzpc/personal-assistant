@@ -6,6 +6,7 @@ install:
 	npm install
 
 bin: test
+	bash scripts/check-platform-guards.sh
 	npm run lint && npm run build
 
 deploy: clean bin
