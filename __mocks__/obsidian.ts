@@ -42,6 +42,12 @@ export class Modal {
     onClose() { }
 }
 
+export class SuggestModal<T> extends Modal {
+    getSuggestions(_query: string): T[] { return []; }
+    renderSuggestion(_item: T, _el: HTMLElement): void { }
+    onChooseSuggestion(_item: T, _evt: MouseEvent | KeyboardEvent): void { }
+}
+
 export class Component {
     private registeredCallbacks: Array<() => unknown> = [];
 
@@ -75,6 +81,20 @@ export class Setting {
         setButtonText: (text: string) => unknown;
         onClick: (callback: () => void) => unknown;
     }) => void) { return this; }
+}
+
+export class Plugin {
+    app: App = {} as App;
+    manifest = { id: "", dir: "" };
+    loadData(): Promise<unknown> { return Promise.resolve(null); }
+    saveData(_data: unknown): Promise<void> { return Promise.resolve(); }
+    addCommand() { return {}; }
+    addRibbonIcon() { return {} as HTMLElement; }
+    addSettingTab() { }
+    addStatusBarItem() { return { setText: jest.fn() } as unknown as HTMLElement; }
+    registerView() { }
+    registerEvent() { }
+    registerInterval() { }
 }
 
 export class PluginSettingTab {

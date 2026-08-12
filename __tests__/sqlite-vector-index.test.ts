@@ -98,6 +98,78 @@ describe('SqliteVectorIndex worker recovery', () => {
         expect(workerQueue).toHaveLength(0);
     });
 
+    it('sends initialize only once on first explicit call', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class { } });
+        const worker = new MockWorker(true, { status: 'ready' });
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        await index.initialize({ provider: 'qwen', model: 'text-embedding-v4', dimensions: 1024, baseURL: 'https://example.com/v1', distanceMetric: 'COSINE' });
+
+        const initCalls = worker.postMessage.mock.calls.filter(
+            (call: [SqliteWorkerRequest]) => call[0].type === 'initialize',
+        );
+        expect(initCalls).toHaveLength(1);
+    });
+
+    it('preserves original error code when first initialize fails', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class { } });
+        const worker = new MockWorker(false);
+        worker.postMessage = jest.fn((request: SqliteWorkerRequest) => {
+            queueMicrotask(() => {
+                worker.onmessage?.({
+                    data: { id: request.id, ok: false, error: { code: 'opfs-sahpool-locked', message: 'Pool is locked' } },
+                } as MessageEvent<SqliteWorkerResponse>);
+            });
+        }) as typeof worker.postMessage;
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        await expect(
+            index.initialize({ provider: 'qwen', model: 'text-embedding-v4', dimensions: 1024, baseURL: 'https://example.com/v1', distanceMetric: 'COSINE' }),
+        ).rejects.toThrow('Pool is locked');
+    });
+
+    it('reinitializes replacement Worker before the next operation after error', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class { } });
+        let firstCallCount = 0;
+        const firstWorker = new MockWorker(false);
+        firstWorker.postMessage = jest.fn((request: SqliteWorkerRequest) => {
+            firstCallCount++;
+            if (request.type === 'initialize') {
+                queueMicrotask(() => {
+                    firstWorker.onmessage?.({
+                        data: { id: request.id, ok: true, result: { status: 'ready' } },
+                    } as MessageEvent<SqliteWorkerResponse>);
+                });
+            }
+        }) as typeof firstWorker.postMessage;
+        const secondWorker = new MockWorker(true, readyStats);
+        const workerQueue = [firstWorker, secondWorker];
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => workerQueue.shift() as unknown as Worker,
+        });
+
+        await index.initialize({ provider: 'qwen', model: 'text-embedding-v4', dimensions: 1024, baseURL: 'https://example.com/v1', distanceMetric: 'COSINE' });
+
+        const failedStats = index.getStats();
+        await new Promise((r) => setTimeout(r, 0));
+        firstWorker.fail('worker crashed');
+        await expect(failedStats).rejects.toThrow('worker crashed');
+
+        await index.getStats();
+
+        const secondMessages = secondWorker.postMessage.mock.calls.map(
+            (call: [SqliteWorkerRequest]) => call[0].type,
+        );
+        expect(secondMessages).toEqual(['initialize', 'getStats']);
+    });
+
     it('passes scoped OPFS options to worker initialization', async () => {
         Object.defineProperty(globalThis, 'Worker', {
             configurable: true,

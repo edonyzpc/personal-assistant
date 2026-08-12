@@ -2349,6 +2349,79 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 	color: var(--text-muted);
 }
 
+.pa-chat-setup-form {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	width: 100%;
+	max-width: 360px;
+}
+
+.pa-chat-setup-providers {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.pa-chat-setup-token-row {
+	display: flex;
+}
+
+.pa-chat-setup-token-row.pa-hidden {
+	display: none;
+}
+
+.pa-chat-setup-token-input {
+	box-sizing: border-box;
+	width: 100%;
+	padding: 8px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: 0.9em;
+}
+
+.pa-chat-setup-status {
+	min-height: 1.35em;
+	color: var(--text-muted);
+	font-size: 0.85em;
+	line-height: 1.35;
+}
+
+.pa-chat-setup-status.is-error {
+	color: var(--text-error);
+}
+
+body.is-mobile .pa-chat-empty-chip {
+	min-height: 44px;
+	padding: 10px 14px;
+}
+
+body.is-mobile .pa-chat-setup-token-input {
+	min-height: 44px;
+	font-size: 16px;
+}
+
+body.is-mobile .pa-chat-setup-advanced-link {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	min-height: 44px;
+}
+
+.pa-chat-setup-advanced-link {
+	font-size: 0.8em;
+	color: var(--text-muted);
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+.llm-view .pa-chat-setup-advanced-link:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
 .llm-view button:focus-visible {
 	outline: 2px solid var(--interactive-accent);
 	outline-offset: 2px;

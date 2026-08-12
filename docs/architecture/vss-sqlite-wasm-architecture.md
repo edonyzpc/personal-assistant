@@ -1,8 +1,8 @@
 # VSS SQLite/WASM Current Architecture
 
-Updated: 2026-07-11
+Updated: 2026-08-11
 
-Status: Current runtime contract. Verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure.
+Status: Current runtime contract. The SQLite/WASM baseline was verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure; DEC-028/B-126 is the approved 2026-08-11 amendment, with implementation validation tracked in the [active package](../development/active/silent-first-use-memory-preparation/tracker.md).
 
 ## Authority And Product Boundary
 
@@ -11,8 +11,10 @@ Status: Current runtime contract. Verified against `src/vss/`, `src/plugin.ts`, 
 - `MemoryManager` owns user-facing readiness, confirmation, background-maintenance policy, progress, and notices.
 - `VSS` is the internal facade for search, refresh, rebuild, reset, reconcile, verification, and index maintenance.
 - `VectorIndex` hides the concrete storage/search implementation from product code.
-- First prepare, missing local index, profile/settings stale, and costly rebuild paths require explicit user confirmation.
-- Automatic background maintenance is allowed only after prepare approval and only when the durable backend is ready.
+- [DEC-028](../product/decisions/dec-028-silent-memory-auto-prepare.md) is the narrow first-use exception: the first Chat may start one non-blocking whole eligible vault rebuild without an Approval Modal and answer immediately. Shared folder/tag/generated-note exclusions still apply.
+- Owner's later 2026-08-11 option 1 adds a prerequisite to that exception: an in-memory null marker cannot authorize destructive work until IndexedDB marker state has hydrated as known absent or the prior/unknown marker is durably invalidated. Before reset/provider work, VSS must durably save retry state and establish that truth; an unavailable transition fails closed while Chat remains answer-now.
+- Missing local index, profile/settings stale, manual Prepare/Update, and other non-first-use costly rebuild paths require explicit user confirmation.
+- Automatic background maintenance is allowed only after a confirmed or DEC-028 first-use prepare reaches durable usable ready. Abort, total failure, ready-marker publication failure, unavailable durable backend, unload, or Memory opt-out must not upgrade `memoryApprovalPolicy` or manufacture ready state. A denied persistent-storage request alone keeps the existing usable-but-evictable behavior and warning.
 
 ## Runtime Shape
 
@@ -125,12 +127,16 @@ The current schema version is `VSS_SCHEMA_VERSION = 2`; the default embedding di
 `VSSIndexStateStore` persists the local marker, dirty journal, and migration/diagnostic state separately from OPFS.
 
 - The marker says that compatible local Memory was prepared for a specific scope/profile; it is not a backup of embeddings.
+- `marker === null` is only known absent after successful hydration for the current local-state store/generation. Before that it is unknown and cannot authorize destructive reset or provider work.
 - The dirty journal contains only confirmed work that still needs refresh.
 - `verifyQueue` remains process-local and is reconstructed by vault events and reconcile.
-- If IndexedDB is temporarily unavailable, an approved update may continue with in-memory state and retry state persistence later.
+- Ordinary non-destructive observation/verification may keep process-local pending state and retry IndexedDB persistence later. This existing behavior does not apply to destructive rebuild admission.
+- Destructive rebuild atomically durable-saves the whole-vault retry journal, a null/invalidation marker and a content-free guard carrying the original `first-use`、`settings-changed` or `local-memory-missing` reason. It may proceed after hydrated known absence or after this same-generation durable invalidation; transition failure preserves the old OPFS index/marker and stops before `VectorIndex.reset()` and before any embedding-provider call.
+- Hydration prioritizes the rebuild guard over marker/OPFS inference; abort and total failure retain it, so a confirmed recovery cannot restart as silent first-use.
+- Full success clears the guard only after durable ready publication and Memory policy/lifecycle admission. If that admission fails, `rollbackPreparedRebuild(reason)` restores non-ready state and the original guard rather than exposing a prepared index as usable ready.
 - Foreground startup/chat/readiness must not open OPFS only to reconstruct a missing marker.
 
-See [VSS Local State](./vss-local-state-plan.md) for the focused state-store contract.
+See [VSS Local State](./vss-local-state-plan.md) for the focused state-store contract. Browser persistent-storage permission denial remains a separate usable-but-evictable warning and is not marker uncertainty.
 
 ## Freshness And Mutation Flow
 
@@ -176,6 +182,8 @@ Additional lifecycle rules:
 - Hot reload uses a scope-specific shutdown barrier before a new instance opens the same OPFS scope.
 - Foreground lock recovery is short and non-blocking; it must not trigger embeddings or silently load legacy JSON fallback.
 - Manual prepare/technical diagnostics may use bounded retry.
+- Concurrent first-use Chat calls reuse the same active preparation. Disabling Memory or unloading the plugin aborts that run; the old lifecycle cannot persist auto policy, update status, or show a late success/failure Notice.
+- If marker truth or durable invalidation is unavailable, the first Chat still completes answer-now; later status/Chat paths retry state-store initialization and re-evaluate the hydrated marker instead of assuming a fresh install.
 - Reset clears the local Memory copy and VSS maintenance state without modifying source notes.
 
 ## Durable And Fallback Behavior
@@ -183,7 +191,7 @@ Additional lifecycle rules:
 - `SqliteVectorIndex` is the durable automatic-maintenance backend.
 - The fallback `MemoryVectorIndex` is read-only for automatic maintenance.
 - Background status must not claim updates are running when the durable mutation path is unavailable.
-- OPFS loss or incompatible profile leads to explicit prepare/rebuild UX, not silent provider work.
+- OPFS loss after a previously prepared index or an incompatible profile leads to explicit prepare/rebuild UX, not silent provider work. Only a genuinely uninitialized first-use Chat is eligible for the DEC-028 silent path.
 - Old vault-visible JSON cache/state files are historical user-owned artifacts and are not the active fallback.
 
 ## Packaging
@@ -196,6 +204,8 @@ Additional lifecycle rules:
 ## Validation Boundary
 
 Current automated coverage includes worker initialization/disposal, OPFS locking, data-safety migration, vector index operations, hybrid search, dirty/verify behavior, rebuild/refresh, and Memory policy paths.
+
+The B-126 first-use contract additionally requires focused coverage for immediate answer-now/no Modal, active-run reuse, durable success versus total failure/abort/marker-publication failure, retained confirmation for recovery/manual paths, Memory disable/unload cleanup, and unknown-marker preflight that preserves the old index/marker with zero reset/provider calls. See the [B-126 Product Spec](../product/specs/pa-silent-first-use-memory-preparation-product-spec.md); mocked mobile coverage is not real-device proof.
 
 Desktop and real-device iOS evidence exist for the current Memory path. Physical Android validation remains in [Backlog B-003](../backlog.md#下一步可执行); do not infer Android parity from desktop or iOS.
 

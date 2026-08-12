@@ -1,7 +1,7 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-08-06
+Updated: 2026-08-12
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
@@ -24,5 +24,6 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-024 | Count cold Quiet Recall semantic retrieval in its existing actual-call budget | Accepted | Pure-semantic candidate discovery, zero-call boundary, and metadata fallback semantics | [Record](./dec-024-quiet-recall-cold-semantic-retrieval.md) |
 | DEC-025 | Consumption-aware Pagelet delivery and empty-state Action Ring | Accepted | Device-local seen suppression；four-action Ring with visible EN/ZH localized labels；Desktop/iPad inward-arc-first with whole-group compact fallback；iPhone full-row/whole-column responsive layout | [Record](./dec-025-consumption-aware-pagelet-delivery.md) |
 | DEC-026 | Local, explicit full-fidelity Share Card export | Accepted | Four entries including Ring selection-first/current-note fallback；valid-YAML/basename projection；graphic brand/local data-URL font；single-page enlarge and multi-page adaptive batch font；per-Modal output folder；exact SnapDOM 2.23.2；no proxy | [Record](./dec-026-local-share-card.md) |
+| DEC-028 | Silent Memory auto-prepare for first-use | Accepted | Owner-approved 2026-08-11 first-Chat exception plus same-day option 1: unknown IndexedDB marker truth blocks destructive reset/provider work; failed/cancelled rebuilds retain their original reason, failed admission rolls back to non-ready, and recovery/manual paths still block | [Record](./dec-028-silent-memory-auto-prepare.md) |
 
 Accepted 记录必须出现在 Active Decision Register。Rejected/Superseded 记录如果只剩历史价值，应移动到年度 Archive 并在 successor/年度索引中可追溯。

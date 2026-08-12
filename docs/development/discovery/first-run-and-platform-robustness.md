@@ -2,9 +2,9 @@
 
 Document status: Current
 Delivery status: Exploring
-Updated: 2026-08-10
-Work item: (pending backlog registration)
-Authority: 本主题在产品决定前的问题、证据、讨论结论与待决策项。
+Updated: 2026-08-11
+Work item: B-126
+Authority: 首次体验与平台韧性的活跃问题、证据和未决方向；已获批准的 silent first-use Memory slice 由 DEC-028 与 B-126 Product Spec 负责，本 Brief 不替代批准证据。
 
 ## Problem And User Outcome
 
@@ -29,7 +29,7 @@ Authority: 本主题在产品决定前的问题、证据、讨论结论与待决
 | PluginManager 11,863 行单体无完整生命周期测试 | Confirmed | src/plugin.ts, \_\_tests\_\_/ | 集成层 bug 无法被现有测试捕获 |
 | 3,499 test cases, baseline ~80% coverage | Confirmed | jest.config.js | 子系统覆盖好，集成层覆盖差 |
 | Memory 构建速度慢 (2018 文件 ~15min) | Confirmed | 用户反馈, VSS maxConcurrency=1 + batch=10 + 100ms gap | 首次体验严重受阻 |
-| Memory 构建需手动确认 (Approval Modal) | Confirmed | src/memory-manager.ts:420,626,837 | 首次使用时被打断、困惑 |
+| PR base 的 Memory 构建需手动确认 (Approval Modal) | Confirmed | PR base `src/memory-manager.ts` | 首次使用时被打断、困惑；当前授权行为见 DEC-028 |
 | Embedding 并发度 maxConcurrency=1 | Confirmed | src/vss/vss-core.ts:2413 | 串行处理是 15min 瓶颈的主因 |
 | flush 模式 maxPerMinute=5 限制 | Confirmed | src/vss/vss-maintenance.ts:4 | 增量更新也被严格限速 |
 | Qwen embedding batch=10, gap=100ms, TPM=900K | Confirmed | src/vss/vss-core.ts:2405-2416 | 理论吞吐远未达 TPM 上限 |
@@ -437,7 +437,11 @@ PROVIDER_PRESETS["pa-cloud"] = {
 
 ## Part 5: Memory 构建体验
 
-### 5.1 当前 Memory 构建流程
+### 5.1 PR base 的 Memory 构建流程
+
+以下流程是 2026-08-10 Discovery 时捕获的 PR base，不是 2026-08-11 后的
+current authority；现行 first-use 行为由 [DEC-028](../../product/decisions/dec-028-silent-memory-auto-prepare.md)
+与 [B-126 Product Spec](../../product/specs/pa-silent-first-use-memory-preparation-product-spec.md) 定义。
 
 ```
 用户首次发送 Chat 消息
@@ -752,16 +756,33 @@ export const QWEN_TEXT_EMBEDDING_SAFE_TPM = 1_000_000;
 
 ---
 
-## Decisions Made (2026-08-10)
+## 2026-08-10 Proposal Snapshot（非批准证据）
 
-| # | Decision | Choice | Rationale |
+下表保留当时的方案输入。它不能证明 Owner approval，也不授权实现；只有后续
+repo-local Decision/Product Spec 或当前明确 Owner 选择可以提升其中的方向。
+
+| # | Question | Proposal at the time | Rationale |
 | --- | --- | --- | --- |
 | D1 | Setup 引导方案 | **Chat 内联 Setup** (不做 Wizard) | 贴近 North Star "需要时自然浮现"，用户不离开 chat 上下文 |
 | D2 | Memory Consent | **完全去掉 Approval Modal** | 配置完成后直接后台构建，零打断；如有合规需求在 Settings Memory 区放小字说明 |
 | D3 | Phase 1 执行范围 | **先做 1.1 + 1.2 + 1.3** (bug fix / 性能) | 并发优化 + 移动端 bug fix 优先；UX 调整 (1.4/1.5/1.6) 留到 Phase 2 |
 | D4 | 测试基础设施节奏 | **Phase 2 完成后再做** | 先集中精力做用户体验提升，测试基建等功能稳定后补 |
 
-### 任务排期
+## Owner Decision Routed On 2026-08-11
+
+- Owner 在当前 PR #378 review follow-up 明确选择方案 A：保留首次 Chat 静默后台
+  whole-vault Memory 构建。
+- Owner 在同日后续 review follow-up 明确选择方案 1：IndexedDB marker 状态未知时，
+  destructive rebuild fail closed，保留旧 index/marker，reset/provider 为 0，并等待
+  state store 恢复；该选择不追溯为 2026-08-10 的批准。
+- 该选择只批准 D2 对应的 narrow first-use slice，已进入
+  [DEC-028](../../product/decisions/dec-028-silent-memory-auto-prepare.md)、
+  [Product Spec](../../product/specs/pa-silent-first-use-memory-preparation-product-spec.md)
+  与 [Active Package](../active/silent-first-use-memory-preparation/README.md)。
+- D1、D3、D4、Fresh Custom、progressive build、provider/model 性能与 release timing
+  继续是 Discovery 输入，不从本次选择推导批准。
+
+### 当时建议排期（非授权）
 
 **立即实施 (Phase 1 首批)**:
 - 1.1 Embedding 并发优化 (maxConcurrency=3, safeTPM=1M, maxRetries=1)
@@ -786,7 +807,7 @@ export const QWEN_TEXT_EMBEDDING_SAFE_TPM = 1_000_000;
 - Simple/Advanced 模式
 - PA Cloud + 商业化
 
-## Exit
+## Current Disposition
 
-- ✅ Accepted — 决策已拍板，Phase 1 首批立即开始实施。
-- Phase 2+ 进入 Backlog 等待版本规划。
+- Brief 保持 `Exploring`，因为 first-run/platform 的更宽范围仍未决。
+- Silent first-use Memory slice 已按 2026-08-11 当前明确选择 promotion；其余提案没有实现授权。

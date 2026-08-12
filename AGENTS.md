@@ -159,7 +159,7 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 - Fallback `MemoryVectorIndex` is read-only for automatic maintenance. Do not add automatic background writes to fallback memory.
 - Cross-device note changes are handled through vault events, startup/resume reconcile, and low-frequency rolling hash verification.
 - Chat should not block on background changed-note refresh when auto policy and durable ready state are available. It may use the previous Memory snapshot while background maintenance catches up.
-- First-use, missing local index, profile/settings stale, and potentially costly rebuild paths require explicit user confirmation.
+- [DEC-028](docs/product/decisions/dec-028-silent-memory-auto-prepare.md) is the narrow first-use exception: the first Chat may schedule one silent background whole-eligible-vault rebuild while Chat answers immediately. Destructive reset/provider work may proceed only after marker truth is hydrated as known absent or the prior/unknown marker is durably invalidated. Missing local index, profile/settings stale, manual, and other potentially costly rebuild paths still require explicit user confirmation.
 
 ## Memory/VSS Product Rules
 
@@ -169,7 +169,8 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
   - Data: notes are not modified or deleted.
   - AI provider: note text may be sent to the configured AI provider when preparing Memory.
   - Cost: AI credits/API calls may be used; unchanged notes are skipped when possible.
-- After the user approves and prepare/update succeeds, `memoryApprovalPolicy` may upgrade to `auto-refresh-after-prepare`.
+- After the user approves, or after the DEC-028 silent first-use path completes, `memoryApprovalPolicy` may upgrade to `auto-refresh-after-prepare` only when durable usable ready and policy/lifecycle admission both succeed.
+- Destructive rebuild must fail closed while durable marker truth is unknown or cannot be invalidated: do not reset the index or call the provider, let Chat answer now, and wait for local state recovery. Failed or cancelled rebuilds retain their original recovery reason; admission failure must not leave usable ready state.
 - `changed-notes + auto-refresh-after-prepare + durable ready` should schedule background reconcile/flush and continue chat without a blocking modal.
 - In fallback or non-durable states, do not claim background updates are running if maintenance cannot actually run.
 - Manual `Update memory now` remains a force/manual refresh path and should preserve progress and error feedback.
@@ -275,9 +276,11 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 - Release gates validate only release-critical documentation through
   `npm run docs:check:release`; they must not depend on Backlog, Discovery,
   Active Package, Tracker, Decision, or other lifecycle status.
-- Keep the full `npm run docs:check` in documentation maintenance and regular
-  CI. Report lifecycle findings separately; do not use them to block a beta or
-  stable release whose source, runtime, packaging, legal, and Community gates pass.
+- Keep the full `npm run docs:check` in documentation maintenance and as an
+  advisory step in regular CI. Keep lifecycle findings visible, but do not let
+  them stop Test/Lint/Build/Audit or fail the CI job by themselves. Do not use
+  them to block a beta or stable release whose source, runtime, packaging,
+  legal, and Community gates pass.
 - Preview without writing files: `make release-dry-run VERSION=x.y.z`.
 - Create local release commit and annotated tag: `make release VERSION=x.y.z`.
 - Publish only after explicit user request or confirmation: `make publish VERSION=x.y.z`.

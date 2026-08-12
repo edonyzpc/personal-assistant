@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-08-07
+Updated: 2026-08-12
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -34,6 +34,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 | DEC-024 | Quiet Recall 冷语义检索计入既有实际调用预算 | 保留 pure-semantic 候选；冷 query embedding 通过 DEC-023 gate 并占用现有 10/hour、50/day bucket，空检索后 evaluator/generation 为 0；index unavailable 时 metadata 只能作为显式 Discover 的本地线索 | [Decision Record](./decisions/dec-024-quiet-recall-cold-semantic-retrieval.md), [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | 本地 query embedding 达到同等质量，或空检索持续挤压高价值 evaluator 预算 |
 | DEC-025 | Pagelet 已看内容不再主动重复，已解释空态改为四项 Action Ring | Bubble/Detail 实际可见后，设备本地 fingerprint 只阻止同类型、同内容的 Recall/Recap 再次主动推送；seen gate 不过滤显式运行/导航。Ready Empty/Intentionally Quiet 首次解释看过后，Pet 短点打开 Capture / Review / Discover / Share Ring；四项显示中英本地化文字标签，前三项不变，Share 进入 DEC-026/B-124。Desktop/iPad 内向弧优先，标签放不下时整组 compact fallback；iPhone 可容纳时横排、否则整组竖排 | [Decision Record](./decisions/dec-025-consumption-aware-pagelet-delivery.md), [B-121 Product Spec](./specs/pagelet-attention-aware-delivery-product-spec.md), [DEC-026](./decisions/dec-026-local-share-card.md) | 近重复或跨类型重复仍造成干扰、用户要求跨设备已看同步，或四项 Ring 的发现/触控/布局成本高于收益 |
 | DEC-026 | Share Card 使用本地、显式导出的完整渲染卡片 | Chat、Pagelet、editor selection 与 Ring Share 四入口共享固定卡片和显式 Copy/Save；Ring selection 优先，否则 current note（只剥有效 YAML、显示 basename）。图形 logo + `Personal Assistant`、local-only Source Han Serif；短单页取 `18/20/22px` 最大可容纳，多页按 `16→15→14px` 仅减页且整批一致。保存目录默认有效 attachment folder、否则 `PA-Cards`，可在本次 Modal 临时选择。远程图片、Vault Embed 与图表进入 v1；capture 精确使用 SnapDOM 2.23.2，PA 先本地化显式资源且禁 proxy/external font | [Decision Record](./decisions/dec-026-local-share-card.md), [B-124 Product Spec](./specs/pa-share-card-product-spec.md), [Share Card Architecture](../architecture/share-card-architecture.md), [DEC-025](./decisions/dec-025-consumption-aware-pagelet-delivery.md) | 真实 compatibility/community/font/mobile gate 失败，或需改变来源优先级、媒体保真、资源权限、视觉身份、目录策略、字号或 capture runtime |
+| DEC-028 | 首次 Memory 构建采用静默后台准备 | Owner 于 2026-08-11 明确选择：首次 Chat 触发一个 whole eligible vault 后台 rebuild，跳过 Approval Modal 并立即 answer-now；同日后续选择 marker unknown 时 fail closed。Destructive rebuild 必须先 durable 保存 retry state 与原 recovery reason，并 hydrate/prove-absent 或 invalidate marker；失败时 old index/marker 保留且 reset/provider 为 0。Abort/total failure 保留原 reason，policy/lifecycle admission 失败补偿为 non-ready；只有完整 admitted durable usable success 才清 guard 并升级 auto-refresh。Recovery/manual/costly rebuild 仍阻断确认 | [Decision Record](./decisions/dec-028-silent-memory-auto-prepare.md), [B-126 Product Spec](./specs/pa-silent-first-use-memory-preparation-product-spec.md), [VSS Architecture](../architecture/vss-sqlite-wasm-architecture.md), [Local State](../architecture/vss-local-state-plan.md), [Embedding Refresh](../architecture/vss-embedding-refresh.md) | 隐私法规变化要求 explicit opt-in；用户反馈显示 silent build 造成意外成本或混淆；total failure 率过高需要 fallback 到确认流程 |
 
 ## Active Architecture Decisions
 

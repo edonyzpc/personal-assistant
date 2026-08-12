@@ -7,9 +7,13 @@ import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view"
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import {
     AIUtils,
+    assessAIReadiness,
     getDashScopeImageGenerationEndpoint,
     isDashScopeCompatibleBaseURL,
     supportsDashScopeThinkingControl,
+    type AIReadinessScope,
+    type AIReadinessSnapshot,
+    type APITokenCacheState,
     type QwenRequestOptions,
 } from "./ai-services/ai-utils";
 import { stableStringify } from "./ai-services/agent-utils";
@@ -39,10 +43,10 @@ import {
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION, PROVIDER_PRESETS } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
-import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, hasSecretValue, icons } from './utils';
+import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
 import { CalloutModal } from './callout';
@@ -53,7 +57,11 @@ import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from
 import { normalizeStatisticsView } from './stats/stats-store';
 import type { EditorPluginHost } from './stats/EditorPluginHost';
 import type { StatsHost } from './stats/StatsHost';
-import { MemoryManager, type MemoryPreparationStatus } from './memory-manager';
+import {
+    MemoryManager,
+    type MemoryDecisionResult,
+    type MemoryPreparationStatus,
+} from './memory-manager';
 import { getVaultConfigDir, getVaultConfigDirStorageScope, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
 import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
@@ -159,7 +167,7 @@ import {
 import type { AiServiceHost } from './ai-services/AiServiceHost';
 import type { PaAgentInjectedContext } from './ai-services/context';
 import type { MemoryHost } from './memory';
-import type { ChatHost } from './chat/ChatHost';
+import type { AISetupInput, AISetupResult, ChatHost } from './chat/ChatHost';
 import {
     QUICK_CAPTURE_COMMAND_ID,
     QUICK_CAPTURE_COMMAND_NAME,
@@ -1294,10 +1302,11 @@ export class PluginManager extends Plugin {
     private backlinkMapCache: { map: Map<string, string[]>; builtAt: number } | null = null;
     private static readonly BACKLINK_MAP_TTL_MS = 30_000;
     private token: string = "";
-    private hasTokenCached: boolean | null = null;
+    private tokenCacheState: APITokenCacheState = "unknown";
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private settingsSaveTail: Promise<void> | null = null;
+    private requiredSettingsTransactions: Set<Promise<unknown>> | null = null;
     private settingsMigrationBaselineFingerprint: string | null = null;
     private memoryQueueAuditPromise: Promise<void> | null = null;
     private hoverPopoverObserver: MutationObserver | null = null;
@@ -1693,10 +1702,6 @@ export class PluginManager extends Plugin {
     private async onLayoutReady(): Promise<void> {
         if (this.unloading) return;
 
-        if (this.hasTokenCached === null && this.settings.aiProvider) {
-            this.hasTokenCached = hasSecretValue(this.getConfiguredAPITokenSecret());
-        }
-
         this.setupHoverPopoverObserver();
         await this.initializeMemorySubsystem();
         if (this.unloading) return;
@@ -1788,6 +1793,9 @@ export class PluginManager extends Plugin {
             this.syncPageletRuntime();
             this.syncMemoryExtractionRuntime();
             void this.reconcileMemoryQueueAudit();
+            if (!this.settings.memoryEnabled) {
+                this.memoryManager?.cancelActivePreparation();
+            }
         });
     }
 
@@ -6802,12 +6810,13 @@ export class PluginManager extends Plugin {
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
             registerEvent: (ref) => this.registerEvent(ref),
             saveSettings: () => this.saveSettings(),
+            persistMemoryAdmissionSettings: () => this.persistMemoryAdmissionSettings(),
             getVSSFiles: () => this.getVSSFiles(),
+            isVSSFileEligible: (file) => this.isVSSFileEligible(file),
             getAPIToken: () => this.getAPIToken(),
             notifyStatusChanged: () => this.debouncedStatusBarUpdate(),
             updateMemorySetting: (key, value) => {
                 (this.settings as unknown as Record<string, unknown>)[key] = value;
-                void this.saveSettings();
             },
         };
     }
@@ -6825,8 +6834,7 @@ export class PluginManager extends Plugin {
             getMemoryExtractionPromptContext: () =>
                 this.getMemoryExtractionPromptContext() as unknown as Record<string, unknown>,
             memorySearch: {
-                ensureReadyForChat: (query) =>
-                    this.memoryManager?.ensureReadyForChat(query) ?? Promise.resolve({ decision: "answer-now" }),
+                ensureReadyForChat: (query) => this.ensureMemoryReadyForChat(query),
                 searchHybrid: (query, opts) =>
                     this.vss?.searchHybrid(query, opts) ?? Promise.resolve([]),
                 getChunksByPath: (paths, opts) =>
@@ -6837,6 +6845,14 @@ export class PluginManager extends Plugin {
             isDataBoundaryAllowedPath: (path) => this.isDataBoundaryAllowedPath(path),
             agentRunCoordinator: this.agentRunCoordinator,
         };
+    }
+
+    private ensureMemoryReadyForChat(query?: string): Promise<MemoryDecisionResult> {
+        if (!this.getAIReadiness("memory").ready) {
+            return Promise.resolve({ decision: "answer-now" });
+        }
+        return this.memoryManager?.ensureReadyForChat(query)
+            ?? Promise.resolve({ decision: "answer-now" });
     }
 
     private getOperationsService(): OperationsService {
@@ -7154,21 +7170,23 @@ export class PluginManager extends Plugin {
             },
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
             getAISetupIssue: () => this.getAISetupIssue(),
+            getAIReadiness: (scope) => this.getAIReadiness(scope),
+            refreshAPITokenPresence: () => this.refreshAPITokenPresence(),
             chatHistoryManager: this.chatHistoryManager,
             memoryStatus: {
-                getMaintenancePlan: () => this.memoryManager?.getMaintenancePlan() ?? Promise.resolve({
-                    reason: "unavailable",
-                    action: "none",
-                    notesToCheck: 0,
-                    requiresApproval: false,
-                    canAnswerNow: true,
-                }),
-                prepareFromCommand: () => this.runManualMemoryAction(
-                    () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
-                ),
-                updateFromCommand: () => this.runManualMemoryAction(
-                    () => this.memoryManager?.updateFromCommand() ?? Promise.resolve(),
-                ),
+                getMaintenancePlan: () => this.getAIReadiness("memory").ready
+                    ? this.memoryManager?.getMaintenancePlan() ?? Promise.resolve(this.unavailableMemoryPlan())
+                    : Promise.resolve(this.unavailableMemoryPlan()),
+                prepareFromCommand: () => this.getAIReadiness("memory").ready
+                    ? this.runManualMemoryAction(
+                        () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
+                    )
+                    : Promise.resolve(),
+                updateFromCommand: () => this.getAIReadiness("memory").ready
+                    ? this.runManualMemoryAction(
+                        () => this.memoryManager?.updateFromCommand() ?? Promise.resolve(),
+                    )
+                    : Promise.resolve(),
                 showTechnicalStatus: () => void this.showTechnicalMemoryStatus(),
                 onStatusChanged: (listener) => this.onMemoryStatusChanged(listener),
             },
@@ -7177,6 +7195,17 @@ export class PluginManager extends Plugin {
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 this.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),
             openMemorySettings: (claimId) => this.openMemorySettings(claimId),
+            completeAISetup: (input) => this.completeAISetup(input),
+        };
+    }
+
+    private unavailableMemoryPlan() {
+        return {
+            reason: "unavailable" as const,
+            action: "none" as const,
+            notesToCheck: 0,
+            requiresApproval: false,
+            canAnswerNow: true,
         };
     }
 
@@ -8673,6 +8702,10 @@ export class PluginManager extends Plugin {
         this.hoverPopoverObserver?.disconnect();
         this.hoverPopoverObserver = null;
         this.memoryManager?.stopAutoMaintenance();
+        await this.memoryManager?.waitForIdle().catch((error) => {
+            this.log("Failed to drain Memory maintenance during unload", error);
+        });
+        await this.drainSettingsWrites();
         await this.vss?.dispose().catch((error) => this.log("Failed to dispose Memory local index", error));
         if (statsManager) {
             const flush = statsManager.flush();
@@ -10156,7 +10189,7 @@ export class PluginManager extends Plugin {
             // defaulting to qwen. The Settings UI renders a "Choose your
             // AI provider" prompt while aiProvider is empty.
             this.settings.aiProvider = "";
-            this.hasTokenCached = false;
+            this.clearTokenCache();
         }
         // Detect when a pre-existing `pagelet.reviewsFolder` was just coerced
         // by the now-stricter validator (e.g. an early-beta user stored a path
@@ -10192,6 +10225,19 @@ export class PluginManager extends Plugin {
             return true;
         });
         if (saved) await this.notifySettingsChanged();
+    }
+
+    private async persistMemoryAdmissionSettings(): Promise<void> {
+        await this.trackRequiredSettingsTransaction(this.persistRequiredSettings());
+    }
+
+    private async persistRequiredSettings(): Promise<void> {
+        await this.enqueueSettingsWrite(async () => {
+            await this.saveSettingsData();
+        });
+        if (!this.unloading) {
+            await this.notifySettingsChanged();
+        }
     }
 
     async setMemoryAutoAcceptPaused(paused: boolean): Promise<void> {
@@ -10392,6 +10438,30 @@ export class PluginManager extends Plugin {
         const result = this.settingsSaveTail.then(operation, operation);
         this.settingsSaveTail = result.then(() => undefined, () => undefined);
         return result;
+    }
+
+    private async drainSettingsWrites(): Promise<void> {
+        while (true) {
+            const pendingTail = this.settingsSaveTail;
+            const pendingTransactions = Array.from(this.requiredSettingsTransactions ?? []);
+            if (!pendingTail && pendingTransactions.length === 0) return;
+            await Promise.allSettled([
+                ...(pendingTail ? [pendingTail] : []),
+                ...pendingTransactions,
+            ]);
+            if (pendingTail === this.settingsSaveTail
+                && (this.requiredSettingsTransactions?.size ?? 0) === 0) {
+                return;
+            }
+        }
+    }
+
+    private trackRequiredSettingsTransaction<T>(operation: Promise<T>): Promise<T> {
+        this.requiredSettingsTransactions ??= new Set();
+        this.requiredSettingsTransactions.add(operation);
+        const remove = () => this.requiredSettingsTransactions?.delete(operation);
+        void operation.then(remove, remove);
+        return operation;
     }
 
     /**
@@ -10751,14 +10821,16 @@ export class PluginManager extends Plugin {
     }
 
     getVSSFiles() {
-        const files = this.app.vault.getMarkdownFiles();
+        return this.app.vault.getMarkdownFiles().filter((file) => this.isVSSFileEligible(file));
+    }
+
+    private isVSSFileEligible(file: TFile): boolean {
         const normalizedExcludePaths = (this.settings.vssCacheExcludePath ?? [])
             .map((path) => path.trim())
             .filter(Boolean);
-        return files.filter((file) =>
-            !normalizedExcludePaths.some((prefix) => file.path.startsWith(prefix))
-            && this.isDataBoundaryAllowedFile(file)
-        );
+        return file.extension === "md"
+            && !normalizedExcludePaths.some((prefix) => file.path.startsWith(prefix))
+            && this.isDataBoundaryAllowedFile(file);
     }
 
     private decideDataBoundaryForPath(path: string): DataBoundaryDecision {
@@ -11464,7 +11536,7 @@ export class PluginManager extends Plugin {
     private runMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
         if (!this.settings.memoryEnabled) return false;
         if (!this.vss || !this.memoryManager) return false;
-        if (this.getAISetupIssue() !== null) return false;
+        if (!this.getAIReadiness("memory").ready) return false;
         if (!checking) {
             void this.runManualMemoryAction(action).catch((error) => {
                 this.log("Memory command failed", error);
@@ -11709,13 +11781,13 @@ export class PluginManager extends Plugin {
 
     getConfiguredAPITokenSecret(): string | null {
         const currentId = this.getAPITokenSecretId();
-        const currentToken = this.app.secretStorage.getSecret(currentId);
-        if (hasSecretValue(currentToken)) return currentToken;
+        const currentToken = normalizeAPIToken(this.app.secretStorage.getSecret(currentId));
+        if (currentToken) return currentToken;
 
         for (const legacyId of this.getAPITokenSecretCandidateIds()) {
             if (legacyId === currentId) continue;
-            const legacyToken = this.app.secretStorage.getSecret(legacyId);
-            if (!hasSecretValue(legacyToken)) continue;
+            const legacyToken = normalizeAPIToken(this.app.secretStorage.getSecret(legacyId));
+            if (!legacyToken) continue;
             return legacyToken;
         }
 
@@ -11723,38 +11795,69 @@ export class PluginManager extends Plugin {
     }
 
     setAPITokenSecret(value: string): void {
+        const normalized = normalizeAPIToken(value) ?? "";
+        this.cancelActiveMemoryPreparation();
         const currentId = this.getAPITokenSecretId();
-        this.app.secretStorage.setSecret(currentId, value);
-        if (value === "") {
+        this.app.secretStorage.setSecret(currentId, normalized);
+        if (normalized === "") {
             for (const legacyId of this.getAPITokenSecretCandidateIds()) {
                 if (legacyId !== currentId) {
                     this.app.secretStorage.setSecret(legacyId, "");
                 }
             }
         }
-        this.clearTokenCache();
-        this.hasTokenCached = hasSecretValue(value);
+        this.token = "";
+        this.tokenCacheState = normalized ? "present" : "missing";
     }
 
     hasConfiguredAPIToken(): boolean {
-        return hasSecretValue(this.getConfiguredAPITokenSecret());
+        return this.tokenCacheState === "present";
     }
 
     hasTokenCachedValue(): boolean | null {
-        return this.hasTokenCached;
+        if (this.tokenCacheState === "unknown") return null;
+        return this.tokenCacheState === "present";
     }
 
-    getAISetupIssue(): string | null {
-        if (!this.settings.aiProvider) {
-            return this.t("plugin.aiSetup.chooseProvider");
+    getAPITokenCacheState(): APITokenCacheState {
+        return this.tokenCacheState;
+    }
+
+    refreshAPITokenPresence(): APITokenCacheState {
+        try {
+            const token = this.getConfiguredAPITokenSecret();
+            this.tokenCacheState = token ? "present" : "missing";
+            if (!token) this.token = "";
+        } catch (error) {
+            this.tokenCacheState = "unknown";
+            this.token = "";
+            this.log("Failed to inspect API token presence", error);
         }
-        if (!this.settings.baseURL || !this.settings.chatModelName) {
-            return this.t("plugin.aiSetup.completeProvider");
+        return this.tokenCacheState;
+    }
+
+    getAIReadiness(scope: AIReadinessScope = "chat"): AIReadinessSnapshot {
+        return assessAIReadiness(this.settings, this.tokenCacheState, scope);
+    }
+
+    getAISetupIssue(scope: AIReadinessScope = "chat"): string | null {
+        const readiness = this.getAIReadiness(scope);
+        switch (readiness.issue) {
+            case null:
+                return null;
+            case "provider_missing":
+                return this.t("plugin.aiSetup.chooseProvider");
+            case "provider_unsupported":
+                return this.t("plugin.aiSetup.unsupportedProvider");
+            case "embedding_model_missing":
+                return this.t("plugin.aiSetup.completeMemoryProvider");
+            case "token_unknown":
+                return this.t("plugin.aiSetup.checkToken");
+            case "token_missing":
+                return this.t("plugin.aiSetup.addToken");
+            default:
+                return this.t("plugin.aiSetup.completeProvider");
         }
-        if (!this.hasConfiguredAPIToken()) {
-            return this.t("plugin.aiSetup.addToken");
-        }
-        return null;
     }
 
     async getAPIToken() {
@@ -11762,20 +11865,127 @@ export class PluginManager extends Plugin {
             return this.token;
         }
         const token = this.getConfiguredAPITokenSecret();
-        if (!hasSecretValue(token)) {
-            this.hasTokenCached = false;
+        if (!token) {
+            this.tokenCacheState = "missing";
             new Notice(this.t("plugin.notice.apiTokenNotConfigured"), 5000);
             return "";
         }
-        this.hasTokenCached = true;
+        this.tokenCacheState = "present";
         this.token = token;
         return token;
     }
 
     clearTokenCache(): void {
         this.token = "";
-        this.hasTokenCached = null;
+        this.tokenCacheState = "unknown";
     }
+
+    cancelActiveMemoryPreparation(): void {
+        this.memoryManager?.cancelActivePreparation();
+    }
+
+    private completeAISetup(input: AISetupInput): Promise<AISetupResult> {
+        return this.trackRequiredSettingsTransaction(this.completeAISetupTransaction(input));
+    }
+
+    private async completeAISetupTransaction(input: AISetupInput): Promise<AISetupResult> {
+        if (this.unloading) {
+            return { ok: false, code: "settings_save_failed" };
+        }
+        const preset = input.presetKey ? PROVIDER_PRESETS[input.presetKey] : undefined;
+        if (input.presetKey && (!preset || input.presetKey === "custom")) {
+            return { ok: false, code: "invalid_configuration" };
+        }
+
+        const previousSettings = {
+            aiProvider: this.settings.aiProvider,
+            aiProviderPreset: this.settings.aiProviderPreset,
+            baseURL: this.settings.baseURL,
+            chatModelName: this.settings.chatModelName,
+            embeddingModelName: this.settings.embeddingModelName,
+        };
+        const nextSettings = preset ? {
+            aiProvider: preset.runtimeProvider,
+            aiProviderPreset: input.presetKey,
+            baseURL: preset.baseURL,
+            chatModelName: preset.chatModelName,
+            embeddingModelName: preset.embeddingModelName,
+        } : previousSettings;
+        const requestedToken = normalizeAPIToken(input.token);
+
+        if (!requestedToken && this.tokenCacheState === "unknown") {
+            this.refreshAPITokenPresence();
+        }
+        if (!requestedToken && this.tokenCacheState !== "present") {
+            return { ok: false, code: "token_required" };
+        }
+        const readiness = assessAIReadiness(nextSettings, "present", "chat");
+        if (!readiness.ready) {
+            return { ok: false, code: "invalid_configuration" };
+        }
+
+        let previousToken: string | null = null;
+        let tokenWritten = false;
+        if (requestedToken) {
+            try {
+                previousToken = this.getConfiguredAPITokenSecret();
+            } catch (error) {
+                this.clearTokenCache();
+                this.log("Failed to inspect the previous API token during inline setup", error);
+                return { ok: false, code: "token_save_failed" };
+            }
+            try {
+                this.setAPITokenSecret(requestedToken);
+                tokenWritten = true;
+            } catch (error) {
+                this.log("Failed to save API token during inline setup", error);
+                try {
+                    this.setAPITokenSecret(previousToken ?? "");
+                } catch (compensationError) {
+                    this.clearTokenCache();
+                    this.log("Failed to compensate API token after inline setup write failure", compensationError);
+                    return { ok: false, code: "compensation_failed" };
+                }
+                return { ok: false, code: "token_save_failed" };
+            }
+        }
+
+        this.cancelActiveMemoryPreparation();
+        Object.assign(this.settings, nextSettings);
+        try {
+            await this.persistRequiredSettings();
+            return { ok: true };
+        } catch (error) {
+            this.log("Failed to save AI provider during inline setup", error);
+            Object.assign(this.settings, previousSettings);
+            let compensationFailed = false;
+            if (tokenWritten) {
+                try {
+                    this.setAPITokenSecret(previousToken ?? "");
+                } catch (compensationError) {
+                    compensationFailed = true;
+                    this.clearTokenCache();
+                    this.log("Failed to restore API token after inline setup failure", compensationError);
+                }
+            }
+            try {
+                await this.persistRequiredSettings();
+            } catch (compensationError) {
+                compensationFailed = true;
+                this.log("Failed to restore AI provider settings after inline setup failure", compensationError);
+            }
+            return {
+                ok: false,
+                code: compensationFailed ? "compensation_failed" : "settings_save_failed",
+            };
+        }
+    }
+}
+
+function normalizeAPIToken(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim();
+    return normalized || null;
 }
 
 function coerceModelResultToString(result: unknown): string {

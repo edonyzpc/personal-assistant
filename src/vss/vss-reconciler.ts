@@ -18,6 +18,7 @@ export const VSS_MOBILE_CHAT_VERIFY_MAX_WALL_CLOCK_MS = 100;
 
 export interface VSSReconcileOptions {
     reason?: string;
+    abortSignal?: AbortSignal;
     batchSize?: number;
     maxMetadataItems?: number;
     verifyHashLimit?: number;
@@ -32,6 +33,7 @@ export interface VSSReconcileSummary extends VSSOperationSummary {
 
 export interface VSSVerifyOptions {
     reason?: string;
+    abortSignal?: AbortSignal;
     maxFiles?: number;
     maxBytes?: number;
     maxWallClockMs?: number;

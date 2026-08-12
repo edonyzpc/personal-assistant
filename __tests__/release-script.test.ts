@@ -66,7 +66,7 @@ describe("scripts/release.mjs", () => {
         expect(output).toContain("Do not add code or documentation commits on the beta branch.");
     });
 
-    it("uses the lightweight documentation gate for local and tagged releases", () => {
+    it("uses the lightweight release gate and keeps lifecycle CI advisory", () => {
         const releaseScript = readFileSync(join(process.cwd(), "scripts/release.mjs"), "utf8");
         const releaseWorkflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
         const ciWorkflow = readFileSync(join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
@@ -76,8 +76,21 @@ describe("scripts/release.mjs", () => {
         expect(releaseWorkflow).toContain("fetch-depth: 0");
         expect(releaseWorkflow).toContain("run: npm run docs:check:release");
         expect(releaseWorkflow).not.toContain("DOCS_CHECK_BASE");
-        expect(ciWorkflow).toContain("run: npm run docs:check");
-        expect(ciWorkflow).toContain("DOCS_CHECK_BASE");
+        const docsStepStart = ciWorkflow.indexOf("- name: Check documentation workflow (advisory)");
+        const reportStepStart = ciWorkflow.indexOf("- name: Report documentation workflow findings");
+        const docsStep = ciWorkflow.slice(docsStepStart, reportStepStart);
+
+        expect(docsStepStart).toBeGreaterThanOrEqual(0);
+        expect(reportStepStart).toBeGreaterThan(docsStepStart);
+        expect(docsStep).toContain("id: docs_check");
+        expect(docsStep).toContain("continue-on-error: true");
+        expect(docsStep).toContain("run: npm run docs:check");
+        expect(docsStep).toContain("DOCS_CHECK_BASE");
+        expect(ciWorkflow).toContain("steps.docs_check.outcome == 'failure'");
+        expect(ciWorkflow).toContain("::warning title=Documentation workflow findings::");
+        for (const gate of ["Test", "Lint", "Build", "Audit bundle"]) {
+            expect(ciWorkflow.indexOf(`- name: ${gate}`)).toBeGreaterThan(reportStepStart);
+        }
     });
 
     it("guards prerelease tags against the current origin/master parent", () => {

@@ -10,7 +10,6 @@ import { getDashScopeImageGenerationEndpoint, isDashScopeCompatibleBaseURL } fro
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { confirmUserAction } from "./confirm";
-import { hasSecretValue } from "./utils";
 import {
     PAGELET_DEFAULTS,
     mergePageletSettings,
@@ -752,6 +751,11 @@ function normalizeTrimmedStringArray(value: unknown, fallback: string[]): string
         .filter(Boolean))];
 }
 
+function addsExclusions(previous: readonly string[], next: readonly string[]): boolean {
+    const previousSet = new Set(previous);
+    return next.some((value) => !previousSet.has(value));
+}
+
 function normalizeStringArray(value: unknown, fallback: string[]): string[] {
     if (!Array.isArray(value)) return [...fallback];
     return value.filter((entry): entry is string => typeof entry === "string");
@@ -1249,11 +1253,11 @@ export class SettingTab extends PluginSettingTab {
     private isGroupCollapsed(groupId: string): boolean {
         try {
             const raw = localStorage.getItem("pa-settings-collapsed");
-            if (!raw) return false;
+            if (!raw) return groupId !== "ai-provider";
             const state = JSON.parse(raw) as Record<string, boolean>;
             return state[groupId] === true;
         } catch {
-            return false;
+            return groupId !== "ai-provider";
         }
     }
 
@@ -1530,7 +1534,15 @@ export class SettingTab extends PluginSettingTab {
         const plugin = this.plugin;
         const app = this.app;
         const secretId = plugin.getAPITokenSecretId();
-        const existing = plugin.getConfiguredAPITokenSecret() ?? "";
+        let existing = "";
+        try {
+            existing = plugin.getConfiguredAPITokenSecret() ?? "";
+        } catch {
+            plugin.clearTokenCache();
+            plugin.log("Failed to read API token");
+            new Notice(this.t("plugin.settings.apiToken.modal.loadFailed"), 4000);
+            return;
+        }
         const translate = this.t.bind(this);
         const rebuildProviderConfig = () => this.rebuildProviderConfig();
         const releaseModal = (modal: Modal) => {
@@ -1837,7 +1849,11 @@ export class SettingTab extends PluginSettingTab {
                 .setPlaceholder("private, archive/sensitive")
                 .setValue(plugin.settings.dataBoundary.excludedFolders.join(", "))
                 .onChange((value) => {
-                    plugin.settings.dataBoundary.excludedFolders = normalizeTrimmedStringArray(value.split(","), []);
+                    const next = normalizeTrimmedStringArray(value.split(","), []);
+                    if (addsExclusions(plugin.settings.dataBoundary.excludedFolders, next)) {
+                        plugin.cancelActiveMemoryPreparation();
+                    }
+                    plugin.settings.dataBoundary.excludedFolders = next;
                     this.debouncedSave();
                 }));
 
@@ -1848,9 +1864,13 @@ export class SettingTab extends PluginSettingTab {
                 .setPlaceholder("private, sensitive")
                 .setValue(plugin.settings.dataBoundary.excludedTags.join(", "))
                 .onChange((value) => {
-                    plugin.settings.dataBoundary.excludedTags = normalizeTrimmedStringArray(value.split(","), [])
+                    const next = normalizeTrimmedStringArray(value.split(","), [])
                         .map((tag) => tag.replace(/^#/, ""))
                         .filter(Boolean);
+                    if (addsExclusions(plugin.settings.dataBoundary.excludedTags, next)) {
+                        plugin.cancelActiveMemoryPreparation();
+                    }
+                    plugin.settings.dataBoundary.excludedTags = next;
                     this.debouncedSave();
                 }));
 
@@ -1862,7 +1882,12 @@ export class SettingTab extends PluginSettingTab {
                 .addOption("include-generated", this.t("plugin.settings.dataBoundary.generatedNotes.include"))
                 .setValue(plugin.settings.dataBoundary.generatedNotePolicy)
                 .onChange((value) => {
-                    plugin.settings.dataBoundary.generatedNotePolicy = normalizeDataBoundaryGeneratedNotePolicy(value);
+                    const next = normalizeDataBoundaryGeneratedNotePolicy(value);
+                    if (plugin.settings.dataBoundary.generatedNotePolicy === "include-generated"
+                        && next === "exclude-generated") {
+                        plugin.cancelActiveMemoryPreparation();
+                    }
+                    plugin.settings.dataBoundary.generatedNotePolicy = next;
                     void plugin.saveSettings();
                 }));
 
@@ -2410,6 +2435,10 @@ export class SettingTab extends PluginSettingTab {
                         }
                     }
 
+                    if (plugin.getAPITokenCacheState() === "unknown") {
+                        plugin.refreshAPITokenPresence();
+                    }
+                    plugin.cancelActiveMemoryPreparation();
                     plugin.settings.aiProvider = preset.runtimeProvider;
                     plugin.settings.aiProviderPreset = value;
                     if (value === "custom") {
@@ -2455,11 +2484,14 @@ export class SettingTab extends PluginSettingTab {
             .setName(this.t("plugin.settings.ai.apiToken.name"))
             .setDesc(this.t("plugin.settings.ai.apiToken.desc"))
             .addButton((button) => {
-                const hasToken = plugin.hasTokenCachedValue() ?? hasSecretValue(plugin.getConfiguredAPITokenSecret());
+                const tokenState = plugin.getAPITokenCacheState();
+                const buttonKey = tokenState === "present"
+                    ? "plugin.settings.apiToken.modal.editTitle"
+                    : tokenState === "missing"
+                        ? "plugin.settings.apiToken.modal.addTitle"
+                        : "plugin.settings.apiToken.modal.manageTitle";
                 button
-                    .setButtonText(this.t(hasToken
-                        ? "plugin.settings.apiToken.modal.editTitle"
-                        : "plugin.settings.apiToken.modal.addTitle"))
+                    .setButtonText(this.t(buttonKey))
                     .onClick(() => this.openApiTokenSecretEditor());
             });
 
@@ -2470,6 +2502,9 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder("https://api.openai.com/v1");
                 text.setValue(plugin.settings.baseURL);
                 text.onChange((value: string) => {
+                    if (value !== plugin.settings.baseURL) {
+                        plugin.cancelActiveMemoryPreparation();
+                    }
                     plugin.settings.baseURL = value;
                     plugin.settings.aiProviderPreset = "custom";
                     this.debouncedSave();
@@ -2495,19 +2530,21 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
 
-        const policyModelSetting = new Setting(container);
-        (policyModelSetting as Setting & { settingEl?: HTMLElement }).settingEl?.addClass("pa-policy-model-setting");
-        policyModelSetting
-            .setName(this.t("plugin.settings.ai.policyModel.name"))
-            .setDesc(this.t("plugin.settings.ai.policyModel.desc"))
-            .addText((text) => {
-                text.setPlaceholder(plugin.settings.chatModelName || "optional");
-                text.setValue(plugin.settings.policyModelName);
-                text.onChange((value: string) => {
-                    plugin.settings.policyModelName = value.trim();
-                    this.debouncedSave();
+        if (plugin.settings.showAdvancedMemoryControls) {
+            const policyModelSetting = new Setting(container);
+            (policyModelSetting as Setting & { settingEl?: HTMLElement }).settingEl?.addClass("pa-policy-model-setting");
+            policyModelSetting
+                .setName(this.t("plugin.settings.ai.policyModel.name"))
+                .setDesc(this.t("plugin.settings.ai.policyModel.desc"))
+                .addText((text) => {
+                    text.setPlaceholder(plugin.settings.chatModelName || "optional");
+                    text.setValue(plugin.settings.policyModelName);
+                    text.onChange((value: string) => {
+                        plugin.settings.policyModelName = value.trim();
+                        this.debouncedSave();
+                    });
                 });
-            });
+        }
         this.markFormControlSettings(container);
     }
 
@@ -2841,6 +2878,9 @@ export class SettingTab extends PluginSettingTab {
                 toggle
                     .setValue(plugin.settings.memoryEnabled)
                     .onChange(async (value) => {
+                        if (!value && plugin.settings.memoryEnabled) {
+                            plugin.cancelActiveMemoryPreparation();
+                        }
                         plugin.settings.memoryEnabled = value;
                         await plugin.saveSettings();
                         this.rebuildMemorySubSettings();
@@ -3697,6 +3737,7 @@ export class SettingTab extends PluginSettingTab {
                         plugin.settings.showAdvancedMemoryControls = value;
                         await plugin.saveSettings();
                         this.rebuildMemoryAdvanced();
+                        this.rebuildProviderConfig();
                     });
             });
 
@@ -3826,6 +3867,9 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder("model name");
                 text.setValue(plugin.settings.embeddingModelName);
                 text.onChange((value: string) => {
+                    if (value !== plugin.settings.embeddingModelName) {
+                        plugin.cancelActiveMemoryPreparation();
+                    }
                     plugin.settings.embeddingModelName = value;
                     plugin.settings.aiProviderPreset = "custom";
                     this.debouncedSave();
@@ -3908,7 +3952,11 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('tmp/,notes/templates')
                     .setValue(plugin.settings.vssCacheExcludePath.join(','))
                     .onChange((value) => {
-                        plugin.settings.vssCacheExcludePath = value.split(",").map((path) => path.trim()).filter(Boolean);
+                        const next = value.split(",").map((path) => path.trim()).filter(Boolean);
+                        if (addsExclusions(plugin.settings.vssCacheExcludePath, next)) {
+                            plugin.cancelActiveMemoryPreparation();
+                        }
+                        plugin.settings.vssCacheExcludePath = next;
                         this.debouncedSave();
                     })
             });

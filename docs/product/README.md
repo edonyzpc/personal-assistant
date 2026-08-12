@@ -22,6 +22,7 @@
 
 ## Memory、Insight 与 Review
 
+- [Silent First-Use Memory Preparation](./specs/pa-silent-first-use-memory-preparation-product-spec.md)
 - [Memory Control Center](./specs/pa-memory-control-center-product-spec.md)
 - [Memory Type Taxonomy](./specs/pa-memory-type-taxonomy-product-spec.md)
 - [Saved Insight and Insight Ledger](./specs/pa-saved-insight-ledger-product-spec.md)

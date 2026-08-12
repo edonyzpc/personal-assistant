@@ -193,7 +193,9 @@ authority/traceability、当前文档删除连续性，以及 Archive 的当前�
 它不要求 Archive 自成完整链接图，也不要求为无入链、无稳定身份的过程草稿或历史
 清理回填整套 package。
 
-该门禁属于文档维护与常规 CI，不是 beta/stable 的发布资格门。发布流程只运行
+该门禁属于文档维护；常规 CI 也运行完整检查，但只作为 advisory warning。finding 必须
+清晰可见并独立修复，但不得仅因 lifecycle finding 让 CI job 失败，也不得阻断后续
+Test、Lint、Build 或 bundle audit。它不是 beta/stable 的发布资格门。发布流程只运行
 `npm run docs:check:release`，校验公开/发布关键文档及其直接本地链接；Backlog、
 Discovery、Active Package、Tracker、Decision/Spec/Governance 状态、WIP 数量、Archive
-入链或跨 tag 删除连续性不得阻断版本发布。完整 lifecycle finding 仍需独立报告和修复。
+入链或跨 tag 删除连续性不得阻断版本发布。

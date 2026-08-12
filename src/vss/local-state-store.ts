@@ -8,6 +8,7 @@ const VSS_LOCAL_STATE_DB_VERSION = 1;
 const STATE_STORE = "state";
 const MARKER_KEY = "marker";
 const DIRTY_JOURNAL_KEY = "dirtyJournal";
+const REBUILD_GUARD_KEY = "rebuildGuard";
 const MIGRATION_METADATA_KEY = "migration";
 const PLUGIN_STORAGE_SCOPE = "personal-assistant-vss-state";
 
@@ -18,6 +19,20 @@ export interface VSSLocalStateMigrationMetadata {
     lastLegacyError?: string;
 }
 
+export type VSSRebuildRecoveryReason = "first-use" | "settings-changed" | "local-memory-missing";
+
+export interface VSSRebuildGuard {
+    version: 1;
+    reason: VSSRebuildRecoveryReason;
+    startedAt: string;
+}
+
+export interface VSSRebuildStateTransition {
+    marker: VSSIndexMarker | null;
+    dirtyJournal: Map<string, DirtyTimestamps>;
+    guard: VSSRebuildGuard | null;
+}
+
 export interface VSSIndexStateStore {
     initialize(): Promise<void>;
     getMarker(): Promise<VSSIndexMarker | null>;
@@ -26,6 +41,8 @@ export interface VSSIndexStateStore {
     getDirtyJournal(): Promise<Map<string, DirtyTimestamps>>;
     setDirtyJournal(dirty: Map<string, DirtyTimestamps>): Promise<void>;
     clearDirtyJournal(): Promise<void>;
+    getRebuildGuard(): Promise<VSSRebuildGuard | null>;
+    replaceRebuildState(state: VSSRebuildStateTransition): Promise<void>;
     getMigrationMetadata(): Promise<VSSLocalStateMigrationMetadata | null>;
     setMigrationMetadata(metadata: VSSLocalStateMigrationMetadata): Promise<void>;
     dispose(): Promise<void>;
@@ -34,6 +51,7 @@ export interface VSSIndexStateStore {
 export class MemoryVSSIndexStateStore implements VSSIndexStateStore {
     private marker: VSSIndexMarker | null = null;
     private dirtyJournal = new Map<string, DirtyTimestamps>();
+    private rebuildGuard: VSSRebuildGuard | null = null;
     private migrationMetadata: VSSLocalStateMigrationMetadata | null = null;
 
     async initialize(): Promise<void> {
@@ -62,6 +80,16 @@ export class MemoryVSSIndexStateStore implements VSSIndexStateStore {
 
     async clearDirtyJournal(): Promise<void> {
         this.dirtyJournal.clear();
+    }
+
+    async getRebuildGuard(): Promise<VSSRebuildGuard | null> {
+        return this.rebuildGuard ? { ...this.rebuildGuard } : null;
+    }
+
+    async replaceRebuildState(state: VSSRebuildStateTransition): Promise<void> {
+        this.marker = state.marker ? { ...state.marker } : null;
+        this.dirtyJournal = cloneDirtyMap(state.dirtyJournal);
+        this.rebuildGuard = state.guard ? { ...state.guard } : null;
     }
 
     async getMigrationMetadata(): Promise<VSSLocalStateMigrationMetadata | null> {
@@ -105,6 +133,14 @@ export class UnavailableVSSIndexStateStore implements VSSIndexStateStore {
     }
 
     async clearDirtyJournal(): Promise<void> {
+        throw this.error;
+    }
+
+    async getRebuildGuard(): Promise<VSSRebuildGuard | null> {
+        throw this.error;
+    }
+
+    async replaceRebuildState(_state: VSSRebuildStateTransition): Promise<void> {
         throw this.error;
     }
 
@@ -166,6 +202,28 @@ export class IndexedDbVSSIndexStateStore implements VSSIndexStateStore {
 
     async clearDirtyJournal(): Promise<void> {
         await this.removeEntry(DIRTY_JOURNAL_KEY);
+    }
+
+    async getRebuildGuard(): Promise<VSSRebuildGuard | null> {
+        const value = await this.getEntry<VSSRebuildGuard>(REBUILD_GUARD_KEY);
+        return value ? { ...value } : null;
+    }
+
+    async replaceRebuildState(state: VSSRebuildStateTransition): Promise<void> {
+        const transaction = this.getTransaction("readwrite");
+        const store = transaction.objectStore(STATE_STORE);
+        if (state.marker) {
+            store.put({ key: MARKER_KEY, value: { ...state.marker } });
+        } else {
+            store.delete(MARKER_KEY);
+        }
+        store.put({ key: DIRTY_JOURNAL_KEY, value: dirtyMapToRecord(state.dirtyJournal) });
+        if (state.guard) {
+            store.put({ key: REBUILD_GUARD_KEY, value: { ...state.guard } });
+        } else {
+            store.delete(REBUILD_GUARD_KEY);
+        }
+        await transactionDone(transaction);
     }
 
     async getMigrationMetadata(): Promise<VSSLocalStateMigrationMetadata | null> {
