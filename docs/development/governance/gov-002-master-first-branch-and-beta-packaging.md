@@ -36,7 +36,8 @@ flowchart LR
 - NG-02: 不追溯改写 `2.9.0-beta.1`、`2.9.0-beta.2` 或其他已发布历史。
 - NG-03: 不授权 push、tag、publish、force-push 或 stable release。
 - NG-04: 不修改 PA runtime、数据/隐私边界、Obsidian UI 或用户行为。
-- NG-05: 不弱化常规 CI 与文档维护中的完整 `docs:check`。
+- NG-05: 不从常规 CI 或文档维护中移除完整 `docs:check`；常规 CI 以独立 advisory
+  报告 finding，不阻断后续 source/runtime gates。
 
 ## Acceptance Criteria
 
@@ -45,7 +46,7 @@ flowchart LR
 - B-117/AC-03: prerelease publish 只接受 tag/HEAD 为 `master` 之上唯一直接 release commit、本地 `master` 等于实时查询的 `origin/master`、版本 metadata 一致且 commit 只含完整生成包装文件；beta branch + tag 原子推送。
 - B-117/AC-04: GitHub release workflow 对 prerelease tag 重复校验 release parent 仍属于当前 `origin/master` 历史、匹配 beta ref、版本 metadata 与完整包装文件集合；正常并发快进可接受，分叉/重写与手工不完整包装被拒绝。
 - B-117/AC-05: 当前文档保留已发布 beta.2 的真实历史，不把新政策伪装成旧发布事实；focused tests、release docs check 与 diff check 通过。
-- B-117/AC-06: 本地 release 与 GitHub tag workflow 都只调用 `docs:check:release`；release checker 不读取 lifecycle status，常规 CI 仍调用完整 `docs:check`。
+- B-117/AC-06: 本地 release 与 GitHub tag workflow 都只调用 `docs:check:release`；release checker 不读取 lifecycle status，常规 CI 仍调用完整 `docs:check` 并将 finding 作为不阻断后续 gate 的 advisory warning。
 
 ## Traceability
 

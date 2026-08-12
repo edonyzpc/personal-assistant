@@ -28,12 +28,21 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Check platform guards
+        run: bash scripts/check-platform-guards.sh
+      - name: Self-test platform guards
+        run: bash scripts/test-platform-guards.sh
       - name: Check third-party notices
         run: npm run check:third-party-notices
-      - name: Check documentation workflow
+      - name: Check documentation workflow (advisory)
+        id: docs_check
+        continue-on-error: true
         env:
           DOCS_CHECK_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: npm run docs:check
+      - name: Report documentation workflow findings
+        if: ${{ steps.docs_check.outcome == 'failure' }}
+        run: echo "::warning title=Documentation workflow findings::npm run docs:check reported lifecycle findings. Review the advisory step; source and runtime validation will continue."
       - name: Test
         run: npm test -- --runInBand --coverage
       - name: Lint

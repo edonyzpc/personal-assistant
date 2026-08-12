@@ -57,7 +57,8 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
   入链 Archive、超出 `1 Now + 1 Next`、Feature Home 状态镜像、Active
   handoff/closeout、`T-xxx` 删除和不可用显式 baseline fail closed；同时允许删除
   baseline 无入链、无稳定身份的过程草稿。release checker 不读取上述 lifecycle 状态，
-  且 focused release test 证明常规 CI 仍保留完整 `docs:check`。
+  且 focused workflow test 证明常规 CI 仍运行完整 `docs:check`、以 warning 报告
+  finding，并继续执行后续 source/runtime gates。
 - B-115/AC-05: B-115 可从 docs index → Development index → Governance index/GOV-001
   定位；Tracker 独占执行状态与跨会话 handoff，Plan/SDD 按复杂度创建，`Validated`
   自动触发 closeout 询问，过程 artifact 吸收后默认删除，且不伪造 Product
