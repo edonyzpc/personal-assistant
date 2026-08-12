@@ -15,6 +15,7 @@ jest.mock('obsidian', () => {
     class MockPlugin { }
     class MockTFile {
         path: string;
+        extension = "md";
         constructor(path: string) {
             this.path = path;
         }
@@ -94,7 +95,7 @@ jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: s
 
 import { PluginManager } from '../src/plugin';
 
-interface FakeFile { path: string }
+interface FakeFile { path: string; extension?: string }
 
 const DATA_BOUNDARY_DEFAULTS = {
     excludedFolders: [] as string[],
@@ -110,6 +111,9 @@ const buildHarness = (
         metadataByPath?: Record<string, unknown>;
     } = {},
 ) => {
+    // Vault#getMarkdownFiles always returns Markdown TFiles. Keep the harness
+    // faithful to that contract while preserving each fixture's identity.
+    files.forEach((file) => { file.extension ??= "md"; });
     const plugin = Object.create(PluginManager.prototype) as unknown as {
         app: {
             vault: {
@@ -160,6 +164,13 @@ describe('PluginManager.getVSSFiles', () => {
         const files = [{ path: 'a.md' }, { path: 'b/c.md' }];
         const plugin = buildHarness(files, undefined);
         expect(plugin.getVSSFiles()).toEqual(files);
+    });
+
+    it('rejects a non-Markdown entry if a caller supplies one defensively', () => {
+        const markdown = { path: 'notes/keep.md', extension: 'md' };
+        const nonMarkdown = { path: 'assets/skip.pdf', extension: 'pdf' };
+        const plugin = buildHarness([markdown, nonMarkdown], []);
+        expect(plugin.getVSSFiles()).toEqual([markdown]);
     });
 
     it('excludes files that match a single prefix', () => {

@@ -33,8 +33,14 @@ export interface MemoryHost {
     /** Persist current settings to disk. */
     saveSettings(): Promise<void> | void;
 
+    /** Persist Memory admission/compensation even while plugin unload is draining. */
+    persistMemoryAdmissionSettings(): Promise<void>;
+
     /** Return the Markdown files that are eligible for Memory indexing. */
     getVSSFiles(): TFile[];
+
+    /** Re-check current shared Data Boundary and Memory exclusions for one file. */
+    isVSSFileEligible(file: TFile): boolean;
 
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;
@@ -42,7 +48,7 @@ export interface MemoryHost {
     /** Notify UI consumers that Memory status has changed. */
     notifyStatusChanged(): void;
 
-    /** Update a Memory setting and persist to disk. */
+    /** Mutate a Memory setting; the caller owns the persistence transaction. */
     updateMemorySetting<K extends keyof MemoryHost["settings"]>(
         key: K,
         value: MemoryHost["settings"][K],

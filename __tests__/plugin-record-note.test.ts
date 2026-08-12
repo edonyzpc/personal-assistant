@@ -9906,6 +9906,7 @@ describe('manual Memory action guard', () => {
                 : key
         ));
         plugin.getAISetupIssue = jest.fn(() => null);
+        plugin.getAIReadiness = jest.fn(() => ({ ready: true }));
         plugin.showTechnicalMemoryStatus = jest.fn(async () => undefined);
         plugin.onMemoryStatusChanged = jest.fn(() => jest.fn());
         plugin.onSettingsChanged = jest.fn(() => jest.fn());

@@ -10,6 +10,89 @@ import { getPlatformDocument } from '../platform-dom';
 
 type ChatTransport = 'obsidian' | 'native';
 
+export type APITokenCacheState = "unknown" | "present" | "missing";
+export type AIReadinessScope = "chat" | "memory";
+export type AIReadinessIssue =
+    | "provider_missing"
+    | "provider_unsupported"
+    | "base_url_missing"
+    | "chat_model_missing"
+    | "embedding_model_missing"
+    | "token_unknown"
+    | "token_missing";
+
+export interface AIReadinessSettings {
+    aiProvider: string;
+    baseURL: string;
+    chatModelName: string;
+    embeddingModelName: string;
+}
+
+export interface AIReadinessSnapshot extends AIReadinessSettings {
+    scope: AIReadinessScope;
+    ready: boolean;
+    issue: AIReadinessIssue | null;
+    tokenState: APITokenCacheState;
+    hasToken: boolean;
+}
+
+const SUPPORTED_AI_PROVIDERS = new Set(["qwen", "openai"]);
+
+function normalizeRequiredValue(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+export function assessAIReadiness(
+    settings: AIReadinessSettings,
+    tokenState: APITokenCacheState,
+    scope: AIReadinessScope = "chat",
+): AIReadinessSnapshot {
+    const aiProvider = normalizeRequiredValue(settings.aiProvider).toLowerCase();
+    const baseURL = normalizeRequiredValue(settings.baseURL);
+    const chatModelName = normalizeRequiredValue(settings.chatModelName);
+    const embeddingModelName = normalizeRequiredValue(settings.embeddingModelName);
+    let issue: AIReadinessIssue | null = null;
+
+    if (!aiProvider) issue = "provider_missing";
+    else if (!SUPPORTED_AI_PROVIDERS.has(aiProvider)) issue = "provider_unsupported";
+    else if (!baseURL) issue = "base_url_missing";
+    else if (!chatModelName) issue = "chat_model_missing";
+    else if (scope === "memory" && !embeddingModelName) issue = "embedding_model_missing";
+    else if (tokenState === "unknown") issue = "token_unknown";
+    else if (tokenState === "missing") issue = "token_missing";
+
+    return {
+        scope,
+        ready: issue === null,
+        issue,
+        tokenState,
+        hasToken: tokenState === "present",
+        aiProvider,
+        baseURL,
+        chatModelName,
+        embeddingModelName,
+    };
+}
+
+function throwForReadiness(readiness: AIReadinessSnapshot): never {
+    switch (readiness.issue) {
+        case "provider_missing":
+            throw new Error("AI provider not configured. Complete setup in Settings.");
+        case "provider_unsupported":
+            throw new Error(`Unsupported AI provider: ${readiness.aiProvider}`);
+        case "embedding_model_missing":
+            throw new Error("AI provider configuration incomplete. Check base URL and embedding model in Settings.");
+        case "base_url_missing":
+        case "chat_model_missing":
+            throw new Error("AI provider configuration incomplete. Check base URL and model in Settings.");
+        case "token_unknown":
+        case "token_missing":
+            throw new Error("AI API token not configured. Add a valid token in Settings.");
+        default:
+            throw new Error("AI provider configuration is not ready.");
+    }
+}
+
 export type NativeToolCallingCapabilityStatus = "disabled" | "unsupported" | "supported";
 
 export interface NativeToolCallingCapability {
@@ -239,14 +322,25 @@ export class AIUtils {
         temperature: number = 0.8,
         options: CreateChatModelOptions = {},
     ): Promise<ChatOpenAI<ChatOpenAICallOptions>> {
-        const provider = this.host.settings.aiProvider;
-        const modelName = options.modelName || this.host.settings.chatModelName;
-        const baseURL = this.host.settings.baseURL;
+        const readiness = assessAIReadiness({
+            ...this.host.settings,
+            chatModelName: options.modelName === undefined
+                ? this.host.settings.chatModelName
+                : options.modelName,
+        }, "present", "chat");
+        if (!readiness.ready) throwForReadiness(readiness);
+
+        const provider = readiness.aiProvider;
+        const modelName = readiness.chatModelName;
+        const baseURL = readiness.baseURL;
         const transport = options.transport ?? 'obsidian';
+        const token = (await this.getAPIToken()).trim();
+        if (!token) {
+            throwForReadiness(assessAIReadiness(this.host.settings, "missing", "chat"));
+        }
 
         switch (provider) {
             case 'qwen': {
-                const token = await this.getAPIToken();
                 const modelKwargs = buildQwenModelKwargs(provider, baseURL, options.qwenRequestOptions);
                 return new ChatOpenAI({
                     model: modelName,
@@ -259,10 +353,9 @@ export class AIUtils {
             }
 
             case 'openai': {
-                const openaiToken = await this.getAPIToken();
                 return new ChatOpenAI({
                     model: modelName,
-                    apiKey: openaiToken,
+                    apiKey: token,
                     configuration: this.createOpenAIClientOptions(baseURL, transport),
                     temperature: temperature,
                     ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
@@ -346,14 +439,20 @@ export class AIUtils {
      * 创建嵌入模型实例
      */
     async createEmbeddings(dimensions?: number, options: CreateEmbeddingsOptions = {}): Promise<OpenAIEmbeddings> {
-        const provider = this.host.settings.aiProvider;
-        const modelName = this.host.settings.embeddingModelName;
-        const baseURL = this.host.settings.baseURL;
+        const readiness = assessAIReadiness(this.host.settings, "present", "memory");
+        if (!readiness.ready) throwForReadiness(readiness);
+
+        const provider = readiness.aiProvider;
+        const modelName = readiness.embeddingModelName;
+        const baseURL = readiness.baseURL;
+        const token = (await this.getAPIToken()).trim();
+        if (!token) {
+            throwForReadiness(assessAIReadiness(this.host.settings, "missing", "memory"));
+        }
 
         switch (provider) {
             case 'qwen':
             case 'openai': {
-                const token = await this.getAPIToken();
                 return new OpenAIEmbeddings({
                     model: modelName,
                     dimensions: dimensions,

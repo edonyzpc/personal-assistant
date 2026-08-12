@@ -694,6 +694,9 @@ function createView(options: {
     panelWidth?: number;
     chatHistoryManager?: unknown;
     setupIssue?: string | null;
+    inlineSetup?: boolean;
+    tokenState?: 'unknown' | 'present' | 'missing';
+    setupResult?: { ok: true } | { ok: false; code: 'invalid_configuration' | 'token_required' | 'token_save_failed' | 'settings_save_failed' | 'compensation_failed' };
     operationsEnabled?: boolean;
 } = {}) {
     const containerEl = new MockElement('div');
@@ -702,6 +705,7 @@ function createView(options: {
     const memoryStatusListeners = new Set<() => void | Promise<void>>();
     const settingsChangeListeners = new Set<() => void | Promise<void>>();
     let setupIssue = options.setupIssue ?? null;
+    let tokenState = options.tokenState ?? 'missing';
     const editor = {
         getCursor: jest.fn(() => ({ line: 0, ch: 0 })),
         replaceRange: jest.fn(),
@@ -753,6 +757,7 @@ function createView(options: {
             aiProvider: 'openai',
             baseURL: '',
             chatModelName: 'gpt-test',
+            embeddingModelName: 'embed-test',
             operationsAgentEnabled: options.operationsEnabled === true,
             operationsProactiveSaveSuggestionsEnabled: true,
         },
@@ -776,6 +781,41 @@ function createView(options: {
             }),
         },
         getAISetupIssue: jest.fn(() => setupIssue),
+        ...(options.inlineSetup ? {
+            getAIReadiness: jest.fn(() => {
+                const issue = setupIssue === null
+                    ? null
+                    : setupIssue.includes('token')
+                        ? tokenState === 'present'
+                            ? null
+                            : tokenState === 'unknown'
+                                ? 'token_unknown' as const
+                                : 'token_missing' as const
+                        : 'base_url_missing' as const;
+                return {
+                    scope: 'chat' as const,
+                    ready: issue === null,
+                    issue,
+                    tokenState,
+                    hasToken: tokenState === 'present',
+                    aiProvider: 'openai',
+                    baseURL: '',
+                    chatModelName: 'gpt-test',
+                    embeddingModelName: 'embed-test',
+                };
+            }),
+            refreshAPITokenPresence: jest.fn(() => {
+                if (tokenState === 'present' && setupIssue?.includes('token')) {
+                    setupIssue = null;
+                }
+                return tokenState;
+            }),
+            completeAISetup: jest.fn(async () => {
+                const result = options.setupResult ?? { ok: true as const };
+                if (result.ok) setupIssue = null;
+                return result;
+            }),
+        } : {}),
         onSettingsChanged: jest.fn((listener: () => void | Promise<void>) => {
             settingsChangeListeners.add(listener);
             return () => {
@@ -829,6 +869,7 @@ function createView(options: {
         getMemoryStatusListenerCount,
         getSettingsChangeListenerCount,
         setAISetupIssue,
+        setTokenState: (value: 'unknown' | 'present' | 'missing') => { tokenState = value; },
     };
 }
 
@@ -4175,16 +4216,142 @@ describe('LLMView turn lifecycle', () => {
         });
         await view.onOpen();
 
-        expect(allText(containerEl)).toContain('Welcome to AI Chat');
+        expect(allText(containerEl)).toContain('Get Started');
         expect(allText(containerEl)).toContain('Add your API token in Settings first.');
 
         setAISetupIssue(null);
         await emitSettingsChanged();
 
-        expect(allText(containerEl)).not.toContain('Welcome to AI Chat');
+        expect(allText(containerEl)).not.toContain('Get Started');
         expect(allText(containerEl)).not.toContain('Add your API token in Settings first.');
         expect(allText(containerEl)).toContain('Ask about your notes');
         expect(getButtonByText(containerEl, 'Summarize current note').disabled).toBe(false);
+    });
+
+    it('checks an unknown saved token only after the user explicitly sends', async () => {
+        const harness = createView({
+            setupIssue: 'Your saved API token has not been checked yet.',
+            inlineSetup: true,
+            tokenState: 'unknown',
+        });
+        const { view, containerEl, plugin, setAISetupIssue, setTokenState } = harness;
+        const refreshToken = plugin.refreshAPITokenPresence as jest.Mock;
+        refreshToken.mockImplementation(() => {
+            setTokenState('present');
+            setAISetupIssue(null);
+            return 'present';
+        });
+        await view.onOpen();
+
+        expect(allText(containerEl)).not.toContain('Add your API token');
+        expect(allText(containerEl)).not.toContain('Get Started');
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Hello';
+        expect(refreshToken).not.toHaveBeenCalled();
+
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        expect(refreshToken).toHaveBeenCalledTimes(1);
+        expect(streamCalls).toHaveLength(1);
+        streamCalls[0].resolve();
+        await flushPromises();
+    });
+
+    it('keeps an unknown token neutral when an explicit check is unavailable', async () => {
+        const { view, containerEl, plugin } = createView({
+            setupIssue: 'Your saved API token has not been checked yet.',
+            inlineSetup: true,
+            tokenState: 'unknown',
+        });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'Hello';
+
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        expect(plugin.refreshAPITokenPresence).toHaveBeenCalledTimes(1);
+        expect(streamCalls).toHaveLength(0);
+        expect(allText(containerEl)).toContain('has not been checked yet');
+        expect(allText(containerEl)).not.toContain('Add your API token');
+    });
+
+    it('reuses an existing token when a provider preset completes partial setup', async () => {
+        const { view, containerEl, plugin } = createView({
+            setupIssue: 'Complete the AI provider URL and model in Settings first.',
+            inlineSetup: true,
+            tokenState: 'present',
+        });
+        await view.onOpen();
+
+        const providerGroup = getElementByClass(containerEl, 'pa-chat-setup-providers');
+        expect(providerGroup.getAttribute('role')).toBe('group');
+        expect(providerGroup.getAttribute('aria-labelledby')).toBeTruthy();
+        getButtonByText(containerEl, 'OpenAI').click();
+        const tokenRow = getElementByClass(containerEl, 'pa-chat-setup-token-row');
+        const start = getButtonByText(containerEl, 'Start');
+        expect(tokenRow.classList.contains('pa-hidden')).toBe(true);
+        expect(start.disabled).toBe(false);
+        const completeAISetup = plugin.completeAISetup as jest.Mock;
+
+        await start.click();
+
+        expect(completeAISetup).toHaveBeenCalledWith({ presetKey: 'openai' });
+    });
+
+    it('keeps inline setup retryable with visible live feedback after a save failure', async () => {
+        const { view, containerEl } = createView({
+            setupIssue: 'Add your API token in Settings first.',
+            inlineSetup: true,
+            tokenState: 'missing',
+            setupResult: { ok: false, code: 'settings_save_failed' },
+        });
+        await view.onOpen();
+
+        const tokenInput = getElementByClass(containerEl, 'pa-chat-setup-token-input');
+        const start = getButtonByText(containerEl, 'Start');
+        const form = getElementByClass(containerEl, 'pa-chat-setup-form');
+        expect(start.disabled).toBe(true);
+        tokenInput.value = 'sk-test';
+        expect(start.disabled).toBe(false);
+
+        const pending = start.click() as Promise<void>;
+        expect(form.getAttribute('aria-busy')).toBe('true');
+        await pending;
+
+        const status = getElementByClass(containerEl, 'pa-chat-setup-status');
+        expect(status.getAttribute('role')).toBe('status');
+        expect(status.getAttribute('aria-live')).toBe('polite');
+        expect(status.classList.contains('is-error')).toBe(true);
+        expect(allText(status)).toContain('Could not save this AI setup');
+        expect(form.getAttribute('aria-busy')).toBeNull();
+        expect(start.disabled).toBe(false);
+    });
+
+    it('submits valid token-only setup with Enter', async () => {
+        const { view, containerEl, plugin } = createView({
+            setupIssue: 'Add your API token in Settings first.',
+            inlineSetup: true,
+            tokenState: 'missing',
+        });
+        await view.onOpen();
+        const tokenInput = getElementByClass(containerEl, 'pa-chat-setup-token-input');
+        tokenInput.value = 'sk-test';
+        const preventDefault = jest.fn();
+
+        tokenInput.dispatchEvent('keydown', { key: 'Enter', preventDefault });
+        await flushPromises();
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(plugin.completeAISetup).toHaveBeenCalledWith({ token: 'sk-test' });
+    });
+
+    it('keeps inline setup controls touch-sized on mobile', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-empty-chip\s*{[\s\S]*?min-height:\s*44px;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-setup-token-input\s*{[\s\S]*?min-height:\s*44px;[\s\S]*?font-size:\s*16px;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-setup-advanced-link\s*{[\s\S]*?min-height:\s*44px;/);
     });
 
     it('uses panel-width density classes instead of viewport media queries', async () => {

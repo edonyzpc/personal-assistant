@@ -1,3 +1,5 @@
+import type { VSSRebuildRecoveryReason } from "./local-state-store";
+
 export const VSS_PARAMS = {
     quietWindow: 30 * 1000,
     maxDelay: 10 * 60 * 1000,
@@ -37,6 +39,9 @@ export interface VSSProgressEvent {
 export interface VSSOperationOptions {
     silent?: boolean;
     onProgress?: (event: VSSProgressEvent) => void;
+    abortSignal?: AbortSignal;
+    rebuildReason?: VSSRebuildRecoveryReason;
+    deferAdmission?: boolean;
 }
 
 export interface VSSFlushOptions extends VSSOperationOptions {

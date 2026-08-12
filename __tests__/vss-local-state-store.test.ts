@@ -5,6 +5,7 @@ import {
     getVSSLocalStateDbName,
     IndexedDbVSSIndexStateStore,
     MemoryVSSIndexStateStore,
+    type VSSRebuildGuard,
 } from "../src/vss/local-state-store";
 import type { VSSIndexMarker } from "../src/vss/types";
 
@@ -84,6 +85,58 @@ describe("VSS local state store", () => {
         await expect(store.getDirtyJournal()).resolves.toEqual(new Map());
         await store.removeMarker();
         await expect(store.getMarker()).resolves.toBeNull();
+    });
+
+    it("atomically replaces marker, dirty journal, and rebuild guard in one IndexedDB transaction", async () => {
+        const fakeIndexedDb = new FakeIndexedDbFactory();
+        const store = new IndexedDbVSSIndexStateStore("vss-atomic-db", fakeIndexedDb as unknown as IDBFactory);
+        const guard: VSSRebuildGuard = {
+            version: 1,
+            reason: "settings-changed",
+            startedAt: "2026-08-12T00:00:00.000Z",
+        };
+        await store.initialize();
+
+        await store.replaceRebuildState({
+            marker: createMarker({ indexId: "prepared-index" }),
+            dirtyJournal: new Map([["retry.md", { first: 1, last: 2, epoch: 3 }]]),
+            guard,
+        });
+
+        await expect(store.getMarker()).resolves.toMatchObject({ indexId: "prepared-index" });
+        await expect(store.getDirtyJournal()).resolves.toEqual(new Map([
+            ["retry.md", { first: 1, last: 2, epoch: 3 }],
+        ]));
+        await expect(store.getRebuildGuard()).resolves.toEqual(guard);
+    });
+
+    it("keeps all prior rebuild state when the IndexedDB replacement transaction aborts", async () => {
+        const fakeIndexedDb = new FakeIndexedDbFactory();
+        const store = new IndexedDbVSSIndexStateStore("vss-abort-db", fakeIndexedDb as unknown as IDBFactory);
+        const oldGuard: VSSRebuildGuard = {
+            version: 1,
+            reason: "local-memory-missing",
+            startedAt: "2026-08-11T00:00:00.000Z",
+        };
+        await store.initialize();
+        await store.replaceRebuildState({
+            marker: createMarker({ indexId: "old-index" }),
+            dirtyJournal: new Map([["old.md", { first: 4, last: 5, epoch: 6 }]]),
+            guard: oldGuard,
+        });
+        fakeIndexedDb.db.abortNextTransaction();
+
+        await expect(store.replaceRebuildState({
+            marker: createMarker({ indexId: "new-index" }),
+            dirtyJournal: new Map([["new.md", { first: 7, last: 8, epoch: 9 }]]),
+            guard: null,
+        })).rejects.toThrow("transaction aborted");
+
+        await expect(store.getMarker()).resolves.toMatchObject({ indexId: "old-index" });
+        await expect(store.getDirtyJournal()).resolves.toEqual(new Map([
+            ["old.md", { first: 4, last: 5, epoch: 6 }],
+        ]));
+        await expect(store.getRebuildGuard()).resolves.toEqual(oldGuard);
     });
 
     it("scopes IndexedDB by plugin id, vault id, config dir, and local vault path", () => {
@@ -202,6 +255,7 @@ class FakeIdbDatabase {
     onversionchange: ((this: IDBDatabase, ev: IDBVersionChangeEvent) => unknown) | null = null;
     createObjectStoreCalls = 0;
     closeCalls = 0;
+    private shouldAbortNextTransaction = false;
 
     constructor(private readonly options: FakeIndexedDbOptions) {
         if (options.hasStore ?? true) {
@@ -220,7 +274,9 @@ class FakeIdbDatabase {
     }
 
     transaction(storeName: string, _mode: IDBTransactionMode): IDBTransaction {
-        return new FakeTransaction(this, storeName) as unknown as IDBTransaction;
+        const shouldAbort = this.shouldAbortNextTransaction;
+        this.shouldAbortNextTransaction = false;
+        return new FakeTransaction(this, storeName, shouldAbort) as unknown as IDBTransaction;
     }
 
     getStore(name: string): Map<string, unknown> {
@@ -235,6 +291,10 @@ class FakeIdbDatabase {
     close(): void {
         this.closeCalls += 1;
     }
+
+    abortNextTransaction(): void {
+        this.shouldAbortNextTransaction = true;
+    }
 }
 
 class FakeTransaction {
@@ -242,18 +302,38 @@ class FakeTransaction {
     onerror: ((this: IDBTransaction, ev: Event) => unknown) | null = null;
     onabort: ((this: IDBTransaction, ev: Event) => unknown) | null = null;
     error: DOMException | null = null;
+    private readonly stagedRecords: Map<string, unknown>;
+    private completionScheduled = false;
 
-    constructor(private readonly db: FakeIdbDatabase, private readonly storeName: string) { }
+    constructor(
+        private readonly db: FakeIdbDatabase,
+        private readonly storeName: string,
+        private readonly shouldAbort: boolean,
+    ) {
+        this.stagedRecords = new Map(
+            Array.from(db.getStore(storeName).entries(), ([key, value]) => [key, cloneValue(value)]),
+        );
+    }
 
     objectStore(name: string): IDBObjectStore {
         if (name !== this.storeName) {
             throw new Error(`Store ${name} is outside transaction scope ${this.storeName}.`);
         }
-        return new FakeObjectStore(this.db.getStore(name), this) as unknown as IDBObjectStore;
+        return new FakeObjectStore(this.stagedRecords, this) as unknown as IDBObjectStore;
     }
 
-    complete(): void {
-        this.oncomplete?.call(this as unknown as IDBTransaction, {} as Event);
+    scheduleCompletion(): void {
+        if (this.completionScheduled) return;
+        this.completionScheduled = true;
+        queueMicrotask(() => {
+            if (this.shouldAbort) {
+                this.error = new DOMException("transaction aborted", "AbortError");
+                this.onabort?.call(this as unknown as IDBTransaction, {} as Event);
+                return;
+            }
+            this.db.stores.set(this.storeName, new Map(this.stagedRecords));
+            this.oncomplete?.call(this as unknown as IDBTransaction, {} as Event);
+        });
     }
 }
 
@@ -272,13 +352,13 @@ class FakeObjectStore {
         const key = record.key;
         if (!key) throw new Error("Missing fake IndexedDB key.");
         this.records.set(key, cloneValue(record));
-        queueMicrotask(() => this.transaction?.complete());
+        this.transaction?.scheduleCompletion();
         return createAsyncRequest<IDBValidKey>(key);
     }
 
     delete(key: IDBValidKey): IDBRequest<undefined> {
         this.records.delete(String(key));
-        queueMicrotask(() => this.transaction?.complete());
+        this.transaction?.scheduleCompletion();
         return createAsyncRequest(undefined);
     }
 }

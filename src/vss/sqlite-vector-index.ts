@@ -15,6 +15,7 @@ import { clearPlatformTimeout, decodePlatformBase64, getPlatformLocation, setPla
 
 const SQLITE_DISPOSE_WORKER_READY_TIMEOUT_MS = 2_000;
 const SQLITE_DISPOSE_MESSAGE_TIMEOUT_MS = 2_000;
+const SQLITE_SEND_TIMEOUT_MS = 60_000;
 
 export interface SqliteVectorIndexOptions {
     workerUrl: string;
@@ -46,6 +47,9 @@ export class SqliteVectorIndex implements VectorIndex {
         resolve: (value: unknown) => void;
         reject: (reason?: unknown) => void;
     }>();
+    private lastInitializePayload: object | null = null;
+    private workerInitialized = false;
+    private hasEverInitialized = false;
 
     constructor(options: SqliteVectorIndexOptions) {
         this.workerUrl = options.workerUrl;
@@ -61,14 +65,21 @@ export class SqliteVectorIndex implements VectorIndex {
         this.assertActive();
         const wasmUrl = await this.prepareWasmUrl();
         this.assertActive();
-        return this.enqueue(() => this.send<VectorIndexStatus>("initialize", {
+        const payload = {
             profile,
             databaseName: this.databaseName,
             opfsDirectory: this.opfsDirectory,
             legacyOpfsDirectory: this.legacyOpfsDirectory,
             opfsVfsName: this.opfsVfsName,
             wasmUrl,
-        }));
+        };
+        this.lastInitializePayload = payload;
+        return this.enqueue(async () => {
+            const result = await this.send<VectorIndexStatus>("initialize", payload);
+            this.workerInitialized = true;
+            this.hasEverInitialized = true;
+            return result;
+        });
     }
 
     upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]): Promise<void> {
@@ -159,13 +170,23 @@ export class SqliteVectorIndex implements VectorIndex {
         const id = this.nextId++;
         const request = { id, type, payload } as SqliteWorkerRequest;
         return new Promise<T>((resolve, reject) => {
+            const timer = setPlatformTimeout(() => {
+                if (!this.pending.has(id)) return;
+                this.pending.delete(id);
+                this.resetWorker(worker);
+                reject(createVectorIndexError(
+                    "sqlite-worker-timeout",
+                    `Worker did not respond within ${SQLITE_SEND_TIMEOUT_MS}ms (possible background termination).`,
+                ));
+            }, SQLITE_SEND_TIMEOUT_MS);
             this.pending.set(id, {
-                resolve: (value) => resolve(value as T),
-                reject,
+                resolve: (value) => { clearPlatformTimeout(timer); resolve(value as T); },
+                reject: (error) => { clearPlatformTimeout(timer); reject(error); },
             });
             try {
                 worker.postMessage(request);
             } catch (error) {
+                clearPlatformTimeout(timer);
                 this.pending.delete(id);
                 this.resetWorker(worker);
                 reject(createVectorIndexError(
@@ -266,6 +287,18 @@ export class SqliteVectorIndex implements VectorIndex {
             this.resetWorker(worker);
         };
         this.worker = worker;
+        if (this.hasEverInitialized && this.lastInitializePayload && !this.workerInitialized) {
+            try {
+                await this.send<unknown>("initialize", this.lastInitializePayload);
+                this.workerInitialized = true;
+            } catch {
+                this.resetWorker(worker);
+                throw createVectorIndexError(
+                    "sqlite-worker-reinitialize-failed",
+                    "Replacement Worker failed to initialize.",
+                );
+            }
+        }
         return worker;
     }
 
@@ -277,6 +310,7 @@ export class SqliteVectorIndex implements VectorIndex {
         }
         this.worker = null;
         this.workerReady = null;
+        this.workerInitialized = false;
     }
 
     private rejectPending(error: Error): void {

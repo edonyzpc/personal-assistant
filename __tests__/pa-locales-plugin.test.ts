@@ -45,6 +45,33 @@ describe("plugin locale resources", () => {
         const t = makePluginTranslator("zh");
         expect(t("plugin.chat.history.minAgo", { count: 3 })).toBe("3 分钟前");
     });
+
+    it.each(["en", "zh"] as const)(
+        "discloses silent first-use Memory boundaries in %s",
+        (locale) => {
+            const enabled = pluginT("plugin.settings.memory.enabled.desc", locale);
+            const laterChecks = pluginT("plugin.settings.memory.askCredits.desc", locale);
+            const boundary = pluginT("plugin.settings.dataBoundary.providerDisclosure.desc", locale);
+
+            if (locale === "en") {
+                expect(enabled).toContain("configured AI provider");
+                expect(enabled).toContain("API credits or calls may be used");
+                expect(enabled).toContain("not modified or deleted");
+                expect(enabled).toContain("Turn this off");
+                expect(laterChecks).toContain("First-use preparation runs quietly");
+                expect(boundary).toContain("quiet exception");
+                expect(boundary).toContain("manual rebuilds");
+            } else {
+                expect(enabled).toContain("配置的 AI 服务商");
+                expect(enabled).toContain("AI 额度或 API 调用");
+                expect(enabled).toContain("不会修改或删除你的笔记");
+                expect(enabled).toContain("关闭此项");
+                expect(laterChecks).toContain("首次准备会安静地在后台运行");
+                expect(boundary).toContain("安静例外");
+                expect(boundary).toContain("手动重建");
+            }
+        },
+    );
 });
 
 describe("getPluginUiLanguage", () => {
