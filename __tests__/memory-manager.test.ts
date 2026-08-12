@@ -129,6 +129,33 @@ const createOperationSummary = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 });
 
+const createDeferred = <T,>() => {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+};
+
+const installMockDocument = () => {
+    const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: {
+            createDocumentFragment: jest.fn(() => createMockDomElement()),
+        },
+    });
+    return () => {
+        if (originalDocument) {
+            Object.defineProperty(globalThis, 'document', originalDocument);
+        } else {
+            delete (globalThis as { document?: Document }).document;
+        }
+    };
+};
+
 const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unknown> = {}) => {
     const plugin = {
         app: {},
@@ -170,10 +197,13 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
                 verified: 0,
                 hasMore: false,
             })),
-            refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
-            rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
+            refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean; abortSignal?: AbortSignal }) => createOperationSummary()),
+            rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean; abortSignal?: AbortSignal; deferAdmission?: boolean }) => createOperationSummary()),
+            admitPreparedRebuild: jest.fn(async (_options?: { abortSignal?: AbortSignal }) => true),
+            rollbackPreparedRebuild: jest.fn(async (_reason?: string) => undefined),
         },
         saveSettings: jest.fn(async () => undefined),
+        persistMemoryAdmissionSettings: jest.fn(async () => plugin.saveSettings()),
         notifyStatusChanged: jest.fn(),
         log: jest.fn(),
         registerEvent: jest.fn(),
@@ -370,6 +400,166 @@ describe('MemoryManager chat decisions', () => {
         ]);
     });
 
+    it('does not start preparation when Memory is disabled while approval is pending', async () => {
+        const plan = createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const manager = createManager(plugin);
+        const approval = createDeferred<'use-memory'>();
+        (manager as any).requestApproval = jest.fn(() => approval.promise); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const deciding = manager.ensureReadyForChat('question');
+        await Promise.resolve();
+        plugin.settings.memoryEnabled = false;
+        manager.cancelActivePreparation();
+        approval.resolve('use-memory');
+
+        await expect(deciding).resolves.toEqual({ decision: 'answer-now' });
+        expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+        expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+    });
+
+    it('keeps a second chat quiet while first-use preparation is still active', async () => {
+        const restoreDocument = installMockDocument();
+        const firstUsePlan = createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const unavailablePlan = createPlan({
+            reason: 'unavailable',
+            action: 'none',
+            requiresApproval: false,
+        });
+        const plugin = createPlugin(firstUsePlan);
+        plugin.vss.getMemoryReadiness
+            .mockResolvedValueOnce(firstUsePlan)
+            .mockResolvedValueOnce(firstUsePlan)
+            .mockResolvedValueOnce(unavailablePlan);
+        const rebuildStarted = createDeferred<void>();
+        const rebuildResult = createDeferred<ReturnType<typeof createOperationSummary>>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async () => {
+            rebuildStarted.resolve();
+            return rebuildResult.promise;
+        });
+        const manager = createManager(plugin);
+        try {
+            const firstDecision = await manager.ensureReadyForChat('first question');
+            await rebuildStarted.promise;
+            const backgroundRun = (manager as any).activePreparationRun.promise as Promise<unknown>; // eslint-disable-line @typescript-eslint/no-explicit-any
+            const secondDecision = await manager.ensureReadyForChat('second question');
+            const thirdDecision = await manager.ensureReadyForChat('third question');
+
+            expect(firstDecision).toEqual({
+                decision: 'answer-now',
+                message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+            });
+            expect(secondDecision).toEqual(firstDecision);
+            expect(thirdDecision).toEqual(firstDecision);
+            expect(plugin.vss.rebuildLocalIndex).toHaveBeenCalledTimes(1);
+            expect(mockNoticeMessages).not.toContain('Memory is unavailable. I will answer normally for now.');
+
+            rebuildResult.resolve(createOperationSummary({ updated: 1 }));
+            await backgroundRun;
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('does not report a detached first-use failure after unload cancels it', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const rebuildStarted = createDeferred<void>();
+        const rebuildFinished = createDeferred<void>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { silent?: boolean; abortSignal?: AbortSignal }) => {
+            rebuildStarted.resolve();
+            await new Promise<void>((resolve) => {
+                options?.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+            });
+            rebuildFinished.resolve();
+            return createOperationSummary({ aborted: true });
+        });
+        const manager = createManager(plugin);
+        try {
+            await manager.ensureReadyForChat('question');
+            await rebuildStarted.promise;
+            const backgroundRun = (manager as any).activePreparationRun.promise as Promise<unknown>; // eslint-disable-line @typescript-eslint/no-explicit-any
+            manager.stopAutoMaintenance();
+            await rebuildFinished.promise;
+            await backgroundRun;
+            await Promise.resolve();
+
+            expect(plugin.log).not.toHaveBeenCalledWith(
+                'Background memory prepare did not succeed',
+                expect.anything(),
+            );
+            expect(mockNoticeMessages).not.toContain('I could not prepare memory this time, so I answered normally.');
+            expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('shows a Notice when first-use background prepare fails', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        plugin.vss.rebuildLocalIndex.mockRejectedValueOnce(new TypeError('null is not an object'));
+        const manager = createManager(plugin);
+        try {
+            const noticeCountBefore = mockNoticeMessages.length;
+            await manager.ensureReadyForChat('question');
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockNoticeMessages.length).toBeGreaterThan(noticeCountBefore);
+            expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('does not show rejection Notice after lifecycle is stopped', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const rebuildStarted = createDeferred<void>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async () => {
+            rebuildStarted.resolve();
+            throw new Error('delayed crash');
+        });
+        const manager = createManager(plugin);
+        try {
+            mockNoticeMessages.length = 0;
+            await manager.ensureReadyForChat('question');
+            await rebuildStarted.promise;
+            manager.stopAutoMaintenance();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(mockNoticeMessages).not.toContain('Could not prepare memory. I will answer normally for now.');
+        } finally {
+            restoreDocument();
+        }
+    });
+
     it('does not check readiness when pre-chat memory checks are disabled', async () => {
         const plugin = createPlugin(createPlan(), { memoryAutoCheckBeforeChat: false });
         const manager = createManager(plugin);
@@ -495,7 +685,10 @@ describe('MemoryManager chat decisions', () => {
         try {
             await (manager as any).runBackgroundTask('verify', 'unit'); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-            expect(plugin.vss.verifyPendingChanges).toHaveBeenCalledWith({ reason: 'unit' });
+            expect(plugin.vss.verifyPendingChanges).toHaveBeenCalledWith({
+                reason: 'unit',
+                abortSignal: expect.any(AbortSignal),
+            });
             expect(plugin.notifyStatusChanged).toHaveBeenCalled();
             expect(flushSpy).toHaveBeenCalledWith('verify', 0);
             expect(plugin.vss.flush).not.toHaveBeenCalled();
@@ -562,6 +755,182 @@ describe('MemoryManager command decisions', () => {
         expect(mockNoticeMessages).toEqual([
             'Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.',
         ]);
+    });
+
+    it('does not publish success or upgrade policy after an all-failed rebuild', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        const summary = createOperationSummary({ failed: 1 });
+        plugin.vss.rebuildLocalIndex.mockResolvedValue(summary);
+        const manager = createManager(plugin);
+        try {
+            const result = await manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+
+            expect(result).toMatchObject({ ok: false, partial: false, summary });
+            expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
+            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('accepts an empty-vault rebuild when persistent storage is not granted', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        const summary = createOperationSummary({ storagePersisted: false });
+        plugin.vss.rebuildLocalIndex.mockResolvedValue(summary);
+        const manager = createManager(plugin);
+        try {
+            const result = await manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+
+            expect(result).toMatchObject({ ok: true, partial: false, summary });
+            expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+            expect(plugin.notifyStatusChanged).toHaveBeenCalled();
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('restores approval policy when cancellation races settings persistence', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        plugin.vss.rebuildLocalIndex.mockResolvedValue(createOperationSummary({ updated: 1 }));
+        const saveStarted = createDeferred<void>();
+        const releaseSave = createDeferred<void>();
+        plugin.saveSettings.mockImplementationOnce(async () => {
+            saveStarted.resolve();
+            await releaseSave.promise;
+        });
+        const manager = createManager(plugin);
+        try {
+            const preparing = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await saveStarted.promise;
+            manager.cancelActivePreparation();
+            releaseSave.resolve();
+            const result = await preparing;
+
+            expect(result.ok).toBe(false);
+            expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('keeps a second chat out of Memory while policy admission is still pending', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({ reason: 'first-use', action: 'rebuild', requiresApproval: true });
+        const plugin = createPlugin(plan);
+        plugin.vss.rebuildLocalIndex.mockResolvedValue(createOperationSummary({ updated: 1 }));
+        const saveStarted = createDeferred<void>();
+        const releaseSave = createDeferred<void>();
+        plugin.saveSettings.mockImplementationOnce(async () => {
+            saveStarted.resolve();
+            await releaseSave.promise;
+        });
+        const manager = createManager(plugin);
+        try {
+            const preparing = manager.prepareMemory(plan);
+            await saveStarted.promise;
+
+            const secondChat = await manager.ensureReadyForChat('second question');
+
+            expect(secondChat).toEqual({
+                decision: 'answer-now',
+                message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+            });
+            expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
+            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+
+            releaseSave.resolve();
+            await expect(preparing).resolves.toMatchObject({ ok: true, partial: false });
+            expect(plugin.vss.admitPreparedRebuild).toHaveBeenCalledTimes(1);
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('compensates a policy save that writes auto approval before throwing', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        plugin.vss.rebuildLocalIndex.mockResolvedValue(createOperationSummary({ updated: 1 }));
+        let persistedPolicy = 'always';
+        let saveAttempt = 0;
+        plugin.saveSettings.mockImplementation(async () => {
+            saveAttempt++;
+            persistedPolicy = plugin.settings.memoryApprovalPolicy;
+            if (saveAttempt === 1) throw new Error('disk reported failure after write');
+        });
+        const manager = createManager(plugin);
+        try {
+            const result = await manager.prepareMemory(createPlan({
+                reason: 'settings-changed',
+                action: 'rebuild',
+            }));
+
+            expect(result.ok).toBe(false);
+            expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+            expect(persistedPolicy).toBe('always');
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(3);
+            expect(plugin.vss.rollbackPreparedRebuild).toHaveBeenCalledWith('settings-changed');
+            expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
+            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('cancels an in-flight background flush without retrying or notifying', async () => {
+        const plugin = createPlugin(createPlan(), {
+            memoryApprovalPolicy: 'auto-refresh-after-prepare',
+        });
+        const flushStarted = createDeferred<void>();
+        plugin.vss.flush.mockImplementation(async (rawOptions?: unknown) => {
+            const options = rawOptions as { abortSignal?: AbortSignal } | undefined;
+            flushStarted.resolve();
+            await new Promise<void>((resolve) => {
+                options?.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+            });
+            return createOperationSummary({ aborted: true });
+        });
+        const manager = createManager(plugin);
+        manager.startAutoMaintenance();
+        const retrySpy = jest.spyOn(manager, 'scheduleAutoFlush');
+        try {
+            const running = (manager as any).runBackgroundTask('flush', 'scope-test') as Promise<void>; // eslint-disable-line @typescript-eslint/no-explicit-any
+            await flushStarted.promise;
+            const signal = (plugin.vss.flush.mock.calls[0][0] as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
+
+            manager.cancelActivePreparation();
+            await running;
+
+            expect(signal?.aborted).toBe(true);
+            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+            expect(retrySpy).not.toHaveBeenCalledWith(expect.stringContaining('retry:'), expect.any(Number));
+        } finally {
+            manager.stopAutoMaintenance();
+        }
     });
 
     it('ignores repeated manual prepare clicks while a command is already in flight', async () => {

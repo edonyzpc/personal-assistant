@@ -860,10 +860,15 @@ export class LLMView extends ItemView {
             });
             return { clear, close, schedule };
         };
+        const getBlockingAISetupIssue = () => {
+            const readiness = this.host.getAIReadiness?.("chat");
+            if (readiness?.issue === "token_unknown") return null;
+            return this.host.getAISetupIssue?.() ?? null;
+        };
         const syncComposerControls = () => {
             const generating = isGenerating();
             const hasDraft = textArea.value.trim().length > 0;
-            const setupIssue = this.host.getAISetupIssue?.() ?? null;
+            const setupIssue = getBlockingAISetupIssue();
             sendButton.disabled = generating || !hasDraft || setupIssue !== null;
             if (generating && !isStopping && !isFinalizing) {
                 textArea.setAttribute('placeholder', t("plugin.chat.placeholder.draftNextMessage"));
@@ -1187,27 +1192,215 @@ export class LLMView extends ItemView {
             emptyStateEl = null;
             if (timelineEntries.length > 0 || isGenerating()) return;
 
-            const setupIssue = this.host.getAISetupIssue?.() ?? null;
+            const setupIssue = getBlockingAISetupIssue();
             if (setupIssue) {
                 emptyStateEl = this.responseDiv.createDiv({ cls: 'pa-chat-empty-state pa-chat-config-banner' });
                 emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: t("plugin.chat.empty.setupTitle") });
-                emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: setupIssue });
-                const actions = emptyStateEl.createDiv({ cls: 'pa-chat-empty-chips' });
-                const settingsButton = actions.createEl('button', {
-                    text: t("plugin.chat.action.openSettingsTitle"),
-                    cls: 'pa-chat-empty-chip mod-cta',
-                    attr: { type: 'button' },
-                });
-                settingsButton.onclick = () => {
-                    const appWithSettings = this.app as typeof this.app & {
-                        setting?: {
-                            open: () => void;
-                            openTabById: (id: string) => void;
-                        };
+
+                if (this.host.completeAISetup) {
+                    const form = emptyStateEl.createDiv({ cls: 'pa-chat-setup-form' });
+                    const fallbackProvider = this.host.settings.aiProvider.trim().toLowerCase();
+                    const fallbackBaseURL = this.host.settings.baseURL.trim();
+                    const fallbackChatModel = this.host.settings.chatModelName.trim();
+                    const fallbackEmbeddingModel = this.host.settings.embeddingModelName?.trim() ?? "";
+                    const fallbackIssue = !fallbackProvider
+                        ? "provider_missing" as const
+                        : !["qwen", "openai"].includes(fallbackProvider)
+                            ? "provider_unsupported" as const
+                            : !fallbackBaseURL
+                                ? "base_url_missing" as const
+                                : !fallbackChatModel
+                                    ? "chat_model_missing" as const
+                                    : "token_missing" as const;
+                    const readiness = this.host.getAIReadiness?.("chat") ?? {
+                        scope: "chat" as const,
+                        ready: false,
+                        issue: fallbackIssue,
+                        tokenState: "missing" as const,
+                        hasToken: false,
+                        aiProvider: fallbackProvider,
+                        baseURL: fallbackBaseURL,
+                        chatModelName: fallbackChatModel,
+                        embeddingModelName: fallbackEmbeddingModel,
                     };
-                    appWithSettings.setting?.open();
-                    appWithSettings.setting?.openTabById('personal-assistant');
-                };
+                    const needsOnlyToken = readiness.issue === "token_missing"
+                        || readiness.issue === "token_unknown";
+
+                    let selectedPreset = "";
+                    let tokenState = readiness.tokenState;
+                    let busy = false;
+
+                    const setStatus = (message = "", error = false) => {
+                        statusEl.setText(message);
+                        if (error) statusEl.classList.add("is-error");
+                        else statusEl.classList.remove("is-error");
+                    };
+
+                    const syncSetupControls = () => {
+                        const hasTokenInput = tokenInput.value.trim().length > 0;
+                        const providerReady = needsOnlyToken || selectedPreset.length > 0;
+                        const tokenReady = tokenState === "present" || hasTokenInput;
+                        startButton.disabled = busy || !providerReady || !tokenReady;
+                        if (!needsOnlyToken && (!selectedPreset || tokenState === "present")) tokenRow.classList.add("pa-hidden");
+                        else tokenRow.classList.remove("pa-hidden");
+                    };
+
+                    const setBusy = (value: boolean) => {
+                        busy = value;
+                        if (value) {
+                            form.setAttribute("aria-busy", "true");
+                            startButton.setAttribute("aria-busy", "true");
+                        } else {
+                            form.removeAttribute("aria-busy");
+                            startButton.removeAttribute("aria-busy");
+                        }
+                        startButton.setText(value
+                            ? t("plugin.chat.empty.setupSaving")
+                            : t("plugin.chat.empty.setupStartButton"));
+                        syncSetupControls();
+                    };
+
+                    if (needsOnlyToken) {
+                        form.createDiv({ cls: 'pa-chat-empty-hint', text: t("plugin.chat.empty.setupAddToken") });
+                    } else {
+                        const providerHint = form.createDiv({
+                            cls: 'pa-chat-empty-hint',
+                            text: t("plugin.chat.empty.setupChooseProvider"),
+                        });
+                        const providerHintId = `pa-chat-setup-provider-label-${this.viewSessionId}`;
+                        providerHint.setAttribute("id", providerHintId);
+                        const providers = form.createDiv({
+                            cls: 'pa-chat-setup-providers',
+                            attr: { role: "group", "aria-labelledby": providerHintId },
+                        });
+                        const presets = [
+                            { key: "qwen", label: t("plugin.chat.empty.presetQwen") },
+                            { key: "qwen-intl", label: t("plugin.chat.empty.presetQwenIntl") },
+                            { key: "openai", label: t("plugin.chat.empty.presetOpenAI") },
+                        ];
+                        const providerButtons: HTMLButtonElement[] = [];
+                        for (const preset of presets) {
+                            const btn = providers.createEl("button", {
+                                text: preset.label,
+                                cls: "pa-chat-empty-chip",
+                                attr: { type: "button", "aria-pressed": "false" },
+                            });
+                            providerButtons.push(btn);
+                            btn.onclick = () => {
+                                selectedPreset = preset.key;
+                                providerButtons.forEach(b => { b.classList.remove("mod-cta"); b.setAttribute("aria-pressed", "false"); });
+                                btn.classList.add("mod-cta");
+                                btn.setAttribute("aria-pressed", "true");
+                                setStatus();
+                                if (tokenState === "unknown") {
+                                    tokenState = this.host.refreshAPITokenPresence?.() ?? "unknown";
+                                }
+                                syncSetupControls();
+                            };
+                        }
+                    }
+
+                    const tokenRow = form.createDiv({
+                        cls: needsOnlyToken
+                            ? 'pa-chat-setup-token-row'
+                            : 'pa-chat-setup-token-row pa-hidden',
+                    });
+                    const tokenInput = tokenRow.createEl("input", {
+                        type: "password",
+                        cls: "pa-chat-setup-token-input",
+                        attr: {
+                            placeholder: t("plugin.chat.empty.setupTokenPlaceholder"),
+                            "aria-label": t("plugin.chat.empty.setupTokenPlaceholder"),
+                            autocomplete: "off",
+                            autocapitalize: "none",
+                            autocorrect: "off",
+                            spellcheck: "false",
+                        },
+                    });
+
+                    const actions = form.createDiv({ cls: 'pa-chat-empty-chips' });
+                    const startButton = actions.createEl("button", {
+                        text: t("plugin.chat.empty.setupStartButton"),
+                        cls: "pa-chat-empty-chip mod-cta",
+                        attr: { type: "button" },
+                    });
+                    const statusEl = form.createDiv({
+                        cls: "pa-chat-setup-status",
+                        attr: { role: "status", "aria-live": "polite" },
+                    });
+                    startButton.onclick = async () => {
+                        const token = tokenInput.value.trim();
+                        if (startButton.disabled) return;
+                        setStatus();
+                        setBusy(true);
+                        try {
+                            const result = await this.host.completeAISetup!({
+                                ...(selectedPreset ? { presetKey: selectedPreset } : {}),
+                                ...(token ? { token } : {}),
+                            });
+                            if (!result.ok) {
+                                if (result.code === "token_required") {
+                                    tokenState = "missing";
+                                    setStatus(t("plugin.chat.empty.setupTokenRequired"), true);
+                                } else if (result.code === "invalid_configuration") {
+                                    setStatus(t("plugin.chat.empty.setupInvalidConfiguration"), true);
+                                } else if (result.code === "compensation_failed") {
+                                    setStatus(t("plugin.chat.empty.setupCompensationFailed"), true);
+                                } else {
+                                    setStatus(t("plugin.chat.empty.setupSaveFailed"), true);
+                                }
+                                setBusy(false);
+                                return;
+                            }
+                        } catch {
+                            setStatus(t("plugin.chat.empty.setupSaveFailed"), true);
+                            setBusy(false);
+                            return;
+                        }
+                        renderEmptyState();
+                    };
+                    tokenInput.addEventListener("input", () => {
+                        setStatus();
+                        syncSetupControls();
+                    });
+                    tokenInput.addEventListener("keydown", (e) => {
+                        if (e.key === "Enter" && !startButton.disabled) {
+                            e.preventDefault();
+                            startButton.click();
+                        }
+                    });
+
+                    syncSetupControls();
+
+                    const advancedLink = form.createEl("a", {
+                        text: t("plugin.chat.empty.setupAdvancedLink"),
+                        cls: "pa-chat-setup-advanced-link",
+                        attr: { href: "#" },
+                    });
+                    advancedLink.onclick = (e) => {
+                        e.preventDefault();
+                        const appWithSettings = this.app as typeof this.app & {
+                            setting?: { open: () => void; openTabById: (id: string) => void };
+                        };
+                        appWithSettings.setting?.open();
+                        appWithSettings.setting?.openTabById("personal-assistant");
+                    };
+                } else {
+                    emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: setupIssue });
+                    const actions = emptyStateEl.createDiv({ cls: 'pa-chat-empty-chips' });
+                    const settingsButton = actions.createEl('button', {
+                        text: t("plugin.chat.action.openSettingsTitle"),
+                        cls: 'pa-chat-empty-chip mod-cta',
+                        attr: { type: 'button' },
+                    });
+                    settingsButton.onclick = () => {
+                        const appWithSettings = this.app as typeof this.app & {
+                            setting?: { open: () => void; openTabById: (id: string) => void };
+                        };
+                        appWithSettings.setting?.open();
+                        appWithSettings.setting?.openTabById('personal-assistant');
+                    };
+                }
                 return;
             }
 
@@ -2970,9 +3163,18 @@ export class LLMView extends ItemView {
 
         const sendPrompt = async (prompt: string) => {
             if (!prompt.trim() || isGenerating()) return;
-            const setupIssue = this.host.getAISetupIssue?.() ?? null;
+            if (this.host.getAIReadiness?.("chat").issue === "token_unknown") {
+                const tokenState = this.host.refreshAPITokenPresence?.() ?? "unknown";
+                if (tokenState === "unknown") {
+                    showComposerHint(this.host.getAISetupIssue?.() ?? t("plugin.aiSetup.checkToken"));
+                    syncComposerControls();
+                    return;
+                }
+            }
+            const setupIssue = getBlockingAISetupIssue();
             if (setupIssue) {
                 showComposerHint(setupIssue);
+                renderEmptyState();
                 syncComposerControls();
                 return;
             }

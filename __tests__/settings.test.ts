@@ -758,7 +758,9 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             prepareFromCommand: jest.fn(async () => undefined),
             scheduleReconcile: jest.fn(),
             scheduleAutoFlush: jest.fn(),
+            cancelActivePreparation: jest.fn(),
         },
+        cancelActiveMemoryPreparation: jest.fn(),
         updateMemoryStatusBar: jest.fn(async () => undefined),
         runManualMemoryAction: jest.fn(async (action: () => Promise<void>) => { await action(); }),
         vss: {
@@ -821,6 +823,8 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         getAPITokenSecretId: jest.fn(() => 'pa-api-token-vault-test'),
         getConfiguredAPITokenSecret: jest.fn<() => string | null>(() => null),
         hasTokenCachedValue: jest.fn<() => boolean | null>(() => null),
+        getAPITokenCacheState: jest.fn<() => 'unknown' | 'present' | 'missing'>(() => 'missing'),
+        refreshAPITokenPresence: jest.fn<() => 'unknown' | 'present' | 'missing'>(() => 'missing'),
         setAPITokenSecret: jest.fn(),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
@@ -960,7 +964,7 @@ describe('PA Agent telemetry settings', () => {
     });
 
     it('renders policy model privacy copy in settings', () => {
-        const plugin = makePlugin();
+        const plugin = makePlugin({ showAdvancedMemoryControls: true });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
@@ -1307,10 +1311,14 @@ describe('Phase 1 refactor invariants', () => {
         expect(advancedToggle?.onChange).toBeDefined();
 
         const displaySpy = jest.spyOn(tab, 'display');
+        const providerRebuildSpy = jest.spyOn(internals, 'rebuildProviderConfig');
 
         await advancedToggle!.onChange!(true);
+        await advancedToggle!.onChange!(false);
 
         expect(displaySpy).not.toHaveBeenCalled();
+        expect(providerRebuildSpy).toHaveBeenCalledTimes(2);
+        expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
         // Sibling sub-container refs preserved across the rebuild.
         expect(internals.graphColorsContainer).toBe(before.graph);
         expect(internals.metadataContainer).toBe(before.metadata);
@@ -3357,7 +3365,8 @@ describe('Phase 3 IA reorder + provider UX', () => {
             { value: 'exclude-generated', text: 'Skip generated notes' },
             { value: 'include-generated', text: 'Allow generated notes' },
         ]);
-        expect(providerDisclosure?.desc).toContain('PA asks before broad');
+        expect(providerDisclosure?.desc).toContain('First-use Memory preparation is the quiet exception');
+        expect(providerDisclosure?.desc).toContain('PA still asks');
         const unavailableCleanupRecords = [
             'Local cache', 'Review queue', 'Replay metadata',
             'Candidates', 'Confirmed Memory', 'Tombstones',
@@ -3375,6 +3384,29 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.settings.dataBoundary.excludedFolders).toEqual(['private', 'archive/sensitive']);
         expect(plugin.settings.dataBoundary.excludedTags).toEqual(['sensitive', 'private']);
         expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('include-generated');
+        expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(2);
+    });
+
+    it('cancels active Memory before tightening the generated-note boundary', () => {
+        const plugin = makePlugin({
+            dataBoundary: {
+                ...DEFAULT_SETTINGS.dataBoundary,
+                generatedNotePolicy: 'include-generated',
+            },
+        });
+        plugin.cancelActiveMemoryPreparation.mockImplementation(() => {
+            expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('include-generated');
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const generatedNotes = getMockSettingRecords()
+            .find((record) => record.name === 'Generated notes')?.dropdowns[0];
+
+        generatedNotes?.onChange?.('exclude-generated');
+
+        expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(1);
+        expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('exclude-generated');
     });
 
     it('routes Data cleanup to the exact canonical Memory data-and-recovery control', async () => {
@@ -3761,6 +3793,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
     it('selecting a preset on fresh install applies preset baseURL and model', async () => {
         const plugin = makePlugin({ aiProvider: '' });
+        plugin.getAPITokenCacheState.mockReturnValue('unknown');
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
@@ -3775,6 +3808,9 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS['qwen-intl'].baseURL);
         expect(plugin.settings.chatModelName).toBe(PROVIDER_PRESETS['qwen-intl'].chatModelName);
         expect(plugin.settings.embeddingModelName).toBe(PROVIDER_PRESETS['qwen-intl'].embeddingModelName);
+        expect(plugin.refreshAPITokenPresence).toHaveBeenCalledTimes(1);
+        expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(1);
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         // No confirmation needed when there is no prior preset to compare against.
         expect((confirmUserAction as jest.Mock)).not.toHaveBeenCalled();
     });
@@ -3949,10 +3985,48 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(getMockModalInstances()).toHaveLength(2);
     });
 
+    it('never reads SecretStorage while rendering an unknown token state', () => {
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        plugin.getAPITokenCacheState.mockReturnValue('unknown');
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+        expect(apiTokenButton?.text).toBe('Manage API token');
+        expect(plugin.getConfiguredAPITokenSecret).not.toHaveBeenCalled();
+    });
+
+    it('fails closed with visible feedback when an explicit token read throws', async () => {
+        const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        plugin.getAPITokenCacheState.mockReturnValue('unknown');
+        plugin.getConfiguredAPITokenSecret.mockImplementation(() => {
+            throw new Error('keychain unavailable');
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const apiTokenButton = getMockSettingRecords()
+            .find((record) => record.name === 'API Token')
+            ?.buttons[0];
+
+        await apiTokenButton?.onClick?.();
+
+        expect(plugin.clearTokenCache).toHaveBeenCalledTimes(1);
+        expect(plugin.log).toHaveBeenCalledWith('Failed to read API token');
+        expect(Notice).toHaveBeenCalledWith('Could not open the API token. Try again.', 4000);
+        expect(getMockModalInstances()).toHaveLength(0);
+    });
+
     it('keeps an existing API token when removal confirmation is canceled', async () => {
         setMockConfirmDecision(false);
         const plugin = makePlugin({ aiProvider: 'qwen' });
         plugin.getConfiguredAPITokenSecret.mockReturnValue('sk-existing-token');
+        plugin.getAPITokenCacheState.mockReturnValue('present');
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
@@ -4015,6 +4089,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         plugin.setAPITokenSecret.mockImplementation((value: unknown) => {
             const token = String(value);
             storedToken = token === '' ? null : token;
+            plugin.getAPITokenCacheState.mockReturnValue(token === '' ? 'missing' : 'present');
         });
         const tab = new SettingTab(app as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -4434,7 +4509,7 @@ describe('Phase 4 P1 UX', () => {
 
             const names = getMockSettingRecords().map((r) => r.name);
             expect(names).toContain('Use memory from my notes');
-            expect(names).toContain('Ask before using AI credits');
+            expect(names).toContain('Check before preparing Memory again');
             expect(names).toContain('Advanced memory controls');
         });
 
@@ -4643,8 +4718,50 @@ describe('Phase 4 P1 UX', () => {
             expect(rebuildSpy).toHaveBeenCalledTimes(1);
             // Sub-settings now appear in the records.
             const namesAfter = getMockSettingRecords().map((r) => r.name);
-            expect(namesAfter).toContain('Ask before using AI credits');
+            expect(namesAfter).toContain('Check before preparing Memory again');
             expect(namesAfter).toContain('Advanced memory controls');
+        });
+
+        it('cancels active preparation synchronously before disabling Memory', async () => {
+            const plugin = makePlugin({ memoryEnabled: true });
+            plugin.cancelActiveMemoryPreparation.mockImplementation(() => {
+                expect(plugin.settings.memoryEnabled).toBe(true);
+            });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const masterToggle = getMockSettingRecords()
+                .find((r) => r.name === 'Use memory from my notes')?.toggles[0];
+
+            await masterToggle!.onChange!(false);
+
+            expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(1);
+            expect(plugin.settings.memoryEnabled).toBe(false);
+        });
+
+        it('cancels active preparation before provider URL or Memory model mutation', () => {
+            const plugin = makePlugin({ showAdvancedMemoryControls: true });
+            const previousBaseURL = plugin.settings.baseURL;
+            const previousMemoryModel = plugin.settings.embeddingModelName;
+            plugin.cancelActiveMemoryPreparation.mockImplementationOnce(() => {
+                expect(plugin.settings.baseURL).toBe(previousBaseURL);
+            }).mockImplementationOnce(() => {
+                expect(plugin.settings.embeddingModelName).toBe(previousMemoryModel);
+            });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const baseURL = getMockSettingRecords()
+                .find((r) => r.name === 'Base URL')?.texts[0];
+            const memoryModel = getMockSettingRecords()
+                .find((r) => r.name === 'Memory model')?.texts[0];
+
+            baseURL?.onChange?.('https://new.example/v1');
+            memoryModel?.onChange?.('new-embedding-model');
+
+            expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(2);
+            expect(plugin.settings.baseURL).toBe('https://new.example/v1');
+            expect(plugin.settings.embeddingModelName).toBe('new-embedding-model');
         });
 
         it('asks for confirmation before enabling background memory updates', async () => {
@@ -4722,20 +4839,44 @@ describe('Phase 4 P1 UX', () => {
             expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
             expect(confirmUserAction).toHaveBeenCalledTimes(1);
         });
+
+        it('cancels active preparation before adding a Memory exclude path', () => {
+            const plugin = makePlugin({ showAdvancedMemoryControls: true });
+            plugin.cancelActiveMemoryPreparation.mockImplementation(() => {
+                expect(plugin.settings.vssCacheExcludePath).not.toContain('private');
+            });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const excludePath = getMockSettingRecords()
+                .find((r) => r.name === 'Memory Exclude Path')?.texts[0];
+
+            excludePath?.onChange?.(`${plugin.settings.vssCacheExcludePath.join(',')},private`);
+
+            expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(1);
+            expect(plugin.settings.vssCacheExcludePath).toContain('private');
+        });
     });
 
     describe('4c: pre-chat copy', () => {
-        it('renames the pre-chat toggle to "Ask before using AI credits" with cost-framed desc', () => {
+        it('describes silent first-use and confirmed recovery preparation without internal jargon', () => {
             const plugin = makePlugin();
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
             tab.display();
 
             const record = getMockSettingRecords()
-                .find((r) => r.name === 'Ask before using AI credits');
+                .find((r) => r.name === 'Check before preparing Memory again');
+            const enabled = getMockSettingRecords()
+                .find((r) => r.name === 'Use memory from my notes');
             expect(record).toBeDefined();
-            expect(record?.desc).toContain('approval');
+            expect(record?.desc).toContain('First-use preparation runs quietly');
+            expect(record?.desc).toContain('manual rebuild still requires confirmation');
             expect(record?.desc).toContain('API calls');
+            expect(enabled?.desc).toContain('configured AI provider');
+            expect(enabled?.desc).toContain('API credits or calls');
+            expect(enabled?.desc).toContain('notes are not modified or deleted');
+            expect(enabled?.desc).toContain('Turn this off');
             // Avoid leaking VSS / RAG / embedding internals into normal copy.
             expect(record?.desc).not.toMatch(/vss|rag|embedding|vector|chunk/i);
         });
@@ -4931,6 +5072,49 @@ describe('Phase 4 P1 UX', () => {
 
             await countRow?.texts[0].onChange?.('99');
             expect(plugin.settings.numFeaturedImages).toBe(4);
+        });
+    });
+
+    describe('mobile platform', () => {
+        const obsidian = jest.requireMock('obsidian') as { Platform: { isDesktop: boolean; isMobile: boolean } };
+        const prevPlatform = { ...obsidian.Platform };
+
+        beforeEach(() => {
+            Object.assign(obsidian.Platform, { isDesktop: false, isMobile: true });
+        });
+
+        afterEach(() => {
+            Object.assign(obsidian.Platform, prevPlatform);
+        });
+
+        it('renders settings display without crashing on mobile', () => {
+            const plugin = makePlugin({ aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatModelName: 'qwen3.6-plus' });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+
+            expect(() => tab.display()).not.toThrow();
+        });
+
+        it('does not call getLeaf("window") on mobile', () => {
+            const plugin = makePlugin({ aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatModelName: 'qwen3.6-plus' });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+
+            tab.display();
+
+            const allSettings = getMockSettingRecords();
+            expect(allSettings.length).toBeGreaterThan(0);
+        });
+
+        it('settings display produces expected number of setting rows on mobile', () => {
+            const plugin = makePlugin({ aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', chatModelName: 'qwen3.6-plus' });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+
+            tab.display();
+
+            const allSettings = getMockSettingRecords();
+            expect(allSettings.length).toBeGreaterThan(10);
         });
     });
 });

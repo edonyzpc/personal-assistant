@@ -93,6 +93,7 @@ const MOBILE_VERIFY_DELAY_MS = 5_000;
 type MemoryApprovalContext = "chat" | "command";
 type BackgroundTaskKind = "flush" | "reconcile" | "verify";
 type MemoryPreparationAction = Exclude<MemoryMaintenancePlan["action"], "none">;
+type MemoryRebuildRecoveryReason = "first-use" | "settings-changed" | "local-memory-missing";
 interface ActivePreparationIdentity {
     id: number;
     action: MemoryPreparationAction;
@@ -208,6 +209,8 @@ export class MemoryManager {
     private lifecycleVersion = 0;
     private shuttingDown = false;
     private manualCommandInFlight = false;
+    private readonly activeOperationControllers = new Set<AbortController>();
+    private readonly activeOperationPromises = new Set<Promise<unknown>>();
     private activePreparationStatus: (MemoryPreparationStatus & { id: number; lifecycleVersion: number }) | null = null;
     private activePreparationRun: ActivePreparationRun | null = null;
     private nextPreparationId = 1;
@@ -291,12 +294,20 @@ export class MemoryManager {
         }
     }
 
+    cancelActivePreparation(): void {
+        this.lifecycleVersion++;
+        for (const controller of this.activeOperationControllers) {
+            controller.abort();
+        }
+        this.activeOperationControllers.clear();
+        this.activePreparationRun = null;
+        this.activePreparationStatus = null;
+    }
+
     stopAutoMaintenance(): void {
         this.started = false;
         this.shuttingDown = true;
-        this.lifecycleVersion++;
-        this.activePreparationRun = null;
-        this.activePreparationStatus = null;
+        this.cancelActivePreparation();
         if (this.autoFlushTimer) {
             clearPlatformTimeout(this.autoFlushTimer);
             this.autoFlushTimer = null;
@@ -368,6 +379,15 @@ export class MemoryManager {
         if (!this.isLifecycleCurrent(lifecycleToken)) {
             return { decision: "answer-now" };
         }
+        const activePreparation = this.activePreparationRun;
+        if (activePreparation
+            && this.isActivePreparationCurrent(activePreparation)
+            && (activePreparation.action === "rebuild" || plan.reason === "unavailable")) {
+            return {
+                decision: "answer-now",
+                message: memoryT("plugin.memory.message.buildingInBackground"),
+            };
+        }
         if (plan.reason === "unavailable") {
             new Notice(memoryT("plugin.memory.notice.unavailableAnswerNow"), 5000);
             return {
@@ -376,7 +396,7 @@ export class MemoryManager {
             };
         }
         if (this.shouldTryChatFastVerification(plan) && await this.canRunLocalMaintenance()) {
-            await this.verifyPendingBeforeChat(lifecycleToken);
+            await this.trackActiveOperation(this.verifyPendingBeforeChat(lifecycleToken));
             if (!this.isLifecycleCurrent(lifecycleToken)) {
                 return { decision: "answer-now" };
             }
@@ -410,6 +430,25 @@ export class MemoryManager {
             }
         }
 
+        if (plan.reason === "first-use") {
+            const prepareLifecycle = this.lifecycleVersion;
+            void this.prepareMemory(plan).then((result) => {
+                if (!this.isLifecycleCurrent(prepareLifecycle)) return;
+                if (!result.ok) {
+                    this.host.log("Background memory prepare did not succeed", result.message);
+                    new Notice(result.message ?? memoryT("plugin.memory.error.prepareFailedAnswerNow"), 5000);
+                }
+            }).catch((error) => {
+                if (!this.isLifecycleCurrent(prepareLifecycle)) return;
+                this.host.log("Background memory prepare failed", error);
+                new Notice(memoryT("plugin.memory.error.prepareFailedAnswerNow"), 5000);
+            });
+            return {
+                decision: "answer-now",
+                message: memoryT("plugin.memory.message.buildingInBackground"),
+            };
+        }
+
         if (this.isAnswerNowCoolingDown()) {
             return {
                 decision: "answer-now",
@@ -428,6 +467,10 @@ export class MemoryManager {
                 decision: "answer-now",
                 message: memoryT("plugin.memory.message.notUsed"),
             };
+        }
+
+        if (!this.isLifecycleCurrent(lifecycleToken) || !this.isMemoryEnabled()) {
+            return { decision: "answer-now" };
         }
 
         const result = await this.prepareMemory(plan);
@@ -449,6 +492,13 @@ export class MemoryManager {
     }
 
     async prepareMemory(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
+        if (!this.isMemoryEnabled() || this.shuttingDown) {
+            return {
+                ok: false,
+                partial: false,
+                message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+            };
+        }
         const requestedAction = this.getPreparationAction(plan);
         const activePreparation = this.activePreparationRun;
         if (activePreparation) {
@@ -469,7 +519,7 @@ export class MemoryManager {
             action: requestedAction,
             lifecycleVersion: this.lifecycleVersion,
         };
-        const run = Promise.resolve().then(() => this.runPreparation(plan, activeIdentity));
+        const run = this.trackActiveOperation(Promise.resolve().then(() => this.runPreparation(plan, activeIdentity)));
         this.activePreparationRun = { ...activeIdentity, promise: run };
         try {
             return await run;
@@ -498,7 +548,7 @@ export class MemoryManager {
                 startedAt,
             };
         };
-        if (!this.isLifecycleCurrent(lifecycleToken)) {
+        if (!this.isLifecycleCurrent(lifecycleToken) || !this.isMemoryEnabled()) {
             return {
                 ok: false,
                 partial: false,
@@ -515,13 +565,34 @@ export class MemoryManager {
                 setActiveStatus(text, event);
             }
         };
+        let abortController: AbortController | null = null;
+        const isRebuild = plan.action !== "refresh";
+        const rebuildReason = this.getRebuildRecoveryReason(plan);
+        let deferredRebuildPrepared = false;
+        let previousApprovalPolicy: string | null = null;
+        const rollbackDeferredRebuild = async () => {
+            if (!deferredRebuildPrepared || !isRebuild) return;
+            await this.vss.rollbackPreparedRebuild(rebuildReason);
+            deferredRebuildPrepared = false;
+        };
         try {
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
             setActiveStatus(memoryT("plugin.memory.progress.checking"));
+            abortController = new AbortController();
+            this.activeOperationControllers.add(abortController);
+            const operationOptions = {
+                silent: true,
+                onProgress: updateProgressAndStatus,
+                abortSignal: abortController.signal,
+                rebuildReason,
+                deferAdmission: isRebuild,
+            };
             const summary = plan.action === "refresh"
-                ? await this.vss.refreshLocalIndex({ silent: true, onProgress: updateProgressAndStatus })
-                : await this.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgressAndStatus });
+                ? await this.vss.refreshLocalIndex(operationOptions)
+                : await this.vss.rebuildLocalIndex(operationOptions);
+            deferredRebuildPrepared = isRebuild && !summary.aborted && !(summary.updated === 0 && summary.failed > 0);
             if (!this.isLifecycleCurrent(lifecycleToken)) {
+                await rollbackDeferredRebuild();
                 return {
                     ok: false,
                     partial: false,
@@ -538,9 +609,47 @@ export class MemoryManager {
                 };
             }
 
+            if (summary.updated === 0 && summary.failed > 0) {
+                return {
+                    ok: false,
+                    partial: false,
+                    summary,
+                    message: memoryT("plugin.memory.error.prepareFailedAnswerNow"),
+                };
+            }
+
+            const partial = summary.failed > 0;
+            const previousPolicy = this.host.settings.memoryApprovalPolicy;
+            previousApprovalPolicy = previousPolicy;
+            const policyEnabled = await this.enableAutoRefreshAfterPrepare(
+                lifecycleToken,
+                abortController.signal,
+            );
+            if (!policyEnabled || !this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
+                await rollbackDeferredRebuild();
+                return {
+                    ok: false,
+                    partial: false,
+                    summary,
+                    message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+                };
+            }
+            if (isRebuild) {
+                const admitted = await this.vss.admitPreparedRebuild({ abortSignal: abortController.signal });
+                if (!admitted || !this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
+                    await rollbackDeferredRebuild();
+                    await this.restoreMemoryApprovalPolicy(previousPolicy);
+                    return {
+                        ok: false,
+                        partial: false,
+                        summary,
+                        message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+                    };
+                }
+                deferredRebuildPrepared = false;
+            }
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.ready"));
             setActiveStatus(memoryT("plugin.memory.progress.ready"));
-            const partial = summary.failed > 0;
             if (partial) {
                 new Notice(memoryT("plugin.memory.notice.updatedPartial"), 5000);
             } else if (summary.storagePersisted === false && Platform.isMobile) {
@@ -549,13 +658,25 @@ export class MemoryManager {
                 new Notice(memoryT("plugin.memory.notice.readyNotesUnchanged"), 3000);
             }
 
-            await this.enableAutoRefreshAfterPrepare();
             if (this.isLifecycleCurrent(lifecycleToken)) {
                 this.scheduleReconcile("prepare", PREPARE_RECONCILE_DELAY_MS);
                 this.host.notifyStatusChanged();
             }
             return { ok: true, partial, summary };
         } catch (error) {
+            const shouldRestoreAdmissionPolicy = deferredRebuildPrepared && previousApprovalPolicy !== null;
+            try {
+                await rollbackDeferredRebuild();
+            } catch (rollbackError) {
+                this.host.log("Could not roll back prepared memory", rollbackError);
+            }
+            if (shouldRestoreAdmissionPolicy && previousApprovalPolicy !== null) {
+                try {
+                    await this.restoreMemoryApprovalPolicy(previousApprovalPolicy);
+                } catch (policyRollbackError) {
+                    this.host.log("Could not restore Memory approval policy", policyRollbackError);
+                }
+            }
             if (!this.isLifecycleCurrent(lifecycleToken)) {
                 return {
                     ok: false,
@@ -570,6 +691,9 @@ export class MemoryManager {
                 message: getMemoryPrepareFailureMessage(error),
             };
         } finally {
+            if (abortController) {
+                this.activeOperationControllers.delete(abortController);
+            }
             this.clearActivePreparationStatus(activePreparation);
             progress.notice.hide();
         }
@@ -625,6 +749,7 @@ export class MemoryManager {
             : plan;
         const decision = await this.requestApproval(actionPlan, "command");
         if (decision !== "use-memory") return;
+        if (!this.isMemoryEnabled() || this.shuttingDown) return;
         const result = await this.prepareMemory(actionPlan);
         if (!result.ok) {
             new Notice(result.message ?? memoryT("plugin.notice.memoryPrepareFailed"), 7000);
@@ -632,16 +757,31 @@ export class MemoryManager {
     }
 
     private enqueueBackgroundTask(kind: BackgroundTaskKind, reason: string): void {
-        const run = this.maintenanceQueue.then(
+        const run = this.trackActiveOperation(this.maintenanceQueue.then(
             () => this.runBackgroundTask(kind, reason),
             () => this.runBackgroundTask(kind, reason),
-        );
+        ));
         this.maintenanceQueue = run.then(() => undefined, () => undefined);
         void run;
     }
 
+    async waitForIdle(): Promise<void> {
+        while (this.activeOperationPromises.size > 0) {
+            await Promise.allSettled(Array.from(this.activeOperationPromises));
+        }
+        await this.maintenanceQueue.catch(() => undefined);
+    }
+
+    private trackActiveOperation<T>(operation: Promise<T>): Promise<T> {
+        this.activeOperationPromises.add(operation);
+        const remove = () => this.activeOperationPromises.delete(operation);
+        void operation.then(remove, remove);
+        return operation;
+    }
+
     private async runBackgroundTask(kind: BackgroundTaskKind, reason: string): Promise<void> {
         const lifecycleToken = this.lifecycleVersion;
+        let abortController: AbortController | null = null;
         try {
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
             if (kind === "verify") {
@@ -651,12 +791,20 @@ export class MemoryManager {
                 return;
             }
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
+            abortController = new AbortController();
+            this.activeOperationControllers.add(abortController);
+            if (!this.isLifecycleCurrent(lifecycleToken)) {
+                abortController.abort();
+                return;
+            }
             if (kind === "flush") {
                 const summary = await this.vss.flush({
                     silent: true,
                     reason: "auto-refresh",
+                    abortSignal: abortController.signal,
                 });
                 if (!this.isLifecycleCurrent(lifecycleToken)) return;
+                if (summary.aborted) return;
                 if (summary.failed > 0) {
                     throw new Error(`Background memory update skipped ${summary.failed} note(s).`);
                 }
@@ -667,8 +815,12 @@ export class MemoryManager {
                     this.scheduleAutoFlush("dirty-pending", QUIET_AUTO_FLUSH_DELAY_MS);
                 }
             } else if (kind === "verify") {
-                const summary = await this.vss.verifyPendingChanges({ reason });
+                const summary = await this.vss.verifyPendingChanges({
+                    reason,
+                    abortSignal: abortController.signal,
+                });
                 if (!this.isLifecycleCurrent(lifecycleToken)) return;
+                if (summary.aborted) return;
                 if (!summary.aborted) {
                     this.host.notifyStatusChanged();
                 }
@@ -692,8 +844,10 @@ export class MemoryManager {
                 const summary = await this.vss.reconcileLocalFiles({
                     reason,
                     verifyHashLimit: reason === "periodic" ? 50 : 0,
+                    abortSignal: abortController.signal,
                 });
                 if (!this.isLifecycleCurrent(lifecycleToken)) return;
+                if (summary.aborted) return;
                 if (summary.failed > 0) {
                     throw new Error(`Background memory reconcile failed for ${summary.failed} note(s).`);
                 }
@@ -712,7 +866,7 @@ export class MemoryManager {
             }
             this.backgroundFailureCount = 0;
         } catch (error) {
-            if (!this.isLifecycleCurrent(lifecycleToken)) return;
+            if (abortController?.signal.aborted || !this.isLifecycleCurrent(lifecycleToken)) return;
             this.host.log("Background memory maintenance failed", { kind, reason, error });
             const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
             this.backgroundFailureCount++;
@@ -723,6 +877,10 @@ export class MemoryManager {
             } else {
                 this.scheduleReconcile(`retry:${reason}`, delay);
             }
+        } finally {
+            if (abortController) {
+                this.activeOperationControllers.delete(abortController);
+            }
         }
     }
 
@@ -732,12 +890,16 @@ export class MemoryManager {
     }
 
     private async verifyPendingBeforeChat(lifecycleToken: number): Promise<void> {
+        const abortController = new AbortController();
+        this.activeOperationControllers.add(abortController);
         try {
             const summary = await this.vss.verifyPendingChanges({
                 reason: "chat",
                 fastPath: true,
+                abortSignal: abortController.signal,
             });
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
+            if (summary.aborted) return;
             if (!summary.aborted) {
                 this.host.notifyStatusChanged();
             }
@@ -756,9 +918,11 @@ export class MemoryManager {
                 this.scheduleVerify("chat");
             }
         } catch (error) {
-            if (!this.isLifecycleCurrent(lifecycleToken)) return;
+            if (abortController.signal.aborted || !this.isLifecycleCurrent(lifecycleToken)) return;
             this.host.log("Chat memory verification failed", error);
             this.scheduleVerify("chat-retry");
+        } finally {
+            this.activeOperationControllers.delete(abortController);
         }
     }
 
@@ -824,10 +988,53 @@ export class MemoryManager {
         }
     }
 
-    private async enableAutoRefreshAfterPrepare(): Promise<void> {
-        if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) return;
+    private async enableAutoRefreshAfterPrepare(
+        lifecycleToken: number,
+        abortSignal: AbortSignal,
+    ): Promise<boolean> {
+        if (!this.isLifecycleCurrent(lifecycleToken) || abortSignal.aborted || !this.isMemoryEnabled()) {
+            return false;
+        }
+        if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) return true;
+        const previousPolicy = this.host.settings.memoryApprovalPolicy;
         this.host.updateMemorySetting("memoryApprovalPolicy", AUTO_MEMORY_POLICY);
-        await this.host.saveSettings();
+        try {
+            await this.host.persistMemoryAdmissionSettings();
+        } catch (error) {
+            if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) {
+                this.host.updateMemorySetting("memoryApprovalPolicy", previousPolicy);
+            }
+            try {
+                await this.host.persistMemoryAdmissionSettings();
+            } catch (compensationError) {
+                throw Object.assign(new Error("Could not persist or compensate the Memory approval policy."), {
+                    cause: error,
+                    compensationError,
+                });
+            }
+            throw error;
+        }
+        if (this.isLifecycleCurrent(lifecycleToken) && !abortSignal.aborted && this.isMemoryEnabled()) {
+            return true;
+        }
+        if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) {
+            this.host.updateMemorySetting("memoryApprovalPolicy", previousPolicy);
+            await this.host.persistMemoryAdmissionSettings();
+        }
+        return false;
+    }
+
+    private async restoreMemoryApprovalPolicy(previousPolicy: string): Promise<void> {
+        if (this.host.settings.memoryApprovalPolicy !== previousPolicy) {
+            this.host.updateMemorySetting("memoryApprovalPolicy", previousPolicy);
+        }
+        await this.host.persistMemoryAdmissionSettings();
+    }
+
+    private getRebuildRecoveryReason(plan: MemoryMaintenancePlan): MemoryRebuildRecoveryReason {
+        if (plan.reason === "first-use") return "first-use";
+        if (plan.reason === "local-memory-missing") return "local-memory-missing";
+        return "settings-changed";
     }
 
     private getVerifyDelayMs(): number {

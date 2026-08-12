@@ -8,7 +8,12 @@ import { computeContentHash, selectFlushCandidates, DirtyTimestamps } from '../v
 import { createInlineSqliteWorker, getInlineSqliteWasmUrl } from './sqlite-inline-assets';
 import { SqliteVectorIndex } from './sqlite-vector-index';
 import { getVSSDeviceId } from './state';
-import { createVSSIndexStateStore, type VSSIndexStateStore } from './local-state-store';
+import {
+    createVSSIndexStateStore,
+    type VSSIndexStateStore,
+    type VSSRebuildGuard,
+    type VSSRebuildRecoveryReason,
+} from './local-state-store';
 import { toError } from '../error-utils';
 import { getPlatformCrypto, getPlatformNavigatorStorage } from '../platform-dom';
 import {
@@ -31,7 +36,7 @@ import {
 import type { MemoryMaintenancePlan } from '../memory-manager';
 import { confirmUserAction } from '../confirm';
 import { buildFtsQuery } from './fts-query-builder';
-import { throwIfAborted } from '../ai-services/chat-utils';
+import { isAbortError, throwIfAborted } from '../ai-services/chat-utils';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { createHeadingAwareMarkdownChunks } from './markdown-chunker';
 import { stableHash } from '../pa/helpers';
@@ -95,9 +100,20 @@ const VSS_MANUAL_LOCKED_WAIT_MS = 3_000;
 const VSS_INDEX_DISPOSE_TIMEOUT_MS = 4_000;
 const VSS_RECOVERY_COOLDOWN_MS = 5_000;
 const VSS_LOCAL_STATE_UNAVAILABLE_CODE = "vss-local-state-unavailable";
+const VSS_FILE_INELIGIBLE_CODE = "vss-file-ineligible";
 
 function vssT(key: string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
     return pluginT(key, getPluginUiLanguage(), params, fallback);
+}
+
+function createVssFileIneligibleError(path: string): Error {
+    return Object.assign(new Error(`Memory file is no longer eligible: ${path}`), {
+        code: VSS_FILE_INELIGIBLE_CODE,
+    });
+}
+
+function isVssFileIneligibleError(error: unknown): boolean {
+    return getErrorCode(error) === VSS_FILE_INELIGIBLE_CODE;
 }
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'metadata-synced' | 'removed' | 'skipped';
@@ -223,6 +239,7 @@ export class VSS {
     private reconcilePhase: "records" | "files" = "records";
     private hashVerifyCursor = 0;
     private initialized = false;
+    private closing = false;
     private disposed = false;
     private index: VectorIndex | null = null;
     private status: VectorIndexStatus = "uninitialized";
@@ -235,6 +252,10 @@ export class VSS {
     private localStateClearPending = false;
     private dirtyJournalWritePending = false;
     private markerWritePending = false;
+    private pendingMarkerSnapshot: VSSIndexMarker | null = null;
+    private preparedRebuildMarker: VSSIndexMarker | null = null;
+    private markerRemovalPending = false;
+    private rebuildGuard: VSSRebuildGuard | null = null;
     private markerRecoverySuppressed = false;
     private stateGeneration = 0;
     private lastMissingIndexNoticeAt = 0;
@@ -256,7 +277,7 @@ export class VSS {
     }
 
     async initialize() {
-        if (this.disposed) return;
+        if (this.disposed || this.closing) return;
         if (this.initialized) {
             await this.retryLocalStateStore();
             return;
@@ -277,6 +298,11 @@ export class VSS {
         this.storageStatus = await this.getStoragePersistenceStatus();
         if (this.disposed) return;
 
+        if (this.rebuildGuard) {
+            this.status = this.getStatusForRebuildReason(this.rebuildGuard.reason);
+            this.initialized = true;
+            return;
+        }
         if (!this.marker) {
             this.status = "uninitialized";
             this.initialized = true;
@@ -320,7 +346,7 @@ export class VSS {
         if (!this.localStateHydrated && !this.hasPendingLocalStateWrites()) {
             await this.hydrateLocalStateFromStore();
         }
-        if (!this.marker) {
+        if (!this.marker && !this.rebuildGuard && this.status !== "initializing") {
             this.status = "uninitialized";
         }
         await this.flushPendingLocalStateWrites();
@@ -330,14 +356,27 @@ export class VSS {
     }
 
     private hasPendingLocalStateWrites(): boolean {
-        return this.localStateClearPending || this.dirtyJournalWritePending || this.markerWritePending;
+        return this.localStateClearPending
+            || this.dirtyJournalWritePending
+            || this.markerWritePending
+            || this.markerRemovalPending;
     }
 
     private async hydrateLocalStateFromStore(): Promise<void> {
         if (this.disposed || !this.localStateReady || this.localStateHydrated) return;
         await this.loadDirtyJournal();
         if (this.disposed) return;
+        const rebuildGuard = await this.stateStore.getRebuildGuard();
         const marker = await this.readLocalMarker();
+        if (rebuildGuard) {
+            this.rebuildGuard = { ...rebuildGuard };
+            this.preparedRebuildMarker = marker;
+            this.marker = null;
+            this.markerRecoverySuppressed = true;
+            this.status = this.getStatusForRebuildReason(rebuildGuard.reason);
+            this.localStateHydrated = true;
+            return;
+        }
         if (!this.marker) {
             this.marker = marker;
         }
@@ -352,11 +391,19 @@ export class VSS {
         if (this.localStateClearPending) {
             await this.clearLocalStateStore(this.stateGeneration);
         }
+        if (this.markerRemovalPending) {
+            await this.removePersistedLocalIndexMarker(this.stateGeneration);
+        }
         if (this.dirtyJournalWritePending) {
             await this.persistDirtyJournal();
         }
-        if (this.markerWritePending && this.marker) {
-            await this.persistMarkerSnapshot(this.marker, this.stateGeneration);
+        if (this.markerWritePending && this.pendingMarkerSnapshot) {
+            const pendingMarker = { ...this.pendingMarkerSnapshot };
+            if (await this.persistMarkerSnapshot(pendingMarker, this.stateGeneration)) {
+                this.marker = pendingMarker;
+                this.markerRecoverySuppressed = false;
+                this.status = "ready";
+            }
         }
     }
 
@@ -365,11 +412,7 @@ export class VSS {
         const pendingInitialization = this.initializationPromise;
         const pendingEnsureIndex = this.ensureIndexPromise;
         const pendingRecovery = this.sqliteRecoveryPromise;
-        this.disposed = true;
-        this.initialized = false;
-        this.initializationPromise = null;
-        this.ensureIndexPromise = null;
-        this.sqliteRecoveryPromise = null;
+        this.closing = true;
         this.pageletQueryEmbeddingCache.clear();
         this.pageletQueryEmbeddingInFlight.clear();
         this.disposePromise = this.disposeUnlocked([
@@ -383,6 +426,16 @@ export class VSS {
 
     private async disposeUnlocked(pendingOperations: Array<Promise<unknown> | null>): Promise<void> {
         await Promise.allSettled(pendingOperations.filter((operation): operation is Promise<unknown> => Boolean(operation)));
+        let drainedQueue: Promise<void>;
+        do {
+            drainedQueue = this.operationQueue;
+            await drainedQueue.catch(() => undefined);
+        } while (drainedQueue !== this.operationQueue);
+        this.disposed = true;
+        this.initialized = false;
+        this.initializationPromise = null;
+        this.ensureIndexPromise = null;
+        this.sqliteRecoveryPromise = null;
         const index = this.index;
         this.index = null;
         this.status = "uninitialized";
@@ -414,7 +467,7 @@ export class VSS {
     }
 
     private async tryRecoverMarkerFromSqlite(mode: VSSIndexOpenMode): Promise<void> {
-        if (!this.profile || this.disposed) {
+        if (!this.profile || this.disposed || this.rebuildGuard || this.dirty.size > 0) {
             this.status = "uninitialized";
             return;
         }
@@ -599,7 +652,7 @@ export class VSS {
     }
 
     async canAutoMaintain(): Promise<boolean> {
-        if (this.disposed) return false;
+        if (this.disposed || this.closing) return false;
         await this.initialize();
         if (this.index) {
             await this.ensureIndex({ allowFallback: false, mode: "foreground" });
@@ -608,20 +661,32 @@ export class VSS {
     }
 
     async flush(options: VSSFlushOptions = {}): Promise<VSSOperationSummary> {
-        if (this.disposed) return { ...createEmptyOperationSummary(), aborted: true };
+        if (this.disposed || this.closing) return { ...createEmptyOperationSummary(), aborted: true };
         return this.runExclusive(() => this.flushUnlocked(options));
     }
 
     private async flushUnlocked(options: VSSFlushOptions = {}): Promise<VSSOperationSummary> {
         this.assertActive();
         const summary = createEmptyOperationSummary();
+        if (options.abortSignal?.aborted) {
+            summary.aborted = true;
+            return summary;
+        }
         if (this.isFlushing) {
             summary.aborted = true;
             return summary;
         }
         await this.initialize();
         this.assertActive();
+        if (options.abortSignal?.aborted) {
+            summary.aborted = true;
+            return summary;
+        }
         await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: options.force === true, mode: "manual" });
+        if (options.abortSignal?.aborted) {
+            summary.aborted = true;
+            return summary;
+        }
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             if (!options.silent) {
                 new Notice(vssT("plugin.memory.notice.notReadyPrepareFirst"), 5000);
@@ -651,6 +716,20 @@ export class VSS {
             const candidates = currentPaths
                 ? Array.from(currentPaths)
                 : selectFlushCandidates(this.dirty, now, quiet, VSS_PARAMS.maxDelay, limit);
+            if (currentPaths) {
+                for (const path of candidates) {
+                    if (this.markDirtyPath(path)) {
+                        dirtyChanged = true;
+                    }
+                }
+            }
+            if (candidates.length > 0) {
+                const retryStatePersisted = await this.persistDirtyJournal();
+                if (!retryStatePersisted) {
+                    summary.aborted = true;
+                    return summary;
+                }
+            }
             const getEmbeddingsModel = this.createEmbeddingsModelProvider(this.getEmbeddingBatchPolicy().createOptions);
             const filesTotal = candidates.length;
             let filesDone = 0;
@@ -667,33 +746,77 @@ export class VSS {
             };
 
             emitProgress("scanning");
-            if (currentPaths && this.index) {
+            if (options.abortSignal?.aborted) {
+                summary.aborted = true;
+            }
+            if (currentPaths && this.index && !summary.aborted) {
                 const indexedPaths = await this.index.listFilePaths();
-                for (const indexedPath of indexedPaths) {
-                    if (!currentPaths.has(indexedPath)) {
-                        await this.index.deleteFile(indexedPath);
-                        this.dirty.delete(indexedPath);
-                        this.verifyQueue.delete(indexedPath);
+                if (options.abortSignal?.aborted) {
+                    summary.aborted = true;
+                }
+                const stalePaths = indexedPaths.filter(path => !currentPaths.has(path));
+                const staleDirtyStamps = new Map<string, number | undefined>();
+                let staleDirtyChanged = false;
+                for (const stalePath of stalePaths) {
+                    if (this.markDirtyPath(stalePath)) {
+                        staleDirtyChanged = true;
                         dirtyChanged = true;
-                        indexStateChanged = true;
-                        summary.removed++;
                     }
+                    staleDirtyStamps.set(stalePath, this.getDirtyStamp(stalePath));
+                }
+                if (staleDirtyChanged) {
+                    const retryStatePersisted = await this.persistDirtyJournal();
+                    if (!retryStatePersisted) {
+                        summary.aborted = true;
+                    }
+                }
+                if (options.abortSignal?.aborted) {
+                    summary.aborted = true;
+                }
+                for (const indexedPath of stalePaths) {
+                    if (options.abortSignal?.aborted) {
+                        summary.aborted = true;
+                        break;
+                    }
+                    await this.index.deleteFile(indexedPath);
+                    if (options.abortSignal?.aborted) {
+                        summary.aborted = true;
+                        break;
+                    }
+                    if (this.clearDirtyIfStampMatches(indexedPath, staleDirtyStamps.get(indexedPath))) {
+                        dirtyChanged = true;
+                    }
+                    this.verifyQueue.delete(indexedPath);
+                    indexStateChanged = true;
+                    summary.removed++;
                 }
             }
 
             for (const path of candidates) {
                 this.assertActive();
+                if (summary.aborted) break;
+                if (options.abortSignal?.aborted) { summary.aborted = true; break; }
                 if (!options.force && this.processedWindow.count >= VSS_PARAMS.maxPerMinute) break;
 
                 const dirtyStamp = this.getDirtyStamp(path);
                 const file = this.host.app.vault.getAbstractFileByPath(path);
                 emitProgress("scanning", { currentFile: file instanceof TFile ? getProgressFileName(file) : getProgressPathName(path) });
                 if (!file || !(file instanceof TFile)) {
+                    if (options.abortSignal?.aborted) {
+                        summary.aborted = true;
+                        break;
+                    }
                     if (this.clearDirtyIfStampMatches(path, dirtyStamp)) {
                         dirtyChanged = true;
                     }
                     this.verifyQueue.delete(path);
                     if (this.index) await this.index.deleteFile(path);
+                    if (options.abortSignal?.aborted) {
+                        this.markDirtyPath(path);
+                        dirtyChanged = true;
+                        summary.aborted = true;
+                        break;
+                    }
                     indexStateChanged = true;
                     summary.removed++;
                     filesDone++;
@@ -703,13 +826,21 @@ export class VSS {
 
                 let status: VSSRefreshStatus;
                 try {
-                    status = await this.refreshFileCacheUnlocked(file, getEmbeddingsModel);
+                    status = await this.refreshFileCacheUnlocked(file, getEmbeddingsModel, options.abortSignal);
                 } catch (e) {
+                    if (isAbortError(e, options.abortSignal)) {
+                        summary.aborted = true;
+                        break;
+                    }
                     summary.failed++;
                     this.host.log("Failed to refresh VSS index", { path, error: e });
                     filesDone++;
                     emitProgress("writing", { currentFile: getProgressFileName(file) });
                     continue;
+                }
+                if (options.abortSignal?.aborted) {
+                    summary.aborted = true;
+                    break;
                 }
 
                 if (status === 'unchanged') summary.unchanged++;
@@ -736,12 +867,21 @@ export class VSS {
                 }
             }
             if (dirtyChanged) {
-                await this.persistDirtyJournal();
+                const retryStatePersisted = await this.persistDirtyJournal();
+                if (!retryStatePersisted) {
+                    summary.aborted = true;
+                }
             }
-            if (indexStateChanged) {
-                await this.writeLocalIndexState();
+            if (options.abortSignal?.aborted) {
+                summary.aborted = true;
             }
-            emitProgress("ready", { filesDone });
+            if (indexStateChanged && !summary.aborted) {
+                const published = await this.writeLocalIndexState(this.stateGeneration, options.abortSignal);
+                if (!published) summary.aborted = true;
+            }
+            if (!summary.aborted) {
+                emitProgress("ready", { filesDone });
+            }
         } finally {
             this.isFlushing = false;
         }
@@ -749,41 +889,163 @@ export class VSS {
     }
 
     async rebuildLocalIndex(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
-        if (this.disposed) return { ...createEmptyOperationSummary(), aborted: true };
+        if (this.disposed || this.closing) return { ...createEmptyOperationSummary(), aborted: true };
         return this.runExclusive(() => this.rebuildLocalIndexUnlocked(options));
     }
 
-    private async rebuildLocalIndexUnlocked(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
+    async admitPreparedRebuild(options: { abortSignal?: AbortSignal } = {}): Promise<boolean> {
+        if (this.disposed) return false;
+        return this.runExclusive(async () => {
+            const guard = this.rebuildGuard;
+            const marker = this.preparedRebuildMarker;
+            if (!guard || !marker || this.closing || options.abortSignal?.aborted) return false;
+            const generation = this.stateGeneration;
+            if (!await this.replaceRebuildState(marker, null, generation)) {
+                throw new Error("Memory local state could not admit the prepared index.");
+            }
+            if (this.closing || options.abortSignal?.aborted) {
+                await this.rollbackPreparedRebuildUnlocked(guard.reason);
+                return false;
+            }
+            this.marker = marker;
+            this.preparedRebuildMarker = null;
+            this.rebuildGuard = null;
+            this.markerRecoverySuppressed = false;
+            this.status = "ready";
+            return true;
+        });
+    }
+
+    async rollbackPreparedRebuild(reason: VSSRebuildRecoveryReason): Promise<void> {
+        if (this.disposed) return;
+        await this.runExclusive(() => this.rollbackPreparedRebuildUnlocked(reason), { allowDuringClosing: true });
+    }
+
+    private async rollbackPreparedRebuildUnlocked(reason: VSSRebuildRecoveryReason): Promise<void> {
         this.assertActive();
+        await this.stateWriteChain.catch(() => undefined);
+        const generation = ++this.stateGeneration;
+        const guard: VSSRebuildGuard = this.rebuildGuard?.reason === reason
+            ? { ...this.rebuildGuard }
+            : { version: 1, reason, startedAt: new Date().toISOString() };
+        this.dirty.clear();
+        this.verifyQueue.clear();
+        for (const file of this.host.getVSSFiles()) {
+            this.markDirtyPath(file.path);
+        }
+        this.marker = null;
+        this.preparedRebuildMarker = null;
+        this.markerWritePending = false;
+        this.pendingMarkerSnapshot = null;
+        this.rebuildGuard = guard;
+        this.markerRecoverySuppressed = true;
+        this.status = this.getStatusForRebuildReason(reason);
+        if (!await this.replaceRebuildState(null, guard, generation)) {
+            throw new Error("Memory local state could not roll back prepared index admission.");
+        }
+        if (this.index) {
+            await this.index.reset();
+        }
+    }
+
+    private async rebuildLocalIndexUnlocked(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
+        const summary = createEmptyOperationSummary();
+        const abortSignal = options.abortSignal;
+        this.assertActive();
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+            return summary;
+        }
         await this.initialize();
         this.assertActive();
+        const rebuildReason = options.rebuildReason ?? this.getCurrentRebuildReason();
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+            return summary;
+        }
         this.storageStatus = await this.requestPersistentStorage();
+        summary.storagePersisted = this.storageStatus.persisted;
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+            return summary;
+        }
         if (!this.storageStatus.persisted && !options.silent) {
             new Notice(vssT("plugin.memory.notice.prepareAgainLater"), 7000);
         }
         await this.ensureIndex({ allowFallback: false, mode: "manual" });
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+            if (!this.marker && !this.rebuildGuard) this.status = "uninitialized";
+            return summary;
+        }
         if (!this.index || this.status === "disabled") {
             throw new Error("Memory is unavailable.");
         }
 
         const index = this.index;
-        await index.reset();
-        this.status = "initializing";
+        const files = this.host.getVSSFiles()
+            .sort((a, b) => b.stat.mtime - a.stat.mtime);
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+            if (!this.marker && !this.rebuildGuard) this.status = "uninitialized";
+            return summary;
+        }
+
         this.dirty.clear();
         this.verifyQueue.clear();
-        this.nextEmbeddingRequestAt = 0;
-        const files = this.host.getVSSFiles();
-        const summary = createEmptyOperationSummary();
-        summary.storagePersisted = this.storageStatus.persisted;
+        const rebuildDirtyStamps = new Map<string, number | undefined>();
+        for (const file of files) {
+            this.markDirtyPath(file.path);
+            rebuildDirtyStamps.set(file.path, this.getDirtyStamp(file.path));
+        }
+        const { generation: rebuildGeneration, guard: rebuildGuard } = await this.beginRebuildState(rebuildReason);
         const embeddingPolicy = this.getEmbeddingBatchPolicy();
         const getEmbeddingsModel = this.createEmbeddingsModelProvider(embeddingPolicy.createOptions);
         const pendingFiles = new Map<string, RebuildFileState>();
         let currentBatch: RebuildChunkWorkItem[] = [];
+        let indexWasReset = false;
         let filesScanned = 0;
         let filesFinalized = 0;
         let filesUpdated = 0;
         let chunksTotal = 0;
         let chunksEmbedded = 0;
+
+        const leaveRebuildIncomplete = async (resetPartialIndex: boolean) => {
+            currentBatch = [];
+            pendingFiles.clear();
+            for (const file of files) {
+                this.markDirtyPath(file.path);
+            }
+            this.marker = null;
+            this.markerWritePending = false;
+            this.pendingMarkerSnapshot = null;
+            this.preparedRebuildMarker = null;
+            this.rebuildGuard = rebuildGuard;
+            this.markerRecoverySuppressed = true;
+            this.status = this.getStatusForRebuildReason(rebuildGuard.reason);
+            if (!await this.replaceRebuildState(null, rebuildGuard, rebuildGeneration)) {
+                throw new Error("Memory local state could not preserve incomplete rebuild state.");
+            }
+            if (resetPartialIndex) {
+                await index.reset();
+            }
+        };
+
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+            await leaveRebuildIncomplete(false);
+            return summary;
+        }
+
+        try {
+            await index.reset();
+            indexWasReset = true;
+        } catch (error) {
+            this.status = this.getStatusForRebuildReason(rebuildGuard.reason);
+            throw error;
+        }
+        this.status = "initializing";
+        this.nextEmbeddingRequestAt = 0;
 
         const emitProgress = (phase: VSSProgressPhase, overrides: Partial<VSSProgressEvent> = {}) => {
             options.onProgress?.({
@@ -821,6 +1083,15 @@ export class VSS {
                 }
 
                 try {
+                    throwIfAborted(abortSignal);
+                    if (!this.isEligible(state.file)) {
+                        await index.deleteFile(state.path);
+                        this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
+                        summary.removed++;
+                        filesFinalized++;
+                        emitProgress("writing", { currentFile: getProgressFileName(state.file) });
+                        continue;
+                    }
                     if (!this.isFileSnapshotCurrent(state.file, state)) {
                         if (this.markDirtyPath(state.file.path)) {
                             this.host.log("Skipped rebuilding Memory file because it changed before index write", { path: state.path, currentPath: state.file.path });
@@ -831,18 +1102,23 @@ export class VSS {
                         continue;
                     }
 
+                    throwIfAborted(abortSignal);
                     await index.upsertFile({
                         path: state.path,
                         contentHash: state.contentHash,
                         mtime: state.mtime,
                         size: state.size,
                     }, state.chunks, state.embeddings);
+                    throwIfAborted(abortSignal);
                     if (this.markDirtyIfSnapshotChanged(state.file, state)) {
                         this.host.log("Marked Memory file dirty after rebuild because it changed during index write", { path: state.path, currentPath: state.file.path });
+                    } else {
+                        this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
                     }
                     summary.updated++;
                     filesUpdated++;
                 } catch (error) {
+                    if (isAbortError(error, abortSignal)) throw error;
                     summary.failed++;
                     this.host.log("Failed to write rebuilt VSS file", { path: state.file.path, error });
                 }
@@ -853,20 +1129,31 @@ export class VSS {
 
         const processBatch = async () => {
             this.assertActive();
+            throwIfAborted(abortSignal);
             if (currentBatch.length === 0) return;
             const batch = currentBatch;
             currentBatch = [];
             const currentFile = getProgressFileName(batch[0].state.file);
             emitProgress("embedding", { currentFile });
             const skippedStates = new Set<RebuildFileState>();
+            const ineligibleStates = new Set<RebuildFileState>();
             const activeBatch = batch.filter((item) => {
+                if (!this.isEligible(item.state.file)) {
+                    skippedStates.add(item.state);
+                    ineligibleStates.add(item.state);
+                    return false;
+                }
                 if (this.isFileSnapshotCurrent(item.state.file, item.state)) return true;
                 skippedStates.add(item.state);
                 return false;
             });
             for (const state of skippedStates) {
                 if (!pendingFiles.has(state.path)) continue;
-                if (this.markDirtyPath(state.file.path)) {
+                if (ineligibleStates.has(state)) {
+                    await index.deleteFile(state.path);
+                    this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
+                    this.host.log("Removed Memory file because it is no longer eligible", { path: state.path });
+                } else if (this.markDirtyPath(state.file.path)) {
                     this.host.log("Skipped rebuilding Memory file because it changed before embedding", { path: state.path, currentPath: state.file.path });
                 }
                 state.skipped = true;
@@ -883,7 +1170,10 @@ export class VSS {
                     getEmbeddingsModel,
                     embeddingPolicy,
                     (retryDelayMs) => emitProgress("retrying", { currentFile, retryDelayMs }),
+                    abortSignal,
+                    () => activeBatch.every(item => this.isEligible(item.state.file)),
                 );
+                throwIfAborted(abortSignal);
                 if (embeddings.length !== activeBatch.length) {
                     throw new Error(`Embedding count ${embeddings.length} does not match batch size ${activeBatch.length}.`);
                 }
@@ -894,7 +1184,26 @@ export class VSS {
                 }
                 chunksEmbedded += embeddings.length;
             } catch (error) {
+                if (isAbortError(error, abortSignal)) throw error;
                 const affectedStates = Array.from(new Set(activeBatch.map(item => item.state)));
+                if (isVssFileIneligibleError(error)) {
+                    for (const state of affectedStates) {
+                        if (!this.isEligible(state.file)) {
+                            await index.deleteFile(state.path);
+                            this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
+                        } else {
+                            this.markDirtyPath(state.path);
+                        }
+                        state.skipped = true;
+                        state.remaining = 0;
+                    }
+                    await finalizeReadyFiles([
+                        ...affectedStates,
+                        ...skippedStates,
+                    ]);
+                    emitProgress("embedding", { currentFile });
+                    return;
+                }
                 const affectedFiles = affectedStates.map(state => state.file.path);
                 this.host.log("Failed to embed rebuilt VSS batch", { paths: affectedFiles, error });
                 for (const state of affectedStates) {
@@ -902,6 +1211,7 @@ export class VSS {
                     state.remaining = 0;
                 }
             }
+            throwIfAborted(abortSignal);
             await finalizeReadyFiles([
                 ...activeBatch.map(item => item.state),
                 ...skippedStates,
@@ -911,11 +1221,13 @@ export class VSS {
 
         emitProgress("scanning");
         for (const file of files) {
-            this.assertActive();
-            filesScanned++;
-            emitProgress("scanning", { currentFile: getProgressFileName(file) });
             try {
-                const snapshot = await this.readFileContentSnapshot(file);
+                this.assertActive();
+                throwIfAborted(abortSignal);
+                filesScanned++;
+                emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                const snapshot = await this.readFileContentSnapshot(file, abortSignal);
+                throwIfAborted(abortSignal);
 
                 if (snapshot.changedDuringCapture) {
                     if (this.markDirtyPath(file.path)) {
@@ -928,12 +1240,13 @@ export class VSS {
                 }
 
                 if (snapshot.tooLarge) {
-                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-large-file")) {
+                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-large-file", abortSignal)) {
                         summary.skipped++;
                         filesFinalized++;
                         emitProgress("scanning", { currentFile: getProgressFileName(file) });
                         continue;
                     }
+                    this.clearDirtyIfStampMatches(snapshot.path, rebuildDirtyStamps.get(snapshot.path));
                     summary.skipped++;
                     filesFinalized++;
                     this.host.log(`Skipped VSS index for large file ${file.path}`);
@@ -942,26 +1255,35 @@ export class VSS {
                 }
 
                 if (!snapshot.contentHash) {
-                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-empty-file")) {
+                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-empty-file", abortSignal)) {
                         summary.skipped++;
                         filesFinalized++;
                         emitProgress("scanning", { currentFile: getProgressFileName(file) });
                         continue;
                     }
+                    this.clearDirtyIfStampMatches(snapshot.path, rebuildDirtyStamps.get(snapshot.path));
                     summary.removed++;
                     filesFinalized++;
                     emitProgress("scanning", { currentFile: getProgressFileName(file) });
                     continue;
                 }
 
-                const chunks = await this.prepareFileChunks(file, snapshot.contentHash, snapshot.cleanedContent, snapshot);
+                const chunks = await this.prepareFileChunks(
+                    file,
+                    snapshot.contentHash,
+                    snapshot.cleanedContent,
+                    snapshot,
+                    abortSignal,
+                );
+                throwIfAborted(abortSignal);
                 if (chunks.length === 0) {
-                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-empty-chunks")) {
+                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-empty-chunks", abortSignal)) {
                         summary.skipped++;
                         filesFinalized++;
                         emitProgress("scanning", { currentFile: getProgressFileName(file) });
                         continue;
                     }
+                    this.clearDirtyIfStampMatches(snapshot.path, rebuildDirtyStamps.get(snapshot.path));
                     summary.removed++;
                     filesFinalized++;
                     emitProgress("scanning", { currentFile: getProgressFileName(file) });
@@ -992,6 +1314,18 @@ export class VSS {
                     }
                 }
             } catch (error) {
+                if (isAbortError(error, abortSignal)) {
+                    summary.aborted = true;
+                    break;
+                }
+                if (isVssFileIneligibleError(error)) {
+                    await index.deleteFile(file.path);
+                    this.clearDirtyIfStampMatches(file.path, rebuildDirtyStamps.get(file.path));
+                    summary.removed++;
+                    filesFinalized++;
+                    emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                    continue;
+                }
                 summary.failed++;
                 filesFinalized++;
                 this.host.log("Failed to scan rebuilt VSS file", { path: file.path, error });
@@ -999,12 +1333,61 @@ export class VSS {
             }
         }
 
-        await processBatch();
+        if (!summary.aborted) {
+            try {
+                await processBatch();
+            } catch (error) {
+                if (isAbortError(error, abortSignal)) {
+                    summary.aborted = true;
+                } else {
+                    await leaveRebuildIncomplete(indexWasReset);
+                    throw error;
+                }
+            }
+        }
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+        }
+        if (summary.aborted) {
+            await leaveRebuildIncomplete(indexWasReset);
+            return summary;
+        }
+        if (summary.updated === 0 && summary.failed > 0) {
+            await leaveRebuildIncomplete(indexWasReset);
+            return summary;
+        }
+        if (summary.updated === 0 && this.dirty.size > 0) {
+            summary.aborted = true;
+            await leaveRebuildIncomplete(indexWasReset);
+            return summary;
+        }
+
         emitProgress("writing");
-        await this.persistDirtyJournal();
-        await this.writeLocalIndexState();
-        emitProgress("ready", { filesDone: filesFinalized });
-        if (!options.silent) {
+        if (abortSignal?.aborted) {
+            summary.aborted = true;
+            await leaveRebuildIncomplete(indexWasReset);
+            return summary;
+        }
+        let published: boolean;
+        try {
+            published = await this.commitRebuildState(
+                rebuildGeneration,
+                options.deferAdmission === true,
+                abortSignal,
+            );
+        } catch (error) {
+            await leaveRebuildIncomplete(indexWasReset);
+            throw error;
+        }
+        if (!published || abortSignal?.aborted) {
+            summary.aborted = true;
+            await leaveRebuildIncomplete(indexWasReset);
+            return summary;
+        }
+        if (!options.deferAdmission) {
+            emitProgress("ready", { filesDone: filesFinalized });
+        }
+        if (!options.silent && !options.deferAdmission) {
             new Notice(summary.failed > 0 ? vssT("plugin.memory.notice.readyPartial") : vssT("plugin.memory.notice.readyNotesUnchanged"), 5000);
         }
         return summary;
@@ -1017,6 +1400,7 @@ export class VSS {
             limit: Number.MAX_SAFE_INTEGER,
             silent: options.silent,
             onProgress: options.onProgress,
+            abortSignal: options.abortSignal,
         });
         if (!summary.aborted && !options.silent) {
             new Notice(summary.failed > 0 ? vssT("plugin.memory.notice.updatedPartial") : vssT("plugin.memory.notice.readyNotesUnchanged"), 3000);
@@ -1032,6 +1416,12 @@ export class VSS {
     private async resetLocalIndexUnlocked(): Promise<void> {
         this.assertActive();
         await this.initialize();
+        const previousRebuildGuard = this.rebuildGuard ? { ...this.rebuildGuard } : null;
+        if (!this.index) {
+            const profile = this.profile ?? this.createEmbeddingProfile();
+            const opened = await this.openSqliteIndex(profile, "manual");
+            this.index = opened.index;
+        }
         if (this.index) {
             const index = this.index;
             await index.reset();
@@ -1042,26 +1432,45 @@ export class VSS {
         this.stateGeneration++;
         this.localStateClearPending = true;
         this.markerWritePending = false;
+        this.pendingMarkerSnapshot = null;
+        this.preparedRebuildMarker = null;
+        this.markerRemovalPending = false;
         this.dirtyJournalWritePending = false;
         this.markerRecoverySuppressed = true;
         this.marker = null;
+        this.rebuildGuard = null;
         this.status = "uninitialized";
         this.dirty.clear();
         this.verifyQueue.clear();
-        await this.clearLocalStateStore(this.stateGeneration);
+        const cleared = await this.clearLocalStateStore(this.stateGeneration);
+        if (!cleared) {
+            this.rebuildGuard = previousRebuildGuard;
+            if (previousRebuildGuard) {
+                this.status = this.getStatusForRebuildReason(previousRebuildGuard.reason);
+            }
+            throw new Error("Memory local state could not finish resetting the local index.");
+        }
         new Notice(vssT("plugin.memory.notice.localCopyReset"), 3000);
     }
 
     async reconcileLocalFiles(options: VSSReconcileOptions = {}): Promise<VSSReconcileSummary> {
-        if (this.disposed) return {
+        const abortedSummary = (): VSSReconcileSummary => ({
             ...createEmptyOperationSummary(),
             scanned: 0,
             markedDirty: 0,
             verified: 0,
             hasMore: false,
             aborted: true,
-        };
-        return this.runExclusive(() => this.reconcileLocalFilesUnlocked(options));
+        });
+        if (this.disposed || this.closing || options.abortSignal?.aborted) return abortedSummary();
+        try {
+            return await this.runExclusive(() => this.reconcileLocalFilesUnlocked(options));
+        } catch (error) {
+            if (isAbortError(error, options.abortSignal) || this.closing || this.disposed || getErrorCode(error) === "vss-disposed") {
+                return abortedSummary();
+            }
+            throw error;
+        }
     }
 
     private async reconcileLocalFilesUnlocked(options: VSSReconcileOptions = {}): Promise<VSSReconcileSummary> {
@@ -1073,9 +1482,12 @@ export class VSS {
             verified: 0,
             hasMore: false,
         };
+        throwIfAborted(options.abortSignal);
         await this.initialize();
         this.assertActive();
+        throwIfAborted(options.abortSignal);
         await this.ensureIndex({ allowFallback: false, mode: "manual" });
+        throwIfAborted(options.abortSignal);
         if (!this.index || !await this.isDurableReady()) {
             summary.aborted = true;
             return summary;
@@ -1094,7 +1506,7 @@ export class VSS {
 
         const maybeYield = async () => {
             if (summary.scanned > 0 && summary.scanned % batchSize === 0) {
-                await sleep(0);
+                await this.sleepActive(0, options.abortSignal);
             }
         };
 
@@ -1109,11 +1521,15 @@ export class VSS {
             }
             while (hasBudget() && this.recordReconcileCursor < records.length) {
                 this.assertActive();
+                throwIfAborted(options.abortSignal);
                 const record = records[this.recordReconcileCursor];
                 this.recordReconcileCursor++;
                 summary.scanned++;
-                if (!fileByPath.has(record.path)) {
+                const currentFile = fileByPath.get(record.path);
+                if (!currentFile || !this.isEligible(currentFile)) {
+                    throwIfAborted(options.abortSignal);
                     await index.deleteFile(record.path);
+                    throwIfAborted(options.abortSignal);
                     this.verifyQueue.delete(record.path);
                     if (this.dirty.delete(record.path)) {
                         dirtyChanged = true;
@@ -1140,13 +1556,25 @@ export class VSS {
             }
             while (hasBudget() && this.reconcileCursor < files.length) {
                 this.assertActive();
+                throwIfAborted(options.abortSignal);
                 const file = files[this.reconcileCursor];
                 this.reconcileCursor++;
                 summary.scanned++;
                 const record = recordByPath.get(file.path);
+                if (!this.isEligible(file)) {
+                    if (record) {
+                        await index.deleteFile(file.path);
+                        indexChanged = true;
+                        summary.removed++;
+                    }
+                    this.verifyQueue.delete(file.path);
+                    if (this.dirty.delete(file.path)) dirtyChanged = true;
+                    await maybeYield();
+                    continue;
+                }
                 if (!record) {
                     try {
-                        const snapshot = await this.readFileContentSnapshot(file);
+                        const snapshot = await this.readFileContentSnapshot(file, options.abortSignal);
                         if (snapshot.changedDuringCapture || !this.isFileSnapshotCurrent(file, snapshot)) {
                             if (this.markDirtyPath(file.path)) {
                                 dirtyChanged = true;
@@ -1167,6 +1595,14 @@ export class VSS {
                             summary.markedDirty++;
                         }
                     } catch (error) {
+                        if (isAbortError(error, options.abortSignal)) throw error;
+                        if (isVssFileIneligibleError(error)) {
+                            this.verifyQueue.delete(file.path);
+                            if (this.dirty.delete(file.path)) dirtyChanged = true;
+                            summary.removed++;
+                            await maybeYield();
+                            continue;
+                        }
                         this.host.log("Failed to inspect missing Memory index record", { path: file.path, error });
                         if (this.markDirtyPath(file.path)) {
                             dirtyChanged = true;
@@ -1216,11 +1652,22 @@ export class VSS {
 
         if (!summary.hasMore && verifyHashLimit > 0 && summary.scanned < maxMetadataItems && files.length > 0) {
             const filesToVerify = rotateByCursor(files, this.hashVerifyCursor);
-            for (let index = 0; index < filesToVerify.length && summary.verified < verifyHashLimit && summary.scanned < maxMetadataItems; index++) {
+            for (let fileIndex = 0; fileIndex < filesToVerify.length && summary.verified < verifyHashLimit && summary.scanned < maxMetadataItems; fileIndex++) {
                 this.assertActive();
-                const file = filesToVerify[index];
+                throwIfAborted(options.abortSignal);
+                const file = filesToVerify[fileIndex];
                 this.hashVerifyCursor = (this.hashVerifyCursor + 1) % files.length;
                 const record = recordByPath.get(file.path);
+                if (!this.isEligible(file)) {
+                    if (record) {
+                        await index.deleteFile(file.path);
+                        indexChanged = true;
+                        summary.removed++;
+                    }
+                    this.verifyQueue.delete(file.path);
+                    if (this.dirty.delete(file.path)) dirtyChanged = true;
+                    continue;
+                }
                 if (!record || record.mtime !== file.stat.mtime || record.size !== file.stat.size || this.dirty.has(file.path)) {
                     continue;
                 }
@@ -1234,15 +1681,38 @@ export class VSS {
         }
 
         if (dirtyChanged) {
+            throwIfAborted(options.abortSignal);
             await this.persistDirtyJournal();
         }
         if (indexChanged) {
-            await this.writeLocalIndexState();
+            throwIfAborted(options.abortSignal);
+            if (!await this.writeLocalIndexState(this.stateGeneration, options.abortSignal)) {
+                summary.aborted = true;
+            }
         }
         return summary;
     }
 
     async verifyPendingChanges(options: VSSVerifyOptions = {}): Promise<VSSVerifySummary> {
+        const abortedSummary = (): VSSVerifySummary => ({
+            ...createEmptyOperationSummary(),
+            markedDirty: 0,
+            hasMore: this.verifyQueue.size > 0,
+            bytesReadEstimate: 0,
+            aborted: true,
+        });
+        if (this.disposed || this.closing || options.abortSignal?.aborted) return abortedSummary();
+        try {
+            return await this.verifyPendingChangesInternal(options);
+        } catch (error) {
+            if (isAbortError(error, options.abortSignal) || this.closing || this.disposed || getErrorCode(error) === "vss-disposed") {
+                return abortedSummary();
+            }
+            throw error;
+        }
+    }
+
+    private async verifyPendingChangesInternal(options: VSSVerifyOptions): Promise<VSSVerifySummary> {
         const summary: VSSVerifySummary = {
             ...createEmptyOperationSummary(),
             markedDirty: 0,
@@ -1254,9 +1724,12 @@ export class VSS {
             return summary;
         }
 
+        throwIfAborted(options.abortSignal);
         await this.initialize();
         this.assertActive();
+        throwIfAborted(options.abortSignal);
         await this.ensureIndex({ allowFallback: false, mode: "manual" });
+        throwIfAborted(options.abortSignal);
         if (!this.index || !await this.isDurableReady()) {
             summary.aborted = true;
             return summary;
@@ -1268,6 +1741,7 @@ export class VSS {
 
         for (const candidate of candidates) {
             this.assertActive();
+            throwIfAborted(options.abortSignal);
             if (summary.verificationChecked >= budget.maxFiles) {
                 summary.hasMore = true;
                 break;
@@ -1284,11 +1758,12 @@ export class VSS {
             if (!file || !(file instanceof TFile) || !this.isEligible(file)) {
                 summary.verificationChecked++;
                 await this.runExclusive(async () => {
+                    throwIfAborted(options.abortSignal);
                     if (!this.isCurrentVerifyRecord(candidate)) return;
                     this.verifyQueue.delete(candidate.path);
                     if (this.index) {
                         await this.index.deleteFile(candidate.path);
-                        await this.writeLocalIndexState();
+                        await this.writeLocalIndexState(this.stateGeneration, options.abortSignal);
                     }
                 });
                 summary.removed++;
@@ -1309,8 +1784,22 @@ export class VSS {
             let snapshot: VSSFileContentSnapshot;
             summary.verificationChecked++;
             try {
-                snapshot = await this.readFileContentSnapshot(file);
+                snapshot = await this.readFileContentSnapshot(file, options.abortSignal);
             } catch (error) {
+                if (isAbortError(error, options.abortSignal)) throw error;
+                if (isVssFileIneligibleError(error)) {
+                    await this.runExclusive(async () => {
+                        throwIfAborted(options.abortSignal);
+                        if (!this.isCurrentVerifyRecord(candidate)) return;
+                        this.verifyQueue.delete(candidate.path);
+                        if (this.index) {
+                            await this.index.deleteFile(candidate.path);
+                            await this.writeLocalIndexState(this.stateGeneration, options.abortSignal);
+                        }
+                    });
+                    summary.removed++;
+                    continue;
+                }
                 summary.failed++;
                 this.host.log("Could not verify Memory file hash", { path: candidate.path, error });
                 continue;
@@ -1318,6 +1807,7 @@ export class VSS {
 
             if (snapshot.changedDuringCapture) {
                 await this.runExclusive(async () => {
+                    throwIfAborted(options.abortSignal);
                     if (!this.isCurrentVerifyRecord(candidate)) return;
                     if (this.markDirtyPath(candidate.path)) {
                         summary.dirtyConfirmed++;
@@ -1331,6 +1821,7 @@ export class VSS {
             if (snapshot.tooLarge || !snapshot.contentHash) {
                 let deleted = false;
                 await this.runExclusive(async () => {
+                    throwIfAborted(options.abortSignal);
                     if (!this.isCurrentVerifyRecord(candidate)) return;
                     if (!this.isFileSnapshotCurrent(file, snapshot)) {
                         if (this.markDirtyPath(candidate.path)) {
@@ -1343,7 +1834,7 @@ export class VSS {
                     this.verifyQueue.delete(candidate.path);
                     if (this.index) {
                         await this.index.deleteFile(candidate.path);
-                        await this.writeLocalIndexState();
+                        await this.writeLocalIndexState(this.stateGeneration, options.abortSignal);
                         deleted = true;
                     }
                     if (this.clearDirtyIfStampMatches(candidate.path, dirtyStamp)) {
@@ -1362,6 +1853,7 @@ export class VSS {
 
             if (snapshot.contentHash !== candidate.contentHash) {
                 await this.runExclusive(async () => {
+                    throwIfAborted(options.abortSignal);
                     if (!this.isCurrentVerifyRecord(candidate)) return;
                     if (this.markDirtyPath(candidate.path)) {
                         summary.dirtyConfirmed++;
@@ -1374,6 +1866,7 @@ export class VSS {
 
             const verifiedHash = snapshot.contentHash;
             await this.runExclusive(async () => {
+                throwIfAborted(options.abortSignal);
                 if (!this.isCurrentVerifyRecord(candidate)) return;
                 if (!this.index) return;
                 if (!this.isVerifyCandidateMetadataCurrent(file, candidate)) {
@@ -1398,7 +1891,7 @@ export class VSS {
                 summary.metadataSynced++;
             });
 
-            await sleep(0);
+            await this.sleepActive(0, options.abortSignal);
         }
 
         summary.hasMore = summary.hasMore || this.verifyQueue.size > 0;
@@ -1506,23 +1999,47 @@ export class VSS {
         return this.runExclusive(() => this.refreshFileCacheUnlocked(file, getEmbeddingsModel));
     }
 
-    private async refreshFileCacheUnlocked(file: TFile, getEmbeddingsModel?: EmbeddingsModelProvider): Promise<VSSRefreshStatus> {
+    private async refreshFileCacheUnlocked(
+        file: TFile,
+        getEmbeddingsModel?: EmbeddingsModelProvider,
+        abortSignal?: AbortSignal,
+    ): Promise<VSSRefreshStatus> {
         this.assertActive();
+        throwIfAborted(abortSignal);
         await this.initialize();
+        throwIfAborted(abortSignal);
         await this.ensureIndex({ allowFallback: false, mode: "manual" });
+        throwIfAborted(abortSignal);
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             throw new Error("VSS index is unavailable.");
         }
 
-        const snapshot = await this.readFileContentSnapshot(file);
+        if (!this.isEligible(file)) {
+            return this.removeIneligibleFileFromIndex(file, abortSignal);
+        }
+
+        let snapshot: VSSFileContentSnapshot;
+        try {
+            snapshot = await this.readFileContentSnapshot(file, abortSignal);
+        } catch (error) {
+            if (isVssFileIneligibleError(error)) {
+                return this.removeIneligibleFileFromIndex(file, abortSignal);
+            }
+            throw error;
+        }
+        throwIfAborted(abortSignal);
+
+        if (!this.isEligible(file)) {
+            return this.removeIneligibleFileFromIndex(file, abortSignal);
+        }
 
         if (snapshot.changedDuringCapture) {
-            await this.deferSnapshotRefresh(file, snapshot, "read");
+            await this.deferSnapshotRefresh(file, snapshot, "read", abortSignal);
             return 'skipped';
         }
 
         if (snapshot.tooLarge) {
-            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "large-file")) {
+            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "large-file", abortSignal)) {
                 return 'skipped';
             }
             this.host.log(`Skipped VSS index for large file ${file.path}`);
@@ -1530,61 +2047,90 @@ export class VSS {
         }
 
         if (!snapshot.contentHash) {
-            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "empty-file")) {
+            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "empty-file", abortSignal)) {
                 return 'skipped';
             }
             return 'removed';
         }
 
+        throwIfAborted(abortSignal);
         const cached = await this.index.getFileRecord(file.path);
+        throwIfAborted(abortSignal);
         if (cached && cached.contentHash === snapshot.contentHash) {
             if (cached.mtime !== snapshot.mtime || cached.size !== snapshot.size) {
-                if (await this.deferSnapshotRefresh(file, snapshot, "metadata-sync")) {
+                if (await this.deferSnapshotRefresh(file, snapshot, "metadata-sync", abortSignal)) {
                     return 'skipped';
                 }
+                throwIfAborted(abortSignal);
                 await this.index.updateFileMetadata({
                     path: file.path,
                     contentHash: snapshot.contentHash,
                     mtime: snapshot.mtime,
                     size: snapshot.size,
                 });
+                throwIfAborted(abortSignal);
                 await this.markDirtyIfSnapshotChangedAndPersist(file, snapshot, "metadata-sync");
                 this.clearVerifyRecordIfNotNewerThanSnapshot(file.path, snapshot);
                 return 'metadata-synced';
             }
-            if (await this.deferSnapshotRefresh(file, snapshot, "unchanged")) {
+            if (await this.deferSnapshotRefresh(file, snapshot, "unchanged", abortSignal)) {
                 return 'skipped';
             }
             this.clearVerifyRecordIfNotNewerThanSnapshot(file.path, snapshot);
             return 'unchanged';
         }
 
-        if (await this.deferSnapshotRefresh(file, snapshot, "pre-embeddings")) {
+        if (await this.deferSnapshotRefresh(file, snapshot, "pre-embeddings", abortSignal)) {
             return 'skipped';
         }
-        const prepared = await this.prepareFileVectors(file, snapshot, getEmbeddingsModel);
+        throwIfAborted(abortSignal);
+        let prepared: Awaited<ReturnType<VSS["prepareFileVectors"]>>;
+        try {
+            prepared = await this.prepareFileVectors(file, snapshot, getEmbeddingsModel, abortSignal);
+        } catch (error) {
+            if (isVssFileIneligibleError(error)) {
+                return this.removeIneligibleFileFromIndex(file, abortSignal);
+            }
+            throw error;
+        }
+        throwIfAborted(abortSignal);
         if (prepared.deferred) {
             return 'skipped';
         }
         if (prepared.chunks.length === 0) {
-            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "empty-chunks")) {
+            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "empty-chunks", abortSignal)) {
                 return 'skipped';
             }
             return 'removed';
         }
 
-        if (await this.deferSnapshotRefresh(file, snapshot, "vector-upsert")) {
+        if (await this.deferSnapshotRefresh(file, snapshot, "vector-upsert", abortSignal)) {
             return 'skipped';
         }
+        if (!this.isEligible(file)) {
+            return this.removeIneligibleFileFromIndex(file, abortSignal);
+        }
+        throwIfAborted(abortSignal);
         await this.index.upsertFile({
             path: file.path,
             contentHash: snapshot.contentHash,
             mtime: snapshot.mtime,
             size: snapshot.size,
         }, prepared.chunks, prepared.embeddings);
+        throwIfAborted(abortSignal);
         await this.markDirtyIfSnapshotChangedAndPersist(file, snapshot, "vector-upsert");
         this.clearVerifyRecordIfNotNewerThanSnapshot(file.path, snapshot);
         return 'updated';
+    }
+
+    private async removeIneligibleFileFromIndex(file: TFile, abortSignal?: AbortSignal): Promise<VSSRefreshStatus> {
+        throwIfAborted(abortSignal);
+        if (this.index) {
+            await this.index.deleteFile(file.path);
+        }
+        throwIfAborted(abortSignal);
+        this.verifyQueue.delete(file.path);
+        return "removed";
     }
 
     async loadVectorStore(_vssFiles: TFile[], _isDelete: boolean = false) {
@@ -1592,7 +2138,7 @@ export class VSS {
     }
 
     async searchSimilarity(prompt: string) {
-        if (this.disposed) return [];
+        if (this.disposed || this.closing) return [];
         await this.initialize();
         if (this.index) {
             await this.ensureIndex({ allowFallback: false, mode: "foreground" });
@@ -1654,7 +2200,7 @@ export class VSS {
             : Promise.resolve(options?.temporalFilter ?? null);
         const signal = options?.signal;
         throwIfAborted(signal);
-        if (this.disposed) return [];
+        if (this.disposed || this.closing) return [];
         await this.initialize();
         throwIfAborted(signal);
         if (this.index) {
@@ -1778,7 +2324,7 @@ export class VSS {
     }
 
     async getStats(options: { mode?: VSSIndexOpenMode } = {}): Promise<VSSIndexStats> {
-        if (this.disposed) {
+        if (this.disposed || this.closing) {
             return this.createUnavailableStats("uninitialized");
         }
         const mode = options.mode ?? "foreground";
@@ -1810,7 +2356,9 @@ export class VSS {
         return mode === "manual"
             && !this.index
             && !this.marker
+            && !this.rebuildGuard
             && !this.markerRecoverySuppressed
+            && this.dirty.size === 0
             && (this.status === "uninitialized" || this.status === "disabled" || this.status === "error");
     }
 
@@ -1821,7 +2369,7 @@ export class VSS {
     }
 
     async getMemoryReadiness(): Promise<MemoryMaintenancePlan> {
-        if (this.disposed) {
+        if (this.disposed || this.closing) {
             return {
                 reason: "unavailable",
                 action: "none",
@@ -1905,8 +2453,24 @@ export class VSS {
         };
     }
 
-    private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
-        if (this.disposed) {
+    private getStatusForRebuildReason(reason: VSSRebuildRecoveryReason): VectorIndexStatus {
+        if (reason === "settings-changed") return "stale";
+        if (reason === "local-memory-missing") return "missing-local-index";
+        return "uninitialized";
+    }
+
+    private getCurrentRebuildReason(): VSSRebuildRecoveryReason {
+        if (this.rebuildGuard) return this.rebuildGuard.reason;
+        if (this.status === "stale") return "settings-changed";
+        if (this.status === "missing-local-index") return "local-memory-missing";
+        return "first-use";
+    }
+
+    private runExclusive<T>(
+        operation: () => Promise<T>,
+        options: { allowDuringClosing?: boolean } = {},
+    ): Promise<T> {
+        if (this.disposed || this.closing && !options.allowDuringClosing) {
             return Promise.reject(createVssDisposedError());
         }
         const runOperation = () => {
@@ -1928,10 +2492,12 @@ export class VSS {
         }
     }
 
-    private async sleepActive(ms: number): Promise<void> {
+    private async sleepActive(ms: number, signal?: AbortSignal): Promise<void> {
         this.assertActive();
-        await sleep(ms);
+        throwIfAborted(signal);
+        await waitForAbortablePromise(sleep(ms), signal);
         this.assertActive();
+        throwIfAborted(signal);
     }
 
     private createUnavailableStats(status: VectorIndexStatus): VSSIndexStats {
@@ -2125,6 +2691,12 @@ export class VSS {
         if (this.index && (this.status === "ready" || this.status === "stale")) {
             return;
         }
+        if (this.index
+            && !this.marker
+            && this.status === "uninitialized"
+            && this.markerRecoverySuppressed) {
+            return;
+        }
         if (this.index && this.status === "initializing") {
             return;
         }
@@ -2299,19 +2871,35 @@ export class VSS {
         file: TFile,
         snapshot: VSSFileContentSnapshot,
         getEmbeddingsModel?: EmbeddingsModelProvider,
+        abortSignal?: AbortSignal,
     ): Promise<{ chunks: VSSChunk[]; embeddings: number[][]; deferred: boolean }> {
         this.assertActive();
-        const chunks = await this.prepareFileChunks(file, snapshot.contentHash ?? "", snapshot.cleanedContent, snapshot);
+        throwIfAborted(abortSignal);
+        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
+        const chunks = await this.prepareFileChunks(
+            file,
+            snapshot.contentHash ?? "",
+            snapshot.cleanedContent,
+            snapshot,
+            abortSignal,
+        );
+        throwIfAborted(abortSignal);
         if (chunks.length === 0) {
             return { chunks, embeddings: [], deferred: false };
         }
-        if (await this.deferSnapshotRefresh(file, snapshot, "pre-embedding-request")) {
+        if (await this.deferSnapshotRefresh(file, snapshot, "pre-embedding-request", abortSignal)) {
             return { chunks, embeddings: [], deferred: true };
         }
+        throwIfAborted(abortSignal);
+        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
         const embeddings = await this.embedTexts(
             chunks.map(chunk => chunk.content),
             getEmbeddingsModel,
+            abortSignal,
+            () => this.isEligible(file),
         );
+        throwIfAborted(abortSignal);
+        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
         return { chunks, embeddings, deferred: false };
     }
 
@@ -2320,26 +2908,37 @@ export class VSS {
         contentHash: string,
         cleanedContent?: string,
         metadata?: VSSFileMetadataSnapshot,
+        abortSignal?: AbortSignal,
     ): Promise<VSSChunk[]> {
         this.assertActive();
-        const content = cleanedContent ?? this.aiUtils.cleanMarkdownContent(await this.readVaultFile(file));
+        throwIfAborted(abortSignal);
+        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
+        const markdown = cleanedContent === undefined
+            ? await waitForAbortablePromise(this.readVaultFile(file), abortSignal)
+            : undefined;
+        throwIfAborted(abortSignal);
+        const content = cleanedContent ?? this.aiUtils.cleanMarkdownContent(markdown ?? "");
 
         if (content.trim().length === 0) {
             return [];
         }
 
-        return createHeadingAwareMarkdownChunks({
+        const chunks = createHeadingAwareMarkdownChunks({
             path: file.path,
             markdown: content,
             contentHash,
             created: metadata?.ctime ?? file.stat.ctime,
             lastModified: metadata?.mtime ?? file.stat.mtime,
         });
+        throwIfAborted(abortSignal);
+        return chunks;
     }
 
     private async embedTexts(
         texts: string[],
         getEmbeddingsModel?: EmbeddingsModelProvider,
+        abortSignal?: AbortSignal,
+        canSend?: () => boolean,
     ): Promise<number[][]> {
         const policy = this.getEmbeddingBatchPolicy();
         const embeddingsModelProvider = getEmbeddingsModel ?? this.createEmbeddingsModelProvider(policy.createOptions);
@@ -2351,10 +2950,20 @@ export class VSS {
         const embeddings: number[][] = [];
         for (let g = 0; g < batches.length; g += concurrency) {
             this.assertActive();
+            throwIfAborted(abortSignal);
+            if (canSend && !canSend()) throw createVssFileIneligibleError("embedding-batch");
             const group = batches.slice(g, g + concurrency);
             const results = await Promise.all(
-                group.map(batch => this.embedDocumentsWithRetry(batch, embeddingsModelProvider, policy)),
+                group.map(batch => this.embedDocumentsWithRetry(
+                    batch,
+                    embeddingsModelProvider,
+                    policy,
+                    undefined,
+                    abortSignal,
+                    canSend,
+                )),
             );
+            throwIfAborted(abortSignal);
             for (const result of results) {
                 embeddings.push(...result);
             }
@@ -2368,35 +2977,58 @@ export class VSS {
         getEmbeddingsModel: EmbeddingsModelProvider,
         policy: EmbeddingBatchPolicy,
         onRetry?: (retryDelayMs: number) => void,
+        abortSignal?: AbortSignal,
+        canSend?: () => boolean,
     ): Promise<number[][]> {
         let lastError: unknown;
         for (let attempt = 0; attempt <= policy.retryDelaysMs.length; attempt++) {
             this.assertActive();
-            await this.waitForEmbeddingThrottle(texts, policy);
+            throwIfAborted(abortSignal);
+            if (canSend && !canSend()) throw createVssFileIneligibleError("embedding-batch");
+            await this.waitForEmbeddingThrottle(texts, policy, abortSignal);
             this.assertActive();
+            throwIfAborted(abortSignal);
+            if (canSend && !canSend()) throw createVssFileIneligibleError("embedding-batch");
             try {
-                const embeddingsModel = await getEmbeddingsModel();
+                const embeddingsModel = await waitForAbortablePromise(getEmbeddingsModel(), abortSignal);
                 this.assertActive();
-                return await embeddingsModel.embedDocuments(texts);
+                throwIfAborted(abortSignal);
+                if (canSend && !canSend()) throw createVssFileIneligibleError("embedding-batch");
+                const embeddings = await waitForAbortablePromise(
+                    embeddingsModel.embedDocuments(texts),
+                    abortSignal,
+                );
+                throwIfAborted(abortSignal);
+                if (canSend && !canSend()) throw createVssFileIneligibleError("embedding-batch");
+                return embeddings;
             } catch (error) {
+                if (isAbortError(error, abortSignal)) throw error;
+                if (isVssFileIneligibleError(error)) throw error;
                 lastError = error;
                 if (!isRetryableEmbeddingError(error) || attempt >= policy.retryDelaysMs.length) {
                     throw error;
                 }
+                throwIfAborted(abortSignal);
                 const retryDelayMs = policy.retryDelaysMs[attempt];
                 onRetry?.(retryDelayMs);
-                await this.sleepActive(retryDelayMs);
+                await this.sleepActive(retryDelayMs, abortSignal);
             }
         }
         throw lastError instanceof Error ? lastError : new Error(String(lastError));
     }
 
-    private async waitForEmbeddingThrottle(texts: string[], policy: EmbeddingBatchPolicy): Promise<void> {
+    private async waitForEmbeddingThrottle(
+        texts: string[],
+        policy: EmbeddingBatchPolicy,
+        abortSignal?: AbortSignal,
+    ): Promise<void> {
+        throwIfAborted(abortSignal);
         const now = Date.now();
         const delayMs = Math.max(0, this.nextEmbeddingRequestAt - now);
         if (delayMs > 0) {
-            await this.sleepActive(delayMs);
+            await this.sleepActive(delayMs, abortSignal);
         }
+        throwIfAborted(abortSignal);
 
         const scheduledAt = Math.max(Date.now(), this.nextEmbeddingRequestAt);
         const estimatedTokens = estimateEmbeddingTokensForTexts(texts);
@@ -2459,8 +3091,13 @@ export class VSS {
         return { hash: snapshot.contentHash, tooLarge: snapshot.tooLarge };
     }
 
-    private async readFileContentSnapshot(file: TFile): Promise<VSSFileContentSnapshot> {
+    private async readFileContentSnapshot(
+        file: TFile,
+        abortSignal?: AbortSignal,
+    ): Promise<VSSFileContentSnapshot> {
         this.assertActive();
+        throwIfAborted(abortSignal);
+        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
         const metadata = this.captureFileMetadata(file);
         if (metadata.size > VSS_PARAMS.largeFileThreshold) {
             return {
@@ -2471,11 +3108,15 @@ export class VSS {
                 changedDuringCapture: !this.isFileSnapshotCurrent(file, metadata),
             };
         }
-        const markdown = await this.readVaultFile(file);
+        const markdown = await waitForAbortablePromise(this.readVaultFile(file), abortSignal);
+        throwIfAborted(abortSignal);
+        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(markdown);
         const contentHash = cleanedContent.trim()
-            ? await computeContentHash(cleanedContent)
+            ? await waitForAbortablePromise(computeContentHash(cleanedContent), abortSignal)
             : null;
+        throwIfAborted(abortSignal);
+        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
         return {
             ...metadata,
             cleanedContent,
@@ -2518,7 +3159,13 @@ export class VSS {
         return this.verifyQueue.delete(path);
     }
 
-    private async deferSnapshotRefresh(file: TFile, snapshot: VSSFileMetadataSnapshot, phase: string): Promise<boolean> {
+    private async deferSnapshotRefresh(
+        file: TFile,
+        snapshot: VSSFileMetadataSnapshot,
+        phase: string,
+        abortSignal?: AbortSignal,
+    ): Promise<boolean> {
+        throwIfAborted(abortSignal);
         if (this.isFileSnapshotCurrent(file, snapshot)) return false;
         if (this.markDirtyPath(snapshot.path)) {
             await this.persistDirtyJournal();
@@ -2530,10 +3177,18 @@ export class VSS {
         return true;
     }
 
-    private async deleteSnapshotFileFromIndex(file: TFile, snapshot: VSSFileMetadataSnapshot, phase: string): Promise<boolean> {
+    private async deleteSnapshotFileFromIndex(
+        file: TFile,
+        snapshot: VSSFileMetadataSnapshot,
+        phase: string,
+        abortSignal?: AbortSignal,
+    ): Promise<boolean> {
+        throwIfAborted(abortSignal);
         if (!this.index) return false;
-        if (await this.deferSnapshotRefresh(file, snapshot, `${phase}-delete`)) return false;
+        if (await this.deferSnapshotRefresh(file, snapshot, `${phase}-delete`, abortSignal)) return false;
+        throwIfAborted(abortSignal);
         await this.index.deleteFile(snapshot.path);
+        throwIfAborted(abortSignal);
         if (this.isFileSnapshotCurrent(file, snapshot)) {
             this.clearVerifyRecordIfNotNewerThanSnapshot(snapshot.path, snapshot);
             return true;
@@ -2581,11 +3236,11 @@ export class VSS {
         }
     }
 
-    private async persistDirtyJournal() {
-        if (this.disposed) return;
+    private async persistDirtyJournal(): Promise<boolean> {
+        if (this.disposed) return false;
         if (!await this.ensureLocalStateStoreReady()) {
             this.dirtyJournalWritePending = true;
-            return;
+            return false;
         }
         const generation = this.stateGeneration;
         const write = this.stateWriteChain.catch(() => undefined).then(async () => {
@@ -2599,10 +3254,12 @@ export class VSS {
             if (!this.disposed && generation === this.stateGeneration) {
                 this.dirtyJournalWritePending = false;
             }
+            return !this.disposed && generation === this.stateGeneration;
         } catch (error) {
             this.dirtyJournalWritePending = true;
             this.localStateReady = false;
             this.host.log("Error persisting Memory dirty journal:", error);
+            return false;
         }
     }
 
@@ -2617,26 +3274,151 @@ export class VSS {
         return persisted;
     }
 
-    private async writeLocalIndexState(generation = this.stateGeneration): Promise<void> {
-        if (this.disposed) return;
-        if (!this.index || !this.profile) return;
+    private async beginRebuildState(reason: VSSRebuildRecoveryReason): Promise<{
+        generation: number;
+        guard: VSSRebuildGuard;
+    }> {
+        await this.stateWriteChain.catch(() => undefined);
+        const previousMarker = this.marker;
+        const previousStatus = this.status;
+        const previousGuard = this.rebuildGuard;
+        const previousRecoverySuppressed = this.markerRecoverySuppressed;
+        const previousMarkerWritePending = this.markerWritePending;
+        const previousMarkerRemovalPending = this.markerRemovalPending;
+        const previousPendingMarkerSnapshot = this.pendingMarkerSnapshot;
+        const previousPreparedRebuildMarker = this.preparedRebuildMarker;
+        const generation = ++this.stateGeneration;
+        const guard: VSSRebuildGuard = previousGuard?.reason === reason
+            ? { ...previousGuard }
+            : { version: 1, reason, startedAt: new Date().toISOString() };
+        this.markerWritePending = false;
+        this.pendingMarkerSnapshot = null;
+        this.preparedRebuildMarker = null;
+        const replaced = await this.replaceRebuildState(null, guard, generation);
+        if (!replaced) {
+            this.marker = previousMarker;
+            this.status = previousStatus;
+            this.rebuildGuard = previousGuard;
+            this.markerRecoverySuppressed = previousRecoverySuppressed;
+            this.markerWritePending = previousMarkerWritePending;
+            this.pendingMarkerSnapshot = previousPendingMarkerSnapshot;
+            this.preparedRebuildMarker = previousPreparedRebuildMarker;
+            this.markerRemovalPending = previousMarkerRemovalPending;
+            throw new Error("Memory local state could not enter fail-closed rebuild state.");
+        }
+
+        this.marker = null;
+        this.rebuildGuard = guard;
+        this.status = this.getStatusForRebuildReason(reason);
+        this.markerRecoverySuppressed = true;
+        this.localStateHydrated = true;
+        return { generation, guard };
+    }
+
+    private async replaceRebuildState(
+        marker: VSSIndexMarker | null,
+        guard: VSSRebuildGuard | null,
+        generation: number,
+    ): Promise<boolean> {
+        if (this.disposed || generation !== this.stateGeneration) return false;
+        if (!await this.ensureLocalStateStoreReady()) return false;
+        const dirtyJournal = new Map(this.dirty);
+        const write = this.stateWriteChain.catch(() => undefined).then(async () => {
+            if (this.disposed || generation !== this.stateGeneration) return;
+            await this.stateStore.replaceRebuildState({ marker, dirtyJournal, guard });
+        });
+        this.stateWriteChain = write.then(() => undefined, () => undefined);
+        try {
+            await write;
+            if (this.disposed || generation !== this.stateGeneration) return false;
+            this.localStateHydrated = true;
+            this.localStateClearPending = false;
+            this.dirtyJournalWritePending = false;
+            this.markerWritePending = false;
+            this.pendingMarkerSnapshot = null;
+            this.markerRemovalPending = false;
+            return true;
+        } catch (error) {
+            this.localStateReady = false;
+            this.host.log("Failed to persist fail-closed Memory rebuild state", error);
+            return false;
+        }
+    }
+
+    private async commitRebuildState(
+        generation: number,
+        deferAdmission: boolean,
+        abortSignal?: AbortSignal,
+    ): Promise<boolean> {
+        if (this.disposed || generation !== this.stateGeneration || abortSignal?.aborted) return false;
+        const guard = this.rebuildGuard;
+        if (!this.index || !this.profile || !guard) return false;
         const stats = await this.index.getStats();
-        if (this.disposed || generation !== this.stateGeneration) return;
+        if (this.disposed || generation !== this.stateGeneration || abortSignal?.aborted) return false;
         this.storageStatus = await this.getStoragePersistenceStatus();
-        if (this.disposed || generation !== this.stateGeneration) return;
+        if (this.disposed || generation !== this.stateGeneration || abortSignal?.aborted) return false;
         const now = new Date().toISOString();
-        const profileSignature = getEmbeddingProfileSignature(this.profile);
-        const previousMarker = this.marker?.profileSignature === profileSignature ? this.marker : null;
         const marker: VSSIndexMarker = {
             schemaVersion: VSS_SCHEMA_VERSION,
             deviceId: this.deviceId,
-            indexId: previousMarker?.indexId ?? createIndexId(),
+            indexId: createIndexId(),
+            profileSignature: getEmbeddingProfileSignature(this.profile),
+            opfsScope: this.getVaultStorageScope().safeName,
+            backend: stats.backend,
+            chunkCount: stats.chunkCount,
+            fileCount: stats.fileCount,
+            builtAt: now,
+            lastVerifiedAt: now,
+            storagePersisted: this.storageStatus.persisted,
+            estimatedDbBytes: stats.estimatedDbBytes,
+            estimatedEmbeddingTokens: estimateEmbeddingTokens(stats.chunkCount),
+        };
+        const nextGuard = deferAdmission ? guard : null;
+        if (!await this.replaceRebuildState(marker, nextGuard, generation)) {
+            throw new Error("Memory local state could not publish the prepared index marker.");
+        }
+        if (abortSignal?.aborted) return false;
+        if (deferAdmission) {
+            this.preparedRebuildMarker = marker;
+            this.marker = null;
+            this.markerRecoverySuppressed = true;
+            this.status = this.getStatusForRebuildReason(guard.reason);
+            return true;
+        }
+        this.marker = marker;
+        this.preparedRebuildMarker = null;
+        this.rebuildGuard = null;
+        this.markerRecoverySuppressed = false;
+        this.status = stats.status === "stale" ? "stale" : "ready";
+        return true;
+    }
+
+    private async writeLocalIndexState(
+        generation = this.stateGeneration,
+        abortSignal?: AbortSignal,
+    ): Promise<boolean> {
+        if (this.disposed || abortSignal?.aborted) return false;
+        if (!this.index || !this.profile) return false;
+        const previousMarker = this.marker ? { ...this.marker } : null;
+        const previousStatus = this.status;
+        const previousRecoverySuppressed = this.markerRecoverySuppressed;
+        const stats = await this.index.getStats();
+        if (this.disposed || generation !== this.stateGeneration || abortSignal?.aborted) return false;
+        this.storageStatus = await this.getStoragePersistenceStatus();
+        if (this.disposed || generation !== this.stateGeneration || abortSignal?.aborted) return false;
+        const now = new Date().toISOString();
+        const profileSignature = getEmbeddingProfileSignature(this.profile);
+        const matchingPreviousMarker = previousMarker?.profileSignature === profileSignature ? previousMarker : null;
+        const marker: VSSIndexMarker = {
+            schemaVersion: VSS_SCHEMA_VERSION,
+            deviceId: this.deviceId,
+            indexId: matchingPreviousMarker?.indexId ?? createIndexId(),
             profileSignature,
             opfsScope: this.getVaultStorageScope().safeName,
             backend: stats.backend,
             chunkCount: stats.chunkCount,
             fileCount: stats.fileCount,
-            builtAt: previousMarker?.builtAt ?? now,
+            builtAt: matchingPreviousMarker?.builtAt ?? now,
             lastVerifiedAt: now,
             storagePersisted: this.storageStatus.persisted,
             estimatedDbBytes: stats.estimatedDbBytes,
@@ -2645,14 +3427,42 @@ export class VSS {
         this.marker = marker;
         this.markerRecoverySuppressed = false;
         this.status = stats.status === "stale" ? "stale" : "ready";
-        await this.persistMarkerSnapshot(marker, generation);
+        const markerPersisted = await this.persistMarkerSnapshot(marker, generation);
+        if (!markerPersisted) {
+            if (previousMarker) {
+                this.marker = previousMarker;
+                this.status = previousStatus;
+                this.markerRecoverySuppressed = previousRecoverySuppressed;
+                return false;
+            }
+            this.marker = null;
+            this.status = "uninitialized";
+            this.markerRecoverySuppressed = true;
+            this.markerWritePending = false;
+            this.pendingMarkerSnapshot = null;
+            throw new Error("Memory local state could not save the prepared index marker.");
+        }
+        if (!abortSignal?.aborted) return true;
+
+        this.marker = previousMarker;
+        this.status = previousMarker ? previousStatus : "uninitialized";
+        this.markerRecoverySuppressed = previousMarker ? previousRecoverySuppressed : true;
+        if (previousMarker) {
+            await this.persistMarkerSnapshot(previousMarker, generation);
+        } else {
+            this.markerWritePending = false;
+            this.pendingMarkerSnapshot = null;
+            await this.removePersistedLocalIndexMarker(generation);
+        }
+        return false;
     }
 
-    private async persistMarkerSnapshot(marker: VSSIndexMarker, generation: number): Promise<void> {
-        if (this.disposed) return;
+    private async persistMarkerSnapshot(marker: VSSIndexMarker, generation: number): Promise<boolean> {
+        if (this.disposed) return false;
         if (!await this.ensureLocalStateStoreReady()) {
             this.markerWritePending = true;
-            return;
+            this.pendingMarkerSnapshot = { ...marker };
+            return false;
         }
         const snapshot = { ...marker };
         const write = this.stateWriteChain.catch(() => undefined).then(async () => {
@@ -2664,24 +3474,57 @@ export class VSS {
             await write;
             if (!this.disposed && generation === this.stateGeneration) {
                 this.markerWritePending = false;
+                this.pendingMarkerSnapshot = null;
+                this.markerRemovalPending = false;
             }
+            return !this.disposed && generation === this.stateGeneration;
         } catch (error) {
             this.markerWritePending = true;
+            this.pendingMarkerSnapshot = { ...marker };
             this.localStateReady = false;
             this.host.log("Error persisting Memory local marker:", error);
+            return false;
         }
     }
 
-    private async clearLocalStateStore(generation: number): Promise<void> {
-        if (this.disposed || generation !== this.stateGeneration) return;
+    private async removePersistedLocalIndexMarker(generation: number): Promise<boolean> {
+        if (this.disposed || generation !== this.stateGeneration) return false;
+        this.markerRemovalPending = true;
         if (!await this.ensureLocalStateStoreReady()) {
-            this.localStateClearPending = true;
-            return;
+            return false;
         }
         const write = this.stateWriteChain.catch(() => undefined).then(async () => {
             if (this.disposed || generation !== this.stateGeneration) return;
             await this.stateStore.removeMarker();
-            await this.stateStore.clearDirtyJournal();
+        });
+        this.stateWriteChain = write.then(() => undefined, () => undefined);
+        try {
+            await write;
+            if (!this.disposed && generation === this.stateGeneration) {
+                this.markerRemovalPending = false;
+            }
+            return !this.disposed && generation === this.stateGeneration;
+        } catch (error) {
+            this.markerRemovalPending = true;
+            this.localStateReady = false;
+            this.host.log("Failed to remove incomplete Memory local marker", error);
+            return false;
+        }
+    }
+
+    private async clearLocalStateStore(generation: number): Promise<boolean> {
+        if (this.disposed || generation !== this.stateGeneration) return false;
+        if (!await this.ensureLocalStateStoreReady()) {
+            this.localStateClearPending = true;
+            return false;
+        }
+        const write = this.stateWriteChain.catch(() => undefined).then(async () => {
+            if (this.disposed || generation !== this.stateGeneration) return;
+            await this.stateStore.replaceRebuildState({
+                marker: null,
+                dirtyJournal: new Map(),
+                guard: null,
+            });
         });
         this.stateWriteChain = write.then(() => undefined, () => undefined);
         try {
@@ -2691,11 +3534,17 @@ export class VSS {
                 this.localStateHydrated = true;
                 this.dirtyJournalWritePending = false;
                 this.markerWritePending = false;
+                this.pendingMarkerSnapshot = null;
+                this.preparedRebuildMarker = null;
+                this.markerRemovalPending = false;
+                this.rebuildGuard = null;
             }
+            return !this.disposed && generation === this.stateGeneration;
         } catch (error) {
             this.localStateClearPending = true;
             this.localStateReady = false;
             this.host.log("Failed to clear Memory local state during reset", error);
+            return false;
         }
     }
 
@@ -2868,14 +3717,7 @@ export class VSS {
     }
 
     private isEligible(file: TFile) {
-        if (file.extension !== 'md') return false;
-        const exclude = (this.host.settings.vssCacheExcludePath || []).map(path => path.trim()).filter(Boolean);
-        for (const path of exclude) {
-            if (file.path.startsWith(path)) {
-                return false;
-            }
-        }
-        return true;
+        return this.host.isVSSFileEligible(file);
     }
 }
 
