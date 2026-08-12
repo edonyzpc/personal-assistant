@@ -1,6 +1,6 @@
 # VSS Embedding 刷新方案说明
 
-> **Status (2026-07-11)**: Current refresh/maintenance contract. Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
+> **Status (2026-08-11)**: Current refresh/maintenance contract. DEC-028/B-126 is the approved first-use amendment and its implementation validation is tracked in the [active package](../development/active/silent-first-use-memory-preparation/tracker.md). Ollama support was removed in v2.0.0; the current provider matrix is Qwen plus supported OpenAI-compatible embedding providers.
 ## 目标
 
 在保证 Memory 搜索结果新鲜度的前提下，降低频繁编辑和大 vault 重建时的 embedding 请求数与 Token 消耗，让准备和后台维护过程不阻塞聊天，并在限流或网络抖动时给用户明确反馈。
@@ -10,7 +10,9 @@
 ## 当前关键机制
 
 - **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 仍会经过轻量 observation，只有 metadata 已匹配的 replay 被忽略；普通 `vault.modify` 即使 metadata 匹配也会进入 verify queue，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
-- **首次授权后的自动维护**：用户确认并成功 prepare/update Memory 后，`memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 在 durable SQLite/WASM ready 时由后台 reconcile/verify/refresh 维护，Chat 不再等待 refresh。
+- **首次准备与自动维护**：[DEC-028](../product/decisions/dec-028-silent-memory-auto-prepare.md) 允许首次 Chat 静默启动一个 whole eligible vault rebuild 并立即 answer-now；其他 recovery/manual/costly prepare 仍需确认。确认路径或 DEC-028 路径只有在 durable usable ready 且未 abort/total-fail 后才把 `memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 才由后台 reconcile/verify/refresh 维护，Chat 不等待 refresh。
+- **Destructive rebuild marker truth gate**：在 reset 或 embedding-provider call 前，rebuild 必须 durable 保存 whole-vault retry journal，并以 hydrated known absence 或同一 generation 的 atomic durable invalidation 建立 marker truth。Marker unknown 且无法 durable invalidate 时保留旧 index/marker、reset/provider 为 0；首次 Chat 仍 answer-now，等待 state store 恢复。该规则不改变普通 non-destructive maintenance 的既有 process-local retry 语义。
+- **Destructive rebuild recovery identity**：reset 前与 marker/dirty journal 原子保存原始 `first-use`、`settings-changed` 或 `local-memory-missing` rebuild guard；hydrate 优先 guard，abort/total failure 保留它。只有 durable ready 与 Memory policy/lifecycle admission 都成功才清 guard；admission 失败通过 `rollbackPreparedRebuild(reason)` 恢复 non-ready 与原 reason。
 - **本地静默状态**：后台自动维护只写设备本地 SQLite/WASM OPFS Memory index，并把 marker 与 dirty journal 写入本地 IndexedDB state store；默认不在 vault 中创建 `vss-index-state/`、`manifest.json` 或 `vss-cache/dirty.json`。如果 IndexedDB 暂时打不开，VSS 先把 marker/dirty state 保留在进程内，后续 update/status 路径重试并落盘。
 - **静默窗口 + 最长延迟**：后台 refresh 保留 `quietWindow=30s` 和 `maxDelay=10min`，避免用户连续编辑时反复计算。
 - **跨设备 reconcile**：启动、首次 prepare 后、窗口恢复和周期任务会扫描 vault 当前文件与 indexed records；新文件标脏，missing indexed path 删除索引，metadata mismatch 只进入验证队列，不会直接让 Memory 进入 changed-notes。
@@ -26,14 +28,14 @@
 
 ## Reconcile 与后台调度
 
-`MemoryManager.startAutoMaintenance()` 在插件加载后启动轻量调度器，并在 unload 时清理 timers 和 window/document listeners。自动 reconcile/refresh 只在 `memoryApprovalPolicy === "auto-refresh-after-prepare"` 且 VSS durable backend ready 时运行；verify 是本地 hash/metadata 检查，可在默认确认策略下运行，确认 dirty 后仍走既有确认/自动刷新策略。
+`MemoryManager.startAutoMaintenance()` 在插件加载后启动轻量调度器，并在 unload 时清理 timers 和 window/document listeners。自动 reconcile/refresh 只在 `memoryApprovalPolicy === "auto-refresh-after-prepare"` 且 VSS durable backend ready 时运行；verify 是本地 hash/metadata 检查，可在默认确认策略下运行，确认 dirty 后仍走既有确认/自动刷新策略。首次 Chat 的 silent rebuild 是一次明确的 B-126/DEC-028 admission，不让普通 startup/resume 调度器获得 silent whole-vault 权限。
 
-`stopAutoMaintenance()` 会让 in-flight background task 和 prepare flow 进入 shutdown-aware 模式：已经返回的长任务不会再 schedule retry/reconcile、刷新 Memory status bar 或弹出成功/失败 Notice。这样插件升级或热重载时，不会由旧实例继续触发 UI 更新或新的 embedding 工作。
+`stopAutoMaintenance()` 会让 in-flight background task 和 prepare flow 进入 shutdown-aware 模式：已经返回的长任务不会再 schedule retry/reconcile、刷新 Memory status bar、持久化 auto policy 或弹出成功/失败 Notice。关闭 `memoryEnabled` 同样取消 active preparation。这样 opt-out、插件升级或热重载后，不会由旧实例继续触发 UI 更新或新的 embedding 工作。
 
 默认 reconcile 时机：
 
 - 插件启动后 60 秒。
-- 首次成功 prepare/update 后 5 秒。
+- 首次 confirmed prepare/update 或 DEC-028 silent prepare 达到 durable usable ready 后 5 秒。
 - window focus 或 `visibilitychange` 恢复 visible 后 30 秒。
 - 每 60 分钟一次周期 reconcile。
 - Chat 遇到 `changed-notes` 且 auto policy 可用时立即排队 reconcile、verify 和 auto flush；如果只是 pending verification，聊天前最多做一个小预算 fast verify，移动端使用更小的 1-file 预算。Vault-event verify 也可在后台做同类本地检查，以免进程内候选在 reload 前丢失。
@@ -81,6 +83,9 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 - 单个 embedding batch 最终失败时，涉及的文件会标记为 failed；该文件不会写入不完整 embeddings。
 - 对于一个大文件，如果某个 batch 失败，后续 chunks 不再继续排队，避免产生不会被写入的额外 embedding 请求。
 - Rebuild 已经 reset 本地 index，因此中途失败仍保持当前语义：可能得到部分可用的本地 Memory index；本阶段不做临时 index 原子替换。
+- DEC-028 first-use 的 total failure、throw、abort、unload、opt-out 或 durable non-usable 结果必须返回失败、不升级 auto policy、不显示 ready；partial summary 只有在 durable index 可用时才可进入 partial success，失败文件保留后续重试状态。
+- Marker 未 hydrate、retry journal 无法 durable 保存或旧 marker 无法 durable invalidate 时，destructive rebuild 必须在 reset/provider 前失败；不得把 in-memory null 当作 fresh-install proof。Persistent-storage permission denied 是独立 usable-but-evictable warning，不触发此 unknown-marker 分支。
+- Abort/total failure 后的 restart 必须按 rebuild guard 恢复原始 recovery reason；已确认的 settings/missing rebuild 不得降级成 silent first-use。Policy save 或 lifecycle admission 失败必须补偿为 non-ready，不能留下可搜索的 prepared-but-unadmitted ready。
 
 ## 当前限制与后续优化
 
@@ -134,6 +139,9 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 - Foreground `opfs-sahpool-locked` 不触发 query embedding，也不加载 legacy JSON fallback；manual path 可 bounded retry 恢复 SQLite。
 - `SqliteVectorIndex` 在 worker 初始化 pending 时 dispose 会释放 Worker，后续请求拒绝而不是重建。
 - auto policy + durable ready + changed notes 时 Chat 不弹确认、不等待 refresh，会调度后台 reconcile/verify/flush。
+- first-use Chat 不弹确认且立即 answer-now；并发 first-use 复用同一 rebuild。只有 durable usable success 才升级 auto policy，total failure/abort/ready-marker publication failure 与 Memory disable/unload 都不制造 ready 或迟到副作用。Persistent-storage permission 被拒本身沿用既有 usable-but-evictable warning 语义。
+- state-store unavailable 且 persisted marker truth 未 hydrate 时，destructive rebuild 的 reset/provider call 为 0，旧 index/marker 不变；state store 恢复后再按 hydrated marker 判定，不静默假设 first-use。
+- destructive rebuild abort/total-failure restart 保留 `settings-changed`/`local-memory-missing` 原 reason；policy/lifecycle admission failure 触发 rollback，移除 usable-ready admission 并保留 guarded recovery reason；完整 admitted success 才清 guard。
 - 非 durable 或不可用状态下不会执行自动写入，并会提示后台更新不可用。
 - reconcile 能发现新增、deleted indexed path，并把 durable ready 下的 metadata mismatch/rolling candidate 放入 verify queue。verify 只有在 hash 真实变化时才标 dirty。metadata-only 漂移不会让 Memory 进入 needs update，也不会把聊天入口的 brain 状态变成 changed-notes。
 - vault event observation 能过滤启动期旧 mtime replay 和 metadata 已匹配的 `create`/`modify` 事件；只有 missing indexed record 或 hash-confirmed 变化会写入 dirty journal。

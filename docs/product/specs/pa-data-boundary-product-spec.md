@@ -1,10 +1,10 @@
 # PA Data Boundary Product Spec
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-08-11
 Work item: B-118
-Scope note: DEC-023/DEC-024 reconciliation is owned by B-118; the base cross-feature contract predates stable Backlog IDs.
-Scoped decisions: [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+Scope note: DEC-023/DEC-024 reconciliation is owned by B-118; DEC-028's narrow Memory exception is owned by B-126; the base cross-feature contract predates stable Backlog IDs.
+Scoped decisions: [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md)
 Authority: PA-wide source eligibility、exclusions、provider disclosure、storage、cleanup 与 replay data boundaries。
 
 ## Status
@@ -12,7 +12,7 @@ Authority: PA-wide source eligibility、exclusions、provider disclosure、stora
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Delivery / validation status | Shared v1 Data Boundary implemented; B-118 automated/review and authorized desktop/iPhone gates passed for DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall semantic retrieval and live-source revalidation. Real high-risk provider calls were not executed; new data classes still require explicit extension. |
+| Delivery / validation status | Shared v1 Data Boundary implemented; B-118 automated/review and authorized desktop/iPhone gates passed for DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall semantic retrieval and live-source revalidation. DEC-028/B-126 first-use Memory exception is approved and its implementation/validation remains tracked in the active B-126 package. Real high-risk provider calls were not executed; new data classes still require explicit extension. |
 | Feature family | Data Boundary / Privacy / Local-first controls |
 | Primary surfaces | Settings, Chat, Pagelet, Memory, Maintenance Review |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -50,6 +50,7 @@ controls.
 | DB-D10 | Generic preload sensitivity comes from explicit shared Data Boundary rules, not content inference. | Every actual source must pass the configured folder/tag/generated-source policy with no override; unmarked allowed notes are treated as ordinary, and a caller-provided `sensitive=false` is not evidence. |
 | DB-D11 | Provider-bound sources are rechecked from the exact latest Markdown body. | Explicit body tags/frontmatter and path policy are enforced at the provider seam; MetadataCache lag or malformed leading frontmatter fails closed, and model findings must cite an exact actual-input path. |
 | DB-D12 | Derived Pagelet text inherits every live source boundary. | All Pagelet provider inputs combine shared and Pagelet-local source rules; a cold embedding validates its primary latest body first, and a Saved Insight reaches an evaluator only when every sourceRef is live-readable, unchanged, and allowed. |
+| DB-D13 | DEC-028 authorizes one narrow silent Memory admission path. | A first-use Chat may schedule one whole eligible vault Memory rebuild without a blocking Modal; reset/provider work requires hydrated known absence or durable marker invalidation, this authority does not derive from Pagelet provider trust, and recovery/manual/costly Memory runs still block. |
 
 ## 1. Product Decision
 
@@ -191,6 +192,22 @@ Maintenance runs. The second rule applies as soon as a run exceeds its standard
 envelope. Provider trust does not grant Memory admission, vault write, Markdown,
 or external-action authority.
 
+[DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md) is a separate,
+owner-approved Memory-specific exception recorded on 2026-08-11. When Memory is
+enabled, a configured provider/token is available, the user sends the first
+Chat message, and VSS is genuinely `first-use`/uninitialized, PA may start one
+whole eligible vault rebuild in the background and answer immediately. Folder,
+tag, generated-note, and other source exclusions still apply. The exception is
+not inherited from DEC-023 shared Pagelet first-use state and does not extend to
+missing local index, profile/settings stale, manual Prepare/Update, or other
+non-first-use costly rebuilds. Settings must continuously disclose note-text
+transfer, provider/API cost, notes-unchanged behavior, and the Memory opt-out.
+Unresolved marker truth because hydration/invalidation is unavailable stops
+before reset and provider work. Only durable usable success plus
+policy/lifecycle admission may
+clear the original rebuild reason and enable automatic maintenance; failed
+admission compensates to non-ready.
+
 [DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md) clarifies
 that a cold Quiet Recall query embedding is an actual standard-bounded Pagelet
 provider call, even though the subsequent vector search runs against the local
@@ -256,7 +273,8 @@ exactly matches one of that invocation's actual allowed input paths.
 | Generic background preload inside the exact narrow envelope | Standard bounded shared admission; read-only and explicitly opted in |
 | Generic background preload outside any envelope condition | Silent skip / fail closed; no blocking prompt, call, reservation, cost, or flag mutation |
 | Broad / sensitive / costly / whole-vault / out-of-envelope / excluded override | Blocking per-run `run / adjust / cancel` before provider call or cost reservation, even when the shared flag is already true |
-| Prepare / Update Memory and Memory admission | Existing Memory-specific confirmation and cost contract |
+| First Chat with uninitialized Memory | DEC-028 narrow exception: schedule a non-blocking whole eligible vault rebuild and answer-now; reset/provider work requires hydrated known absence or durable marker invalidation, with auto enable only after durable usable success plus policy/lifecycle admission |
+| Missing local index, profile/settings stale, manual Prepare/Update, or other costly Memory rebuild | Blocking Memory-specific confirmation and cost disclosure before provider call |
 | Vault mutation, Markdown, or external action | Separate effect-based preview / confirmation contract; provider notice is insufficient |
 
 Disclosure should happen:
@@ -266,7 +284,7 @@ Disclosure should happen:
   the first actual Pagelet provider call
 - before admitted foreground or explicitly initiated broad/costly/sensitive
   runs; an out-of-envelope generic background preload skips instead of prompting
-- before first Prepare/Update Memory under its Memory-specific contract
+- persistently in Settings before DEC-028 silent first-use is eligible; all non-first-use Prepare/Update paths retain blocking Memory-specific disclosure
 - before foreground Pagelet Review whose filtered, de-duplicated actual allowed
   source set contains more than one source
 - before Maintenance scan over broad scope
