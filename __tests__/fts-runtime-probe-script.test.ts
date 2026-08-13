@@ -43,16 +43,57 @@ describe("portable exact Obsidian FTS runtime evidence", () => {
         expect(receipt.evaluation.blockers).toContain("exact_renderer_plugin_identity_missing");
     });
 
-    it("accepts one exact, same-artifact receipt for darwin, win32, and linux", () => {
-        const receipts = platformReceipts();
+    it("accepts exact same-artifact Darwin and Linux receipts under the B-125 waiver", () => {
+        const receipts = platformReceipts().filter((receipt) => receipt.platform.os !== "win32");
         const result = verify(receipts);
         expect(result.status).toBe(0);
         expect(JSON.parse(result.stdout)).toMatchObject({
             schemaVersion: 2,
             receiptType: "pa.fts-runtime-multi-platform-verification",
             status: "PASS",
-            platforms: ["darwin", "win32", "linux"],
+            platforms: ["darwin", "linux"],
+            receiptPlatforms: ["darwin", "linux"],
+            platformPolicy: {
+                id: "B-125-WIN32-TEMPORARY-SUPPORT-WAIVER-2026-08-13",
+                requiredPlatforms: ["darwin", "linux"],
+                excludedPlatforms: ["win32"],
+            },
             productionPluginArtifactSha256: hashBytes(readFileSync(productionPluginPath)),
+        });
+    });
+
+    it("still recognizes and validates a supplied Win32 receipt", () => {
+        const result = verify(platformReceipts());
+        expect(result.status).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({
+            status: "PASS",
+            platforms: ["darwin", "linux"],
+            receiptPlatforms: ["darwin", "win32", "linux"],
+        });
+    });
+
+    it("provides an explicit all-desktop policy for restoring Win32 support", () => {
+        const pass = verify(platformReceipts(), ["--platform-policy=all-desktop"]);
+        expect(pass.status).toBe(0);
+        expect(JSON.parse(pass.stdout)).toMatchObject({
+            status: "PASS",
+            platforms: ["darwin", "win32", "linux"],
+            receiptPlatforms: ["darwin", "win32", "linux"],
+            platformPolicy: {
+                id: "all-recognized-desktop-platforms",
+                requiredPlatforms: ["darwin", "win32", "linux"],
+                excludedPlatforms: [],
+            },
+        });
+
+        const missingWin32 = verify(
+            platformReceipts().filter((receipt) => receipt.platform.os !== "win32"),
+            ["--platform-policy=all-desktop"],
+        );
+        expect(missingWin32.status).toBe(2);
+        expect(JSON.parse(missingWin32.stdout)).toMatchObject({
+            status: "BLOCKED",
+            blockers: ["missing_platform:win32"],
         });
     });
 
@@ -100,7 +141,7 @@ describe("portable exact Obsidian FTS runtime evidence", () => {
         expect(result.stderr).toBe("");
         expect(JSON.parse(result.stdout)).toMatchObject({
             status: "BLOCKED",
-            platforms: ["darwin", "win32", "linux"],
+            platforms: ["darwin", "linux"],
             blockers: ["missing_platform:linux"],
             failures: [],
         });
@@ -112,7 +153,6 @@ describe("portable exact Obsidian FTS runtime evidence", () => {
             status: "BLOCKED",
             blockers: [
                 "missing_platform:darwin",
-                "missing_platform:win32",
                 "missing_platform:linux",
             ],
             failures: [],
@@ -421,14 +461,21 @@ function hashBytes(value: Uint8Array): string {
     return createHash("sha256").update(value).digest("hex");
 }
 
-function verify(receipts: any[]): { status: number | null; stdout: string; stderr: string } {
+function verify(
+    receipts: any[],
+    arguments_: string[] = [],
+): { status: number | null; stdout: string; stderr: string } {
     const directory = mkdtempSync(join(tmpdir(), "pa-fts-runtime-receipts-"));
     const paths = receipts.map((receipt, index) => {
         const path = join(directory, `receipt-${index}.json`);
         writeFileSync(path, JSON.stringify(receipt), "utf8");
         return path;
     });
-    const result = spawnSync(process.execPath, [verifierPath, "--json", ...paths], { encoding: "utf8" });
+    const result = spawnSync(
+        process.execPath,
+        [verifierPath, "--json", ...arguments_, ...paths],
+        { encoding: "utf8" },
+    );
     return {
         status: result.status,
         stdout: String(result.stdout),

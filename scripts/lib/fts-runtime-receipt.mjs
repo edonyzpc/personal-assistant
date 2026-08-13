@@ -3,7 +3,18 @@ import { Buffer } from "node:buffer";
 
 export const FTS_RUNTIME_RECEIPT_SCHEMA_VERSION = 2;
 export const FTS_RUNTIME_RECEIPT_TYPE = "pa.fts-runtime-platform";
-export const REQUIRED_PLATFORMS = Object.freeze(["darwin", "win32", "linux"]);
+export const RECOGNIZED_RECEIPT_PLATFORMS = Object.freeze(["darwin", "win32", "linux"]);
+export const REQUIRED_PLATFORMS = RECOGNIZED_RECEIPT_PLATFORMS;
+export const ALL_DESKTOP_PLATFORM_POLICY = Object.freeze({
+  id: "all-recognized-desktop-platforms",
+  requiredPlatforms: REQUIRED_PLATFORMS,
+  excludedPlatforms: Object.freeze([]),
+});
+export const B125_DESKTOP_PLATFORM_POLICY = Object.freeze({
+  id: "B-125-WIN32-TEMPORARY-SUPPORT-WAIVER-2026-08-13",
+  requiredPlatforms: Object.freeze(["darwin", "linux"]),
+  excludedPlatforms: Object.freeze(["win32"]),
+});
 export const REQUIRED_REFERENCE_NODE_MAJOR = 22;
 export const PRODUCTION_PLUGIN_ARTIFACT_ID = "production-plugin";
 export const PRODUCTION_PLUGIN_ARTIFACT_PATH = "dist/main.js";
@@ -158,7 +169,7 @@ function rendererIdentityIsExact(renderer) {
     && typeof runtime?.versions?.icu === "string"
     && typeof runtime?.obsidianAppVersion === "string"
     && runtime.obsidianAppVersion.length > 0
-    && REQUIRED_PLATFORMS.includes(runtime?.processPlatform)
+    && RECOGNIZED_RECEIPT_PLATFORMS.includes(runtime?.processPlatform)
     && typeof runtime?.processArch === "string"
     && runtime.processArch.length > 0;
 }
@@ -280,6 +291,26 @@ export function inspectPlatformReceipt(receipt, options = {}) {
 
 export function verifyMultiPlatformReceipts(receipts, options = {}) {
   if (!Array.isArray(receipts)) throw new Error("Receipts must be an array.");
+  const requiredPlatforms = [
+    ...(options.platformPolicy?.requiredPlatforms ?? REQUIRED_PLATFORMS),
+  ];
+  const excludedPlatforms = [
+    ...(options.platformPolicy?.excludedPlatforms ?? []),
+  ];
+  for (const platform of [...requiredPlatforms, ...excludedPlatforms]) {
+    if (!RECOGNIZED_RECEIPT_PLATFORMS.includes(platform)) {
+      throw new Error(`Unsupported platform policy entry: ${platform ?? "missing"}.`);
+    }
+  }
+  if (requiredPlatforms.length === 0
+    || new Set(requiredPlatforms).size !== requiredPlatforms.length
+    || new Set(excludedPlatforms).size !== excludedPlatforms.length
+    || excludedPlatforms.some((platform) => requiredPlatforms.includes(platform))
+    || RECOGNIZED_RECEIPT_PLATFORMS.some((platform) => (
+      !requiredPlatforms.includes(platform) && !excludedPlatforms.includes(platform)
+    ))) {
+    throw new Error("Invalid runtime receipt platform policy.");
+  }
   const productionPluginHashes = new Set(receipts
     .map((receipt) => receipt.artifacts?.productionPlugin?.sha256)
     .filter(isSha256));
@@ -300,13 +331,13 @@ export function verifyMultiPlatformReceipts(receipts, options = {}) {
   const byPlatform = new Map();
   for (const item of inspected) {
     const platform = item.receipt.platform?.os;
-    if (!REQUIRED_PLATFORMS.includes(platform)) {
+    if (!RECOGNIZED_RECEIPT_PLATFORMS.includes(platform)) {
       throw new Error(`Unsupported receipt platform: ${platform ?? "missing"}.`);
     }
     if (byPlatform.has(platform)) throw new Error(`Duplicate platform receipt: ${platform}.`);
     byPlatform.set(platform, item);
   }
-  const missingPlatforms = REQUIRED_PLATFORMS.filter((platform) => !byPlatform.has(platform));
+  const missingPlatforms = requiredPlatforms.filter((platform) => !byPlatform.has(platform));
   const blockers = [
     ...missingPlatforms.map((platform) => `missing_platform:${platform}`),
     ...inspected.flatMap(({ receipt, result }) => (
@@ -348,7 +379,13 @@ export function verifyMultiPlatformReceipts(receipts, options = {}) {
     schemaVersion: FTS_RUNTIME_RECEIPT_SCHEMA_VERSION,
     receiptType: "pa.fts-runtime-multi-platform-verification",
     status,
-    platforms: [...REQUIRED_PLATFORMS],
+    platforms: requiredPlatforms,
+    receiptPlatforms: [...byPlatform.keys()],
+    platformPolicy: {
+      id: options.platformPolicy?.id ?? ALL_DESKTOP_PLATFORM_POLICY.id,
+      requiredPlatforms,
+      excludedPlatforms,
+    },
     productionPluginArtifactSha256:
       productionPluginHashes.size === 1 ? [...productionPluginHashes][0] : null,
     blockers,
