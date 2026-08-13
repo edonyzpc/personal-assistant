@@ -80,6 +80,36 @@ describe("scripts/release.mjs", () => {
         expect(ciWorkflow).toContain("DOCS_CHECK_BASE");
     });
 
+    it("builds the production artifact before receipt-dependent Jest gates", () => {
+        const root = process.cwd();
+        const makefile = readFileSync(join(root, "Makefile"), "utf8");
+        const ciWorkflow = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
+        const releaseWorkflow = readFileSync(join(root, ".github/workflows/release.yml"), "utf8");
+        const releaseScript = readFileSync(join(root, "scripts/release.mjs"), "utf8");
+
+        expect(readMakeTarget(makefile, "bin")).toEqual({
+            prerequisites: [],
+            recipe: ["npm run lint", "npm run build", "npm test"],
+        });
+        expect(readMakeTarget(makefile, "deploy").prerequisites).toContain("bin");
+        expect(readMakeTarget(makefile, "deploy-icloud").prerequisites).toContain("bin");
+        expectSnippetsInOrder(ciWorkflow, [
+            "- name: Lint\n        run: npm run lint",
+            "- name: Build\n        run: npm run build",
+            "- name: Test\n        run: npm test -- --runInBand --coverage",
+        ]);
+        expectSnippetsInOrder(releaseWorkflow, [
+            "- name: Lint\n        run: npm run lint",
+            "- name: Build\n        run: npm run build --if-present",
+            "- name: Test\n        run: npm test -- --runInBand --coverage",
+        ]);
+        expectSnippetsInOrder(releaseScript, [
+            'run("npm", ["run", "lint"]);',
+            'run("npm", ["run", "build"]);',
+            'run("npm", ["test", "--", "--runInBand", "--coverage"]);',
+        ]);
+    });
+
     it("guards prerelease tags against the current origin/master parent", () => {
         const workflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 
@@ -107,6 +137,40 @@ describe("scripts/release.mjs", () => {
         expect(workflow).toContain('if [[ "${version_core}" == *-* ]]');
     });
 });
+
+function expectSnippetsInOrder(source: string, snippets: string[]): void {
+    let cursor = -1;
+    for (const snippet of snippets) {
+        const index = source.indexOf(snippet, cursor + 1);
+        expect(index).toBeGreaterThan(cursor);
+        cursor = index;
+    }
+}
+
+function readMakeTarget(
+    source: string,
+    target: string,
+): { prerequisites: string[]; recipe: string[] } {
+    const lines = source.split(/\r?\n/u);
+    const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const headerPattern = new RegExp(`^${escapedTarget}:\\s*(.*)$`, "u");
+    const headerIndex = lines.findIndex((line) => headerPattern.test(line));
+    expect(headerIndex).toBeGreaterThanOrEqual(0);
+    const prerequisites = (lines[headerIndex].match(headerPattern)?.[1] ?? "")
+        .trim()
+        .split(/\s+/u)
+        .filter(Boolean);
+    const recipe: string[] = [];
+    for (const line of lines.slice(headerIndex + 1)) {
+        if (line.startsWith("\t")) {
+            recipe.push(line.slice(1));
+            continue;
+        }
+        if (line.trim().length === 0) continue;
+        break;
+    }
+    return { prerequisites, recipe };
+}
 
 function createReleaseRepo(): string {
     const repo = mkdtempSync(join(tmpdir(), "pa-release-"));

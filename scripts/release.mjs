@@ -159,9 +159,9 @@ function runChecks() {
   run("git", ["diff", "--check"]);
   run("npm", ["run", "check:third-party-notices"]);
   run("npm", ["run", "docs:check:release"]);
-  run("npm", ["test", "--", "--runInBand", "--coverage"]);
   run("npm", ["run", "lint"]);
   run("npm", ["run", "build"]);
+  run("npm", ["test", "--", "--runInBand", "--coverage"]);
   run("npm", ["run", "audit:bundle"]);
   assertCleanWorktree("after validation checks");
 }

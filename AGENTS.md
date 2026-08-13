@@ -122,9 +122,9 @@ Context runtime constants live in `src/ai-services/pa-agent-runtime.ts`; Memory 
 - For narrow changes, run the closest relevant Jest tests first.
 - For Memory/VSS/chat changes, run the focused tests that cover `memory-manager`, `vss`, and affected chat paths when present.
 - For broad behavior, release, packaging, or shared infrastructure changes, run:
-  - `npm test -- --runInBand`
   - `npm run lint`
   - `npm run build`
+  - `npm test -- --runInBand`
   - `git diff --check`
 - For dependency or lockfile changes, also run `npm ci --dry-run` when practical.
 - For Obsidian UI smoke tests, prefer the fast path: `make deploy`, reload/re-enable the plugin, use the Obsidian CLI/deep link to open the exact test vault target, then use Computer Use only for the interaction that must be observed in the app.
@@ -144,7 +144,12 @@ rg -n "createElement\([\"']style[\"']\)|\.innerHTML\s*=|\.outerHTML\s*=" src
 
 For the `rg` community-scan command, exit code 1 with no output means no matches were found and should be treated as a pass.
 
-Use `make deploy` when app-runtime confidence is needed — it runs full Jest, lint, build, and deploys assets to `test/`.
+Focused receipt/probe suites that bind `dist/main.js` require a current production
+build. Run `npm run build` first when `dist/` is absent or stale; the full
+`make deploy`, CI, and release gates enforce this ordering automatically.
+
+Use `make deploy` when app-runtime confidence is needed — it runs lint, a
+production build, full Jest, and deploys assets to `test/`.
 
 ## Architecture Rules
 

@@ -34,11 +34,11 @@ jobs:
         env:
           DOCS_CHECK_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: npm run docs:check
-      - name: Test
-        run: npm test -- --runInBand --coverage
       - name: Lint
         run: npm run lint
       - name: Build
         run: npm run build
+      - name: Test
+        run: npm test -- --runInBand --coverage
       - name: Audit bundle
         run: npm run audit:bundle
