@@ -1,6 +1,8 @@
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 import { RunnableLambda } from "@langchain/core/runnables";
+import { Platform } from "obsidian";
 
+jest.mock("obsidian");
 jest.mock("../src/ai-services/append-tool-provider", () => ({
     AppendToolProvider: class { },
 }));
@@ -833,6 +835,43 @@ describe("MemorySearchTool searchVss contract", () => {
         expect(calls.map((call) => call.prompt)).toEqual(["hello world"]);
         expect(plugin.vss.getChunksByPath).not.toHaveBeenCalled();
         expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual(["notes/a.md"]);
+    });
+
+    it("keeps raw graph-on retrieval direct-only on Windows", async () => {
+        const originalIsWin = Platform.isWin;
+        Platform.isWin = true;
+        try {
+            const seedPath = "notes/a.md";
+            const linkedPath = "notes/b.md";
+            const { plugin } = makePlugin({
+                policyModelName: "",
+                retrievalOptimizationFlags: { graphPpr: true },
+                graphBoundarySource: {
+                    getEpoch: () => "graph-epoch-1",
+                    resolvedLinks: new Map([[seedPath, new Set([linkedPath])]]),
+                    classifyPath: () => "allowed_markdown",
+                    canonicalizePath: (path) => path,
+                },
+                searchHybrid: async () => [directRawResult(seedPath)],
+                rankGraphCandidates: async (_embedding, paths, control) => ({
+                    requestId: control.requestId,
+                    runEpoch: control.runEpoch,
+                    sourceEpoch: control.sourceEpoch,
+                    paths: paths.map((path: string) => rankedPath(path, 0.8)),
+                }),
+            });
+            const tool = new MemorySearchTool(plugin as any, makeAIUtils() as any);
+            isolateCandidateAssembly(tool);
+
+            const result = await (tool as any).searchVss("hello world", undefined);
+
+            expect(plugin.memorySearch.rankGraphCandidates).not.toHaveBeenCalled();
+            expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+                seedPath,
+            ]);
+        } finally {
+            Platform.isWin = originalIsWin;
+        }
     });
 
     it("does not revive one-hop lookup as a graph fallback", async () => {

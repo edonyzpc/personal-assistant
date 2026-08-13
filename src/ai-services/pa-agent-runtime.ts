@@ -7,6 +7,7 @@ import type {
 } from "./ai-utils";
 import type { AiServiceHost, RetrievalOptimizationFlags } from "./AiServiceHost";
 import type { MemoryMode } from "../memory-manager";
+import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
 import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { MemorySearchTool } from "./memory-search-tool";
 import {
@@ -2082,15 +2083,19 @@ function isHostRetrievalFlagEnabled(
     host: AiServiceHost,
     flag: keyof RetrievalOptimizationFlags,
 ): boolean {
-    const live = host.getRetrievalOptimizationFlags?.();
-    return (live ?? host.settings.retrievalOptimizationFlags)?.[flag] === true;
+    return resolveB125RetrievalOptimizationFlags(
+        host.getRetrievalOptimizationFlags?.()
+        ?? host.settings.retrievalOptimizationFlags,
+    )[flag];
 }
 
 function getHostRetrievalPolicyEpoch(host: AiServiceHost): string {
     const liveEpoch = host.getRetrievalOptimizationEpoch?.();
     if (liveEpoch) return liveEpoch;
-    const flags = host.getRetrievalOptimizationFlags?.()
-        ?? host.settings.retrievalOptimizationFlags;
+    const flags = resolveB125RetrievalOptimizationFlags(
+        host.getRetrievalOptimizationFlags?.()
+        ?? host.settings.retrievalOptimizationFlags,
+    );
     return [
         "legacy-retrieval-flags",
         flags?.lexicalProfile === true ? "1" : "0",

@@ -237,7 +237,7 @@ export const parseYaml = (yaml: string): Record<string, unknown> => Object.fromE
         }
         return [[key, raw.replace(/^['"]|['"]$/g, '')]];
     }));
-export const Platform = { isDesktop: true, isMobile: false };
+export const Platform = { isDesktop: true, isMobile: false, isWin: false };
 export function debounce<T extends unknown[], V>(cb: (...args: [...T]) => V, timeout = 0, resetTimer = true) {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let latestArgs: T | null = null;

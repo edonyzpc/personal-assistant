@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { RunnableLambda } from '@langchain/core/runnables';
+import { Platform } from 'obsidian';
 
 import type { AiServiceHost } from '../src/ai-services/AiServiceHost';
 import { BUILTIN_WEB_SEARCH_TOOL_NAME } from '../src/ai-services/builtin-web-search-provider';
@@ -1265,6 +1266,43 @@ describe('Pagelet agent runtime', () => {
             stageControlCalled: true,
             relaxedTokenConsumed: false,
         });
+    });
+
+    it('keeps Pagelet relaxed recovery disabled on Windows when the raw flag is on', async () => {
+        const originalIsWin = Platform.isWin;
+        Platform.isWin = true;
+        try {
+            const host = createHost();
+            host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+            const executeRelaxedMemorySearch = jest.fn(async (seed: MemorySearchResult) => seed);
+            const runtime = createPageletAgentRuntime({
+                host,
+                isPathAllowed: () => true,
+                executeMemorySearch: async (input) => ({
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                }),
+                executeRelaxedMemorySearch,
+                captureSourceMaterial: async () => null,
+                createModel: () => ({
+                    stream: async function* () {
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    },
+                }),
+            });
+
+            const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+
+            expect(result.recovery).toMatchObject({
+                enabled: false,
+                relaxedTokenConsumed: false,
+            });
+            expect(executeRelaxedMemorySearch).not.toHaveBeenCalled();
+        } finally {
+            Platform.isWin = originalIsWin;
+        }
     });
 
     it('stages first-source A and independently verified lead-source B into two unchanged drafts', async () => {

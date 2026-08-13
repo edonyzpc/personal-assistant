@@ -176,6 +176,7 @@ import {
     type RetrievalDiagnosticsSnapshot,
     type RetrievalDiagnosticSurface,
 } from './ai-services/retrieval-diagnostics';
+import { resolveB125RetrievalOptimizationFlags } from './retrieval-optimization-platform-policy';
 import type { GraphBoundarySnapshotSource } from './graph/graph-boundary-snapshot';
 import type { GraphPathClass } from './graph/personalized-pagerank';
 import type { PaAgentInjectedContext } from './ai-services/context';
@@ -6955,6 +6956,12 @@ export class PluginManager extends Plugin {
         }
     }
 
+    private getEffectiveRetrievalOptimizationFlags() {
+        return resolveB125RetrievalOptimizationFlags(
+            this.settings.retrievalOptimizationFlags,
+        );
+    }
+
     private createMemoryHost(): MemoryHost {
         return {
             app: this.app,
@@ -6966,6 +6973,7 @@ export class PluginManager extends Plugin {
             getVSSFiles: () => this.getVSSFiles(),
             isDataBoundaryAllowedPath: (path) => this.isDataBoundaryAllowedPath(path),
             getAPIToken: () => this.getAPIToken(),
+            getRetrievalOptimizationFlags: () => this.getEffectiveRetrievalOptimizationFlags(),
             notifyStatusChanged: () => this.debouncedStatusBarUpdate(),
             updateMemorySetting: (key, value) => {
                 (this.settings as unknown as Record<string, unknown>)[key] = value;
@@ -6985,12 +6993,8 @@ export class PluginManager extends Plugin {
             createRetrievalDiagnosticRecorder: retrievalDiagnostics.createRecorder,
             scheduleArmedGraphWorkerCancellation:
                 retrievalDiagnostics.scheduleArmedGraphWorkerCancellation,
-            isGraphPprEnabled: () => (
-                this.settings.retrievalOptimizationFlags?.graphPpr === true
-            ),
-            getRetrievalOptimizationFlags: () => ({
-                ...this.settings.retrievalOptimizationFlags,
-            }),
+            isGraphPprEnabled: () => this.getEffectiveRetrievalOptimizationFlags().graphPpr,
+            getRetrievalOptimizationFlags: () => this.getEffectiveRetrievalOptimizationFlags(),
             getRetrievalOptimizationEpoch: () => this.getRetrievalOptimizationEpoch(),
             onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             getAPIToken: () => this.getAPIToken(),
@@ -7042,12 +7046,12 @@ export class PluginManager extends Plugin {
     }
 
     private getRetrievalOptimizationEpoch(): string {
-        const flags = this.settings.retrievalOptimizationFlags;
+        const flags = this.getEffectiveRetrievalOptimizationFlags();
         const signature = stableStringify({
-            lexicalProfile: flags?.lexicalProfile === true,
-            strictReranker: flags?.strictReranker === true,
-            graphPpr: flags?.graphPpr === true,
-            relaxedRecovery: flags?.relaxedRecovery === true,
+            lexicalProfile: flags.lexicalProfile,
+            strictReranker: flags.strictReranker,
+            graphPpr: flags.graphPpr,
+            relaxedRecovery: flags.relaxedRecovery,
         });
         if (signature !== this.retrievalOptimizationSignature) {
             this.retrievalOptimizationSignature = signature;
@@ -7760,10 +7764,11 @@ export class PluginManager extends Plugin {
                 return runWithMemorySearchInvocation(
                     createStandardMemorySearchInvocation({
                         temporalIntent: "none",
-                        captureRecoverySeed: (
-                            runtimeHost.getRetrievalOptimizationFlags?.().relaxedRecovery
-                            ?? runtimeHost.settings.retrievalOptimizationFlags?.relaxedRecovery
-                        ) === true,
+                        captureRecoverySeed:
+                            resolveB125RetrievalOptimizationFlags(
+                                runtimeHost.getRetrievalOptimizationFlags?.()
+                                ?? runtimeHost.settings.retrievalOptimizationFlags,
+                            ).relaxedRecovery,
                         ...(control?.runEpoch ? { runEpoch: control.runEpoch } : {}),
                         ...(control?.absoluteDeadlineMs !== undefined
                             ? { absoluteDeadlineMs: control.absoluteDeadlineMs }
@@ -7957,6 +7962,7 @@ export class PluginManager extends Plugin {
         const pagelet = this.getPageletSettingsWithDataBoundary();
         const endpoint = (this.settings.baseURL ?? "").trim().replace(/\/+$/, "");
         const platform: AgentRuntimePlatform = Platform.isMobile ? "mobile" : "desktop";
+        const retrievalOptimizationFlags = this.getEffectiveRetrievalOptimizationFlags();
         return {
             dataBoundaryIdentity: `pagelet-agent-boundary:${stableHash(stableStringify({
                 version: 1,
@@ -7975,10 +7981,10 @@ export class PluginManager extends Plugin {
                 licenseTier: this.settings.licenseTier,
                 platform,
                 retrievalOptimizationFlags: {
-                    lexicalProfile: this.settings.retrievalOptimizationFlags?.lexicalProfile === true,
-                    strictReranker: this.settings.retrievalOptimizationFlags?.strictReranker === true,
-                    graphPpr: this.settings.retrievalOptimizationFlags?.graphPpr === true,
-                    relaxedRecovery: this.settings.retrievalOptimizationFlags?.relaxedRecovery === true,
+                    lexicalProfile: retrievalOptimizationFlags.lexicalProfile,
+                    strictReranker: retrievalOptimizationFlags.strictReranker,
+                    graphPpr: retrievalOptimizationFlags.graphPpr,
+                    relaxedRecovery: retrievalOptimizationFlags.relaxedRecovery,
                 },
             }))}`,
             modelIdentity: `pagelet-agent-model:${stableHash(stableStringify({

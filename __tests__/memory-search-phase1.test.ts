@@ -1,5 +1,8 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { RunnableLambda } from "@langchain/core/runnables";
+import { Platform } from "obsidian";
+
+jest.mock("obsidian");
 
 import {
     createStandardMemorySearchInvocation,
@@ -561,6 +564,33 @@ describe("Phase 1 search assembly", () => {
         });
         expect(rollback.result.documents).toHaveLength(1);
         expect(rollback.readLatestMemorySource).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps direct evidence and skips strict reranking on Windows", async () => {
+        const originalIsWin = Platform.isWin;
+        Platform.isWin = true;
+        try {
+            const search = await runSearch({
+                strict: true,
+                response: '{"verdict":"none_relevant","ranking":[],"needsMoreEvidence":true}',
+                readLatest: async (path) => latestSource(
+                    path,
+                    "# One\n\nUseful current evidence.",
+                ),
+            });
+
+            expect(search.createChatModel).toHaveBeenCalledTimes(1);
+            expect(search.invoke).toHaveBeenCalledTimes(1);
+            expect(search.result).toMatchObject({
+                usedMemory: true,
+                memoryEvidenceState: "evidence",
+                rerankVerdict: "relevant",
+                needsMoreEvidence: false,
+            });
+            expect(search.result.recoverySeed).toBeUndefined();
+        } finally {
+            Platform.isWin = originalIsWin;
+        }
     });
 
     it("threads the invocation deadline into the selected reranker child timeout", async () => {

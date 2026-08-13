@@ -54,6 +54,7 @@ import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { createHeadingAwareMarkdownChunks } from './markdown-chunker';
 import { normalizeVaultPath, stableHash } from '../pa/helpers';
 import { errorMessage } from "../ai-services/agent-utils";
+import { resolveB125RetrievalOptimizationFlags } from '../retrieval-optimization-platform-policy';
 import {
     EMBEDDING_RETRY_DELAYS_MS,
     QWEN_TEXT_EMBEDDING_SAFE_TPM,
@@ -2625,7 +2626,10 @@ export class VSS {
     }
 
     private isLexicalProfileEnabled(): boolean {
-        return this.host.settings.retrievalOptimizationFlags?.lexicalProfile === true;
+        return resolveB125RetrievalOptimizationFlags(
+            this.host.getRetrievalOptimizationFlags?.()
+            ?? this.host.settings.retrievalOptimizationFlags,
+        ).lexicalProfile;
     }
 
     private getLexicalBoundaryFingerprint(): string | undefined {

@@ -33,7 +33,7 @@ jest.mock('obsidian', () => {
             }
         },
         normalizePath: (p: string) => p,
-        Platform: { isMobile: false },
+        Platform: { isMobile: false, isWin: false },
     };
 });
 
@@ -73,6 +73,9 @@ jest.mock('../src/confirm', () => ({
 
 const MockSqliteVectorIndex = (jest.requireMock('../src/vss/sqlite-vector-index') as { SqliteVectorIndex: jest.Mock }).SqliteVectorIndex;
 const mockConfirmUserAction = (jest.requireMock('../src/confirm') as { confirmUserAction: jest.Mock }).confirmUserAction;
+const mockPlatform = (jest.requireMock('obsidian') as {
+    Platform: { isMobile: boolean; isWin: boolean };
+}).Platform;
 
 class FakeVectorIndex implements VectorIndex {
     status: VectorIndexStatus = 'ready';
@@ -501,6 +504,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         MockSqliteVectorIndex.mockClear();
         mockConfirmUserAction.mockClear();
         mockConfirmUserAction.mockImplementation(() => Promise.resolve(true));
+        mockPlatform.isWin = false;
         Object.defineProperty(globalThis, 'confirm', {
             configurable: true,
             value: undefined,
@@ -516,6 +520,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        mockPlatform.isWin = false;
         clearMockSqliteIndex();
         if (originalNavigator) {
             Object.defineProperty(globalThis, 'navigator', originalNavigator);
@@ -2451,6 +2456,27 @@ describe('VSS SQLite/WASM lifecycle', () => {
             requiresApproval: true,
             canAnswerNow: true,
         });
+    });
+
+    it('keeps lexical work disabled when the Windows policy masks a persisted flag', async () => {
+        mockPlatform.isWin = true;
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        index.lexicalStatus = {
+            state: 'unavailable',
+            reason: 'feature_disabled',
+            chunkCount: 2,
+            lexicalRowCount: 0,
+        };
+        attachReadyIndex(vss, index);
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'ready',
+            action: 'none',
+        });
+        expect(plugin.settings.retrievalOptimizationFlags).toEqual({ lexicalProfile: true });
     });
 
     it('selects exact baseline/candidate payloads when the lexical calibration flag changes', async () => {

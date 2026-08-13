@@ -20,6 +20,7 @@ import {
 import { createAgentControlSnapshot } from "../../ai-services/pa-agent-control-policy";
 import { PolicyEngine } from "../../ai-services/policy-engine";
 import type { RetrievalDiagnosticEventInput } from "../../ai-services/retrieval-diagnostics";
+import { resolveB125RetrievalOptimizationFlags } from "../../retrieval-optimization-platform-policy";
 import type { PaAgentMessage, SourceRecord } from "../../ai-services/chat-types";
 import {
     capturePageletSourceSnapshot,
@@ -940,9 +941,10 @@ function isPageletRetrievalFlagEnabled(
     dependencies: PageletAgentRuntimeDependencies,
     flag: "strictReranker" | "graphPpr" | "relaxedRecovery",
 ): boolean {
-    const flags = dependencies.host.getRetrievalOptimizationFlags?.()
-        ?? dependencies.host.settings.retrievalOptimizationFlags;
-    return flags?.[flag] === true;
+    return resolveB125RetrievalOptimizationFlags(
+        dependencies.host.getRetrievalOptimizationFlags?.()
+        ?? dependencies.host.settings.retrievalOptimizationFlags,
+    )[flag];
 }
 
 function getPageletRetrievalPolicyEpoch(
@@ -950,8 +952,10 @@ function getPageletRetrievalPolicyEpoch(
 ): string {
     const liveEpoch = dependencies.host.getRetrievalOptimizationEpoch?.();
     if (liveEpoch) return liveEpoch;
-    const flags = dependencies.host.getRetrievalOptimizationFlags?.()
-        ?? dependencies.host.settings.retrievalOptimizationFlags;
+    const flags = resolveB125RetrievalOptimizationFlags(
+        dependencies.host.getRetrievalOptimizationFlags?.()
+        ?? dependencies.host.settings.retrievalOptimizationFlags,
+    );
     return [
         "legacy-retrieval-flags",
         flags?.lexicalProfile === true ? "1" : "0",

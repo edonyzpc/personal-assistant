@@ -49,6 +49,10 @@ import type {
     RetrievalDiagnosticRecorder,
     RetrievalDiagnosticSurface,
 } from "./retrieval-diagnostics";
+import {
+    isB125RetrievalOptimizationPlatformSupported,
+    resolveB125RetrievalOptimizationFlags,
+} from "../retrieval-optimization-platform-policy";
 
 export interface RawSearchResult {
     score?: unknown;
@@ -1838,20 +1842,21 @@ export class MemorySearchTool {
     }
 
     private isGraphPprEnabled(): boolean {
-        return !this.disposed && (
-            this.host.isGraphPprEnabled?.()
-            ?? this.isRetrievalFlagEnabled("graphPpr")
-        );
+        return !this.disposed
+            && isB125RetrievalOptimizationPlatformSupported()
+            && (
+                this.host.isGraphPprEnabled?.()
+                ?? this.isRetrievalFlagEnabled("graphPpr")
+            );
     }
 
     private isRetrievalFlagEnabled(
         flag: "strictReranker" | "graphPpr" | "relaxedRecovery",
     ): boolean {
-        return this.host.getRetrievalOptimizationFlags?.()[flag] === true
-            || (
-                this.host.getRetrievalOptimizationFlags === undefined
-                && this.host.settings?.retrievalOptimizationFlags?.[flag] === true
-            );
+        return resolveB125RetrievalOptimizationFlags(
+            this.host.getRetrievalOptimizationFlags?.()
+            ?? this.host.settings?.retrievalOptimizationFlags,
+        )[flag];
     }
 
     private beginGraphRankRequest(

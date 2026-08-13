@@ -2,6 +2,8 @@
 
 import type { App, EventRef, TFile } from "obsidian";
 
+import type { RetrievalOptimizationFlags } from "../ai-services/AiServiceHost";
+
 /**
  * Narrow host interface for the Memory subsystem.
  *
@@ -27,12 +29,7 @@ export interface MemoryHost {
         embeddingModelName: string;
         baseURL: string;
         statisticsVaultId: string;
-        retrievalOptimizationFlags?: {
-            lexicalProfile?: boolean;
-            strictReranker?: boolean;
-            graphPpr?: boolean;
-            relaxedRecovery?: boolean;
-        };
+        retrievalOptimizationFlags?: RetrievalOptimizationFlags;
     };
 
     /** Structured debug log (no-op when debug is false). */
@@ -52,6 +49,9 @@ export interface MemoryHost {
 
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;
+
+    /** Effective live B-125 flags after platform support policy is applied. */
+    getRetrievalOptimizationFlags?(): Readonly<RetrievalOptimizationFlags>;
 
     /** Notify UI consumers that Memory status has changed. */
     notifyStatusChanged(): void;
