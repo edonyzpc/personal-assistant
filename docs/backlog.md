@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-08-02
+Updated: 2026-08-13
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -34,6 +34,7 @@ Updated: 2026-08-02
 | B-119 | 有界 Insight Enhancement Layer（Graph / Pattern / Maintenance） | 仅当用户明确把 B-119 选为唯一 `Next` 并授权实现时重启；先按当前源码复核预算、provider/Data Boundary、ephemeral overlay、UI clone/render 与 move-only 写入边界，再创建 Approved SDD | [DEC-022](./product/decisions/dec-022-bounded-insight-enhancement-layer.md), [Product Spec](./product/specs/pa-insight-enhancement-layer-product-spec.md) |
 | B-120 | Writing Insight / 近期笔记写作回顾 | 只有 B-119 Graph/Pattern/Maintenance 真实 dogfood 后，仍证明独立写作趋势能提供 Recall/Recap 未覆盖的低负担价值，才重新决定来源呈现、触发频率、成本和 UI；当前不进入实现 | [DEC-022](./product/decisions/dec-022-bounded-insight-enhancement-layer.md), [historical external source](https://linear.app/slateleaf/issue/SLA-11/规划-b-119-洞察增强层graph-pattern-maintenance) |
 | B-122 | Generic preload → Review DeliveryCandidate adapter | B-118 明确 raw `PreloadFinding[]` 只进入显式 Prepared Panel，不触发 Pet nudge 或 Bubble；只有真实使用证明该缓存值得主动浮现，且 stable identity、source-backed confidence、why-now、currentness、route/action 与噪声预算均获批后才重开 | [Bubble Product Spec](./product/specs/pagelet-bubble-readiness-and-recall-product-spec.md), [B-118 Product Spec](./product/specs/pagelet-ui-ux-hardening-product-spec.md) |
+| B-126 | Retrieval performance 扩展认证 | 不阻塞 B-125 rollout；真实性能/内存回归、需要更低硬件性能承诺、扩大默认开启/平台 rollout，或发布声明必须提供 floor-grade process-memory 证据时重启。重启后先取得适用的 Xcode/Instruments 或等价受审 profiler 环境，再重新评估 raw-export converter、process physical footprint、18 个 device-derived thresholds 与原 `23 standard + 23 retry + 1 cancel`（47 episodes）扩展 workload；不把旧计划直接视为已批准阈值 | [DEC-027](./product/decisions/dec-027-bounded-retrieval-recovery.md), [B-125 Product Spec](./product/specs/pa-active-vault-indexer-product-spec.md#101-b-125-scoped-retrieval-optimization) |
 
 ## 触发型评估
 

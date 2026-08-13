@@ -1,7 +1,7 @@
 # PA Eval Harness Product Spec
 
 Document status: Current
-Updated: 2026-08-08
+Updated: 2026-08-13
 Work item: B-118
 Scope note: DEC-024 deterministic coverage is owned by B-118; DEC-027/B-125 adds lexical-correctness、retrieval、rerank、retry and opaque-bridge gates. Their current implementation、validation and rollout status is owned only by the [B-125 Tracker](../../development/active/retrieval-optimization/tracker.md).
 Scoped decisions: [DEC-024 — Quiet Recall cold semantic retrieval](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027 — bounded retrieval recovery](../decisions/dec-027-bounded-retrieval-recovery.md)
@@ -177,7 +177,7 @@ when a product spec adds a new hard boundary.
 | Spec / surface | Deterministic checks | Blocks |
 | --- | --- | --- |
 | Product IA / Review Queue | canonical queue type accepted; unknown type rejected; required shared fields present | Shared Review Queue data model |
-| Active Vault Indexer | real sqlite-wasm MATCH fixtures prove shared CJK index/query normalization across Chinese、English、mixed CJK/kana、title、heading、path basename、error code and long-note cases；quality/cost reports cover FTS Recall@K、hybrid Recall@12、final Recall@8/MRR、unique-path、index/rebuild/update and slow-device p95 before lexical/fusion constants are selected；sourceRefs resolve; excluded paths absent from seed/candidate/result/source/provider/replay identity; reranker policy-or-Chat selection and fail-open matrix passes, including valid cross-origin mixing versus direct-hybrid-first + graph-cosine fail-open with no score decay/reservation; Local cosine-before-truncation、Deep Breadth exclusion-only-at-selection、Convergence overlap and membership-aware lane nominations pass; 12 direct + 6 graph + 18 reranker limits hold；recovery fixtures prove same-query/frozen-plan reuse、episode-local exact-evidence fingerprints、novel-before-changed admission、cap-before-repeat filtering、rejected-path propagation and zero-fresh-only topology roots；a standard/retry recovery episode exposes one cumulative projection of at most 8 final documents; retrieval outcome status matches fixture | B-125 retrieval substrate phase |
+| Active Vault Indexer | real sqlite-wasm MATCH fixtures prove shared CJK index/query normalization across Chinese、English、mixed CJK/kana、title、heading、path basename、error code and long-note cases；quality/cost reports cover FTS Recall@K、hybrid Recall@12、final Recall@8/MRR、unique-path and index/rebuild/update cost before lexical/fusion constants are selected；the owner-accepted current real-iPhone practical proxy runs separate `3 warmup + 10 measured` standard and retry latency series plus one cancellation probe, recording UI/main-thread gap、derived-index size、rebuild/incremental-update、deadline、cancel、late-discard and finalization-reserve evidence；six frozen selected-reranker rankings and structured explicit-temporal acceptance remain independent quality/correctness gates；process physical footprint is diagnostic only and its absence is an accepted B-125 risk, while Xcode/Instruments、18 device-derived thresholds and the original `23 + 23 + 1` extended certification are non-blocking B-126 work；sourceRefs resolve; excluded paths absent from seed/candidate/result/source/provider/replay identity; reranker policy-or-Chat selection and fail-open matrix passes, including valid cross-origin mixing versus direct-hybrid-first + graph-cosine fail-open with no score decay/reservation; Local cosine-before-truncation、Deep Breadth exclusion-only-at-selection、Convergence overlap and membership-aware lane nominations pass; 12 direct + 6 graph + 18 reranker limits hold；recovery fixtures prove same-query/frozen-plan reuse、episode-local exact-evidence fingerprints、novel-before-changed admission、cap-before-repeat filtering、rejected-path propagation and zero-fresh-only topology roots；a standard/retry recovery episode exposes one cumulative projection of at most 8 final documents; retrieval outcome status matches fixture | B-125 retrieval substrate phase |
 | Data Boundary | excluded/generated/self-write sources do not reach provider/candidate paths; `allowed A → excluded Markdown B → allowed C` may surface only C through one opaque bridge; generated/attachment/two-excluded variants remain unreachable; provider、DTO、source、log、telemetry and replay spies contain no B path/title/body/metadata; per-run override recorded; cleanup groups separate cache/user data | Any provider-backed broad scan or memory extraction, including B-125 |
 | Pagelet Review / generic preload admission | foreground Review uses the post-filter/de-duplicated actual allowed-source count: current=1 and requested `last7` reduced to 1 are standard, while `>1` blocks before any call/quota/cost reservation; generic background preload is standard only with explicit opt-in、changed-only、recent 7 days、input `<=4K`、output `<=1K`、calls `<=2/rolling-hour` and `<=20/local-day`、`allowWrite=false` and every actual source allowed by the explicit shared Data Boundary without override; violate each condition independently and assert silent skip with zero blocking UI/call/reservation/flag mutation; reconstruct the limiter、cross local midnight and corrupt storage to prove caps persist/fail closed; the narrow envelope is never classified high-risk merely as `weekly` | B-118 DEC-023 foreground Review and background preload runtime admission |
 | Context Pager | displayed used/skipped/dropped counts match retrieval/memory outcomes; why-dropped labels match actual decision reasons | Context transparency UI |
@@ -191,6 +191,22 @@ when a product spec adds a new hard boundary.
 | Weekly Review | scope disclosure present; accepted-only items enter Markdown note; dismissed/unconfirmed items stay out | Weekly Review write |
 | Lightweight Graph Discovery | graph suggestions have sourceRefs; `theme_chain` does not become memory directly; rejected edge remains local; opaque bridge never becomes an item/edge/source/why-shown and generated/attachment/excluded-chain bridges fail | Graph-aware discovery and B-125 PPR boundary |
 | Retrieval Habit Profile | disabled mode has no influence; weak signal cannot cross explicit scope/Data Boundary/evidence strength | Retrieval adaptation |
+
+For B-125, the compact device report also records a same-device、same-artifact、
+same-synthetic-input all-flags-off standard direct/vector control. It compares
+exactly `1 warmup + 5 measured` control episodes as a directional reference, not
+a p95 certification, and compares
+only fields present in both runs；retry、Graph and lexical maintenance use absolute
+observations plus owner review, and unavailable comparisons remain `N/A`, never
+`0` or PASS. The receipt binds immutable `control` and `evaluated` profiles；the
+runner may perform only the declared control-to-evaluated transition and must
+reject any other settings/device/artifact drift. Hard-budget or structural violations are `FAIL`; missing evidence is
+`BLOCKED`. A reproducible material latency/UI/index/maintenance regression or
+unexplained outlier cannot be auto-promoted to `PASS` and requires investigation
+or explicit owner risk acceptance. A machine-complete run is only `CANDIDATE /
+READY_FOR_OWNER_REVIEW`; the aggregate remains `BLOCKED` until the Tracker records
+the owner's accepted/rejected disposition and reason. This adds no arbitrary
+percentage threshold.
 
 Blocking rule:
 

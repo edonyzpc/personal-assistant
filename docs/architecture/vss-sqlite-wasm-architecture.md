@@ -1,6 +1,6 @@
 # VSS SQLite/WASM Current Architecture
 
-Updated: 2026-08-09
+Updated: 2026-08-13
 
 Status: Current runtime contract. Verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure.
 
@@ -277,8 +277,51 @@ Memory policy paths.
 
 The retrieval-optimization rollout remains behind internal default-off flags
 until its current Tracker records post-restart desktop Obsidian/OPFS、real iOS
-segmentation/runtime behavior、supported slowest-device latency/memory/UI-stall、
-lexical deadline/cancel behavior and real selected-reranker quality evidence.
+segmentation/runtime behavior、current-iPhone pragmatic latency/UI/index/
+maintenance/deadline/cancel evidence and real selected-reranker plus structured
+temporal quality evidence. B-125 uses the owner's currently available newer
+iPhone as a practical real-WKWebView performance proxy without claiming exact
+iPhone 15 floor equivalence. Its workload is 3 warmups + 10 measured standard、
+3 warmups + 10 measured retry and one isolated cancel probe. It reuses the
+existing 500 ms lexical、8,000 ms Graph、30,000 ms Memory-episode and 180,000 ms
+outer-turn budgets rather than inventing new device thresholds；UI gap、DB/index
+bytes、one rebuild and one incremental update remain required recorded evidence.
+The report first records a same-device、same-artifact、same-synthetic-input all-
+flags-off `1 warmup + 5 measured` standard direct/vector control as a directional
+reference rather than a p95 certification, then compares only metrics that actually
+exist in both runs. Retry、Graph and lexical derived-index maintenance have no
+valid all-off counterpart；they use absolute observation plus owner review, and
+`N/A` never becomes `0` or PASS. A reproducible material regression or unexplained outlier keeps
+the implicated flag off pending investigation or explicit owner risk acceptance；
+it cannot auto-pass merely because a broad hard budget was not exceeded.
+Machine-complete evidence is only `CANDIDATE / READY_FOR_OWNER_REVIEW`; the
+Tracker must record the owner's disposition and reason before performance PASS.
+Process physical footprint is optional diagnostic evidence when available；lack
+of Xcode/Instruments is an accepted residual risk, not a metric PASS. Formal
+representative-floor、20-sample、47-episode、18-threshold and profiler/converter
+certification moves to B-126 and does not block B-125 absent a measured regression.
+Ranking and structured temporal evidence remain separate rollout gates and do not
+depend on a performance threshold freeze.
+
+The current v9 fixture/runner/verifier still implements the earlier strict
+23 + 23 + 1、required-process-memory contract. Until the active Tracker's T-12
+aligns those artifacts and focused tests, it remains `BLOCKED`; this architecture
+decision is not runtime or receipt evidence.
+
+A pragmatic-gate failure keeps or returns the affected flag to off and preserves
+the direct/vector path；lexical failure also retains the previous valid generation
+or vector-only fallback. Crash/hang、OS termination、repeated hard-budget exceed、
+unsafe late-result acceptance、index corruption/runaway growth or a reproducible
+material latency/UI regression invalidates the receipt and reopens B-125. Missing
+optional footprint evidence alone does not.
+
+For B-125 only, [DEC-027](../product/decisions/dec-027-bounded-retrieval-recovery.md)
+temporarily excludes Win32 runtime support: Windows resolves the four B-125
+effective flags to `false` without rewriting raw settings and retains the existing
+direct/vector path. This does not remove any other PA Windows capability or change
+the manifest；the
+[active Tracker](../development/active/retrieval-optimization/tracker.md) owns the
+evidence and explicit re-entry gate.
 Existing Memory-path device evidence does not by itself validate the new lexical,
 graph or recovery path. Physical Android validation remains in
 [Backlog B-003](../backlog.md#下一步可执行); do not infer Android parity from desktop
@@ -295,7 +338,7 @@ standard retrieval may receive the exact offline candidate `8 / 12 / 18`,
 top-level clause OR, body-favoring BM25 weights and equal-leg `RRF k=30`；the
 profile remains explicitly provisional and default-off. Relaxed retrieval、graph
 worksets/cosine、the 500ms lexical budget and rebuild batches remain marked
-inherited/unvalidated pending the Tracker's device gates. Legacy callers may
+inherited/unvalidated pending the Tracker's pragmatic device gate. Legacy callers may
 still supply bounded depth aliases, but those ad-hoc combinations carry no
 versioned profile identity；the Worker exact-validates every registered profile
 payload and rejects drift or alias mismatch.

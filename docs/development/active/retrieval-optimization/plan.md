@@ -1,7 +1,7 @@
 # Retrieval Pipeline Optimization — Delivery Plan
 
 Document status: Approved
-Updated: 2026-08-08
+Updated: 2026-08-13
 Work item: B-125
 Authority: 本 track 的交付顺序、依赖、风险、验证策略与 stop point。
 Decision: [DEC-027](../../../product/decisions/dec-027-bounded-retrieval-recovery.md)
@@ -45,9 +45,9 @@ Tracker: [Development Tracker](./tracker.md)
 | Phase | Outcome | Primary requirement | Exit gate | Stop point |
 | --- | --- | --- | --- | --- |
 | Phase 0A — lexical evidence baseline | real sqlite-wasm MATCH harness compares current baseline、`BIGRAM-U1` primary candidate、`CHAR-PHRASE` deterministic comparator、explicit-locale/fingerprinted `INTL-WORD` challenger and trigram limitation control；no production behavior change | B-125/REQ-08 evidence prerequisite | frozen CJK/English/mixed/title/heading/path/error-code/long-note labels；candidate Top-8/English-safety/error-free/metadata-reachability gates；quality/cost report | passing only produces an OD-06A shortlist；evidence不足时不选择 shipping profile；不得用已知失效的中文 FTS 选择 rewrite、RRF 或 graph 参数 |
-| Phase 0B — corrected lexical profile | owner-confirmed `CHAR-PHRASE` exact shared index/query normalization；independent `lexicalProfileVersion`；explicitly confirmed lexical-only shadow rebuild and atomic switch；separately rankable title/heading/body/bounded path；BM25 + RRF | B-125/REQ-08 | real MATCH regression；confirm/cancel/progress、crash/abort、concurrent incremental-write、Recall/cost/supported-runtime/slow-device gates | stale/rebuilding/failed lexical state uses honest vector/direct-only；never global reset、provider call、re-embedding or source mutation |
+| Phase 0B — corrected lexical profile | owner-confirmed `CHAR-PHRASE` exact shared index/query normalization；independent `lexicalProfileVersion`；explicitly confirmed lexical-only shadow rebuild and atomic switch；separately rankable title/heading/body/bounded path；BM25 + RRF | B-125/REQ-08 | real MATCH regression；confirm/cancel/progress、crash/abort、concurrent incremental-write、Recall/cost/supported-runtime and pragmatic iPhone performance gates | stale/rebuilding/failed lexical state uses honest vector/direct-only；never global reset、provider call、re-embedding or source mutation |
 | Phase 1 — strict rerank and projection | deterministic zero-candidate result；policy-or-Chat model selection；strict parser including partial `needsMoreEvidence`；latest-Markdown candidate materialization and Boundary/currentness revalidation before provider and final projection；direct-first fail-open；Host-only pool；8-document allocator | B-125/REQ-01、02 | focused unit/integration tests + typecheck + provider leakage/currentness spies | unavailable/invalid rerank keeps bounded direct-hybrid-first → graph-cosine candidates；newly excluded/stale candidates are dropped, never sent or cited |
-| Phase 2 — convergence-aware PPR | immutable three-class Boundary snapshot/epoch；complete Local cosine；fixed-alpha error-driven Deep Breadth/Convergence；whole-PPR graph/state/memory/deadline preflight；cancelable bounded Worker；membership nomination + cosine fill → graph≤6 | B-125/REQ-03、04、07 | algorithm/boundary/Worker cancellation + supported-runtime/iOS/slowest-device performance gates | unsafe/changed snapshot or shared embedding/Worker failure is direct-only；PPR preflight/solver failure drops all Deep/Convergence；safe complete Local may remain |
+| Phase 2 — convergence-aware PPR | immutable three-class Boundary snapshot/epoch；complete Local cosine；fixed-alpha error-driven Deep Breadth/Convergence；whole-PPR graph/state/memory/deadline preflight；cancelable bounded Worker；membership nomination + cosine fill → graph≤6 | B-125/REQ-03、04、07 | algorithm/boundary/Worker cancellation + supported-runtime/current-iPhone pragmatic performance gate | unsafe/changed snapshot or shared embedding/Worker failure is direct-only；PPR preflight/solver failure drops all Deep/Convergence；safe complete Local may remain |
 | Phase 3 — Host-owned recovery and Pagelet depth | per-Chat-stream one-token coordinator；single cumulative evidence projection；strict partial retry producer；stable-identity exact-repeat push-down；same-run Pagelet Host staging control while terminal output stays natural Markdown；atomic non-empty 0–2 insight collection；temporal preservation | B-125/REQ-05、06 | coordinator/finalization reserve、push-down、Pagelet natural-Markdown 0/1/2/cache/delivery、flag default/off/teardown tests + deployed Obsidian smoke | no retry when token、deadline/reserve、currentness、time scope、stable identity or independent lead cannot be proved；MemorySearchTool remains stateless |
 
 Phase 0A evidence → OD-06A `CHAR-PHRASE` selection → Phase 0B → Phase 1 → Phase 2 → Phase 3。
@@ -122,7 +122,8 @@ OPFS、真机与真实 reranker 评测，离线 winner 可以作为 versioned、
    lanes，禁止 filter-after traversal。
 2. PPR 构图/solver 前对 canonical reachable nodes、edges、projected lifted states/
    transitions、memory 与 remaining absolute deadline 做确定性全图 preflight。任何一项
-   超出经 EC-02/slow-device 校准的上限，都跳过整个 PPR（Deep + Convergence），不得以
+   超出经 EC-02 有界 fixture 与 B-125 pragmatic iPhone gate 校准的上限，都跳过
+   整个 PPR（Deep + Convergence），不得以
    adjacency/insertion prefix 截图；只有独立完成自身 preflight 与全量 cosine 的 Local
    才可保留。
 3. Worker request 携带 request id、invocation/cancel epoch 与 absolute deadline；path/
@@ -205,13 +206,13 @@ OPFS、真机与真实 reranker 评测，离线 winner 可以作为 versioned、
 
 No per-seed truncation is allowed. Local/Deep/Convergence worksets and the total
 pre-cosine work envelope are implementation safety limits that require fixture
-and slowest-supported-device calibration；they are not fixed by the confirmed
+and B-125 pragmatic iPhone calibration；they are not fixed by the confirmed
 Decision. All final budgets are ceilings and never require filling.
 
 以下是旧草案的 tuning 候选，不是已批准的 shipping 参数：normal/relaxed cosine
 `0.3/0.2`、vector `k 8/12`、`fusionTopK 12/18`。它们可以进入 versioned、default-off、
 `provisional` 的验证 plumbing，但只有在 SDD EC-02 的 fixture、真实 reranker、
-slow-device/real-iOS calibration 记录通过后，才可成为 rollout/default 候选。
+real-iOS pragmatic performance gate 记录通过后，才可成为 rollout/default 候选。
 
 ## Dependencies And Sequencing
 
@@ -248,7 +249,7 @@ slow-device/real-iOS calibration 记录通过后，才可成为 rollout/default 
 | --- | --- | --- |
 | CJK FTS 继续零召回、normalization/runtime drift 或 profile 重建代价过高 | exact NFC/grapheme/atom golden vectors、real sqlite-wasm MATCH、independent profile version、supported-runtime fingerprint、Recall@K/index-size/rebuild/update/p95 gate | discard incomplete shadow generation；vector/direct-only；no provider call、re-embedding or Markdown mutation |
 | lexical rebuild crash、阻塞前台 search 或增量写形成 mixed generation | short queued batches + foreground read priority、SQLite-canonical marker/switch、shadow row/vocab checks、delta replay、abort/rename/upsert/delete race fixtures | 保持前一有效 selected generation；否则 lexical unavailable + vector-only；never monolithic queue hold/global VSS reset |
-| FTS 因 vector scan 超时被静默跳过 | explicit lexical state/reason/timing、EC-02 deadline calibration and slow-device fixture | vector/direct fallback；不得把未运行 FTS 记录为 empty lexical result |
+| FTS 因 vector scan 超时被静默跳过 | explicit lexical state/reason/timing、EC-02 deadline calibration and current-iPhone proxy fixture | vector/direct fallback；不得把未运行 FTS 记录为 empty lexical result |
 | stale/newly excluded excerpt 进入 reranker 或 final source | latest-Markdown materialization、pre/post-provider epoch/hash/anchor revalidation、MetadataCache-lag/provider spies | drop changed/denied candidate；不足时保留其他 current candidates 或诚实 none；never send/cite stale body |
 | Reranker 误过滤、partial 无可靠 retry producer 或模型失败级联 | strict envelope、一模型一次调用、`needsMoreEvidence` required-boolean matrix、invalid/timeout/origin-order tests | fail open direct-first；invalid partial 不授权 retry；关闭 strict-none flag 不恢复旧 parser bug或跨-origin decay |
 | 去掉 `0.02` 后远端弱节点增加 | calibrated lane worksets/high-degree envelope、cosine、reranker、graph≤6 | 关闭 PPR；未来可引入经评测的 lane-specific threshold，无数据迁移 |
@@ -266,6 +267,19 @@ slow-device/real-iOS calibration 记录通过后，才可成为 rollout/default 
 | 显式时间范围在 rewrite 中丢失 | temporal-intent propagation tests | 拒绝该 relaxed retry，保留首轮 partial/direct evidence |
 | source 与 final docs 不一致 | two-pass allocator、path+chunk dedupe、sources-from-final-only | omit invalid source/document；不得从 candidate pool补 source |
 
+Performance rollback remains flag-scoped. A pragmatic-gate `FAIL` keeps the
+affected B-125 flag off；lexical failure also retains/discards the shadow generation
+and uses the previous valid generation or vector-only fallback. After rollout, an
+app/renderer crash or hang、OS termination、repeated existing-budget deadline
+exceed、unsafe cancel/late-result acceptance、derived-index corruption/runaway
+growth or a reproducible material latency/UI regression disables the affected flag
+and reopens B-125 validation. A plugin/profile/workload or hard-budget change also
+invalidates the prior performance receipt. Missing optional physical-footprint
+sampling alone does not trigger rollback；an observed memory-related termination or
+sustained field regression does. B-126 extended certification may add evidence or
+trigger one of these reopen conditions, but its mere incompleteness does not block
+B-125.
+
 ## Validation Strategy
 
 ### Focused automated gates
@@ -276,7 +290,7 @@ slow-device/real-iOS calibration 记录通过后，才可成为 rollout/default 
   disabled；all core CJK Hit@8、English/code no-regression、zero MATCH errors and
   title/heading/path-only reachability。Report path Hit@1/3/8、MRR、Recall/
   Precision@8、unique-path/duplicate-chunk、vocab/query diagnostics、index bytes
-  and Node warm p50/p95；do not claim slow-device performance or a winner。
+  and Node warm p50/p95；do not claim real-device performance or a winner。
 - Phase 0B: exact NFC/grapheme/script/Letter-Mark/hex-atom golden vectors run on
   every supported runtime；selected profile real MATCH regression；independent
   lexical version and state transitions；explicit confirm/cancel/progress；shadow
@@ -284,7 +298,7 @@ slow-device/real-iOS calibration 记录通过后，才可成为 rollout/default 
   profile validation + same-SQLite-transaction marker/switch；crash/abort/late
   epoch/delta replay/concurrent upsert/delete/rename fixtures；zero global reset/
   provider/re-embedding/source mutation；FTS Recall@K、hybrid Recall@12、final Recall@8/MRR、unique-path、
-  index/rebuild/incremental-update and slowest-device p95 evidence。
+  index/rebuild/incremental-update and pragmatic iPhone evidence。
 - Phase 1: model selection、0/1/N candidate、strict verdict + required
   `needsMoreEvidence` matrix、valid cross-origin mixing、timeout/error direct-
   hybrid-first + graph-cosine fail-open with no decay/reservation、18-candidate
@@ -322,102 +336,145 @@ slow-device/real-iOS calibration 记录通过后，才可成为 rollout/default 
 先跑最接近的 focused Jest suites，再执行 Local Validation Gate。共享 Memory/VSS/
 Pagelet runtime 全部完成后才运行 `make deploy`；docs-only 更新不运行 Build 或 smoke。
 
-### Supported-runtime and slowest-device gate
+### Supported-runtime and pragmatic performance gate
+
+The owner-confirmed mobile support floor is `minimumIPhoneModel=iPhone 15`,
+`minimumIOSVersion=17.0` and `minimumObsidianVersion=1.11.4`. Direct evidence on
+that exact tuple is preferred. For B-125, the owner explicitly accepts the
+recorded 2026-08-11 within-freshness-window newer-version real-iOS verifier PASS
+result as a software-version proxy validation baseline because the exact older
+environment is unavailable, while retaining the declared floor and accepting the
+untested backward-compatibility risk. This software-floor proxy does not itself
+satisfy the current-artifact functional or pragmatic performance gate. For B-125
+performance, the owner designates the currently available, newer iPhone as a
+pragmatic proxy: bind its opaque identity、available runtime classification and
+Obsidian API identity plus current plugin/runner artifacts. The owner-observed
+newer iOS remains an unattested observation when the WKWebView cannot expose an
+authoritative OS version；do not label the device `representsFloor=true` or claim
+exact iPhone 15 performance. Reopen direct floor testing if a compatibility regression
+is reported at iOS 17.0 or Obsidian 1.11.4. For
+B-125 only, the owner temporarily excludes Win32 runtime support；the required
+desktop rollout matrix is `darwin` + `linux`. This is not Win32 PASS、a
+compatibility claim or a permanent change to PA Windows support or manifests.
+On Windows the four B-125 effective flags must remain fail-closed `false`, with
+raw settings unchanged and direct/vector fallback preserved.
 
 1. Run deterministic normalization/profile fingerprints on repository Node 22,
    the current supported Obsidian desktop renderer and the supported iOS WKWebView;
    retain Node 20/other desktop comparison as a compatibility canary, not as a
    substitute for supported-runtime evidence. Any fingerprint drift requires a
    new lexical generation and blocks rollout.
-   - Each desktop platform produces one schema-v2 exact-renderer receipt with
+   - Each B-125 required desktop platform produces one schema-v2 exact-renderer
+     receipt with
      [`fts-runtime-probe.mjs`](../../../../scripts/fts-runtime-probe.mjs). The
      receipt must prove a real `app://obsidian.md` renderer and bind the actual
      platform/runtime fingerprint plus the bundled production
      `char-phrase-v1` artifact.
-   - Rollout requires one `darwin`、one `win32` and one `linux` receipt from the
-     same checkout/artifact, verified together by
+   - Rollout requires one `darwin` and one `linux` receipt from the same
+     checkout/artifact, verified together by the B-125 platform policy in
      [`fts-runtime-receipt-verify.mjs`](../../../../scripts/fts-runtime-receipt-verify.mjs).
-     Missing renderer/case/artifact evidence is `BLOCKED`; selected-profile or
-     grapheme drift is `FAIL`; word-boundary-only drift remains diagnostic.
+     `missing_platform:win32` does not block B-125 while the scoped waiver is
+     active. Missing Darwin/Linux renderer、case or artifact evidence remains
+     `BLOCKED`; selected-profile or grapheme drift is `FAIL`; word-boundary-only
+     drift remains diagnostic.
      These receipts do not substitute for iOS、OPFS、quality or performance
      evidence.
-2. Run real sqlite-wasm Phase 0B rebuild/query/incremental-update evidence and the
-   Phase 2 graph/Worker + Phase 3 retry path on the slowest supported device. Record
-   p50/p95、peak derived-index size/memory、maximum UI/main-thread stall、deadline/
-   cancellation outcome and finalization-reserve preservation. Exact acceptance
-   thresholds and batch/workset/deadline values remain EC-02 calibration, not
-   approved constants in this Plan.
-   - Use the versioned `b125-device-measurement-v9` plan: nearest-rank
-     percentiles、3 warmup samples and 20 measured samples. All device thresholds
-     and either a selected-reranker minimum-MRR or flag-off non-regression gate
-     must be reviewed and frozen before **any scored ranking、structured explicit-
-     temporal acceptance canary or performance evidence** is recorded. A null
-     threshold、late threshold change、missing sample or unsupported required
-     metric keeps the receipt `BLOCKED`；ranking/temporal-acceptance evidence
-     recorded before that freeze cannot be imported into the frozen run. An
-     isolated Recovery functional/debug canary may run before freeze, but it is
-     unscored and cannot satisfy any threshold、MRR or ranking acceptance gate.
-   - Freeze three stages across four isolated content-free sessions: exactly 23
-     standard one-attempt retrieval episodes；exactly 23 two-attempt retry episodes
-     split deterministically into `12 + 11` sessions；then exactly one cancellation
-     probe. Standard and retry each keep their own 3-warmup + 20-measured latency、
-     Graph、queue/batch and finalization-reserve series. A retry episode requires
-     its cumulative projection；the two distributions are never merged.
-   - Freeze the exact `performanceWorkload` as part of that same plan. Before
-     starting the timed envelope, qualify the dedicated two-wave fixture once in
-     standard mode and once in retry mode with the selected reranker：both must
-     complete the full Graph chain, and the retry qualification must preserve
-     standard partial evidence while adding the fresh sufficient target. Every
-     timed episode then runs the manifest-selected prompt in a fresh live Chat and
-     is recorded immediately against the same opaque diagnostics `runId`；wrong
-     prompts、rehydrated or reused turns、duplicate run identities、unbound episodes
-     or stage/order drift invalidate the whole workload. The receipt stores only
-     frozen workload IDs、classes、counts and content-free correlation hashes，not
-     prompts、paths or note text.
-   - Each performance episode starts at `recovery_standard` and ends only at one
-     legal finalization boundary. Orphan、duplicate、out-of-order、early or repeated
-     finalization events invalidate the whole stage；`reserve_protected` is only a
-     diagnostic event, while `reserve_not_entered` is the legal boundary for a run
-     that never entered the reserved turn. Every successful Graph attempt must be
-     the strict snapshot start/complete → preflight start/complete → PPR start →
-     one-to-three completed seed terminals → completed aggregate → pre-Worker
-     workset → Worker start/accepted completion → final-workset sequence. Missing、
-     fallback、deadline、extra or out-of-order events cannot produce a full-Graph
-     performance sample.
-   - The cancellation session proves same-episode cancel requested、Worker-
-     confirmed cancel observed、late-result discard and zero accepted-after-
-     cancel as structural invariants independent of permissive thresholds. No
-     session may borrow、truncate、supplement or selectively rerun events from
-     another；any dropped event or capacity overflow blocks the whole receipt.
-   - A start/stop runtime envelope must begin before the first performance event
-     and cover all three performance sessions. It records required maximum-
-     observed process physical footprint and database samples at one-second
-     intervals plus main-thread scheduling gaps at 50 ms, with a ten-minute
-     absolute cap；JS heap is optional diagnostic evidence only. Operator-entered
-     point values and percentile rAF gaps cannot satisfy these peak/maximum gates.
-   - On iOS, if the runtime process-memory source is unavailable, the only allowed
-     substitute is the multi-point profiler artifact at
-     `retrieval-smoke/evidence/system-memory-envelope.json` plus its bound raw
-     Instruments export at
-     `retrieval-smoke/evidence/system-memory-envelope.instruments.xml`. The runner
-     reads and hashes both files as raw bytes and binds `physical_footprint_bytes` in bytes to the
-     exact Obsidian process/app build、plugin and runner artifacts、device identity、
-     iOS runtime family and the complete performance-envelope window. A manual
-     peak、another platform or a stale/changed artifact remains `BLOCKED`.
-     This fixed-path JSON must be generated by a conversion tool from a real Xcode
-     Instruments export captured over that same runtime envelope：the workflow
-     must not provide a fillable JSON template，and the operator must not type、
-     copy or synthesize `samples`. Neither file may exist before profiler capture
-     begins；after the runner binds them，a create/modify/delete/rename event or a
-     byte mismatch in either file remains sticky and blocks `finalize()`. The
-     final receipt records both byte digests and rechecks them at its evidence
-     cutoff. Those hashes prove only that the converted artifact and raw export
-     stayed byte-stable after binding；they do not authenticate the original
-     Instruments trace or turn operator-entered values into evidence.
-3. Desktop success cannot close the iOS gate. Use a real supported iOS device for
-   the final runtime smoke；if the platform lacks the required Worker/cancellation/
-   segmentation behavior or misses the calibrated p95 gate, keep the affected
-   Phase flag off and preserve the preceding safe fallback.
+   - Validate separately that Win32 resolves `lexicalProfile`、`strictReranker`、
+     `graphPpr` and `relaxedRecovery` to effective `false` even if raw settings
+     request `true`, without mutating persisted settings, and that direct/vector
+     fallback plus cancellation/teardown remain safe. Re-enable B-125 on Windows
+     only after a Windows environment、same-artifact Win32 receipt plus the full
+     Darwin/Linux/Win32 aggregate、Win32 App/OPFS/flag lifecycle/fallback/cancel
+     smoke and explicit owner approval are all available. The restoration
+     aggregate must run
+     `node scripts/fts-runtime-receipt-verify.mjs --platform-policy=all-desktop --json <darwin> <win32> <linux>`
+     and return `status=PASS` with `receiptPlatforms` containing exactly
+     `darwin`、`win32` and `linux`；the scoped B-125 waiver result cannot
+     substitute for this restoration proof.
+2. Run the B-125 pragmatic performance gate on the designated current iPhone.
+   This gate protects users from deadline overruns、UI hangs、unbounded local-index
+   growth and unsafe cancellation without turning B-125 into a hardware
+   certification program.
+   - Bind one current production plugin、runner、fixture manifest、opaque device
+     identity、available runtime classification and Obsidian API identity. The
+     receipt declares immutable `control` (all B-125 flags effective-off) and
+     `evaluated` flag/settings profiles；the only permitted transition is the
+     runner-recorded and verified `control → evaluated` switch. Every other
+     setting、device and artifact remains unchanged, and final cleanup restores the
+     initial profile. Record an owner-observed newer iOS version only as
+     unattested context when the WKWebView cannot expose an authoritative OS
+     version. A stale artifact、undeclared settings drift or another device cannot be mixed
+     into the same receipt.
+   - Use nearest-rank percentiles and two separate distributions: exactly 3 warmup
+     plus 10 measured standard one-attempt episodes, then exactly 3 warmup plus 10
+     measured two-attempt retry episodes. Run one additional isolated cancellation
+     probe. Each episode uses the frozen synthetic workload in a fresh Chat and is
+     bound to its own opaque diagnostics `runId`; warmups never enter percentiles
+     and standard/retry samples are never merged.
+   - Retain the key evidence only: standard/retry total p50/p95、lexical and Graph
+     p50/p95、Worker queue/max-batch timing、maximum observed main-thread scheduling
+     gap、derived DB/index bytes before/peak/after、one successful lexical rebuild
+     and one successful incremental update with duration, deadline/finalization
+     outcome and the cancellation state transition. Process physical footprint and
+     JS heap are optional diagnostics when the environment exposes them.
+   - Capture a separate same-device、same-artifact、same-synthetic-input control
+     with all four B-125 flags effective-off before the enabled run. This control
+     executes exactly 1 warmup + 5 measured standard direct/vector episodes and
+     is a directional reference, not a p95 certification. Compare enabled standard
+     total latency、maximum UI gap and any metric actually present in both runs;
+     retry、Graph and the new lexical derived-index rebuild/update have no valid
+     all-off counterpart, so record them absolutely under the hard budgets and
+     owner review. Every unavailable comparison is explicit `N/A`, never `0` or
+     an implicit `PASS`. B-125 defines no invented percentage cutoff, but a
+     reproducible material regression or unexplained outlier keeps the implicated
+     flag off and the gate `BLOCKED` pending investigation or a new explicit owner
+     risk decision.
+   - Reuse existing runtime budgets instead of inventing device-derived thresholds:
+     the local lexical phase has its existing 500 ms absolute budget, Graph has its
+     existing 8,000 ms envelope, one Memory recovery episode has its existing
+     30,000 ms envelope, and the outer turn remains bounded by 180,000 ms with a
+     non-zero finalization reserve. Every measured episode must complete inside the
+     applicable hard budget. Worker queue/batch、UI-gap、DB/index、rebuild and update
+     values are recorded as a current-device baseline; B-125 adds no unsupported
+     numeric limit for them.
+   - The cancellation probe must record at least one cancel request, at least one
+     Worker-observed cancellation, at least one late-result discard and exactly
+     zero accepted-after-cancel results. Any deadline exceed、app/renderer crash or
+     hang、OS termination、incomplete rebuild/update、index
+     corruption、provider/re-embedding call during lexical rebuild or Markdown
+     mutation is `FAIL`.
+   - Missing/mismatched current artifacts、fewer than the required episodes、an
+     unavailable required timing/UI/storage/rebuild/update/cancel observation or an
+     unbound episode、dropped diagnostic event or capacity overflow is `BLOCKED`.
+     A complete run satisfying the hard budgets and structural invariants is only
+     `CANDIDATE / READY_FOR_OWNER_REVIEW`; the aggregate remains `BLOCKED` until
+     the Tracker records the owner's accepted/rejected disposition and reason.
+     Acceptance with no material regression/unexplained outlier, or an explicit
+     risk acceptance, produces performance `PASS`; rejection produces `FAIL` and
+     keeps the implicated flag off；pending investigation remains `BLOCKED`.
+     Missing process-footprint evidence alone is
+     recorded as `ACCEPTED RISK`, not `PASS` for that metric and not an aggregate
+     blocker. Xcode/Instruments and a converter are therefore not required for
+     B-125.
+   - The current `b125-device-measurement-v9` runner/verifier still enforces the
+     older 23 + 23 + 1 workload、18 device-derived thresholds and required external
+     process-memory contract. Until Tracker T-12 aligns the fixture、runner、receipt
+     verifier and focused tests with this pragmatic contract, their expected
+     result remains `BLOCKED`; the documentation decision does not manufacture a
+     performance PASS.
+   - Move representative-floor hardware、20 measured samples per lane、the full
+     47-episode workload、18 independently frozen thresholds、Instruments-derived
+     physical-footprint evidence and its converter/provenance audit to B-126
+     extended performance certification. B-126 is follow-up assurance and does not
+     block B-125 rollout unless a B-125 failure or reopen trigger below is observed.
+3. Desktop success cannot close the iOS gate. Use the designated current iPhone for
+   the final runtime smoke. For B-125 functional software-floor acceptance, the
+   owner-approved recorded within-window result is the allowed software-version
+   proxy for the unavailable exact iOS 17.0 / Obsidian 1.11.4 tuple. The new
+   current-artifact functional/flag-lifecycle smoke and pragmatic performance
+   receipt remain separate required evidence. If the device lacks the required
+   Worker/cancellation/segmentation behavior or fails the pragmatic gate, keep the
+   affected Phase flag off and preserve the preceding safe fallback.
 
 ### App smoke after implementation
 
@@ -461,31 +518,29 @@ documentCount === 0` terminal is a zero-document result；a positive count requi
 tuple、failed attempt、missing field、`null` or otherwise unavailable count remains
 `null`/`unavailable`；it must never satisfy a none/empty gate.
 
-For a combined quality/device run, load the runner first and freeze the reviewed
-device thresholds plus reranker gate before recording any of the six scored
-rankings or the structured explicit-temporal acceptance canary. Those two
-acceptance slices run only after freeze and before the workload performance
-envelope. The independent Chat Recovery functional/debug canary may run before
-freeze；it is evidence for recovery topology only and never enters threshold、MRR
-or ranking acceptance. Any diagnostics session used while collecting post-freeze
-acceptance evidence is staging only：stop and discard it，then start a fresh empty
-standard-performance session and verify that it contains no inherited event
-before starting the runtime envelope. Execute 23 standard one-
-attempt episodes；call `beginRetryPerformance()` and execute the first 12 two-
-attempt episodes；call `continueRetryPerformance()` and execute the remaining 11.
-Stop the envelope only after both retry batches；when iOS needs external process-
-footprint evidence, bind the fixed-path artifact from that same window；then call
-`beginCancellationProbe()` and execute exactly one isolated cancellation episode.
-Use `captureRetrievalDiagnostics()` for an intermediate projection or
-`stopRetrievalDiagnostics()` to seal the active stage；`finalize()` also stops the
-active stage automatically. Diagnostics collect only allowlisted phase/outcome/
-reason/count/timing fields and never call a provider or turn a manual/ranking case
-into `PASS`. Each event carries only the runtime-generated opaque Agent run id
-needed to bind that diagnostic episode to the same live canonical Chat turn；it
-must never contain a query、path、title or source identity. Missing diagnostics、
-capacity overflow、session or run identity drift、mixed
-or out-of-order episodes、an incomplete Graph chain or an envelope that does not
-cover the exact standard + retry workload remains aggregate `BLOCKED`.
+Selected-model ranking and structured explicit-temporal acceptance are quality/
+correctness gates, not performance samples. They may be recorded independently
+before or after the pragmatic performance run and do not require a device-threshold
+freeze. They must still bind the same current plugin、runner、provider/model class
+and stable settings. Ranking `PASS` remains all six frozen targets at rank 1
+(`MRR=1.0`) with zero forbidden/opaque hits；the structured temporal canary must
+prove the exact A1 → one A2 → cumulative projection topology with no temporal
+violation. Missing evidence is `BLOCKED` and a wrong/forbidden result is `FAIL`.
+Both remain required by the B-125 rollout aggregate, but neither can make the
+performance gate pass and the performance gate cannot make either quality gate
+pass.
+
+Before performance sampling, stop and discard any earlier diagnostics session,
+then start a verified-empty session. Execute the 3 + 10 standard episodes、the
+separate 3 + 10 retry episodes and one cancellation probe defined above. Use
+`captureRetrievalDiagnostics()` only for intermediate projection and seal each
+stage explicitly. Diagnostics collect only allowlisted phase/outcome/reason/count/
+timing fields and never call a provider or turn a manual/ranking case into `PASS`.
+Each event carries only the runtime-generated opaque Agent run id needed to bind
+that episode to the same live canonical Chat turn；it must never contain a query、
+path、title or source identity. Missing diagnostics、capacity overflow、session or
+run identity drift、mixed/out-of-order episodes or an incomplete required Graph
+chain remains `BLOCKED`.
 
 1. FTS：中文、标题/heading、英文错误码可进入 direct candidate pool；profile rebuild
    不触发 provider 或 Markdown 变更，lexical unavailable 时诚实降级。

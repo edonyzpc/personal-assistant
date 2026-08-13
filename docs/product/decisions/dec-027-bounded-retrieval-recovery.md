@@ -2,8 +2,8 @@
 
 Decision ID: DEC-027
 Status: Accepted
-Updated: 2026-08-11
-Authority: 用户于 2026-08-08 对 retrieval-optimization 逐项分析并依次确认模型选择、失败语义、Chat/Pagelet retry、Pagelet insight 上限、Data Boundary opaque bridge、multi-seed PPR、候选/文档预算与 query-embedding 生命周期；随后在 PPR 效果复审后确认 additive Local / Deep Breadth / Convergence 三 lane、membership-aware 单候选提名与分层失败降级，并确认有效 reranker 可自由混排、fail-open 采用 direct-first 且不做跨 origin score decay；同日继续确认保留 SQLite FTS5 + RRF、先修 CJK lexical correctness、再评测多字段 BM25、AND/OR 与 fusion 参数，暂不新增 semantic query rewrite 或重型 sparse/search engine；并确认 Phase 0A 以 deterministic bigram + indexed unigram fallback 为主候选、symmetric character phrase 为确定性对照、显式 locale/fingerprint 的 `Intl.Segmenter` 为挑战者、trigram 仅作限制对照；随后确认 OD-05A 复用首次有效查询与 lexical plan，并以 run-scoped exact-evidence replay suppression 保证 relaxed retry 探索新证据而不切断图传播；在补充上下文边界、大库规模与当前 macOS Obsidian renderer 对照证据后，明确确认 OD-06A 选择 `CHAR-PHRASE` 作为 shipping CJK profile family；并明确要求把全部已确认内容写入当前权威文档。用户于 2026-08-11 进一步指定 B-125 rollout 的硬件型号下限为 `iPhone 15`，同时明确暂缓 Xcode/Instruments 与性能工作；该决定不等于选择性能代表设备，也未定义最低 iOS/Obsidian 版本
+Updated: 2026-08-13
+Authority: 用户于 2026-08-08 对 retrieval-optimization 逐项分析并依次确认模型选择、失败语义、Chat/Pagelet retry、Pagelet insight 上限、Data Boundary opaque bridge、multi-seed PPR、候选/文档预算与 query-embedding 生命周期；随后在 PPR 效果复审后确认 additive Local / Deep Breadth / Convergence 三 lane、membership-aware 单候选提名与分层失败降级，并确认有效 reranker 可自由混排、fail-open 采用 direct-first 且不做跨 origin score decay；同日继续确认保留 SQLite FTS5 + RRF、先修 CJK lexical correctness、再评测多字段 BM25、AND/OR 与 fusion 参数，暂不新增 semantic query rewrite 或重型 sparse/search engine；并确认 Phase 0A 以 deterministic bigram + indexed unigram fallback 为主候选、symmetric character phrase 为确定性对照、显式 locale/fingerprint 的 `Intl.Segmenter` 为挑战者、trigram 仅作限制对照；随后确认 OD-05A 复用首次有效查询与 lexical plan，并以 run-scoped exact-evidence replay suppression 保证 relaxed retry 探索新证据而不切断图传播；在补充上下文边界、大库规模与当前 macOS Obsidian renderer 对照证据后，明确确认 OD-06A 选择 `CHAR-PHRASE` 作为 shipping CJK profile family；并明确要求把全部已确认内容写入当前权威文档。用户于 2026-08-11 进一步指定 B-125 rollout 的硬件型号下限为 `iPhone 15`，同时明确暂缓 Xcode/Instruments 与性能工作；用户于 2026-08-13 确认 `minimumIOSVersion=17.0`、`minimumObsidianVersion=1.11.4`，随后接受 2026-08-11 freshness window 内记录的较新版本 real-iOS verifier PASS 结果作为该声明下限中软件版本部分的 B-125 proxy validation baseline，并承担未直接测试精确 floor tuple 的向后兼容风险；同日进一步明确仅对 B-125 临时豁免 Win32 runtime support，把 Win32 排除出本 track 的 required desktop rollout matrix，同时要求四个 B-125 rollout flags 在 Windows fail-closed 强制关闭；这些决定不构成 Win32 PASS、兼容证明或 PA 对 Windows 的永久支持变更。同日 owner 重新评估性能工作的产品价值与投入后，批准 B-125 采用当前可用 iPhone 的 practical performance proxy 和精简实用门禁，接受不采集 process physical footprint 的残余风险，并将 Xcode/Instruments、18 个 device-derived thresholds 与原 47-episode 扩展认证移至非阻塞 B-126
 Work item: B-125
 
 > [!note] Owner decision 2026-08-08
@@ -13,8 +13,61 @@ Work item: B-125
 > [!note] Owner rollout decision 2026-08-11
 > `minimumIPhoneModel=iPhone 15`。Xcode/Instruments 与 performance 暂缓；这不是
 > performance gate 的 PASS/waiver，也不把当前可用 iPhone 自动指定为
-> `representativeDevice` 或 `representsFloor=true`。最低 iOS、最低 Obsidian 与性能
-> 代表设备仍需后续明确决定。
+> `representativeDevice` 或 `representsFloor=true`。在该次决定时，最低 iOS、最低
+> Obsidian 与性能代表设备仍需后续明确决定；软件版本问题由下方 2026-08-13
+> 决定关闭。
+
+> [!note] Owner rollout decision 2026-08-13
+> `minimumIOSVersion=17.0`、`minimumObsidianVersion=1.11.4`。这两个值是已批准的
+> B-125 rollout 软件下限。由于精确旧版本环境不可用，owner 接受 2026-08-11
+> freshness window 内记录的较新版本 real-iOS verifier PASS 结果作为本 track 的
+> 软件下限 proxy validation baseline，
+> 并基于“主流用户通常会及时更新”的产品假设接受未直接测试 floor tuple 的残余
+> 兼容风险。这关闭 B-125 对精确 iOS 17.0 / Obsidian 1.11.4 组合的执行要求，
+> 但不是 exact-floor test PASS：当时的 verifier evidence 记录 Obsidian API
+> `1.13.6`、`ios-wkwebview` runtime classification、opaque device identity、
+> loaded/vault/current-dist plugin、bundle hashes 和 runtime/profile canaries；base
+> 仍为 `CANDIDATE / UNATTESTED`，且窗口外必然 stale。它不证明实际 iOS/WebKit
+> 版本、精确设备型号或向后兼容性。
+> 当前没有 Windows 设备，因此 owner 仅对 B-125 临时豁免 Win32 runtime support。
+> 本 track 的 required desktop rollout matrix 改为 `darwin` + `linux`；Win32 receipt
+> 缺失不再单独阻塞 B-125。该 scoped waiver 不是 Win32 PASS、兼容证明或永久移除
+> Windows，也不改变 PA 其他 Windows 支持、manifest 或原始用户设置。在 Windows
+> 上，`lexicalProfile`、`strictReranker`、`graphPpr` 和 `relaxedRecovery` 四个 B-125
+> rollout flags 的 effective value 必须 fail-closed 强制为 `false`，保留既有 direct/
+> vector fallback；当前 Decision 不自行证明该 enforcement 已实施或验证。
+> 恢复 B-125 Windows support 必须同时具备可用 Windows 环境、同产物 Win32 receipt
+> 与 Darwin/Linux/Win32 aggregate、Win32 App/OPFS/flag lifecycle/fallback/cancel
+> smoke，并由 owner 明确恢复。下方较新的 performance decision supersede 本段此前
+> 对性能代表设备与 Xcode/Instruments 的未闭合边界。
+
+> [!note] Owner performance decision 2026-08-13
+> B-125 接受当前可用、较新 iOS 与 Obsidian 的真实 iPhone 作为 practical
+> performance proxy；不再要求设备声明 `representsFloor=true`，也不要求 Xcode/
+> Instruments 或进程物理内存证明。这个 proxy 是针对主流、及时更新用户的实用风险
+> 检查，不是最低硬件性能认证，文档更新本身也不是 performance PASS。
+>
+> B-125 的精简性能门保留：standard 与 retry 分别执行 `3 warmup + 10 measured`
+> episodes，另执行 `1` 次独立 cancellation；检查 retrieval/Worker latency、UI/main-
+> thread gap、derived index size、rebuild/incremental-update cost、deadline、cancel、late-
+> discard 与 finalization reserve。另以同设备、同产物、同 synthetic input、四 flag
+> 全关的 `1 warmup + 5 measured` standard direct/vector control 对照两边实际共有的
+> latency/UI 指标；该 control 只作方向性对照，不产生 p95 认证。retry、
+> Graph 和新 lexical derived-index maintenance 无合法全关对照，必须记录绝对值并由
+> owner review，`N/A` 不得冒充 `0` 或 PASS。B-125 不捏造百分比阈值；可重复的实质回归或无法解释的异常值必须
+> 保持相关 flag 关闭，等待调查或新的 owner 风险决定。六个 frozen selected-reranker ranking cases 和
+> structured explicit-temporal acceptance 继续作为独立质量/正确性门，不再依赖 18 个
+> device-derived thresholds 的整体冻结。`memory.peakProcessFootprintBytes` 只保留为
+> 可用时的诊断项；缺失不阻塞 B-125，owner 接受尚未量化真实进程峰值内存的残余风险。
+> Runner 通过样本、硬预算与结构校验时只能输出 `CANDIDATE /
+> READY_FOR_OWNER_REVIEW`；只有 Tracker 记录 owner 的接受/拒绝 disposition 与理由后
+> 才能成为 performance PASS 或 FAIL，待调查时保持 BLOCKED。
+>
+> 原 `b125-device-measurement-v9` 的 `23 standard + 23 retry + 1 cancel` 扩展 workload、
+> Xcode/Instruments raw export/converter、floor-representative certification 和 18 个
+> device-derived thresholds 移至非阻塞 [B-126](../../backlog.md#已延期的产品与工程工作)。
+> 当前 runner/verifier 是否已支持这一精简门以及实际执行状态只由 B-125 Tracker 记录；
+> 本决定不声称 evidence tooling 已对齐。
 
 ## Context
 
@@ -191,8 +244,9 @@ deadline/finalization reserve 由 SDD EC-03 收束为可验证的工程合同，
    CJK grapheme-character normalization，连续 CJK run 使用保持顺序与相邻关系的 phrase
    语义。目标 FTS surface 应能分别评测 `title`、`heading`、`body` 和低权重 path-derived
    signal。具体物理 token 编码/字段、BM25 列权重、strict phrase/AND 与 broad OR 候选
-   策略、候选深度和 RRF 参数必须由真实 sqlite-wasm fixtures 与最慢支持设备数据决定，
-   不能由本 Decision 固定经验常数。
+   策略、候选深度和 RRF 参数必须由真实 sqlite-wasm fixtures 与 owner 接受的当前 iPhone
+   practical performance proxy 决定，不能由本 Decision 固定经验常数。该 proxy 不构成
+   最低硬件性能认证；更严格的 floor certification 属于 B-126。
 4. Trigram 不作为默认 CJK 修复，因为 FTS5 trigram 对少于三个 Unicode 字符的全文
    query 不匹配；它仅可在评测证明三字以上 substring 是独立主要漏召回来源后，作为
    可回滚的辅助 surface。
@@ -223,8 +277,12 @@ deadline/finalization reserve 由 SDD EC-03 收束为可验证的工程合同，
   失败可保留安全的 modernized Local；共享 graph 安全失败回到 direct-only。feature flag
   可分别关闭 strict rerank、PPR 或 retry；关闭 PPR 不得恢复按 adjacency 顺序截断的旧
   one-hop。
+- Performance evidence: B-125 以当前真实 iPhone practical proxy 验证用户可感知的
+  latency、UI gap、local-index cost 和 deadline/cancel 安全性；process footprint 仅诊断。
+  Instruments、floor-grade memory proof、18-threshold/47-episode 扩展认证留给 B-126，
+  不阻塞本 track rollout。
 - Work created or removed: 建立 B-125 Active Package；B-123 的单结果 Deep Discover
-  验证继续是历史实现证据，不能证明 B-125 已交付。
+  验证继续是历史实现证据，不能证明 B-125 已交付；B-126 承接非阻塞的扩展性能认证。
 
 ## Revisit Trigger
 
@@ -237,6 +295,8 @@ deadline/finalization reserve 由 SDD EC-03 收束为可验证的工程合同，
 - `alpha=0.75`、误差目标或 cosine gate 在真实拓扑中产生可重复的远端漏召回。
 - CJK、title/heading 或错误码 fixtures 在修复后仍不能进入 reranker 候选，或 derived
   FTS 的索引大小、重建/更新成本、iPhone p95 latency 超过可接受范围。
+- 出现 app/renderer hang、OOM/jetsam/OS termination、持续或可重复的 UI/延迟/索引/
+  内存回归、扩大到默认开启或更广平台 rollout，或需要正式 floor-grade 性能声明。
 
 ## Traceability
 

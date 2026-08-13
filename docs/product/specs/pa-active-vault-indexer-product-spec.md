@@ -1,7 +1,7 @@
 # PA Active Vault Indexer Product Spec
 
 Document status: Approved
-Updated: 2026-08-11
+Updated: 2026-08-13
 Work item: B-125
 Decision: [DEC-027 — 采用有界、汇合感知的检索恢复](../decisions/dec-027-bounded-retrieval-recovery.md)
 Authority: Active Vault Indexer 的共享 retrieval behavior、surface policy、source/evidence contract 与 B-125 scoped requirements；早于 stable Backlog ID 的 bounded v1 baseline 继续保留其历史来源。
@@ -518,7 +518,8 @@ Algorithm details and implementation ownership live in the approved
   truncation；no `max` merge or absolute `0.02` relevance gate；membership-aware
   one-per-lane nominations、overlap dedupe without replacement debt、cosine
   backfill and final graph≤6. Lane workset/high-degree constants require fixture
-  and slowest-supported-device calibration rather than being fixed by this AC.
+  and current-real-iPhone practical-proxy calibration rather than being fixed by
+  this AC；this is a mainstream-device risk gate, not floor-grade certification.
 - **B-125/AC-04:** `allowed A → excluded Markdown B → allowed C` can surface C
   when C independently passes all gates. Two excluded nodes、generated notes
   and attachments cannot bridge; spies over provider input、result DTO、source
@@ -548,8 +549,25 @@ Algorithm details and implementation ownership live in the approved
   prove the index/query normalization is identical. Retrieval-quality fixtures
   report FTS-only Recall@K、pre-reranker hybrid Recall@12、final Recall@8/MRR and
   unique-path recall before selecting AND/OR、field weights、candidate depth or
-  RRF constants. Slowest-supported-device checks record p95 latency、derived
-  index size and rebuild/incremental-update cost. A profile upgrade rebuilds
+  RRF constants. On the owner-accepted current real-iPhone practical proxy,
+  standard and retry each run `3 warmup + 10 measured` episodes and retain
+  separate p95 latency series；one independent cancellation probe verifies
+  deadline、cancel observation、late discard and no accepted-after-cancel behavior.
+  The same practical gate records UI/main-thread gaps、derived index size and
+  rebuild/incremental-update cost. A separate same-device、same-artifact、same-
+  synthetic-input all-flags-off control exercises `1 warmup + 5 measured` standard
+  direct/vector episodes as a directional reference, not a p95 certification；
+  only metrics present in both runs are compared. Retry、Graph and new lexical
+  maintenance use absolute observations plus owner review, with unavailable
+  comparisons recorded as `N/A`, never `0` or PASS. A reproducible material regression or unexplained
+  outlier keeps the implicated flag off until investigated or explicitly accepted
+  by the owner；B-125 does not invent a percentage threshold. A machine-complete
+  report is only `CANDIDATE / READY_FOR_OWNER_REVIEW`; performance becomes PASS
+  only after the Tracker records the owner's disposition and reason. Six frozen selected-reranker ranking cases and
+  the structured explicit-temporal canary remain independent quality/correctness
+  gates and do not depend on a global device-threshold freeze. Process physical
+  footprint is diagnostic when available, not required acceptance evidence；the
+  owner accepts the residual unmeasured-peak-memory risk. A profile upgrade rebuilds
   only local derived FTS state from allowed existing chunk records, with no
   provider call、re-embedding or Markdown mutation. Selected-profile normalization
   canaries are verified across supported desktop/mobile runtimes and a fingerprint
@@ -714,14 +732,64 @@ These are engineering questions unless no configuration meets the confirmed
 quality、cost、device、budget or Data Boundary gates.
 
 There are no remaining B-125 retrieval-behavior or runtime-architecture choices.
-The rollout support boundary is only partially resolved: on 2026-08-11 the owner
-set `minimumIPhoneModel=iPhone 15`. This does not by itself choose a
-slowest-device performance representative or define the supported software floor.
-`minimumIOSVersion`、`minimumObsidianVersion` and an exact
-`representativeDevice` with `representsFloor=true` remain required before EC-02
-and T-10 can close. Xcode/Instruments and performance are currently deferred,
-not passed or waived. These rollout choices select evidence baselines and do not
-change the approved retrieval behavior above.
+The owner set `minimumIPhoneModel=iPhone 15` on 2026-08-11 and confirmed
+`minimumIOSVersion=17.0` plus `minimumObsidianVersion=1.11.4` on 2026-08-13.
+These values remain the declared B-125 rollout hardware/software floor. Because
+the exact older software environment is unavailable, the owner accepts the
+recorded 2026-08-11 within-freshness-window newer-version real-iOS verifier PASS
+result as this track's software-version proxy validation baseline, based on the
+product assumption that mainstream users usually update promptly. This closes
+the requirement to execute the exact
+iOS 17.0 / Obsidian 1.11.4 tuple for B-125 as an explicit risk acceptance, not
+as an exact-floor test PASS. That verifier evidence records Obsidian API `1.13.6`,
+an `ios-wkwebview` runtime classification, opaque device identity, loaded/vault/
+current-dist plugin and bundle hashes, plus runtime/profile canaries. The base
+remains `CANDIDATE / UNATTESTED`, and the PASS was time-bounded；it does not bind
+the actual iOS/WebKit version or exact device model. Compatibility at the declared
+software floor therefore remains an untested residual risk.
+
+For B-125 performance acceptance, the owner separately accepts the currently
+available real iPhone with newer iOS and Obsidian as a practical proxy for
+mainstream users who update promptly. This device need not claim
+`representsFloor=true` and the gate is not a minimum-hardware performance
+certification. The scoped B-125 gate is `3 warmup + 10 measured` standard
+episodes、`3 warmup + 10 measured` retry episodes and one isolated cancellation,
+covering latency、UI/main-thread gap、derived-index size、rebuild/incremental-update
+cost and deadline/cancel/late-result safety, with a separate same-device、same-
+artifact、same-synthetic-input all-flags-off standard direct/vector control.
+That control is exactly `1 warmup + 5 measured` and is directional, not p95
+certification. Only shared metrics are compared；retry、Graph and lexical maintenance use absolute
+observations plus owner review, and `N/A` never becomes `0` or PASS. Material regressions
+or unexplained outliers keep the implicated flag off pending investigation or a
+new explicit owner risk decision. A machine-complete run remains `CANDIDATE /
+READY_FOR_OWNER_REVIEW` and aggregate `BLOCKED` until the Tracker records that
+disposition and reason. The six frozen selected-reranker
+rankings and structured explicit-temporal case remain required independent
+quality/correctness checks. Process physical footprint is optional diagnostic
+evidence；its absence does not block B-125, and the owner accepts the residual
+memory risk. Xcode/Instruments raw-export conversion、18 device-derived thresholds、
+floor-representative certification and the original `23 + 23 + 1` extended
+workload move to non-blocking [B-126](../../backlog.md#已延期的产品与工程工作).
+This contract change is not a performance PASS and does not claim the current
+runner/verifier already implements the reduced gate；execution status and evidence
+remain solely in the B-125 Tracker.
+
+Because no Windows device is currently available, the owner temporarily excludes Win32
+runtime support from B-125 only. The required desktop rollout matrix for this
+track is therefore `darwin` + `linux`; a missing Win32 receipt is not a B-125
+blocker. This scoped support waiver is not a Win32 PASS、compatibility claim or
+permanent removal of Windows from PA, and it does not change the manifest or any
+other PA Windows support. On Windows, the effective values of the four B-125
+rollout flags `lexicalProfile`、`strictReranker`、`graphPpr` and
+`relaxedRecovery` must be forced fail-closed to `false` without overwriting raw
+settings, preserving the existing direct/vector fallback. Restoring B-125
+Windows support requires an available Windows environment、a same-artifact
+Win32 receipt plus Darwin/Linux/Win32 aggregate、Win32 App/OPFS/flag lifecycle/
+fallback/cancel smoke and explicit owner approval. Xcode/Instruments and
+the extended performance-certification lane are deferred to B-126 rather than
+being B-125 blockers. B-125's reduced practical performance gate remains required
+until the Tracker records its evidence. These rollout choices select evidence
+baselines and do not change the approved retrieval behavior above.
 
 The following are non-blocking future Active Vault Indexer questions:
 
