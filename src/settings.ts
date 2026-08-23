@@ -1251,25 +1251,31 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private isGroupCollapsed(groupId: string): boolean {
+        const defaultCollapsed = groupId !== "ai-provider";
         try {
             const raw = localStorage.getItem("pa-settings-collapsed");
-            if (!raw) return groupId !== "ai-provider";
-            const state = JSON.parse(raw) as Record<string, boolean>;
-            return state[groupId] === true;
+            if (!raw) return defaultCollapsed;
+            const state = JSON.parse(raw) as unknown;
+            if (!state || typeof state !== "object" || Array.isArray(state)) {
+                return defaultCollapsed;
+            }
+            const collapsed = (state as Record<string, unknown>)[groupId];
+            return typeof collapsed === "boolean" ? collapsed : defaultCollapsed;
         } catch {
-            return groupId !== "ai-provider";
+            return defaultCollapsed;
         }
     }
 
     private persistGroupCollapseState(groupId: string, collapsed: boolean): void {
         try {
             const raw = localStorage.getItem("pa-settings-collapsed");
-            const state: Record<string, boolean> = raw ? JSON.parse(raw) : {};
-            if (collapsed) {
-                state[groupId] = true;
-            } else {
-                delete state[groupId];
-            }
+            const parsed = raw ? JSON.parse(raw) as unknown : null;
+            const state: Record<string, boolean> = parsed
+                && typeof parsed === "object"
+                && !Array.isArray(parsed)
+                ? parsed as Record<string, boolean>
+                : {};
+            state[groupId] = collapsed;
             localStorage.setItem("pa-settings-collapsed", JSON.stringify(state));
         } catch { /* localStorage unavailable — graceful degradation */ }
     }

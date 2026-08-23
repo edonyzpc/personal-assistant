@@ -1,6 +1,6 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { VSS } from '../src/vss';
-import { type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
+import { VSS_SCHEMA_VERSION, type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
 import { MemoryVSSIndexStateStore } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
 import { TFile } from 'obsidian';
@@ -164,7 +164,7 @@ const createPlugin = () => {
 
 function createReadyMarker(overrides: Partial<VSSIndexMarker> = {}): VSSIndexMarker {
     return {
-        schemaVersion: 1,
+        schemaVersion: VSS_SCHEMA_VERSION,
         deviceId: getVSSDeviceId(),
         indexId: 'index-1',
         profileSignature: 'openai||model|1024|COSINE',
@@ -192,6 +192,7 @@ function attachReadyIndex(vss: VSS, index: FakeVectorIndex): void {
     (vss as any).index = index;
     (vss as any).status = 'ready';
     (vss as any).localStateReady = true;
+    (vss as any).localStateHydrated = true;
     (vss as any).marker = createReadyMarker({ deviceId: 'device-1' });
     /* eslint-enable @typescript-eslint/no-explicit-any */
 }
@@ -309,6 +310,10 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         await vss.searchHybrid('same semantic query', { executeEmbeddingInvoke });
         /* eslint-disable @typescript-eslint/no-explicit-any */
         (vss as any).profile = { ...(vss as any).profile, model: 'model-2' };
+        (vss as any).marker = createReadyMarker({
+            deviceId: 'device-1',
+            profileSignature: 'openai||model-2|1024|COSINE',
+        });
         /* eslint-enable @typescript-eslint/no-explicit-any */
         await vss.searchHybrid('same semantic query', { executeEmbeddingInvoke });
 

@@ -39,8 +39,12 @@ export interface MemoryHost {
     /** Return the Markdown files that are eligible for Memory indexing. */
     getVSSFiles(): TFile[];
 
-    /** Re-check current shared Data Boundary and Memory exclusions for one file. */
-    isVSSFileEligible(file: TFile): boolean;
+    /**
+     * Re-check current shared Data Boundary and Memory exclusions for one file.
+     * When Markdown is supplied, eligibility must be derived from that exact
+     * provider-bound body instead of MetadataCache.
+     */
+    isVSSFileEligible(file: TFile, markdown?: string): boolean;
 
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;

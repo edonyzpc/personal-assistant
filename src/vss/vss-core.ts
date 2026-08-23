@@ -135,11 +135,20 @@ interface VSSFileMetadataSnapshot {
 }
 
 interface VSSFileContentSnapshot extends VSSFileMetadataSnapshot {
+    exactMarkdown: string;
     cleanedContent: string;
     contentHash: string | null;
     tooLarge: boolean;
     changedDuringCapture: boolean;
 }
+
+interface BoundaryCheckedRebuildFileState extends RebuildFileState {
+    exactMarkdown: string;
+}
+
+type BoundaryCheckedRebuildChunkWorkItem = Omit<RebuildChunkWorkItem, "state"> & {
+    state: BoundaryCheckedRebuildFileState;
+};
 
 export type {
     VSSFlushOptions,
@@ -639,7 +648,7 @@ export class VSS {
         }
         switch (this.status) {
             case "ready":
-                return "ready";
+                return this.hasAdmittedReadyMarker() ? "ready" : "unprepared";
             case "stale":
                 return "stale";
             case "uninitialized":
@@ -983,8 +992,7 @@ export class VSS {
         }
 
         const index = this.index;
-        const files = this.host.getVSSFiles()
-            .sort((a, b) => b.stat.mtime - a.stat.mtime);
+        const files = this.host.getVSSFiles();
         if (abortSignal?.aborted) {
             summary.aborted = true;
             if (!this.marker && !this.rebuildGuard) this.status = "uninitialized";
@@ -1001,8 +1009,8 @@ export class VSS {
         const { generation: rebuildGeneration, guard: rebuildGuard } = await this.beginRebuildState(rebuildReason);
         const embeddingPolicy = this.getEmbeddingBatchPolicy();
         const getEmbeddingsModel = this.createEmbeddingsModelProvider(embeddingPolicy.createOptions);
-        const pendingFiles = new Map<string, RebuildFileState>();
-        let currentBatch: RebuildChunkWorkItem[] = [];
+        const pendingFiles = new Map<string, BoundaryCheckedRebuildFileState>();
+        let currentBatch: BoundaryCheckedRebuildChunkWorkItem[] = [];
         let indexWasReset = false;
         let filesScanned = 0;
         let filesFinalized = 0;
@@ -1060,7 +1068,7 @@ export class VSS {
             });
         };
 
-        const finalizeReadyFiles = async (states: Iterable<RebuildFileState>) => {
+        const finalizeReadyFiles = async (states: Iterable<BoundaryCheckedRebuildFileState>) => {
             const readyStates = Array.from(new Set(states))
                 .filter(state => state.remaining === 0 && pendingFiles.has(state.path));
 
@@ -1084,7 +1092,7 @@ export class VSS {
 
                 try {
                     throwIfAborted(abortSignal);
-                    if (!this.isEligible(state.file)) {
+                    if (!this.isEligible(state.file, state.exactMarkdown)) {
                         await index.deleteFile(state.path);
                         this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
                         summary.removed++;
@@ -1135,10 +1143,10 @@ export class VSS {
             currentBatch = [];
             const currentFile = getProgressFileName(batch[0].state.file);
             emitProgress("embedding", { currentFile });
-            const skippedStates = new Set<RebuildFileState>();
-            const ineligibleStates = new Set<RebuildFileState>();
+            const skippedStates = new Set<BoundaryCheckedRebuildFileState>();
+            const ineligibleStates = new Set<BoundaryCheckedRebuildFileState>();
             const activeBatch = batch.filter((item) => {
-                if (!this.isEligible(item.state.file)) {
+                if (!this.isEligible(item.state.file, item.state.exactMarkdown)) {
                     skippedStates.add(item.state);
                     ineligibleStates.add(item.state);
                     return false;
@@ -1171,7 +1179,7 @@ export class VSS {
                     embeddingPolicy,
                     (retryDelayMs) => emitProgress("retrying", { currentFile, retryDelayMs }),
                     abortSignal,
-                    () => activeBatch.every(item => this.isEligible(item.state.file)),
+                    () => activeBatch.every(item => this.isEligible(item.state.file, item.state.exactMarkdown)),
                 );
                 throwIfAborted(abortSignal);
                 if (embeddings.length !== activeBatch.length) {
@@ -1188,7 +1196,7 @@ export class VSS {
                 const affectedStates = Array.from(new Set(activeBatch.map(item => item.state)));
                 if (isVssFileIneligibleError(error)) {
                     for (const state of affectedStates) {
-                        if (!this.isEligible(state.file)) {
+                        if (!this.isEligible(state.file, state.exactMarkdown)) {
                             await index.deleteFile(state.path);
                             this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
                         } else {
@@ -1290,10 +1298,11 @@ export class VSS {
                     continue;
                 }
 
-                const state: RebuildFileState = {
+                const state: BoundaryCheckedRebuildFileState = {
                     file,
                     path: snapshot.path,
                     capturedAt: snapshot.capturedAt,
+                    exactMarkdown: snapshot.exactMarkdown,
                     contentHash: snapshot.contentHash,
                     ctime: snapshot.ctime,
                     mtime: snapshot.mtime,
@@ -2029,7 +2038,7 @@ export class VSS {
         }
         throwIfAborted(abortSignal);
 
-        if (!this.isEligible(file)) {
+        if (!this.isEligible(file, snapshot.exactMarkdown)) {
             return this.removeIneligibleFileFromIndex(file, abortSignal);
         }
 
@@ -2107,7 +2116,7 @@ export class VSS {
         if (await this.deferSnapshotRefresh(file, snapshot, "vector-upsert", abortSignal)) {
             return 'skipped';
         }
-        if (!this.isEligible(file)) {
+        if (!this.isEligible(file, snapshot.exactMarkdown)) {
             return this.removeIneligibleFileFromIndex(file, abortSignal);
         }
         throwIfAborted(abortSignal);
@@ -2150,7 +2159,7 @@ export class VSS {
             this.showMissingIndexNotice();
             return [];
         }
-        if (this.status !== "ready") {
+        if (this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
             return [];
         }
 
@@ -2163,7 +2172,7 @@ export class VSS {
             if (this.index) {
                 await this.ensureIndex({ allowFallback: false, mode: "foreground" });
             }
-            if (!this.index || this.status !== "ready" || !this.profile) return [];
+            if (!this.index || this.status !== "ready" || !this.hasAdmittedReadyMarker() || !this.profile) return [];
             if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
             const results = await this.index.search(queryEmbedding, 8);
             return results.map(normalizeSearchResult);
@@ -2214,7 +2223,7 @@ export class VSS {
             this.showMissingIndexNotice();
             return [];
         }
-        if (this.status !== "ready") {
+        if (this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
             return [];
         }
 
@@ -2251,7 +2260,7 @@ export class VSS {
                 await this.ensureIndex({ allowFallback: false, mode: "foreground" });
             }
             throwIfAborted(signal);
-            if (!this.index || this.status !== "ready" || !this.profile) return [];
+            if (!this.index || this.status !== "ready" || !this.hasAdmittedReadyMarker() || !this.profile) return [];
             if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
 
             if (!(this.index instanceof SqliteVectorIndex)) {
@@ -2286,7 +2295,7 @@ export class VSS {
             this.showMissingIndexNotice();
             return [];
         }
-        if (this.status !== "ready") {
+        if (this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
             return [];
         }
 
@@ -2297,7 +2306,7 @@ export class VSS {
                 await this.ensureIndex({ allowFallback: false, mode: "foreground" });
             }
             throwIfAborted(signal);
-            if (!this.index || this.status !== "ready") return [];
+            if (!this.index || this.status !== "ready" || !this.hasAdmittedReadyMarker()) return [];
 
             const results = await waitForAbortablePromise(
                 this.index.getChunksByPath(uniquePaths, {
@@ -2315,7 +2324,7 @@ export class VSS {
 
     async clusterVectors(maxClusters: number): Promise<Array<{ clusterId: number; label: string; paths: string[] }>> {
         if (this.disposed || !this.index || !(this.index instanceof SqliteVectorIndex)) return [];
-        if (this.status !== "ready") return [];
+        if (this.status !== "ready" || !this.hasAdmittedReadyMarker()) return [];
         try {
             return await this.index.clusterVectors(maxClusters);
         } catch {
@@ -2339,9 +2348,12 @@ export class VSS {
             return this.createUnavailableStats(this.status);
         }
         const stats = await this.index.getStats();
+        const exposedStatus = this.status === "ready" && !this.hasAdmittedReadyMarker()
+            ? this.getFailClosedIndexStatus()
+            : this.status;
         return {
             ...stats,
-            status: this.status === "ready" ? stats.status : this.status,
+            status: exposedStatus === "ready" ? stats.status : exposedStatus,
             storagePersisted: this.storageStatus.persisted,
             storageUsage: this.storageStatus.usage,
             storageQuota: this.storageStatus.quota,
@@ -2354,6 +2366,7 @@ export class VSS {
 
     private shouldRecoverMarkerForStats(mode: VSSIndexOpenMode): boolean {
         return mode === "manual"
+            && this.localStateHydrated
             && !this.index
             && !this.marker
             && !this.rebuildGuard
@@ -2387,8 +2400,9 @@ export class VSS {
         const dirtyCount = this.dirty.size;
         const verificationPending = this.verifyQueue.size;
         const status = this.status;
+        const hasAdmittedReadyMarker = this.hasAdmittedReadyMarker();
 
-        if (status === "ready" && dirtyCount > 0) {
+        if (status === "ready" && hasAdmittedReadyMarker && dirtyCount > 0) {
             return {
                 reason: "changed-notes",
                 action: "refresh",
@@ -2400,7 +2414,7 @@ export class VSS {
             };
         }
 
-        if (status === "ready") {
+        if (status === "ready" && hasAdmittedReadyMarker) {
             return {
                 reason: "ready",
                 action: "none",
@@ -2456,6 +2470,27 @@ export class VSS {
     private getStatusForRebuildReason(reason: VSSRebuildRecoveryReason): VectorIndexStatus {
         if (reason === "settings-changed") return "stale";
         if (reason === "local-memory-missing") return "missing-local-index";
+        return "uninitialized";
+    }
+
+    private hasAdmittedReadyMarker(): boolean {
+        if (!this.localStateHydrated || !this.marker || this.rebuildGuard || this.markerRecoverySuppressed) {
+            return false;
+        }
+        const profile = this.profile;
+        return Boolean(profile
+            && this.marker.schemaVersion === VSS_SCHEMA_VERSION
+            && this.marker.profileSignature === getEmbeddingProfileSignature(profile));
+    }
+
+    private getFailClosedIndexStatus(): VectorIndexStatus {
+        if (this.rebuildGuard) return this.getStatusForRebuildReason(this.rebuildGuard.reason);
+        if (this.marker && this.profile && (
+            this.marker.schemaVersion !== VSS_SCHEMA_VERSION
+            || this.marker.profileSignature !== getEmbeddingProfileSignature(this.profile)
+        )) {
+            return "stale";
+        }
         return "uninitialized";
     }
 
@@ -2651,7 +2686,7 @@ export class VSS {
     }
 
     private async isDurableReady(): Promise<boolean> {
-        if (!this.index || this.status !== "ready") return false;
+        if (!this.index || this.status !== "ready" || !this.hasAdmittedReadyMarker()) return false;
         const stats = await this.index.getStats();
         return stats.status === "ready"
             && !stats.fallbackMode
@@ -2688,13 +2723,16 @@ export class VSS {
         const { profile, profileSignature } = await this.refreshEmbeddingProfile();
         this.assertActive();
 
-        if (this.index && (this.status === "ready" || this.status === "stale")) {
+        if (this.index && this.status === "ready" && this.hasAdmittedReadyMarker()) {
             return;
         }
+        if (this.index && this.status === "ready") {
+            this.status = this.getFailClosedIndexStatus();
+        }
+        if (this.index && this.status === "stale") return;
         if (this.index
             && !this.marker
-            && this.status === "uninitialized"
-            && this.markerRecoverySuppressed) {
+            && this.status === "uninitialized") {
             return;
         }
         if (this.index && this.status === "initializing") {
@@ -2714,6 +2752,27 @@ export class VSS {
             if (mode !== "manual") {
                 return;
             }
+        }
+
+        if (this.index && this.status === "uninitialized" && marker) {
+            if (
+                marker.schemaVersion !== VSS_SCHEMA_VERSION
+                || marker.profileSignature !== profileSignature
+            ) {
+                this.status = "stale";
+                return;
+            }
+            const stats = await this.index.getStats();
+            if (marker.chunkCount > 0 && stats.chunkCount === 0) {
+                this.status = "missing-local-index";
+                return;
+            }
+            this.status = stats.status === "stale"
+                ? "stale"
+                : this.hasAdmittedReadyMarker()
+                    ? "ready"
+                    : this.getFailClosedIndexStatus();
+            return;
         }
 
         let sqliteIndex: SqliteVectorIndex | null = null;
@@ -2736,7 +2795,9 @@ export class VSS {
                 return;
             }
 
-            this.status = "ready";
+            this.status = this.hasAdmittedReadyMarker()
+                ? "ready"
+                : this.getFailClosedIndexStatus();
             return;
         } catch (error) {
             if (sqliteIndex) {
@@ -2875,7 +2936,7 @@ export class VSS {
     ): Promise<{ chunks: VSSChunk[]; embeddings: number[][]; deferred: boolean }> {
         this.assertActive();
         throwIfAborted(abortSignal);
-        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
+        if (!this.isEligible(file, snapshot.exactMarkdown)) throw createVssFileIneligibleError(file.path);
         const chunks = await this.prepareFileChunks(
             file,
             snapshot.contentHash ?? "",
@@ -2891,15 +2952,15 @@ export class VSS {
             return { chunks, embeddings: [], deferred: true };
         }
         throwIfAborted(abortSignal);
-        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
+        if (!this.isEligible(file, snapshot.exactMarkdown)) throw createVssFileIneligibleError(file.path);
         const embeddings = await this.embedTexts(
             chunks.map(chunk => chunk.content),
             getEmbeddingsModel,
             abortSignal,
-            () => this.isEligible(file),
+            () => this.isEligible(file, snapshot.exactMarkdown),
         );
         throwIfAborted(abortSignal);
-        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
+        if (!this.isEligible(file, snapshot.exactMarkdown)) throw createVssFileIneligibleError(file.path);
         return { chunks, embeddings, deferred: false };
     }
 
@@ -3102,6 +3163,7 @@ export class VSS {
         if (metadata.size > VSS_PARAMS.largeFileThreshold) {
             return {
                 ...metadata,
+                exactMarkdown: "",
                 cleanedContent: "",
                 contentHash: null,
                 tooLarge: true,
@@ -3110,15 +3172,16 @@ export class VSS {
         }
         const markdown = await waitForAbortablePromise(this.readVaultFile(file), abortSignal);
         throwIfAborted(abortSignal);
-        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
+        if (!this.isEligible(file, markdown)) throw createVssFileIneligibleError(file.path);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(markdown);
         const contentHash = cleanedContent.trim()
             ? await waitForAbortablePromise(computeContentHash(cleanedContent), abortSignal)
             : null;
         throwIfAborted(abortSignal);
-        if (!this.isEligible(file)) throw createVssFileIneligibleError(file.path);
+        if (!this.isEligible(file, markdown)) throw createVssFileIneligibleError(file.path);
         return {
             ...metadata,
+            exactMarkdown: markdown,
             cleanedContent,
             contentHash,
             tooLarge: false,
@@ -3297,13 +3360,15 @@ export class VSS {
         const replaced = await this.replaceRebuildState(null, guard, generation);
         if (!replaced) {
             this.marker = previousMarker;
-            this.status = previousStatus;
             this.rebuildGuard = previousGuard;
             this.markerRecoverySuppressed = previousRecoverySuppressed;
             this.markerWritePending = previousMarkerWritePending;
             this.pendingMarkerSnapshot = previousPendingMarkerSnapshot;
             this.preparedRebuildMarker = previousPreparedRebuildMarker;
             this.markerRemovalPending = previousMarkerRemovalPending;
+            this.status = previousStatus === "ready" && !this.hasAdmittedReadyMarker()
+                ? this.getFailClosedIndexStatus()
+                : previousStatus;
             throw new Error("Memory local state could not enter fail-closed rebuild state.");
         }
 
@@ -3716,8 +3781,8 @@ export class VSS {
         new Notice(vssT("plugin.memory.notice.needsPrepareAgain"), 7000);
     }
 
-    private isEligible(file: TFile) {
-        return this.host.isVSSFileEligible(file);
+    private isEligible(file: TFile, markdown?: string) {
+        return this.host.isVSSFileEligible(file, markdown);
     }
 }
 

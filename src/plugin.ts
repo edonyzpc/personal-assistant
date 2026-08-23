@@ -6812,7 +6812,7 @@ export class PluginManager extends Plugin {
             saveSettings: () => this.saveSettings(),
             persistMemoryAdmissionSettings: () => this.persistMemoryAdmissionSettings(),
             getVSSFiles: () => this.getVSSFiles(),
-            isVSSFileEligible: (file) => this.isVSSFileEligible(file),
+            isVSSFileEligible: (file, markdown) => this.isVSSFileEligible(file, markdown),
             getAPIToken: () => this.getAPIToken(),
             notifyStatusChanged: () => this.debouncedStatusBarUpdate(),
             updateMemorySetting: (key, value) => {
@@ -7174,15 +7174,15 @@ export class PluginManager extends Plugin {
             refreshAPITokenPresence: () => this.refreshAPITokenPresence(),
             chatHistoryManager: this.chatHistoryManager,
             memoryStatus: {
-                getMaintenancePlan: () => this.getAIReadiness("memory").ready
+                getMaintenancePlan: () => this.hasStructuralAIConfiguration("memory")
                     ? this.memoryManager?.getMaintenancePlan() ?? Promise.resolve(this.unavailableMemoryPlan())
                     : Promise.resolve(this.unavailableMemoryPlan()),
-                prepareFromCommand: () => this.getAIReadiness("memory").ready
+                prepareFromCommand: () => this.ensureAIConfigured("memory")
                     ? this.runManualMemoryAction(
                         () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
                     )
                     : Promise.resolve(),
-                updateFromCommand: () => this.getAIReadiness("memory").ready
+                updateFromCommand: () => this.ensureAIConfigured("memory")
                     ? this.runManualMemoryAction(
                         () => this.memoryManager?.updateFromCommand() ?? Promise.resolve(),
                     )
@@ -10231,11 +10231,11 @@ export class PluginManager extends Plugin {
         await this.trackRequiredSettingsTransaction(this.persistRequiredSettings());
     }
 
-    private async persistRequiredSettings(): Promise<void> {
+    private async persistRequiredSettings(options: { notify?: boolean } = {}): Promise<void> {
         await this.enqueueSettingsWrite(async () => {
             await this.saveSettingsData();
         });
-        if (!this.unloading) {
+        if (options.notify !== false && !this.unloading) {
             await this.notifySettingsChanged();
         }
     }
@@ -10824,13 +10824,15 @@ export class PluginManager extends Plugin {
         return this.app.vault.getMarkdownFiles().filter((file) => this.isVSSFileEligible(file));
     }
 
-    private isVSSFileEligible(file: TFile): boolean {
+    private isVSSFileEligible(file: TFile, markdown?: string): boolean {
         const normalizedExcludePaths = (this.settings.vssCacheExcludePath ?? [])
             .map((path) => path.trim())
             .filter(Boolean);
         return file.extension === "md"
             && !normalizedExcludePaths.some((prefix) => file.path.startsWith(prefix))
-            && this.isDataBoundaryAllowedFile(file);
+            && (markdown === undefined
+                ? this.isDataBoundaryAllowedFile(file)
+                : this.getLatestDataBoundaryContentBoundary(file.path, markdown)?.allowed === true);
     }
 
     private decideDataBoundaryForPath(path: string): DataBoundaryDecision {
@@ -10893,6 +10895,29 @@ export class PluginManager extends Plugin {
         path: string,
         markdown: string,
     ): { allowed: boolean; tags: string[]; isGenerated: boolean } | null {
+        const latestBoundary = this.getLatestDataBoundaryContentBoundary(path, markdown);
+        if (!latestBoundary) return null;
+        const excludedTags = new Set([
+            "no-ai",
+            "no-review",
+            ...(this.settings?.pagelet?.excludedTags ?? []),
+        ].map((tag) => (
+            tag.trim().replace(/^#+/, "").toLowerCase()
+        )));
+        return {
+            allowed: latestBoundary.allowed
+                && !latestBoundary.tags.some((tag) => excludedTags.has(tag))
+                && !latestBoundary.isGenerated,
+            tags: latestBoundary.tags,
+            isGenerated: latestBoundary.isGenerated,
+        };
+    }
+
+    /** Re-check the shared Data Boundary from the exact Markdown body. */
+    private getLatestDataBoundaryContentBoundary(
+        path: string,
+        markdown: string,
+    ): { allowed: boolean; tags: string[]; isGenerated: boolean } | null {
         try {
             const frontmatterInfo = getFrontMatterInfo(markdown);
             if (
@@ -10917,28 +10942,17 @@ export class PluginManager extends Plugin {
             const isGenerated = frontmatter.pagelet === true
                 || (typeof frontmatter.pagelet === "string"
                     && frontmatter.pagelet.trim().toLowerCase() === "true");
-            const excludedTags = new Set([
-                "no-ai",
-                "no-review",
-                ...(this.settings?.pagelet?.excludedTags ?? []),
-                ...(this.settings?.dataBoundary?.excludedTags ?? []),
-            ].map((tag) => (
-                tag.trim().replace(/^#+/, "").toLowerCase()
-            )));
-            const tagDenied = normalizedTags.some((tag) => excludedTags.has(tag));
             const dataBoundaryDecision = decideDataBoundaryForSource(
                 { path, tags: normalizedTags, isGenerated },
                 this.settings?.dataBoundary,
             );
             return {
-                allowed: !tagDenied
-                    && !isGenerated
-                    && dataBoundaryDecision.decision === "allow",
+                allowed: dataBoundaryDecision.decision === "allow",
                 tags: normalizedTags,
                 isGenerated,
             };
         } catch (error) {
-            this.log("Latest Pagelet source boundary parse failed closed", { path, error });
+            this.log("Latest source Data Boundary parse failed closed", { path, error });
             return null;
         }
     }
@@ -11536,18 +11550,27 @@ export class PluginManager extends Plugin {
     private runMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
         if (!this.settings.memoryEnabled) return false;
         if (!this.vss || !this.memoryManager) return false;
-        if (!this.getAIReadiness("memory").ready) return false;
-        if (!checking) {
-            void this.runManualMemoryAction(action).catch((error) => {
-                this.log("Memory command failed", error);
-                new Notice(this.t("plugin.notice.memoryActionFailed"), 5000);
-            });
-        }
+        if (checking) return this.hasStructuralAIConfiguration("memory");
+        if (!this.ensureAIConfigured("memory")) return true;
+        void this.runManualMemoryAction(action).catch((error) => {
+            this.log("Memory command failed", error);
+            new Notice(this.t("plugin.notice.memoryActionFailed"), 5000);
+        });
         return true;
     }
 
-    private ensureAIConfigured(): boolean {
-        const issue = this.getAISetupIssue();
+    private hasStructuralAIConfiguration(scope: AIReadinessScope): boolean {
+        const issue = this.getAIReadiness(scope).issue;
+        return issue === null || issue === "token_unknown" || issue === "token_missing";
+    }
+
+    private ensureAIConfigured(scope: AIReadinessScope = "chat"): boolean {
+        if (this.getAIReadiness(scope).issue === "token_unknown") {
+            this.refreshAPITokenPresence();
+            void this.notifySettingsChanged();
+            void this.updateMemoryStatusBar();
+        }
+        const issue = this.getAISetupIssue(scope);
         if (!issue) return true;
         new Notice(issue, 5000);
         return false;
@@ -11969,7 +11992,7 @@ export class PluginManager extends Plugin {
                 }
             }
             try {
-                await this.persistRequiredSettings();
+                await this.persistRequiredSettings({ notify: false });
             } catch (compensationError) {
                 compensationFailed = true;
                 this.log("Failed to restore AI provider settings after inline setup failure", compensationError);

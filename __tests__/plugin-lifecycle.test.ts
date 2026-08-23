@@ -1,4 +1,5 @@
 import { describe, expect, it, jest, afterEach } from "@jest/globals";
+import { Notice } from "obsidian";
 import { setPlatformMobile, resetPlatform } from "./helpers/platform-mock";
 
 jest.mock("obsidian-callout-manager", () => ({ getApi: jest.fn() }));
@@ -184,6 +185,137 @@ describe("Plugin lifecycle integration", () => {
 });
 
 describe("AI readiness gate", () => {
+    it("keeps local Memory status readable and probes a retained token only for a manual action", async () => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+            secretStorageValues: { "pa-api-token": "sk-retained" },
+        });
+        await plugin.loadSettings();
+        const getMaintenancePlan = jest.fn(async () => ({
+            reason: "ready" as const,
+            action: "none" as const,
+            notesToCheck: 2,
+            requiresApproval: false,
+            canAnswerNow: true,
+        }));
+        const prepareFromCommand = jest.fn(async () => undefined);
+        (plugin as unknown as { memoryManager: unknown }).memoryManager = {
+            getMaintenancePlan,
+            prepareFromCommand,
+        };
+        const settingsChanged = jest.fn<() => void>();
+        const memoryStatusChanged = jest.fn<() => void>();
+        plugin.onSettingsChanged(settingsChanged);
+        plugin.onMemoryStatusChanged(memoryStatusChanged);
+        const host = (plugin as unknown as { createChatHost(): { memoryStatus: {
+            getMaintenancePlan(): Promise<{ reason: string }>;
+            prepareFromCommand(): Promise<void>;
+        } } }).createChatHost();
+
+        await expect(host.memoryStatus.getMaintenancePlan()).resolves.toMatchObject({ reason: "ready" });
+        expect(getMaintenancePlan).toHaveBeenCalledTimes(1);
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe("unknown");
+
+        await host.memoryStatus.prepareFromCommand();
+        await Promise.resolve();
+
+        expect(secretStorage.getSecret).toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe("present");
+        expect(prepareFromCommand).toHaveBeenCalledTimes(1);
+        expect(settingsChanged).toHaveBeenCalledTimes(1);
+        expect(memoryStatusChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("probes a retained token through the explicit AI command gate", async () => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+            secretStorageValues: { "pa-api-token": "sk-retained" },
+        });
+        await plugin.loadSettings();
+        const settingsChanged = jest.fn<() => void>();
+        const memoryStatusChanged = jest.fn<() => void>();
+        plugin.onSettingsChanged(settingsChanged);
+        plugin.onMemoryStatusChanged(memoryStatusChanged);
+
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+        expect((plugin as unknown as { ensureAIConfigured(): boolean }).ensureAIConfigured()).toBe(true);
+        await Promise.resolve();
+        expect(secretStorage.getSecret).toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe("present");
+        expect(settingsChanged).toHaveBeenCalledTimes(1);
+        expect(memoryStatusChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a raw token presence probe local so inline setup draft state is not re-rendered", async () => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+            secretStorageValues: { "pa-api-token": "sk-retained" },
+        });
+        await plugin.loadSettings();
+        const settingsChanged = jest.fn<() => void>();
+        const memoryStatusChanged = jest.fn<() => void>();
+        plugin.onSettingsChanged(settingsChanged);
+        plugin.onMemoryStatusChanged(memoryStatusChanged);
+
+        expect(plugin.refreshAPITokenPresence()).toBe("present");
+        await Promise.resolve();
+
+        expect(secretStorage.getSecret).toHaveBeenCalled();
+        expect(settingsChanged).not.toHaveBeenCalled();
+        expect(memoryStatusChanged).not.toHaveBeenCalled();
+    });
+
+    it("shows a setup issue when an explicit Memory action finds no saved token", async () => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+        });
+        await plugin.loadSettings();
+        const prepareFromCommand = jest.fn(async () => undefined);
+        (plugin as unknown as { memoryManager: unknown }).memoryManager = {
+            getMaintenancePlan: jest.fn(async () => ({
+                reason: "ready" as const,
+                action: "none" as const,
+                notesToCheck: 0,
+                requiresApproval: false,
+                canAnswerNow: true,
+            })),
+            prepareFromCommand,
+        };
+        const host = (plugin as unknown as { createChatHost(): { memoryStatus: {
+            prepareFromCommand(): Promise<void>;
+        } } }).createChatHost();
+        const messages = (Notice as unknown as { messages: Array<{ message?: unknown }> }).messages;
+        messages.length = 0;
+
+        await host.memoryStatus.prepareFromCommand();
+
+        expect(secretStorage.getSecret).toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe("missing");
+        expect(prepareFromCommand).not.toHaveBeenCalled();
+        expect(messages.at(-1)?.message).toBe("Add your API token in Settings first.");
+    });
+
     it("createChatModel throws when aiProvider is empty", async () => {
         const { AIUtils } = await import("../src/ai-services/ai-utils");
         const host = {
@@ -405,6 +537,8 @@ describe("inline AI setup coordinator", () => {
         });
         await plugin.loadSettings();
         plugin.refreshAPITokenPresence();
+        const settingsChanged = jest.fn<() => void>();
+        plugin.onSettingsChanged(settingsChanged);
         (plugin as unknown as { legacyMemoryCompatibilityBarrier: null }).legacyMemoryCompatibilityBarrier = null;
         const saveData = jest.fn<() => Promise<void>>()
             .mockRejectedValueOnce(new Error("save failed"))
@@ -423,6 +557,7 @@ describe("inline AI setup coordinator", () => {
         });
         expect(secretStorage.setSecret).toHaveBeenNthCalledWith(1, expect.any(String), "sk-new");
         expect(secretStorage.setSecret).toHaveBeenNthCalledWith(2, expect.any(String), "sk-old");
+        expect(settingsChanged).not.toHaveBeenCalled();
     });
 
     it("fails safe when token compensation also fails", async () => {

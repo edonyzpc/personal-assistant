@@ -26,6 +26,32 @@ jest.mock('obsidian', () => {
         Notice: class { },
         Platform: { isDesktop: false, isMobile: false },
         normalizePath: (path: string) => path,
+        getFrontMatterInfo: (markdown: string) => {
+            const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
+            if (!match) return { exists: false, contentStart: 0, frontmatter: '', from: 0, to: 0 };
+            return {
+                exists: true,
+                contentStart: match[0].length,
+                frontmatter: match[1] ?? '',
+                from: 4,
+                to: 4 + (match[1]?.length ?? 0),
+            };
+        },
+        parseYaml: (yaml: string) => Object.fromEntries(yaml
+            .split(/\r?\n/)
+            .map((line): [string, unknown] => {
+                const match = /^\s*([^:#]+):\s*(.*?)\s*$/.exec(line);
+                if (!match) throw new Error('malformed yaml');
+                const key = match[1]!.trim();
+                const raw = match[2]!.trim();
+                if (raw === 'true') return [key, true];
+                if (raw === 'false') return [key, false];
+                if (raw.startsWith('[') && raw.endsWith(']')) {
+                    return [key, raw.slice(1, -1).split(',').map((part) => part.trim())];
+                }
+                if (raw.startsWith('[') || raw.endsWith(']')) throw new Error('malformed yaml');
+                return [key, raw];
+            })),
         addIcon: jest.fn(),
         setIcon: jest.fn(),
         debounce: <T extends unknown[], V>(callback: (...args: T) => V) => callback,
@@ -127,7 +153,9 @@ const buildHarness = (
             dataBoundary: typeof DATA_BOUNDARY_DEFAULTS;
         };
         getVSSFiles: () => FakeFile[];
+        isVSSFileEligible: (file: FakeFile, markdown?: string) => boolean;
         isDataBoundaryAllowedPath: (path: string) => boolean;
+        log: jest.Mock;
     };
     plugin.app = {
         vault: {
@@ -145,6 +173,7 @@ const buildHarness = (
             ...options.dataBoundary,
         },
     };
+    plugin.log = jest.fn();
     return plugin;
 };
 
@@ -263,5 +292,62 @@ describe('PluginManager.getVSSFiles', () => {
         expect(plugin.isDataBoundaryAllowedPath('notes/tagged.md')).toBe(false);
         expect(plugin.isDataBoundaryAllowedPath('Reviews/generated.md')).toBe(false);
         expect(plugin.isDataBoundaryAllowedPath('notes/missing.md')).toBe(true);
+    });
+
+    it('rechecks exact Markdown when stale MetadataCache would allow provider input', () => {
+        const FileCtor = TFile as unknown as { new(path: string): FakeFile };
+        const tagged = new FileCtor('notes/tagged.md');
+        const generated = new FileCtor('notes/generated.md');
+        const plugin = buildHarness(
+            [tagged, generated],
+            [],
+            {
+                dataBoundary: {
+                    excludedTags: ['sensitive'],
+                    generatedNotePolicy: 'exclude-generated',
+                },
+                metadataByPath: {
+                    'notes/tagged.md': { tags: [] },
+                    'notes/generated.md': { frontmatter: {} },
+                },
+            },
+        );
+
+        expect(plugin.getVSSFiles()).toEqual([tagged, generated]);
+        expect(plugin.isVSSFileEligible(tagged, '# Note\n\nprivate #sensitive')).toBe(false);
+        expect(plugin.isVSSFileEligible(
+            tagged,
+            '---\ntags: [sensitive]\n---\nprivate body',
+        )).toBe(false);
+        expect(plugin.isVSSFileEligible(
+            generated,
+            '---\npagelet: true\n---\ngenerated body',
+        )).toBe(false);
+    });
+
+    it('fails exact Markdown eligibility closed for malformed leading frontmatter', () => {
+        const FileCtor = TFile as unknown as { new(path: string): FakeFile };
+        const file = new FileCtor('notes/malformed.md');
+        const plugin = buildHarness([file], [], {
+            dataBoundary: { excludedTags: ['sensitive'] },
+            metadataByPath: { 'notes/malformed.md': { frontmatter: {} } },
+        });
+
+        expect(plugin.getVSSFiles()).toEqual([file]);
+        expect(plugin.isVSSFileEligible(file, '---\ntags: [sensitive\nprivate body')).toBe(false);
+        expect(plugin.isVSSFileEligible(file, '---\ntags: [sensitive\n---\nprivate body')).toBe(false);
+    });
+
+    it('does not treat ordinary Markdown or fenced-code tags as boundary frontmatter', () => {
+        const FileCtor = TFile as unknown as { new(path: string): FakeFile };
+        const file = new FileCtor('notes/ordinary.md');
+        const plugin = buildHarness([file], [], {
+            dataBoundary: { excludedTags: ['sensitive'] },
+        });
+
+        expect(plugin.isVSSFileEligible(
+            file,
+            '# Heading\n\n---\n\n```md\n#sensitive\n```\n\nordinary text',
+        )).toBe(true);
     });
 });
