@@ -216,6 +216,18 @@ class RecoverableStateStore extends MemoryVSSIndexStateStore {
     }
 }
 
+class FailingGuardTransitionOnceStateStore extends MemoryVSSIndexStateStore {
+    failNextGuardTransition = true;
+
+    async replaceRebuildState(state: VSSRebuildStateTransition): Promise<void> {
+        if (state.guard && this.failNextGuardTransition) {
+            this.failNextGuardTransition = false;
+            throw new Error('guard transition failed once');
+        }
+        await super.replaceRebuildState(state);
+    }
+}
+
 class FailingMarkerWriteStateStore extends MemoryVSSIndexStateStore {
     failNextMarkerWrite = true;
 
@@ -459,6 +471,7 @@ function attachReadyIndex(vss: VSS, index: FakeVectorIndex): void {
     (vss as any).index = index; // eslint-disable-line @typescript-eslint/no-explicit-any
     (vss as any).status = 'ready'; // eslint-disable-line @typescript-eslint/no-explicit-any
     (vss as any).localStateReady = true; // eslint-disable-line @typescript-eslint/no-explicit-any
+    (vss as any).localStateHydrated = true; // eslint-disable-line @typescript-eslint/no-explicit-any
     (vss as any).marker = createReadyMarker({ // eslint-disable-line @typescript-eslint/no-explicit-any
         deviceId: 'device-1',
         chunkCount: index.records.size,
@@ -540,6 +553,13 @@ describe('VSS SQLite/WASM lifecycle', () => {
         internal.initialized = true;
         internal.localStateHydrated = true;
         internal.status = 'ready';
+        internal.profile = {
+            provider: 'openai',
+            baseURL: '',
+            model: 'model',
+            dimensions: 1024,
+            distanceMetric: 'COSINE',
+        };
         internal.marker = createReadyMarker({ fileCount: 7 });
         internal.dirty.set('notes/dirty.md', { firstSeenAt: 1, lastSeenAt: 1 });
         internal.verifyQueue.set('notes/verify.md', {});
@@ -943,8 +963,74 @@ describe('VSS SQLite/WASM lifecycle', () => {
         await vss.rebuildLocalIndex({ silent: true });
 
         expect(createEmbeddings).toHaveBeenCalledTimes(1);
+        expect(mockAdapter.read.mock.calls.map(([path]) => path)).toEqual([
+            firstFile.path,
+            secondFile.path,
+        ]);
         expect(index.upsertFile).toHaveBeenCalledTimes(2);
         vss.dispose();
+    });
+
+    it('removes a rebuild source denied by its exact Markdown without calling the provider', async () => {
+        const file = createTFile('notes/private.md', { size: 31, mtime: 2, ctime: 1 }, 'md', 'private.md');
+        const exactMarkdown = '# Note\n\nLATEST-PRIVATE #sensitive';
+        const isVSSFileEligible = jest.fn((_file: TFile, markdown?: string) => (
+            markdown === undefined || !markdown.includes('#sensitive')
+        ));
+        const { plugin, mockAdapter } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+            isVSSFileEligible,
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        mockAdapter.read.mockResolvedValue(exactMarkdown);
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const summary = await vss.rebuildLocalIndex({ silent: true });
+
+        expect(summary).toMatchObject({ updated: 0, removed: 1, failed: 0 });
+        expect(isVSSFileEligible).toHaveBeenCalledWith(file, exactMarkdown);
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(index.upsertFile).not.toHaveBeenCalled();
+        expect(index.deleteFile).toHaveBeenCalledWith(file.path);
+        await vss.dispose();
+    });
+
+    it('rechecks the same rebuild Markdown immediately before embedding', async () => {
+        const file = createTFile('notes/tightened.md', { size: 22, mtime: 2, ctime: 1 }, 'md', 'tightened.md');
+        const exactMarkdown = 'provider-bound note body';
+        let boundaryTightened = false;
+        const exactBodiesChecked: string[] = [];
+        const isVSSFileEligible = jest.fn((_file: TFile, markdown?: string) => {
+            if (markdown === undefined) return true;
+            exactBodiesChecked.push(markdown);
+            return !boundaryTightened;
+        });
+        const { plugin, mockAdapter } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+            isVSSFileEligible,
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        mockAdapter.read.mockResolvedValue(exactMarkdown);
+        const waitForEmbeddingThrottle = jest.fn(async () => {
+            boundaryTightened = true;
+        });
+        (vss as any).waitForEmbeddingThrottle = waitForEmbeddingThrottle; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const summary = await vss.rebuildLocalIndex({ silent: true });
+
+        expect(waitForEmbeddingThrottle).toHaveBeenCalledTimes(1);
+        expect(exactBodiesChecked.length).toBeGreaterThan(2);
+        expect(exactBodiesChecked.every((body) => body === exactMarkdown)).toBe(true);
+        expect(summary).toMatchObject({ updated: 0, skipped: 1, failed: 0 });
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(index.upsertFile).not.toHaveBeenCalled();
+        expect(index.deleteFile).toHaveBeenCalledWith(file.path);
+        await vss.dispose();
     });
 
     it('batches rebuild embeddings across files with the qwen v4 request cap', async () => {
@@ -1646,6 +1732,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         });
         setMockSqliteIndex(index);
         const vss = new VSS(plugin, 'cache');
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
         await expect(vss.rebuildLocalIndex({ silent: true })).rejects.toThrow(
             'Memory local state could not enter fail-closed rebuild state.',
@@ -1654,6 +1741,16 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.reset).not.toHaveBeenCalled();
         expect(index.records.has('old.md')).toBe(true);
         await expect(stateStore.getMarker()).resolves.toMatchObject({ indexId: 'index-1' });
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'first-use',
+            action: 'rebuild',
+        });
+        await expect(vss.getStats()).resolves.toMatchObject({ status: 'uninitialized' });
+        await expect(vss.canAutoMaintain()).resolves.toBe(false);
+        await expect(vss.searchSimilarity('must stay local')).resolves.toEqual([]);
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(index.search).not.toHaveBeenCalled();
+        expect(vss.getMemoryStatusSnapshot().status).not.toBe('ready');
         await vss.dispose();
     });
 
@@ -1688,9 +1785,51 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const summary = await vss.rebuildLocalIndex({ silent: true });
 
         expect(summary).toMatchObject({ aborted: false, updated: 1, failed: 0 });
+        expect(MockSqliteVectorIndex).toHaveBeenCalledTimes(1);
         expect(index.reset).toHaveBeenCalledTimes(1);
         await expect(stateStore.getMarker()).resolves.toMatchObject({ chunkCount: 1, fileCount: 1 });
         await expect(stateStore.getDirtyJournal()).resolves.toEqual(new Map());
+        await vss.dispose();
+    });
+
+    it('keeps a known-absent physical index fail closed when the guard transition fails', async () => {
+        const file = createTFile('transition-recovery.md', { size: 20, mtime: 1, ctime: 1 }, 'md', 'transition-recovery.md');
+        const stateStore = new FailingGuardTransitionOnceStateStore();
+        const { plugin, mockAdapter } = createPlugin({
+            createVSSIndexStateStore: jest.fn(() => stateStore),
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        mockAdapter.read.mockResolvedValue('transition recovery memory');
+        const index = new FakeVectorIndex();
+        index.records.set('old.md', {
+            path: 'old.md',
+            contentHash: 'old',
+            mtime: 1,
+            size: 1,
+            status: 'ready',
+            updatedAt: 1,
+        });
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        await expect(vss.rebuildLocalIndex({ silent: true })).rejects.toThrow(
+            'Memory local state could not enter fail-closed rebuild state.',
+        );
+
+        expect(index.reset).not.toHaveBeenCalled();
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'first-use' });
+        await expect(vss.getStats()).resolves.toMatchObject({ status: 'uninitialized' });
+        await expect(vss.canAutoMaintain()).resolves.toBe(false);
+        await expect(vss.searchSimilarity('must stay local')).resolves.toEqual([]);
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(index.search).not.toHaveBeenCalled();
+
+        const summary = await vss.rebuildLocalIndex({ silent: true });
+
+        expect(summary).toMatchObject({ aborted: false, updated: 1, failed: 0 });
+        expect(MockSqliteVectorIndex).toHaveBeenCalledTimes(1);
+        expect(index.reset).toHaveBeenCalledTimes(1);
         await vss.dispose();
     });
 
@@ -2985,6 +3124,40 @@ describe('VSS SQLite/WASM lifecycle', () => {
             expect.objectContaining({ phase: 'ready', filesTotal: 1, filesDone: 1, filesUpdated: 1 }),
         ]));
         vss.dispose();
+    });
+
+    it('removes a refresh source denied by its exact Markdown without calling the provider', async () => {
+        const file = createTFile('notes/private-refresh.md', { size: 39, mtime: 2, ctime: 1 }, 'md', 'private-refresh.md');
+        const exactMarkdown = '---\ntags: [sensitive]\n---\nLATEST-PRIVATE';
+        const isVSSFileEligible = jest.fn((_file: TFile, markdown?: string) => (
+            markdown === undefined || !markdown.includes('sensitive')
+        ));
+        const { plugin, mockAdapter } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+            isVSSFileEligible,
+        });
+        const index = new FakeVectorIndex();
+        index.records.set(file.path, {
+            path: file.path,
+            contentHash: 'old-content',
+            mtime: 1,
+            size: 10,
+            status: 'ready',
+            updatedAt: 1,
+        });
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, index);
+        mockAdapter.read.mockResolvedValue(exactMarkdown);
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const result = await vss.refreshFileCache(file);
+
+        expect(result).toBe('removed');
+        expect(isVSSFileEligible).toHaveBeenCalledWith(file, exactMarkdown);
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(index.upsertFile).not.toHaveBeenCalled();
+        expect(index.deleteFile).toHaveBeenCalledWith(file.path);
+        await vss.dispose();
     });
 
     it('drops a newly ineligible dirty file locally without reading or embedding note text', async () => {

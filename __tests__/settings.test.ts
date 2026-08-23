@@ -832,9 +832,21 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
     };
 }
 
+const localStorageValues = new Map<string, string>();
+Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+        clear: () => localStorageValues.clear(),
+        getItem: (key: string) => localStorageValues.get(key) ?? null,
+        removeItem: (key: string) => localStorageValues.delete(key),
+        setItem: (key: string, value: string) => localStorageValues.set(key, value),
+    },
+});
+
 beforeEach(() => {
     getMockSettingRecords().length = 0;
     getMockDebounceRecords().length = 0;
+    localStorage.clear();
     delete (globalThis as typeof globalThis & { __paModalInstances?: unknown[] }).__paModalInstances;
     delete (globalThis as typeof globalThis & { __paModalOpenError?: unknown }).__paModalOpenError;
     delete (globalThis as typeof globalThis & { __paModalCloseError?: unknown }).__paModalCloseError;
@@ -1678,6 +1690,91 @@ describe('Phase 3 IA reorder + provider UX', () => {
     beforeEach(() => {
         setMockConfirmDecision(undefined);
         (confirmUserAction as jest.Mock).mockClear();
+    });
+
+    it('expands only AI & Provider on the first Settings visit', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+
+        expect(containerEl.findAll('.pa-settings-group').map((group) => group.open)).toEqual([
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ]);
+    });
+
+    it('falls back to first-visit group defaults when collapse storage is malformed', () => {
+        localStorage.setItem('pa-settings-collapsed', '{');
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+
+        expect(containerEl.findAll('.pa-settings-group').map((group) => group.open)).toEqual([
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ]);
+    });
+
+    it('keeps an explicitly expanded non-AI group open after reopening Settings', () => {
+        const plugin = makePlugin();
+        const firstTab = new SettingTab(makeMockApp() as never, plugin as never);
+        const firstContainer = new MockContainerEl('div');
+        firstTab.containerEl = firstContainer as never;
+        firstTab.display();
+
+        const memoryGroup = firstContainer.findAll('.pa-settings-group')[1];
+        expect(memoryGroup?.open).toBe(false);
+        memoryGroup.open = true;
+        memoryGroup.dispatchEvent('toggle');
+        expect(JSON.parse(localStorage.getItem('pa-settings-collapsed') ?? '{}'))
+            .toMatchObject({ 'memory-personalization': false });
+
+        const reopenedTab = new SettingTab(makeMockApp() as never, plugin as never);
+        const reopenedContainer = new MockContainerEl('div');
+        reopenedTab.containerEl = reopenedContainer as never;
+        reopenedTab.display();
+
+        const reopenedGroups = reopenedContainer.findAll('.pa-settings-group');
+        expect(reopenedGroups[1]?.open).toBe(true);
+        expect(reopenedGroups[2]?.open).toBe(false);
+    });
+
+    it('keeps AI & Provider collapsed after reopening Settings', () => {
+        const plugin = makePlugin();
+        const firstTab = new SettingTab(makeMockApp() as never, plugin as never);
+        const firstContainer = new MockContainerEl('div');
+        firstTab.containerEl = firstContainer as never;
+        firstTab.display();
+
+        const aiProviderGroup = firstContainer.findAll('.pa-settings-group')[0];
+        expect(aiProviderGroup?.open).toBe(true);
+        aiProviderGroup.open = false;
+        aiProviderGroup.dispatchEvent('toggle');
+        expect(JSON.parse(localStorage.getItem('pa-settings-collapsed') ?? '{}'))
+            .toMatchObject({ 'ai-provider': true });
+
+        const reopenedTab = new SettingTab(makeMockApp() as never, plugin as never);
+        const reopenedContainer = new MockContainerEl('div');
+        reopenedTab.containerEl = reopenedContainer as never;
+        reopenedTab.display();
+
+        const reopenedGroups = reopenedContainer.findAll('.pa-settings-group');
+        expect(reopenedGroups[0]?.open).toBe(false);
+        expect(reopenedGroups[1]?.open).toBe(false);
     });
 
     it('adds a stable Memory & Personalization group and moves Memory into it', () => {
