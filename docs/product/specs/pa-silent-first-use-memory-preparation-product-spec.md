@@ -1,16 +1,17 @@
-# Silent First-Use Memory Preparation Product Spec
+# First-Run AI Setup And Silent Memory Preparation Product Spec
 
 Document status: Approved
-Updated: 2026-08-12
+Updated: 2026-08-23
 Work item: B-126
 Decision: [DEC-028 — Silent Memory auto-prepare for first use](../decisions/dec-028-silent-memory-auto-prepare.md)
-Authority: 首次 Chat 触发的静默 whole-vault Memory 准备、透明度、失败状态与保留确认边界。
+Scoped decision: [DEC-029 — Inline AI setup and first Settings focus](../decisions/dec-029-inline-ai-setup-and-settings-focus.md)
+Authority: 首次 Chat 的常用 AI 配置、首次 Settings 聚焦、静默 whole-vault Memory 准备、透明度、失败状态与保留确认边界。
 
 ## Problem And Product Outcome
 
-- User problem: 用户首次提问时被重量级 Memory Approval Modal 阻断，无法先得到答案。
-- Product outcome: 首次 Chat 立即回答，同时在后台准备 whole eligible vault 的 Memory；只在真实可用后自动启用，失败、取消和关闭不冒充成功。
-- North Star fit: 让笔记在需要时自然浮现，以低打扰方式建立 Memory，同时通过来源边界、状态真实性和随时 opt-out 保持可信。
+- User problem: 新用户需要离开 Chat、穿过长 Settings 页面完成最小 AI 配置；完成后首次提问又会被重量级 Memory Approval Modal 阻断。
+- Product outcome: 常用 provider 用户可在 Chat 上下文内完成配置并立即提问；首次 Chat 同时在后台准备 whole eligible vault 的 Memory，只在真实可用后自动启用。
+- North Star fit: 减少设置管理和阻断，让用户更快开始提问并让笔记自然浮现；通过显式 SecretStorage 探测、来源边界、状态真实性和随时 opt-out 保持可信。
 
 ## Scope
 
@@ -24,31 +25,37 @@ Authority: 首次 Chat 触发的静默 whole-vault Memory 准备、透明度、�
 - B-126/REQ-06: 关闭 Memory 会取消 active preparation 并阻止后续 provider work、policy upgrade、成功 Notice 与 stale status mutation；plugin unload/reload 也必须终止旧 lifecycle 的可见副作用。Desktop 与 mobile 共用该语义。
 - B-126/REQ-07: Destructive rebuild 在任何 `index.reset()` 或 embedding-provider call 前，必须完成 IndexedDB marker truth preflight：whole-vault retry journal 已 durable 保存，且 marker truth 已 hydrate 为 known absent，或旧/unknown marker 已按同一 generation durable invalidate。Marker 未 hydrate且 durable invalidation 不可用时必须 fail closed，保留旧 index/marker，provider call 为 0；首次 Chat 继续 `answer-now`，待 state store 恢复后重新判定。此规则不扩大改变普通 non-destructive maintenance 的既有 process-local retry 语义。
 - B-126/REQ-08: 每次 destructive rebuild 必须在 reset 前 durable 保存原始 recovery reason（`first-use`、`settings-changed` 或 `local-memory-missing`）。Hydration 优先该 guard；abort/total failure 保留它，成功且 policy/lifecycle admission 完成后才清除。若 index 已准备但 `memoryApprovalPolicy` 持久化或 lifecycle admission 失败，必须 compensation rollback 为 non-ready 并恢复原 reason；重启不得把已批准/阻断的 recovery rebuild 误降为 silent `first-use`。
+- B-126/REQ-09: Chat 空态在 AI 配置不完整时提供 Qwen 中国、Qwen 国际、OpenAI preset 与按需 token 输入；Custom、URL/model 高级编辑继续通过 Settings link 完成，不在 inline surface 展开。
+- B-126/REQ-10: 现有 provider tuple 完整且只缺 token 时，只写 token；现有 token 可在 preset 补齐 partial provider config 时复用。成功必须持久化完整 provider tuple 与 `aiProviderPreset`；任一保存失败保持 setup incomplete、显示可重试错误，并对本次已写 settings/token 执行 best-effort compensation，补偿失败不得宣称成功。
+- B-126/REQ-11: Token presence 使用 `unknown | present | missing`。被动 render、input、Settings display 与本地只读 Memory status 不读取 SecretStorage；明确用户发起的 provider 选择、token 管理、Chat submit 或 AI/Memory command 可以探测 unknown，再重新计算 readiness 并定向刷新相关 surface。
+- B-126/REQ-12: 没有已存 collapse preference 时，Settings 只展开 `ai-provider` group，其他 groups 默认折叠；每个 group 的用户选择以显式 boolean 持久化，缺失 key 仍回落到首次默认。
+- B-126/REQ-13: Inline setup 支持键盘提交、programmatic provider group/selection、token accessible name、保存 busy 状态、`aria-live` 错误反馈和移动端 44px controls；失败后保留可重试状态。
 
 ### Non-goals
 
 - NG-01: 不实现 recent-first/progressive build；本次选择是 whole eligible vault rebuild。
 - NG-02: 不改变 embedding model、provider 限额、batch/concurrency 或价格。
-- NG-03: 不建立 setup wizard、PA Cloud、Fresh Custom provider 或新的 consent persistence。
+- NG-03: 不建立 setup wizard、PA Cloud、Fresh Custom inline provider、新 provider/model、Test Connection 或新的 consent persistence；Custom/advanced 配置继续位于 Settings。
 - NG-04: 不把 Pagelet shared first-use state 复用为 Memory admission。
 
 ## User Flow And States
 
-1. 用户配置 provider/token，并保持 `Use memory from my notes` 开启。
-2. 首次 Chat preflight 返回 `first-use`；PA 立即继续回答，并显示“Memory 正在后台准备中，准备完成后将自动启用”。
-3. 后台只有一个 whole eligible vault rebuild；后续 Chat 可继续 answer-now 并看到仍在准备的真实状态。
-4. Durable usable success 后才切换为 ready/auto-refresh；后续 Chat 可使用 Memory。
-5. Total failure 保持可重试状态并给出非阻断失败反馈；关闭 Memory 或卸载会取消旧运行且不显示迟到成功。
-6. 非 first-use rebuild 继续显示既有 blocking confirmation。
-7. 如果 IndexedDB marker 仍是 unknown，后台 prepare 在 reset/provider 前停止；当前 Chat 正常回答，且不会把 unknown 当作“首次没有 marker”。后续状态路径在 state store 恢复后 hydrate 并重新判定 ready/first-use/recovery。
-8. 如果 destructive rebuild abort/total-fail，重启后仍显示原来的 first-use、settings-changed 或 local-memory-missing 路径；只有完整 ready 与 policy/lifecycle admission 都成功才清除 recovery guard。Admission 失败不会留下可用 Memory snapshot。
+1. AI 配置不完整时，Chat 空态提供三个常用 preset；已有 provider tuple 只缺 token 时仅补 token，Custom/advanced 进入 Settings。
+2. Start 只在 provider/token 条件满足时启用。保存中显示 busy；成功后进入正常 Chat，失败则显示 live error 并保持可重试。
+3. 首次 Settings 只展开 AI Provider；用户之后的展开/折叠 preference 在重开时保持。
+4. 用户保持 `Use memory from my notes` 开启并发送首次 Chat；preflight 返回 `first-use` 时 PA 立即继续回答，并显示“Memory 正在后台准备中，准备完成后将自动启用”。
+5. 后台只有一个 whole eligible vault rebuild；后续 Chat 可继续 answer-now 并看到仍在准备的真实状态。
+6. Durable usable success 后才切换为 ready/auto-refresh；total failure 保持可重试状态。关闭 Memory 或卸载会取消旧运行且不显示迟到成功。
+7. 非 first-use rebuild 继续显示既有 blocking confirmation。
+8. IndexedDB marker 为 unknown 时，后台 prepare 在 reset/provider 前停止；当前 Chat 正常回答，后续在 state store 恢复后重新判定。
+9. Destructive rebuild abort/total-fail 后重启仍保留原 first-use、settings-changed 或 local-memory-missing reason；只有完整 ready 与 policy/lifecycle admission 都成功才清除 recovery guard。
 
 ## Trust, Data And Authority
 
-- Source evidence: [DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md) 记录 Owner 于 2026-08-11 对方案 A 的当前明确选择，以及同日后续对“marker unknown 时 fail-closed”的方案 1 选择；更早 Discovery 内容只作问题/方案输入，不作批准证据。
-- Data sent / stored: eligible Markdown chunks 可发送给 configured embedding provider；向量与 marker 存在设备本地 OPFS/IndexedDB，可重建，不修改 vault source notes。
-- User disclosure / confirmation: first-use 是 DEC-028 的窄静默例外；Settings 持续披露数据/provider/cost/opt-out，Chat 显示后台准备状态。其他 whole-vault recovery、manual 与 costly 路径继续逐次确认。
-- Reversibility / recovery: 用户可关闭 Memory 取消在途准备，也可重置本地 Memory copy；失败不升级 policy，后续 hydration 按 guard 恢复原 first-use/settings-changed/local-memory-missing reason。
+- Source evidence: [DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md) 记录 Owner 2026-08-11 的 silent Memory/marker choices；[DEC-029](../decisions/dec-029-inline-ai-setup-and-settings-focus.md) 只使用 Owner 2026-08-23 的方案 1 作为 inline setup/Settings 批准证据。更早 Discovery 内容只作输入。
+- Data sent / stored: Inline setup 本身不发起 provider request；provider tuple/preset identity 写入 plugin settings，API token 写入 Obsidian SecretStorage，collapse preference 写入本地 UI storage。首次 Memory 的 eligible Markdown chunks 可发送给 configured embedding provider；向量与 marker 存在设备本地 OPFS/IndexedDB。
+- User disclosure / confirmation: 用户明确选择 preset、输入 token 并点击 Start；这只配置 BYOK provider，不授予其他 capability。Memory first-use 是 DEC-028 的窄静默例外；Settings 持续披露数据/provider/cost/opt-out，其他 costly 路径继续确认。
+- Reversibility / recovery: Provider/token 可在 Settings 修改；setup 保存失败保持 incomplete 并尝试恢复旧 settings/token。用户可关闭 Memory 或重置本地 Memory copy；失败不升级 policy，后续 hydration 按 guard 恢复原 reason。
 - Recovery identity: IndexedDB 只持久化 content-free rebuild reason/timestamp，不保存 note text；guard 防止 restart 把需要再次确认的 recovery rebuild 误分类为 silent first-use。
 
 ## Acceptance Criteria
@@ -61,13 +68,18 @@ Authority: 首次 Chat 触发的静默 whole-vault Memory 准备、透明度、�
 - B-126/AC-06: 运行中关闭 Memory及 plugin unload/reload 测试证明 abort 被传播，旧 lifecycle 不再发 provider 请求、保存 auto policy、更新 status 或显示成功/失败 Notice；desktop/mobile mock 都覆盖该路径。
 - B-126/AC-07: State-store fixture 预置旧 marker/index 后让 IndexedDB initialize/hydrate 与 durable invalidation 均不可用，证明 destructive rebuild 的 `index.reset()`、embedding model/provider call、policy upgrade 与 ready publication 均为 0，旧 marker/index 保持不变，first-use Chat 返回 `answer-now`；恢复 state store 后按 hydrated marker 重新判定。另一个 known-absent fixture 证明成功 hydrate 后可正常 rebuild，并覆盖 unknown/old marker 可被 atomic transition durable invalidate 后才继续的路径。Persistent-storage permission denied 单独覆盖并保持 usable-but-evictable 语义。
 - B-126/AC-08: Restart fixtures 分别证明 settings-changed abort 与 local-memory-missing total failure 保留原 durable guard/reason，first-use guard 仍为 first-use；三者均不因 marker null 互相误分类。Policy-save/lifecycle-admission failure fixture 证明 `rollbackPreparedRebuild(reason)` 后 ready marker/policy admission 均不可用，原 guard/reason 可在 restart hydrate；完整成功路径原子清 guard。
+- B-126/AC-09: Fresh/incomplete setup 测试证明三个 preset 可选、Start 在配置/token 未满足时禁用、Advanced link 可达 Settings，且成功保存完整 tuple 与 preset identity。
+- B-126/AC-10: Token-only、partial config + existing token、provider-save failure、token-write failure、compensation failure 与 unload race 测试分别证明不覆盖无关配置、不要求重复 token、不宣称失败事务成功，reload 后 settings/token 一致或明确 incomplete。
+- B-126/AC-11: Retained-token reload 测试证明 passive Chat/Settings/Memory status 的 SecretStorage reads 为 0；明确 Chat、provider 或 AI/Memory action只在 token unknown 时探测一次，并将结果更新到相关 surface。
+- B-126/AC-12: Settings fixture 证明无 storage 时仅 AI Provider 展开；展开非 AI group、折叠 AI Provider 后重开分别保持；任一 group 的存储存在不会改变其他缺失 groups 的默认。
+- B-126/AC-13: DOM/CSS 测试证明 provider group/selection、token label、Enter、busy/live error 与移动端 44px targets；失败后 Start/input 可继续使用。
 
 ## Open Decisions
 
-None. Owner 于 2026-08-11 已选择首次 Chat 静默后台 whole-vault Memory 构建，并在同日后续明确选择 marker unknown 时方案 1（fail closed）；Fresh Custom、progressive build 与 release timing 不属于本决定。
+None for the approved slices. Owner 于 2026-08-11 选择 silent Memory/marker fail-closed，并于 2026-08-23 选择保留 inline setup 与首次 Settings 聚焦。Fresh Custom、wizard、Test Connection、provider performance、progressive build 与 release timing 继续未批准。
 
 ## Delivery Handoff
 
-- Active Package: [B-126 Silent First-Use Memory Preparation](../../development/active/silent-first-use-memory-preparation/README.md)
+- Active Package: [B-126 First-Run AI Setup And Silent Memory Preparation](../../development/active/silent-first-use-memory-preparation/README.md)
 - Architecture contracts: [VSS SQLite/WASM Current Architecture](../../architecture/vss-sqlite-wasm-architecture.md)、[VSS Local State](../../architecture/vss-local-state-plan.md)、[VSS Embedding Refresh](../../architecture/vss-embedding-refresh.md)、[PA Data Boundary](./pa-data-boundary-product-spec.md)
 - Release / rollout boundary: PR #378 只在 focused failure/concurrency/lifecycle tests、full CI 与适用 Obsidian smoke 通过后可合并；自动化 mock 不等于真实 iOS/Android 证明。
