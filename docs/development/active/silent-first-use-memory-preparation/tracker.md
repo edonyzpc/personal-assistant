@@ -1,7 +1,7 @@
 # First-Run AI Setup And Silent Memory Preparation Development Tracker
 
 Document status: Current
-Delivery status: Validating
+Delivery status: Validated
 Updated: 2026-08-23
 Work item: B-126
 Authority: 本 track 的唯一执行状态、finding、验证证据与 closeout readiness。
@@ -10,10 +10,10 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: PR #378 merge-gate runtime findings、DEC-029 authority、focused/full automation、当前 build Desktop Obsidian smoke 与 real-iPhone Keychain/reload smoke 已关闭；进入提交前验证。
-- Next action: 创建经授权的 commits/更新 PR 后，在新 SHA 上重跑 remote CI。
+- Current phase: PR #378 merge-gate runtime findings、DEC-029 authority、focused/full automation、当前 build Desktop Obsidian smoke、real-iPhone Keychain/reload smoke，以及最终提交 SHA 的 remote CI 均已关闭；等待 Owner 合并与 closeout 决定。
+- Next action: Owner 决定是否合并 PR #378；合并后再显式决定是否关闭 B-126 并处置过程文档。
 - Blocker / decision needed: 产品、实现与本地验证选择已闭合；当前无新增 Owner decision。
-- Last verified behavior: 当前未提交候选通过 189 suites / 4139 tests、9-suite / 590-test focused gate、typecheck、lint、build/deploy、platform guard/self-test、diff/community scan、Desktop Obsidian 1.13.6 smoke，以及 Edony iPhone 15 上的当前 build Keychain/reload smoke。`docs:check` 通过并逐条报告 28 个 exact known Episodic/Retrieval advisory findings；远程 head `6f28121b` 仍是旧候选。
+- Last verified behavior: PR head `9a28436a744bc342ace6496ed58da8dda7f22f95` 通过 GitHub Actions run `32632403732` / job `97177042546`，Test、Lint、Build、Audit、platform guard 与 docs workflow 全部成功；本地候选通过 189 suites / 4139 tests、9-suite / 590-test focused gate、typecheck、lint、build/deploy、diff/community scan、Desktop Obsidian 1.13.6 smoke，以及 Edony iPhone 15 当前 build 的 Keychain/reload smoke。`docs:check` 成功并逐条报告 28 个 exact content-locked Episodic/Retrieval advisory findings。
 
 ## Work
 
@@ -41,7 +41,7 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | --- | --- | --- | --- | --- | --- |
 | F-01 | P1 | Accepted DEC lacked a valid Work item and verifiable current Owner provenance; current Data Boundary/VSS contracts still required first-use blocking confirmation. | Route current 2026-08-11 choice through B-126, DEC-028, Product Spec, architecture and Active Package; do not backdate approval. | Link/metadata inspection plus B-126 authority review | Closed for the B-126 authority chain; repository-wide lifecycle findings remain independently owned |
 | F-02 | P1 | A failed/aborted first-use rebuild or failed ready-marker publication could be represented too optimistically or upgrade auto policy. | Gate success/policy/status on usable completion and published readiness; keep retryable non-ready state otherwise. | Focused failure/abort/marker tests | Closed by post-race 199-test gate |
-| F-03 | P1 | Shell guard warned instead of failing for settings secret reads and whole-line exclusions could hide a render-path violation. | Use syntax-aware fatal checks, positive/negative fixtures and a CI step. | Guard self-test and current-source scan | Closed locally; remote CI pending PR update |
+| F-03 | P1 | Shell guard warned instead of failing for settings secret reads and whole-line exclusions could hide a render-path violation. | Use syntax-aware fatal checks, positive/negative fixtures and a CI step. | Guard self-test and current-source scan | Closed locally and by final remote CI |
 | F-04 | P2 | Memory Settings copy still promised a prompt before every prepare, contradicting DEC-028 first-use behavior. | State the first-use exception while preserving provider/cost/notes-unchanged/opt-out disclosure and other confirmation paths. | Locale assertions and focused UI/settings test | Closed by 8-suite / 553-test gate |
 | F-05 | P1 | Treating unhydrated in-memory `marker=null` as fresh-install truth could reset an existing OPFS index and send whole-vault text before IndexedDB revealed the old marker. | Owner selected option 1 on 2026-08-11: persist retry state and hydrate/prove-absent or durable-invalidate marker before destructive reset/provider; otherwise answer-now and wait for store recovery. Ordinary non-destructive retry semantics remain scoped separately. | VSS unavailable-state fixture asserts old marker/index preserved and reset/provider calls 0 | Closed by post-race atomic-state/unknown-state tests |
 | F-06 | P1 | Abort/total failure could lose a confirmed rebuild reason after restart, and policy/lifecycle admission failure could expose prepared data as usable ready. | Persist a content-free rebuild guard with the original reason; hydrate it before marker/OPFS inference, retain it on abort/total failure, and use VSS compensation to restore non-ready state when post-build admission fails. | Restart/guard fixtures plus policy/lifecycle failure assertions | Closed by post-race 199-test gate |
@@ -74,11 +74,12 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | 2026-08-23 | Desktop Obsidian full-ui smoke | Obsidian 1.13.6 test vault；retained-token Memory status；first Settings default/persistence；temporary in-memory inline setup | Pass | Passive token state stayed unknown while Memory showed a local update state, not unavailable；only AI Provider opened by default；Features remained open after reopen while other missing groups stayed collapsed；Qwen Intl selection survived explicit retained-token probe with `aria-pressed=true`, hidden token row and enabled Start；no provider request or save was executed；original settings/localStorage restored；no errors captured |
 | 2026-08-23 | Inline setup failure-state regression | Plugin lifecycle、Chat View、Settings focused suites；typecheck；lint；diff check | Pass | 3 suites / 383 tests；failed provider save restores prior token/settings without broadcasting compensation, while the mounted form retains visible retry feedback |
 | 2026-08-23 | B-126/REQ-06 / B-126/AC-06；T-11 | Edony iPhone 15、iCloud `test` vault、plugin 2.9.2；current-build Keychain and reload smoke | Pass | `make deploy-icloud` reran 189 suites / 4139 tests、guard、lint and build；`main.js`、both manifests and `styles.css` matched the deployed assets。Passive Chat input and Settings render stayed responsive with token state `unknown`、local `Memory ready` and neutral `Manage API token`；explicit `Update memory now` resolved the retained token to `present` and opened the normal 11-note confirmation，then real-touch Cancel prevented provider work；reload returned to `unknown` with no Notice/error or late progress state。Portrait only；landscape、iPad and Android were not tested |
+| 2026-08-23 | PR #378 final remote gate | Head `9a28436a744bc342ace6496ed58da8dda7f22f95`；GitHub Actions run `32632403732` / job `97177042546` | Pass | Test、Lint、Build、Audit、platform guard/self-test、third-party notices 与 docs workflow 全部成功；known docs debt remains visible as 28 exact content-locked warnings；PR mergeable |
 
 ## Closeout Readiness
 
 - [x] Owning contract 与实际行为一致。
-- [ ] Required review/smoke/release evidence 已记录。
+- [x] Required review/smoke/release evidence 已记录（本工作项无需独立 release）。
 - [ ] 未完成项已进入 Backlog。
 - [x] 稳定结论已吸收到 current contract/tests。
 - [ ] 过程文档已标记 delete-after-absorption 或 unique archive evidence。
