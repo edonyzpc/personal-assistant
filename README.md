@@ -14,7 +14,7 @@
  <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
 </p>
 
-> ***NOTE***: Newest beta feature: **Pagelet** — a quiet review assistant for your notes (produces structured suggestions, saves as review notes). Also supports LLM chat with Memory. Before preparing memory, the assistant explains data flow, AI provider usage, and possible cost, then asks for your approval.
+> ***NOTE***: Newest beta feature: **Pagelet** — a quiet review assistant for your notes (produces structured suggestions, saves as review notes). Also supports LLM chat with Memory. When Memory is enabled and an AI provider is configured, the first Chat can prepare Memory in the background without a blocking prompt: eligible note text is sent to the configured embedding provider and may use API credits. You can turn Memory off in Settings; recovery, settings-change, and manual rebuilds still ask before costly work.
 
 > ***v2.7 guide***: Before trying the release, read the [v2.7 user guide](./docs/archive/v2.7-user-guide-en.md). It explains AI Insights, Memory, Pagelet, Research, safe save flows, best practices, and a short release-video script from a user workflow perspective. Chinese version: [v2.7 用户指南](./docs/archive/v2.7-user-guide.md).
 
@@ -41,8 +41,8 @@ https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
 Three steps to get talking to your notes:
 
 1. Click the Personal Assistant icon on the left ribbon — it opens the AI Chat view directly. (Right-click the same icon for the older plugin controls modal.)
-2. The first time the chat opens with no AI configured, an inline banner shows what is missing and offers an **Open Settings** button that jumps straight to this plugin's settings tab.
-3. Pick an AI provider (Qwen, OpenAI, etc.), fill in the base URL, model, and API token, then return to the chat. The banner disappears and you can ask your first question.
+2. If AI is not configured, the Chat banner lets you choose **Qwen China**, **Qwen International**, or **OpenAI** and add a token without leaving Chat. If only the token is missing, it preserves your existing provider settings and asks only for the token.
+3. Select **Start** to save and continue. Use **Advanced setup** for a custom endpoint or model; the first Settings visit keeps AI Provider open and the other groups folded so the required fields stay in focus.
 
 See the [AI Chat chapter in the Manual](Manual.md#ai-chat) for prompts, citations, web search, and Memory tips.
 
@@ -126,7 +126,7 @@ Manual "Update memory" keeps the safer per-file refresh path for now, but it als
 
 ### Background memory maintenance note
 
-After you approve and successfully prepare Memory once on a device, changed notes can be maintained automatically while Obsidian is open. Chat no longer waits for a refresh when the local SQLite/WASM Memory index is ready; it can answer with the last prepared Memory while a background reconcile/refresh updates changed notes.
+After the first background preparation or an approved recovery/manual preparation succeeds on a device, changed notes can be maintained automatically while Obsidian is open. Chat no longer waits for a refresh when the local SQLite/WASM Memory index is ready; it can answer with the last prepared Memory while a background reconcile/refresh updates changed notes.
 
 Automatic maintenance writes Memory embedding data to the device-local SQLite/WASM OPFS backend and keeps VSS maintenance state in local Obsidian app storage. It does not create new `vss-index-state/`, `vss-index-state/<deviceId>/manifest.json`, or `vss-cache/dirty.json` files in the vault.
 
@@ -138,7 +138,7 @@ Personal Assistant does not include telemetry or analytics. By default, Statisti
 | --- | --- | --- | --- | --- | --- |
 | Chat | You send a message | Prompt; when enabled, selected note/tool context, Memory search query, and selected Memory excerpts or note snippets used in the final answer prompt | Configured AI provider | No | Provider, chat, and Memory settings |
 | AI note tools | You run summary or note AI actions | Current note content and the generated prompt | Configured AI provider | No | User action and AI settings |
-| Memory prepare/update | You approve prepare or update | Note text and Memory search data | Configured AI provider | The manual action is not background; after success, changed notes may update in background | Memory settings and background toggle |
+| Memory prepare/update | First Chat while Memory is enabled and the AI provider is configured; or an approved recovery/manual action | Eligible note text and Memory search data | Configured embedding provider | First-use preparation runs in the background; manual actions block on progress; after success, changed notes may update in background | Memory on/off, Data Boundary exclusions, provider settings, and background toggle |
 | Memory changed-note maintenance | Memory has been prepared and background updates are enabled | Changed note text | Configured AI provider | Yes | Memory background setting |
 | Qwen web search | You enable web search for Qwen responses | Question and final prompt context | DashScope/Bailian | No | Qwen response setting |
 | Featured image generation | You run image generation | Current note content for prompt generation, then image prompt and task requests | Configured AI provider and DashScope/Bailian | Polls task status after your request | User action and AI settings |
