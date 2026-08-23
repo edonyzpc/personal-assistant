@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(process.env.DOCS_CHECK_REPO_ROOT || process.cwd());
 const docsRoot = path.join(repoRoot, "docs");
+const knownFindingsFile = path.join(repoRoot, "scripts/docs-check-known-findings.json");
 const errors = [];
 const warnings = [];
 let checkedLinks = 0;
@@ -984,11 +986,142 @@ try {
     else warnings.push(`Skipped deletion continuity check: git base ${diffBase} is unavailable (${error instanceof Error ? error.message : "unknown error"})`);
 }
 
-if (errors.length > 0) {
-    console.error(`Documentation check failed with ${errors.length} issue(s):`);
-    for (const error of errors) console.error(`- ${error}`);
+function loadKnownFindings() {
+    if (!existsSync(knownFindingsFile)) return { configurationErrors: [], findings: [] };
+    let parsed;
+    try {
+        parsed = JSON.parse(readFileSync(knownFindingsFile, "utf8"));
+    } catch (error) {
+        return {
+            configurationErrors: [`Known documentation findings baseline is invalid JSON: ${error instanceof Error ? error.message : "unknown error"}`],
+            findings: [],
+        };
+    }
+    const configurationErrors = [];
+    if (parsed?.version !== 1) configurationErrors.push("Known documentation findings baseline must declare version 1");
+    if (typeof parsed?.authority !== "string" || !parsed.authority.trim()) {
+        configurationErrors.push("Known documentation findings baseline must declare its authority");
+    }
+    if (typeof parsed?.removeWhen !== "string" || !parsed.removeWhen.trim()) {
+        configurationErrors.push("Known documentation findings baseline must declare its removal condition");
+    }
+    if (!Array.isArray(parsed?.groups) || parsed.groups.length === 0) {
+        configurationErrors.push("Known documentation findings baseline must contain at least one exact group");
+        return { configurationErrors, findings: [] };
+    }
+    const seenGroupIds = new Set();
+    const seenPaths = new Set();
+    const findings = [];
+    const findingCounts = new Map();
+    for (const group of parsed.groups) {
+        const groupId = group?.id;
+        if (typeof groupId !== "string" || !/^[a-z0-9-]+$/u.test(groupId)) {
+            configurationErrors.push("Known documentation findings baseline group must have a lowercase id");
+        } else if (seenGroupIds.has(groupId)) {
+            configurationErrors.push(`Known documentation findings baseline contains duplicate group id: ${groupId}`);
+        } else {
+            seenGroupIds.add(groupId);
+        }
+        if (typeof group?.reason !== "string" || !group.reason.trim()) {
+            configurationErrors.push(`Known documentation findings baseline group ${groupId ?? "<unknown>"} must declare a reason`);
+        }
+        if (!Array.isArray(group?.files) || group.files.length === 0) {
+            configurationErrors.push(`Known documentation findings baseline group ${groupId ?? "<unknown>"} must lock at least one file`);
+            continue;
+        }
+        const groupPaths = [];
+        for (const file of group.files) {
+            const sourcePath = file?.path;
+            const expectedHash = file?.sha256;
+            if (typeof sourcePath !== "string"
+                || !sourcePath.startsWith("docs/")
+                || sourcePath.includes("\\")
+                || path.posix.normalize(sourcePath) !== sourcePath
+                || /[*?[\]]/u.test(sourcePath)) {
+                configurationErrors.push(`Known documentation findings baseline group ${groupId ?? "<unknown>"} has an invalid exact path: ${sourcePath ?? ""}`);
+                continue;
+            }
+            if (seenPaths.has(sourcePath)) {
+                configurationErrors.push(`Known documentation findings baseline contains duplicate path: ${sourcePath}`);
+                continue;
+            }
+            seenPaths.add(sourcePath);
+            groupPaths.push(sourcePath);
+            if (typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(expectedHash)) {
+                configurationErrors.push(`Known documentation findings baseline has an invalid SHA-256 for ${sourcePath}`);
+                continue;
+            }
+            const sourceFile = path.resolve(repoRoot, sourcePath);
+            if (!sourceFile.startsWith(`${repoRoot}${path.sep}`) || !existsSync(sourceFile) || !statSync(sourceFile).isFile()) {
+                configurationErrors.push(`Known documentation findings baseline file is missing: ${sourcePath}`);
+                continue;
+            }
+            const actualHash = createHash("sha256").update(readFileSync(sourceFile)).digest("hex");
+            if (actualHash !== expectedHash) {
+                configurationErrors.push(`Known documentation findings baseline file drifted: ${sourcePath}`);
+            }
+        }
+        if (!Array.isArray(group?.findings)
+            || group.findings.length === 0
+            || group.findings.some((finding) => typeof finding !== "string" || !finding.trim())) {
+            configurationErrors.push(`Known documentation findings baseline group ${groupId ?? "<unknown>"} must contain non-empty exact finding strings`);
+            continue;
+        }
+        for (const finding of group.findings) {
+            if (!groupPaths.some((sourcePath) => containsExactRepoPath(finding, sourcePath))) {
+                configurationErrors.push(`Known documentation finding does not name a locked file in group ${groupId ?? "<unknown>"}: ${finding}`);
+            }
+            findingCounts.set(finding, (findingCounts.get(finding) ?? 0) + 1);
+            findings.push(finding);
+        }
+    }
+    for (const [finding, count] of findingCounts) {
+        if (count > 1) configurationErrors.push(`Known documentation findings baseline contains a duplicate: ${finding}`);
+    }
+    return { configurationErrors, findings };
+}
+
+function containsExactRepoPath(text, target) {
+    const repoPathCharacter = /[A-Za-z0-9_./-]/u;
+    let offset = 0;
+    while (offset <= text.length - target.length) {
+        const index = text.indexOf(target, offset);
+        if (index < 0) return false;
+        const before = text[index - 1] ?? "";
+        const after = text[index + target.length] ?? "";
+        if (!repoPathCharacter.test(before) && !repoPathCharacter.test(after)) return true;
+        offset = index + 1;
+    }
+    return false;
+}
+
+const knownFindingBaseline = loadKnownFindings();
+const remainingKnownFindings = new Set(knownFindingBaseline.findings);
+const knownErrors = [];
+const blockingErrors = [...knownFindingBaseline.configurationErrors];
+for (const error of errors) {
+    if (remainingKnownFindings.delete(error)) knownErrors.push(error);
+    else blockingErrors.push(error);
+}
+for (const staleFinding of remainingKnownFindings) {
+    blockingErrors.push(`Known documentation finding no longer occurs; remove its baseline entry: ${staleFinding}`);
+}
+
+if (blockingErrors.length > 0) {
+    console.error(`Documentation check failed with ${blockingErrors.length} issue(s):`);
+    for (const error of blockingErrors) console.error(`- ${error}`);
     process.exitCode = 1;
 } else {
-    console.log(`Documentation check passed: ${markdownFiles.length} Markdown files, ${checkedLinks} local links.`);
+    const advisorySuffix = knownErrors.length > 0
+        ? `; ${knownErrors.length} exact known finding(s) remain advisory.`
+        : ".";
+    console.log(`Documentation check passed: ${markdownFiles.length} Markdown files, ${checkedLinks} local links${advisorySuffix}`);
+}
+if (knownErrors.length > 0) {
+    console.warn(`Warning: ${knownErrors.length} exact known documentation finding(s) remain advisory:`);
+    for (const error of knownErrors) console.warn(`- ${error}`);
+    if (process.env.GITHUB_ACTIONS === "true") {
+        console.log(`::warning title=Known documentation lifecycle findings::${knownErrors.length} exact baseline finding(s) remain; see the docs:check log.`);
+    }
 }
 for (const warning of warnings) console.warn(`Warning: ${warning}`);

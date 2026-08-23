@@ -2,11 +2,11 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-08-07
+Updated: 2026-08-23
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
-Bootstrap source: 用户于 2026-07-12 直接授权 docs/Agent/checker lifecycle remediation；2026-07-21 又明确取消 PA 项目内的 Linear Skill 与默认流程，并要求降低 Agent 的文档/token 维护负担；2026-08-04 要求将 Share Card 未经确认的技术选型和产品边界偏差吸收为项目规范与长期记忆；2026-08-07 明确决定版本发布不得强绑定项目文档状态。B-115 保持为该长期治理 contract 的稳定 ID。
+Bootstrap source: 用户于 2026-07-12 直接授权 docs/Agent/checker lifecycle remediation；2026-07-21 又明确取消 PA 项目内的 Linear Skill 与默认流程，并要求降低 Agent 的文档/token 维护负担；2026-08-04 要求将 Share Card 未经确认的技术选型和产品边界偏差吸收为项目规范与长期记忆；2026-08-07 明确决定版本发布不得强绑定项目文档状态；2026-08-23 要求既有 docs finding 继续以 warning 可见但不阻断后续 CI，并明确 PR #378 不得修改并行开发的 Retrieval Optimization 文档或再次改动已恢复的 Episodic Memory 文档。B-115 保持为该长期治理 contract 的稳定 ID。
 
 ## Context And Selected Governance Choice
 
@@ -31,7 +31,10 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
   `1 Now + 1 Next`、Feature Home link-only、Tracker-only status，且不创建独立
   handoff/closeout 文档。未入链、未索引、无稳定身份的过程草稿可由 checker 证明后
   直接删除；例行 turn 必须按任务读取最小当前 authority。beta/stable 发布只校验
-  公开/发布关键文档，不得依赖 lifecycle status 或跨 tag 文档连续性。
+  公开/发布关键文档，不得依赖 lifecycle status 或跨 tag 文档连续性。Owner 明确划出
+  并行 workstream 时，既有 finding 只能通过 exact path + SHA-256 + exact finding 的
+  自失效基线暂时降为可见 warning；任何 drift、新增 finding、重复或 stale baseline
+  必须 fail closed，责任 workstream 修复时必须同步删除对应基线。
 - B-115/REQ-06: 用户提供的 spec 或 current authority 明确命名的技术选型与产品、数据、
   媒体边界必须视为 binding constraint，直到显式 superseding decision 生效。“分析/设计
   并实现”不授权 Agent 静默替换选型、缩窄或扩大能力边界。Material deviation 必须在
@@ -58,7 +61,9 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
   handoff/closeout、`T-xxx` 删除和不可用显式 baseline fail closed；同时允许删除
   baseline 无入链、无稳定身份的过程草稿。release checker 不读取上述 lifecycle 状态，
   且 focused workflow test 证明常规 CI 仍运行完整 `docs:check`、以 warning 报告
-  finding，并继续执行后续 source/runtime gates。
+  finding，并继续执行后续 source/runtime gates。若使用已知 finding 基线，focused test
+  还必须证明仅完整路径、内容摘要和逐字 finding 全匹配时通过；文件漂移、缺失、新错误、
+  重复配置、glob/前缀和已修复但未清理的条目全部失败。
 - B-115/AC-05: B-115 可从 docs index → Development index → Governance index/GOV-001
   定位；Tracker 独占执行状态与跨会话 handoff，Plan/SDD 按复杂度创建，`Validated`
   自动触发 closeout 询问，过程 artifact 吸收后默认删除，且不伪造 Product
