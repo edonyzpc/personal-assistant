@@ -2,9 +2,9 @@
 
 Document status: Current
 Delivery status: Exploring
-Updated: 2026-08-11
+Updated: 2026-08-23
 Work item: B-126
-Authority: 首次体验与平台韧性的活跃问题、证据和未决方向；已获批准的 silent first-use Memory slice 由 DEC-028 与 B-126 Product Spec 负责，本 Brief 不替代批准证据。
+Authority: 首次体验与平台韧性的活跃问题、证据和未决方向；已批准的 silent Memory 与 inline setup/first-Settings slices 分别由 DEC-028、DEC-029 与 B-126 Product Spec 负责，本 Brief 不替代批准证据。
 
 ## Problem And User Outcome
 
@@ -40,7 +40,7 @@ Authority: 首次体验与平台韧性的活跃问题、证据和未决方向；
 
 ## Part 1: Empty Vault & First-Run Experience
 
-### 1.1 Current First-Run Flow
+### 1.1 PR Base First-Run Flow（历史基线）
 
 ```
 用户安装 plugin
@@ -75,6 +75,8 @@ Authority: 首次体验与平台韧性的活跃问题、证据和未决方向；
 
 **总步骤: 5-7 次交互**，涉及 2 次页面跳转。
 
+该流程是 PR #378 设计前的基线，不再描述 2026-08-23 批准后的目标行为。当前批准边界见 [DEC-029](../../product/decisions/dec-029-inline-ai-setup-and-settings-focus.md)：Chat inline 只提供 Qwen 中国、Qwen 国际与 OpenAI preset，Custom/advanced 继续进入 Settings；首次 Settings 只展开 AI Provider，用户后续 collapse preference 优先。
+
 ### 1.2 残留风险代码路径
 
 | 位置 | 风险 | 严重程度 | 触发条件 |
@@ -84,7 +86,9 @@ Authority: 首次体验与平台韧性的活跃问题、证据和未决方向；
 | src/plugin.ts:11749 getAPIToken() | 无 token 时返回 "" 并 Notice | LOW | 非崩溃但体验差 |
 | src/plugin.ts loadSettings→migrateSettings 间隙 | statisticsVaultId 为空字符串 | LOW | 仅重排代码时暴露 |
 
-### 1.3 Ideal First-Run Improvements
+### 1.3 2026-08-10 Ideal First-Run Improvements（历史提案）
+
+本节保留当时的方案输入，不代表批准。2026-08-23 只批准其中“有界 Chat inline setup”和“首次 Settings 聚焦 AI Provider”；其中 Custom inline、wizard、Test Connection、PA Cloud 与其他扩张仍未批准。
 
 **优先级 P0 — 低成本高回报**:
 
@@ -779,8 +783,15 @@ repo-local Decision/Product Spec 或当前明确 Owner 选择可以提升其中�
   [DEC-028](../../product/decisions/dec-028-silent-memory-auto-prepare.md)、
   [Product Spec](../../product/specs/pa-silent-first-use-memory-preparation-product-spec.md)
   与 [Active Package](../active/silent-first-use-memory-preparation/README.md)。
-- D1、D3、D4、Fresh Custom、progressive build、provider/model 性能与 release timing
-  继续是 Discovery 输入，不从本次选择推导批准。
+- D1、首次 Settings 折叠、D3、D4、Fresh Custom、progressive build、provider/model 性能与 release timing 在该日期继续只是 Discovery 输入，不从 2026-08-11 选择推导批准。
+
+## Owner Decision Routed On 2026-08-23
+
+- Owner 在当前 PR #378 merge-gate follow-up 明确选择方案 1：保留 Chat inline provider/token setup 与首次 Settings 默认折叠。
+- 该当前选择批准 D1 的有界版本：inline 只提供 Qwen 中国、Qwen 国际与 OpenAI preset；完整 provider tuple 只缺 token 时只补 token；existing token 可复用；Advanced/Custom 继续进入 Settings。
+- 同一选择批准首次 Settings 无 preference 时只展开 AI Provider，且用户之后的显式展开/折叠 preference 必须优先。
+- Token unknown、跨 settings/SecretStorage 保存失败、补偿、unload 与 a11y/mobile 状态按 [DEC-029](../../product/decisions/dec-029-inline-ai-setup-and-settings-focus.md) 与 [B-126 Product Spec](../../product/specs/pa-silent-first-use-memory-preparation-product-spec.md) 收口。
+- Fresh Custom inline、wizard、Test Connection、PA Cloud、新 provider/model、D3、D4、progressive build、provider performance 与 release timing 仍未批准；本次选择不回溯为 2026-08-10/11 的批准。
 
 ### 当时建议排期（非授权）
 
@@ -810,4 +821,5 @@ repo-local Decision/Product Spec 或当前明确 Owner 选择可以提升其中�
 ## Current Disposition
 
 - Brief 保持 `Exploring`，因为 first-run/platform 的更宽范围仍未决。
-- Silent first-use Memory slice 已按 2026-08-11 当前明确选择 promotion；其余提案没有实现授权。
+- Silent first-use Memory 已按 2026-08-11 选择 promotion；有界 inline setup 与首次 Settings focus 已按 2026-08-23 选择 promotion。
+- Fresh Custom、wizard、Test Connection、D3/D4、progressive/provider performance、PA Cloud 与 release timing 没有实现授权。

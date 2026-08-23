@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-08-12
+Updated: 2026-08-23
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -13,7 +13,7 @@ Updated: 2026-08-12
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
 | B-005 | Featured Image Wan 2.7 live provider smoke | 自动化、构建、部署与既有图片渲染通过；真实生成未调用 | 仅在用户明确同意发送测试笔记内容并接受 API 成本后执行 | [Historical tracker](./archive/featured-image-model-upgrade-spec-driven-development.md) |
 | B-006 | GitHub CI 首次远端验证 | 本地 workflow 命令已验证；`actionlint`、GitHub-hosted run 与 branch protection 未验证 | 在明确授权远端操作后验证首个 CI run，并决定 required checks | [Optimization final report](./archive/repo-wide-optimization-2026-07-10-final-report.md) |
-| B-126 | First-run experience and platform robustness | Owner 于 2026-08-11 批准首次 Chat 静默后台 whole eligible vault Memory 构建，并在同日后续选择 marker unknown 时 destructive rebuild fail closed；Fresh Custom、progressive build、provider/model 性能与 release timing 未获本次批准 | 完成 PR #378 的 B-126 runtime/tests/docs/CI guard 与 marker truth/recovery 验证；更宽方向继续 Discovery，不从 DEC-028 外推 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [DEC-028](./product/decisions/dec-028-silent-memory-auto-prepare.md), [Product Spec](./product/specs/pa-silent-first-use-memory-preparation-product-spec.md), [Tracker](./development/active/silent-first-use-memory-preparation/tracker.md) |
+| B-126 | First-run experience and platform robustness | Owner 于 2026-08-11 批准 silent first-use Memory 与 marker unknown fail-closed；2026-08-23 选择保留 bounded Chat inline setup 与 first-Settings focus。Fresh Custom、wizard、Test Connection、progressive build、provider/model 性能、PA Cloud 与 release timing 未获批准 | 完成 PR #378 当前 build 的 runtime/tests/docs/CI 与适用 Obsidian smoke；更宽方向继续 Discovery，不从 DEC-028/DEC-029 外推 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [DEC-028](./product/decisions/dec-028-silent-memory-auto-prepare.md), [DEC-029](./product/decisions/dec-029-inline-ai-setup-and-settings-focus.md), [Product Spec](./product/specs/pa-silent-first-use-memory-preparation-product-spec.md), [Tracker](./development/active/silent-first-use-memory-preparation/tracker.md) |
 
 ## 已延期的产品与工程工作
 

@@ -1,10 +1,10 @@
-# Silent First-Use Memory Preparation Software Design Document
+# First-Run AI Setup And Silent Memory Preparation Software Design Document
 
 Document status: Approved
-Updated: 2026-08-11
+Updated: 2026-08-23
 Work item: B-126
-Authority: DEC-028 的 source-verified runtime design、数据/生命周期边界、兼容性与 test matrix。
-Product spec: [Silent First-Use Memory Preparation Product Spec](../../../product/specs/pa-silent-first-use-memory-preparation-product-spec.md)
+Authority: DEC-028 owning contract 与 DEC-029 scoped decision 的 source-verified runtime design、数据/生命周期边界、兼容性与 test matrix。
+Product spec: [First-Run AI Setup And Silent Memory Preparation Product Spec](../../../product/specs/pa-silent-first-use-memory-preparation-product-spec.md)
 Tracker: [Development Tracker](./tracker.md)
 
 ## Current Source Baseline
@@ -13,6 +13,9 @@ Tracker: [Development Tracker](./tracker.md)
 - `src/vss/vss-core.ts`: `getMemoryReadiness()` returns `first-use`, `local-memory-missing`, `settings-changed`, `changed-notes`, `ready` or `unavailable`; `localStateReady`/`localStateHydrated` distinguish available, known marker truth from process-local unknown state. `beginRebuildState(reason)` and atomic `replaceRebuildState({ marker, dirtyJournal, guard })` form the destructive rebuild preflight; VSS mutation stays behind its exclusive operation queue.
 - `docs/architecture/vss-local-state-plan.md`: IndexedDB owns durable marker/dirty truth; OPFS owns the reconstructable index. An in-memory null marker is not proof of absence until hydration succeeds.
 - `src/settings.ts`: `memoryEnabled`, `memoryAutoCheckBeforeChat` and `memoryApprovalPolicy` are persisted settings; turning Memory off calls `cancelActiveMemoryPreparation()`.
+- `src/chat/chat-view.ts`: incomplete Chat readiness owns the inline setup form, preset selection, token-only state, keyboard/a11y feedback and Advanced Settings route; it delegates persistence to the plugin host.
+- `src/plugin.ts`: tri-state token readiness and `completeAISetup()` own the explicit SecretStorage probe plus coordinated settings/token save and compensation. Passive Chat/Settings render never calls SecretStorage.
+- `src/settings.ts`: when collapse storage has no value for a group, `ai-provider` defaults expanded and every other group defaults collapsed; an explicit stored boolean overrides that default.
 - `src/locales/plugin/{en,zh}.json`: `plugin.memory.message.buildingInBackground` already promises automatic use only once ready; Memory Settings disclosure must be reconciled with the DEC-028 exception.
 - `scripts/check-platform-guards.sh` and `.github/workflows/ci.yml`: the PR's platform-sensitive regression guard exists locally but requires fatal semantics, structural exceptions, self-test and direct CI execution.
 - No new persisted setting, command ID, VSS schema, vector backend, worker/WASM asset or Pagelet first-use flag is introduced by B-126.
@@ -50,6 +53,16 @@ B-126/REQ-07 and B-126/AC-07 add a pre-reset truth gate. A destructive rebuild m
 
 B-126/REQ-08 and B-126/AC-08 use a content-free durable rebuild guard carrying `first-use`、`settings-changed` or `local-memory-missing`. The local-state store atomically replaces marker, dirty journal and guard; hydration gives the guard priority and maps it back to the original readiness/recovery reason. Abort/total failure retain the guard. Full success clears it only after ready-marker publication and Memory policy/lifecycle admission; an admission failure invokes `rollbackPreparedRebuild(reason)` so prepared index data is not exposed as usable ready and restart still recovers the original reason.
 
+### Inline setup and first Settings focus
+
+B-126/REQ-09 and B-126/AC-09 keep presentation in `ChatView` and persistence in `PluginManager`. Chat renders only three approved preset identities (`qwen`, `qwen-intl`, `openai`) and never accepts an arbitrary endpoint inline. `completeAISetup()` resolves the selected preset through the shared preset table so runtime provider, base URL, chat model, embedding model and `aiProviderPreset` stay one tuple. Advanced/custom configuration routes to Settings.
+
+B-126/REQ-10 and B-126/AC-10 treat settings plus SecretStorage as a coordinated transaction, not a false cross-storage atomic primitive. The plugin snapshots the prior provider tuple and token, writes a supplied token only when needed, persists the complete provider tuple through the required-settings tail, and on failure restores the snapshot with best-effort compensation. Unload drains the whole required transaction, including compensation. Any primary or compensation failure returns a typed incomplete result; Chat keeps the form retryable and never renders success.
+
+B-126/REQ-11 and B-126/AC-11 use `unknown | present | missing`. Passive readiness may report unknown but cannot inspect Keychain. Only explicit provider selection, token management, Chat submit or AI/Memory command probes unknown; callers then recompute readiness and refresh the surfaces they own. Local read-only Memory status depends on structural configuration and durable index state, not token presence.
+
+B-126/REQ-12..13 and B-126/AC-12..13 keep first-run focus reversible and accessible. Collapse storage writes explicit booleans; missing or malformed entries fall back per group, so saving one group cannot expand every other group. The inline form exposes provider selection, token name, Enter submit, busy/live error state and mobile-sized controls.
+
 ## Interfaces And Ownership
 
 - `MemoryManager` remains the product-policy owner; Chat callers consume `MemoryDecisionResult` and never start VSS writes directly.
@@ -57,6 +70,7 @@ B-126/REQ-08 and B-126/AC-08 use a content-free durable rebuild guard carrying `
 - `VSSIndexStateStore` is the durable truth source for rebuild marker/dirty state. Process-local state can bridge ordinary non-destructive maintenance retries, but cannot authorize destructive reset/provider work while marker truth is unknown.
 - Its rebuild transition uses `getRebuildGuard()` plus atomic `replaceRebuildState({ marker, dirtyJournal, guard })`; `MemoryManager` uses the VSS compensation boundary `rollbackPreparedRebuild(reason)` when post-build policy/lifecycle admission fails. These APIs do not carry note content.
 - Settings owns persistent disclosure and the master opt-out. Pagelet shared provider state, Memory Extraction consent and write/action policy are not inputs to first-use admission.
+- `ChatView` owns inline setup draft/UI state only. `PluginManager` owns readiness, explicit SecretStorage access, provider tuple persistence and compensation; Settings remains the only Custom/advanced editor.
 - The platform guard is build/CI tooling only. It rejects unguarded `getLeaf("window")` and render-time secret reads; it does not change runtime feature behavior.
 
 ## Lifecycle And Cleanup
@@ -79,6 +93,8 @@ B-126/REQ-05 and B-126/AC-05 keep missing/stale/manual/costly Memory confirmatio
 - Non-destructive maintenance: the owner choice does not change existing process-local dirty/verify retry semantics. Browser persistent-storage permission denial also remains the separate usable-but-evictable warning path.
 - Restart/recovery reason: guard hydration maps `first-use` to `uninitialized/first-use`, `settings-changed` to `stale/settings-changed`, and `local-memory-missing` to `missing-local-index/local-memory-missing`. Missing/stale guards retain their blocking confirmation semantics after restart.
 - Desktop/mobile: product semantics are identical; desktop-only Obsidian APIs require structural `Platform.isDesktop` guards. Passive startup/render/input reads only the tri-state token cache and never probes `SecretStorage`; only an explicit token-management, provider-selection, or Chat-submit user action may probe Keychain. A Chat submit with `token_unknown` probes before admission instead of reporting the token missing.
+- First Settings focus: no migration is needed. Missing/malformed collapse storage uses the approved per-group default; explicit `true`/`false` values survive reopen and override it.
+- Inline setup rollback: restoring the prior provider/token pair is best-effort across two stores. If compensation itself fails, readiness stays incomplete and the UI reports the fail-safe state; it never claims absolute atomicity.
 - Reload/unmount: old lifecycle work cannot write state or UI after unload. OPFS/fallback constraints remain unchanged; fallback is not granted automatic writes.
 - Rollback: restore the first-use call to the existing Memory Approval Modal and remove only the DEC-028 exception; no persisted-data rollback is needed.
 
@@ -94,6 +110,11 @@ B-126/REQ-05 and B-126/AC-05 keep missing/stale/manual/costly Memory confirmatio
 | B-126/REQ-06 / B-126/AC-06 | Desktop/mobile mocks disable or unload during deferred rebuild | Toggle Memory off during preparation; reload plugin | No late request/policy/status/Notice from old lifecycle | Tracker T-06 |
 | B-126/REQ-07 / B-126/AC-07 | Preload old marker/index, fail IndexedDB initialize/hydrate, then request rebuild | First Chat answers normally while Memory remains non-ready | Assert reset/provider/policy/ready are 0 and old state survives; recover store and re-evaluate. Separate known-absent and persistence-permission fixtures | Tracker T-09 |
 | B-126/REQ-08 / B-126/AC-08 | Restart fixtures for each rebuild reason plus policy-save/lifecycle-admission failure | Recovery UI follows the original reason; only first-use is silent | Abort/total fail retain guard; compensation removes usable ready and restores reason; full admitted success clears guard | Tracker T-10 |
+| B-126/REQ-09 / B-126/AC-09 | Fresh/partial setup presets, disabled Start, Advanced route and persisted tuple identity | Configure a fresh Chat without leaving the surface | Invalid/custom inline input is rejected | Tracker T-13 |
+| B-126/REQ-10 / B-126/AC-10 | Token-only/existing-token reuse, settings/token failure, compensation and unload races | Failed setup stays visible and retryable | Reload preserves the old pair or remains explicitly incomplete | Tracker T-13 |
+| B-126/REQ-11 / B-126/AC-11 | Passive read count 0; explicit Chat/AI/Memory probes unknown once | Retained-token reload does not show a false missing-token state | Probe error remains neutral/unknown with feedback | Tracker T-13 |
+| B-126/REQ-12 / B-126/AC-12 | First default plus expanded non-AI/collapsed AI reopen fixtures | First Settings visit focuses AI Provider | Missing/malformed stored keys use per-group defaults | Tracker T-13 |
+| B-126/REQ-13 / B-126/AC-13 | Provider semantics, token label, Enter, busy/live error and mobile CSS assertions | Keyboard and narrow-surface interaction smoke | Save failure preserves input/focusable retry path | Tracker T-13 |
 
 ## Open Design Findings
 
@@ -101,6 +122,6 @@ None. Implementation/review findings and validation state are tracked only in [T
 
 ## Approval
 
-- Design authority: Owner's explicit 2026-08-11 option A in the current PR #378 review follow-up, plus the same-day later option 1 requiring fail-closed destructive rebuild when IndexedDB marker truth is unknown; bounded by DEC-028 and the current VSS/Data Boundary contracts.
-- Approved on: 2026-08-11
-- Authorized implementation scope: Preserve first-Chat silent whole eligible vault Memory preparation; require durable marker truth/invalidation before destructive reset/provider work; retain original rebuild reason across failure/restart and roll back ready admission when policy/lifecycle admission fails; fix correctness, tests, current contracts and CI guard needed to make those choices truthful. Do not broaden the marker/recovery decision to ordinary non-destructive maintenance, or add Fresh Custom, progressive build, provider/model changes, Pagelet/extraction/write authority or release actions.
+- Design authority: Owner's explicit 2026-08-11 option A plus same-day marker option 1 own DEC-028. Owner's explicit 2026-08-23 option 1 owns DEC-029: retain the bounded Chat inline setup and first Settings default focus. Neither decision is backdated to the earlier Discovery proposal.
+- Approved on: 2026-08-11 for DEC-028; scoped amendment approved 2026-08-23 for DEC-029.
+- Authorized implementation scope: Preserve first-Chat silent whole eligible vault Memory preparation and marker/recovery truth; retain Qwen China/Qwen Intl/OpenAI inline preset setup, token-only/existing-token preservation, explicit token probe, compensated save, accessible error states and persisted first-Settings focus. Do not add Fresh Custom, wizard, Test Connection, PA Cloud, new provider/model, ordinary non-destructive marker changes, Pagelet/extraction/write authority or release actions.
