@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -171,6 +172,90 @@ describe("scripts/check-docs.mjs", () => {
         });
 
         expect(output).toContain("deletion continuity cannot fail open");
+    });
+
+    it("reports an exact immutable known-finding baseline as advisory", () => {
+        const repo = createFixture();
+        addKnownArchitectureFinding(repo);
+        writeKnownFindingsBaseline(repo);
+
+        const output = runCheck(repo, { GITHUB_ACTIONS: "true" });
+
+        expect(output).toContain("Documentation check passed");
+        expect(output).toContain("2 exact known finding(s) remain advisory");
+        expect(output).toContain("::warning title=Known documentation lifecycle findings::2 exact baseline finding(s) remain");
+    });
+
+    it("still fails when a new finding is absent from the exact baseline", () => {
+        const repo = createFixture();
+        addKnownArchitectureFinding(repo);
+        writeKnownFindingsBaseline(repo);
+        write(repo, "docs/architecture/unexpected.md", "# Unexpected\n");
+
+        expect(expectCheckFailure(repo)).toContain("docs/architecture/unexpected.md");
+    });
+
+    it("fails when a known-finding source changes without baseline reconciliation", () => {
+        const repo = createFixture();
+        addKnownArchitectureFinding(repo);
+        writeKnownFindingsBaseline(repo);
+        append(repo, "docs/architecture/legacy.md", "\nChanged while still producing the same findings.\n");
+
+        expect(expectCheckFailure(repo)).toContain("Known documentation findings baseline file drifted: docs/architecture/legacy.md");
+    });
+
+    it("fails when a resolved finding leaves a stale baseline entry", () => {
+        const repo = createFixture();
+        addKnownArchitectureFinding(repo);
+        writeKnownFindingsBaseline(repo, {
+            extraFindings: ["Unindexed architecture doc: docs/architecture/legacy.md via docs/architecture/another-index.md"],
+        });
+
+        expect(expectCheckFailure(repo)).toContain("Known documentation finding no longer occurs; remove its baseline entry");
+    });
+
+    it("rejects duplicate findings and non-exact baseline paths", () => {
+        const repo = createFixture();
+        addKnownArchitectureFinding(repo);
+        const findings = knownArchitectureFindings();
+        writeKnownFindingsBaseline(repo, {
+            extraFindings: [findings[0]],
+            lockedPath: "docs/architecture/**",
+        });
+
+        const output = expectCheckFailure(repo);
+        expect(output).toContain("has an invalid exact path: docs/architecture/**");
+        expect(output).toContain("contains a duplicate");
+    });
+
+    it("does not let a locked path prefix cover another document", () => {
+        const repo = createFixture();
+        addKnownArchitectureFinding(repo);
+        write(repo, "docs/architecture/legacy.md-extra.md", "# Prefix collision\n");
+        writeKnownFindingsBaseline(repo, {
+            extraFindings: [
+                "Unindexed architecture doc: docs/architecture/legacy.md-extra.md via docs/architecture/README.md",
+                "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/architecture/legacy.md-extra.md",
+            ],
+        });
+
+        expect(expectCheckFailure(repo)).toContain("Known documentation finding does not name a locked file");
+    });
+
+    it("fails closed on malformed known-finding configuration", () => {
+        const repo = createFixture();
+        write(repo, "scripts/docs-check-known-findings.json", "{not-json\n");
+
+        expect(expectCheckFailure(repo)).toContain("Known documentation findings baseline is invalid JSON");
+    });
+
+    it("fails when an exactly locked baseline file is missing", () => {
+        const repo = createFixture();
+        addKnownArchitectureFinding(repo);
+        writeKnownFindingsBaseline(repo);
+        unlinkSync(join(repo, "docs/architecture/legacy.md"));
+
+        expect(expectCheckFailure(repo)).toContain("Known documentation findings baseline file is missing: docs/architecture/legacy.md");
     });
 
     it("rejects removing a Backlog ID without active or terminal authority", () => {
@@ -443,6 +528,41 @@ Otherwise add an explicit disposition pointing to repo-local authority.
 
 The focused checker test verifies current-document continuity.
 `;
+}
+
+function addKnownArchitectureFinding(repo: string): void {
+    write(repo, "docs/architecture/legacy.md", "# Legacy architecture input\n");
+}
+
+function knownArchitectureFindings(): string[] {
+    return [
+        "Unindexed architecture doc: docs/architecture/legacy.md via docs/architecture/README.md",
+        "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/architecture/legacy.md",
+    ];
+}
+
+function writeKnownFindingsBaseline(
+    repo: string,
+    options: { extraFindings?: string[]; lockedPath?: string } = {},
+): void {
+    const lockedPath = options.lockedPath ?? "docs/architecture/legacy.md";
+    const lockedFile = join(repo, "docs/architecture/legacy.md");
+    const sha256 = createHash("sha256").update(readFileSync(lockedFile)).digest("hex");
+    write(
+        repo,
+        "scripts/docs-check-known-findings.json",
+        `${JSON.stringify({
+            version: 1,
+            authority: "Test-only exact baseline",
+            removeWhen: "Remove when the fixture finding disappears",
+            groups: [{
+                id: "legacy-architecture",
+                reason: "Synthetic inherited finding",
+                files: [{ path: lockedPath, sha256 }],
+                findings: [...knownArchitectureFindings(), ...(options.extraFindings ?? [])],
+            }],
+        }, null, 2)}\n`,
+    );
 }
 
 function addProposal(

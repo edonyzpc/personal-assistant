@@ -199,3 +199,11 @@ Test、Lint、Build 或 bundle audit。它不是 beta/stable 的发布资格门�
 `npm run docs:check:release`，校验公开/发布关键文档及其直接本地链接；Backlog、
 Discovery、Active Package、Tracker、Decision/Spec/Governance 状态、WIP 数量、Archive
 入链或跨 tag 删除连续性不得阻断版本发布。
+
+当 Owner 明确要求当前变更不得触碰由其他并行 workstream 拥有的既有文档时，可在
+`scripts/docs-check-known-findings.json` 暂存精确已知 finding。每组必须锁定完整 repo
+路径、文件 SHA-256、逐字 finding、来源与移除条件；checker 仍完整执行所有规则，只将
+路径、内容摘要和 finding 同时匹配的既有项降为可见 warning。任何文件漂移、glob/前缀、
+重复条目、新 finding、已消失但未同步删除的基线或损坏配置都必须 fail closed。责任
+workstream 修复对应文档时，必须在同一变更删除已经失效的基线，不得把该机制当作永久
+豁免或替代 authority reconciliation。
