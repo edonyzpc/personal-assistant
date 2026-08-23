@@ -19,11 +19,16 @@ Personal Assistant ships an in-vault AI Chat view that can answer questions, sum
 
 - **Ribbon icon (recommended)**: Left-click the Personal Assistant icon on the left ribbon to open the chat view. Right-click the same icon if you want the older plugin-controls modal.
 - **Command palette**: Search for `Personal Assistant: Open Chat` or any chat-related command listed under the plugin.
-- **Empty-state banner**: When the chat opens with an incomplete AI setup, the empty state shows the specific missing field plus an **Open Settings** button that jumps directly to this plugin's settings tab.
+- **Empty-state setup**: When AI setup is incomplete, Chat offers Qwen China, Qwen International, or OpenAI plus a token field when needed. **Advanced setup** opens the plugin Settings for custom endpoints or models.
 
 ### 3. Configuration
 
-Open the plugin settings (or use the empty-state **Open Settings** button) and fill in:
+For a standard provider, complete setup directly in the Chat empty state:
+
+- Choose **Qwen China**, **Qwen International**, or **OpenAI**.
+- Add the API token when requested, then select **Start**. If your provider URL/models are already complete and only the token is missing, PA preserves that tuple and asks only for the token.
+
+Use **Advanced setup** when you need a custom endpoint or model. It opens the plugin settings, where the first visit keeps **AI Provider** expanded and the other groups folded; later visits preserve your own group choices. Advanced fields include:
 
 - **AI provider** — Qwen / OpenAI / any compatible endpoint.
 - **Base URL** and **Model name** — provider defaults are pre-filled when you select a provider.
@@ -51,7 +56,7 @@ Once all fields are set, the empty-state banner disappears and the default chat 
 ### 7. Memory integration
 
 - After Memory has been prepared (see the **Memory** chapter referenced from settings), the assistant can search your indexed notes before answering. The composer Memory button surfaces Memory status (ready / preparing / disabled).
-- Memory remains opt-in and runs locally via SQLite/WASM; Chat only sends content to the configured AI provider when you actually send a message.
+- Memory is enabled by default but can be turned off in **Settings → Memory & Personalization**. Its index stays device-local in SQLite/WASM. After you configure an AI provider and send the first Chat message, Memory may start preparing in the background without a blocking prompt: eligible note text is sent to the configured embedding provider and may use API credits. Folder, tag, and generated-note exclusions are applied; recovery, settings-change, and manual rebuilds still ask before costly work.
 
 ### 8. FAQ
 

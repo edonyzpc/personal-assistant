@@ -11,7 +11,7 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦！Personal Assistant 的聊天助手可以读取来自你笔记的 Memory；准备 Memory 前会说明数据流、AI 服务商调用和可能成本，并先征求你的确认。
+> ***号外***: 新特性来啦！Personal Assistant 的聊天助手可以读取来自你笔记的 Memory。开启 Memory 并配置 AI Provider 后，首次 Chat 可以不弹阻断确认、直接在后台准备 Memory：符合 Data Boundary 的笔记文本会发送给已配置的 embedding provider，并可能消耗 API credits。你可以随时在 Settings 关闭 Memory；索引恢复、设置变更和手动重建等高成本路径仍会先确认。
 
 > ***v2.7 用户指南***: 发布前建议先阅读 [v2.7 用户指南：AI Insights、Memory 与 Pagelet 最佳实践](./docs/archive/v2.7-user-guide.md)。它从用户工作流出发，说明 AI Insights、Memory、Pagelet、Research 和安全保存应该怎么搭配使用，也包含可录制发布视频的脚本。海外用户可查看 [English v2.7 user guide](./docs/archive/v2.7-user-guide-en.md)。
 
@@ -32,6 +32,12 @@ https://github.com/user-attachments/assets/5420fb9a-209c-44c8-b32e-cafb8f2820a7
 https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
 
 </div>
+
+## 60 秒开始 AI Chat
+
+1. 点击左侧 Personal Assistant 图标，直接打开 AI Chat。
+2. 尚未配置 AI 时，可在 Chat 空态选择 **Qwen 中国**、**Qwen 国际**或 **OpenAI**，按需填写 API Token；若现有 Provider 配置完整、只缺 Token，PA 不会覆盖已有 URL 或模型。
+3. 点击 **Start** 保存并开始。Custom endpoint/model 使用 **Advanced setup** 进入 Settings；首次打开 Settings 时仅展开 AI Provider，其他分组保持折叠，之后以你的展开/折叠选择为准。
 
 <div align="center">
 <video src="./docs/assets/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
@@ -100,7 +106,7 @@ https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
 
 ### Memory 后台维护说明
 
-在某台设备上首次确认并成功准备 Memory 后，后续 changed notes 可以在 Obsidian 打开期间由后台自动维护。只要本地 SQLite/WASM Memory index 已 ready，Chat 不再等待 refresh；它会先使用上一版已准备好的 Memory 回答，同时后台 reconcile/refresh 会更新 changed notes。
+在某台设备上首次后台准备成功，或经确认的恢复/手动准备成功后，后续 changed notes 可以在 Obsidian 打开期间由后台自动维护。只要本地 SQLite/WASM Memory index 已 ready，Chat 不再等待 refresh；它会先使用上一版已准备好的 Memory 回答，同时后台 reconcile/refresh 会更新 changed notes。
 
 自动维护把 Memory embedding 数据写入设备本地 SQLite/WASM OPFS 后端，并把 VSS 维护状态写入本地 Obsidian app storage。它不会在 vault 中创建新的 `vss-index-state/`、`vss-index-state/<deviceId>/manifest.json` 或 `vss-cache/dirty.json` 文件。如果本地 Memory 暂时不可用或未准备好，助手会提示后台更新不可用，需要在本设备重新准备 Memory 后才能恢复自动维护。
 
@@ -112,7 +118,7 @@ Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statist
 | --- | --- | --- | --- | --- | --- |
 | Chat | 你发送消息 | Prompt；启用上下文时选中的 note/tool context；启用 Memory 时的 Memory search query，以及最终回答 prompt 中使用的已选 Memory excerpts 或 note snippets | 配置的 AI provider | 否 | Provider、chat 和 Memory 设置 |
 | AI note tools | 你运行 summary 或 note AI 操作 | 当前 note content 和生成的 prompt | 配置的 AI provider | 否 | 用户操作和 AI 设置 |
-| Memory prepare/update | 你确认 prepare 或 update | Note text 和 Memory search 数据 | 配置的 AI provider | 手动操作本身不是后台；成功后 changed notes 可能后台更新 | Memory 设置和后台开关 |
+| Memory prepare/update | 开启 Memory 且已配置 AI Provider 后的首次 Chat；或经确认的恢复/手动操作 | 符合 Data Boundary 的 note text 和 Memory search 数据 | 配置的 embedding provider | 首次准备在后台运行；手动操作显示阻断进度；成功后 changed notes 可能后台更新 | Memory 开关、Data Boundary 排除规则、Provider 设置和后台开关 |
 | Memory changed-note maintenance | Memory 已准备且后台更新开启 | Changed note text | 配置的 AI provider | 是 | Memory 后台设置 |
 | Qwen web search | 你开启 Qwen web search | 问题和最终 prompt context | DashScope/Bailian | 否 | Qwen response 设置 |
 | Featured image generation | 你运行图片生成 | 用于生成图片 prompt 的当前 note content，以及图片 prompt 和 task 请求 | 配置的 AI provider 和 DashScope/Bailian | 请求后会轮询 task 状态 | 用户操作和 AI 设置 |
