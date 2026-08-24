@@ -1644,6 +1644,8 @@ describe('VSS SQLite/WASM lifecycle', () => {
             deferAdmission: true,
         });
         expect(prepared.aborted).toBe(false);
+        const preparedHandle = prepared.preparedRebuildHandle;
+        expect(preparedHandle).toBeDefined();
         await expect(stateStore.getRebuildGuard()).resolves.toMatchObject({ reason: 'local-memory-missing' });
         await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
             reason: 'local-memory-missing',
@@ -1651,7 +1653,8 @@ describe('VSS SQLite/WASM lifecycle', () => {
         });
         stateStore.blockNextMarkerWrite();
 
-        const admitting = vss.admitPreparedRebuild();
+        if (!preparedHandle) throw new Error('Expected a prepared rebuild handle');
+        const admitting = vss.admitPreparedRebuild(preparedHandle);
         await stateStore.waitForMarkerWrite();
         const disposing = vss.dispose();
         stateStore.releaseMarkerWrite();
@@ -1666,6 +1669,43 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const restarted = new VSS(restartedPlugin, 'cache');
         await expect(restarted.getMemoryReadiness()).resolves.toMatchObject({ reason: 'local-memory-missing' });
         await restarted.dispose();
+    });
+
+    it('ignores a stale rollback after a newer deferred rebuild is admitted', async () => {
+        const stateStore = new MemoryVSSIndexStateStore();
+        const { plugin } = createPlugin({
+            createVSSIndexStateStore: jest.fn(() => stateStore),
+        });
+        const index = new FakeVectorIndex();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, index);
+
+        const first = await vss.rebuildLocalIndex({
+            silent: true,
+            rebuildReason: 'first-use',
+            deferAdmission: true,
+        });
+        const second = await vss.rebuildLocalIndex({
+            silent: true,
+            rebuildReason: 'first-use',
+            deferAdmission: true,
+        });
+        const firstHandle = first.preparedRebuildHandle;
+        const secondHandle = second.preparedRebuildHandle;
+        expect(firstHandle).toBeDefined();
+        expect(secondHandle).toBeDefined();
+        expect(secondHandle).not.toBe(firstHandle);
+        if (!firstHandle || !secondHandle) throw new Error('Expected prepared rebuild handles');
+
+        await expect(vss.admitPreparedRebuild(firstHandle)).resolves.toBe(false);
+        await expect(vss.admitPreparedRebuild(secondHandle)).resolves.toBe(true);
+        await expect(vss.rollbackPreparedRebuild(firstHandle, 'first-use')).resolves.toBe(false);
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({ reason: 'ready', action: 'none' });
+        await expect(stateStore.getRebuildGuard()).resolves.toBeNull();
+        await expect(stateStore.getMarker()).resolves.toMatchObject({ indexId: secondHandle });
+        expect(index.reset).toHaveBeenCalledTimes(2);
+        await vss.dispose();
     });
 
     it('retains pending marker removal when a later fail-closed guard transition also fails', async () => {

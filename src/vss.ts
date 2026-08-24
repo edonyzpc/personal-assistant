@@ -7,6 +7,7 @@ export type {
     VSSFlushOptions,
     VSSOperationOptions,
     VSSOperationSummary,
+    VSSPreparedRebuildHandle,
     VSSProgressEvent,
     VSSProgressPhase,
 } from "./vss/vss-maintenance";

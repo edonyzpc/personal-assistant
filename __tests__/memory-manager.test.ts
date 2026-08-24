@@ -7,7 +7,7 @@ import {
     getMemoryApprovalCopy,
     type MemoryMaintenancePlan,
 } from '../src/memory-manager';
-import type { VSSMemoryStatusSnapshot } from '../src/vss';
+import type { VSSMemoryStatusSnapshot, VSSPreparedRebuildHandle } from '../src/vss';
 
 const mockNoticeMessages: string[] = [];
 const mockProgressSteps: string[] = [];
@@ -115,6 +115,8 @@ const createPlan = (overrides: Partial<MemoryMaintenancePlan> = {}): MemoryMaint
     ...overrides,
 });
 
+const DEFAULT_PREPARED_REBUILD_HANDLE = 'prepared-rebuild' as VSSPreparedRebuildHandle;
+
 const createOperationSummary = (overrides: Record<string, unknown> = {}) => ({
     aborted: false,
     updated: 0,
@@ -126,6 +128,7 @@ const createOperationSummary = (overrides: Record<string, unknown> = {}) => ({
     verificationQueued: 0,
     verificationChecked: 0,
     dirtyConfirmed: 0,
+    preparedRebuildHandle: DEFAULT_PREPARED_REBUILD_HANDLE,
     ...overrides,
 });
 
@@ -199,8 +202,14 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
             })),
             refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean; abortSignal?: AbortSignal }) => createOperationSummary()),
             rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean; abortSignal?: AbortSignal; deferAdmission?: boolean }) => createOperationSummary()),
-            admitPreparedRebuild: jest.fn(async (_options?: { abortSignal?: AbortSignal }) => true),
-            rollbackPreparedRebuild: jest.fn(async (_reason?: string) => undefined),
+            admitPreparedRebuild: jest.fn(async (
+                _handle?: VSSPreparedRebuildHandle,
+                _options?: { abortSignal?: AbortSignal },
+            ) => true),
+            rollbackPreparedRebuild: jest.fn(async (
+                _handle?: VSSPreparedRebuildHandle,
+                _reason?: string,
+            ) => true),
         },
         saveSettings: jest.fn(async () => undefined),
         persistMemoryAdmissionSettings: jest.fn(async () => plugin.saveSettings()),
@@ -834,6 +843,101 @@ describe('MemoryManager command decisions', () => {
         }
     });
 
+    it('does not let a cancelled rebuild roll back a newer prepared run', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        const oldHandle = 'old-prepared-rebuild' as VSSPreparedRebuildHandle;
+        const newHandle = 'new-prepared-rebuild' as VSSPreparedRebuildHandle;
+        plugin.vss.rebuildLocalIndex
+            .mockResolvedValueOnce(createOperationSummary({ updated: 1, preparedRebuildHandle: oldHandle }))
+            .mockResolvedValueOnce(createOperationSummary({ updated: 1, preparedRebuildHandle: newHandle }));
+        const oldSaveStarted = createDeferred<void>();
+        const releaseOldSave = createDeferred<void>();
+        plugin.saveSettings.mockImplementationOnce(async () => {
+            oldSaveStarted.resolve();
+            await releaseOldSave.promise;
+        });
+        const manager = createManager(plugin);
+        try {
+            const oldPreparation = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await oldSaveStarted.promise;
+            manager.cancelActivePreparation();
+
+            const newPreparation = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await expect(newPreparation).resolves.toMatchObject({ ok: true, partial: false });
+            expect(plugin.vss.admitPreparedRebuild).toHaveBeenCalledWith(
+                newHandle,
+                expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+            );
+
+            releaseOldSave.resolve();
+            await expect(oldPreparation).resolves.toMatchObject({ ok: false, partial: false });
+
+            expect(plugin.vss.rollbackPreparedRebuild).toHaveBeenCalledWith(oldHandle, 'first-use');
+            expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('persists a taken-over auto policy when the cancelled save rejects', async () => {
+        const restoreDocument = installMockDocument();
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        const oldHandle = 'rejected-old-rebuild' as VSSPreparedRebuildHandle;
+        const newHandle = 'persisted-new-rebuild' as VSSPreparedRebuildHandle;
+        plugin.vss.rebuildLocalIndex
+            .mockResolvedValueOnce(createOperationSummary({ updated: 1, preparedRebuildHandle: oldHandle }))
+            .mockResolvedValueOnce(createOperationSummary({ updated: 1, preparedRebuildHandle: newHandle }));
+        const oldSaveStarted = createDeferred<void>();
+        const rejectOldSave = createDeferred<void>();
+        let saveAttempt = 0;
+        let persistedPolicy = 'always';
+        plugin.saveSettings.mockImplementation(async () => {
+            saveAttempt++;
+            if (saveAttempt === 1) {
+                oldSaveStarted.resolve();
+                await rejectOldSave.promise;
+                throw new Error('cancelled save failed');
+            }
+            persistedPolicy = plugin.settings.memoryApprovalPolicy;
+        });
+        const manager = createManager(plugin);
+        try {
+            const oldPreparation = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await oldSaveStarted.promise;
+            manager.cancelActivePreparation();
+
+            const newPreparation = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await expect(newPreparation).resolves.toMatchObject({ ok: true, partial: false });
+            expect(plugin.vss.admitPreparedRebuild).toHaveBeenCalledWith(
+                newHandle,
+                expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+            );
+            expect(persistedPolicy).toBe('auto-refresh-after-prepare');
+
+            rejectOldSave.resolve();
+            await expect(oldPreparation).resolves.toMatchObject({ ok: false, partial: false });
+
+            expect(plugin.vss.rollbackPreparedRebuild).toHaveBeenCalledWith(oldHandle, 'first-use');
+            expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
+            expect(persistedPolicy).toBe('auto-refresh-after-prepare');
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+            const reloadedPlugin = createPlugin(createPlan(), { memoryApprovalPolicy: persistedPolicy });
+            expect(reloadedPlugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
+        } finally {
+            restoreDocument();
+        }
+    });
+
     it('keeps a second chat out of Memory while policy admission is still pending', async () => {
         const restoreDocument = installMockDocument();
         const plan = createPlan({ reason: 'first-use', action: 'rebuild', requiresApproval: true });
@@ -892,8 +996,11 @@ describe('MemoryManager command decisions', () => {
             expect(result.ok).toBe(false);
             expect(plugin.settings.memoryApprovalPolicy).toBe('always');
             expect(persistedPolicy).toBe('always');
-            expect(plugin.saveSettings).toHaveBeenCalledTimes(3);
-            expect(plugin.vss.rollbackPreparedRebuild).toHaveBeenCalledWith('settings-changed');
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+            expect(plugin.vss.rollbackPreparedRebuild).toHaveBeenCalledWith(
+                DEFAULT_PREPARED_REBUILD_HANDLE,
+                'settings-changed',
+            );
             expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
             expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
         } finally {

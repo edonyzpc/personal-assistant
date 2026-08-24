@@ -1,5 +1,15 @@
 import type { VSSRebuildRecoveryReason } from "./local-state-store";
 
+declare const preparedRebuildHandleBrand: unique symbol;
+
+/**
+ * Identifies one in-memory deferred rebuild admission. Consumers must treat
+ * this value as opaque and return it unchanged to admit or roll back that run.
+ */
+export type VSSPreparedRebuildHandle = string & {
+    readonly [preparedRebuildHandleBrand]: true;
+};
+
 export const VSS_PARAMS = {
     quietWindow: 30 * 1000,
     maxDelay: 10 * 60 * 1000,
@@ -20,6 +30,7 @@ export interface VSSOperationSummary {
     verificationChecked: number;
     dirtyConfirmed: number;
     storagePersisted?: boolean;
+    preparedRebuildHandle?: VSSPreparedRebuildHandle;
 }
 
 export type VSSProgressPhase = "scanning" | "embedding" | "writing" | "retrying" | "ready";
