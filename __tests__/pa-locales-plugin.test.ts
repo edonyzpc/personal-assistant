@@ -46,6 +46,13 @@ describe("plugin locale resources", () => {
         expect(t("plugin.chat.history.minAgo", { count: 3 })).toBe("3 分钟前");
     });
 
+    it("localizes provider-save failure feedback in EN and ZH", () => {
+        expect(pluginT("plugin.settings.ai.provider.saveFailed", "en"))
+            .toBe("Could not save the AI provider settings. Review the current configuration and try again.");
+        expect(pluginT("plugin.settings.ai.provider.saveFailed", "zh"))
+            .toBe("无法保存 AI 服务商设置，请检查当前配置后重试。");
+    });
+
     it.each(["en", "zh"] as const)(
         "discloses silent first-use Memory boundaries in %s",
         (locale) => {

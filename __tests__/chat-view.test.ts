@@ -255,11 +255,12 @@ class MockElement {
         }
     }
 
-    click() {
+    click(detail = 0) {
         if (this.disabled) return undefined;
         const event = {
             target: this,
             currentTarget: this,
+            detail,
             stopPropagation: () => { },
             preventDefault: () => { },
             defaultPrevented: false,
@@ -4209,7 +4210,7 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonByText(containerEl, 'Ask').disabled).toBe(false);
     });
 
-    it('refreshes the setup banner when settings become complete', async () => {
+    it('refreshes the setup banner when Settings adds or removes the API token', async () => {
         const { view, containerEl, emitSettingsChanged, setAISetupIssue } = createView({
             withMarkdownLeaf: true,
             setupIssue: 'Add your API token in Settings first.',
@@ -4226,6 +4227,12 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('Add your API token in Settings first.');
         expect(allText(containerEl)).toContain('Ask about your notes');
         expect(getButtonByText(containerEl, 'Summarize current note').disabled).toBe(false);
+
+        setAISetupIssue('Add your API token in Settings first.');
+        await emitSettingsChanged();
+
+        expect(allText(containerEl)).toContain('Get Started');
+        expect(allText(containerEl)).toContain('Add your API token in Settings first.');
     });
 
     it('checks an unknown saved token only after the user explicitly sends', async () => {
@@ -4328,7 +4335,12 @@ describe('LLMView turn lifecycle', () => {
         expect(start.disabled).toBe(false);
     });
 
-    it('submits valid token-only setup with Enter', async () => {
+    it('submits valid token-only setup with Enter and restores composer focus', async () => {
+        const documentWithFocus = { activeElement: null as MockElement | null };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: documentWithFocus,
+        });
         const { view, containerEl, plugin } = createView({
             setupIssue: 'Add your API token in Settings first.',
             inlineSetup: true,
@@ -4337,6 +4349,7 @@ describe('LLMView turn lifecycle', () => {
         await view.onOpen();
         const tokenInput = getElementByClass(containerEl, 'pa-chat-setup-token-input');
         tokenInput.value = 'sk-test';
+        tokenInput.focus();
         const preventDefault = jest.fn();
 
         tokenInput.dispatchEvent('keydown', { key: 'Enter', preventDefault });
@@ -4344,6 +4357,60 @@ describe('LLMView turn lifecycle', () => {
 
         expect(preventDefault).toHaveBeenCalledTimes(1);
         expect(plugin.completeAISetup).toHaveBeenCalledWith({ token: 'sk-test' });
+        expect(documentWithFocus.activeElement).toBe(getTextArea(containerEl));
+    });
+
+    it('does not focus the composer after pointer setup submission', async () => {
+        const documentWithFocus = { activeElement: null as MockElement | null };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: documentWithFocus,
+        });
+        const { view, containerEl } = createView({
+            setupIssue: 'Add your API token in Settings first.',
+            inlineSetup: true,
+            tokenState: 'missing',
+        });
+        await view.onOpen();
+        const tokenInput = getElementByClass(containerEl, 'pa-chat-setup-token-input');
+        tokenInput.value = 'sk-test';
+        const start = getButtonByText(containerEl, 'Start');
+        start.focus();
+
+        await start.click(1);
+
+        expect(documentWithFocus.activeElement).toBe(start);
+        expect(documentWithFocus.activeElement).not.toBe(getTextArea(containerEl));
+    });
+
+    it('does not restore composer focus when keyboard setup finishes after the session closes', async () => {
+        let resolveSetup: ((result: { ok: true }) => void) | undefined;
+        const documentWithFocus = { activeElement: null as MockElement | null };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: documentWithFocus,
+        });
+        const { view, containerEl, plugin } = createView({
+            setupIssue: 'Add your API token in Settings first.',
+            inlineSetup: true,
+            tokenState: 'missing',
+        });
+        (plugin.completeAISetup as jest.Mock).mockImplementationOnce(() => new Promise<{ ok: true }>((resolve) => {
+            resolveSetup = resolve;
+        }));
+        await view.onOpen();
+        const tokenInput = getElementByClass(containerEl, 'pa-chat-setup-token-input');
+        tokenInput.value = 'sk-test';
+        tokenInput.focus();
+
+        tokenInput.dispatchEvent('keydown', { key: 'Enter', preventDefault: jest.fn() });
+        await flushPromises();
+        await view.onClose();
+        documentWithFocus.activeElement = null;
+        resolveSetup!({ ok: true });
+        await flushPromises();
+
+        expect(documentWithFocus.activeElement).toBeNull();
     });
 
     it('keeps inline setup controls touch-sized on mobile', () => {

@@ -1172,6 +1172,25 @@ function fingerprintPluginData(value: unknown): string {
     return value === undefined ? "undefined" : stableStringify(value);
 }
 
+type LegacyAiProviderMigration = "confirmed-qwen" | "provider-selection-required";
+
+const LEGACY_QWEN_MODEL_NAMES = new Set(["qwen-max", "qwen-turbo", "qwen-plus"]);
+
+function classifyLegacyAiProviderMigration(loaded: unknown): LegacyAiProviderMigration | null {
+    if (isFreshInstall(loaded)) return null;
+    if (!isLegacyV1Install(loaded)) {
+        const hasExplicitProvider = typeof loaded === "object"
+            && loaded !== null
+            && !Array.isArray(loaded)
+            && (loaded as Record<string, unknown>).aiProvider !== undefined;
+        return hasExplicitProvider ? null : "provider-selection-required";
+    }
+    const legacyModelName = (loaded as Record<string, unknown>).modelName;
+    return typeof legacyModelName === "string" && LEGACY_QWEN_MODEL_NAMES.has(legacyModelName)
+        ? "confirmed-qwen"
+        : "provider-selection-required";
+}
+
 function readVaultInsightsInjectionNoticeFlag(): boolean {
     try {
         return getPlatformLocalStorage()?.getItem(VAULT_INSIGHTS_INJECTION_NOTICE_KEY) === "1";
@@ -1188,6 +1207,14 @@ function writeVaultInsightsInjectionNoticeFlag(): void {
     }
 }
 
+export type AIProviderConfigurationPatch = Partial<Pick<PluginManagerSettings,
+    | "aiProvider"
+    | "aiProviderPreset"
+    | "baseURL"
+    | "chatModelName"
+    | "embeddingModelName"
+>>;
+
 export class PluginManager extends Plugin {
     settings!: PluginManagerSettings
     private _localGraph: LocalGraph | null = null;
@@ -1197,12 +1224,10 @@ export class PluginManager extends Plugin {
     // the file-open listener for this session. Not persisted — restarting the
     // app should always start with the listener disarmed.
     private isEnabledMetadataUpdating: boolean = false;
-    // True when the loaded data blob has the shape of a legacy v1.x install:
-    // non-empty but missing the `aiProvider` field. Used by migrateSettings
-    // to apply the qwen default exactly once on the upgrade path, rather
-    // than every time aiProvider happens to be empty (which is also a
-    // valid Phase 3 state on fresh installs and after the user clears it).
-    private needsLegacyAiProviderMigration: boolean = false;
+    // Derived from the raw data blob before defaults are merged. Only the three
+    // model values offered by the pre-Provider Qwen UI prove an earlier Qwen
+    // choice; all other provider-less legacy shapes fail closed to setup.
+    private legacyAiProviderMigration: LegacyAiProviderMigration | null = null;
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
     vss: VSS | null = null;
@@ -1306,6 +1331,16 @@ export class PluginManager extends Plugin {
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private settingsSaveTail: Promise<void> | null = null;
+    private aiSetupTransactionTail: Promise<void> | null = null;
+    // Store-scoped ownership guards: a failed inline setup may compensate only
+    // while no later mutation owns the same provider tuple or token secret.
+    private aiProviderConfigurationRevision = 0;
+    private aiTokenRevision = 0;
+    private aiExternalSettingsMutationEpoch = 0;
+    private aiPendingExternalProviderMutationEpoch: number | null = null;
+    private aiReadinessFailureRevision = 0;
+    private aiProviderCredentialTransitionCount = 0;
+    private aiSettingsNotificationDeferredDuringCredentialTransaction = false;
     private requiredSettingsTransactions: Set<Promise<unknown>> | null = null;
     private settingsMigrationBaselineFingerprint: string | null = null;
     private memoryQueueAuditPromise: Promise<void> | null = null;
@@ -10170,7 +10205,7 @@ export class PluginManager extends Plugin {
         this.legacyMemoryCompatibilityBarrier = new LegacyMemoryCompatibilityBarrier(loaded);
         this.legacyMemoryPayload = this.legacyMemoryCompatibilityBarrier.snapshot();
         const fresh = isFreshInstall(loaded);
-        this.needsLegacyAiProviderMigration = isLegacyV1Install(loaded);
+        this.legacyAiProviderMigration = classifyLegacyAiProviderMigration(loaded);
         const rawMemoryExtractionEnabled = (typeof loaded === "object" && loaded !== null)
             ? (loaded as Record<string, unknown>).memoryExtractionEnabled
             : undefined;
@@ -10276,14 +10311,14 @@ export class PluginManager extends Plugin {
         if (saved) await this.notifySettingsChanged();
     }
 
-    private async saveSettingsData(): Promise<void> {
+    private async saveSettingsData(settingsSnapshot: PluginManagerSettings = this.settings): Promise<void> {
         const barrier = this.legacyMemoryCompatibilityBarrier;
         if (!barrier) {
-            await this.saveData(this.settings);
+            await this.saveData(settingsSnapshot);
             return;
         }
         if (!barrier.isActive() && !barrier.isFinalizing()) {
-            await this.saveData(this.settings);
+            await this.saveData(settingsSnapshot);
             return;
         }
         const migrationBaseline = this.settingsMigrationBaselineFingerprint ?? null;
@@ -10292,7 +10327,7 @@ export class PluginManager extends Plugin {
                 && fingerprintPluginData(persisted) !== migrationBaseline) {
                 throw new PluginDataJsonMigrationConflictError();
             }
-            const composed = barrier.composeForSave(this.settings, persisted);
+            const composed = barrier.composeForSave(settingsSnapshot, persisted);
             if (!composed.ok) {
                 this.memoryGovernanceBootstrapErrorCode = composed.errorCode;
                 throw new MemoryGovernanceBootstrapError("legacy_save_collision");
@@ -11123,10 +11158,84 @@ export class PluginManager extends Plugin {
     }
 
     private async notifySettingsChanged() {
+        if (this.hasActiveAIProviderCredentialTransition()) {
+            this.aiSettingsNotificationDeferredDuringCredentialTransaction = true;
+            return;
+        }
         this.settingsChangeListeners ??= new Set();
         await Promise.allSettled(
             Array.from(this.settingsChangeListeners, (listener) => Promise.resolve().then(listener)),
         );
+    }
+
+    async notifyAIReadinessChanged(): Promise<void> {
+        if (this.unloading) return;
+        await this.enqueueAIConfigurationTransaction(async () => {
+            if (!this.unloading) {
+                await this.notifySettingsChanged();
+            }
+        });
+    }
+
+    /** Mark a Settings provider edit at invocation time so older queued Chat setup becomes stale. */
+    beginAIProviderConfigurationMutation(): number {
+        const epoch = (this.aiExternalSettingsMutationEpoch ?? 0) + 1;
+        this.aiExternalSettingsMutationEpoch = epoch;
+        this.aiPendingExternalProviderMutationEpoch = epoch;
+        return epoch;
+    }
+
+    private claimAIProviderTupleMutation(): number {
+        this.aiProviderConfigurationRevision = (this.aiProviderConfigurationRevision ?? 0) + 1;
+        return this.aiProviderConfigurationRevision;
+    }
+
+    private claimAITokenMutation(): number {
+        this.aiTokenRevision = (this.aiTokenRevision ?? 0) + 1;
+        return this.aiTokenRevision;
+    }
+
+    private hasActiveAIProviderCredentialTransition(): boolean {
+        return (this.aiProviderCredentialTransitionCount ?? 0) > 0;
+    }
+
+    private acquireAIProviderCredentialTransition(): () => void {
+        this.aiProviderCredentialTransitionCount = (this.aiProviderCredentialTransitionCount ?? 0) + 1;
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            this.aiProviderCredentialTransitionCount = Math.max(
+                0,
+                (this.aiProviderCredentialTransitionCount ?? 0) - 1,
+            );
+        };
+    }
+
+    private async settleAIProviderCredentialTransitionNotification(
+        shouldNotify: boolean,
+    ): Promise<void> {
+        if (shouldNotify) {
+            this.aiSettingsNotificationDeferredDuringCredentialTransaction = true;
+        }
+        if (this.hasActiveAIProviderCredentialTransition()) return;
+        const notificationWasDeferred = this.aiSettingsNotificationDeferredDuringCredentialTransaction === true;
+        this.aiSettingsNotificationDeferredDuringCredentialTransaction = false;
+        if (notificationWasDeferred && !this.unloading) {
+            await this.notifySettingsChanged();
+        }
+    }
+
+    private async failClosedAIProviderAfterCompensationFailure(logMessage: string): Promise<void> {
+        this.settings.aiProvider = "";
+        this.settings.aiProviderPreset = undefined;
+        this.claimAIProviderTupleMutation();
+        this.aiReadinessFailureRevision = (this.aiReadinessFailureRevision ?? 0) + 1;
+        try {
+            await this.saveSettingsData(this.settings);
+        } catch (error) {
+            this.log(logMessage, error);
+        }
     }
 
     async updateMemoryStatusBar() {
@@ -11565,6 +11674,11 @@ export class PluginManager extends Plugin {
     }
 
     private ensureAIConfigured(scope: AIReadinessScope = "chat"): boolean {
+        if (this.hasActiveAIProviderCredentialTransition()) {
+            const issue = this.getAISetupIssue(scope);
+            if (issue) new Notice(issue, 5000);
+            return false;
+        }
         if (this.getAIReadiness(scope).issue === "token_unknown") {
             this.refreshAPITokenPresence();
             void this.notifySettingsChanged();
@@ -11607,19 +11721,22 @@ export class PluginManager extends Plugin {
             const legacyModelName = typeof settingsWithLegacyModel.modelName === "string"
                 ? settingsWithLegacyModel.modelName.trim()
                 : "";
-            // Legacy v1.x migration: pre-Provider users had no aiProvider field
-            // and stored their model in `modelName`. Detected by the *shape* of
-            // the persisted blob (non-empty AND lacking aiProvider) rather than
-            // a runtime "is empty now" check, so we don't re-trigger on every
-            // launch where aiProvider happens to be "" (fresh install, or the
-            // user intentionally cleared it via the new provider chooser).
-            if (this.needsLegacyAiProviderMigration) {
+            // Classify from the pre-merge raw blob. The old provider-less UI
+            // offered exactly three Qwen models, so only those values can be
+            // grandfathered as an earlier Qwen choice. Unknown legacy shapes
+            // must enter the current provider-selection flow.
+            if (this.legacyAiProviderMigration === "confirmed-qwen") {
                 this.log("Migrating settings from old version");
                 this.settings.aiProvider = 'qwen';
                 this.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
                 this.settings.chatModelName = legacyModelName || DEFAULT_SETTINGS.chatModelName;
                 this.settings.embeddingModelName = 'text-embedding-v3';
-                this.needsLegacyAiProviderMigration = false;
+                this.legacyAiProviderMigration = null;
+                changed = true;
+            } else if (this.legacyAiProviderMigration === "provider-selection-required") {
+                this.settings.aiProvider = "";
+                delete this.settings.aiProviderPreset;
+                this.legacyAiProviderMigration = null;
                 changed = true;
             }
             if (
@@ -11689,15 +11806,12 @@ export class PluginManager extends Plugin {
                 delete (this.settings as Partial<PluginManagerSettings> & { isEnabledMetadataUpdating?: unknown }).isEnabledMetadataUpdating;
                 changed = true;
             }
-            // v2.0.0 removed Ollama provider support. Users upgrading from v1.x with
-            // `aiProvider: "ollama"` would otherwise hit a hard runtime throw on first
-            // chat. Migrate them to the qwen default so the app remains usable; the v2.0.0
-            // CHANGELOG break-change note instructs them to reconfigure their model.
+            // v2.0.0 removed Ollama provider support. A prior local-provider
+            // choice cannot authorize a remote Qwen endpoint, so retain the
+            // tuple for reference but require an explicit current provider.
             if (this.settings.aiProvider === "ollama") {
-                this.settings.aiProvider = "qwen";
-                this.settings.baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-                this.settings.chatModelName = DEFAULT_SETTINGS.chatModelName;
-                this.settings.embeddingModelName = "text-embedding-v4";
+                this.settings.aiProvider = "";
+                delete this.settings.aiProviderPreset;
                 changed = true;
             }
             if (typeof this.settings.shareAnonymousCapabilityUsage !== "boolean") {
@@ -11817,20 +11931,33 @@ export class PluginManager extends Plugin {
         return null;
     }
 
-    setAPITokenSecret(value: string): void {
+    setAPITokenSecret(value: string, origin: "settings" | "inline-setup" = "settings"): void {
         const normalized = normalizeAPIToken(value) ?? "";
         this.cancelActiveMemoryPreparation();
         const currentId = this.getAPITokenSecretId();
-        this.app.secretStorage.setSecret(currentId, normalized);
-        if (normalized === "") {
-            for (const legacyId of this.getAPITokenSecretCandidateIds()) {
-                if (legacyId !== currentId) {
-                    this.app.secretStorage.setSecret(legacyId, "");
+        try {
+            this.app.secretStorage.setSecret(currentId, normalized);
+            if (normalized === "") {
+                for (const legacyId of this.getAPITokenSecretCandidateIds()) {
+                    if (legacyId !== currentId) {
+                        this.app.secretStorage.setSecret(legacyId, "");
+                    }
                 }
             }
+        } catch (error) {
+            this.clearTokenCache();
+            this.claimAITokenMutation();
+            if (origin === "settings") {
+                this.aiExternalSettingsMutationEpoch = (this.aiExternalSettingsMutationEpoch ?? 0) + 1;
+            }
+            throw error;
         }
         this.token = "";
         this.tokenCacheState = normalized ? "present" : "missing";
+        this.claimAITokenMutation();
+        if (origin === "settings") {
+            this.aiExternalSettingsMutationEpoch = (this.aiExternalSettingsMutationEpoch ?? 0) + 1;
+        }
     }
 
     hasConfiguredAPIToken(): boolean {
@@ -11847,6 +11974,10 @@ export class PluginManager extends Plugin {
     }
 
     refreshAPITokenPresence(): APITokenCacheState {
+        if (this.hasActiveAIProviderCredentialTransition()) {
+            this.aiSettingsNotificationDeferredDuringCredentialTransaction = true;
+            return "unknown";
+        }
         try {
             const token = this.getConfiguredAPITokenSecret();
             this.tokenCacheState = token ? "present" : "missing";
@@ -11860,6 +11991,10 @@ export class PluginManager extends Plugin {
     }
 
     getAIReadiness(scope: AIReadinessScope = "chat"): AIReadinessSnapshot {
+        if (this.hasActiveAIProviderCredentialTransition()) {
+            this.aiSettingsNotificationDeferredDuringCredentialTransaction = true;
+            return assessAIReadiness(this.settings, "unknown", scope);
+        }
         return assessAIReadiness(this.settings, this.tokenCacheState, scope);
     }
 
@@ -11884,6 +12019,10 @@ export class PluginManager extends Plugin {
     }
 
     async getAPIToken() {
+        if (this.hasActiveAIProviderCredentialTransition()) {
+            this.aiSettingsNotificationDeferredDuringCredentialTransaction = true;
+            throw new Error("AI provider configuration is being updated. Try again.");
+        }
         if (this.token !== "") {
             return this.token;
         }
@@ -11907,18 +12046,185 @@ export class PluginManager extends Plugin {
         this.memoryManager?.cancelActivePreparation();
     }
 
-    private completeAISetup(input: AISetupInput): Promise<AISetupResult> {
-        return this.trackRequiredSettingsTransaction(this.completeAISetupTransaction(input));
+    private enqueueAIConfigurationTransaction<T>(operation: () => Promise<T>): Promise<T> {
+        this.aiSetupTransactionTail ??= Promise.resolve();
+        const transaction = this.aiSetupTransactionTail.then(operation, operation);
+        this.aiSetupTransactionTail = transaction.then(() => undefined, () => undefined);
+        return this.trackRequiredSettingsTransaction(transaction);
     }
 
-    private async completeAISetupTransaction(input: AISetupInput): Promise<AISetupResult> {
+    updateAIProviderConfiguration(
+        patch: AIProviderConfigurationPatch,
+        invocationEpoch: number,
+    ): Promise<AISetupResult> {
         if (this.unloading) {
+            if (this.aiPendingExternalProviderMutationEpoch === invocationEpoch) {
+                this.aiPendingExternalProviderMutationEpoch = null;
+            }
+            return Promise.resolve({ ok: false, code: "settings_save_failed" });
+        }
+        const requestedPatch = { ...patch };
+        const startingTokenRevision = this.aiTokenRevision ?? 0;
+        const releaseCredentialTransition = this.acquireAIProviderCredentialTransition();
+        const transaction = this.enqueueAIConfigurationTransaction(
+            () => this.updateAIProviderConfigurationTransaction(
+                requestedPatch,
+                startingTokenRevision,
+                releaseCredentialTransition,
+            ),
+        );
+        if (this.aiPendingExternalProviderMutationEpoch === invocationEpoch) {
+            this.aiPendingExternalProviderMutationEpoch = null;
+        }
+        return transaction;
+    }
+
+    private async updateAIProviderConfigurationTransaction(
+        patch: AIProviderConfigurationPatch,
+        startingTokenRevision: number,
+        releaseCredentialTransition: () => void,
+    ): Promise<AISetupResult> {
+        const startingFailureRevision = this.aiReadinessFailureRevision ?? 0;
+        let result: AISetupResult | undefined;
+        try {
+            result = await this.enqueueSettingsWrite(
+                () => this.updateAIProviderConfigurationExclusive(patch, startingTokenRevision),
+            );
+            return result;
+        } finally {
+            const readinessFailedClosed = (this.aiReadinessFailureRevision ?? 0) !== startingFailureRevision;
+            releaseCredentialTransition();
+            await this.settleAIProviderCredentialTransitionNotification(
+                result?.ok === true || readinessFailedClosed,
+            );
+        }
+    }
+
+    private async updateAIProviderConfigurationExclusive(
+        patch: AIProviderConfigurationPatch,
+        startingTokenRevision: number,
+    ): Promise<AISetupResult> {
+        const previousSettings = {
+            aiProvider: this.settings.aiProvider,
+            aiProviderPreset: this.settings.aiProviderPreset,
+            baseURL: this.settings.baseURL,
+            chatModelName: this.settings.chatModelName,
+            embeddingModelName: this.settings.embeddingModelName,
+        };
+        this.cancelActiveMemoryPreparation();
+        let ownedProviderRevision = this.claimAIProviderTupleMutation();
+        const nextSettings: PluginManagerSettings = { ...this.settings, ...patch };
+
+        try {
+            await this.saveSettingsData(nextSettings);
+            if (this.aiProviderConfigurationRevision === ownedProviderRevision) {
+                Object.assign(this.settings, {
+                    aiProvider: nextSettings.aiProvider,
+                    aiProviderPreset: nextSettings.aiProviderPreset,
+                    baseURL: nextSettings.baseURL,
+                    chatModelName: nextSettings.chatModelName,
+                    embeddingModelName: nextSettings.embeddingModelName,
+                });
+            }
+            return { ok: true };
+        } catch (error) {
+            this.log("Failed to save AI provider from Settings", error);
+        }
+
+        if ((this.aiTokenRevision ?? 0) !== startingTokenRevision) {
+            await this.failClosedAIProviderAfterCompensationFailure(
+                "Failed to persist incomplete AI provider state after concurrent token mutation",
+            );
+            return { ok: false, code: "compensation_failed" };
+        }
+
+        if (this.aiProviderConfigurationRevision !== ownedProviderRevision) {
+            return { ok: false, code: "settings_save_failed" };
+        }
+
+        ownedProviderRevision = this.claimAIProviderTupleMutation();
+        try {
+            await this.saveSettingsData({ ...this.settings, ...previousSettings });
+            if ((this.aiTokenRevision ?? 0) !== startingTokenRevision) {
+                await this.failClosedAIProviderAfterCompensationFailure(
+                    "Failed to persist incomplete AI provider state after token mutation during rollback",
+                );
+                return { ok: false, code: "compensation_failed" };
+            }
+            return { ok: false, code: "settings_save_failed" };
+        } catch (compensationError) {
+            this.log("Failed to restore AI provider settings after Settings save failure", compensationError);
+        }
+
+        // A failed rollback write means the durable tuple cannot be proven.
+        // Fail closed and persist a retryable state without broadcasting a
+        // successful edit. Standalone token edits remain independently owned.
+        if (this.aiProviderConfigurationRevision === ownedProviderRevision) {
+            await this.failClosedAIProviderAfterCompensationFailure(
+                "Failed to persist incomplete AI provider state after rollback failure",
+            );
+        }
+        return { ok: false, code: "compensation_failed" };
+    }
+
+    private completeAISetup(input: AISetupInput): Promise<AISetupResult> {
+        if (this.unloading) {
+            return Promise.resolve({ ok: false, code: "settings_save_failed" });
+        }
+        if (typeof this.aiPendingExternalProviderMutationEpoch === "number") {
+            return Promise.resolve({ ok: false, code: "settings_save_failed" });
+        }
+        const requestedInput = { ...input };
+        const submittedExternalSettingsEpoch = this.aiExternalSettingsMutationEpoch ?? 0;
+        const releaseCredentialTransition = normalizeAPIToken(requestedInput.token)
+            ? this.acquireAIProviderCredentialTransition()
+            : null;
+        return this.enqueueAIConfigurationTransaction(
+            () => this.completeAISetupTransaction(
+                requestedInput,
+                submittedExternalSettingsEpoch,
+                releaseCredentialTransition,
+            ),
+        );
+    }
+
+    private async completeAISetupTransaction(
+        input: AISetupInput,
+        submittedExternalSettingsEpoch: number,
+        releaseCredentialTransition: (() => void) | null,
+    ): Promise<AISetupResult> {
+        const startingFailureRevision = this.aiReadinessFailureRevision ?? 0;
+        let result: AISetupResult | undefined;
+        try {
+            result = await this.enqueueSettingsWrite(
+                () => this.completeAISetupExclusive(input, submittedExternalSettingsEpoch),
+            );
+            return result;
+        } finally {
+            const readinessFailedClosed = (this.aiReadinessFailureRevision ?? 0) !== startingFailureRevision;
+            releaseCredentialTransition?.();
+            await this.settleAIProviderCredentialTransitionNotification(
+                result?.ok === true || readinessFailedClosed,
+            );
+        }
+    }
+
+    private async completeAISetupExclusive(
+        input: AISetupInput,
+        submittedExternalSettingsEpoch: number,
+    ): Promise<AISetupResult> {
+        if ((this.aiExternalSettingsMutationEpoch ?? 0) !== submittedExternalSettingsEpoch) {
             return { ok: false, code: "settings_save_failed" };
         }
         const preset = input.presetKey ? PROVIDER_PRESETS[input.presetKey] : undefined;
         if (input.presetKey && (!preset || input.presetKey === "custom")) {
             return { ok: false, code: "invalid_configuration" };
         }
+
+        const startingProviderRevision = this.aiProviderConfigurationRevision ?? 0;
+        const startingTokenRevision = this.aiTokenRevision ?? 0;
+        let ownedProviderRevision = startingProviderRevision;
+        let ownedTokenRevision = startingTokenRevision;
 
         const previousSettings = {
             aiProvider: this.settings.aiProvider,
@@ -11958,44 +12264,72 @@ export class PluginManager extends Plugin {
                 return { ok: false, code: "token_save_failed" };
             }
             try {
-                this.setAPITokenSecret(requestedToken);
+                this.setAPITokenSecret(requestedToken, "inline-setup");
                 tokenWritten = true;
+                ownedTokenRevision = this.aiTokenRevision;
             } catch (error) {
                 this.log("Failed to save API token during inline setup", error);
                 try {
-                    this.setAPITokenSecret(previousToken ?? "");
+                    this.setAPITokenSecret(previousToken ?? "", "inline-setup");
                 } catch (compensationError) {
                     this.clearTokenCache();
                     this.log("Failed to compensate API token after inline setup write failure", compensationError);
+                    await this.failClosedAIProviderAfterCompensationFailure(
+                        "Failed to persist incomplete AI provider state after token write compensation failure",
+                    );
                     return { ok: false, code: "compensation_failed" };
                 }
                 return { ok: false, code: "token_save_failed" };
             }
         }
 
+        if (!preset) {
+            return { ok: true };
+        }
+
         this.cancelActiveMemoryPreparation();
-        Object.assign(this.settings, nextSettings);
+        ownedProviderRevision = this.claimAIProviderTupleMutation();
+        const settingsSnapshot: PluginManagerSettings = { ...this.settings, ...nextSettings };
         try {
-            await this.persistRequiredSettings();
+            await this.saveSettingsData(settingsSnapshot);
+            if (this.aiProviderConfigurationRevision === ownedProviderRevision) {
+                Object.assign(this.settings, nextSettings);
+            }
             return { ok: true };
         } catch (error) {
             this.log("Failed to save AI provider during inline setup", error);
-            Object.assign(this.settings, previousSettings);
+            const ownsProviderTuple = this.aiProviderConfigurationRevision === ownedProviderRevision;
+            const ownsToken = tokenWritten && this.aiTokenRevision === ownedTokenRevision;
+            if (ownsProviderTuple) {
+                ownedProviderRevision = this.claimAIProviderTupleMutation();
+            }
             let compensationFailed = false;
-            if (tokenWritten) {
+            let providerCompensationFailed = false;
+            let tokenCompensationFailed = false;
+            if (ownsToken) {
                 try {
-                    this.setAPITokenSecret(previousToken ?? "");
+                    this.setAPITokenSecret(previousToken ?? "", "inline-setup");
                 } catch (compensationError) {
                     compensationFailed = true;
+                    tokenCompensationFailed = true;
                     this.clearTokenCache();
                     this.log("Failed to restore API token after inline setup failure", compensationError);
                 }
             }
-            try {
-                await this.persistRequiredSettings({ notify: false });
-            } catch (compensationError) {
-                compensationFailed = true;
-                this.log("Failed to restore AI provider settings after inline setup failure", compensationError);
+            if (ownsProviderTuple) {
+                try {
+                    await this.saveSettingsData({ ...this.settings, ...previousSettings });
+                } catch (compensationError) {
+                    compensationFailed = true;
+                    providerCompensationFailed = true;
+                    this.log("Failed to restore AI provider settings after inline setup failure", compensationError);
+                }
+            }
+            if ((providerCompensationFailed || tokenCompensationFailed)
+                && this.aiProviderConfigurationRevision === ownedProviderRevision) {
+                await this.failClosedAIProviderAfterCompensationFailure(
+                    "Failed to persist incomplete AI provider state after inline setup rollback failure",
+                );
             }
             return {
                 ok: false,
