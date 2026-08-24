@@ -483,6 +483,7 @@
     "plugin.settings.ai.provider.switch.presetMessage": "Switching providers replaces your Base URL, chat model, and Memory model with that preset's defaults. You can edit them afterward. Your API token is kept but may need to be replaced.",
     "plugin.settings.ai.provider.switch.confirm": "Switch",
     "plugin.settings.ai.provider.prompt": "Choose an AI provider above to configure your API token, base URL, and model.",
+    "plugin.settings.ai.provider.saveFailed": "Could not save the AI provider settings. Review the current configuration and try again.",
     "plugin.settings.ai.apiToken.name": "API Token",
     "plugin.settings.ai.apiToken.desc": "Stored securely in your OS keychain (macOS Keychain / iOS Keychain / Windows Credential Manager). Use the button to add or edit it; clear it in the editor to remove it.",
     "plugin.settings.ai.apiToken.remove.title": "Remove API token?",

@@ -483,6 +483,7 @@
     "plugin.settings.ai.provider.switch.presetMessage": "切换服务商会用该预设的默认值替换 Base URL、聊天模型和 Memory model。之后你仍可编辑。API token 会保留，但可能需要替换。",
     "plugin.settings.ai.provider.switch.confirm": "切换",
     "plugin.settings.ai.provider.prompt": "请先在上方选择 AI 服务商，然后配置 API token、base URL 和模型。",
+    "plugin.settings.ai.provider.saveFailed": "无法保存 AI 服务商设置，请检查当前配置后重试。",
     "plugin.settings.ai.apiToken.name": "API Token",
     "plugin.settings.ai.apiToken.desc": "安全存储在你的系统 keychain 中（macOS Keychain / iOS Keychain / Windows Credential Manager）。使用按钮添加或编辑；需要移除时，在编辑器中清空并保存。",
     "plugin.settings.ai.apiToken.remove.title": "移除 API token？",

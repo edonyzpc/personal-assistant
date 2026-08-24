@@ -10140,7 +10140,7 @@ describe('settings migration', () => {
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
     });
 
-    it('migrates removed ollama provider to qwen default on v2.0.0 upgrade', async () => {
+    it('requires provider selection after migrating the removed Ollama provider', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.app = createMigrationApp();
         plugin.settings = {
@@ -10156,10 +10156,10 @@ describe('settings migration', () => {
 
         await plugin.migrateSettings();
 
-        expect(plugin.settings.aiProvider).toBe('qwen');
-        expect(plugin.settings.baseURL).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
-        expect(plugin.settings.chatModelName).toBe('qwen3.6-plus');
-        expect(plugin.settings.embeddingModelName).toBe('text-embedding-v4');
+        expect(plugin.settings.aiProvider).toBe('');
+        expect(plugin.settings.baseURL).toBe('http://localhost:11434');
+        expect(plugin.settings.chatModelName).toBe('llama3.1');
+        expect(plugin.settings.embeddingModelName).toBe('mxbai-embed-large');
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
     });
 

@@ -671,7 +671,8 @@ function makeMockApp() {
 }
 
 function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
-    return {
+    let aiProviderMutationEpoch = 0;
+    const plugin = {
         manifest: {
             version: '2.8.0',
         },
@@ -826,10 +827,21 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         getAPITokenCacheState: jest.fn<() => 'unknown' | 'present' | 'missing'>(() => 'missing'),
         refreshAPITokenPresence: jest.fn<() => 'unknown' | 'present' | 'missing'>(() => 'missing'),
         setAPITokenSecret: jest.fn(),
+        notifyAIReadinessChanged: jest.fn(async () => undefined),
+        beginAIProviderConfigurationMutation: jest.fn(() => ++aiProviderMutationEpoch),
+        updateAIProviderConfiguration: jest.fn<(
+            patch: Record<string, unknown>,
+            invocationEpoch: number,
+        ) => Promise<{ ok: boolean; code?: string }>>(),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
         },
     };
+    plugin.updateAIProviderConfiguration.mockImplementation(async (patch) => {
+        Object.assign(plugin.settings, patch);
+        return { ok: true };
+    });
+    return plugin;
 }
 
 const localStorageValues = new Map<string, string>();
@@ -3901,13 +3913,23 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         await dropdown!.onChange!('qwen-intl');
 
+        expect(plugin.beginAIProviderConfigurationMutation).toHaveBeenCalledTimes(1);
+        expect(plugin.beginAIProviderConfigurationMutation.mock.invocationCallOrder[0])
+            .toBeLessThan(plugin.updateAIProviderConfiguration.mock.invocationCallOrder[0]);
         expect(plugin.settings.aiProvider).toBe('qwen');
         expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS['qwen-intl'].baseURL);
         expect(plugin.settings.chatModelName).toBe(PROVIDER_PRESETS['qwen-intl'].chatModelName);
         expect(plugin.settings.embeddingModelName).toBe(PROVIDER_PRESETS['qwen-intl'].embeddingModelName);
         expect(plugin.refreshAPITokenPresence).toHaveBeenCalledTimes(1);
         expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(1);
-        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+        expect(plugin.updateAIProviderConfiguration).toHaveBeenCalledWith({
+            aiProvider: 'qwen',
+            aiProviderPreset: 'qwen-intl',
+            baseURL: PROVIDER_PRESETS['qwen-intl'].baseURL,
+            chatModelName: PROVIDER_PRESETS['qwen-intl'].chatModelName,
+            embeddingModelName: PROVIDER_PRESETS['qwen-intl'].embeddingModelName,
+        }, 1);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
         // No confirmation needed when there is no prior preset to compare against.
         expect((confirmUserAction as jest.Mock)).not.toHaveBeenCalled();
     });
@@ -3962,6 +3984,244 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.settings.aiProvider).toBe('openai');
         expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS.openai.baseURL);
         expect(plugin.settings.chatModelName).toBe(PROVIDER_PRESETS.openai.chatModelName);
+    });
+
+    it('a confirmed preset switch supersedes an unflushed provider text draft', async () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            aiProviderPreset: 'qwen',
+            baseURL: PROVIDER_PRESETS.qwen.baseURL,
+            chatModelName: PROVIDER_PRESETS.qwen.chatModelName,
+            embeddingModelName: PROVIDER_PRESETS.qwen.embeddingModelName,
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const records = getMockSettingRecords();
+        const baseURL = records.find((record) => record.name === 'Base URL')?.texts[0];
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+
+        baseURL?.onChange?.('https://draft.example/v1');
+        expect(plugin.updateAIProviderConfiguration).not.toHaveBeenCalled();
+
+        setMockConfirmDecision(true);
+        await dropdown!.onChange!('openai');
+
+        expect(plugin.beginAIProviderConfigurationMutation).toHaveBeenCalledTimes(2);
+        expect(plugin.updateAIProviderConfiguration).toHaveBeenCalledTimes(1);
+        expect(plugin.updateAIProviderConfiguration).toHaveBeenCalledWith({
+            aiProvider: 'openai',
+            aiProviderPreset: 'openai',
+            baseURL: PROVIDER_PRESETS.openai.baseURL,
+            chatModelName: PROVIDER_PRESETS.openai.chatModelName,
+            embeddingModelName: PROVIDER_PRESETS.openai.embeddingModelName,
+        }, 2);
+        expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS.openai.baseURL);
+    });
+
+    it('switching an unflushed provider text draft to Custom preserves every drafted field', async () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            aiProviderPreset: 'qwen',
+            baseURL: PROVIDER_PRESETS.qwen.baseURL,
+            chatModelName: PROVIDER_PRESETS.qwen.chatModelName,
+            embeddingModelName: PROVIDER_PRESETS.qwen.embeddingModelName,
+            showAdvancedMemoryControls: true,
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const records = getMockSettingRecords();
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+        records.find((record) => record.name === 'Base URL')?.texts[0]
+            ?.onChange?.('https://draft.example/v1');
+        records.find((record) => record.name === 'Chat Model Name')?.texts[0]
+            ?.onChange?.('draft-chat');
+        records.find((record) => record.name === 'Memory model')?.texts[0]
+            ?.onChange?.('draft-embed');
+
+        await dropdown!.onChange!('custom');
+
+        expect(plugin.updateAIProviderConfiguration).toHaveBeenCalledTimes(1);
+        expect(plugin.updateAIProviderConfiguration).toHaveBeenCalledWith({
+            aiProvider: 'qwen',
+            aiProviderPreset: 'custom',
+            baseURL: 'https://draft.example/v1',
+            chatModelName: 'draft-chat',
+            embeddingModelName: 'draft-embed',
+        }, 4);
+        expect(plugin.settings).toMatchObject({
+            aiProviderPreset: 'custom',
+            baseURL: 'https://draft.example/v1',
+            chatModelName: 'draft-chat',
+            embeddingModelName: 'draft-embed',
+        });
+        expect(confirmUserAction).not.toHaveBeenCalled();
+    });
+
+    it('keeps a pending Memory-model draft across an advanced-controls rerender and refreshes after success', async () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            aiProviderPreset: 'qwen',
+            embeddingModelName: PROVIDER_PRESETS.qwen.embeddingModelName,
+            showAdvancedMemoryControls: true,
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const originalMemoryModel = getMockSettingRecords()
+            .find((record) => record.name === 'Memory model')?.texts[0];
+        originalMemoryModel?.onChange?.('draft-embedding-model');
+        (tab as unknown as { rebuildMemoryAdvanced(): void }).rebuildMemoryAdvanced();
+
+        const rerenderedDraft = [...getMockSettingRecords()].reverse()
+            .find((record) => record.name === 'Memory model')?.texts[0];
+        expect(rerenderedDraft?.value).toBe('draft-embedding-model');
+        expect(plugin.settings.embeddingModelName).toBe(PROVIDER_PRESETS.qwen.embeddingModelName);
+
+        (tab as unknown as {
+            debouncedAIProviderSaveRunner: { run(): unknown };
+        }).debouncedAIProviderSaveRunner.run();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const refreshedValue = [...getMockSettingRecords()].reverse()
+            .find((record) => record.name === 'Memory model')?.texts[0]?.value;
+        expect(refreshedValue).toBe('draft-embedding-model');
+        expect(plugin.settings.embeddingModelName).toBe('draft-embedding-model');
+        expect((tab as unknown as {
+            latestAIProviderConfigurationDraft: unknown;
+        }).latestAIProviderConfigurationDraft).toBeNull();
+    });
+
+    it('preserves the live background-Memory toggle while a provider save settles during confirmation', async () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            aiProviderPreset: 'qwen',
+            embeddingModelName: PROVIDER_PRESETS.qwen.embeddingModelName,
+            memoryApprovalPolicy: 'always',
+            showAdvancedMemoryControls: true,
+        });
+        let resolveProviderSave!: () => void;
+        const providerSavePending = new Promise<void>((resolve) => {
+            resolveProviderSave = resolve;
+        });
+        plugin.updateAIProviderConfiguration.mockImplementationOnce(async (patch) => {
+            await providerSavePending;
+            Object.assign(plugin.settings, patch);
+            return { ok: true };
+        });
+        let resolveConfirmation!: (confirmed: boolean) => void;
+        const confirmationPending = new Promise<boolean>((resolve) => {
+            resolveConfirmation = resolve;
+        });
+        (confirmUserAction as jest.Mock).mockImplementationOnce(() => confirmationPending);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const memoryModel = records.find((record) => record.name === 'Memory model')?.texts[0];
+        const backgroundToggle = records
+            .find((record) => record.name === 'Keep memory updated in background')?.toggles[0];
+        memoryModel?.onChange?.('settled-embedding-model');
+        (tab as unknown as {
+            debouncedAIProviderSaveRunner: { run(): unknown };
+        }).debouncedAIProviderSaveRunner.run();
+
+        expect(backgroundToggle?.onChange).toBeDefined();
+        if (backgroundToggle) backgroundToggle.value = true;
+        const toggleChange = backgroundToggle?.onChange?.(true) as Promise<void>;
+        await Promise.resolve();
+        expect(confirmUserAction).toHaveBeenCalledTimes(1);
+
+        resolveProviderSave();
+        for (let index = 0; index < 4; index += 1) await Promise.resolve();
+
+        const backgroundRecordsAfterProviderSettle = records
+            .filter((record) => record.name === 'Keep memory updated in background');
+        expect(backgroundRecordsAfterProviderSettle).toHaveLength(1);
+        expect(backgroundRecordsAfterProviderSettle[0]?.toggles[0]).toBe(backgroundToggle);
+        expect(memoryModel?.value).toBe('settled-embedding-model');
+        expect(plugin.settings.embeddingModelName).toBe('settled-embedding-model');
+        expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+
+        resolveConfirmation(true);
+        await toggleChange;
+
+        const visibleBackgroundToggle = [...records].reverse()
+            .find((record) => record.name === 'Keep memory updated in background')?.toggles[0];
+        expect(visibleBackgroundToggle).toBe(backgroundToggle);
+        expect(visibleBackgroundToggle?.value).toBe(true);
+        expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
+        expect(plugin.memoryManager.scheduleReconcile).toHaveBeenCalledWith('settings');
+        expect(plugin.memoryManager.scheduleAutoFlush).toHaveBeenCalledWith('settings');
+    });
+
+    it('ignores an old provider failure but rolls the latest failed draft back with localized feedback', async () => {
+        const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
+        Notice.mockClear();
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            aiProviderPreset: 'qwen',
+            baseURL: PROVIDER_PRESETS.qwen.baseURL,
+            chatModelName: PROVIDER_PRESETS.qwen.chatModelName,
+        });
+        const requests: Array<{
+            resolve: (result: { ok: boolean; code?: string }) => void;
+        }> = [];
+        plugin.updateAIProviderConfiguration.mockImplementation(() => (
+            new Promise((resolve) => { requests.push({ resolve }); })
+        ));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const refreshSpy = jest.spyOn(
+            tab as unknown as { refreshAIProviderConfigurationControls(): void },
+            'refreshAIProviderConfigurationControls',
+        );
+        const providerDebounce = (tab as unknown as {
+            debouncedAIProviderSaveRunner: { run(): unknown };
+        }).debouncedAIProviderSaveRunner;
+
+        getMockSettingRecords().find((record) => record.name === 'Base URL')?.texts[0]
+            ?.onChange?.('https://older-draft.example/v1');
+        providerDebounce.run();
+        expect(requests).toHaveLength(1);
+
+        getMockSettingRecords().find((record) => record.name === 'Chat Model Name')?.texts[0]
+            ?.onChange?.('newer-draft-chat');
+        requests[0].resolve({ ok: false, code: 'settings_save_failed' });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(refreshSpy).not.toHaveBeenCalled();
+        expect(Notice).not.toHaveBeenCalled();
+        expect((tab as unknown as {
+            latestAIProviderConfigurationDraft: { chatModelName?: string } | null;
+        }).latestAIProviderConfigurationDraft?.chatModelName).toBe('newer-draft-chat');
+
+        providerDebounce.run();
+        expect(requests).toHaveLength(2);
+        requests[1].resolve({ ok: false, code: 'settings_save_failed' });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(refreshSpy).toHaveBeenCalledTimes(1);
+        expect((tab as unknown as {
+            latestAIProviderConfigurationDraft: unknown;
+        }).latestAIProviderConfigurationDraft).toBeNull();
+        expect([...getMockSettingRecords()].reverse()
+            .find((record) => record.name === 'Base URL')?.texts[0]?.value)
+            .toBe(PROVIDER_PRESETS.qwen.baseURL);
+        expect([...getMockSettingRecords()].reverse()
+            .find((record) => record.name === 'Chat Model Name')?.texts[0]?.value)
+            .toBe(PROVIDER_PRESETS.qwen.chatModelName);
+        expect(Notice).toHaveBeenCalledWith(
+            'Could not save the AI provider settings. Review the current configuration and try again.',
+            5000,
+        );
     });
 
     it('switching to "custom" confirms and preserves URL/model fields', async () => {
@@ -4147,6 +4407,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         expect(confirmUserAction).toHaveBeenCalledTimes(1);
         expect(plugin.setAPITokenSecret).not.toHaveBeenCalled();
+        expect(plugin.notifyAIReadinessChanged).not.toHaveBeenCalled();
         expect(saveButton?.disabled).toBe(false);
     });
 
@@ -4176,6 +4437,9 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         expect(plugin.setAPITokenSecret).toHaveBeenCalledWith('');
         expect(plugin.setAPITokenSecret).toHaveBeenCalledTimes(1);
+        expect(plugin.notifyAIReadinessChanged).toHaveBeenCalledTimes(1);
+        expect(plugin.setAPITokenSecret.mock.invocationCallOrder[0])
+            .toBeLessThan(plugin.notifyAIReadinessChanged.mock.invocationCallOrder[0]);
     });
 
     it('saves once and refreshes the token button through the real click entrypoint', async () => {
@@ -4213,6 +4477,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         expect(plugin.setAPITokenSecret).toHaveBeenCalledWith('sk-modal-token');
         expect(plugin.setAPITokenSecret).toHaveBeenCalledTimes(1);
+        expect(plugin.notifyAIReadinessChanged).toHaveBeenCalledTimes(1);
         const latestApiTokenRecord = [...getMockSettingRecords()]
             .reverse()
             .find((record) => record.name === 'API Token');
@@ -4305,6 +4570,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         Notice.mockClear();
         const plugin = makePlugin({ aiProvider: 'qwen' });
         plugin.setAPITokenSecret.mockImplementationOnce(() => {
+            plugin.getAPITokenCacheState.mockReturnValue('unknown');
             throw new Error('write failed');
         });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
@@ -4330,9 +4596,18 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.log).toHaveBeenCalledWith('Failed to save API token');
         expect(JSON.stringify(plugin.log.mock.calls)).not.toContain('sk-sensitive-token');
         expect(Notice).toHaveBeenCalledWith('Could not save the API token. Try again.', 4000);
+        expect(Notice).not.toHaveBeenCalledWith('API token saved.', 3000);
+        expect(plugin.notifyAIReadinessChanged).toHaveBeenCalledTimes(1);
+        expect(plugin.setAPITokenSecret.mock.invocationCallOrder[0])
+            .toBeLessThan(plugin.notifyAIReadinessChanged.mock.invocationCallOrder[0]);
+        const failedStateTokenRecord = [...getMockSettingRecords()]
+            .reverse()
+            .find((record) => record.name === 'API Token');
+        expect(failedStateTokenRecord?.buttons[0]?.text).toBe('Manage API token');
 
         await saveButton!.onClick!();
         expect(plugin.setAPITokenSecret).toHaveBeenCalledTimes(2);
+        expect(plugin.notifyAIReadinessChanged).toHaveBeenCalledTimes(2);
     });
 
     it('reports a saved token even if refreshing the Settings row fails', async () => {
@@ -4414,16 +4689,22 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
         const legacyModelName = typeof loadedObject.modelName === 'string'
             ? loadedObject.modelName.trim()
             : '';
+        const hasConfirmedLegacyQwenModel = typeof loadedObject.modelName === 'string'
+            && new Set(['qwen-max', 'qwen-turbo', 'qwen-plus']).has(loadedObject.modelName);
         if (fresh) {
             settings.aiProvider = '';
         }
 
         let migrationApplied = false;
-        if (needsLegacyMigration) {
+        if (needsLegacyMigration && hasConfirmedLegacyQwenModel) {
             settings.aiProvider = 'qwen';
             settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
             settings.chatModelName = legacyModelName || DEFAULT_SETTINGS.chatModelName;
             settings.embeddingModelName = 'text-embedding-v3';
+            migrationApplied = true;
+        } else if (needsLegacyMigration) {
+            settings.aiProvider = '';
+            delete settings.aiProviderPreset;
             migrationApplied = true;
         }
         if (
@@ -4469,10 +4750,10 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
         expect(settings).not.toHaveProperty('modelName');
     });
 
-    it('legacy v1.x install with no modelName falls back to the current Qwen default', () => {
+    it('legacy data without an exact pre-Provider Qwen model requires provider selection', () => {
         const { settings, migrationApplied } = simulate({ debug: false });
         expect(migrationApplied).toBe(true);
-        expect(settings.chatModelName).toBe('qwen3.6-plus');
+        expect(settings.aiProvider).toBe('');
         expect(settings).not.toHaveProperty('modelName');
     });
 
@@ -4569,6 +4850,37 @@ describe('Phase 4 P1 UX', () => {
 
             expect(debounceRecord.cancelled).toBe(beforeCancels + 1);
             expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaves + 1);
+        });
+
+        it('hide() flushes a pending provider draft through the shared transaction API', () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const baseURL = getMockSettingRecords()
+                .find((record) => record.name === 'Base URL')?.texts[0];
+            const targetPath = getMockSettingRecords()
+                .find((record) => record.name === 'Target Path')?.texts[0];
+            baseURL?.onChange?.('https://close-flush.example/v1');
+            targetPath?.onChange?.('notes');
+            const providerDebounce = (tab as unknown as {
+                debouncedAIProviderSaveRunner: { __record: MockDebounceRecord };
+            }).debouncedAIProviderSaveRunner.__record;
+            const beforeCancels = providerDebounce.cancelled;
+
+            tab.hide();
+
+            expect(providerDebounce.cancelled).toBe(beforeCancels + 1);
+            expect(plugin.updateAIProviderConfiguration).toHaveBeenCalledWith({
+                aiProvider: 'qwen',
+                baseURL: 'https://close-flush.example/v1',
+                aiProviderPreset: 'custom',
+                chatModelName: DEFAULT_SETTINGS.chatModelName,
+                embeddingModelName: DEFAULT_SETTINGS.embeddingModelName,
+            }, 1);
+            expect(plugin.saveSettings.mock.invocationCallOrder[0])
+                .toBeLessThan(plugin.updateAIProviderConfiguration.mock.invocationCallOrder[0]);
+            expect(plugin.settings.baseURL).toBe('https://close-flush.example/v1');
         });
 
         it('opening and closing Settings without an edit performs no persistent save', () => {
@@ -4836,9 +5148,10 @@ describe('Phase 4 P1 UX', () => {
             expect(plugin.settings.memoryEnabled).toBe(false);
         });
 
-        it('cancels active preparation before provider URL or Memory model mutation', () => {
+        it('marks provider edits immediately and commits one debounced tuple transaction', () => {
             const plugin = makePlugin({ showAdvancedMemoryControls: true });
             const previousBaseURL = plugin.settings.baseURL;
+            const previousChatModel = plugin.settings.chatModelName;
             const previousMemoryModel = plugin.settings.embeddingModelName;
             plugin.cancelActiveMemoryPreparation.mockImplementationOnce(() => {
                 expect(plugin.settings.baseURL).toBe(previousBaseURL);
@@ -4850,14 +5163,36 @@ describe('Phase 4 P1 UX', () => {
             tab.display();
             const baseURL = getMockSettingRecords()
                 .find((r) => r.name === 'Base URL')?.texts[0];
+            const chatModel = getMockSettingRecords()
+                .find((r) => r.name === 'Chat Model Name')?.texts[0];
             const memoryModel = getMockSettingRecords()
                 .find((r) => r.name === 'Memory model')?.texts[0];
 
             baseURL?.onChange?.('https://new.example/v1');
+            chatModel?.onChange?.('new-chat-model');
             memoryModel?.onChange?.('new-embedding-model');
 
             expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(2);
+            expect(plugin.beginAIProviderConfigurationMutation).toHaveBeenCalledTimes(3);
+            expect(plugin.updateAIProviderConfiguration).not.toHaveBeenCalled();
+            expect(plugin.settings.baseURL).toBe(previousBaseURL);
+            expect(plugin.settings.chatModelName).toBe(previousChatModel);
+            expect(plugin.settings.embeddingModelName).toBe(previousMemoryModel);
+
+            const providerDebounce = (tab as unknown as {
+                debouncedAIProviderSaveRunner: { run(): unknown };
+            }).debouncedAIProviderSaveRunner;
+            providerDebounce.run();
+
+            expect(plugin.updateAIProviderConfiguration).toHaveBeenCalledWith({
+                aiProvider: 'qwen',
+                baseURL: 'https://new.example/v1',
+                chatModelName: 'new-chat-model',
+                embeddingModelName: 'new-embedding-model',
+                aiProviderPreset: 'custom',
+            }, 3);
             expect(plugin.settings.baseURL).toBe('https://new.example/v1');
+            expect(plugin.settings.chatModelName).toBe('new-chat-model');
             expect(plugin.settings.embeddingModelName).toBe('new-embedding-model');
         });
 

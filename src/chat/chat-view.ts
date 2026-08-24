@@ -1328,7 +1328,7 @@ export class LLMView extends ItemView {
                         cls: "pa-chat-setup-status",
                         attr: { role: "status", "aria-live": "polite" },
                     });
-                    startButton.onclick = async () => {
+                    const submitSetup = async (focusComposerAfterSuccess: boolean) => {
                         const token = tokenInput.value.trim();
                         if (startButton.disabled) return;
                         setStatus();
@@ -1338,6 +1338,7 @@ export class LLMView extends ItemView {
                                 ...(selectedPreset ? { presetKey: selectedPreset } : {}),
                                 ...(token ? { token } : {}),
                             });
+                            if (!isCurrentSession()) return;
                             if (!result.ok) {
                                 if (result.code === "token_required") {
                                     tokenState = "missing";
@@ -1353,11 +1354,22 @@ export class LLMView extends ItemView {
                                 return;
                             }
                         } catch {
+                            if (!isCurrentSession()) return;
                             setStatus(t("plugin.chat.empty.setupSaveFailed"), true);
                             setBusy(false);
                             return;
                         }
                         renderEmptyState();
+                        if (focusComposerAfterSuccess) {
+                            this.focusComposerTextArea(textArea);
+                        }
+                    };
+                    startButton.onclick = (event) => {
+                        // Keyboard and assistive-technology button activation
+                        // dispatch a click with detail=0. Pointer/touch clicks
+                        // carry a positive detail and must not summon a mobile
+                        // keyboard after setup completes.
+                        return submitSetup(event.detail === 0);
                     };
                     tokenInput.addEventListener("input", () => {
                         setStatus();
@@ -1366,7 +1378,7 @@ export class LLMView extends ItemView {
                     tokenInput.addEventListener("keydown", (e) => {
                         if (e.key === "Enter" && !startButton.disabled) {
                             e.preventDefault();
-                            startButton.click();
+                            void submitSetup(true);
                         }
                     });
 

@@ -2,7 +2,8 @@
 
 import { App, Modal, Notice, Platform, PluginSettingTab, Setting, debounce } from "obsidian";
 
-import type { PluginManager } from "./plugin"
+import type { AIProviderConfigurationPatch, PluginManager } from "./plugin"
+import type { AISetupResult } from "./chat/ChatHost";
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
 import { DEFAULT_NOTE_TEMPLATE } from "./note-template";
 import { isRecord } from "./pa/helpers";
@@ -718,11 +719,10 @@ export function isFreshInstall(loaded: unknown): boolean {
 }
 
 /**
- * True when the persisted data blob is from a legacy v1.x install — it has
- * data but is missing the `aiProvider` field that Provider-aware versions
- * always write. Used by migrateSettings to apply the qwen default exactly
- * once on the first launch after upgrade, instead of every time aiProvider
- * happens to be empty (which is also a valid Phase 3 state on fresh installs).
+ * True when the persisted data blob is a legacy v1.x candidate — it has data
+ * but is missing the `aiProvider` field that Provider-aware versions always
+ * write. The caller must still classify provider provenance from the raw blob;
+ * this shape alone does not prove an earlier Qwen choice.
  */
 export function isLegacyV1Install(loaded: unknown): boolean {
     if (loaded == null) return false;
@@ -983,6 +983,7 @@ export class SettingTab extends PluginSettingTab {
     private graphColorsContainer: HTMLDivElement | null = null;
     private metadataContainer: HTMLDivElement | null = null;
     private featuredImageContainer: HTMLDivElement | null = null;
+    private memoryModelTextControl: { setValue(value: string): unknown } | null = null;
     private apiTokenSecretModal: (Modal & { closeSafely(): void }) | null = null;
     private memoryControlCenterGeneration = 0;
     private pendingMemoryControlCenterTargetId: string | null = null;
@@ -996,12 +997,25 @@ export class SettingTab extends PluginSettingTab {
     private settingsGroupSummaries = new Map<string, HTMLElement>();
     private settingsScrollRoot: HTMLElement | null = null;
     private settingsScrollHandler: (() => void) | null = null;
+    private aiProviderPresetDropdown: { setValue(value: string): unknown } | null = null;
 
     // Set by rebuildQwenOptions(); invoked by Base URL onChange.
-    private refreshQwenResponseOptionAvailability: (() => void) | null = null;
+    private refreshQwenResponseOptionAvailability: ((baseURL?: string) => void) | null = null;
 
-    // Coalesces saveSettings() across keystrokes in text inputs. Each addText
-    // onChange mutates plugin.settings.* synchronously, then calls
+    // Provider tuple fields use their own draft so typing stays responsive
+    // without exposing an unpersisted tuple to Chat. The external mutation
+    // epoch is claimed on every edit; the merged tuple enters the shared AI
+    // configuration transaction queue after the normal 400ms debounce.
+    private pendingAIProviderConfigurationPatch: AIProviderConfigurationPatch | null = null;
+    private pendingAIProviderConfigurationEpoch: number | null = null;
+    private latestAIProviderConfigurationDraft: AIProviderConfigurationPatch | null = null;
+    private latestAIProviderConfigurationEpoch: number | null = null;
+    private debouncedAIProviderSaveRunner = debounce(() => {
+        this.flushPendingAIProviderConfiguration();
+    }, 400, true);
+
+    // Coalesces saveSettings() across keystrokes in non-provider text inputs.
+    // Each onChange mutates plugin.settings.* synchronously, then calls
     // debouncedSave(); the actual disk write is deferred 400ms past the last
     // keystroke. hide() cancels the timer and forces one final save so a user
     // who closes the tab mid-edit doesn't lose their input.
@@ -1085,6 +1099,8 @@ export class SettingTab extends PluginSettingTab {
         this.graphColorsContainer = null;
         this.metadataContainer = null;
         this.featuredImageContainer = null;
+        this.memoryModelTextControl = null;
+        this.aiProviderPresetDropdown = null;
         this.refreshQwenResponseOptionAvailability = null;
 
         const shell = containerEl.createDiv({ cls: "pa-settings-shell" });
@@ -1236,6 +1252,7 @@ export class SettingTab extends PluginSettingTab {
         const doc = (this.containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
         doc.body?.classList.remove("pa-settings-tab-open");
         this.debouncedSaveRunner.cancel();
+        this.debouncedAIProviderSaveRunner.cancel();
         if (this.hasPendingSettingsSave) {
             this.hasPendingSettingsSave = false;
             void this.plugin.saveSettings().catch((error) => {
@@ -1243,11 +1260,99 @@ export class SettingTab extends PluginSettingTab {
                 this.log("Failed to persist Settings changes on close", error);
             });
         }
+        this.flushPendingAIProviderConfiguration();
     }
 
     private debouncedSave(): void {
         this.hasPendingSettingsSave = true;
         this.debouncedSaveRunner();
+    }
+
+    private getEffectiveAIProviderConfiguration(): {
+        aiProvider: string;
+        aiProviderPreset?: string;
+        baseURL: string;
+        chatModelName: string;
+        embeddingModelName: string;
+    } {
+        const draft = this.latestAIProviderConfigurationDraft;
+        return {
+            aiProvider: draft?.aiProvider ?? this.plugin.settings.aiProvider,
+            aiProviderPreset: draft?.aiProviderPreset ?? this.plugin.settings.aiProviderPreset,
+            baseURL: draft?.baseURL ?? this.plugin.settings.baseURL,
+            chatModelName: draft?.chatModelName ?? this.plugin.settings.chatModelName,
+            embeddingModelName: draft?.embeddingModelName ?? this.plugin.settings.embeddingModelName,
+        };
+    }
+
+    private beginAIProviderConfigurationDraft(patch: AIProviderConfigurationPatch): {
+        draft: AIProviderConfigurationPatch;
+        invocationEpoch: number;
+    } {
+        const invocationEpoch = this.plugin.beginAIProviderConfigurationMutation();
+        const draft = {
+            ...this.getEffectiveAIProviderConfiguration(),
+            ...patch,
+        };
+        this.latestAIProviderConfigurationDraft = draft;
+        this.latestAIProviderConfigurationEpoch = invocationEpoch;
+        return { draft, invocationEpoch };
+    }
+
+    private queueAIProviderConfigurationPatch(patch: AIProviderConfigurationPatch): void {
+        const pending = this.beginAIProviderConfigurationDraft(patch);
+        this.pendingAIProviderConfigurationPatch = pending.draft;
+        this.pendingAIProviderConfigurationEpoch = pending.invocationEpoch;
+        this.debouncedAIProviderSaveRunner();
+    }
+
+    private flushPendingAIProviderConfiguration(): void {
+        const patch = this.pendingAIProviderConfigurationPatch;
+        const invocationEpoch = this.pendingAIProviderConfigurationEpoch;
+        if (!patch || invocationEpoch === null) return;
+        this.pendingAIProviderConfigurationPatch = null;
+        this.pendingAIProviderConfigurationEpoch = null;
+        void this.submitAIProviderConfiguration(patch, invocationEpoch);
+    }
+
+    private async submitAIProviderConfiguration(
+        patch: AIProviderConfigurationPatch,
+        invocationEpoch: number,
+    ): Promise<AISetupResult> {
+        let result: AISetupResult;
+        try {
+            result = await this.plugin.updateAIProviderConfiguration(patch, invocationEpoch);
+        } catch (error) {
+            this.log("Failed to persist AI provider changes", error);
+            result = { ok: false, code: "settings_save_failed" };
+        }
+        this.settleAIProviderConfiguration(invocationEpoch, result);
+        return result;
+    }
+
+    private settleAIProviderConfiguration(invocationEpoch: number, result: AISetupResult): void {
+        if (this.latestAIProviderConfigurationEpoch !== invocationEpoch) return;
+        this.latestAIProviderConfigurationDraft = null;
+        this.latestAIProviderConfigurationEpoch = null;
+        this.refreshAIProviderConfigurationControls();
+        if (result.ok) return;
+
+        this.log("Failed to persist AI provider changes", result.code);
+        new Notice(this.t("plugin.settings.ai.provider.saveFailed"), 5000);
+    }
+
+    private refreshAIProviderConfigurationControls(): void {
+        const settings = this.getEffectiveAIProviderConfiguration();
+        this.aiProviderPresetDropdown?.setValue(
+            settings.aiProvider ? deriveDisplayPreset(settings) : "",
+        );
+        this.rebuildProviderConfig();
+        this.rebuildQwenOptions();
+        // The embedding model is the only provider-dependent value inside the
+        // Advanced Memory section. Preserve the rest of that section so an
+        // in-flight confirmation keeps its live control and callback.
+        this.memoryModelTextControl?.setValue(settings.embeddingModelName);
+        this.rebuildFeaturedImage();
     }
 
     private isGroupCollapsed(groupId: string): boolean {
@@ -1659,6 +1764,16 @@ export class SettingTab extends PluginSettingTab {
                                         plugin.setAPITokenSecret(value);
                                     } catch {
                                         plugin.log("Failed to save API token");
+                                        try {
+                                            rebuildProviderConfig();
+                                        } catch {
+                                            plugin.log("Failed to refresh API token setting");
+                                        }
+                                        try {
+                                            await plugin.notifyAIReadinessChanged();
+                                        } catch {
+                                            plugin.log("Failed to notify AI readiness after API token change");
+                                        }
                                         new Notice(translate("plugin.settings.apiToken.modal.saveFailed"), 4000);
                                         return;
                                     }
@@ -1667,6 +1782,11 @@ export class SettingTab extends PluginSettingTab {
                                         rebuildProviderConfig();
                                     } catch {
                                         plugin.log("Failed to refresh API token setting");
+                                    }
+                                    try {
+                                        await plugin.notifyAIReadinessChanged();
+                                    } catch {
+                                        plugin.log("Failed to notify AI readiness after API token change");
                                     }
                                     this.closeSafely();
                                     if (value !== "") {
@@ -2389,15 +2509,17 @@ export class SettingTab extends PluginSettingTab {
         new Setting(parentEl).setName(this.t("plugin.settings.ai.provider.name"))
             .setDesc(this.t("plugin.settings.ai.provider.desc"))
             .addDropdown(dropDown => {
-                if (!plugin.settings.aiProvider) {
+                this.aiProviderPresetDropdown = dropDown;
+                const initialConfiguration = this.getEffectiveAIProviderConfiguration();
+                if (!initialConfiguration.aiProvider) {
                     dropDown.addOption('', this.t("plugin.settings.ai.provider.choose"));
                 }
                 for (const [key, preset] of Object.entries(PROVIDER_PRESETS)) {
                     dropDown.addOption(key, preset.label);
                 }
 
-                const initialPreset = plugin.settings.aiProvider
-                    ? deriveDisplayPreset(plugin.settings)
+                const initialPreset = initialConfiguration.aiProvider
+                    ? deriveDisplayPreset(initialConfiguration)
                     : '';
                 dropDown.setValue(initialPreset);
 
@@ -2411,19 +2533,20 @@ export class SettingTab extends PluginSettingTab {
                         return;
                     }
 
-                    if (plugin.settings.aiProvider) {
-                        const prevKey = deriveDisplayPreset(plugin.settings);
+                    const currentConfiguration = this.getEffectiveAIProviderConfiguration();
+                    if (currentConfiguration.aiProvider) {
+                        const prevKey = deriveDisplayPreset(currentConfiguration);
                         if (value !== prevKey) {
                             const prev = PROVIDER_PRESETS[prevKey];
                             const hasCustomURL = prevKey === "custom"
-                                ? plugin.settings.baseURL !== ""
-                                : Boolean(prev) && plugin.settings.baseURL !== prev.baseURL;
+                                ? currentConfiguration.baseURL !== ""
+                                : Boolean(prev) && currentConfiguration.baseURL !== prev.baseURL;
                             const hasCustomModel = prevKey === "custom"
-                                ? plugin.settings.chatModelName !== ""
-                                : Boolean(prev) && plugin.settings.chatModelName !== prev.chatModelName;
+                                ? currentConfiguration.chatModelName !== ""
+                                : Boolean(prev) && currentConfiguration.chatModelName !== prev.chatModelName;
                             const hasCustomMemoryModel = prevKey === "custom"
-                                ? plugin.settings.embeddingModelName !== ""
-                                : Boolean(prev) && plugin.settings.embeddingModelName !== prev.embeddingModelName;
+                                ? currentConfiguration.embeddingModelName !== ""
+                                : Boolean(prev) && currentConfiguration.embeddingModelName !== prev.embeddingModelName;
                             const confirmed = await confirmUserAction(this.app, {
                                 title: this.t("plugin.settings.ai.provider.switch.title"),
                                 message: value === "custom"
@@ -2445,19 +2568,22 @@ export class SettingTab extends PluginSettingTab {
                         plugin.refreshAPITokenPresence();
                     }
                     plugin.cancelActiveMemoryPreparation();
-                    plugin.settings.aiProvider = preset.runtimeProvider;
-                    plugin.settings.aiProviderPreset = value;
-                    if (value === "custom") {
-                        // Custom keeps the current URL/model fields; the user can edit them below.
-                    } else {
-                        plugin.settings.baseURL = preset.baseURL;
-                        plugin.settings.chatModelName = preset.chatModelName;
-                        plugin.settings.embeddingModelName = preset.embeddingModelName;
-                    }
-                    await plugin.saveSettings();
-                    this.rebuildProviderConfig();
-                    this.rebuildQwenOptions();
-                    this.rebuildFeaturedImage();
+                    this.debouncedAIProviderSaveRunner.cancel();
+                    this.pendingAIProviderConfigurationPatch = null;
+                    this.pendingAIProviderConfigurationEpoch = null;
+                    const submission = this.beginAIProviderConfigurationDraft({
+                        aiProvider: preset.runtimeProvider,
+                        aiProviderPreset: value,
+                        ...(value === "custom" ? {} : {
+                            baseURL: preset.baseURL,
+                            chatModelName: preset.chatModelName,
+                            embeddingModelName: preset.embeddingModelName,
+                        }),
+                    });
+                    await this.submitAIProviderConfiguration(
+                        submission.draft,
+                        submission.invocationEpoch,
+                    );
                 });
             });
 
@@ -2473,8 +2599,9 @@ export class SettingTab extends PluginSettingTab {
         this.providerConfigContainer.empty();
         const plugin = this.plugin;
         const container = this.providerConfigContainer;
+        const providerConfiguration = this.getEffectiveAIProviderConfiguration();
 
-        if (!plugin.settings.aiProvider) {
+        if (!providerConfiguration.aiProvider) {
             // Fresh install: hide Token / URL / Model fields until the user
             // chooses a provider above. Without this guard the user is faced
             // with empty Token + Base URL + Model fields and no clue which
@@ -2506,20 +2633,23 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.ai.baseUrl.desc"))
             .addText((text) => {
                 text.setPlaceholder("https://api.openai.com/v1");
-                text.setValue(plugin.settings.baseURL);
+                text.setValue(providerConfiguration.baseURL);
                 text.onChange((value: string) => {
-                    if (value !== plugin.settings.baseURL) {
+                    const current = this.getEffectiveAIProviderConfiguration();
+                    const currentBaseURL = current.baseURL;
+                    const currentPreset = current.aiProviderPreset;
+                    if (value === currentBaseURL && currentPreset === "custom") return;
+                    if (value !== currentBaseURL) {
                         plugin.cancelActiveMemoryPreparation();
                     }
-                    plugin.settings.baseURL = value;
-                    plugin.settings.aiProviderPreset = "custom";
-                    this.debouncedSave();
+                    this.queueAIProviderConfigurationPatch({
+                        baseURL: value,
+                        aiProviderPreset: "custom",
+                    });
                     // Visual sync (enabling/disabling DashScope-only toggles)
-                    // is intentionally synchronous — it reflects the in-memory
-                    // setting, not the persisted one, so debouncing the save
-                    // does not delay it.
-                    this.refreshQwenResponseOptionAvailability?.();
-                    this.rebuildFeaturedImage();
+                    // remains synchronous while the durable tuple is debounced.
+                    this.refreshQwenResponseOptionAvailability?.(value);
+                    this.rebuildFeaturedImage(value);
                 });
             });
 
@@ -2528,11 +2658,16 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.ai.chatModel.desc"))
             .addText((text) => {
                 text.setPlaceholder("gpt-4o-mini");
-                text.setValue(plugin.settings.chatModelName);
+                text.setValue(providerConfiguration.chatModelName);
                 text.onChange((value: string) => {
-                    plugin.settings.chatModelName = value;
-                    plugin.settings.aiProviderPreset = "custom";
-                    this.debouncedSave();
+                    const current = this.getEffectiveAIProviderConfiguration();
+                    const currentModel = current.chatModelName;
+                    const currentPreset = current.aiProviderPreset;
+                    if (value === currentModel && currentPreset === "custom") return;
+                    this.queueAIProviderConfigurationPatch({
+                        chatModelName: value,
+                        aiProviderPreset: "custom",
+                    });
                 });
             });
 
@@ -2543,7 +2678,7 @@ export class SettingTab extends PluginSettingTab {
                 .setName(this.t("plugin.settings.ai.policyModel.name"))
                 .setDesc(this.t("plugin.settings.ai.policyModel.desc"))
                 .addText((text) => {
-                    text.setPlaceholder(plugin.settings.chatModelName || "optional");
+                    text.setPlaceholder(providerConfiguration.chatModelName || "optional");
                     text.setValue(plugin.settings.policyModelName);
                     text.onChange((value: string) => {
                         plugin.settings.policyModelName = value.trim();
@@ -2560,15 +2695,16 @@ export class SettingTab extends PluginSettingTab {
         this.refreshQwenResponseOptionAvailability = null;
 
         const plugin = this.plugin;
-        if (plugin.settings.aiProvider !== 'qwen') return;
+        const providerConfiguration = this.getEffectiveAIProviderConfiguration();
+        if (providerConfiguration.aiProvider !== 'qwen') return;
 
         const container = this.qwenOptionsContainer;
         const qwenOptionToggles: QwenResponseOptionToggle[] = [];
         container.createEl('h3', { text: this.t("plugin.settings.qwen.title") });
         const qwenOptionsDescriptionEl = container.createEl("p", { cls: "pa-settings-section-desc-sm" });
-        this.refreshQwenResponseOptionAvailability = () => {
+        this.refreshQwenResponseOptionAvailability = (baseURL = providerConfiguration.baseURL) => {
             updateQwenResponseOptionAvailability(
-                plugin.settings.baseURL,
+                baseURL,
                 qwenOptionsDescriptionEl,
                 qwenOptionToggles,
                 {
@@ -3694,6 +3830,7 @@ export class SettingTab extends PluginSettingTab {
         this.memorySubContainer.empty();
         // Advanced sub-container is a child of the now-cleared memorySubContainer.
         this.memoryAdvancedContainer = null;
+        this.memoryModelTextControl = null;
 
         const plugin = this.plugin;
         if (!plugin.settings.memoryEnabled) return;
@@ -3820,10 +3957,12 @@ export class SettingTab extends PluginSettingTab {
     private rebuildMemoryAdvanced(): void {
         if (!this.memoryAdvancedContainer) return;
         this.memoryAdvancedContainer.empty();
+        this.memoryModelTextControl = null;
         const plugin = this.plugin;
         if (!plugin.settings.showAdvancedMemoryControls) return;
 
         const container = this.memoryAdvancedContainer;
+        const providerConfiguration = this.getEffectiveAIProviderConfiguration();
         const showMemoryNotReadyNotice = () => {
             new Notice(this.t("plugin.memory.diagnostics.notInitializedSummary"), 5000);
         };
@@ -3870,15 +4009,21 @@ export class SettingTab extends PluginSettingTab {
             .setName(this.t("plugin.settings.memory.model.name"))
             .setDesc(this.t("plugin.settings.memory.model.desc"))
             .addText((text) => {
+                this.memoryModelTextControl = text;
                 text.setPlaceholder("model name");
-                text.setValue(plugin.settings.embeddingModelName);
+                text.setValue(providerConfiguration.embeddingModelName);
                 text.onChange((value: string) => {
-                    if (value !== plugin.settings.embeddingModelName) {
+                    const current = this.getEffectiveAIProviderConfiguration();
+                    const currentModel = current.embeddingModelName;
+                    const currentPreset = current.aiProviderPreset;
+                    if (value === currentModel && currentPreset === "custom") return;
+                    if (value !== currentModel) {
                         plugin.cancelActiveMemoryPreparation();
                     }
-                    plugin.settings.embeddingModelName = value;
-                    plugin.settings.aiProviderPreset = "custom";
-                    this.debouncedSave();
+                    this.queueAIProviderConfigurationPatch({
+                        embeddingModelName: value,
+                        aiProviderPreset: "custom",
+                    });
                 });
             });
 
@@ -4025,12 +4170,14 @@ export class SettingTab extends PluginSettingTab {
         this.rebuildFeaturedImage();
     }
 
-    private rebuildFeaturedImage(): void {
+    private rebuildFeaturedImage(
+        baseURL = this.getEffectiveAIProviderConfiguration().baseURL,
+    ): void {
         if (!this.featuredImageContainer) return;
         this.featuredImageContainer.empty();
         const plugin = this.plugin;
-        if (plugin.settings.aiProvider !== 'qwen') return;
-        if (!getDashScopeImageGenerationEndpoint(plugin.settings.baseURL)) return;
+        if (this.getEffectiveAIProviderConfiguration().aiProvider !== 'qwen') return;
+        if (!getDashScopeImageGenerationEndpoint(baseURL)) return;
 
         const container = this.featuredImageContainer;
 
