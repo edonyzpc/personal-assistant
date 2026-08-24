@@ -89,6 +89,7 @@ import {
     type VSSFlushOptions,
     type VSSOperationOptions,
     type VSSOperationSummary,
+    type VSSPreparedRebuildHandle,
     type VSSProgressEvent,
     type VSSProgressPhase,
 } from './vss-maintenance';
@@ -154,6 +155,7 @@ export type {
     VSSFlushOptions,
     VSSOperationOptions,
     VSSOperationSummary,
+    VSSPreparedRebuildHandle,
     VSSProgressEvent,
     VSSProgressPhase,
 } from './vss-maintenance';
@@ -263,6 +265,7 @@ export class VSS {
     private markerWritePending = false;
     private pendingMarkerSnapshot: VSSIndexMarker | null = null;
     private preparedRebuildMarker: VSSIndexMarker | null = null;
+    private preparedRebuildHandle: VSSPreparedRebuildHandle | null = null;
     private markerRemovalPending = false;
     private rebuildGuard: VSSRebuildGuard | null = null;
     private markerRecoverySuppressed = false;
@@ -380,6 +383,7 @@ export class VSS {
         if (rebuildGuard) {
             this.rebuildGuard = { ...rebuildGuard };
             this.preparedRebuildMarker = marker;
+            this.preparedRebuildHandle = null;
             this.marker = null;
             this.markerRecoverySuppressed = true;
             this.status = this.getStatusForRebuildReason(rebuildGuard.reason);
@@ -902,22 +906,30 @@ export class VSS {
         return this.runExclusive(() => this.rebuildLocalIndexUnlocked(options));
     }
 
-    async admitPreparedRebuild(options: { abortSignal?: AbortSignal } = {}): Promise<boolean> {
+    async admitPreparedRebuild(
+        handle: VSSPreparedRebuildHandle,
+        options: { abortSignal?: AbortSignal } = {},
+    ): Promise<boolean> {
         if (this.disposed) return false;
         return this.runExclusive(async () => {
             const guard = this.rebuildGuard;
             const marker = this.preparedRebuildMarker;
-            if (!guard || !marker || this.closing || options.abortSignal?.aborted) return false;
+            if (!this.isCurrentPreparedRebuild(handle)
+                || !guard
+                || !marker
+                || this.closing
+                || options.abortSignal?.aborted) return false;
             const generation = this.stateGeneration;
             if (!await this.replaceRebuildState(marker, null, generation)) {
                 throw new Error("Memory local state could not admit the prepared index.");
             }
             if (this.closing || options.abortSignal?.aborted) {
-                await this.rollbackPreparedRebuildUnlocked(guard.reason);
+                await this.rollbackPreparedRebuildUnlocked(handle, guard.reason);
                 return false;
             }
             this.marker = marker;
             this.preparedRebuildMarker = null;
+            this.preparedRebuildHandle = null;
             this.rebuildGuard = null;
             this.markerRecoverySuppressed = false;
             this.status = "ready";
@@ -925,14 +937,25 @@ export class VSS {
         });
     }
 
-    async rollbackPreparedRebuild(reason: VSSRebuildRecoveryReason): Promise<void> {
-        if (this.disposed) return;
-        await this.runExclusive(() => this.rollbackPreparedRebuildUnlocked(reason), { allowDuringClosing: true });
+    async rollbackPreparedRebuild(
+        handle: VSSPreparedRebuildHandle,
+        reason: VSSRebuildRecoveryReason,
+    ): Promise<boolean> {
+        if (this.disposed) return false;
+        return this.runExclusive(
+            () => this.rollbackPreparedRebuildUnlocked(handle, reason),
+            { allowDuringClosing: true },
+        );
     }
 
-    private async rollbackPreparedRebuildUnlocked(reason: VSSRebuildRecoveryReason): Promise<void> {
+    private async rollbackPreparedRebuildUnlocked(
+        handle: VSSPreparedRebuildHandle,
+        reason: VSSRebuildRecoveryReason,
+    ): Promise<boolean> {
+        if (!this.isCurrentPreparedRebuild(handle)) return false;
         this.assertActive();
         await this.stateWriteChain.catch(() => undefined);
+        if (!this.isCurrentPreparedRebuild(handle)) return false;
         const generation = ++this.stateGeneration;
         const guard: VSSRebuildGuard = this.rebuildGuard?.reason === reason
             ? { ...this.rebuildGuard }
@@ -944,6 +967,7 @@ export class VSS {
         }
         this.marker = null;
         this.preparedRebuildMarker = null;
+        this.preparedRebuildHandle = null;
         this.markerWritePending = false;
         this.pendingMarkerSnapshot = null;
         this.rebuildGuard = guard;
@@ -955,6 +979,13 @@ export class VSS {
         if (this.index) {
             await this.index.reset();
         }
+        return true;
+    }
+
+    private isCurrentPreparedRebuild(handle: VSSPreparedRebuildHandle): boolean {
+        return this.preparedRebuildHandle === handle
+            && this.preparedRebuildMarker !== null
+            && this.rebuildGuard !== null;
     }
 
     private async rebuildLocalIndexUnlocked(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
@@ -1028,6 +1059,7 @@ export class VSS {
             this.markerWritePending = false;
             this.pendingMarkerSnapshot = null;
             this.preparedRebuildMarker = null;
+            this.preparedRebuildHandle = null;
             this.rebuildGuard = rebuildGuard;
             this.markerRecoverySuppressed = true;
             this.status = this.getStatusForRebuildReason(rebuildGuard.reason);
@@ -1393,6 +1425,15 @@ export class VSS {
             await leaveRebuildIncomplete(indexWasReset);
             return summary;
         }
+        if (options.deferAdmission) {
+            const preparedRebuildHandle = this.preparedRebuildHandle;
+            if (!preparedRebuildHandle) {
+                summary.aborted = true;
+                await leaveRebuildIncomplete(indexWasReset);
+                return summary;
+            }
+            summary.preparedRebuildHandle = preparedRebuildHandle;
+        }
         if (!options.deferAdmission) {
             emitProgress("ready", { filesDone: filesFinalized });
         }
@@ -1443,6 +1484,7 @@ export class VSS {
         this.markerWritePending = false;
         this.pendingMarkerSnapshot = null;
         this.preparedRebuildMarker = null;
+        this.preparedRebuildHandle = null;
         this.markerRemovalPending = false;
         this.dirtyJournalWritePending = false;
         this.markerRecoverySuppressed = true;
@@ -3350,6 +3392,7 @@ export class VSS {
         const previousMarkerRemovalPending = this.markerRemovalPending;
         const previousPendingMarkerSnapshot = this.pendingMarkerSnapshot;
         const previousPreparedRebuildMarker = this.preparedRebuildMarker;
+        const previousPreparedRebuildHandle = this.preparedRebuildHandle;
         const generation = ++this.stateGeneration;
         const guard: VSSRebuildGuard = previousGuard?.reason === reason
             ? { ...previousGuard }
@@ -3357,6 +3400,7 @@ export class VSS {
         this.markerWritePending = false;
         this.pendingMarkerSnapshot = null;
         this.preparedRebuildMarker = null;
+        this.preparedRebuildHandle = null;
         const replaced = await this.replaceRebuildState(null, guard, generation);
         if (!replaced) {
             this.marker = previousMarker;
@@ -3365,6 +3409,7 @@ export class VSS {
             this.markerWritePending = previousMarkerWritePending;
             this.pendingMarkerSnapshot = previousPendingMarkerSnapshot;
             this.preparedRebuildMarker = previousPreparedRebuildMarker;
+            this.preparedRebuildHandle = previousPreparedRebuildHandle;
             this.markerRemovalPending = previousMarkerRemovalPending;
             this.status = previousStatus === "ready" && !this.hasAdmittedReadyMarker()
                 ? this.getFailClosedIndexStatus()
@@ -3445,6 +3490,7 @@ export class VSS {
         if (abortSignal?.aborted) return false;
         if (deferAdmission) {
             this.preparedRebuildMarker = marker;
+            this.preparedRebuildHandle = marker.indexId as VSSPreparedRebuildHandle;
             this.marker = null;
             this.markerRecoverySuppressed = true;
             this.status = this.getStatusForRebuildReason(guard.reason);
@@ -3452,6 +3498,7 @@ export class VSS {
         }
         this.marker = marker;
         this.preparedRebuildMarker = null;
+        this.preparedRebuildHandle = null;
         this.rebuildGuard = null;
         this.markerRecoverySuppressed = false;
         this.status = stats.status === "stale" ? "stale" : "ready";
@@ -3601,6 +3648,7 @@ export class VSS {
                 this.markerWritePending = false;
                 this.pendingMarkerSnapshot = null;
                 this.preparedRebuildMarker = null;
+                this.preparedRebuildHandle = null;
                 this.markerRemovalPending = false;
                 this.rebuildGuard = null;
             }

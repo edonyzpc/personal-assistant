@@ -2,7 +2,13 @@
 
 import { Modal, Notice, Platform, Setting, type App } from "obsidian";
 import type { MemoryHost } from "./memory";
-import type { VSS, VSSMemoryStatus, VSSOperationSummary, VSSProgressEvent } from "./vss";
+import type {
+    VSS,
+    VSSMemoryStatus,
+    VSSOperationSummary,
+    VSSPreparedRebuildHandle,
+    VSSProgressEvent,
+} from "./vss";
 import { getPluginUiLanguage, pluginT, type PluginLocale } from "./locales/plugin";
 import {
     clearPlatformInterval,
@@ -101,6 +107,13 @@ interface ActivePreparationIdentity {
 }
 interface ActivePreparationRun extends ActivePreparationIdentity {
     promise: Promise<MemoryPrepareResult>;
+}
+interface MemoryAdmissionOwner extends ActivePreparationIdentity {
+    previousPolicy: string;
+}
+interface MemoryPolicyAdmissionResult {
+    enabled: boolean;
+    previousPolicy: string | null;
 }
 
 export const MEMORY_USER_FORBIDDEN_TERMS = [
@@ -213,6 +226,7 @@ export class MemoryManager {
     private readonly activeOperationPromises = new Set<Promise<unknown>>();
     private activePreparationStatus: (MemoryPreparationStatus & { id: number; lifecycleVersion: number }) | null = null;
     private activePreparationRun: ActivePreparationRun | null = null;
+    private memoryAdmissionOwner: MemoryAdmissionOwner | null = null;
     private nextPreparationId = 1;
 
     constructor(host: MemoryHost, vss: VSS) {
@@ -568,12 +582,15 @@ export class MemoryManager {
         let abortController: AbortController | null = null;
         const isRebuild = plan.action !== "refresh";
         const rebuildReason = this.getRebuildRecoveryReason(plan);
-        let deferredRebuildPrepared = false;
+        let deferredRebuildHandle: VSSPreparedRebuildHandle | null = null;
         let previousApprovalPolicy: string | null = null;
         const rollbackDeferredRebuild = async () => {
-            if (!deferredRebuildPrepared || !isRebuild) return;
-            await this.vss.rollbackPreparedRebuild(rebuildReason);
-            deferredRebuildPrepared = false;
+            const handle = deferredRebuildHandle;
+            if (!handle || !isRebuild) return;
+            await this.vss.rollbackPreparedRebuild(handle, rebuildReason);
+            if (deferredRebuildHandle === handle) {
+                deferredRebuildHandle = null;
+            }
         };
         try {
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
@@ -590,7 +607,11 @@ export class MemoryManager {
             const summary = plan.action === "refresh"
                 ? await this.vss.refreshLocalIndex(operationOptions)
                 : await this.vss.rebuildLocalIndex(operationOptions);
-            deferredRebuildPrepared = isRebuild && !summary.aborted && !(summary.updated === 0 && summary.failed > 0);
+            const rebuildWasPrepared = isRebuild && !summary.aborted && !(summary.updated === 0 && summary.failed > 0);
+            deferredRebuildHandle = rebuildWasPrepared ? summary.preparedRebuildHandle ?? null : null;
+            if (rebuildWasPrepared && !deferredRebuildHandle) {
+                throw new Error("Memory local state did not return a prepared rebuild handle.");
+            }
             if (!this.isLifecycleCurrent(lifecycleToken)) {
                 await rollbackDeferredRebuild();
                 return {
@@ -619,13 +640,13 @@ export class MemoryManager {
             }
 
             const partial = summary.failed > 0;
-            const previousPolicy = this.host.settings.memoryApprovalPolicy;
-            previousApprovalPolicy = previousPolicy;
-            const policyEnabled = await this.enableAutoRefreshAfterPrepare(
+            const policyAdmission = await this.enableAutoRefreshAfterPrepare(
                 lifecycleToken,
                 abortController.signal,
+                activePreparation,
             );
-            if (!policyEnabled || !this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
+            previousApprovalPolicy = policyAdmission.previousPolicy;
+            if (!policyAdmission.enabled || !this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
                 await rollbackDeferredRebuild();
                 return {
                     ok: false,
@@ -635,10 +656,16 @@ export class MemoryManager {
                 };
             }
             if (isRebuild) {
-                const admitted = await this.vss.admitPreparedRebuild({ abortSignal: abortController.signal });
+                const rebuildHandle = deferredRebuildHandle;
+                if (!rebuildHandle) {
+                    throw new Error("Memory local state lost the prepared rebuild handle before admission.");
+                }
+                const admitted = await this.vss.admitPreparedRebuild(rebuildHandle, { abortSignal: abortController.signal });
                 if (!admitted || !this.isLifecycleCurrent(lifecycleToken) || abortController.signal.aborted) {
                     await rollbackDeferredRebuild();
-                    await this.restoreMemoryApprovalPolicy(previousPolicy);
+                    if (previousApprovalPolicy !== null) {
+                        await this.restoreMemoryApprovalPolicy(previousApprovalPolicy, activePreparation);
+                    }
                     return {
                         ok: false,
                         partial: false,
@@ -646,8 +673,9 @@ export class MemoryManager {
                         message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
                     };
                 }
-                deferredRebuildPrepared = false;
+                deferredRebuildHandle = null;
             }
+            this.releaseMemoryAdmissionOwner(activePreparation);
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.ready"));
             setActiveStatus(memoryT("plugin.memory.progress.ready"));
             if (partial) {
@@ -664,7 +692,9 @@ export class MemoryManager {
             }
             return { ok: true, partial, summary };
         } catch (error) {
-            const shouldRestoreAdmissionPolicy = deferredRebuildPrepared && previousApprovalPolicy !== null;
+            const shouldRestoreAdmissionPolicy = deferredRebuildHandle !== null
+                && previousApprovalPolicy !== null
+                && this.isMemoryAdmissionOwner(activePreparation);
             try {
                 await rollbackDeferredRebuild();
             } catch (rollbackError) {
@@ -672,7 +702,7 @@ export class MemoryManager {
             }
             if (shouldRestoreAdmissionPolicy && previousApprovalPolicy !== null) {
                 try {
-                    await this.restoreMemoryApprovalPolicy(previousApprovalPolicy);
+                    await this.restoreMemoryApprovalPolicy(previousApprovalPolicy, activePreparation);
                 } catch (policyRollbackError) {
                     this.host.log("Could not restore Memory approval policy", policyRollbackError);
                 }
@@ -991,44 +1021,76 @@ export class MemoryManager {
     private async enableAutoRefreshAfterPrepare(
         lifecycleToken: number,
         abortSignal: AbortSignal,
-    ): Promise<boolean> {
+        activePreparation: ActivePreparationIdentity,
+    ): Promise<MemoryPolicyAdmissionResult> {
         if (!this.isLifecycleCurrent(lifecycleToken) || abortSignal.aborted || !this.isMemoryEnabled()) {
-            return false;
+            return { enabled: false, previousPolicy: null };
         }
-        if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) return true;
-        const previousPolicy = this.host.settings.memoryApprovalPolicy;
-        this.host.updateMemorySetting("memoryApprovalPolicy", AUTO_MEMORY_POLICY);
+        const pendingAdmission = this.memoryAdmissionOwner;
+        if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY && !pendingAdmission) {
+            return { enabled: true, previousPolicy: null };
+        }
+        const previousPolicy = pendingAdmission?.previousPolicy ?? this.host.settings.memoryApprovalPolicy;
+        this.memoryAdmissionOwner = { ...activePreparation, previousPolicy };
+        if (this.host.settings.memoryApprovalPolicy !== AUTO_MEMORY_POLICY) {
+            this.host.updateMemorySetting("memoryApprovalPolicy", AUTO_MEMORY_POLICY);
+        }
         try {
             await this.host.persistMemoryAdmissionSettings();
         } catch (error) {
+            if (!this.isMemoryAdmissionOwner(activePreparation)) {
+                throw error;
+            }
             if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) {
                 this.host.updateMemorySetting("memoryApprovalPolicy", previousPolicy);
             }
             try {
                 await this.host.persistMemoryAdmissionSettings();
             } catch (compensationError) {
+                this.releaseMemoryAdmissionOwner(activePreparation);
                 throw Object.assign(new Error("Could not persist or compensate the Memory approval policy."), {
                     cause: error,
                     compensationError,
                 });
             }
+            this.releaseMemoryAdmissionOwner(activePreparation);
             throw error;
         }
         if (this.isLifecycleCurrent(lifecycleToken) && !abortSignal.aborted && this.isMemoryEnabled()) {
-            return true;
+            return { enabled: true, previousPolicy };
         }
-        if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) {
+        if (this.isMemoryAdmissionOwner(activePreparation)
+            && this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) {
             this.host.updateMemorySetting("memoryApprovalPolicy", previousPolicy);
             await this.host.persistMemoryAdmissionSettings();
         }
-        return false;
+        this.releaseMemoryAdmissionOwner(activePreparation);
+        return { enabled: false, previousPolicy };
     }
 
-    private async restoreMemoryApprovalPolicy(previousPolicy: string): Promise<void> {
+    private async restoreMemoryApprovalPolicy(
+        previousPolicy: string,
+        activePreparation: ActivePreparationIdentity,
+    ): Promise<void> {
+        if (!this.isMemoryAdmissionOwner(activePreparation)) return;
         if (this.host.settings.memoryApprovalPolicy !== previousPolicy) {
             this.host.updateMemorySetting("memoryApprovalPolicy", previousPolicy);
         }
         await this.host.persistMemoryAdmissionSettings();
+        this.releaseMemoryAdmissionOwner(activePreparation);
+    }
+
+    private isMemoryAdmissionOwner(activePreparation: ActivePreparationIdentity): boolean {
+        return Boolean(
+            this.memoryAdmissionOwner
+            && this.isSamePreparation(this.memoryAdmissionOwner, activePreparation),
+        );
+    }
+
+    private releaseMemoryAdmissionOwner(activePreparation: ActivePreparationIdentity): void {
+        if (this.isMemoryAdmissionOwner(activePreparation)) {
+            this.memoryAdmissionOwner = null;
+        }
     }
 
     private getRebuildRecoveryReason(plan: MemoryMaintenancePlan): MemoryRebuildRecoveryReason {
