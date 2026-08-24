@@ -10,10 +10,10 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: PR #378 最新 merge-gate findings 已按 Owner 的 legacy Provider 方案 B 修复；当前 isolated candidate 的代码、自动化、对抗复审及最新 build 的 Desktop/iPhone 可见 UI smoke 均已通过，PR 描述已同步最终范围与证据。
-- Next action: 创建 signed modular commits 并推送到 PR #378 head；以新 head 的 remote CI 作为最终 merge gate。
-- Blocker / decision needed: 无代码、测试或新增 Owner 产品决策 blocker；merge 仅等待 candidate 发布与新 head remote CI。
-- Last verified behavior: 9-suite focused gate 通过 903 tests，189-suite full regression 通过 4186 tests，typecheck、lint、production build、full/release docs check、platform guard 与 diff/community hygiene 通过；最终 Provider/Settings/VSS 对抗复审无 P0/P1/P2；最新 build 的 Desktop 与 Edony iPhone 15 Provider/Settings/Memory/Chat 可见交互及 fresh console/error capture 通过，且未发出 provider 请求或修改 token。
+- Current phase: PR #378 最新 merge-gate findings 已按 Owner 的 legacy Provider 方案 B 修复并发布；代码、自动化、对抗复审及最新 runtime build 的 Desktop/iPhone 可见 UI smoke 均已通过，PR 描述已同步最终范围与证据。
+- Next action: merge 前保持当前 PR head remote CI 全绿；任何新 head 都必须重新通过同一 gate。
+- Blocker / decision needed: 无代码、测试或新增 Owner 产品决策 blocker；merge 条件是最终 PR head 的 remote CI 成功。
+- Last verified behavior: 9-suite focused gate 通过 903 tests，189-suite full regression 通过 4186 tests，typecheck、lint、production build、full/release docs check、platform guard 与 diff/community hygiene 通过；最终 Provider/Settings/VSS 对抗复审无 P0/P1/P2；最新 runtime build 的 Desktop 与 Edony iPhone 15 Provider/Settings/Memory/Chat 可见交互及 fresh console/error capture 通过，且未发出 provider 请求或修改 token；published runtime-bearing head `479b1eee` 的 CI `validate` 通过。
 
 ## Work
 
@@ -89,6 +89,7 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | 2026-08-23 | Post-freeze automated merge gate | `npm test -- --runInBand`；production build；typecheck；lint；full/release docs check；platform guard/self-test；diff/community scan；final agent-team review | Pass | 189 suites / 4186 tests；9 focused suites / 903 tests；build and every local code/release-doc gate pass；28 exact Episodic/Retrieval findings remain advisory and untouched；final Provider/Settings/VSS reviews report no P0/P1/P2 |
 | 2026-08-24 | Current-build Obsidian test-vault smoke | `make deploy` validation；exact-build asset deployment；CLI reload/error capture；visible Settings/Memory/Chat interaction | Pass | Validation stage passed 189 suites / 4186 tests, platform guard, lint and build；the candidate assets were then deployed by exact hash into the registered `test` vault。Visible Provider save-failure reconciliation restored the stable URL and showed localized feedback；Memory controls mounted without clipping；Chat accepted and cleared local text；no provider request or token input occurred；fresh console/error capture was clean。Original assets、`data.json` and localStorage were restored and hash-verified afterward |
 | 2026-08-24 | Current-build iOS real-device smoke | Edony iPhone 15；`make deploy-icloud`；four-asset compare；iPhone Mirroring real touch；Safari Inspector | Pass | Deploy reran 189 suites / 4186 tests、platform guard、lint and production build；`main.js`、both manifests and `styles.css` byte-matched the iCloud `test` vault。Plugin 2.9.2 loaded with `isMobile=true`；real-touch Chat accepted and cleared local text；an in-memory-only Provider save failure restored the stable DashScope URL；Memory showed `Ready` with 9 prepared notes and recovery controls；no provider request or token change occurred；`data.json` SHA-256 stayed unchanged and the fresh Inspector Errors filter was empty。Portrait only；landscape、iPad and Android were not tested |
+| 2026-08-24 | Published remediation remote gate | Head `479b1eee2758958382bed012058c4005e42fba7a`；GitHub Actions run `32740493156` / job `97473518005` | Pass | CI `validate` completed in 9m17s；documentation advisory、platform guard/self-test、third-party notices、Test、Lint、Build and bundle audit passed on the published runtime-bearing candidate |
 
 ## Closeout Readiness
 
