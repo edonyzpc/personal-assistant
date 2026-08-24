@@ -2,9 +2,9 @@
 
 Decision ID: DEC-028
 Status: Accepted
-Updated: 2026-08-11
+Updated: 2026-08-23
 Work item: B-126
-Authority: Owner 于 2026-08-11 在 PR #378 当前 review follow-up 中明确选择方案 A：保留首次 Chat 静默后台 whole-vault Memory 构建；同日后续明确选择方案 1：IndexedDB marker 状态未知时 destructive rebuild fail closed。两项选择共同授权对应契约与 CI/test 修复；本记录不把更早讨论视为已验证授权。
+Authority: Owner 于 2026-08-11 在 PR #378 当前 review follow-up 中明确选择方案 A：保留首次 Chat 静默后台 whole-vault Memory 构建；同日后续明确选择方案 1：IndexedDB marker 状态未知时 destructive rebuild fail closed。Owner 于 2026-08-23 进一步选择 legacy provider 方案 B：只 grandfather 可由原始旧配置可靠识别的 Qwen，Ollama 或来源不明的自动迁移必须重新选择当前 Provider。以上选择共同授权对应契约与 CI/test 修复；本记录不把更早讨论视为已验证授权。
 Supersedes: 仅替代 [PA Data Boundary Product Spec](../specs/pa-data-boundary-product-spec.md) 与 [VSS SQLite/WASM Architecture](../../architecture/vss-sqlite-wasm-architecture.md) 中“首次 Prepare 必须阻断确认”的条款；本地索引丢失、profile/settings stale、手动 Prepare/Update 与其他 costly rebuild 继续阻断确认。
 Revisit trigger: 隐私法规变化要求 explicit opt-in；用户反馈显示 silent build 造成意外成本或混淆；total failure 率过高需要 fallback 到确认流程
 
@@ -48,6 +48,13 @@ PA 的 Memory 系统在首次使用时需要将 vault 中的 Markdown 笔记文�
 | 失败处理 | 后台 total failure、abort、unload、opt-out 或 marker truth preflight 失败时不制造 ready、不升级自动策略；durable rebuild guard 保留原 `first-use`/`settings-changed`/`local-memory-missing` reason，后续 hydrate 按原路径重试 |
 | 策略升级 | 仅在 durable backend 报告 usable ready 且本轮未 abort/total-fail 后升级为 `auto-refresh-after-prepare`；partial success 仅在 durable usable 时允许升级，失败文件保持可重试 |
 | 后续更新 | 策略升级后，vault 文件变更自动后台增量更新（已有行为） |
+
+### Legacy provider admission
+
+- Provider-aware 版本明确持久化且当前受支持的 Provider 配置（Qwen 或 OpenAI）仍保留既有选择。更早的 provider-less 配置只有在迁移前原始数据包含该版本 UI 唯一可选的 Qwen model identity（`qwen-plus`、`qwen-max` 或 `qwen-turbo`）时，才可 grandfather 为旧 Qwen。
+- 缺少上述证据的 legacy 配置必须 fail closed，保持 AI setup incomplete，直到用户在现有 inline setup 或 Settings 中明确选择当前 Provider。
+- `aiProvider="ollama"` 表示用户此前选择的是本地 Ollama；自动改写为远程 Qwen 不构成新的 Provider 选择，必须重新确认。
+- SecretStorage 中存在 retained token 只证明凭据仍在，不证明其 Provider 身份。非 grandfather 路径可以在用户明确选择 Provider 后复用该 token，但选择前不得用它触发静默 Memory provider work。
 
 ### Destructive rebuild marker truth gate
 
@@ -96,4 +103,4 @@ PA 的 Memory 系统在首次使用时需要将 vault 中的 Markdown 笔记文�
 - Product Spec: [Silent First-Use Memory Preparation](../specs/pa-silent-first-use-memory-preparation-product-spec.md)
 - Architecture: [VSS SQLite/WASM Current Architecture](../../architecture/vss-sqlite-wasm-architecture.md)、[VSS Local State](../../architecture/vss-local-state-plan.md)、[VSS Embedding Refresh](../../architecture/vss-embedding-refresh.md)
 - Active Package: [B-126 Feature Home](../../development/active/silent-first-use-memory-preparation/README.md)、[Tracker](../../development/active/silent-first-use-memory-preparation/tracker.md)
-- Source request: Owner decisions on 2026-08-11 in the current PR #378 review follow-up—option A for silent first-use and the later option 1 for unknown-marker fail-closed; no earlier discussion is used as approval evidence.
+- Source request: Owner decisions on 2026-08-11 in the current PR #378 review follow-up—option A for silent first-use and the later option 1 for unknown-marker fail-closed；Owner 于 2026-08-23 选择 legacy provider 方案 B，只 grandfather 可证明的旧 Qwen，Ollama/来源不明迁移重新选择；no earlier discussion is used as approval evidence.
