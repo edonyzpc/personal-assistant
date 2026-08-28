@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Exploring
-Updated: 2026-08-25
+Updated: 2026-08-28
 Work item: B-128
 Authority: 本报告是跨项目实现与学术研究证据，不代表已批准改变 PA runtime、产品行为、数据边界或长期 Memory 契约。
 
@@ -14,34 +14,36 @@ window 的问题，重点检查 GitHub 项目的真实实现、官方文档和�
 
 核心结论如下：
 
-1. **完整会话记录不应等于模型活跃上下文。** 成熟实现保留完整、可审计的
-   event log，同时为每次模型调用生成更小的 active context view。
-2. **优先压缩工具结果，再压缩自然语言。** 终端输出、网页、文件全文和测试日志
-   通常体积最大，而且可以通过路径、URL、调用参数或事件 ID 重新获取。
-3. **最可靠的组合是“不可变锚点 + 结构化 checkpoint + 最近原文 + 可回溯
-   archive”。** 只有自然语言摘要、没有目标/约束/计划保护的系统，会在多次压缩后
-   逐渐漂移。
-4. **压缩必须理解 tool call / tool result 原子边界。** 任意删除中间消息可能制造
-   orphan tool result、破坏 provider-native reasoning item，或让模型误解已经执行过的
-   操作。
-5. **摘要需要验证和 fail-closed。** Gemini CLI 的二次遗漏检查、OpenHands 的最小
-   压缩收益门、OpenCode 的 durable checkpoint，以及 Codex 的 canonical context
-   重新注入，都体现了同一原则：压缩失败时保留旧状态，不能用低质量占位内容覆盖
-   真实历史。
-6. **新的学术方向正在从固定摘要转向 agentic context editing。** AgentFold、ACM、
+1. **成熟实现是审查样本，不是 PA 的目标模板。** Codex、OpenHands、OpenCode 等系统
+   面向可跨进程续跑、恢复或分叉的长任务，它们的 event log、checkpoint、window
+   lineage 和 recovery tools 解决的是 PA 当前尚不存在的问题。
+2. **PA 的近期风险集中在 prompt projection，而不是 session operating system。** 单次
+   PA Agent run 已有 20 个 model turns、30 次 tool calls 和 180 秒上限；跨 Chat turn
+   持久化的是最终 user/assistant 对，不是完整 tool transcript。
+3. **当前有五个应优先修复的真实问题。** F-01：生产 transcript 下 soft tool
+   compaction 实际失效；F-02：`maxPromptChars` 不阻止超限请求；F-03：固定十轮摘要并在
+   超限时先移除 recent raw history；F-04：Context Pager 未反映真实压缩结果；F-05：
+   provider-visible placeholder 声称不可见的 source metadata 仍可用。
+4. **PA 当前不需要 immutable anchors、structured task checkpoint、raw session archive、
+   CAS/window identity 或 session-history tools。** 这些设计会引入新的状态所有权、
+   存储/删除/隐私边界和同步失败面，尚无真实用户问题或当前消费者支持这笔复杂度。
+5. **适合 PA 的目标是一个窄的 deterministic projection safety repair。** 复用现有
+   Manager / Hygiene / Compactor / Projector / Budget：按 model cycle 缩短旧 tool result，
+   只在压力下压缩旧 chat history，在当前 runtime 组装处做保守的完整本地字符门，并
+   通过现有 Context Trace / Pager 输出简短且真实的压缩状态。
+6. **新的学术方向仍值得作为 future evidence。** AgentFold、ACM、
    ACON、ReSum 等工作让 Agent 学习何时压缩、压缩什么、何时外置以及何时重新读取。
 7. **任务完成率不足以评价压缩。** 新研究显示，任务最终仍能完成时，Agent 可能已经
    付出了数倍的重新搜索和读取成本；评测还必须覆盖约束保留、事实漂移、重新获取成本、
    延迟和多次压缩后的累积误差。
-8. **PA 当前的 micro-compaction 与 hygiene 方向正确，主要短板是 history summary。**
-   当前固定保留 10 个 turn、对更老 turn 做字符级摘要；它缺少显式 objective、
-   constraints、decisions、artifacts、next step、来源事件范围和摘要验证。
+8. **高级语义压缩必须由 PA 自己的失败数据触发。** 只有 deterministic recent-tail
+   策略在真实长会话中持续丢失任务语义时，才评估一个简单的 rolling summary；只有
+   产品真正需要跨重启恢复 tool-level work 时，才重新讨论 checkpoint/archive。
 
 对 PA 的总建议不是简单增大 context window 或调高字符阈值，而是从字符截断式历史
-摘要升级为：
+处理升级为：
 
-> Immutable anchors + structured working-state checkpoint + recent verbatim tail
-> + recoverable session archive.
+> Pressure-driven dual reduction + conservative final request guard + truthful compact receipt.
 
 ## 2. Research Question And Scope
 
@@ -84,8 +86,9 @@ context window 时，领先系统如何在以下目标之间取舍：
 | Inference | 跨项目比较后得到的工程归纳 | 用于架构建议，不冒充项目原始设计意图 |
 | Unknown | 闭源、快速演进或缺少独立验证 | 明确记录局限，不填补缺失实现 |
 
-所有外部来源检查日期均为 2026-08-25。GitHub `main`、`master`、`dev` 分支仍可能
-继续变化；涉及具体阈值时，应在实施前重新核验对应 commit。
+外部项目初次检查日期为 2026-08-25；OpenAI Codex 与 PA source review 于
+2026-08-28 复核。Codex 细节固定到 commit `a73bf25d17805b4169ba2a2dc4329a010a3bb120`；
+其他 GitHub `main`、`master`、`dev` 分支仍可能变化，实施前应重新核验具体阈值。
 
 ## 3. Problem Decomposition
 
@@ -125,28 +128,49 @@ Evidence: Confirmed.
 
 Primary sources:
 
-- [Local compaction implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact.rs)
-- [Remote compaction implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact_remote.rs)
-- [Model auto-compaction threshold](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)
+- [Model budgets and auto-compaction threshold](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/protocol/src/openai_models.rs#L433-L510)
+- [Token-status calculation](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/session/context_window.rs#L52-L120)
+- [Pre-turn and mid-turn dispatch](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/session/turn.rs#L1032-L1278)
+- [Local compaction](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/compact.rs#L245-L398)
+- [Remote Compaction V2](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/compact_remote_v2.rs#L223-L358)
+- [Checkpoint persistence](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/session/mod.rs#L3569-L3617)
+- [Rollout reconstruction](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/session/rollout_reconstruction.rs#L113-L380)
+- [Experimental TokenBudget path](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/compact_token_budget.rs#L21-L92)
 - [OpenAI compaction guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2)
 
 Implementation findings:
 
-- Codex 支持本地模型摘要与服务端 `/responses/compact` 两条路径。
-- 自动压缩阈值来自模型 context window 的比例，并允许配置覆盖；源码快照中的派生逻辑
-  接近窗口的 90%，同时受模型和配置约束。
-- 本地压缩不是简单把全部历史变成一段摘要。它会保留一定量的真实用户消息，把摘要
-  作为新的历史组成，并重新注入 canonical initial context。
-- 服务端压缩结果被当作下一轮的 active history，而不是给应用解析的普通摘要文本；
-  旧的 developer message、tool item、reasoning item 和重复输出会被有选择地清理。
-- 压缩后重新注入当前有效的规范和环境上下文，避免旧摘要继续携带已经失效的 policy
-  或工作区状态。
-- 实现会提醒用户重复 compaction 可能降低准确性，必要时应开启新线程。
+- 完整 append-only rollout 是审计/恢复源；模型活跃历史以最近一次
+  `replacement_history` checkpoint 加后续 suffix 为基线。普通 turn 追加，compaction
+  才替换 active history。
+- 默认自动阈值约为解析后 context window 的 90%，effective window 默认约为 95%；
+  server-reported usage 与尚未被 provider 统计的本地 tail 共同参与 token status。
+- 调度区分 pre-turn、mid-turn 和 manual。pre-turn/manual 让下一次普通调用重新注入
+  canonical context；mid-turn 立即重建当前 world/turn context，并保持 compaction item
+  的训练时序。
+- 本地路径让模型生成自由文本 handoff summary，并保留约 20K tokens 最近真实用户文本；
+  摘要没有 typed schema 或 coverage verifier。若压缩请求本身超限，会逐项删除最老历史
+  并重试。
+- Remote Compaction V2 在普通 `/responses` 流中追加 trigger，要求恰好返回一个 opaque
+  encrypted compaction item，并把一批过滤后的最近 user/agent 原文与该 item 组成新历史。
+  最近原文预算固定为 64K tokens，不包含新 compaction item、重新注入 context 或下一输入。
+- 安装 checkpoint 时会保存精确 replacement history、window lineage 和相关 context
+  baseline；resume 从最新 surviving checkpoint 恢复并 replay suffix。rollback/fork 共用
+  这套基础设施。
+- feature-gated `TokenBudget` 路径甚至跳过摘要，要求 Agent 外化工作笔记后开启 fresh
+  context window，说明“摘要 checkpoint”也不是 Codex 唯一长期方向。
+- 实现仍有重要边界：pre-turn 预算没有纳入即将到来的新输入；本地摘要无覆盖验证；
+  Remote V2 的 64K 不是 model-scaled；live state swap 与 checkpoint/world/turn baseline
+  是分开持久化，append 失败只记录日志，因此并非 crash-atomic transaction。
 
 Engineering interpretation:
 
-Codex 的关键价值不是某个阈值，而是把“历史压缩”和“当前权威上下文”分开。系统
-指令、权限和当前环境不应依赖摘要保真，而应从 canonical source 重新投影。
+Codex 的价值是展示了一套成熟 long-running agent 所需的审查维度：触发预算、当前权威
+重注入、replacement checkpoint、resume/replay 和失败边界。它同时证明这套能力会带来
+window identity、持久化一致性、provider-specific item 和恢复测试的显著复杂度。
+
+PA 应借用的是“当前 authority 不依赖旧摘要、最终请求需要准入、压缩结果必须真实”这
+三个原则，而不是复制 rollout、checkpoint、fork/resume 或 opaque compaction 协议。
 
 ### 4.2 Gemini CLI
 
@@ -403,6 +427,11 @@ flowchart TD
   L --> J
 ```
 
+This diagram describes the upper-bound pattern found across long-running autonomous agents. It is
+not the recommended PA delivery architecture. In particular, durable tool-event logs, structured
+checkpoints, active-window replacement and history-recovery tools need independent PA product and
+data evidence before they become requirements.
+
 ### 5.2 Common Rules Emerging From Implementations
 
 1. Durable log and active prompt view are separate data structures.
@@ -648,7 +677,8 @@ instruction，也不能因为旧摘要而延续已经撤销的权限。
 
 ## 8. PA Current Implementation Assessment
 
-Evidence: Confirmed from current repository source on 2026-08-25.
+Evidence: Confirmed from current repository source on 2026-08-25 and re-verified
+against the production transcript shape on 2026-08-28.
 
 Primary sources:
 
@@ -665,10 +695,10 @@ Primary sources:
 | Current behavior | Assessment |
 | --- | --- |
 | Manager composes Projector, Hygiene, Compactor and Budget | 模块边界清晰，便于独立演进和测试 |
-| Micro-compaction prioritizes old tool results | 与 Gemini、OpenCode、SWE-agent 的高价值模式一致 |
-| Default trigger `0.7`, target `0.55` | 为 observation 留出回旋空间，不等到完全溢出 |
-| Protects two recent user turns | 保留局部交互连续性 |
-| Compacted tool result retains source metadata and up to four paths | 支持来源追溯，比无信息 `[truncated]` 更可信 |
+| Compactor has a tool-result-first reduction path | 方向与 Gemini、OpenCode、SWE-agent 一致，但生产 transcript 下的 soft path 目前不能按设计触发，见 §8.4 |
+| Default trigger `0.7`, target `0.55` | 已有 soft watermark / target 的形状，但当前 production turn grouping 使其主要停留在测试合同 |
+| Projection clones the transcript before reduction | prompt projection 不直接破坏 canonical transcript 或 source records |
+| Compacted tool result retains internal source records and up to four path strings | 比无信息 `[truncated]` 更好，但 provider 实际只看到 `promptText`，不能访问内部 metadata，见 §8.4 |
 | Projector creates a prompt-only history view | 原始 chat history 不被 projection 直接修改 |
 | Hygiene removes empty/status-only/orphaned items | 降低无价值 token 和 tool pairing 污染 |
 | Provider usage is captured diagnostically | 已具备未来校准字符估算的观测入口 |
@@ -687,218 +717,356 @@ Current source behavior:
 - compaction summary 默认最多 2400 字符；
 - 若投影仍超过 history budget，会继续移除较早 recent messages，最后再缩短 summary。
 
-### 8.3 Gaps Relative To Leading Implementations
+### 8.3 Comparative Gaps And PA Disposition
 
-| Gap | Risk | Comparative evidence |
+“领先项目有、PA 没有”不等于 PA 应该补齐。下表把比较差距重新按当前产品形态分类：
+
+| Comparative gap | PA disposition | Rationale |
 | --- | --- | --- |
-| 固定 10-turn boundary，不看真实 token pressure | 很短但关键的历史和很长但低价值的历史被同等处理 | Codex/Gemini/OpenCode 使用模型或请求预算 |
-| 160/220 字符级 turn 摘要 | 决定、约束、路径、错误和下一步可能被截断 | OpenCode structured checkpoint；Cline handoff |
-| summary 总长 2400 且按拼接结果截断 | 越接近 recent boundary 的旧决定可能完全落在截断之外 | Gemini omission verification |
-| 缺少 immutable objective / constraints | 多次压缩后任务意图可能漂移 | Plans Don't Persist；Codex canonical reinjection |
-| 缺少 summary source event ranges | 无法精确回溯“这句话总结自哪些 turn” | OpenHands forgotten event IDs |
-| 缺少 summary verifier 和 minimum shrink guard | 低质量或低收益摘要仍可能成为 active state | Gemini/OpenHands |
-| 缺少 session-history on-demand retrieval | 被压缩细节只能依赖用户重述或重新做工具调用 | ACM recoverable external memory |
-| `maxPromptChars` 主要用于 snapshot/reporting | 没有形成覆盖全部 prompt section 的最终 hard admission gate | OpenCode pre-turn full-request estimate |
-| Provider usage 未闭环校准估算和触发 | `chars / 4` 对不同语言、模型和 payload 不稳定 | Model-aware budgets in Codex/Gemini |
-| Session summary 与 long-term Memory 的边界依赖约定 | 未来扩展时存在把临时工作状态固化成用户事实的风险 | Faulty consolidation research |
+| 固定 10-turn boundary，不看真实压力 | **Fix in narrow foundation** | 短历史被无必要压缩，是当前可复现的连续性问题。 |
+| 160/220 字符 turn 摘要，summary 总长 2400 且按前缀截断 | **Fix in narrow foundation** | 当前实现可能先丢靠近 recent boundary 的旧信息，并在超限时先删除 recent raw history。 |
+| `maxPromptChars` 只报告、不准入 | **Fix in narrow foundation** | 这是当前 declared local envelope 没有被执行的可靠性缺口。 |
+| Context Pager 不知道 history/tool reduction | **Restore current contract** | 现有 Product Spec 已要求 `compressed` / `budget limit`，无需创造新产品面。 |
+| 缺少 immutable objective / constraints | **Do not add now** | PA 没有独立 task-state owner；opening objective 也可能被用户后续修改，强行锚定会制造冲突。 |
+| 缺少 structured checkpoint、source event ranges、CAS/window identity | **Do not add now** | 当前没有 durable tool-event log、resume/fork 或并发 active-window replacement 需求。 |
+| 缺少 summary verifier / minimum shrink guard | **Only if an LLM summary is later approved** | 当前建议仍是 deterministic reducer，没有需要验证的模型摘要。 |
+| 缺少 session-history search/read tools | **Future evidence gate** | 先证明用户存在跨重启恢复 tool-level work 或高频重复读取问题。 |
+| Provider usage 未用于 per-model calibration | **Observe, then decide** | 首版只承诺保守的 PA-owned char guard；不把 `chars / 4` 冒充真实 token fit。 |
+| Session summary 与 long-term Memory 边界依赖约定 | **Keep explicit separation** | projection reduction 不能自动写入或更新长期 Memory。 |
 
-These are research-informed gaps, not authorization to change current behavior.
+这些 disposition 是方案取舍，不构成 runtime 实施授权。
 
-## 9. Proposed PA Target Architecture
+### 8.4 Source-verified Review Follow-up
 
-Status: Inference / candidate option. Not approved.
+The following findings were re-checked against the current source and focused tests on
+2026-08-28. They are implementation facts, but the proposed remedies remain candidates
+until the product/runtime scope is approved.
 
-### 9.1 Data Layers
+| ID | Classification | Verified current behavior | Consequence if B-128 is promoted |
+| --- | --- | --- | --- |
+| F-01 | Must-fix correctness | [`PaAgentLoop`](../../../src/ai-services/pa-agent-loop.ts) inserts one user message only at `turnIndex === 0`, while [`microCompact`](../../../src/ai-services/context/PaAgentContextCompactor.ts) protects recent work by counting user messages. Therefore all tool results in a real run appear to belong to the protected current user turn. | The `0.7 → 0.55` soft pass and manager's `0.4` aggressive pass can reduce nothing in the production-shaped transcript; only later hard truncation provides relief. |
+| F-02 | Must-fix reliability | [`PaAgentContextBudget`](../../../src/ai-services/context/PaAgentContextBudget.ts) reports `maxPromptChars`, but [`PaAgentContextManager`](../../../src/ai-services/context/PaAgentContextManager.ts) returns the projection even when it is above that value. | Long sessions can still reach the provider without a final admission guarantee or output headroom. |
+| F-03 | Must-fix continuity | Chat history is summarized after a fixed ten turns even when the request is far below budget. The summary keeps early concatenated excerpts up to 2400 chars; if history remains too large, [`PaAgentContextProjector`](../../../src/ai-services/context/PaAgentContextProjector.ts) removes recent raw messages before shrinking the older summary. | Important middle-history constraints can disappear, and recent verbatim context can be sacrificed before lower-fidelity old context. |
+| F-04 | Must-fix current-contract gap | [Context Pager](../../product/specs/pa-context-pager-product-spec.md) requires compressed context and `compressed` / `budget limit` reasons, but the runtime compaction outcome is exposed only through developer diagnostics and [`context-pager.ts`](../../../src/pa/context-pager.ts) derives state only from retrieval/context-used items. | The user receipt can disagree with the actual prompt projection. This is restoration of a current product contract, not a new token dashboard. |
+| F-05 | Should-fix-now traceability | The compacted placeholder says source metadata remains available, while [`formatToolObservations`](../../../src/ai-services/pa-agent-prompts.ts) serializes only `promptText`. It omits call ID, outcome, original event identity and an honest recovery instruction. | The model receives a stronger recoverability claim than the active context actually provides. |
+| F-06 | Decision required | In-memory `PaAgentPersistedTurn.messages` may contain the canonical transcript, but [`ChatHistoryManager`](../../../src/chat/chat-history-manager.ts) persists the final user/assistant pair and rehydrates `canonicalTurn.messages` as empty. | Restart recovery needs an explicit storage/privacy/retention decision; it must not be smuggled into a runtime bug fix. |
+| F-07 | Should-fix-now observability | `compactedToolResults` does not count hard truncations, `budgetDrivenRecompaction` can be true when no soft reduction occurred, and origin annotations describe the input transcript rather than final retained/compacted/dropped state. | Eval and Context Pager cannot prove what was actually changed without a normalized projection receipt. |
+
+Focused source verification passed 4 suites / 117 tests. The existing tests still lack the
+production one-user/multi-model-turn transcript, serialized wrapper overhead, final hard
+admission, middle-history constraints, recent-tail priority, Context Pager compression receipts,
+and reload recovery. No runtime behavior was changed by this review.
+
+## 9. Mature-implementation Review: What Fits PA
+
+Status: Source-verified design review. The disposition below is a candidate recommendation, not
+implementation authority.
+
+### 9.1 PA Runtime Shape That Constrains The Design
+
+| Verified PA fact | Design consequence |
+| --- | --- |
+| Each user send creates a new `PaAgentRuntime`; previous Chat turns enter as flat final user/assistant pairs. | There is no long-lived active model window to replace, version or resume. |
+| A current run is capped at 20 model turns, 30 tool calls and 180 seconds. | The first problem is bounded in-run observation growth, not days-long autonomous execution. |
+| The current-run transcript has one user item followed by assistant/tool cycles. | Tool reduction must group by assistant/model cycle; user-message counting is the wrong boundary. |
+| The provider receives a newly rendered system + human prompt on every model invocation; prior assistant/tool items are not replayed as provider-native message pairs. | Codex-style provider item IDs, reasoning-item lineage and tool call/result checkpoint repair do not apply to the current request shape. |
+| Disk persistence keeps final user/assistant text and bounded metadata; reload reconstructs `canonicalTurn.messages` as empty. | A raw tool-event archive or restart recovery would be a new data product, not a compactor refactor. |
+| Existing projection diagnostics already reach `turn_end.metadata.metrics`, and Context Trace is already stored with completed Chat turns. | A small reduction outcome can reuse current lifecycle plumbing; no parallel receipt ledger is needed. |
+
+### 9.2 Adopt, Adapt Or Reject For Now
+
+| Pattern seen in mature implementations | PA disposition | Reason |
+| --- | --- | --- |
+| Separate canonical source from prompt view | **Keep** | Current projection already clones input and must remain non-mutating. |
+| Reduce verbose tool observations before user-authored dialogue | **Adapt now** | Use current `PaAgentMessage` fields and model-cycle order; do not invent a generic event schema. |
+| Preserve a recent verbatim tail | **Adapt now** | Recompute it per projection from final Chat pairs; do not create a persisted window entity. |
+| Re-inject current control state | **Keep current behavior** | Latest input, runtime instruction, available tools and write boundaries are already assembled fresh. Historical text must never grant current authority. |
+| Final request admission with headroom | **Adapt now** | Guard the PA-owned serialized character envelope conservatively; do not claim exact model-token fit. |
+| Accurate compact user receipt | **Adapt now** | Reuse Context Trace/Pager and show at most `compressed` / `budget limit`; keep technical counts in diagnostics. |
+| Immutable historical objective/approval anchors | **Reject now** | Objectives and approvals can be revised or revoked; duplicating them outside dialogue creates stale authority risk. |
+| Active-window checkpoint, `historyVersion`, window lineage or CAS | **Reject now** | PA has no concurrent context writer, resumable active window, fork or checkpoint consumer. |
+| Durable raw event log, archive index and recovery tools | **Reject now** | Requires new storage, privacy, retention, deletion and migration decisions without current user evidence. |
+| Structured task checkpoint and omission verifier | **Future evidence gate** | Revisit only after deterministic recent-tail evaluation shows repeated semantic failures. |
+| LLM compactor, provider-native compaction or learned policy | **Future evidence gate** | Adds provider calls, latency, cost and provider-specific behavior before the deterministic baseline is trustworthy. |
+
+### 9.3 Over-design Conclusion
+
+The previous target architecture combined four distinct future products: prompt projection,
+resumable job state, a session event archive and semantic task memory. That design was internally
+coherent for a Codex-like agent, but disproportionate for PA today.
+
+The PA target should therefore remain a **stateless projection repair**. “Window” means only a
+temporary recent-tail selection inside one projection. “Compaction” means prompt-only reduction;
+it does not create a durable checkpoint, mutate Chat history, make tool output recoverable, or
+write long-term Memory.
+
+## 10. PA Solution Draft v0.2: Deterministic Projection Reliability
+
+Status: **Discovery candidate only; not approved for implementation.** This rewrite deliberately
+removes the Codex-shaped architecture from the delivery plan. It does not create an Accepted
+Decision, Product Spec, Active Package, SDD, implementation, commit, push or release authority.
+
+### 10.1 Outcome And Scope
+
+Candidate outcome:
+
+> PA should keep short conversations verbatim, reduce older eligible or lower-fidelity prompt material only when
+> pressure requires it, never silently cut the current request or current authority boundaries,
+> and show one truthful compact status when reduction affected the answer context.
+
+The proposed scope addresses F-01 through F-05 and the observability part of F-07. It does not
+claim to preserve every fact from arbitrarily long history. F-06 remains outside this scope.
+
+If approved later, stable `B-128/REQ-xx` and `B-128/AC-xx` belong in the Product Spec; identifiers
+in this Discovery section are explanatory only.
+
+### 10.2 Explicit Non-goals
+
+- no active-window object, checkpoint, `historyVersion`, lineage or CAS;
+- no historical objective/constraint/approval anchor registry;
+- no persisted raw tool transcript, session archive, recovery index or history tools;
+- no new compactor-model call, provider-native compaction or summary verifier;
+- no new Memory admission, update or persistence behavior;
+- no model registry, exact token counter, per-language calibration or learned threshold;
+- no new Context Pager component, Replay ledger, token dashboard or compaction setting;
+- no automatic fresh-chat creation or generated handoff;
+- no replacement for the existing Manager / Hygiene / Compactor / Projector / Budget boundaries.
+
+### 10.3 Minimal Runtime Flow
 
 ```mermaid
 flowchart LR
-  A["Raw session event log\nappend-only, replayable"] --> B["Session archive index\nevent IDs, source refs"]
-  A --> C["Context hygiene\nempty/status/orphan repair"]
-  C --> D["Observation compactor\ntool results first"]
-  D --> E["Working-state reducer"]
-  E --> F["Structured checkpoint\nversioned + source ranges"]
-  G["Canonical anchors\nobjective, constraints, authority"] --> H["Active context packer"]
-  F --> H
-  D --> H
-  I["Recent verbatim tail"] --> H
-  B -. "on-demand recovery" .-> H
-  J["Governed long-term Memory"] --> H
-  H --> K["Provider request\nwith output headroom"]
+  A["Saved final Chat pairs"] --> B["Projector\nfit-first history reduction"]
+  C["Current-run transcript"] --> D["Hygiene"]
+  D --> E["Compactor\nold model cycles first"]
+  B --> F["Context Manager"]
+  E --> F
+  G["Latest input + current runtime/tool boundaries\nexisting Memory/Pagelet projection"] --> F
+  F --> H["Runtime local envelope guard\nknown strings + schemas + safety reserve"]
+  H -->|fit| I["Provider call"]
+  H -->|pressure| J["One ordered deterministic stronger projection"]
+  J --> H
+  H -->|still over local cap| K["Internal overflow\nno provider call"]
+  F --> L["Small reduction outcome"]
+  H --> L
+  L --> M["Existing diagnostics"]
+  L --> N["Existing Context Trace / Chat receipt"]
 ```
 
-### 9.2 Immutable Anchors
+This is a data-flow change inside existing ownership boundaries, not a new context platform.
 
-Suggested fields:
+### 10.4 Candidate Invariants
+
+| Draft ID | Candidate invariant |
+| --- | --- |
+| DRAFT-I1 | The latest user input, current runtime instruction, bound tool/write boundary and required prompt structure are not derived from or overridden by old history. |
+| DRAFT-I2 | Prompt reduction does not mutate saved Chat pairs or the current-run canonical transcript. Every later projection starts from those existing sources, not from a previously generated prompt summary. |
+| DRAFT-I3 | Chat history stays verbatim when it fits. Under pressure, complete recent user/assistant pairs are preferred over a low-fidelity older digest; no opening turn is permanently privileged. |
+| DRAFT-I4 | Tool observations are grouped by assistant/model cycle. Older eligible results are shortened first; a single oversized recent result may still be hard-truncated to enforce the lane cap. |
+| DRAFT-I5 | Provider-visible shortened text states only what is true: tool identity, outcome, visible source paths and that omitted details are not in the current context. It does not claim hidden metadata is available or that a side-effecting tool is safe to rerun. |
+| DRAFT-I6 | The runtime enforces a conservative PA-owned character envelope over all locally known request parts. This is a safety guard, not proof of provider token/window fit. |
+| DRAFT-I7 | Per-invocation outcomes feed diagnostics; one OR-reduced run receipt drives Chat. Reduction does not reclassify run-level source, Memory or skipped-scope accounting. |
+| DRAFT-I8 | Prompt compaction is prompt-local context handling and never becomes governed long-term Memory. |
+
+### 10.5 Deterministic Reduction Policy
+
+#### A. Final Chat history
+
+1. Group stored Chat messages into complete user/assistant turns.
+2. Serialize the full history first. If it fits the current history and overall local envelope,
+   return it byte-for-byte inside the existing escaped wrapper.
+3. Under pressure, select the newest complete turns backward within the available history budget.
+   The number retained is budget-derived, not a fixed ten-turn contract.
+4. The recent tail may consume the whole history budget; an older digest is allowed to be empty.
+   When space remains, select older digest entries newest-first, render the selected entries back in
+   chronological order and report omitted counts rather than slicing a concatenated prefix.
+   The digest is explicitly low-fidelity context, not task state or authority.
+5. If more space is needed, shrink or remove that digest before removing the recent raw tail.
+6. Never write the digest back to Chat storage, recursively summarize it, or permanently pin the
+   opening turn. Later user corrections naturally supersede old text.
+
+This policy intentionally gives no guarantee that every middle-history fact survives. The receipt
+must say when older context was compressed; semantic guarantees require a later, separately proven
+summary design.
+
+#### B. Current-run tool observations
+
+1. Keep current hygiene behavior for empty assistant messages, status-only outcomes and orphans.
+2. Derive model-cycle boundaries from assistant invocations and their following tool results, not
+   from user-message count.
+3. When the observation soft watermark is crossed, shorten older eligible cycles first until the
+   target is reached. Keep recent cycles verbatim when the hard cap permits.
+4. A shortened result uses only fields already available on `PaAgentMessage`: tool name/call ID,
+   success or error, original length and a bounded list of source paths actually serialized into
+   the replacement text.
+5. If the lane still exceeds its hard cap, truncate oldest full results first. A single oversized
+   protected result can be truncated as the final fallback; the wrapper and truncation marker must
+   remain structurally complete.
+6. Source records and canonical message content remain unchanged outside the prompt projection.
+
+Because PA currently sends observations as untrusted text blocks rather than provider-native
+call/result messages, this slice does not introduce Codex-style provider item pairing or IDs.
+
+#### C. Final local envelope guard
+
+The current `120_000`-character limit becomes an enforced PA-local rejection threshold over
+locally measurable request material:
 
 ```text
-originalObjective
-explicitUserConstraints
-authorityAndApprovalBoundaries
-acceptanceCriteria
-currentScope
-canonicalRuntimeInstructionsRef
+localEnvelopeChars
+= fully formatted system-message text, with every template variable counted once
++ fully formatted human-message text, with the projected user input counted once
++ a JSON-size estimate of bound native tool schemas
++ a conservative fixed wrapper/safety reserve
 ```
 
-Rules:
+The formatted system/human text is counted once after interpolation; the individual canonical
+variables are not added again. Schema size is still an estimate because `bindTools` owns provider
+serialization. The fixed reserve covers local wrapper uncertainty only: it is not output headroom,
+a safe model window or proof of provider fit.
 
-- anchors 不从旧摘要继承，始终从当前 canonical source 投影；
-- 用户修改目标或约束时写入新的版本，不静默覆盖历史；
-- tool output、Memory 或 Pagelet evidence 不能提升为 authority；
-- compactor 可以缩短展示形式，但不能删除字段语义。
+If the normal projection is above the cap, the runtime computes the required saving and performs
+one bounded rebuild with this order:
 
-### 9.3 Structured Working-state Checkpoint
+1. soft-compact older eligible tool cycles;
+2. hard-truncate older tool cycles if needed;
+3. shrink and then remove the deterministic older-history digest;
+4. remove the oldest remaining raw Chat turns while preserving the newest complete turns as long
+   as the available budget permits;
+5. hard-truncate the newest tool cycle only as the final reducible fallback.
 
-Suggested shape:
+Current input, current runtime/tool/write boundaries and required prompt structure are never
+trimmed. Existing governed Memory/Pagelet projection keeps its current independent cap in v0.2;
+if history and tool observations are exhausted and the request is still too large, the request is
+irreducible within this approved scope.
+
+At that point the runtime does not call the provider or trim the latest input. The local-overflow
+reason must survive Loop diagnostics into Chat instead of becoming a generic provider/network
+failure. Working product copy:
+
+> This request and its conversation context are too long, so PA did not send it to AI. Shorten the
+> request or start a new conversation.
+
+No automatic new-Chat action or generated handoff is included. Provider-side context rejection
+below the local cap remains a residual risk and does not trigger an unbounded retry loop.
+
+#### D. Aggregate reduction outcome
+
+Do not persist prompt text, source ranges, checkpoint IDs or event lineage. Each model invocation
+emits one content-free projection outcome for developer metrics:
 
 ```text
-checkpointId
-sourceEventStart / sourceEventEnd
-objectiveStatus
-confirmedFacts[]
-decisions[]
-completedWork[]
-activeWork[]
-failedAttempts[]
-blockers[]
-nextStep
-relevantArtifacts[]
-openQuestions[]
-retrievalHandles[]
-createdAt
-compactorVersion
+historyCompressed: boolean
+toolResultsCompacted: number
+toolResultsHardTruncated: number
+budgetLimited: boolean
+admission: fit | local_overflow
 ```
 
-Each item should distinguish:
+Before/after characters, history omitted counts and detailed hygiene statistics remain per-invocation
+developer diagnostics; they are never summed across the run because the same item can be reduced in
+several later projections.
 
-- user statement；
-- tool-observed fact；
-- Agent inference；
-- approved decision；
-- unresolved hypothesis。
-
-### 9.4 Tool-result Compaction Contract
-
-Instead of a generic placeholder, a compacted observation should retain:
+The run-level Chat receipt persists only three booleans:
 
 ```text
-toolName
-callId
-inputDigest
-keyFacts
-sourceRefs
-artifactPaths
-exitStatus
-originalEventId
-originalLength
-reReadRequired
+historyCompressed = OR across invocations
+toolContextReduced = OR(toolResultsCompacted > 0 or toolResultsHardTruncated > 0)
+budgetLimited = OR(any hard truncation or budget-driven history omission)
 ```
 
-Not every result needs LLM summarization. Deterministic extraction is preferable for:
+The ordinary Chat status has one deterministic precedence: when `budgetLimited` is true, show
+`budget limit`; otherwise, when `historyCompressed || toolContextReduced` is true, show
+`compressed`; otherwise show no reduction status. The three booleans remain available to
+diagnostics and reload even though the ordinary surface renders only one state.
 
-- command exit status；
-- changed file list；
-- test pass/fail counts；
-- file paths and line references；
-- URL and document title；
-- structured tool result metadata。
+`local_overflow` is a terminal live error, not completed-turn metadata. For a completed response,
+Chat consumes all projection outcomes already carried by lifecycle metrics and writes the three
+booleans into an additive reduction field on existing turn metadata / Context Trace. A
+reduction-only trace must be created and rendered even when the run used zero sources, zero Memory
+items and zero skipped scopes; it must not be synthesized as a `statusOnly` context-used item.
+Old rows default to no reduction, and deletion follows the existing conversation lifecycle.
 
-### 9.5 Budget Policy
+Source/Memory counts remain run-level retrieval accounting: a source is “used” if its observation
+participated in at least one model invocation, even if a later invocation received only a shortened
+form. The reduction receipt separately states that full detail was not present in every prompt. This
+field is not a checkpoint and cannot recover omitted tool text.
 
-Use a model-aware request budget:
+### 10.6 Delivery Slices
 
-```text
-inputBudget
-= modelContextWindow
-- reservedOutputTokens
-- providerSafetyMargin
-```
+The proposed work is one narrow feature track with two independently reviewable slices, followed
+by a stop-and-observe gate.
 
-Within the input budget, track separate lanes:
+| Slice | Primary ownership | Candidate work | Exit evidence |
+| --- | --- | --- | --- |
+| A. Projection reliability core | `PaAgentContextCompactor`, `PaAgentContextProjector`, `PaAgentContextManager`, request assembly in `PaAgentRuntime` | Production-shape tests; model-cycle grouping; truthful tool shortening; fit-first/recent-first history; unified ordered stronger projection; enforced local char envelope; typed local overflow with minimal Chat explanation; per-invocation diagnostics. | Current input and authority remain intact; fit histories remain verbatim; the real one-user/multi-cycle path reduces observations; no provider call occurs above the local cap; local overflow is not shown as a provider/network failure. |
+| B. Current Context Pager contract bridge | lifecycle metrics consumption, existing Chat metadata/Context Trace and current expandable Chat context UI | OR-reduce per-invocation outcomes to three booleans; create a reduction-only zero-source trace when needed; render one independent product-language status; persist the bounded field through completed-turn save/reload without using `contextUsed` or skipped-scope accounting. | Live and reloaded Chat receipts agree with all projections in the run; repeated reductions are not double-counted; source, Memory and scope counts preserve their run-level semantics. |
+| Evidence gate | eval fixtures and diagnostics | Dogfood the deterministic policy; record only reproducible overflow, constraint-loss or repeated-read failures. | Stop delivery. Reopen exactly one future option only when its entry criterion is met. |
 
-```text
-system and canonical instructions
-tool definitions
-immutable anchors
-working-state checkpoint
-recent verbatim dialogue
-tool observations
-retrieved vault/session evidence
-governed long-term Memory
-```
+If the scope is approved, first capture the selected scope and its included minimal overflow behavior in a
+Draft Decision and Product Spec. Only after explicit acceptance should the minimum Active Package,
+source-verified SDD and Tracker be created. Do not add a separate plan or other process artifact
+unless the phased execution risk cannot fit clearly in the Tracker.
 
-Do not adopt Gemini's 50% or Codex's approximately 90% threshold as a universal PA
-default. Use local eval and provider usage telemetry to choose soft and hard watermarks.
+### 10.7 Candidate Acceptance Conditions
 
-### 9.6 Transactional Compaction
+1. A production-shaped transcript containing one user message and at least three assistant/tool
+   cycles soft-compacts older results while retaining recent cycles when the hard cap permits.
+2. A single oversized tool result is bounded, its wrapper remains valid, and the provider-visible
+   marker makes no false recoverability claim.
+3. A short Chat history produces the same serialized history content as before reduction.
+4. Under pressure, the deterministic older digest is reduced before recent complete raw turns;
+   no opening turn receives immutable or authority semantics.
+5. The enforced local envelope counts the fully formatted system and human messages once, plus a
+   JSON-size estimate of bound schemas and a fixed reserve. It does not double-count canonical
+   variables or claim output headroom/provider-token fit.
+6. An irreducible local overflow causes no provider invocation and does not silently truncate the
+   latest user input. Chat preserves the local-overflow reason and shows the agreed non-technical
+   explanation rather than a generic provider/network error.
+7. The ordered stronger projection exhausts its declared reducible history/tool steps before local
+   overflow, and diagnostics distinguish soft tool compaction, hard truncation, history compression
+   and terminal local overflow.
+8. Per-invocation counts remain diagnostic; the run-level receipt uses OR booleans and does not
+   double-count the same result across later model invocations.
+9. Context UI shows at most one non-technical reduction status, including a zero-source/history-only
+   case; it preserves run-level used/skipped source, Memory and scope semantics and exposes no raw
+   prompt or token figures.
+10. The content-free three-boolean field is backward-compatible with old turns and follows current
+    conversation deletion; no raw tool text or prompt summary is newly persisted.
+11. Projection leaves saved Chat history, canonical current-run messages, source records, current
+    tool availability and write/approval boundaries unchanged.
 
-Recommended lifecycle:
+After implementation, validation should include focused Jest suites, the Local Validation Gate,
+lint, production build, full serialized tests, `git diff --check`, `npm run docs:check`, independent
+review, and deployed Obsidian Chat smoke for the runtime/receipt path. No provider-token fit claim
+may be made without a live provider-specific test.
 
-1. Emit `compaction_started` with old active boundary.
-2. Select a safe event range outside protected recent turns.
-3. Build deterministic candidate facts and references.
-4. Optionally call an LLM to produce typed checkpoint fields.
-5. Verify protected anchors, artifact paths, decisions and source coverage.
-6. Measure shrinkage and token headroom.
-7. If verification fails or shrinkage is negligible, keep old boundary.
-8. If successful, emit `compaction_completed` and atomically install new boundary.
-9. Preserve the old events in session archive.
-10. Expose only compact product-language context information through Context Pager.
+### 10.8 Risks And Rollback
 
-### 9.7 Recovery Tools
+| Risk | Mitigation / rollback |
+| --- | --- |
+| Deterministic digest loses an old fact | State the limitation, protect recent raw turns, test representative constraints, and revert the history reducer independently if regression outweighs benefit. |
+| The char guard is mistaken for a model limit | Name it local envelope admission, retain provider overflow as residual risk and use provider usage only as observation. |
+| Latest tool evidence is too large | Allow hard truncation only as the final lane fallback and mark omitted details honestly. |
+| Context receipt becomes noisy | Render only when reduction occurred, at most once per response, using existing `compressed` / `budget limit` language. |
+| Bounded aggregate expands persistence | Persist fixed scalars/enums only through existing turn metadata; no raw text, new store, index or retention policy. |
+| Internal overflow loses its reason in Chat | Preserve a typed local-overflow diagnostic through Loop/Chat and show the minimal product explanation included in this candidate scope. |
+| Temporary dual policies linger | Replace the old reducer directly behind existing tests; add no user switch or parallel context service. |
 
-Candidate internal tools:
+### 10.9 Future Options With Evidence Gates
 
-```text
-search_session_history(query, beforeEventId?, afterEventId?)
-read_session_events(eventIds)
-read_compaction_sources(checkpointId, field?)
-```
+These are research candidates, not delivery phases or an implied roadmap:
 
-These tools should be read-only and scoped to the current session. Their results should
-enter the same observation budget and carry provenance.
-
-## 10. Recommended Delivery Sequence
-
-Status: Candidate plan only; no implementation authority.
-
-### Phase 1: Deterministic Reliability Foundation
-
-- Add explicit immutable anchor representation.
-- Replace fixed-turn-only decision logic with final request budget accounting.
-- Preserve tool call/result atomic units.
-- Enrich compacted tool placeholders with structured metadata.
-- Record checkpoint source ranges and compression metrics.
-- Add long-session deterministic tests before introducing a summarizer model.
-
-Expected value: closes the highest-risk gaps without additional AI calls or provider cost.
-
-### Phase 2: Structured LLM Compactor With Verification
-
-- Generate typed working-state checkpoints only under pressure or task boundary.
-- Run omission verification for protected fields.
-- Reject inflation, insufficient shrinkage and unsupported facts.
-- Preserve previous checkpoint until the new checkpoint completes.
-- Compare same-model, weak-model and deterministic-only strategies.
-
-Expected value: higher semantic retention than character truncation, with controlled cost.
-
-### Phase 3: Recoverable Session Archive
-
-- Index archived event metadata and source handles.
-- Add on-demand history search/read tools.
-- Track reacquisition rate and repeated tool calls.
-- Support explicit new-session handoff after repeated compactions.
-
-Expected value: reduce irreversible loss and allow long-running tasks to exceed a single window.
-
-### Phase 4: Learned Or Adaptive Policy
-
-- Use real eval failures to tune retention rules.
-- Calibrate trigger thresholds per model/provider/language.
-- Explore task-boundary and subtask isolation inspired by AgentFold/HyMem.
-- Consider a learned compressor only after deterministic contracts and evaluation exist.
-
-Expected value: optimize efficiency after reliability and observability are established.
+| Future option | Re-entry evidence required |
+| --- | --- |
+| Simple provider-generated rolling summary + recent raw tail | Reproducible long-Chat eval or dogfood failures show deterministic digests repeatedly lose important semantics, and latency/cost/data use are accepted. Start with prose; do not assume a typed checkpoint. |
+| Structured objective/decision checkpoint | A simple summary still produces repeated control-state failures, and ownership/correction semantics can be defined without making old approval authoritative. |
+| Per-model/token-aware budget | Provider overflow/usage data proves the fixed conservative char guard is materially too loose or too restrictive. |
+| Persisted raw tool transcript / restart continuation | Users need interrupted tool-level work to resume across app restart, followed by explicit storage, retention, deletion, privacy and migration decisions. |
+| Session search/read recovery tools | An approved session archive exists and repeated tool calls or user restatement are a measured problem. |
+| Active-window identity, checkpoint lineage or CAS | PA gains durable resumable windows, fork/rollback, background compaction or multiple concurrent context writers. |
+| Fresh-chat handoff | Unrecoverable long-Chat continuation becomes frequent enough to justify a new user-visible workflow. |
+| LLM verifier, adaptive or learned policy | A provider summary is already in production, deterministic policies are a stable baseline, and sufficient evaluation data exists. |
 
 ## 11. Evaluation Plan
 
@@ -906,118 +1074,135 @@ Expected value: optimize efficiency after reliability and observability are esta
 
 | Dimension | Metric |
 | --- | --- |
-| Capacity | pre/post tokens, peak tokens, headroom, compression ratio |
-| Correctness | continuation success, factual precision, unsupported additions |
-| Control state | objective, constraint, approval boundary, AC and next-step recall |
-| Structure | orphan tool calls/results, invalid provider items, replay consistency |
-| Recovery | re-read calls, repeated searches, repeated tool calls, recovered source precision |
-| Stability | drift after 1/3/5 compactions, summary version disagreement |
-| Efficiency | compact latency, extra model calls, prompt/output tokens, cost |
-| Trust | source coverage, Context Pager accuracy, ability to inspect original evidence |
+| Admission safety | local-envelope chars, reduction attempts, local-overflow count, provider calls prevented |
+| Observation reduction | before/after chars, soft-compacted count, hard-truncated count, latest-cycle retention |
+| Chat continuity | fit-history byte equality, recent complete-turn retention, older-digest omission rate |
+| Authority safety | latest input/runtime/tool/write boundary unchanged after projection |
+| Trust | aggregate-outcome accuracy and Context receipt agreement without source/Memory/scope count drift |
+| Efficiency | projection latency and allocation cost; no additional provider call in this scope |
+| Residual provider risk | provider context rejection below the local char cap, recorded without claiming exact token calibration |
 
 ### 11.2 Required Test Scenarios
 
-1. **Long coding task:** plan established early, many tests and file reads later.
-2. **Constraint retention:** user prohibits a file or operation in the first turn.
-3. **Permission change:** authorization is granted, narrowed and later revoked.
-4. **Repeated failure:** several similar tool errors must not be summarized as success.
-5. **Large observation burst:** one test/log output nearly consumes the observation budget.
-6. **Tool pair boundary:** function call and result sit exactly across a proposed cutoff.
-7. **Conflicting facts:** later tool evidence supersedes an older assumption.
-8. **Artifact recovery:** compressed history contains a path needed twenty turns later.
-9. **Multiple compactions:** same task crosses at least five compaction boundaries.
-10. **Chinese-heavy session:** token estimation differs materially from `chars / 4`.
-11. **Provider-native items:** encrypted/reasoning/tool IDs must remain valid after checkpoint.
-12. **Summary failure:** timeout, refusal, malformed output and inflated summary all fail closed.
+1. **Production transcript:** one user item followed by at least three assistant/tool cycles proves
+   that older observation compaction works on the real loop shape.
+2. **Single large observation:** one recent result exceeds the lane cap; the wrapper stays complete,
+   truncation is truthful and canonical content is unchanged.
+3. **Errors and sources:** shortened success and error results retain the correct outcome and only
+   source paths actually visible to the provider.
+4. **Fit history:** a short history remains verbatim and receives no compression receipt.
+5. **History pressure:** recent complete user/assistant pairs survive before the old deterministic
+   digest; no fixed ten-turn behavior or immutable opening anchor remains.
+6. **Permission change:** an old approval followed by a newer restriction cannot override current
+   runtime/tool/write policy after history reduction.
+7. **Known envelope:** fixed system text, all canonical variables, operations guidance, bound schemas
+   and safety reserve contribute to local admission.
+8. **Irreducible input:** the ordered history/tool reduction is exhausted, the remaining request
+   exceeds the local cap, the provider is not called, the latest input is not silently truncated and
+   Chat shows the local explanation rather than a provider/network error.
+9. **Run aggregation:** the same tool result is reduced in several model invocations; per-invocation
+   diagnostics remain separate and the persisted run receipt contains one OR-reduced state.
+10. **Zero-source receipt and reload:** history-only reduction with no source, Memory or skipped scope
+    still shows the correct single `compressed` / `budget limit` status live and after reload; old
+    rows remain backward-compatible and source/Memory/scope accounting is unchanged.
 
 ### 11.3 Baselines
 
-Compare at least:
+Compare only the policies needed for this decision:
 
-- full context until hard overflow；
-- oldest-message dropping；
-- current PA fixed-turn character summary；
-- tool-pruning only；
-- structured deterministic checkpoint；
-- structured LLM checkpoint without verifier；
-- structured LLM checkpoint with verifier and recovery tools。
+- current PA fixed-ten-turn history plus production-broken soft observation compaction;
+- fit-first history with model-cycle observation reduction;
+- the complete v0.2 policy including final local admission and aggregate receipt.
+
+Provider summaries, structured checkpoints and recovery tools enter the baseline set only if their
+future evidence gate opens.
 
 ## 12. Anti-patterns
 
 Avoid the following designs:
 
 1. Blindly drop the oldest N messages regardless of semantics.
-2. Summarize after every turn.
-3. Delete source transcript after generating a summary.
-4. Let a summary override current system policy or user constraints.
-5. Split tool call and tool result across a compaction boundary.
-6. Treat `[truncated]` as sufficient provenance.
-7. Use task completion as the only metric.
-8. Promote session checkpoint directly into long-term user Memory.
-9. Keep recursively summarizing summaries without returning to raw events.
-10. Retry overflow indefinitely after tool side effects or durable output.
-11. Expose token and internal context jargon as the default PA product surface.
-12. Use a single threshold for all models, languages and task types without calibration.
+2. Compress after a fixed number of turns when the full history still fits.
+3. Remove recent raw dialogue before shrinking a lower-fidelity older digest.
+4. Treat an opening objective, old approval or prior tool availability as immutable current authority.
+5. Claim hidden metadata or raw tool output is recoverable when it was not serialized or persisted.
+6. Treat a character estimate as proof of provider-token fit.
+7. Create checkpoint IDs, window lineage, CAS or an event archive before PA has a resumable-window consumer.
+8. Build a second receipt/ledger when existing lifecycle metrics and Context Trace can carry bounded state.
+9. Persist prompt summaries or raw tool text as long-term Memory.
+10. Add a provider summarizer, verifier or learned policy before the deterministic baseline has measured failures.
+11. Retry overflow indefinitely or silently trim the latest user input.
+12. Expose token figures, context internals or management settings on the ordinary PA surface.
 
 ## 13. Product Fit With PA North Star
 
-The research supports PA's product constraints:
+The v0.2 design supports “安静且可信” without asking users to manage context:
 
-- **Less interruption:** compaction should normally remain internal and automatic.
-- **More source-backed evidence:** every summary field should be traceable to events, paths or
-  notes.
-- **Preserve original thinking:** raw user messages remain intact and recoverable.
-- **Earned trust:** compaction may change the model view but cannot invent authority or persist
-  long-term Memory without the appropriate contract.
-- **Quiet surface:** ordinary users see compact language such as “older conversation was
-  summarized” and can inspect sources through Context Pager; token dashboards remain diagnostic.
+- **Less interruption:** fit-first reduction is automatic and produces no status when nothing was
+  changed.
+- **Protect original thinking:** saved final user/assistant messages remain unchanged; recent raw
+  dialogue has priority over a generated old digest.
+- **Current authority wins:** old chat, tool observations and Memory remain context-only and cannot
+  restore withdrawn permissions or unavailable tools.
+- **Honest evidence:** a path or URL is shown only when present in provider-visible text. Pure tool
+  details removed from the prompt are not described as replayable or recoverable.
+- **Quiet transparency:** one compact receipt states that older conversation was compressed or some
+  context was excluded by the budget; detailed counts remain developer diagnostics.
+- **No new durable burden:** this scope does not create user-managed checkpoints, archives, settings
+  or long-term Memory candidates.
 
-User-facing interruption is justified only when:
-
-- repeated compactions make continuation confidence low；
-- recovery cannot reconstruct a required decision or constraint；
-- starting a fresh task with an explicit handoff is safer；
-- a costly provider summarization or broad data transfer needs disclosure under current policy。
+The only proposed interruption is terminal local overflow: do not call the provider or silently cut
+the current request. The candidate includes a minimal explanation asking the user to shorten the
+request or start a new conversation. Richer buttons, automatic Chat creation and handoff remain
+future options rather than prerequisites for this reliability fix.
 
 ## 14. Options
 
-| Option | User value | Cost / risk | North Star fit |
-| --- | --- | --- | --- |
-| A. Keep current implementation | No new complexity or provider cost | Long sessions retain current silent-loss risks | Medium for short sessions; weak for long-lived trust |
-| B. Deterministic reliability foundation | Protects authority and improves observability without new LLM call | Requires state schema, migration-free runtime integration and tests | High |
-| C. Verified structured compactor | Better semantic retention and task continuity | Additional latency/cost; verifier can still miss errors | High if source-backed and quiet |
-| D. Recoverable archive + adaptive policy | Supports very long tasks with lower irreversible loss | Highest complexity; needs retrieval and lifecycle governance | High long-term, but should follow B/C |
+| Option | Scope | User value | Cost / risk | North Star fit |
+| --- | --- | --- | --- | --- |
+| A. Remain research-only | Keep current implementation and B-128 Discovery only | No new complexity or provider cost | Confirmed long-session defects remain unresolved | Medium for short sessions; weak for long-lived trust |
+| B. Promote v0.2 projection reliability | Approve only §10.6 slices A and B, then stop at the evidence gate | Fixes verified reduction/admission/receipt defects without a new model call, raw transcript, checkpoint or new store | Multi-module runtime and Chat integration still require SDD, tests, review and smoke | **Highest near-term fit** |
 
-Recommended sequence: **B → C → D**, with independent approval and validation for each phase.
+Recommendation: choose **B**. A Codex-like full session lifecycle is intentionally not a current
+option; semantic provider summarization and full session lifecycle may return only through the
+specific evidence gates in §10.9.
 
 ## 15. Open Questions
 
-1. Should B-128 become a formal PA product/runtime evolution, or remain research evidence only?
-2. Which fields are truly immutable anchors versus versioned working state?
-3. Should the first implementation be deterministic-only, or include an optional LLM compactor?
-4. What provider/data disclosure applies when older chat and tool text are sent to a compactor model?
-5. Where should raw session events live, for how long, and under which deletion/privacy policy?
-6. Should session archive retrieval be automatic, or visible through Context Pager when used?
-7. At what confidence or compaction count should PA recommend a fresh chat with explicit handoff?
-8. Which model/language/task combinations define the initial budget calibration matrix?
+Only one question is active at a time:
+
+1. **Now:** should B-128 remain research-only, or should the narrow v0.2 projection-reliability
+   scope enter formal Decision / Product Spec preparation?
+2. **Only after dogfood evidence:** which single future option in §10.9 has met its re-entry criterion?
+
+Checkpoint fields, archive retention, recovery tools, LLM verifier and calibration matrices are not
+current questions. Raising them now would transfer theoretical design burden to the user.
 
 ## 16. Decision Needed
 
-- Decision: 是否把本报告的结论提升为 PA Context Management runtime / product contract 演进。
-- Decision authority: User / product maintainer.
-- Trigger: 用户明确要求设计、规划或实现 B-128；在此之前保持 research-only。
-- If accepted: 先确认 material product/data/privacy boundaries，再创建或更新 Decision、
-  Product Spec、source-verified SDD 和 Tracker。
-- If deferred: 保留 B-128 与本 Discovery，记录明确重启条件。
-- If rejected: 将独有研究证据压缩归档或在被当前 authority 吸收后删除。
+Current decision card — answer only this decision before the next one is raised:
+
+| Field | Decision context |
+| --- | --- |
+| Original/current authority | B-128 remains Discovery. No current authority approves runtime changes, a provider compactor, raw transcript persistence, checkpoint/archive behavior or a changed Memory boundary. |
+| Verified evidence | F-01–F-05 are concrete runtime/current-contract gaps. PA's per-send runtime and final-pair persistence make the former checkpoint/archive target disproportionate. |
+| Option A | Remain research-only. Lowest delivery cost, but leaves the confirmed long-session risks in place. |
+| Option B — recommended | Approve **only PA Solution Draft v0.2 §10.6 slices A and B** for formal Decision / Product Spec preparation, including the minimal fail-closed local-overflow explanation in §10.5. Source-verified SDD follows only after those contracts are explicitly accepted. Stop after the evidence gate. This excludes anchors, checkpoints, window identity, CAS, raw transcript/archive, recovery tools, new LLM calls and adaptive policy. |
+| Recommendation rationale | Option B fixes verified behavior inside existing module and metadata boundaries. It adds no new context platform, provider cost, raw-data lifecycle or user management surface. |
+| Rollback | Runtime reduction/admission and the Context receipt bridge remain separate reversible slices; the bounded receipt contains only three booleans in existing completed-turn metadata. |
+
+Decision authority: User / product maintainer. Until an explicit answer is recorded, keep
+`Document status: Current`, `Delivery status: Exploring`, make no runtime changes, and create no
+Decision, Product Spec, Active Package or SDD for B-128.
 
 ## 17. Source Index
 
 ### 17.1 Project Implementations
 
-- OpenAI Codex: [local](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact.rs),
-  [remote](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact_remote.rs),
-  [threshold](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)
+- OpenAI Codex snapshot `a73bf25d`: [local](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/compact.rs#L245-L398),
+  [remote v2](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/compact_remote_v2.rs#L223-L358),
+  [threshold](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/protocol/src/openai_models.rs#L433-L510),
+  [resume](https://github.com/openai/codex/blob/a73bf25d17805b4169ba2a2dc4329a010a3bb120/codex-rs/core/src/session/rollout_reconstruction.rs#L113-L380)
 - OpenAI Docs: [Compaction guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2)
 - Gemini CLI: [ChatCompressionService](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/context/chatCompressionService.ts)
 - OpenHands: [Condenser source](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/condenser/llm_summarizing_condenser.py)
@@ -1055,3 +1240,5 @@ Recommended sequence: **B → C → D**, with independent approval and validatio
 | Date | Authority / participants | Conclusion | Still open |
 | --- | --- | --- | --- |
 | 2026-08-25 | User request + Agent source research | 著名 Agent 已从简单截断收敛到 durable log、tool pruning、structured checkpoint、recent tail、verification 与 recoverable archive 的组合 | 是否将研究提升为 PA 的正式产品和 runtime 演进 |
+| 2026-08-28 | User requested a project-compliant solution draft + Agent source review follow-up | 曾将确定性 correctness/contract 修复与 checkpoint、持久化恢复、LLM compactor 分阶段；草案保持 Discovery / unapproved | 已由下一行的 PA-fit v0.2 范围取代 |
+| 2026-08-28 | User requested a PA-fit rewrite after detailed Codex CLI review | Reject Codex parity: replace the former multi-phase checkpoint/archive target with v0.2 stateless deterministic projection reliability; move semantic summary, recovery and window lifecycle behind evidence gates | 是否仅批准 §10.6 的 projection reliability core + current Context receipt contract bridge 进入正式 Decision / Product Spec 准备 |
