@@ -1,13 +1,23 @@
-# DEC-028: 多模态 Chat + 基于图片的社交媒体文案辅助
+# DEC-030: 多模态 Chat + 基于图片的社交媒体文案辅助
+
+Decision ID: DEC-030
+Status: Proposed
+Updated: 2026-08-28
+Authority: 2026-08-11 用户需求与产品讨论；等待后续完整讨论和明确接受
+Work item: B-129
 
 | Field | Value |
 |-------|-------|
-| Status | Approved |
-| Date | 2026-08-11 |
-| Decision | Build（分层实施） |
+| Original discussion | 2026-08-11 |
+| Discussion outcome | 倾向 Build（分层实施），尚未形成实施授权 |
 | Sizing | L（分层拆解为 M + S-M + M-L） |
 | Stakeholders | 产品（edony）、天使用户反馈 |
 | Related | North Star, AI Chat, Memory/Relational Context |
+
+> [!note] Lifecycle boundary
+> 本文保留已完成的需求分析与分层 Build 倾向，但图片输入、数据与隐私、provider、
+> 存储、移动端、Capture 写入和验收边界仍待后续讨论。`Proposed` 不授权实现；只有
+> 完成讨论并接入当前 Decision / Product Spec / Active Package 权威链后才能进入开发。
 
 ## 需求原文
 
