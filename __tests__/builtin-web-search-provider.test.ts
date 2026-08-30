@@ -14,6 +14,7 @@ import {
 } from "../src/ai-services/builtin-web-search-provider";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { AgentNetworkPolicy, ProviderLoadContext } from "../src/ai-services/capability-types";
+import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 
 jest.mock("obsidian");
@@ -130,8 +131,10 @@ describe("BuiltinWebSearchProvider", () => {
 
     it("drops inflight requests on abort and returns the documented cancel message", async () => {
         let resolveRequest: ((response: BuiltinWebSearchHttpResponse) => void) | undefined;
+        let requestSignal: AbortSignal | undefined;
         const provider = createProvider({
-            request: jest.fn(() => new Promise<BuiltinWebSearchHttpResponse>((resolve) => {
+            request: jest.fn<BuiltinWebSearchRequest>((_request, context) => new Promise<BuiltinWebSearchHttpResponse>((resolve) => {
+                requestSignal = context.signal;
                 resolveRequest = resolve;
             })),
         });
@@ -146,12 +149,15 @@ describe("BuiltinWebSearchProvider", () => {
         });
         await Promise.resolve();
         expect(provider.inflightRequests.size).toBe(1);
+        expect(requestSignal).toBeDefined();
+        expect(requestSignal).not.toBe(controller.signal);
 
         controller.abort();
         await expect(pending).resolves.toMatchObject({
             ok: false,
             error: WEB_SEARCH_CANCELLED_MESSAGE,
         });
+        expect(requestSignal?.aborted).toBe(true);
         expect(provider.inflightRequests.size).toBe(0);
 
         resolveRequest?.(okResponse());
@@ -243,24 +249,43 @@ describe("BuiltinWebSearchProvider", () => {
 
     it("returns recoverable unavailable when the request times out", async () => {
         jest.useFakeTimers();
-        const provider = createProvider({
-            timeoutMs: 10,
-            request: jest.fn(() => new Promise<BuiltinWebSearchHttpResponse>(() => undefined)),
-        });
-        const registry = createPaidCapabilityRegistry();
-        await registry.registerProvider(provider, createLoadContext());
+        try {
+            let resolveRequest: ((response: BuiltinWebSearchHttpResponse) => void) | undefined;
+            let requestSignal: AbortSignal | undefined;
+            const provider = createProvider({
+                timeoutMs: 10,
+                request: jest.fn<BuiltinWebSearchRequest>((_request, context) => new Promise<BuiltinWebSearchHttpResponse>((resolve) => {
+                    requestSignal = context.signal;
+                    resolveRequest = resolve;
+                })),
+            });
+            const registry = createPaidCapabilityRegistry();
+            await registry.registerProvider(provider, createLoadContext());
+            const outerController = new AbortController();
 
-        const pending = registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "timeout" }, {
-            host: createPlugin(),
-            turnId: "turn-timeout",
-        });
-        jest.advanceTimersByTime(10);
+            const pending = registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "timeout" }, {
+                host: createPlugin(),
+                turnId: "turn-timeout",
+                signal: outerController.signal,
+            });
+            await Promise.resolve();
+            expect(requestSignal).toBeDefined();
+            expect(requestSignal).not.toBe(outerController.signal);
+            jest.advanceTimersByTime(10);
 
-        await expect(pending).resolves.toMatchObject({
-            ok: false,
-            error: "WebSearch request timed out.",
-        });
-        jest.useRealTimers();
+            await expect(pending).resolves.toMatchObject({
+                ok: false,
+                error: "WebSearch request timed out.",
+            });
+            expect(requestSignal?.aborted).toBe(true);
+            expect(outerController.signal.aborted).toBe(false);
+
+            resolveRequest?.(okResponse());
+            await Promise.resolve();
+            expect(provider.inflightRequests.size).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("truncates long source titles and snippets through SourceStore normalization", async () => {
@@ -324,6 +349,8 @@ describe("BuiltinWebSearchProvider", () => {
     it("uses the Bailian Streamable HTTP MCP sequence and normalizes tool results", async () => {
         const requestUrlMock = requestUrl as unknown as jest.MockedFunction<(request: MockRequestUrlParam) => Promise<unknown>>;
         requestUrlMock.mockReset();
+        const providerRequestScope = createProviderRequestScope();
+        const startRequest = jest.spyOn(providerRequestScope, "startRequest");
         requestUrlMock
             .mockResolvedValueOnce(mockObsidianResponse({
                 text: JSON.stringify({ jsonrpc: "2.0", id: "initialize", result: {} }),
@@ -360,7 +387,7 @@ describe("BuiltinWebSearchProvider", () => {
             endpoint: BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
             headers: { Authorization: "Bearer sk-SECRET_TOKEN_SENTINEL" },
             body: { query: "latest news", limit: 2 },
-        }, {});
+        }, { providerRequestScope });
 
         expect(response).toEqual({
             status: 200,
@@ -375,6 +402,7 @@ describe("BuiltinWebSearchProvider", () => {
             },
         });
         expect(requestUrlMock).toHaveBeenCalledTimes(4);
+        expect(startRequest).toHaveBeenCalledTimes(4);
         const requestBodies = requestUrlMock.mock.calls.map(([requestParam]) => JSON.parse(String(requestParam.body)) as { method: string });
         expect(requestBodies.map((body) => body.method)).toEqual([
             "initialize",
@@ -385,6 +413,61 @@ describe("BuiltinWebSearchProvider", () => {
         expect(requestUrlMock.mock.calls[2]?.[0].headers).toMatchObject({
             "mcp-session-id": "session-1",
         });
+    });
+
+    it("drains a timed-out physical MCP request before the next dispatch in the same run only", async () => {
+        jest.useFakeTimers();
+        try {
+            const requestUrlMock = requestUrl as unknown as jest.MockedFunction<(request: MockRequestUrlParam) => Promise<unknown>>;
+            requestUrlMock.mockReset();
+            let resolveRawRequest!: (response: unknown) => void;
+            requestUrlMock.mockImplementationOnce(() => new Promise((resolve) => {
+                resolveRawRequest = resolve;
+            }));
+            const providerRequestScope = createProviderRequestScope();
+            const provider = createProvider({
+                timeoutMs: 10,
+                request: requestBailianWebSearchMcp,
+            });
+            const registry = createPaidCapabilityRegistry();
+            await registry.registerProvider(provider, createLoadContext());
+
+            const pendingSearch = registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "timeout" }, {
+                host: createPlugin(),
+                turnId: "turn-physical-timeout",
+                providerRequestScope,
+            });
+            await jest.advanceTimersByTimeAsync(0);
+            expect(requestUrlMock).toHaveBeenCalledTimes(1);
+            await jest.advanceTimersByTimeAsync(10);
+            await expect(pendingSearch).resolves.toMatchObject({
+                ok: false,
+                error: "WebSearch request timed out.",
+            });
+
+            let sameRunDispatched = false;
+            const sameRunDispatch = providerRequestScope.startRequest(async () => {
+                sameRunDispatched = true;
+                return "same-run";
+            });
+            let otherRunDispatched = false;
+            const otherRunDispatch = createProviderRequestScope().startRequest(async () => {
+                otherRunDispatched = true;
+                return "other-run";
+            });
+            await expect(otherRunDispatch).resolves.toBe("other-run");
+            expect(otherRunDispatched).toBe(true);
+            expect(sameRunDispatched).toBe(false);
+
+            resolveRawRequest(mockObsidianResponse({
+                text: JSON.stringify({ jsonrpc: "2.0", id: "initialize", result: {} }),
+            }));
+            await expect(sameRunDispatch).resolves.toBe("same-run");
+            expect(sameRunDispatched).toBe(true);
+            expect(requestUrlMock).toHaveBeenCalledTimes(1);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("loads on mobile through the Obsidian requestUrl transport", async () => {

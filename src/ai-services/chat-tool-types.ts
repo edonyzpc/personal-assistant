@@ -22,6 +22,8 @@ export type { ChatToolName, ChatToolResult, MemorySearchResult } from "./chat-ty
 export interface ChatToolContext {
     host: AiServiceHost;
     signal?: AbortSignal;
+    /** Host-only absolute boundary registered by the outer Tool dispatcher. */
+    outerToolDeadlineAt?: number;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
 }

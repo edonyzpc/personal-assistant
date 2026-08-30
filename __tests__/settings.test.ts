@@ -1404,6 +1404,24 @@ describe('safeParseInt', () => {
 });
 
 describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
+    it('keeps retrieval optimization flags absent by default and preserves explicit internal overrides only', () => {
+        expect(DEFAULT_SETTINGS.retrievalOptimizationFlags).toBeUndefined();
+        expect(mergeLoadedSettings({}).retrievalOptimizationFlags).toBeUndefined();
+        expect(mergeLoadedSettings({
+            retrievalOptimizationFlags: {
+                lexicalProfile: true,
+                strictReranker: false,
+                graphPpr: 'invalid',
+            },
+        }).retrievalOptimizationFlags).toEqual({
+            lexicalProfile: true,
+            strictReranker: false,
+            graphPpr: undefined,
+            relaxedRecovery: undefined,
+        });
+        expect(mergeLoadedSettings({ retrievalOptimizationFlags: 'invalid' }).retrievalOptimizationFlags).toBeUndefined();
+    });
+
     it('defaults automatic Memory to active and normalizes the pause control', () => {
         expect((DEFAULT_SETTINGS as unknown as Record<string, unknown>).memoryAutoAcceptPaused).toBe(false);
         expect((mergeLoadedSettings({ memoryAutoAcceptPaused: true }) as unknown as Record<string, unknown>)

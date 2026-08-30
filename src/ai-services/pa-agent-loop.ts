@@ -4,7 +4,7 @@ import {
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { errorMessage } from "./agent-utils";
 import type { AgentRunLease } from "./agent-run-coordinator";
-import { isAbortError } from "./chat-utils";
+import { createAbortError, isAbortError } from "./chat-utils";
 import {
     deriveContinuedAgentControlSnapshot,
     summarizeAgentControlSnapshot,
@@ -64,6 +64,10 @@ export interface PaAgentModelInput {
     toolMode?: PaAgentToolMode;
     controlSnapshot?: AgentControlSnapshot;
     signal?: AbortSignal;
+    /** Internal request-boundary hook used only when a transport retries physically. */
+    prepareForProviderRetry?: () => Promise<PaAgentModelInput>;
+    /** Marks the boundary immediately before a physical Provider request is dispatched. */
+    notifyProviderRequestStarted?: () => void;
 }
 
 export interface PaAgentModel {
@@ -135,6 +139,10 @@ export interface PaAgentLoopOptions {
     userInput: string;
     userMessageContent?: UserMessageContent;
     model: PaAgentModel;
+    /** Request-local projection hook invoked before every logical model request. */
+    prepareModelInput?: (
+        input: PaAgentModelInput,
+    ) => PaAgentModelInput | PromiseLike<PaAgentModelInput>;
     toolExecutor?: PaAgentToolExecutor;
     hostPolicy?: PaAgentHostPolicy;
     now?: () => number;
@@ -147,14 +155,23 @@ export interface PaAgentLoopOptions {
     maxTurns?: number;
     maxToolCalls?: number;
     maxObservationChars?: number;
+    /** Buffered bridges have no meaningful inter-chunk network activity; the absolute wall clock remains authoritative. */
+    providerResponseDelivery?: 'incremental' | 'buffered';
     assistantIdleTimeoutMs?: number;
     maxWallClockMs?: number;
     /**
      * Optional final-answer reserve inside `maxWallClockMs`. Ordinary turns and
      * their lease waits stop at the soft deadline; `final_answer_only` may use
-     * the remaining time up to the existing hard deadline.
+     * the remaining time up to the existing hard deadline. A buffered request
+     * physically dispatched before the soft deadline may finish up to the hard
+     * deadline, but cannot continue to tools、fallback or another ordinary turn.
      */
     finalizationReserveMs?: number;
+    /** Content-free boundary signal for local runtime calibration. */
+    onFinalizationReserve?: (event: {
+        stage: "entered" | "completed" | "aborted" | "failed" | "exhausted" | "overrun";
+        remainingMs: number;
+    }) => void;
     toolTimeoutMs?: number;
     toolTimeoutOutcome?: ToolExecutionOutcome;
     toolAbortGraceMs?: number;
@@ -188,12 +205,27 @@ export interface PaAgentLoopResult {
     endPayload?: Record<string, unknown>;
 }
 
+class ProviderPreparationDeadlineError extends Error {
+    constructor(readonly reason: "finalization_reserve_reached" | "wall_clock_exceeded") {
+        super(reason);
+        this.name = "ProviderPreparationDeadlineError";
+    }
+}
+
+const FINALIZATION_RESERVE_RUNTIME_INSTRUCTION = [
+    "The ordinary turn deadline has been reached.",
+    "This is the single reserved finalization turn; do not call tools.",
+    "Use only existing observations and available context to answer.",
+    "If evidence is unavailable or insufficient, say so directly without inferring it.",
+].join(" ");
+
 export class PaAgentLoop {
     private readonly events: AgentLifecycleEventEmitter;
     private readonly now: () => number;
     private readonly createId: (prefix: string) => string;
     private readonly maxTurns: number;
     private readonly assistantIdleTimeoutMs: number;
+    private readonly providerResponseDelivery: 'incremental' | 'buffered';
     private readonly maxWallClockMs: number;
     private readonly finalizationReserveMs: number;
     private readonly runStartedAt: number;
@@ -209,7 +241,10 @@ export class PaAgentLoop {
         this.now = options.now ?? Date.now;
         this.createId = options.createId ?? createIncrementingIdFactory();
         this.maxTurns = options.maxTurns ?? 20;
-        this.assistantIdleTimeoutMs = options.assistantIdleTimeoutMs ?? 60_000;
+        this.providerResponseDelivery = options.providerResponseDelivery ?? "incremental";
+        this.assistantIdleTimeoutMs = options.providerResponseDelivery === 'buffered'
+            ? Number.POSITIVE_INFINITY
+            : options.assistantIdleTimeoutMs ?? 60_000;
         this.maxWallClockMs = options.maxWallClockMs ?? 180_000;
         this.finalizationReserveMs = normalizeFinalizationReserveMs(
             options.finalizationReserveMs,
@@ -249,53 +284,64 @@ export class PaAgentLoop {
         let nextRuntimeInstruction = this.options.initialRuntimeInstruction;
         let nextToolMode: PaAgentToolMode | undefined;
         let nextControlSnapshot = this.options.initialControlSnapshot;
-        const requestReservedFinalTurn = async (
+        let finalizationTurnRequested = false;
+        let nextTurnIsLoopReservedFinal = false;
+        let finalizationReserveTerminalReported = false;
+        const reportFinalizationReserve = (
+            stage: "entered" | "completed" | "aborted" | "failed" | "exhausted" | "overrun",
+        ): void => {
+            if (stage !== "entered" && finalizationReserveTerminalReported) return;
+            if (stage !== "entered") finalizationReserveTerminalReported = true;
+            try {
+                this.options.onFinalizationReserve?.({
+                    stage,
+                    remainingMs: this.wallClockRemainingMs() ?? 0,
+                });
+            } catch {
+                // Calibration must never change loop behavior.
+            }
+        };
+        const scheduleReservedFinalTurn = (summary: PaAgentTurnSummary): boolean => {
+            if (finalizationTurnRequested) return false;
+            finalizationTurnRequested = true;
+            nextTurnIsLoopReservedFinal = true;
+            nextRuntimeInstruction = FINALIZATION_RESERVE_RUNTIME_INSTRUCTION;
+            nextToolMode = "final_answer_only";
+            nextControlSnapshot = deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
+                runtimeInstruction: nextRuntimeInstruction,
+                toolMode: nextToolMode,
+            });
+            reportFinalizationReserve("entered");
+            return true;
+        };
+        const requestReservedFinalTurn = (
             turnIndex: number,
         ): Promise<PaAgentLoopResult | undefined> => {
             const summary = this.createFinalizationReserveSummary(
                 turnIndex,
                 nextControlSnapshot,
             );
-            const decision = await this.decideAfterTurn(summary);
-            if (
-                decision.action === "continue"
-                && decision.toolMode === "final_answer_only"
-            ) {
-                nextRuntimeInstruction = decision.runtimeInstruction;
-                nextToolMode = decision.toolMode;
-                nextControlSnapshot = decision.controlSnapshot
-                    ?? deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
-                        runtimeInstruction: decision.runtimeInstruction,
-                        toolMode: decision.toolMode,
-                    });
-                return undefined;
-            }
-
-            const status = decision.action === "stop"
-                ? (decision.status ?? "incomplete")
-                : "incomplete";
-            const warnings = decision.action === "stop" ? decision.warnings : undefined;
-            const diagnostics = decision.action === "stop"
-                ? (decision.diagnostics ?? summary.diagnostics)
-                : summary.diagnostics;
-            this.endAgent(status, {
-                reason: decision.action === "stop"
-                    ? decision.reason
-                    : "finalization_reserve_policy_declined",
-                ...(warnings ? { warnings } : {}),
-                diagnostics,
+            if (scheduleReservedFinalTurn(summary)) return Promise.resolve(undefined);
+            reportFinalizationReserve("exhausted");
+            this.endAgent("incomplete", {
+                reason: "finalization_reserve_exhausted",
+                diagnostics: summary.diagnostics,
             });
-            return this.createResult(status);
+            return Promise.resolve(this.createResult("incomplete"));
         };
 
         for (let turnIndex = 0; turnIndex < this.maxTurns; turnIndex++) {
             let turnSummary: PaAgentTurnSummary;
+            let loopReservedFinalTurn = false;
+            let committedTextBeforeTurn = this.committedFinalText;
             while (true) {
                 if (this.isAborted()) {
+                    if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("aborted");
                     this.endAgent("aborted", { reason: "user_abort" });
                     return this.createResult("aborted");
                 }
                 if (this.isWallClockExceeded()) {
+                    if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("exhausted");
                     this.endAgent("incomplete", {
                         reason: "wall_clock_exceeded",
                         maxWallClockMs: this.maxWallClockMs,
@@ -326,6 +372,7 @@ export class PaAgentLoop {
                         continue;
                     }
                     if (deadlineReason === "wall_clock_exceeded") {
+                        if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("exhausted");
                         this.endAgent("incomplete", {
                             reason: "wall_clock_exceeded",
                             maxWallClockMs: this.maxWallClockMs,
@@ -333,6 +380,7 @@ export class PaAgentLoop {
                         return this.createResult("incomplete");
                     }
                     if (isAbortError(error, leaseWait?.signal ?? this.options.signal)) {
+                        if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("aborted");
                         this.endAgent("aborted", { reason: "user_abort" });
                         return this.createResult("aborted");
                     }
@@ -343,17 +391,20 @@ export class PaAgentLoop {
                             message: errorMessage(error),
                         }],
                     });
+                    if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("failed");
                     return this.createResult("error");
                 } finally {
                     leaseWait?.dispose();
                 }
 
                 if (this.isAborted()) {
+                    if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("aborted");
                     turnLease?.release();
                     this.endAgent("aborted", { reason: "user_abort" });
                     return this.createResult("aborted");
                 }
                 if (this.isWallClockExceeded()) {
+                    if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("exhausted");
                     turnLease?.release();
                     this.endAgent("incomplete", {
                         reason: "wall_clock_exceeded",
@@ -370,12 +421,16 @@ export class PaAgentLoop {
 
                 try {
                     this.activeTurnToolMode = nextToolMode;
+                    loopReservedFinalTurn = nextTurnIsLoopReservedFinal
+                        && nextToolMode === "final_answer_only";
+                    committedTextBeforeTurn = this.committedFinalText;
                     turnSummary = await this.runTurn(
                         turnIndex,
                         nextRuntimeInstruction,
                         nextToolMode,
                         nextControlSnapshot,
                     );
+                    if (loopReservedFinalTurn) nextTurnIsLoopReservedFinal = false;
                 } finally {
                     this.activeTurnToolMode = undefined;
                     turnLease?.release();
@@ -389,12 +444,84 @@ export class PaAgentLoop {
             nextControlSnapshot = undefined;
 
             if (turnSummary.status === "aborted" || turnSummary.status === "error") {
+                if (loopReservedFinalTurn) {
+                    reportFinalizationReserve(turnSummary.status === "aborted" ? "aborted" : "failed");
+                }
                 const status = this.agentStatusFromTurn(turnSummary.status);
                 this.endAgent(status, {
                     reason: turnSummary.status,
                     diagnostics: turnSummary.diagnostics,
                 });
                 return this.createResult(status);
+            }
+
+            if (turnSummary.diagnostics.some((diagnostic) => (
+                diagnostic.type === "finalization_reserve_exhausted_by_buffered_provider"
+            ))) {
+                reportFinalizationReserve("entered");
+                reportFinalizationReserve("exhausted");
+                this.endAgent("incomplete", {
+                    reason: "wall_clock_exceeded",
+                    maxWallClockMs: this.maxWallClockMs,
+                    diagnostics: turnSummary.diagnostics,
+                });
+                return this.createResult("incomplete");
+            }
+
+            if (turnSummary.diagnostics.some((diagnostic) => (
+                diagnostic.type === "finalization_reserve_overrun"
+            ))) {
+                reportFinalizationReserve("entered");
+                reportFinalizationReserve("overrun");
+                const producedFinalText = turnSummary.toolCalls.length === 0
+                    && turnSummary.committedFinalText.slice(committedTextBeforeTurn.length).trim().length > 0;
+                const status: AgentEndStatus = producedFinalText
+                    ? "completed_with_warning"
+                    : "incomplete";
+                this.endAgent(status, {
+                    reason: "finalization_reserve_overrun",
+                    diagnostics: turnSummary.diagnostics,
+                });
+                return this.createResult(status);
+            }
+
+            if (loopReservedFinalTurn) {
+                const producedFinalText = turnSummary.toolCalls.length === 0
+                    && turnSummary.committedFinalText.slice(committedTextBeforeTurn.length).trim().length > 0;
+                if (producedFinalText) {
+                    reportFinalizationReserve("completed");
+                    const status = this.agentStatusFromTurn(turnSummary.status);
+                    this.endAgent(status, { reason: "finalization_reserve_completed" });
+                    return this.createResult(status);
+                }
+                const diagnostics = [
+                    ...turnSummary.diagnostics,
+                    ...(turnSummary.toolCalls.length > 0
+                        ? [{
+                            type: "final_answer_only_violation",
+                            message: "The reserved final-answer turn attempted a tool call.",
+                            toolNames: turnSummary.toolCalls.flatMap((part) => (
+                                part.type === "toolCall" ? [part.name] : []
+                            )),
+                        }]
+                        : []),
+                ];
+                this.endAgent("incomplete", {
+                    reason: "finalization_reserve_exhausted",
+                    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+                });
+                reportFinalizationReserve("exhausted");
+                return this.createResult("incomplete");
+            }
+
+            if (
+                turnSummary.status === "incomplete"
+                && turnSummary.diagnostics.some((diagnostic) => (
+                    diagnostic.type === "finalization_reserve_reached"
+                ))
+                && scheduleReservedFinalTurn(turnSummary)
+            ) {
+                continue;
             }
 
             const decision = await this.decideAfterTurn(turnSummary);
@@ -420,6 +547,7 @@ export class PaAgentLoop {
             return this.createResult(status);
         }
 
+        if (nextTurnIsLoopReservedFinal) reportFinalizationReserve("exhausted");
         this.endAgent("incomplete", {
             reason: "max_turns_exceeded",
             maxTurns: this.maxTurns,
@@ -468,8 +596,27 @@ export class PaAgentLoop {
         const modelStartedAt = this.now();
         let firstModelChunkElapsedMs: number | undefined;
         let modelChunkCount = 0;
+        let providerRequestStarted = false;
+        let providerPreparationDeadlineReason:
+            | "finalization_reserve_reached"
+            | "wall_clock_exceeded"
+            | undefined;
+        const providerRequestDeadlineListeners = new Set<() => void>();
+        const notifyProviderRequestStarted = (): void => {
+            if (this.isTurnDeadlineExceeded(toolMode)) {
+                const reason = this.isWallClockExceeded()
+                    ? "wall_clock_exceeded" as const
+                    : "finalization_reserve_reached" as const;
+                providerPreparationDeadlineReason = reason;
+                turnAbort.abort();
+                throw new ProviderPreparationDeadlineError(reason);
+            }
+            if (providerRequestStarted) return;
+            providerRequestStarted = true;
+            for (const listener of providerRequestDeadlineListeners) listener();
+        };
 
-        const modelInput = {
+        let modelInput: PaAgentModelInput = {
             runId: this.options.runId,
             turnId,
             turnIndex,
@@ -480,6 +627,7 @@ export class PaAgentLoop {
             toolMode,
             controlSnapshot,
             signal: turnAbort.signal,
+            notifyProviderRequestStarted,
         };
         let terminalStatus: TurnEndStatus | undefined;
         let stopReason: "stop" | "tool_calls" | "error" | "aborted" | "idle_timeout" | "wall_clock_exceeded" | undefined;
@@ -487,21 +635,73 @@ export class PaAgentLoop {
         const metrics: Array<Record<string, unknown>> = [];
 
         let iterator: AsyncIterator<PaAgentModelStreamChunk> | undefined;
+        let inputPreparationCompleted = !this.options.prepareModelInput;
         try {
+            if (this.options.prepareModelInput) {
+                modelInput = await this.prepareModelInputForProvider(
+                    modelInput,
+                    toolMode,
+                    (reason) => {
+                        providerPreparationDeadlineReason = reason;
+                        turnAbort.abort();
+                    },
+                );
+                inputPreparationCompleted = true;
+                const prepareForProviderRetry = async (): Promise<PaAgentModelInput> => {
+                    const baseInput = { ...modelInput };
+                    delete baseInput.prepareForProviderRetry;
+                    const refreshed = await this.prepareModelInputForProvider(
+                        baseInput,
+                        toolMode,
+                        (reason) => {
+                            providerPreparationDeadlineReason = reason;
+                            turnAbort.abort();
+                        },
+                    );
+                    modelInput = { ...refreshed, prepareForProviderRetry };
+                    return modelInput;
+                };
+                modelInput = { ...modelInput, prepareForProviderRetry };
+            }
+            if (turnAbort.signal.aborted || this.isAborted()) {
+                throw createAbortError();
+            }
             iterator = this.options.model.stream(modelInput)[Symbol.asyncIterator]();
         } catch (error) {
-            stopReason = "error";
-            terminalStatus = "error";
-            diagnostics.push(providerErrorDiagnostic(error));
+            if (error instanceof ProviderPreparationDeadlineError) {
+                stopReason = "wall_clock_exceeded";
+                terminalStatus = "incomplete";
+                diagnostics.push(this.deadlineDiagnostic(error.reason));
+            } else if (isAbortError(error, turnAbort.signal)) {
+                stopReason = "aborted";
+                terminalStatus = "aborted";
+                diagnostics.push({ type: "user_abort" });
+            } else {
+                stopReason = "error";
+                terminalStatus = "error";
+                diagnostics.push(inputPreparationCompleted
+                    ? providerErrorDiagnostic(error)
+                    : { type: "model_input_preparation_error", message: "Model input could not be prepared safely." });
+            }
         }
 
         const consumer = iterator
             ? new ModelChunkConsumer(iterator, {
-                signal: this.options.signal,
+                signal: turnAbort.signal,
                 assistantIdleTimeoutMs: this.assistantIdleTimeoutMs,
                 isAborted: () => this.isAborted(),
-                isWallClockExceeded: () => this.isTurnDeadlineExceeded(toolMode),
-                wallClockRemainingMs: () => this.turnDeadlineRemainingMs(toolMode),
+                isWallClockExceeded: () => this.isProviderWaitDeadlineExceeded(
+                    toolMode,
+                    providerRequestStarted,
+                ),
+                wallClockRemainingMs: () => this.providerWaitDeadlineRemainingMs(
+                    toolMode,
+                    providerRequestStarted,
+                ),
+                subscribeWallClockDeadlineChange: (listener) => {
+                    providerRequestDeadlineListeners.add(listener);
+                    return () => providerRequestDeadlineListeners.delete(listener);
+                },
             })
             : undefined;
 
@@ -518,9 +718,15 @@ export class PaAgentLoop {
                 break;
             }
             if (next.type === "aborted") {
-                stopReason = "aborted";
-                terminalStatus = "aborted";
-                diagnostics.push({ type: "user_abort" });
+                if (providerPreparationDeadlineReason) {
+                    stopReason = "wall_clock_exceeded";
+                    terminalStatus = "incomplete";
+                    diagnostics.push(this.deadlineDiagnostic(providerPreparationDeadlineReason));
+                } else {
+                    stopReason = "aborted";
+                    terminalStatus = "aborted";
+                    diagnostics.push({ type: "user_abort" });
+                }
                 break;
             }
             if (next.type === "wall_clock_exceeded") {
@@ -540,9 +746,15 @@ export class PaAgentLoop {
             }
             if (next.type === "error") {
                 turnAbort.abort();
-                stopReason = "error";
-                terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "error";
-                diagnostics.push(providerErrorDiagnostic(next.error));
+                if (next.error instanceof ProviderPreparationDeadlineError) {
+                    stopReason = "wall_clock_exceeded";
+                    terminalStatus = "incomplete";
+                    diagnostics.push(this.deadlineDiagnostic(next.error.reason));
+                } else {
+                    stopReason = "error";
+                    terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "error";
+                    diagnostics.push(providerErrorDiagnostic(next.error));
+                }
                 break;
             }
 
@@ -604,12 +816,40 @@ export class PaAgentLoop {
             }
         }
 
+        if (
+            terminalStatus === undefined
+            && this.didBufferedProviderOverrunFinalizationReserve(toolMode, providerRequestStarted)
+        ) {
+            terminalStatus = toolCallBuffers.length === 0 && pendingText.trim().length > 0
+                ? "completed_with_warning"
+                : "incomplete";
+            diagnostics.push({
+                type: "finalization_reserve_overrun",
+                providerResponseDelivery: "buffered",
+                finalizationReserveMs: this.finalizationReserveMs,
+                remainingMs: this.wallClockRemainingMs() ?? 0,
+                reservePreserved: false,
+            });
+        } else if (
+            this.usesBufferedProviderHardDeadline(toolMode, providerRequestStarted)
+            && this.isWallClockExceeded()
+        ) {
+            diagnostics.push({
+                type: "finalization_reserve_exhausted_by_buffered_provider",
+                providerResponseDelivery: "buffered",
+                finalizationReserveMs: this.finalizationReserveMs,
+                remainingMs: 0,
+                reservePreserved: false,
+            });
+        }
+
         if (sawThinking) {
             this.events.messageUpdate(turnId, assistantMessage.id, { kind: "thinking_end" });
         }
         if (sawText) {
             this.events.messageUpdate(turnId, assistantMessage.id, { kind: "text_end" });
         }
+        canonicalizeBufferedToolCallParts(toolCallBuffers, assistantMessage.content);
         for (const buffer of toolCallBuffers) {
             this.events.messageUpdate(turnId, assistantMessage.id, {
                 kind: "toolcall_end",
@@ -911,6 +1151,42 @@ export class PaAgentLoop {
         return this.isWallClockExceeded() || this.isFinalizationReserveReached(toolMode);
     }
 
+    private isProviderWaitDeadlineExceeded(
+        toolMode: PaAgentToolMode | undefined,
+        providerRequestStarted: boolean,
+    ): boolean {
+        return this.usesBufferedProviderHardDeadline(toolMode, providerRequestStarted)
+            ? this.isWallClockExceeded()
+            : this.isTurnDeadlineExceeded(toolMode);
+    }
+
+    private providerWaitDeadlineRemainingMs(
+        toolMode: PaAgentToolMode | undefined,
+        providerRequestStarted: boolean,
+    ): number | undefined {
+        return this.usesBufferedProviderHardDeadline(toolMode, providerRequestStarted)
+            ? this.wallClockRemainingMs()
+            : this.turnDeadlineRemainingMs(toolMode);
+    }
+
+    private usesBufferedProviderHardDeadline(
+        toolMode: PaAgentToolMode | undefined,
+        providerRequestStarted: boolean,
+    ): boolean {
+        return providerRequestStarted
+            && this.providerResponseDelivery === "buffered"
+            && this.usesFinalizationReserve(toolMode);
+    }
+
+    private didBufferedProviderOverrunFinalizationReserve(
+        toolMode: PaAgentToolMode | undefined,
+        providerRequestStarted: boolean,
+    ): boolean {
+        return this.usesBufferedProviderHardDeadline(toolMode, providerRequestStarted)
+            && !this.isWallClockExceeded()
+            && this.isFinalizationReserveReached(toolMode);
+    }
+
     private turnDeadlineRemainingMs(toolMode: PaAgentToolMode | undefined): number | undefined {
         const hardRemainingMs = this.wallClockRemainingMs();
         if (hardRemainingMs === undefined) return undefined;
@@ -933,6 +1209,77 @@ export class PaAgentLoop {
             };
         }
         return { type: "wall_clock_exceeded", maxWallClockMs: this.maxWallClockMs };
+    }
+
+    private deadlineDiagnostic(
+        reason: "finalization_reserve_reached" | "wall_clock_exceeded",
+    ): Record<string, unknown> {
+        return reason === "finalization_reserve_reached"
+            ? {
+                type: reason,
+                finalizationReserveMs: this.finalizationReserveMs,
+                maxWallClockMs: this.maxWallClockMs,
+            }
+            : { type: reason, maxWallClockMs: this.maxWallClockMs };
+    }
+
+    private async prepareModelInputForProvider(
+        input: PaAgentModelInput,
+        toolMode: PaAgentToolMode | undefined,
+        onDeadline: (reason: "finalization_reserve_reached" | "wall_clock_exceeded") => void,
+    ): Promise<PaAgentModelInput> {
+        const prepare = this.options.prepareModelInput;
+        if (!prepare) return input;
+
+        const remaining = this.turnDeadlineRemainingMs(toolMode);
+        const deadlineReason = this.usesFinalizationReserve(toolMode)
+            ? "finalization_reserve_reached" as const
+            : "wall_clock_exceeded" as const;
+        if (remaining !== undefined && remaining <= 0) {
+            onDeadline(deadlineReason);
+            throw new ProviderPreparationDeadlineError(deadlineReason);
+        }
+
+        const controller = new AbortController();
+        let timedOut = false;
+        let timer: PlatformTimeoutHandle | undefined;
+        let rejectDeadline: (error: ProviderPreparationDeadlineError) => void = () => undefined;
+        const deadlinePromise = new Promise<never>((_resolve, reject) => {
+            rejectDeadline = reject;
+        });
+        const onAbort = () => controller.abort();
+        input.signal?.addEventListener("abort", onAbort, { once: true });
+        if (input.signal?.aborted) controller.abort();
+        if (remaining !== undefined) {
+            timer = setPlatformTimeout(() => {
+                timedOut = true;
+                onDeadline(deadlineReason);
+                rejectDeadline(new ProviderPreparationDeadlineError(deadlineReason));
+                controller.abort();
+            }, remaining);
+        }
+
+        try {
+            const prepared = await Promise.race([
+                Promise.resolve(prepare({ ...input, signal: controller.signal })),
+                deadlinePromise,
+            ]);
+            if (timedOut) throw new ProviderPreparationDeadlineError(deadlineReason);
+            return {
+                ...prepared,
+                signal: input.signal,
+                ...(input.notifyProviderRequestStarted
+                    ? { notifyProviderRequestStarted: input.notifyProviderRequestStarted }
+                    : {}),
+            };
+        } catch (error) {
+            if (timedOut) throw new ProviderPreparationDeadlineError(deadlineReason);
+            throw error;
+        } finally {
+            if (timer !== undefined) clearPlatformTimeout(timer);
+            input.signal?.removeEventListener("abort", onAbort);
+            controller.abort();
+        }
     }
 
     private createFinalizationReserveSummary(
@@ -1154,6 +1501,32 @@ function upsertToolCallBuffer(
         part.input = buffer.hasStructuredInput ? buffer.input : buffer.argsText;
     }
     return { buffer, isNew };
+}
+
+function canonicalizeBufferedToolCallParts(
+    buffers: BufferedToolCall[],
+    parts: AssistantMessagePart[],
+): void {
+    if (buffers.length < 2) return;
+    const entries = buffers.map((buffer) => ({
+        buffer,
+        originalPartIndex: buffer.partIndex,
+        part: parts[buffer.partIndex],
+    }));
+    if (entries.some((entry) => !isToolCallPart(entry.part))) return;
+    const partIndexes = entries
+        .map((entry) => entry.originalPartIndex)
+        .sort((left, right) => left - right);
+    entries.sort((left, right) => (
+        left.buffer.index - right.buffer.index
+        || left.originalPartIndex - right.originalPartIndex
+    ));
+    for (let index = 0; index < entries.length; index++) {
+        const partIndex = partIndexes[index];
+        parts[partIndex] = entries[index].part!;
+        entries[index].buffer.partIndex = partIndex;
+    }
+    buffers.splice(0, buffers.length, ...entries.map((entry) => entry.buffer));
 }
 
 function createToolCallBufferKey(

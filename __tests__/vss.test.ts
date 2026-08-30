@@ -2,10 +2,12 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { VSS } from '../src/vss';
 import { computeContentHash, DirtyTimestamps } from '../src/vss-helpers';
 import { TFile } from 'obsidian';
-import { VSS_SCHEMA_VERSION, type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
+import { Document } from '@langchain/core/documents';
+import { VSS_SCHEMA_VERSION, type EmbeddingProfile, type IndexedPathEvidenceGenerationResult, type LexicalIndexStatus, type LexicalRebuildBatchResult, type RankGraphCandidatesOptions, type RankedPathRequestControl, type RankedPathRequestResult, type VectorIndex, type VectorIndexDeleteOptions, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
 import { fuseRRF, RRF_K } from '../src/vss/rrf';
 import { MemoryVSSIndexStateStore, type VSSRebuildStateTransition } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
+import { RETRIEVAL_CALIBRATION_PROFILE } from '../src/vss/retrieval-calibration';
 
 const mockNoticeMessages: string[] = [];
 
@@ -31,7 +33,7 @@ jest.mock('obsidian', () => {
             }
         },
         normalizePath: (p: string) => p,
-        Platform: { isMobile: false },
+        Platform: { isMobile: false, isWin: false },
     };
 });
 
@@ -71,11 +73,14 @@ jest.mock('../src/confirm', () => ({
 
 const MockSqliteVectorIndex = (jest.requireMock('../src/vss/sqlite-vector-index') as { SqliteVectorIndex: jest.Mock }).SqliteVectorIndex;
 const mockConfirmUserAction = (jest.requireMock('../src/confirm') as { confirmUserAction: jest.Mock }).confirmUserAction;
+const mockPlatform = (jest.requireMock('obsidian') as {
+    Platform: { isMobile: boolean; isWin: boolean };
+}).Platform;
 
 class FakeVectorIndex implements VectorIndex {
     status: VectorIndexStatus = 'ready';
     records = new Map<string, VSSFileRecord>();
-    deleteFile = jest.fn<(path: string) => Promise<void>>(async (path) => {
+    deleteFile = jest.fn<(path: string, options?: VectorIndexDeleteOptions) => Promise<void>>(async (path, _options) => {
         this.records.delete(path);
     });
     listFilePaths = jest.fn<() => Promise<string[]>>(async () => Array.from(this.records.keys()).sort());
@@ -117,6 +122,250 @@ class FakeVectorIndex implements VectorIndex {
         this.records.clear();
     });
     dispose = jest.fn<() => Promise<void>>(async () => undefined);
+}
+
+class FakeLexicalVectorIndex extends FakeVectorIndex {
+    lexicalStatus: LexicalIndexStatus = {
+        state: 'awaiting_confirmation',
+        reason: 'profile_missing',
+        chunkCount: 2,
+        lexicalRowCount: 0,
+    };
+    private processedRows = 0;
+    private firstBatchRelease: (() => void) | null = null;
+    private firstBatchStarted: (() => void) | null = null;
+    private firstBatchStartedPromise: Promise<void> | null = null;
+    private expectedScopePaths = 0;
+    private acceptedScopePaths = 0;
+    blockFirstBatch = false;
+    operationOrder: string[] = [];
+
+    refreshLexicalPathFromIndexedChunks = jest.fn(async (
+        _path: string,
+        _lexicalBoundaryFingerprint: string,
+    ) => ({
+        kind: 'indexed-chunks-incremental' as const,
+        status: 'completed' as const,
+        operationId: `lexinc-${'1'.repeat(32)}`,
+        scopeBindingSha256: '2'.repeat(64),
+        startedAt: '2026-08-25T00:00:00.000Z',
+        finishedAt: '2026-08-25T00:00:00.001Z',
+        durationMs: 1,
+        state: 'ready' as const,
+        resourceEnvelope: {
+            estimatedDbBytesBefore: 409_600,
+            estimatedDbBytesPeak: 413_696,
+            estimatedDbBytesAfter: 409_600,
+        },
+        before: {
+            databaseInstanceId: 'database-1',
+            profileId: 'char-phrase-v1' as const,
+            generation: 0,
+            sourceChunkEpoch: '7',
+            chunkMutationEpoch: 7,
+            indexMutationEpoch: 10,
+            rebuildEpoch: 1,
+            lexicalMaintenanceEpoch: 3,
+            incrementalMaintenanceEpoch: 0,
+            sourceChunkRows: 1,
+            lexicalRows: 1,
+            totalLexicalRows: 2,
+        },
+        after: {
+            databaseInstanceId: 'database-1',
+            profileId: 'char-phrase-v1' as const,
+            generation: 0,
+            sourceChunkEpoch: '7',
+            chunkMutationEpoch: 7,
+            indexMutationEpoch: 11,
+            rebuildEpoch: 1,
+            lexicalMaintenanceEpoch: 4,
+            incrementalMaintenanceEpoch: 1,
+            sourceChunkRows: 1,
+            lexicalRows: 1,
+            totalLexicalRows: 2,
+        },
+        effects: {
+            source: 'indexed-chunks' as const,
+            pathCount: 1 as const,
+            sourceChunkReads: 1,
+            sourceChunkWrites: 0 as const,
+            lexicalRowsDeleted: 1,
+            lexicalRowsInserted: 1,
+            markdownReads: 0 as const,
+            markdownWrites: 0 as const,
+            providerCalls: 0 as const,
+            embeddingCalls: 0 as const,
+            embeddingWrites: 0 as const,
+        },
+    }));
+
+    getLexicalStatus = jest.fn(async () => this.lexicalStatus);
+    searchHybridDetailed = jest.fn(async () => ({
+        results: [] as VectorSearchResult[],
+        sourceEpoch: '7',
+        lexical: {
+            attempted: false,
+            state: this.lexicalStatus.state,
+            reason: this.lexicalStatus.reason,
+        },
+    }));
+    getStats = jest.fn<() => Promise<VSSIndexStats>>(async () => ({
+        status: this.status,
+        backend: 'sqlite-wasm-opfs-sahpool',
+        chunkCount: this.records.size,
+        fileCount: this.records.size,
+        fallbackMode: false,
+        lexicalProfileState: this.lexicalStatus.state,
+        lexicalProfileId: this.lexicalStatus.marker?.profileId,
+        lexicalGeneration: this.lexicalStatus.marker?.generation,
+        lexicalFallbackReason: this.lexicalStatus.reason,
+    }));
+    beginLexicalRebuild = jest.fn(async (
+        _profileId?: string,
+        _fingerprint?: string,
+        _scopeFingerprint?: string,
+        expectedPathCount?: number,
+    ) => {
+        this.processedRows = 0;
+        this.expectedScopePaths = expectedPathCount ?? 0;
+        this.acceptedScopePaths = 0;
+        this.lexicalStatus = { ...this.lexicalStatus, state: 'rebuilding', reason: undefined };
+        return { rebuildId: 'lexical-1', generation: 1, sourceChunkEpoch: '7', totalRows: 2 };
+    });
+    beginLexicalRebuildWithReceipt = jest.fn(async (
+        profileId: string,
+        fingerprint: string,
+        scopeFingerprint: string,
+        expectedPathCount: number,
+    ) => this.beginLexicalRebuild(profileId, fingerprint, scopeFingerprint, expectedPathCount));
+    appendLexicalScopeBatch = jest.fn(async (rebuildId: string, paths: string[]) => {
+        this.acceptedScopePaths += paths.length;
+        return {
+            rebuildId,
+            acceptedPaths: this.acceptedScopePaths,
+            expectedPaths: this.expectedScopePaths,
+            sealed: this.acceptedScopePaths === this.expectedScopePaths,
+            totalRows: this.acceptedScopePaths === this.expectedScopePaths ? 2 : 0,
+        };
+    });
+    appendLexicalRebuildBatch = jest.fn(async (
+        rebuildId: string,
+        _afterRowId: number,
+        _limit: number,
+    ): Promise<LexicalRebuildBatchResult> => {
+        this.operationOrder.push(`append-${this.processedRows + 1}`);
+        if (this.blockFirstBatch && this.processedRows === 0) {
+            this.firstBatchStarted?.();
+            await new Promise<void>((resolve) => {
+                this.firstBatchRelease = resolve;
+            });
+        }
+        this.processedRows += 1;
+        return {
+            rebuildId,
+            processedRows: this.processedRows,
+            totalRows: 2,
+            nextRowId: this.processedRows,
+            done: this.processedRows >= 2,
+        };
+    });
+    finalizeLexicalRebuild = jest.fn(async () => {
+        this.lexicalStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+            },
+            chunkCount: 2,
+            lexicalRowCount: 2,
+        };
+        return this.lexicalStatus;
+    });
+    finalizeLexicalRebuildWithReceipt = jest.fn(async () => {
+        const status = await this.finalizeLexicalRebuild();
+        return {
+            status,
+            receipt: {
+                kind: 'rebuild' as const,
+                status: 'completed' as const,
+                operationId: `lexreb-${'3'.repeat(32)}`,
+                scopeBindingSha256: '4'.repeat(64),
+                startedAt: '2026-08-25T00:00:00.000Z',
+                finishedAt: '2026-08-25T00:00:00.010Z',
+                durationMs: 10,
+                state: 'ready' as const,
+                resourceEnvelope: {
+                    estimatedDbBytesBefore: 409_600,
+                    estimatedDbBytesPeak: 425_984,
+                    estimatedDbBytesAfter: 421_888,
+                },
+                before: {
+                    databaseInstanceId: 'database-1',
+                    profileId: 'char-phrase-v1' as const,
+                    generation: 1,
+                    sourceChunkEpoch: '7',
+                    chunkMutationEpoch: 7,
+                    indexMutationEpoch: 10,
+                    rebuildEpoch: 1,
+                    lexicalMaintenanceEpoch: 3,
+                    incrementalMaintenanceEpoch: 0,
+                    sourceChunkRows: 2,
+                    lexicalRows: 0,
+                    totalLexicalRows: 0,
+                },
+                after: {
+                    databaseInstanceId: 'database-1',
+                    profileId: 'char-phrase-v1' as const,
+                    generation: 1,
+                    sourceChunkEpoch: '7',
+                    chunkMutationEpoch: 7,
+                    indexMutationEpoch: 14,
+                    rebuildEpoch: 1,
+                    lexicalMaintenanceEpoch: 7,
+                    incrementalMaintenanceEpoch: 0,
+                    sourceChunkRows: 2,
+                    lexicalRows: 2,
+                    totalLexicalRows: 2,
+                },
+                effects: {
+                    source: 'indexed-chunks' as const,
+                    pathCount: 2,
+                    sourceChunkReads: 2,
+                    sourceChunkWrites: 0 as const,
+                    lexicalRowsDeleted: 0,
+                    lexicalRowsInserted: 2,
+                    markdownReads: 0 as const,
+                    markdownWrites: 0 as const,
+                    providerCalls: 0 as const,
+                    embeddingCalls: 0 as const,
+                    embeddingWrites: 0 as const,
+                },
+            },
+        };
+    });
+    abortLexicalRebuild = jest.fn(async () => {
+        this.lexicalStatus = {
+            state: 'awaiting_confirmation',
+            reason: 'rebuild_aborted',
+            chunkCount: 2,
+            lexicalRowCount: 0,
+        };
+        return this.lexicalStatus;
+    });
+
+    waitForFirstBatch(): Promise<void> {
+        this.firstBatchStartedPromise ??= new Promise((resolve) => {
+            this.firstBatchStarted = resolve;
+        });
+        return this.firstBatchStartedPromise;
+    }
+
+    releaseFirstBatch(): void {
+        this.firstBatchRelease?.();
+    }
 }
 
 class FailingVectorIndex extends FakeVectorIndex {
@@ -491,6 +740,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         MockSqliteVectorIndex.mockClear();
         mockConfirmUserAction.mockClear();
         mockConfirmUserAction.mockImplementation(() => Promise.resolve(true));
+        mockPlatform.isWin = false;
         Object.defineProperty(globalThis, 'confirm', {
             configurable: true,
             value: undefined,
@@ -506,6 +756,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        mockPlatform.isWin = false;
         clearMockSqliteIndex();
         if (originalNavigator) {
             Object.defineProperty(globalThis, 'navigator', originalNavigator);
@@ -574,6 +825,35 @@ describe('VSS SQLite/WASM lifecycle', () => {
         });
         snapshot.dirtyCount = 99;
         expect(vss.getMemoryStatusSnapshot().dirtyCount).toBe(1);
+    });
+
+    it('binds foreground stats to the persisted local marker identity', async () => {
+        const { plugin } = createPlugin();
+        const index = new FakeVectorIndex();
+        index.getStats.mockResolvedValue({
+            status: 'ready',
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: 1,
+            fileCount: 1,
+            fallbackMode: false,
+            databaseInstanceId: 'database-instance-1',
+            chunkMutationEpoch: 4,
+            indexMutationEpoch: 6,
+            rebuildEpoch: 1,
+            lexicalMaintenanceEpoch: 2,
+        });
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, index);
+
+        await expect(vss.getStats({ mode: 'foreground' })).resolves.toMatchObject({
+            indexId: 'index-1',
+            indexBuiltAt: '2026-05-02T00:00:00.000Z',
+            databaseInstanceId: 'database-instance-1',
+            chunkMutationEpoch: 4,
+            indexMutationEpoch: 6,
+            rebuildEpoch: 1,
+            lexicalMaintenanceEpoch: 2,
+        });
     });
 
     it.each([
@@ -898,7 +1178,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 
     it('uses a vault-scoped SQLite database and OPFS pool', async () => {
-        const { plugin, mockAdapter, mockVault, vssStateStore } = createPlugin();
+        const { plugin, mockAdapter, mockVault } = createPlugin();
         const index = new FakeVectorIndex();
         setMockSqliteIndex(index);
         mockVault.getName.mockReturnValue('Work Vault');
@@ -993,7 +1273,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(isVSSFileEligible).toHaveBeenCalledWith(file, exactMarkdown);
         expect(createEmbeddings).not.toHaveBeenCalled();
         expect(index.upsertFile).not.toHaveBeenCalled();
-        expect(index.deleteFile).toHaveBeenCalledWith(file.path);
+        expect(index.deleteFile).toHaveBeenCalledWith(
+            file.path,
+            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+        );
         await vss.dispose();
     });
 
@@ -1029,7 +1312,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(summary).toMatchObject({ updated: 0, skipped: 1, failed: 0 });
         expect(createEmbeddings).not.toHaveBeenCalled();
         expect(index.upsertFile).not.toHaveBeenCalled();
-        expect(index.deleteFile).toHaveBeenCalledWith(file.path);
+        expect(index.deleteFile).toHaveBeenCalledWith(
+            file.path,
+            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+        );
         await vss.dispose();
     });
 
@@ -1966,7 +2252,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         await vss.flush({ limit: 5, reason: 'test-large-file' });
 
         expect(dirtyMap.has(largeFile.path)).toBe(false);
-        expect(index.deleteFile).toHaveBeenCalledWith('large.md');
+        expect(index.deleteFile).toHaveBeenCalledWith('large.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
         expect(await vssStateStore.getDirtyJournal()).toEqual(new Map());
         expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
@@ -1995,13 +2281,13 @@ describe('VSS SQLite/WASM lifecycle', () => {
         await vss.flush({ force: true, reason: 'test-stale-delete' });
 
         expect(index.listFilePaths).toHaveBeenCalled();
-        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md');
+        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
         expect(index.records.has('deleted.md')).toBe(false);
         expect(index.upsertFile).toHaveBeenCalledWith(expect.objectContaining({ path: 'keep.md' }), expect.any(Array), expect.any(Array));
     });
 
     it('removes stale index entries when cleaned markdown content is empty or blank', async () => {
-        const { plugin, mockAdapter, vssStateStore } = createPlugin();
+        const { plugin, mockAdapter } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         const index = new FakeVectorIndex();
         attachReadyIndex(vss, index);
@@ -2011,7 +2297,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const status = await vss.refreshFileCache(emptyFile);
 
         expect(status).toBe('removed');
-        expect(index.deleteFile).toHaveBeenCalledWith('empty.md');
+        expect(index.deleteFile).toHaveBeenCalledWith('empty.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
     });
 
     it('keeps a note dirty when a removal write races with newer content', async () => {
@@ -2044,7 +2330,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
         expect(status).toBe('removed');
         expect(dirtyMap.has('empty-race.md')).toBe(true);
-        expect(index.deleteFile).toHaveBeenCalledWith('empty-race.md');
+        expect(index.deleteFile).toHaveBeenCalledWith('empty-race.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
     });
 
     it('defers refresh writes when a note changes while its content snapshot is being read', async () => {
@@ -2422,7 +2708,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(dirtyMap.has('changed.md')).toBe(false);
         expect(dirtyMap.has('created.md')).toBe(true);
         expect(verifyQueue.has('changed.md')).toBe(true);
-        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md');
+        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
         const persistedDirty = await vssStateStore.getDirtyJournal();
         expect(persistedDirty.has('created.md')).toBe(true);
         expect(persistedDirty.has('changed.md')).toBe(false);
@@ -3047,6 +3333,1221 @@ describe('VSS SQLite/WASM lifecycle', () => {
         });
     });
 
+    it('keeps the lexical slice default-off and requests explicit lexical-only approval when enabled', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        attachReadyIndex(vss, index);
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'ready',
+            action: 'none',
+        });
+
+        index.lexicalStatus = {
+            state: 'unavailable',
+            reason: 'feature_disabled',
+            chunkCount: 2,
+            lexicalRowCount: 0,
+        };
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+            canAnswerNow: true,
+        });
+    });
+
+    it('keeps lexical work disabled when the Windows policy masks a persisted flag', async () => {
+        mockPlatform.isWin = true;
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        index.lexicalStatus = {
+            state: 'unavailable',
+            reason: 'feature_disabled',
+            chunkCount: 2,
+            lexicalRowCount: 0,
+        };
+        attachReadyIndex(vss, index);
+
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'ready',
+            action: 'none',
+        });
+        expect(plugin.settings.retrievalOptimizationFlags).toEqual({ lexicalProfile: true });
+    });
+
+    it('selects exact baseline/candidate payloads when the lexical calibration flag changes', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+
+        await vss.searchHybrid('差旅报销;电子发票');
+        const flagOffArgs = index.searchHybridDetailed.mock.calls[0] as unknown as unknown[];
+        expect(flagOffArgs[1]).toBeNull();
+        expect(flagOffArgs[2]).toBe(8);
+        expect(flagOffArgs[3]).toBe(12);
+        expect(flagOffArgs[9]).toEqual(RETRIEVAL_CALIBRATION_PROFILE.baseline.standard);
+
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        await vss.searchHybrid('差旅报销;电子发票');
+        const flagOnArgs = index.searchHybridDetailed.mock.calls[1] as unknown as unknown[];
+        expect(flagOnArgs[1]).toContain(' OR ');
+        expect(flagOnArgs[2]).toBe(8);
+        expect(flagOnArgs[3]).toBe(18);
+        expect(flagOnArgs[9]).toEqual(RETRIEVAL_CALIBRATION_PROFILE.candidate.standard);
+    });
+
+    it('starts the local lexical budget after delayed provider rewrite and embedding settle', async () => {
+        const providerStartedAt = new Date('2026-08-11T01:00:00.000Z').getTime();
+        jest.setSystemTime(providerStartedAt);
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        index.lexicalStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+            },
+            chunkCount: 1,
+            lexicalRowCount: 1,
+        };
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        index.searchHybridDetailed.mockImplementation(async () => {
+            const args = index.searchHybridDetailed.mock.calls.at(-1) as unknown as unknown[];
+            const budget = args[7] as { startedAtMs: number; deadlineAtMs: number };
+            const attempted = Date.now() < budget.deadlineAtMs;
+            return {
+                results: attempted ? [{
+                    score: 1,
+                    doc: new Document({
+                        pageContent: 'exact lexical result',
+                        metadata: { path: 'exact-lexical.md' },
+                    }),
+                }] : [],
+                sourceEpoch: '7',
+                lexical: {
+                    attempted,
+                    state: 'ready' as const,
+                    reason: attempted ? undefined : 'not_started_budget',
+                },
+            };
+        });
+        const rewrite = createDeferred<string | null>();
+        const embeddingStarted = createDeferred<void>();
+        const embeddingRelease = createDeferred<void>();
+        const pendingSearch = vss.searchHybrid('召回', {
+            ftsQueryOverridePromise: rewrite.promise,
+            executeEmbeddingInvoke: async (invoke) => {
+                const embedding = await invoke();
+                embeddingStarted.resolve();
+                await embeddingRelease.promise;
+                return embedding;
+            },
+        });
+        await embeddingStarted.promise;
+        const localPhaseStartedAt = providerStartedAt
+            + RETRIEVAL_CALIBRATION_PROFILE.lexicalRuntime.searchBudgetMs
+            + 100;
+        jest.setSystemTime(localPhaseStartedAt);
+        rewrite.resolve('召回');
+        embeddingRelease.resolve();
+
+        await expect(pendingSearch).resolves.toEqual([
+            expect.objectContaining({
+                doc: expect.objectContaining({
+                    metadata: expect.objectContaining({ path: 'exact-lexical.md' }),
+                }),
+            }),
+        ]);
+        const searchArgs = index.searchHybridDetailed.mock.calls[0] as unknown as unknown[];
+        expect(searchArgs[1]).not.toBeNull();
+        expect(searchArgs[7]).toEqual({
+            startedAtMs: localPhaseStartedAt,
+            deadlineAtMs: localPhaseStartedAt
+                + RETRIEVAL_CALIBRATION_PROFILE.lexicalRuntime.searchBudgetMs,
+        });
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalSearchAttempted: true,
+            lexicalSearchState: 'ready',
+        });
+    });
+
+    it('removes an aborted recovery operation from the VSS foreground queue before dispatch', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const activeStarted = createDeferred<void>();
+        const activeRelease = createDeferred<void>();
+        const active = (vss as any).runExclusive(async () => { // eslint-disable-line @typescript-eslint/no-explicit-any
+            activeStarted.resolve(undefined);
+            await activeRelease.promise;
+        });
+        await activeStarted.promise;
+        const controller = new AbortController();
+        const operation = jest.fn(async () => 'should-not-run');
+        const queued = (vss as any).runExclusive( // eslint-disable-line @typescript-eslint/no-explicit-any
+            operation,
+            'foreground',
+            false,
+            controller.signal,
+        ) as Promise<string>;
+        expect((vss as any).foregroundOperations).toHaveLength(1); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const rejected = expect(queued).rejects.toMatchObject({ name: 'AbortError' });
+
+        controller.abort();
+        await rejected;
+        expect((vss as any).foregroundOperations).toHaveLength(0); // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(operation).not.toHaveBeenCalled();
+
+        activeRelease.resolve(undefined);
+        await active;
+        await Promise.resolve();
+        expect(operation).not.toHaveBeenCalled();
+    });
+
+    it('fails an active hybrid caller closed and keeps its late result out of the next run', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        index.lexicalStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+            },
+            chunkCount: 2,
+            lexicalRowCount: 2,
+        };
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        const firstStarted = createDeferred<void>();
+        const lateResult = createDeferred<Awaited<ReturnType<
+            FakeLexicalVectorIndex['searchHybridDetailed']
+        >>>();
+        index.searchHybridDetailed
+            .mockImplementationOnce(async () => {
+                firstStarted.resolve(undefined);
+                return lateResult.promise;
+            })
+            .mockResolvedValueOnce({
+                results: [{
+                    score: 0.5,
+                    doc: new Document({
+                        pageContent: 'fresh result',
+                        metadata: { path: 'fresh.md' },
+                    }),
+                }],
+                sourceEpoch: 'fresh-epoch',
+                lexical: { attempted: true, state: 'ready', reason: undefined },
+            });
+        const controller = new AbortController();
+        const firstEmbedding: { value?: number[]; profileSignature?: string; sourceEpoch?: string } = {};
+        const first = vss.searchHybrid('first recovery', {
+            signal: controller.signal,
+            queryEmbeddingOut: firstEmbedding,
+        });
+        await firstStarted.promise;
+        const firstIndexArgs = index.searchHybridDetailed.mock.calls[0] as unknown as unknown[];
+        expect(firstIndexArgs[10]).toEqual({ signal: controller.signal });
+        const firstRejected = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+
+        controller.abort();
+        await firstRejected;
+        expect(firstEmbedding).toEqual({
+            value: undefined,
+            profileSignature: undefined,
+            sourceEpoch: undefined,
+        });
+        expect(vss.getMemoryStatusSnapshot().lexicalSearchMatchedRows).toBeUndefined();
+
+        const second = vss.searchHybrid('second recovery');
+        await Promise.resolve();
+        expect(index.searchHybridDetailed).toHaveBeenCalledTimes(1);
+
+        lateResult.resolve({
+            results: [{
+                score: 1,
+                doc: new Document({
+                    pageContent: 'stale late result',
+                    metadata: { path: 'stale.md' },
+                }),
+            }],
+            sourceEpoch: 'stale-epoch',
+            lexical: { attempted: false, state: 'ready', reason: 'stale-late-result' },
+        });
+
+        await expect(second).resolves.toEqual([
+            expect.objectContaining({
+                doc: expect.objectContaining({
+                    metadata: expect.objectContaining({ path: 'fresh.md' }),
+                }),
+            }),
+        ]);
+        expect(index.searchHybridDetailed).toHaveBeenCalledTimes(2);
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalSearchAttempted: true,
+            lexicalSearchReason: undefined,
+        });
+    });
+
+    it('shares one local lexical budget across a same-search evidence rerun', async () => {
+        const localPhaseStartedAt = new Date('2026-08-11T02:00:00.000Z').getTime();
+        jest.setSystemTime(localPhaseStartedAt);
+        const currentFile = createTFile('current.md', { mtime: 10, size: 20 });
+        const { plugin, mockVault } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        mockVault.getAbstractFileByPath.mockImplementation((path) => (
+            path === currentFile.path ? currentFile : null
+        ));
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex() as FakeLexicalVectorIndex & {
+            getPathEvidenceGenerations: jest.Mock<
+                (paths: string[]) => Promise<IndexedPathEvidenceGenerationResult>
+            >;
+        };
+        index.lexicalStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+            },
+            chunkCount: 1,
+            lexicalRowCount: 1,
+        };
+        let evidenceLookupCount = 0;
+        index.getPathEvidenceGenerations = jest.fn(async (paths: string[]) => {
+            evidenceLookupCount += 1;
+            return {
+                sourceEpoch: '7',
+                paths: paths.map((path) => ({
+                    path,
+                    generation: evidenceLookupCount === 1 ? 'generation-1' : 'generation-2',
+                    contentHash: 'hash-current',
+                    mtime: 10,
+                    size: 20,
+                })),
+            };
+        });
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        const observedBudgets: Array<{ startedAtMs: number; deadlineAtMs: number }> = [];
+        index.searchHybridDetailed.mockImplementation(async () => {
+            const args = index.searchHybridDetailed.mock.calls.at(-1) as unknown as unknown[];
+            const budget = args[7] as { startedAtMs: number; deadlineAtMs: number };
+            observedBudgets.push(budget);
+            const attempted = Date.now() < budget.deadlineAtMs;
+            if (observedBudgets.length === 1) {
+                jest.setSystemTime(budget.deadlineAtMs + 1);
+            }
+            return {
+                results: [] as VectorSearchResult[],
+                sourceEpoch: '7',
+                lexical: {
+                    attempted,
+                    state: 'ready' as const,
+                    reason: attempted ? undefined : 'not_started_budget',
+                },
+            };
+        });
+
+        await expect(vss.searchHybrid('召回', {
+            excludeUnchangedPathGenerations: [{
+                path: currentFile.path,
+                generation: 'generation-1',
+            }],
+        })).resolves.toEqual([]);
+
+        expect(index.searchHybridDetailed).toHaveBeenCalledTimes(2);
+        expect(index.getPathEvidenceGenerations).toHaveBeenCalledTimes(2);
+        expect(observedBudgets).toHaveLength(2);
+        expect(observedBudgets[1]).toBe(observedBudgets[0]);
+        expect(observedBudgets[0]).toEqual({
+            startedAtMs: localPhaseStartedAt,
+            deadlineAtMs: localPhaseStartedAt
+                + RETRIEVAL_CALIBRATION_PROFILE.lexicalRuntime.searchBudgetMs,
+        });
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalSearchAttempted: false,
+            lexicalSearchReason: 'not_started_budget',
+        });
+    });
+
+    it('discards a delayed lexical-fused result when the live flag is disabled mid-search', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        const firstSearchStarted = createDeferred<void>();
+        const delayedLexicalResult = createDeferred<Awaited<ReturnType<
+            FakeLexicalVectorIndex['searchHybridDetailed']
+        >>>();
+        index.searchHybridDetailed
+            .mockImplementationOnce(async () => {
+                firstSearchStarted.resolve();
+                return delayedLexicalResult.promise;
+            })
+            .mockResolvedValueOnce({
+                results: [{
+                    score: 0.8,
+                    doc: new Document({
+                        pageContent: 'vector-only result',
+                        metadata: { path: 'vector-only.md' },
+                    }),
+                }],
+                sourceEpoch: '7',
+                lexical: {
+                    attempted: false,
+                    state: 'unavailable',
+                    reason: 'feature_disabled',
+                },
+            });
+
+        const pendingSearch = vss.searchHybrid('差旅报销;电子发票');
+        await firstSearchStarted.promise;
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: false };
+        delayedLexicalResult.resolve({
+            results: [{
+                score: 1,
+                doc: new Document({
+                    pageContent: 'stale lexical-fused result',
+                    metadata: { path: 'stale-lexical.md' },
+                }),
+            }],
+            sourceEpoch: '7',
+            lexical: {
+                attempted: true,
+                state: 'ready',
+                reason: undefined,
+            },
+        });
+
+        await expect(pendingSearch).resolves.toEqual([
+            expect.objectContaining({
+                doc: expect.objectContaining({
+                    metadata: expect.objectContaining({ path: 'vector-only.md' }),
+                }),
+            }),
+        ]);
+        expect(index.searchHybridDetailed).toHaveBeenCalledTimes(2);
+        const lexicalArgs = index.searchHybridDetailed.mock.calls[0] as unknown as unknown[];
+        const vectorOnlyArgs = index.searchHybridDetailed.mock.calls[1] as unknown as unknown[];
+        expect(lexicalArgs[1]).not.toBeNull();
+        expect(lexicalArgs[9]).toEqual(RETRIEVAL_CALIBRATION_PROFILE.candidate.standard);
+        expect(vectorOnlyArgs[1]).toBeNull();
+        expect(vectorOnlyArgs[2]).toBe(8);
+        expect(vectorOnlyArgs[3]).toBe(12);
+        expect(vectorOnlyArgs[5]).toBe('feature_disabled');
+        expect(vectorOnlyArgs[9]).toEqual(RETRIEVAL_CALIBRATION_PROFILE.baseline.standard);
+    });
+
+    it('discards a lexical-fused result when a microtask disables the live flag during the second status refresh', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        const secondStatusStarted = createDeferred<void>();
+        const secondStatusRelease = createDeferred<LexicalIndexStatus>();
+        const readyStatus: LexicalIndexStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+            },
+            chunkCount: 1,
+            lexicalRowCount: 1,
+        };
+        index.getLexicalStatus
+            .mockResolvedValueOnce({
+                state: 'awaiting_confirmation',
+                reason: 'profile_missing',
+                chunkCount: 1,
+                lexicalRowCount: 0,
+            })
+            .mockImplementationOnce(async () => {
+                secondStatusStarted.resolve();
+                return secondStatusRelease.promise;
+            });
+        index.searchHybridDetailed
+            .mockResolvedValueOnce({
+                results: [{
+                    score: 1,
+                    doc: new Document({
+                        pageContent: 'stale lexical-fused result',
+                        metadata: { path: 'stale-lexical.md' },
+                    }),
+                }],
+                sourceEpoch: '7',
+                lexical: {
+                    attempted: true,
+                    state: 'ready',
+                    reason: undefined,
+                },
+            })
+            .mockResolvedValueOnce({
+                results: [{
+                    score: 0.8,
+                    doc: new Document({
+                        pageContent: 'vector-only result',
+                        metadata: { path: 'vector-only.md' },
+                    }),
+                }],
+                sourceEpoch: '8',
+                lexical: {
+                    attempted: false,
+                    state: 'unavailable',
+                    reason: 'feature_disabled',
+                },
+            });
+        const controller = new AbortController();
+
+        const pendingSearch = vss.searchHybrid('差旅报销;电子发票', { signal: controller.signal });
+        await secondStatusStarted.promise;
+        const flagDisabled = Promise.resolve().then(() => {
+            plugin.settings.retrievalOptimizationFlags = { lexicalProfile: false };
+        });
+        secondStatusRelease.resolve(readyStatus);
+        await flagDisabled;
+
+        await expect(pendingSearch).resolves.toEqual([
+            expect.objectContaining({
+                doc: expect.objectContaining({
+                    metadata: expect.objectContaining({ path: 'vector-only.md' }),
+                }),
+            }),
+        ]);
+        expect(index.searchHybridDetailed).toHaveBeenCalledTimes(2);
+        const lexicalArgs = index.searchHybridDetailed.mock.calls[0] as unknown as unknown[];
+        const vectorOnlyArgs = index.searchHybridDetailed.mock.calls[1] as unknown as unknown[];
+        expect(vectorOnlyArgs[0]).toBe(lexicalArgs[0]);
+        expect(vectorOnlyArgs[1]).toBeNull();
+        expect(vectorOnlyArgs[2]).toBe(8);
+        expect(vectorOnlyArgs[3]).toBe(12);
+        expect(vectorOnlyArgs[5]).toBe('feature_disabled');
+        expect(vectorOnlyArgs[7]).toBe(lexicalArgs[7]);
+        expect(vectorOnlyArgs[9]).toEqual(RETRIEVAL_CALIBRATION_PROFILE.baseline.standard);
+        expect(vectorOnlyArgs[10]).toEqual({ signal: controller.signal });
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalSearchAttempted: false,
+            lexicalSearchState: 'unavailable',
+            lexicalSearchReason: 'feature_disabled',
+        });
+    });
+
+    it('clears invocation output and preserves cached status when disposed during the second lexical status refresh', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        const cachedStatus: LexicalIndexStatus = {
+            state: 'awaiting_confirmation',
+            reason: 'profile_missing',
+            chunkCount: 1,
+            lexicalRowCount: 0,
+        };
+        (vss as any).lexicalStatus = cachedStatus; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const secondStatusStarted = createDeferred<void>();
+        const secondStatusRelease = createDeferred<LexicalIndexStatus>();
+        index.getLexicalStatus
+            .mockResolvedValueOnce(cachedStatus)
+            .mockImplementationOnce(async () => {
+                secondStatusStarted.resolve();
+                return secondStatusRelease.promise;
+            });
+        index.searchHybridDetailed.mockResolvedValueOnce({
+            results: [{
+                score: 1,
+                doc: new Document({
+                    pageContent: 'stale lexical-fused result',
+                    metadata: { path: 'stale-lexical.md' },
+                }),
+            }],
+            sourceEpoch: 'stale-epoch',
+            lexical: {
+                attempted: true,
+                state: 'ready',
+                reason: undefined,
+            },
+        });
+        const queryEmbeddingOut: {
+            value?: number[];
+            profileSignature?: string;
+            sourceEpoch?: string;
+        } = {};
+
+        const pendingSearch = vss.searchHybrid('差旅报销;电子发票', { queryEmbeddingOut });
+        await secondStatusStarted.promise;
+        expect(queryEmbeddingOut.value).toBeDefined();
+        const disposing = vss.dispose();
+        secondStatusRelease.resolve({
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+            },
+            chunkCount: 1,
+            lexicalRowCount: 1,
+        });
+
+        await expect(pendingSearch).resolves.toEqual([]);
+        await disposing;
+        expect(queryEmbeddingOut).toEqual({
+            value: undefined,
+            profileSignature: undefined,
+            sourceEpoch: undefined,
+        });
+        expect((vss as any).lexicalStatus).toBe(cachedStatus); // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalSearchAttempted: undefined,
+            lexicalSearchState: undefined,
+            lexicalSearchReason: undefined,
+        });
+        expect(index.searchHybridDetailed).toHaveBeenCalledTimes(1);
+    });
+
+    it('rethrows sqlite index disposal from lexical status refresh and clears invocation output', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        const cachedStatus: LexicalIndexStatus = {
+            state: 'awaiting_confirmation',
+            reason: 'profile_missing',
+            chunkCount: 1,
+            lexicalRowCount: 0,
+        };
+        (vss as any).lexicalStatus = cachedStatus; // eslint-disable-line @typescript-eslint/no-explicit-any
+        index.getLexicalStatus.mockRejectedValueOnce(Object.assign(
+            new Error('disposed during status refresh'),
+            { code: 'sqlite-vector-index-disposed' },
+        ));
+        index.searchHybridDetailed.mockResolvedValueOnce({
+            results: [{
+                score: 1,
+                doc: new Document({
+                    pageContent: 'stale lexical-fused result',
+                    metadata: { path: 'stale-lexical.md' },
+                }),
+            }],
+            sourceEpoch: 'stale-epoch',
+            lexical: {
+                attempted: true,
+                state: 'ready',
+                reason: undefined,
+            },
+        });
+        const queryEmbeddingOut: {
+            value?: number[];
+            profileSignature?: string;
+            sourceEpoch?: string;
+        } = {};
+
+        await expect(vss.searchHybrid('差旅报销;电子发票', { queryEmbeddingOut }))
+            .rejects.toMatchObject({ code: 'sqlite-vector-index-disposed' });
+
+        expect(queryEmbeddingOut).toEqual({
+            value: undefined,
+            profileSignature: undefined,
+            sourceEpoch: undefined,
+        });
+        expect((vss as any).lexicalStatus).toBe(cachedStatus); // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalSearchAttempted: undefined,
+            lexicalSearchState: undefined,
+            lexicalSearchReason: undefined,
+        });
+    });
+
+    it('rejects an old hybrid result when another config refresh replaces its index during status refresh', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const oldIndex = new FakeLexicalVectorIndex();
+        const replacementIndex = new FakeLexicalVectorIndex();
+        Object.setPrototypeOf(oldIndex, MockSqliteVectorIndex.prototype);
+        Object.setPrototypeOf(replacementIndex, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, oldIndex);
+        const cachedStatus: LexicalIndexStatus = {
+            state: 'awaiting_confirmation',
+            reason: 'profile_missing',
+            chunkCount: 1,
+            lexicalRowCount: 0,
+        };
+        (vss as any).lexicalStatus = cachedStatus; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const statusStarted = createDeferred<void>();
+        const lateStatus = createDeferred<LexicalIndexStatus>();
+        oldIndex.getLexicalStatus.mockImplementationOnce(async () => {
+            statusStarted.resolve();
+            return lateStatus.promise;
+        });
+        oldIndex.searchHybridDetailed.mockResolvedValueOnce({
+            results: [{
+                score: 1,
+                doc: new Document({
+                    pageContent: 'old-profile result',
+                    metadata: { path: 'old-profile.md' },
+                }),
+            }],
+            sourceEpoch: 'old-source-epoch',
+            lexical: {
+                attempted: true,
+                state: 'ready',
+                reason: undefined,
+            },
+        });
+        setMockSqliteIndex(replacementIndex);
+        const queryEmbeddingOut: {
+            value?: number[];
+            profileSignature?: string;
+            sourceEpoch?: string;
+        } = {};
+
+        const pendingSearch = vss.searchHybrid('差旅报销;电子发票', { queryEmbeddingOut });
+        await statusStarted.promise;
+        expect(queryEmbeddingOut.value).toBeDefined();
+        plugin.settings.embeddingModelName = 'replacement-model';
+        await (vss as any).ensureIndex({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            allowFallback: false,
+            mode: 'foreground',
+        });
+        expect(oldIndex.dispose).toHaveBeenCalledTimes(1);
+        expect((vss as any).index).toBe(replacementIndex); // eslint-disable-line @typescript-eslint/no-explicit-any
+        lateStatus.resolve({
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+            },
+            chunkCount: 1,
+            lexicalRowCount: 1,
+        });
+
+        await expect(pendingSearch).rejects.toMatchObject({ code: 'vss-search-invocation-changed' });
+        expect(queryEmbeddingOut).toEqual({
+            value: undefined,
+            profileSignature: undefined,
+            sourceEpoch: undefined,
+        });
+        expect((vss as any).lexicalStatus).toBe(cachedStatus); // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalSearchAttempted: undefined,
+            lexicalSearchState: undefined,
+            lexicalSearchReason: undefined,
+        });
+        expect(replacementIndex.searchHybridDetailed).not.toHaveBeenCalled();
+    });
+
+    it('marks a ready lexical generation stale when the eligibility policy changes', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        plugin.settings.dataBoundary = {
+            excludedFolders: [],
+            excludedTags: [],
+            generatedNotePolicy: 'exclude-generated',
+        };
+        plugin.settings.vssCacheExcludePath = ['private/'];
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        const originalFingerprint = (vss as any).getLexicalBoundaryFingerprint(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        index.lexicalStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 0,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+                scopeFingerprint: originalFingerprint,
+                eligibleRowCount: 0,
+            },
+            chunkCount: 0,
+            lexicalRowCount: 0,
+        };
+        attachReadyIndex(vss, index);
+
+        // These values are not equivalent: the first allows `private.md`, the
+        // second excludes it. The lexical policy fingerprint must change too.
+        plugin.settings.vssCacheExcludePath = ['private'];
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+    });
+
+    it('keeps scope_changed effective status observable after hybrid fallback', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        plugin.settings.dataBoundary = {
+            excludedFolders: [],
+            excludedTags: [],
+            generatedNotePolicy: 'exclude-generated',
+        };
+        plugin.settings.vssCacheExcludePath = ['private/'];
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        const originalFingerprint = (vss as any).getLexicalBoundaryFingerprint(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        index.lexicalStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 1,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+                scopeFingerprint: originalFingerprint,
+                eligibleRowCount: 0,
+            },
+            chunkCount: 0,
+            lexicalRowCount: 0,
+        };
+        index.searchHybridDetailed.mockResolvedValue({
+            results: [],
+            sourceEpoch: '7',
+            lexical: {
+                attempted: false,
+                state: 'stale',
+                reason: 'scope_changed',
+            },
+        });
+        // VSS intentionally exposes SQLite-only hybrid APIs behind this
+        // concrete runtime check; preserve the fake's own methods while making
+        // that backend identity explicit for this regression.
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+
+        plugin.settings.vssCacheExcludePath = ['private'];
+        await expect(vss.searchHybrid('query')).resolves.toEqual([]);
+        expect(vss.getMemoryStatusSnapshot()).toMatchObject({
+            lexicalProfileState: 'stale',
+            lexicalFallbackReason: 'scope_changed',
+            lexicalSearchState: 'stale',
+            lexicalSearchReason: 'scope_changed',
+        });
+        await expect(vss.getStats()).resolves.toMatchObject({
+            lexicalProfileState: 'stale',
+            lexicalFallbackReason: 'scope_changed',
+        });
+    });
+
+    it('forwards invocation-local Graph lifecycle diagnostics to the SQLite index', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const rankGraphCandidates = jest.fn<(
+            queryEmbedding: number[],
+            paths: string[],
+            control: RankedPathRequestControl,
+            options?: RankGraphCandidatesOptions,
+        ) => Promise<RankedPathRequestResult>>(async (_embedding, _paths, control, options) => {
+            options?.onDiagnostic?.({ state: 'cancel_requested', accepted: 0 });
+            return {
+                requestId: control.requestId,
+                runEpoch: control.runEpoch,
+                sourceEpoch: control.sourceEpoch,
+                paths: [],
+            };
+        });
+        const index = Object.assign(new FakeVectorIndex(), { rankGraphCandidates });
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        const control: RankedPathRequestControl = {
+            requestId: 'graph-diagnostic-forwarding',
+            runEpoch: 'run-1',
+            sourceEpoch: 'source-1',
+            absoluteDeadlineMs: Date.now() + 10_000,
+            maxPathsPerBatch: 16,
+            maxCandidatePaths: 32,
+            maxChunksScanned: 256,
+        };
+        const onDiagnostic = jest.fn();
+
+        await expect(vss.rankGraphCandidates([1, 0], ['a.md'], control, { onDiagnostic }))
+            .resolves.toMatchObject({ requestId: control.requestId });
+        expect(rankGraphCandidates).toHaveBeenCalledWith(
+            [1, 0],
+            ['a.md'],
+            control,
+            { onDiagnostic },
+        );
+        expect(onDiagnostic).toHaveBeenCalledWith({
+            state: 'cancel_requested',
+            accepted: 0,
+        });
+    });
+
+    it('exposes exact path evidence only when SQLite and the live vault source are current', async () => {
+        const files = new Map([
+            ['current.md', createTFile('current.md', { mtime: 10, size: 20 })],
+            ['dirty.md', createTFile('dirty.md', { mtime: 10, size: 20 })],
+            ['verify.md', createTFile('verify.md', { mtime: 10, size: 20 })],
+            ['mismatch.md', createTFile('mismatch.md', { mtime: 11, size: 20 })],
+            ['blocked.md', createTFile('blocked.md', { mtime: 10, size: 20 })],
+            ['unknown.md', createTFile('unknown.md', { mtime: 10, size: 20 })],
+        ]);
+        const { plugin, mockVault } = createPlugin({
+            isDataBoundaryAllowedPath: (path: string) => path !== 'blocked.md',
+        });
+        mockVault.getAbstractFileByPath.mockImplementation((path) => files.get(path) ?? null);
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex() as FakeVectorIndex & {
+            getPathEvidenceGenerations: jest.Mock<
+                (
+                    paths: string[],
+                    maxPathsPerBatch?: number,
+                    maxChunksScanned?: number,
+                ) => Promise<IndexedPathEvidenceGenerationResult>
+            >;
+        };
+        index.getPathEvidenceGenerations = jest.fn(async (paths: string[]) => ({
+            sourceEpoch: '9',
+            paths: paths
+                .filter((path) => path !== 'unknown.md')
+                .map((path) => ({
+                    path,
+                    generation: `generation-${path}`,
+                    contentHash: `hash-${path}`,
+                    mtime: 10,
+                    size: 20,
+                })),
+        }));
+        Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+        attachReadyIndex(vss, index);
+        (vss as any).dirty.set('dirty.md', { first: 1, last: 1, epoch: 1 }); // eslint-disable-line @typescript-eslint/no-explicit-any
+        (vss as any).verifyQueue.set('verify.md', { path: 'verify.md' }); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const result = await vss.getPathEvidenceGenerations([...files.keys()]);
+        expect(result.sourceEpoch).toBe('9');
+        expect(Object.fromEntries(result.paths.map((entry) => [entry.path, entry.reason]))).toEqual({
+            'blocked.md': 'boundary_denied',
+            'current.md': 'current',
+            'dirty.md': 'dirty',
+            'mismatch.md': 'source_revision_mismatch',
+            'unknown.md': 'generation_unavailable',
+            'verify.md': 'verification_pending',
+        });
+        expect(result.paths.find((entry) => entry.path === 'current.md')).toMatchObject({
+            current: true,
+            generation: 'generation-current.md',
+        });
+        expect(result.paths.filter((entry) => entry.path !== 'current.md').every((entry) => !entry.current)).toBe(true);
+        expect(index.getPathEvidenceGenerations).toHaveBeenCalledWith(
+            ['current.md', 'mismatch.md', 'unknown.md'],
+            64,
+            6_000,
+        );
+    });
+
+    it('runs the diagnostics-only incremental lexical seam from a known-current indexed path without Markdown or providers', async () => {
+        const file = createTFile('retrieval-smoke/lexical/量子灯塔检索.md', {
+            size: 10,
+            mtime: 7,
+            ctime: 1,
+        });
+        const { plugin, mockVault, mockAdapter } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        plugin.settings.dataBoundary = {
+            excludedFolders: [],
+            excludedTags: [],
+            generatedNotePolicy: 'include-generated',
+        };
+        mockVault.getAbstractFileByPath.mockReturnValue(file);
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        index.records.set(file.path, {
+            path: file.path,
+            contentHash: 'h1',
+            mtime: 7,
+            size: 10,
+            status: 'ready',
+            updatedAt: 7,
+        });
+        attachReadyIndex(vss, index);
+        const boundaryFingerprint = (vss as any).getLexicalBoundaryFingerprint(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        index.lexicalStatus = {
+            state: 'ready',
+            marker: {
+                profileId: 'char-phrase-v1',
+                generation: 0,
+                sourceChunkEpoch: '7',
+                runtimeCanaryFingerprint: 'canary',
+                scopeFingerprint: boundaryFingerprint,
+                eligibleRowCount: 2,
+            },
+            chunkCount: 2,
+            lexicalRowCount: 2,
+        };
+
+        await expect(vss.refreshLexicalPathFromIndexedChunks(file.path)).resolves.toMatchObject({
+            kind: 'indexed-chunks-incremental',
+            status: 'completed',
+            state: 'ready',
+            effects: {
+                source: 'indexed-chunks',
+                markdownReads: 0,
+                markdownWrites: 0,
+                providerCalls: 0,
+                embeddingCalls: 0,
+                embeddingWrites: 0,
+            },
+        });
+        expect(index.refreshLexicalPathFromIndexedChunks).toHaveBeenCalledWith(file.path, boundaryFingerprint);
+        expect(mockAdapter.read).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        (vss as any).dirty.set(file.path, { first: 1, last: 1, epoch: 1 }); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await expect(vss.refreshLexicalPathFromIndexedChunks(file.path)).rejects.toMatchObject({
+            code: 'lexical-incremental-path-not-current',
+        });
+        expect(index.refreshLexicalPathFromIndexedChunks).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns a concrete receipt from the real lexical rebuild implementation while preserving the ordinary API', async () => {
+        const files = [
+            createTFile('a.md', { size: 1, mtime: 1, ctime: 1 }, 'md', 'a.md'),
+            createTFile('b.md', { size: 1, mtime: 1, ctime: 1 }, 'md', 'b.md'),
+        ];
+        const { plugin, mockAdapter } = createPlugin({ getVSSFiles: jest.fn(() => files) });
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        attachReadyIndex(vss, index);
+
+        const rebuilding = vss.rebuildLexicalIndexWithReceipt({ batchSize: 2 });
+        await jest.runOnlyPendingTimersAsync();
+        await expect(rebuilding).resolves.toMatchObject({
+            kind: 'rebuild',
+            status: 'completed',
+            state: 'ready',
+            effects: {
+                source: 'indexed-chunks',
+                pathCount: 2,
+                sourceChunkReads: 2,
+                sourceChunkWrites: 0,
+                lexicalRowsInserted: 2,
+                markdownReads: 0,
+                markdownWrites: 0,
+                providerCalls: 0,
+                embeddingCalls: 0,
+                embeddingWrites: 0,
+            },
+        });
+        expect(index.beginLexicalRebuildWithReceipt).toHaveBeenCalledTimes(1);
+        expect(index.finalizeLexicalRebuildWithReceipt).toHaveBeenCalledTimes(1);
+        expect(mockAdapter.read).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        index.beginLexicalRebuild.mockClear();
+        index.finalizeLexicalRebuild.mockClear();
+        const ordinary = vss.rebuildLexicalIndex({ batchSize: 2 });
+        await jest.runOnlyPendingTimersAsync();
+        await expect(ordinary).resolves.toMatchObject({
+            aborted: false,
+            rowsProcessed: 2,
+            rowsTotal: 2,
+            generation: 1,
+        });
+        expect(index.finalizeLexicalRebuild).toHaveBeenCalledTimes(1);
+    });
+
+    it('rebuilds lexical rows in released batches and lets foreground search run between batches', async () => {
+        const files = [
+            createTFile('a.md', { size: 1, mtime: 1, ctime: 1 }, 'md', 'a.md'),
+            createTFile('b.md', { size: 1, mtime: 1, ctime: 1 }, 'md', 'b.md'),
+        ];
+        const { plugin } = createPlugin({
+            getVSSFiles: jest.fn(() => files),
+        });
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        index.blockFirstBatch = true;
+        index.search.mockImplementation(async () => {
+            index.operationOrder.push('search');
+            return [];
+        });
+        attachReadyIndex(vss, index);
+        const firstBatchStarted = index.waitForFirstBatch();
+
+        const rebuilding = vss.rebuildLexicalIndex({ batchSize: 1 });
+        await firstBatchStarted;
+        const searching = vss.searchSimilarity('query');
+        index.releaseFirstBatch();
+
+        await searching;
+        expect(index.operationOrder.slice(0, 2)).toEqual(['append-1', 'search']);
+        await jest.runOnlyPendingTimersAsync();
+        await expect(rebuilding).resolves.toMatchObject({
+            aborted: false,
+            rowsProcessed: 2,
+            rowsTotal: 2,
+            generation: 1,
+        });
+        expect(index.operationOrder).toEqual(['append-1', 'search', 'append-2']);
+        expect(index.finalizeLexicalRebuild).toHaveBeenCalledTimes(1);
+        expect((vss as any).aiUtils.createEmbeddings).toHaveBeenCalledTimes(1); // eslint-disable-line @typescript-eslint/no-explicit-any
+    });
+
+    it('aborts a lexical rebuild without activating the shadow generation', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        attachReadyIndex(vss, index);
+        const controller = new AbortController();
+
+        const rebuilding = vss.rebuildLexicalIndex({
+            batchSize: 1,
+            signal: controller.signal,
+            onProgress: (event) => {
+                if (event.lexicalRowsDone === 1) controller.abort();
+            },
+        });
+        await jest.runOnlyPendingTimersAsync();
+
+        await expect(rebuilding).resolves.toMatchObject({
+            aborted: true,
+            rowsProcessed: 1,
+            rowsTotal: 2,
+            reason: 'aborted',
+        });
+        expect(index.abortLexicalRebuild).toHaveBeenCalledTimes(1);
+        expect(index.finalizeLexicalRebuild).not.toHaveBeenCalled();
+        expect((vss as any).aiUtils.createEmbeddings).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+    });
+
+    it('aborts a lexical rebuild when the live rollout flag is disabled mid-run', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        attachReadyIndex(vss, index);
+        const phases: string[] = [];
+
+        const rebuilding = vss.rebuildLexicalIndex({
+            batchSize: 1,
+            onProgress: (event) => {
+                phases.push(event.phase);
+                if (event.phase === 'lexical-rebuilding' && event.lexicalRowsDone === 1) {
+                    plugin.settings.retrievalOptimizationFlags = { lexicalProfile: false };
+                }
+            },
+        });
+        await jest.runOnlyPendingTimersAsync();
+
+        await expect(rebuilding).resolves.toMatchObject({
+            aborted: true,
+            rowsProcessed: 1,
+            rowsTotal: 2,
+            reason: 'feature_disabled',
+        });
+        expect(phases).toContain('cancelling');
+        expect(index.abortLexicalRebuild).toHaveBeenCalledTimes(1);
+        expect(index.finalizeLexicalRebuild).not.toHaveBeenCalled();
+    });
+
+    it('marks lexical activation as the cancel commit point before finalizing', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        attachReadyIndex(vss, index);
+        const phases: string[] = [];
+
+        const rebuilding = vss.rebuildLexicalIndex({
+            batchSize: 2,
+            onProgress: (event) => phases.push(event.phase),
+        });
+        await jest.runOnlyPendingTimersAsync();
+        await rebuilding;
+
+        expect(phases).toEqual([
+            'lexical-rebuilding',
+            'lexical-rebuilding',
+            'lexical-rebuilding',
+            'finalizing',
+            'ready',
+        ]);
+    });
+
+    it('enters shutdown synchronously and bounds a stalled maintenance drain', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        const neverSettles = new Promise<void>(() => undefined);
+
+        const disposing = vss.disposeAfter(neverSettles);
+        await expect(vss.searchSimilarity('late query')).resolves.toEqual([]);
+        expect(index.search).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(750);
+        await disposing;
+        expect(index.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('cleans an active lexical shadow before disposing during unload', async () => {
+        const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeLexicalVectorIndex();
+        index.blockFirstBatch = true;
+        index.abortLexicalRebuild.mockImplementation(async () => {
+            index.operationOrder.push('abort');
+            return {
+                state: 'awaiting_confirmation',
+                reason: 'rebuild_aborted',
+                chunkCount: 2,
+                lexicalRowCount: 0,
+            };
+        });
+        index.dispose.mockImplementation(async () => {
+            index.operationOrder.push('dispose');
+        });
+        attachReadyIndex(vss, index);
+        const controller = new AbortController();
+        const firstBatchStarted = index.waitForFirstBatch();
+
+        const rebuilding = vss.rebuildLexicalIndex({ batchSize: 1, signal: controller.signal });
+        await firstBatchStarted;
+        controller.abort();
+        const disposing = vss.disposeAfter(rebuilding);
+        index.releaseFirstBatch();
+        await jest.advanceTimersByTimeAsync(0);
+
+        await expect(rebuilding).resolves.toMatchObject({ aborted: true, reason: 'aborted' });
+        await disposing;
+        expect(index.abortLexicalRebuild).toHaveBeenCalledTimes(1);
+        expect(index.operationOrder.indexOf('abort')).toBeLessThan(index.operationOrder.indexOf('dispose'));
+    });
+
     it('maps local missing and settings changed states to rebuild memory plans', async () => {
         const { plugin } = createPlugin({
             getVSSFiles: jest.fn(() => [
@@ -3196,7 +4697,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(isVSSFileEligible).toHaveBeenCalledWith(file, exactMarkdown);
         expect(createEmbeddings).not.toHaveBeenCalled();
         expect(index.upsertFile).not.toHaveBeenCalled();
-        expect(index.deleteFile).toHaveBeenCalledWith(file.path);
+        expect(index.deleteFile).toHaveBeenCalledWith(
+            file.path,
+            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+        );
         await vss.dispose();
     });
 
@@ -3229,7 +4733,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(mockAdapter.read).not.toHaveBeenCalled();
         expect(createEmbeddings).not.toHaveBeenCalled();
         expect(index.upsertFile).not.toHaveBeenCalled();
-        expect(index.deleteFile).toHaveBeenCalledWith(file.path);
+        expect(index.deleteFile).toHaveBeenCalledWith(
+            file.path,
+            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+        );
         expect(vss.hasDirtyChanges()).toBe(false);
         await vss.dispose();
     });

@@ -1,14 +1,32 @@
 /* Copyright 2023 edonyzpc */
-import { Notice, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
+import { Notice, Platform, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
 import { ChatOpenAI, type ChatOpenAICallOptions, type ClientOptions } from '@langchain/openai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 
 import { computeContentHash } from '../vss-helpers';
-import { obsidianFetch } from './obsidian-fetch';
+import {
+    createScopedObsidianFetch,
+    obsidianFetch,
+    type ProviderRequestCancellationCapability,
+    type ProviderRequestScope,
+} from './obsidian-fetch';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { getPlatformDocument } from '../platform-dom';
 
-type ChatTransport = 'obsidian' | 'native';
+export type ChatTransport = 'obsidian' | 'native';
+
+export type ChatTransportResolutionReason =
+    | 'requested_transport'
+    | 'ios_dashscope_native_body_unreliable';
+
+export interface ChatTransportResolution {
+    requested: ChatTransport;
+    effective: ChatTransport;
+    networkBridge: 'global-fetch' | 'obsidian-request-url';
+    responseDelivery: 'incremental' | 'buffered';
+    cancellationCapability: ProviderRequestCancellationCapability;
+    reason: ChatTransportResolutionReason;
+}
 
 export type APITokenCacheState = "unknown" | "present" | "missing";
 export type AIReadinessScope = "chat" | "memory";
@@ -118,9 +136,11 @@ export interface NativeToolCallingCapabilityOptions {
 // Tool-calling protocol matrix (canonical PA streaming support, v2.0.0):
 //   provider=openai  → transport=openai-compatible-stream, streamingToolCalls=true, preservesToolCallId=true,
 //                      earliest observable shape = AIMessageChunk.tool_call_chunks or additional_kwargs.tool_calls.
-//   provider=qwen    → transport=openai-compatible-stream, streamingToolCalls=true, preservesToolCallId=true,
-//                      earliest observable shape = AIMessageChunk.tool_call_chunks from DashScope OpenAI-compatible
-//                      streaming. Only validated DashScope-compatible model/baseURL combinations (see
+//   provider=qwen    → transport=openai-compatible-stream, streamingToolCalls=true. On iOS, DashScope uses
+//                      Obsidian's buffered response bridge because WKWebView global fetch can receive the response
+//                      while leaving both SSE and JSON body consumption unresolved.
+//                      Provider tool-call ids may be empty; PA reassembles by index/order and generates local ids.
+//                      Only validated DashScope-compatible model/baseURL combinations (see
 //                      DASHSCOPE_NATIVE_TOOL_CALLING_MODELS below) enter PA streamed tool-call mode.
 //   Unsupported providers (e.g. Ollama) must error out rather than fall back — the legacy json-planning-loop /
 //   non-streaming-transport paths were removed with v2.0.0 (see PaAgentRuntime path; no rollback flag remains).
@@ -203,14 +223,20 @@ const DASH_SCOPE_NATIVE_TOOL_CALLING_UNSUPPORTED_MODEL_SIGNALS = [
 
 export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
     buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS);
-interface CreateChatModelOptions {
+export interface ProviderRequestOptions {
+    providerRequestScope?: ProviderRequestScope;
+    /** Runs synchronously immediately before each physical requestUrl dispatch. */
+    onProviderRequestStart?: () => void;
+}
+
+export interface CreateChatModelOptions extends ProviderRequestOptions {
     transport?: ChatTransport;
     qwenRequestOptions?: QwenRequestOptions;
     modelName?: string;
     maxTokens?: number;
 }
 
-export interface CreateEmbeddingsOptions {
+export interface CreateEmbeddingsOptions extends ProviderRequestOptions {
     batchSize?: number;
     maxConcurrency?: number;
     maxRetries?: number;
@@ -302,17 +328,36 @@ export class AIUtils {
         });
     }
 
-    private createOpenAIClientOptions(baseURL: string, transport: ChatTransport = 'obsidian'): ClientOptions {
+    private createOpenAIClientOptions(
+        baseURL: string,
+        transport: ChatTransport = 'obsidian',
+        providerRequestOptions: ProviderRequestOptions = {},
+    ): ClientOptions {
         const options: ClientOptions = {
             baseURL: baseURL,
             dangerouslyAllowBrowser: true,
         };
 
-        if (transport === 'obsidian') {
-            options.fetch = obsidianFetch;
+        const resolution = this.resolveChatTransport(transport, baseURL);
+        if (resolution.effective === 'obsidian') {
+            options.fetch = providerRequestOptions.providerRequestScope
+                || providerRequestOptions.onProviderRequestStart
+                ? createScopedObsidianFetch(providerRequestOptions)
+                : obsidianFetch;
         }
 
         return options;
+    }
+
+    resolveChatTransport(
+        requested: ChatTransport,
+        baseURL: unknown = this.host.settings.baseURL,
+    ): ChatTransportResolution {
+        return resolveChatTransport({
+            requested,
+            baseURL,
+            isIosApp: Platform.isIosApp === true,
+        });
     }
 
     /**
@@ -345,7 +390,7 @@ export class AIUtils {
                 return new ChatOpenAI({
                     model: modelName,
                     apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, transport),
+                    configuration: this.createOpenAIClientOptions(baseURL, transport, options),
                     temperature: temperature,
                     ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
                     ...(modelKwargs ? { modelKwargs } : {}),
@@ -356,7 +401,7 @@ export class AIUtils {
                 return new ChatOpenAI({
                     model: modelName,
                     apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, transport),
+                    configuration: this.createOpenAIClientOptions(baseURL, transport, options),
                     temperature: temperature,
                     ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
                 });
@@ -457,7 +502,7 @@ export class AIUtils {
                     model: modelName,
                     dimensions: dimensions,
                     apiKey: token,
-                    configuration: this.createOpenAIClientOptions(baseURL, 'obsidian'),
+                    configuration: this.createOpenAIClientOptions(baseURL, 'obsidian', options),
                     batchSize: options.batchSize,
                     maxConcurrency: options.maxConcurrency,
                     maxRetries: options.maxRetries,
@@ -513,6 +558,42 @@ function normalizeBaseURL(value: unknown): string {
 export function isDashScopeCompatibleBaseURL(value: unknown): boolean {
     const normalized = normalizeBaseURL(value);
     return DASHSCOPE_COMPATIBLE_BASE_URLS.some((baseURL) => normalizeBaseURL(baseURL) === normalized);
+}
+
+export function resolveChatTransport(input: {
+    requested: ChatTransport;
+    baseURL: unknown;
+    isIosApp: boolean;
+}): ChatTransportResolution {
+    if (
+        input.requested === 'native'
+        && input.isIosApp
+        && isDashScopeCompatibleBaseURL(input.baseURL)
+    ) {
+        return {
+            requested: input.requested,
+            effective: 'obsidian',
+            networkBridge: 'obsidian-request-url',
+            responseDelivery: 'buffered',
+            cancellationCapability: 'local-only',
+            reason: 'ios_dashscope_native_body_unreliable',
+        };
+    }
+
+    return {
+        requested: input.requested,
+        effective: input.requested,
+        networkBridge: input.requested === 'obsidian'
+            ? 'obsidian-request-url'
+            : 'global-fetch',
+        responseDelivery: input.requested === 'obsidian'
+            ? 'buffered'
+            : 'incremental',
+        cancellationCapability: input.requested === 'obsidian'
+            ? 'local-only'
+            : 'signal-propagating',
+        reason: 'requested_transport',
+    };
 }
 
 export function getDashScopeImageSynthesisUrl(value: unknown): string | null {

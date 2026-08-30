@@ -170,12 +170,16 @@ export class ChatService {
                 nativeToolPlanningInternalGate: true,
             };
             const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
+            const providerResponseDelivery = this.aiUtils
+                .resolveChatTransport("native")
+                .responseDelivery;
             runtime = new PaAgentRuntime(
                 this.host,
                 this.aiUtils,
                 {
                     ...nativeToolPlanningOptions,
                     runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
+                    providerResponseDelivery,
                     additionalCapabilityProviders,
                     policyOptions: {
                         licenseTier: this.host.settings.licenseTier,

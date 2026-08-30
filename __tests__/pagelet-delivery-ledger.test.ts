@@ -3,6 +3,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
 import { AttentionAwareDeliveryStore } from "../src/pagelet/attention/AttentionAwareDeliveryStore";
+import { buildReviewDeliveryReceipt } from "../src/pagelet/attention/fingerprint";
 import {
     ATTENTION_STATE_SCHEMA_VERSION,
     DELIVERY_FINGERPRINT_VERSION,
@@ -98,23 +99,45 @@ describe("AttentionAwareDeliveryStore", () => {
         }]);
     });
 
-    it("round-trips Deep Discover review receipts without changing the schema", () => {
-        const storage = new MemoryAttentionStorage();
-        const target = receipt(42, "review");
-        const store = new AttentionAwareDeliveryStore({ storage, now: () => 42 });
-
-        store.markSeen(target, "bubble");
-
-        expect(store.isSeen(target)).toBe(true);
-        expect(JSON.parse(storage.serialized ?? "")).toEqual(emptyState({
+    it("keeps legacy v1 review ledger entries readable beside ID-backed Deep Discover receipts", () => {
+        const legacy = buildReviewDeliveryReceipt({
+            locale: "zh",
+            title: "旧洞察",
+            body: "旧版可见内容身份",
+            whyNow: "离开笔记",
+            anchorSourceIdentity: "notes/anchor.md",
+            sourceIdentities: ["notes/anchor.md", "notes/related.md"],
+        });
+        const storage = new MemoryAttentionStorage(JSON.stringify(emptyState({
             seen: [{
                 kind: "review",
-                fingerprint: target.fingerprint,
+                fingerprint: legacy.fingerprint,
                 seenAt: 42,
                 surface: "bubble",
             }],
-        }));
-        expect(new AttentionAwareDeliveryStore({ storage }).isSeen(target)).toBe(true);
+        })));
+        const store = new AttentionAwareDeliveryStore({ storage });
+        const current = buildReviewDeliveryReceipt({
+            insightId: "pagelet-insight:current",
+            locale: "en",
+            title: "Localized insight",
+            body: "Current ID-backed identity",
+        });
+
+        expect(store.mode()).toBe("persisted");
+        expect(store.isSeen(legacy)).toBe(true);
+        expect(store.isSeen(current)).toBe(false);
+        store.markSeen(current, "detail");
+        expect(store.isSeen(legacy)).toBe(true);
+        expect(store.isSeen(current)).toBe(true);
+        expect(JSON.parse(storage.serialized ?? "")).toMatchObject({
+            schemaVersion: 1,
+            fingerprintVersion: 1,
+            seen: expect.arrayContaining([
+                expect.objectContaining({ fingerprint: legacy.fingerprint }),
+                expect.objectContaining({ fingerprint: current.fingerprint }),
+            ]),
+        });
     });
 
     it("evicts only the deterministic oldest-seen entry above 2,000 without a TTL", () => {

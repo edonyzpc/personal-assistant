@@ -2,7 +2,11 @@
 import { Notice, Platform, TAbstractFile, TFile } from 'obsidian';
 import { Document } from "@langchain/core/documents";
 
-import { AIUtils, type CreateEmbeddingsOptions } from '../ai-services/ai-utils';
+import {
+    AIUtils,
+    type CreateEmbeddingsOptions,
+    type ProviderRequestOptions,
+} from '../ai-services/ai-utils';
 import type { MemoryHost } from '../memory';
 import { computeContentHash, selectFlushCandidates, DirtyTimestamps } from '../vss-helpers';
 import { createInlineSqliteWorker, getInlineSqliteWasmUrl } from './sqlite-inline-assets';
@@ -22,6 +26,19 @@ import {
     VSS_DEFAULT_DISTANCE_METRIC,
     VSS_SCHEMA_VERSION,
     type EmbeddingProfile,
+    type LexicalIncrementalMaintenanceReceipt,
+    type LexicalIndexStatus,
+    type LexicalRebuildMaintenanceReceipt,
+    type LexicalSearchStatus,
+    type PathEvidenceGenerationRef,
+    type PathEvidenceGenerationLookupOptions,
+    type PathEvidenceGenerationStatus,
+    type PathEvidenceGenerationStatusResult,
+    type QueryEmbeddingInput,
+    type QueryEmbeddingOutput,
+    type RankGraphCandidatesOptions,
+    type RankedPathRequestControl,
+    type RankedPathRequestResult,
     type VectorIndex,
     type VectorIndexPathLookupOptions,
     type VectorIndexStatus,
@@ -36,11 +53,19 @@ import {
 import type { MemoryMaintenancePlan } from '../memory-manager';
 import { confirmUserAction } from '../confirm';
 import { buildFtsQuery } from './fts-query-builder';
-import { isAbortError, throwIfAborted } from '../ai-services/chat-utils';
+import { CHAR_PHRASE_PROFILE_ID, getCharPhraseRuntimeCanaryFingerprint } from './lexical-normalizer';
+import {
+    RETRIEVAL_CALIBRATION_PROFILE,
+    selectRetrievalSearchRuntimeParameters,
+    type RetrievalCalibrationMode,
+    type RetrievalSearchRuntimeParameters,
+} from './retrieval-calibration';
+import { createAbortError, isAbortError, throwIfAborted } from '../ai-services/chat-utils';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { createHeadingAwareMarkdownChunks } from './markdown-chunker';
-import { stableHash } from '../pa/helpers';
+import { normalizeVaultPath, stableHash } from '../pa/helpers';
 import { errorMessage } from "../ai-services/agent-utils";
+import { resolveB125RetrievalOptimizationFlags } from '../retrieval-optimization-platform-policy';
 import {
     EMBEDDING_RETRY_DELAYS_MS,
     QWEN_TEXT_EMBEDDING_SAFE_TPM,
@@ -92,13 +117,16 @@ import {
     type VSSPreparedRebuildHandle,
     type VSSProgressEvent,
     type VSSProgressPhase,
+    type VSSLexicalRebuildOptions,
+    type VSSLexicalRebuildSummary,
 } from './vss-maintenance';
 
 const VSS_OPFS_ROOT = "/personal-assistant-vss-v2";
 const VSS_LEGACY_OPFS_ROOT = "/personal-assistant-vss";
-const VSS_FOREGROUND_LOCKED_WAIT_MS = 1_500;
+const VSS_FOREGROUND_LOCKED_WAIT_MS = 3_000;
 const VSS_MANUAL_LOCKED_WAIT_MS = 3_000;
 const VSS_INDEX_DISPOSE_TIMEOUT_MS = 4_000;
+const VSS_SHUTDOWN_DRAIN_TIMEOUT_MS = 750;
 const VSS_RECOVERY_COOLDOWN_MS = 5_000;
 const VSS_LOCAL_STATE_UNAVAILABLE_CODE = "vss-local-state-unavailable";
 const VSS_FILE_INELIGIBLE_CODE = "vss-file-ineligible";
@@ -115,6 +143,10 @@ function createVssFileIneligibleError(path: string): Error {
 
 function isVssFileIneligibleError(error: unknown): boolean {
     return getErrorCode(error) === VSS_FILE_INELIGIBLE_CODE;
+}
+
+function createLexicalDiagnosticsError(code: string, message: string): Error {
+    return Object.assign(new Error(message), { code });
 }
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'metadata-synced' | 'removed' | 'skipped';
@@ -166,6 +198,11 @@ export type {
     VSSVerifySummary,
 } from './vss-reconciler';
 
+export type {
+    LexicalIncrementalMaintenanceReceipt,
+    LexicalRebuildMaintenanceReceipt,
+} from './types';
+
 interface StoragePersistenceStatus {
     persisted: boolean;
     usage?: number;
@@ -191,6 +228,15 @@ interface VSSShutdownEntry {
     promise: Promise<void>;
     startedAt: number;
 }
+
+type VSSOperationPriority = "foreground" | "maintenance";
+
+interface VSSQueuedOperation {
+    run: () => Promise<void>;
+    started: boolean;
+}
+
+type LexicalCapableVectorIndex = SqliteVectorIndex;
 
 const vssShutdownBarriers = new Map<string, VSSShutdownEntry>();
 
@@ -238,7 +284,10 @@ export class VSS {
     private verifyQueue = new Map<string, VerifyRecord>();
     private dirtyEpochCounter = 0;
     private isFlushing = false;
-    private operationQueue: Promise<void> = Promise.resolve();
+    private operationActive = false;
+    private readonly foregroundOperations: VSSQueuedOperation[] = [];
+    private readonly maintenanceOperations: VSSQueuedOperation[] = [];
+    private readonly operationDrainWaiters = new Set<() => void>();
     private stateWriteChain: Promise<void> = Promise.resolve();
     private initializationPromise: Promise<void> | null = null;
     private ensureIndexPromise: Promise<void> | null = null;
@@ -275,6 +324,8 @@ export class VSS {
     private lastErrorCode: string | undefined;
     private sqliteRecoveryPromise: Promise<void> | null = null;
     private nextSqliteRecoveryAt = 0;
+    private lexicalStatus: LexicalIndexStatus | null = null;
+    private lastLexicalSearchStatus: LexicalSearchStatus | null = null;
     private readonly pageletQueryEmbeddingCache = new Map<string, number[]>();
     private readonly pageletQueryEmbeddingInFlight = new Map<string, Promise<number[]>>();
 
@@ -421,6 +472,11 @@ export class VSS {
     }
 
     dispose(): Promise<void> {
+        return this.disposeAfter(Promise.resolve());
+    }
+
+    /** Register the storage shutdown barrier immediately, then drain a bounded caller-owned task. */
+    disposeAfter(pendingTask: Promise<unknown>): Promise<void> {
         if (this.disposePromise) return this.disposePromise;
         const pendingInitialization = this.initializationPromise;
         const pendingEnsureIndex = this.ensureIndexPromise;
@@ -428,22 +484,26 @@ export class VSS {
         this.closing = true;
         this.pageletQueryEmbeddingCache.clear();
         this.pageletQueryEmbeddingInFlight.clear();
-        this.disposePromise = this.disposeUnlocked([
-            pendingInitialization,
-            pendingEnsureIndex,
-            pendingRecovery,
-        ]);
+        this.disposePromise = (async () => {
+            await withTimeout(pendingTask, VSS_SHUTDOWN_DRAIN_TIMEOUT_MS).catch((error) => {
+                this.host.log("Failed to drain Memory maintenance before shutdown", error);
+            });
+            this.initializationPromise = null;
+            this.ensureIndexPromise = null;
+            this.sqliteRecoveryPromise = null;
+            await this.disposeUnlocked([
+                pendingInitialization,
+                pendingEnsureIndex,
+                pendingRecovery,
+            ]);
+        })();
         this.registerShutdownBarrier(this.disposePromise);
         return this.disposePromise;
     }
 
     private async disposeUnlocked(pendingOperations: Array<Promise<unknown> | null>): Promise<void> {
         await Promise.allSettled(pendingOperations.filter((operation): operation is Promise<unknown> => Boolean(operation)));
-        let drainedQueue: Promise<void>;
-        do {
-            drainedQueue = this.operationQueue;
-            await drainedQueue.catch(() => undefined);
-        } while (drainedQueue !== this.operationQueue);
+        await this.waitForOperationQueueDrain();
         this.disposed = true;
         this.initialized = false;
         this.initializationPromise = null;
@@ -539,7 +599,21 @@ export class VSS {
     ): Promise<VSSChangeObservation> {
         if (this.disposed) return { kind: "ignored", reason: "disposed" };
         if (!(file instanceof TFile)) return { kind: "ignored", reason: "not-file" };
-        if (!this.isEligible(file)) return { kind: "ignored", path: file.path, reason: "ineligible" };
+        if (!this.isEligible(file)) {
+            await this.initialize();
+            if (this.index && this.status === "ready") {
+                await this.runExclusive(async () => {
+                    if (!this.index) return;
+                    const existing = await this.index.getFileRecord(file.path);
+                    if (!existing) return;
+                    await this.deleteFileFromIndex(this.index, file.path);
+                    this.dirty.delete(file.path);
+                    this.verifyQueue.delete(file.path);
+                    await this.writeLocalIndexState();
+                });
+            }
+            return { kind: "ignored", path: file.path, reason: "ineligible-removed" };
+        }
         await this.initialize();
         if (!this.index || !await this.isDurableReady()) {
             return { kind: "ignored", path: file.path, reason: "not-ready" };
@@ -634,6 +708,13 @@ export class VSS {
             status: this.getCachedMemoryStatus(),
             dirtyCount: this.dirty.size,
             verificationPending: this.verifyQueue.size,
+            lexicalProfileState: this.lexicalStatus?.state,
+            lexicalFallbackReason: this.lexicalStatus?.reason,
+            lexicalSearchAttempted: this.lastLexicalSearchStatus?.attempted,
+            lexicalSearchState: this.lastLexicalSearchStatus?.state,
+            lexicalSearchReason: this.lastLexicalSearchStatus?.reason,
+            lexicalSearchDurationMs: this.lastLexicalSearchStatus?.durationMs,
+            lexicalSearchMatchedRows: this.lastLexicalSearchStatus?.matchedRows,
         };
         if (this.localStateHydrated && this.marker) {
             snapshot.indexedDocumentCount = this.marker.fileCount;
@@ -791,7 +872,7 @@ export class VSS {
                         summary.aborted = true;
                         break;
                     }
-                    await this.index.deleteFile(indexedPath);
+                    await this.deleteFileFromIndex(this.index, indexedPath);
                     if (options.abortSignal?.aborted) {
                         summary.aborted = true;
                         break;
@@ -823,7 +904,7 @@ export class VSS {
                         dirtyChanged = true;
                     }
                     this.verifyQueue.delete(path);
-                    if (this.index) await this.index.deleteFile(path);
+                    if (this.index) await this.deleteFileFromIndex(this.index, path);
                     if (options.abortSignal?.aborted) {
                         this.markDirtyPath(path);
                         dirtyChanged = true;
@@ -944,7 +1025,8 @@ export class VSS {
         if (this.disposed) return false;
         return this.runExclusive(
             () => this.rollbackPreparedRebuildUnlocked(handle, reason),
-            { allowDuringClosing: true },
+            "maintenance",
+            true,
         );
     }
 
@@ -953,7 +1035,7 @@ export class VSS {
         reason: VSSRebuildRecoveryReason,
     ): Promise<boolean> {
         if (!this.isCurrentPreparedRebuild(handle)) return false;
-        this.assertActive();
+        this.assertActive(true);
         await this.stateWriteChain.catch(() => undefined);
         if (!this.isCurrentPreparedRebuild(handle)) return false;
         const generation = ++this.stateGeneration;
@@ -1125,7 +1207,8 @@ export class VSS {
                 try {
                     throwIfAborted(abortSignal);
                     if (!this.isEligible(state.file, state.exactMarkdown)) {
-                        await index.deleteFile(state.path);
+                        await this.deleteFileFromIndex(index, state.path);
+                        throwIfAborted(abortSignal);
                         this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
                         summary.removed++;
                         filesFinalized++;
@@ -1148,6 +1231,9 @@ export class VSS {
                         contentHash: state.contentHash,
                         mtime: state.mtime,
                         size: state.size,
+                        lexicalEligible: true,
+                        lexicalMaintenanceEnabled: this.isLexicalProfileEnabled(),
+                        lexicalBoundaryFingerprint: this.getLexicalBoundaryFingerprint(),
                     }, state.chunks, state.embeddings);
                     throwIfAborted(abortSignal);
                     if (this.markDirtyIfSnapshotChanged(state.file, state)) {
@@ -1190,7 +1276,7 @@ export class VSS {
             for (const state of skippedStates) {
                 if (!pendingFiles.has(state.path)) continue;
                 if (ineligibleStates.has(state)) {
-                    await index.deleteFile(state.path);
+                    await this.deleteFileFromIndex(index, state.path);
                     this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
                     this.host.log("Removed Memory file because it is no longer eligible", { path: state.path });
                 } else if (this.markDirtyPath(state.file.path)) {
@@ -1229,7 +1315,7 @@ export class VSS {
                 if (isVssFileIneligibleError(error)) {
                     for (const state of affectedStates) {
                         if (!this.isEligible(state.file, state.exactMarkdown)) {
-                            await index.deleteFile(state.path);
+                            await this.deleteFileFromIndex(index, state.path);
                             this.clearDirtyIfStampMatches(state.path, rebuildDirtyStamps.get(state.path));
                         } else {
                             this.markDirtyPath(state.path);
@@ -1360,7 +1446,7 @@ export class VSS {
                     break;
                 }
                 if (isVssFileIneligibleError(error)) {
-                    await index.deleteFile(file.path);
+                    await this.deleteFileFromIndex(index, file.path);
                     this.clearDirtyIfStampMatches(file.path, rebuildDirtyStamps.get(file.path));
                     summary.removed++;
                     filesFinalized++;
@@ -1579,7 +1665,7 @@ export class VSS {
                 const currentFile = fileByPath.get(record.path);
                 if (!currentFile || !this.isEligible(currentFile)) {
                     throwIfAborted(options.abortSignal);
-                    await index.deleteFile(record.path);
+                    await this.deleteFileFromIndex(index, record.path);
                     throwIfAborted(options.abortSignal);
                     this.verifyQueue.delete(record.path);
                     if (this.dirty.delete(record.path)) {
@@ -1614,7 +1700,7 @@ export class VSS {
                 const record = recordByPath.get(file.path);
                 if (!this.isEligible(file)) {
                     if (record) {
-                        await index.deleteFile(file.path);
+                        await this.deleteFileFromIndex(index, file.path);
                         indexChanged = true;
                         summary.removed++;
                     }
@@ -1711,7 +1797,7 @@ export class VSS {
                 const record = recordByPath.get(file.path);
                 if (!this.isEligible(file)) {
                     if (record) {
-                        await index.deleteFile(file.path);
+                        await this.deleteFileFromIndex(index, file.path);
                         indexChanged = true;
                         summary.removed++;
                     }
@@ -1813,7 +1899,7 @@ export class VSS {
                     if (!this.isCurrentVerifyRecord(candidate)) return;
                     this.verifyQueue.delete(candidate.path);
                     if (this.index) {
-                        await this.index.deleteFile(candidate.path);
+                        await this.deleteFileFromIndex(this.index, candidate.path);
                         await this.writeLocalIndexState(this.stateGeneration, options.abortSignal);
                     }
                 });
@@ -1844,7 +1930,7 @@ export class VSS {
                         if (!this.isCurrentVerifyRecord(candidate)) return;
                         this.verifyQueue.delete(candidate.path);
                         if (this.index) {
-                            await this.index.deleteFile(candidate.path);
+                            await this.deleteFileFromIndex(this.index, candidate.path);
                             await this.writeLocalIndexState(this.stateGeneration, options.abortSignal);
                         }
                     });
@@ -1884,7 +1970,7 @@ export class VSS {
                     }
                     this.verifyQueue.delete(candidate.path);
                     if (this.index) {
-                        await this.index.deleteFile(candidate.path);
+                        await this.deleteFileFromIndex(this.index, candidate.path);
                         await this.writeLocalIndexState(this.stateGeneration, options.abortSignal);
                         deleted = true;
                     }
@@ -2167,6 +2253,9 @@ export class VSS {
             contentHash: snapshot.contentHash,
             mtime: snapshot.mtime,
             size: snapshot.size,
+            lexicalEligible: this.isEligible(file),
+            lexicalMaintenanceEnabled: this.isLexicalProfileEnabled(),
+            lexicalBoundaryFingerprint: this.getLexicalBoundaryFingerprint(),
         }, prepared.chunks, prepared.embeddings);
         throwIfAborted(abortSignal);
         await this.markDirtyIfSnapshotChangedAndPersist(file, snapshot, "vector-upsert");
@@ -2177,7 +2266,7 @@ export class VSS {
     private async removeIneligibleFileFromIndex(file: TFile, abortSignal?: AbortSignal): Promise<VSSRefreshStatus> {
         throwIfAborted(abortSignal);
         if (this.index) {
-            await this.index.deleteFile(file.path);
+            await this.deleteFileFromIndex(this.index, file.path);
         }
         throwIfAborted(abortSignal);
         this.verifyQueue.delete(file.path);
@@ -2218,7 +2307,7 @@ export class VSS {
             if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
             const results = await this.index.search(queryEmbedding, 8);
             return results.map(normalizeSearchResult);
-        }).catch((error) => {
+        }, "foreground").catch((error) => {
             if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
             throw error;
         });
@@ -2237,12 +2326,51 @@ export class VSS {
             temporalFilter?: { since?: number; until?: number };
             temporalFilterPromise?: Promise<{ since?: number; until?: number } | null>;
             signal?: AbortSignal;
+            /** Run-scoped requestUrl drain barrier for this query embedding only. */
+            providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
             /** Pagelet-only wrapper that admits and immediately invokes query embedding. */
             executeEmbeddingInvoke?: (invoke: () => Promise<number[]>) => Promise<number[]>;
             /** Current-run proof required before a successful Pagelet embedding is cached. */
             canCacheEmbeddingResult?: () => boolean;
+            /** Invocation-owned output; cleared first and never retained on VSS. */
+            queryEmbeddingOut?: QueryEmbeddingOutput;
+            /** Same-run reuse only; avoids a second provider call during recovery. */
+            queryEmbeddingOverride?: QueryEmbeddingInput;
+            /** Bounded direct-leg overfetch controls; callers still own the 12-path cap. */
+            candidateDepth?: number;
+            resultLimit?: number;
+            /** Selects the frozen standard or recovery retrieval envelope. */
+            retrievalMode?: RetrievalCalibrationMode;
+            /** Only current matching generations are pushed down before vector/FTS caps. */
+            excludeUnchangedPathGenerations?: readonly PathEvidenceGenerationRef[];
         },
     ) {
+        const lexicalCandidateEnabled = this.isLexicalProfileEnabled();
+        const retrievalMode = options?.retrievalMode ?? "standard";
+        const usesLegacyDepthOverrides = options?.candidateDepth !== undefined
+            || options?.resultLimit !== undefined;
+        const selectedRetrieval = selectRetrievalSearchRuntimeParameters(
+            lexicalCandidateEnabled,
+            retrievalMode,
+        );
+        // Explicit depth overrides predate the versioned profile. Keep their
+        // old strict/equal semantics and omit profile identity rather than
+        // mislabelling an ad-hoc combination as the frozen EC-02 candidate.
+        const retrieval = usesLegacyDepthOverrides
+            ? applyLegacyRetrievalDepthOverrides(
+                selectRetrievalSearchRuntimeParameters(false, retrievalMode),
+                options?.candidateDepth,
+                options?.resultLimit,
+            )
+            : selectedRetrieval;
+        const vectorOnlyRetrieval = usesLegacyDepthOverrides
+            ? retrieval
+            : selectRetrievalSearchRuntimeParameters(false, retrievalMode);
+        if (options?.queryEmbeddingOut) {
+            options.queryEmbeddingOut.value = undefined;
+            options.queryEmbeddingOut.profileSignature = undefined;
+            options.queryEmbeddingOut.sourceEpoch = undefined;
+        }
         const safeOverridePromise: Promise<string | null> = options?.ftsQueryOverridePromise
             ? options.ftsQueryOverridePromise.catch(() => null)
             : Promise.resolve(options?.ftsQueryOverride ?? null);
@@ -2273,7 +2401,24 @@ export class VSS {
         const profileSignature = getEmbeddingProfileSignature(profile);
         const queryEmbeddingPromise = (async () => {
             throwIfAborted(signal);
-            const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
+            if (options?.queryEmbeddingOverride) {
+                const override = options.queryEmbeddingOverride;
+                if (
+                    override.profileSignature !== profileSignature
+                    || override.value.length !== profile.dimensions
+                    || override.value.some((value) => !Number.isFinite(value))
+                ) {
+                    throw Object.assign(new Error("The reused Memory query embedding no longer matches current settings."), {
+                        code: "query-embedding-override-invalid",
+                    });
+                }
+                return [...override.value];
+            }
+            const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions, {
+                ...(options?.providerRequestScope
+                    ? { providerRequestScope: options.providerRequestScope }
+                    : {}),
+            });
             const invoke = () => embeddings.embedQuery(prompt);
             if (!options?.executeEmbeddingInvoke) return invoke();
             const cacheKey = stableHash(`${profileSignature}\u0000${prompt}`);
@@ -2291,31 +2436,391 @@ export class VSS {
             safeTemporalPromise,
             queryEmbeddingPromise,
         ]), signal);
-        const ftsQuery = ftsOverride != null
-            ? buildFtsQuery(ftsOverride)
-            : buildFtsQuery(prompt);
+        // Provider rewrite/embedding latency belongs to the caller's turn
+        // budget, not the bounded local lexical/Worker phase. Start one local
+        // deadline only after those inputs settle, then share it across every
+        // local rerun in this search invocation.
+        const lexicalBudgetStartedAtMs = Date.now();
+        const lexicalBudget = {
+            startedAtMs: lexicalBudgetStartedAtMs,
+            deadlineAtMs: lexicalBudgetStartedAtMs
+                + RETRIEVAL_CALIBRATION_PROFILE.lexicalRuntime.searchBudgetMs,
+        };
+        let ftsQuery: string | null = null;
+        if (lexicalCandidateEnabled && this.isLexicalProfileEnabled()) {
+            try {
+                const lexicalInput = ftsOverride != null ? ftsOverride : prompt;
+                ftsQuery = retrieval.queryMode === "strict_AND"
+                    ? buildFtsQuery(lexicalInput)
+                    : buildFtsQuery(lexicalInput, retrieval.queryMode);
+            } catch (error) {
+                this.host.log("Lexical Memory query is unavailable; continuing with vector search", error);
+            }
+        }
 
         return this.runExclusive(async () => {
-            throwIfAborted(signal);
+            const assertInvocationActive = () => {
+                throwIfAborted(signal);
+                this.assertActive();
+            };
+            assertInvocationActive();
             if (this.disposed) return [];
             if (this.index) {
                 await this.ensureIndex({ allowFallback: false, mode: "foreground" });
             }
-            throwIfAborted(signal);
+            assertInvocationActive();
             if (!this.index || this.status !== "ready" || !this.hasAdmittedReadyMarker() || !this.profile) return [];
+            const invocationIndex = this.index;
+            const assertInvocationIndexCurrent = () => {
+                assertInvocationActive();
+                if (
+                    this.index !== invocationIndex
+                    || this.status !== "ready"
+                    || !this.hasAdmittedReadyMarker()
+                    || !this.profile
+                    || getEmbeddingProfileSignature(this.profile) !== profileSignature
+                ) {
+                    throw Object.assign(new Error("The Memory search index changed during the invocation."), {
+                        code: "vss-search-invocation-changed",
+                    });
+                }
+            };
             if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
+            if (options?.queryEmbeddingOut) {
+                options.queryEmbeddingOut.value = [...queryEmbedding];
+                options.queryEmbeddingOut.profileSignature = profileSignature;
+            }
 
-            if (!(this.index instanceof SqliteVectorIndex)) {
-                const results = await this.index.search(queryEmbedding, 8);
+            if (!(invocationIndex instanceof SqliteVectorIndex)) {
+                const results = await invocationIndex.search(queryEmbedding, 8);
+                assertInvocationIndexCurrent();
                 return results.map(normalizeSearchResult);
             }
 
-            const results = await this.index.searchHybrid(queryEmbedding, ftsQuery, 8, 12, temporalFilter ?? undefined);
-            return results.map(normalizeSearchResult);
-        }).catch((error) => {
-            if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
+            const safeExclusions = options?.excludeUnchangedPathGenerations?.length
+                ? (await this.getPathEvidenceGenerationStatusesUnlocked(
+                    options.excludeUnchangedPathGenerations.map((entry) => entry.path),
+                )).paths
+                    .filter((entry) => entry.current)
+                    .flatMap((entry): PathEvidenceGenerationRef[] => {
+                        const requested = options.excludeUnchangedPathGenerations!.find((candidate) => candidate.path === entry.path);
+                        return requested && requested.generation === entry.generation ? [requested] : [];
+                    })
+                : [];
+            assertInvocationIndexCurrent();
+            const index = invocationIndex;
+            const searchDetailed = (
+                lexicalEnabled: boolean,
+                exclusions: PathEvidenceGenerationRef[],
+            ) => {
+                const activeRetrieval = lexicalEnabled ? retrieval : vectorOnlyRetrieval;
+                return index.searchHybridDetailed(
+                    queryEmbedding,
+                    lexicalEnabled ? ftsQuery : null,
+                    activeRetrieval.vectorRaw,
+                    activeRetrieval.fusionRaw,
+                    temporalFilter ?? undefined,
+                    lexicalEnabled ? undefined : "feature_disabled",
+                    this.getLexicalBoundaryFingerprint(),
+                    lexicalBudget,
+                    exclusions,
+                    usesLegacyDepthOverrides ? undefined : activeRetrieval,
+                    { signal },
+                );
+            };
+            let lexicalEnabledForAttempt = lexicalCandidateEnabled
+                && this.isLexicalProfileEnabled();
+            let activeExclusions = safeExclusions;
+            let acceptedLexicalStatus: LexicalIndexStatus | null = null;
+            let result = await searchDetailed(lexicalEnabledForAttempt, activeExclusions);
+            assertInvocationIndexCurrent();
+            let exclusionsStillCurrent = true;
+            if (safeExclusions.length > 0) {
+                exclusionsStillCurrent = await this.arePathEvidenceExclusionsStillCurrent(safeExclusions);
+                assertInvocationIndexCurrent();
+            }
+            if (!exclusionsStillCurrent) {
+                // A note became dirty while the Worker was ranking. Re-run the
+                // local legs once with no early exclusions and the same query
+                // embedding; changed evidence must not be hidden as a repeat.
+                activeExclusions = [];
+                lexicalEnabledForAttempt = lexicalEnabledForAttempt
+                    && this.isLexicalProfileEnabled();
+                result = await searchDetailed(lexicalEnabledForAttempt, activeExclusions);
+                assertInvocationIndexCurrent();
+            }
+            const runVectorOnlyFallback = async () => {
+                // The rollout flag is live authority. A result fused while it
+                // was enabled cannot cross the boundary after a mid-flight
+                // disable; reuse the embedding and rerun only the local vector
+                // leg under the baseline envelope. Drop early exclusions for
+                // this second query so a concurrent note change cannot remain
+                // hidden behind an already-validated generation snapshot.
+                lexicalEnabledForAttempt = false;
+                activeExclusions = [];
+                result = await searchDetailed(false, activeExclusions);
+                assertInvocationIndexCurrent();
+            };
+            if (lexicalEnabledForAttempt && !this.isLexicalProfileEnabled()) {
+                await runVectorOnlyFallback();
+            }
+            if (
+                lexicalEnabledForAttempt
+                && (
+                    !this.lexicalStatus
+                    || this.lexicalStatus.state !== result.lexical.state
+                    || this.lexicalStatus.reason !== result.lexical.reason
+                )
+            ) {
+                // Status refresh is another async boundary. Re-check the live
+                // flag afterwards before accepting a lexical-fused result.
+                const lexicalStatus = await this.readLexicalStatusFromIndex();
+                assertInvocationIndexCurrent();
+                acceptedLexicalStatus = lexicalStatus;
+                if (lexicalEnabledForAttempt && !this.isLexicalProfileEnabled()) {
+                    await runVectorOnlyFallback();
+                }
+            }
+            const effectiveLexicalStatus = acceptedLexicalStatus ?? this.lexicalStatus;
+            if (
+                !effectiveLexicalStatus
+                || effectiveLexicalStatus.state !== result.lexical.state
+                || effectiveLexicalStatus.reason !== result.lexical.reason
+            ) {
+                const lexicalStatus = await this.readLexicalStatusFromIndex();
+                assertInvocationIndexCurrent();
+                acceptedLexicalStatus = lexicalStatus;
+                if (lexicalEnabledForAttempt && !this.isLexicalProfileEnabled()) {
+                    await runVectorOnlyFallback();
+                }
+            }
+            // This is the linearization point for the live rollout flag. When
+            // it remains enabled there is no await between this check and the
+            // result/status commit, so a late disable cannot cross the boundary.
+            if (lexicalEnabledForAttempt && !this.isLexicalProfileEnabled()) {
+                await runVectorOnlyFallback();
+            }
+            assertInvocationIndexCurrent();
+            if (options?.queryEmbeddingOut) {
+                options.queryEmbeddingOut.sourceEpoch = result.sourceEpoch;
+            }
+            if (acceptedLexicalStatus) {
+                this.lexicalStatus = acceptedLexicalStatus;
+            }
+            this.lastLexicalSearchStatus = { ...result.lexical };
+            if (!result.lexical.attempted || result.lexical.reason) {
+                this.host.log("Lexical Memory search used vector fallback", {
+                    state: result.lexical.state,
+                    reason: result.lexical.reason,
+                    attempted: result.lexical.attempted,
+                    durationMs: result.lexical.durationMs,
+                });
+            }
+            return result.results.map(normalizeSearchResult);
+        }, "foreground", false, signal).catch((error) => {
+            const errorCode = getErrorCode(error);
+            const invocationInvalid = signal?.aborted
+                || this.disposed
+                || errorCode === "vss-disposed"
+                || errorCode === "sqlite-vector-index-disposed"
+                || errorCode === "vss-search-invocation-changed";
+            if (invocationInvalid && options?.queryEmbeddingOut) {
+                options.queryEmbeddingOut.value = undefined;
+                options.queryEmbeddingOut.profileSignature = undefined;
+                options.queryEmbeddingOut.sourceEpoch = undefined;
+            }
+            if (this.disposed || errorCode === "vss-disposed") return [];
             throw error;
         });
+    }
+
+    /** Rank an already Boundary-approved graph workset using an invocation-owned embedding. */
+    async rankGraphCandidates(
+        queryEmbedding: number[],
+        paths: string[],
+        control: RankedPathRequestControl,
+        options: RankGraphCandidatesOptions = {},
+    ): Promise<RankedPathRequestResult> {
+        const signal = options.signal;
+        throwIfAborted(signal);
+        if (this.disposed || this.closing) throw createVssDisposedError();
+        await this.initialize();
+        throwIfAborted(signal);
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+        }
+        throwIfAborted(signal);
+        if (
+            !(this.index instanceof SqliteVectorIndex)
+            || this.status !== "ready"
+            || !this.hasAdmittedReadyMarker()
+            || !this.profile
+        ) {
+            throw Object.assign(new Error("Graph candidate ranking requires ready local Memory."), {
+                code: "graph-rank-unavailable",
+            });
+        }
+
+        const profileSignature = getEmbeddingProfileSignature(this.profile);
+        const operation = this.runExclusive(async () => {
+            throwIfAborted(signal);
+            if (this.disposed) throw createVssDisposedError();
+            if (this.index) {
+                await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+            }
+            throwIfAborted(signal);
+            if (
+                !(this.index instanceof SqliteVectorIndex)
+                || this.status !== "ready"
+                || !this.hasAdmittedReadyMarker()
+                || !this.profile
+                || getEmbeddingProfileSignature(this.profile) !== profileSignature
+            ) {
+                throw Object.assign(new Error("Graph candidate ranking index changed during the invocation."), {
+                    code: "graph-rank-epoch-mismatch",
+                });
+            }
+            return this.index.rankGraphCandidates(queryEmbedding, paths, control, options);
+        }, "foreground", false, signal);
+        return waitForAbortablePromise(operation, signal);
+    }
+
+    /** Immediate cancellation bypasses VSS and index data queues. */
+    cancelGraphCandidateRank(requestId: string, runEpoch: string): void {
+        if (this.index instanceof SqliteVectorIndex) {
+            this.index.cancelGraphRank(requestId, runEpoch);
+        }
+    }
+
+    /**
+     * Return query-independent complete-path evidence generations only when
+     * both the SQLite row and the live vault source are current. Unknown or
+     * dirty paths remain explicit fail-open statuses.
+     */
+    async getPathEvidenceGenerations(
+        paths: string[],
+        options: PathEvidenceGenerationLookupOptions = {},
+    ): Promise<PathEvidenceGenerationStatusResult> {
+        const signal = options.signal;
+        throwIfAborted(signal);
+        const uniquePaths = [...new Set(paths
+            .map((path) => normalizeVaultPath(path))
+            .filter((path) => path.length > 0))]
+            .sort(compareCodePoint);
+        if (uniquePaths.length === 0) return { sourceEpoch: "", paths: [] };
+        if (this.disposed || this.closing) throw createVssDisposedError();
+        await this.initialize();
+        throwIfAborted(signal);
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+        }
+        throwIfAborted(signal);
+        if (!(this.index instanceof SqliteVectorIndex) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
+            throw Object.assign(new Error("Path evidence generation requires ready local Memory."), {
+                code: "path-evidence-unavailable",
+            });
+        }
+        const maxPathsPerBatch = clampInteger(
+            options.maxPathsPerBatch ?? RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
+            1,
+            RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
+        );
+        const maxChunksScanned = clampInteger(
+            options.maxChunksScanned ?? RETRIEVAL_CALIBRATION_PROFILE.graph.maxChunksScanned,
+            1,
+            RETRIEVAL_CALIBRATION_PROFILE.graph.maxChunksScanned,
+        );
+        return waitForAbortablePromise(this.runExclusive(async () => {
+            throwIfAborted(signal);
+            if (!(this.index instanceof SqliteVectorIndex) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
+                throw Object.assign(new Error("Path evidence generation index changed during the invocation."), {
+                    code: "path-evidence-unavailable",
+                });
+            }
+            return this.getPathEvidenceGenerationStatusesUnlocked(
+                uniquePaths,
+                maxPathsPerBatch,
+                maxChunksScanned,
+            );
+        }, "foreground", false, signal), signal);
+    }
+
+    private async getPathEvidenceGenerationStatusesUnlocked(
+        paths: readonly string[],
+        maxPathsPerBatch: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
+        maxChunksScanned: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxChunksScanned,
+    ): Promise<PathEvidenceGenerationStatusResult> {
+        if (!(this.index instanceof SqliteVectorIndex) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
+            throw Object.assign(new Error("Path evidence generation requires ready local Memory."), {
+                code: "path-evidence-unavailable",
+            });
+        }
+        const uniquePaths = [...new Set(paths
+            .map((path) => normalizeVaultPath(path))
+            .filter((path) => path.length > 0))]
+            .sort(compareCodePoint);
+        const sourceByPath = new Map(uniquePaths.map((path) => [
+            path,
+            this.host.app.vault.getAbstractFileByPath(path),
+        ]));
+        // Do not materialize a complete legacy chunk inventory for paths that
+        // are already known to be outside the current read/currentness gate.
+        const lookupPaths = uniquePaths.filter((path) => {
+            const source = sourceByPath.get(path);
+            return source instanceof TFile
+                && this.isEligible(source)
+                && !this.dirty.has(path)
+                && !this.verifyQueue.has(path);
+        });
+        const indexed = await this.index.getPathEvidenceGenerations(
+            lookupPaths,
+            maxPathsPerBatch,
+            maxChunksScanned,
+        );
+        const indexedByPath = new Map(indexed.paths.map((entry) => [entry.path, entry]));
+        const statuses: PathEvidenceGenerationStatus[] = uniquePaths.map((path) => {
+            const source = sourceByPath.get(path);
+            const record = indexedByPath.get(path);
+            if (!(source instanceof TFile)) {
+                return { path, current: false, reason: "missing" };
+            }
+            if (!this.isEligible(source)) {
+                return { path, current: false, reason: "boundary_denied" };
+            }
+            if (this.dirty.has(path)) {
+                return { ...record, path, current: false, reason: "dirty" };
+            }
+            if (this.verifyQueue.has(path)) {
+                return { ...record, path, current: false, reason: "verification_pending" };
+            }
+            if (!record?.generation) {
+                return { path, current: false, reason: "generation_unavailable" };
+            }
+            if (record.mtime !== source.stat.mtime || record.size !== source.stat.size) {
+                return { ...record, path, current: false, reason: "source_revision_mismatch" };
+            }
+            return { ...record, path, current: true, reason: "current" };
+        });
+        return { sourceEpoch: indexed.sourceEpoch, paths: statuses };
+    }
+
+    private async arePathEvidenceExclusionsStillCurrent(
+        exclusions: readonly PathEvidenceGenerationRef[],
+    ): Promise<boolean> {
+        const statuses = await this.getPathEvidenceGenerationStatusesUnlocked(
+            exclusions.map((entry) => entry.path),
+            Math.min(
+                RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
+                Math.max(1, exclusions.length),
+            ),
+        );
+        const requested = new Map(exclusions.map((entry) => [entry.path, entry.generation]));
+        return statuses.paths.length === requested.size
+            && statuses.paths.every((entry) => (
+                entry.current
+                && typeof entry.generation === "string"
+                && requested.get(entry.path) === entry.generation
+            ));
     }
 
     async getChunksByPath(paths: string[], options: VectorIndexPathLookupOptions = {}) {
@@ -2358,14 +2863,14 @@ export class VSS {
                 signal,
             );
             return results.map(normalizeSearchResult);
-        }).catch((error) => {
+        }, "foreground", false, signal).catch((error) => {
             if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
             throw error;
         });
     }
 
     async clusterVectors(maxClusters: number): Promise<Array<{ clusterId: number; label: string; paths: string[] }>> {
-        if (this.disposed || !this.index || !(this.index instanceof SqliteVectorIndex)) return [];
+        if (this.disposed || this.closing || !this.index || !(this.index instanceof SqliteVectorIndex)) return [];
         if (this.status !== "ready" || !this.hasAdmittedReadyMarker()) return [];
         try {
             return await this.index.clusterVectors(maxClusters);
@@ -2393,6 +2898,10 @@ export class VSS {
         const exposedStatus = this.status === "ready" && !this.hasAdmittedReadyMarker()
             ? this.getFailClosedIndexStatus()
             : this.status;
+        if (stats.lexicalProfileState) {
+            this.lexicalStatus = await this.readLexicalStatusFromIndex();
+        }
+        const effectiveLexicalStatus = this.lexicalStatus;
         return {
             ...stats,
             status: exposedStatus === "ready" ? stats.status : exposedStatus,
@@ -2403,6 +2912,19 @@ export class VSS {
             databaseName: this.getDatabaseName(),
             opfsDirectory: this.getOpfsDirectory(),
             opfsVfsName: this.getOpfsVfsName(),
+            indexId: this.marker?.indexId,
+            indexBuiltAt: this.marker?.builtAt,
+            lexicalProfileState: effectiveLexicalStatus?.state ?? stats.lexicalProfileState,
+            lexicalProfileId: effectiveLexicalStatus?.marker?.profileId ?? stats.lexicalProfileId,
+            lexicalGeneration: effectiveLexicalStatus?.marker?.generation ?? stats.lexicalGeneration,
+            lexicalFallbackReason: effectiveLexicalStatus
+                ? effectiveLexicalStatus.reason
+                : stats.lexicalFallbackReason,
+            lexicalSearchAttempted: this.lastLexicalSearchStatus?.attempted,
+            lexicalSearchState: this.lastLexicalSearchStatus?.state,
+            lexicalSearchReason: this.lastLexicalSearchStatus?.reason,
+            lexicalSearchDurationMs: this.lastLexicalSearchStatus?.durationMs,
+            lexicalSearchMatchedRows: this.lastLexicalSearchStatus?.matchedRows,
         };
     }
 
@@ -2443,6 +2965,36 @@ export class VSS {
         const verificationPending = this.verifyQueue.size;
         const status = this.status;
         const hasAdmittedReadyMarker = this.hasAdmittedReadyMarker();
+
+        if (
+            status === "ready"
+            && hasAdmittedReadyMarker
+            && this.isLexicalProfileEnabled()
+            && isLexicalCapableVectorIndex(this.index)
+        ) {
+            const lexicalStatus = await this.readLexicalStatusFromIndex();
+            this.lexicalStatus = lexicalStatus;
+            if (
+                lexicalStatus.state === "awaiting_confirmation"
+                || lexicalStatus.state === "stale"
+                || lexicalStatus.state === "failed"
+                // A Worker opened while the rollout flag was off reports this
+                // state. Enabling the flag live must enter the same explicit
+                // lexical-only approval flow without reopening the vector DB.
+                || (
+                    lexicalStatus.state === "unavailable"
+                    && lexicalStatus.reason === "feature_disabled"
+                )
+            ) {
+                return {
+                    reason: "lexical-profile-stale",
+                    action: "rebuild-lexical",
+                    notesToCheck,
+                    requiresApproval: true,
+                    canAnswerNow: true,
+                };
+            }
+        }
 
         if (status === "ready" && hasAdmittedReadyMarker && dirtyCount > 0) {
             return {
@@ -2543,28 +3095,480 @@ export class VSS {
         return "first-use";
     }
 
+    async getLexicalStatus(): Promise<LexicalIndexStatus> {
+        if (this.disposed || this.closing) {
+            return createUnavailableLexicalStatus("vss_disposed");
+        }
+        await this.initialize();
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+        }
+        this.lexicalStatus = await this.readLexicalStatusFromIndex();
+        return this.lexicalStatus;
+    }
+
+    /**
+     * Diagnostics-only production seam. It refreshes one active lexical path
+     * exclusively from durable indexed chunks and never reads Markdown or calls
+     * an embedding/provider path.
+     */
+    async refreshLexicalPathFromIndexedChunks(
+        path: string,
+    ): Promise<LexicalIncrementalMaintenanceReceipt> {
+        if (!path || normalizeVaultPath(path) !== path) {
+            throw createLexicalDiagnosticsError(
+                "lexical-incremental-path-invalid",
+                "A canonical vault path is required for lexical diagnostics.",
+            );
+        }
+        if (this.disposed || this.closing) throw createVssDisposedError();
+        await this.initialize();
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: false, mode: "manual" });
+        }
+        if (!isLexicalCapableVectorIndex(this.index) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
+            throw createLexicalDiagnosticsError(
+                "lexical-incremental-index-not-ready",
+                "Durable local Memory must be ready before lexical diagnostics.",
+            );
+        }
+        const index = this.index;
+        return this.runExclusive(async () => {
+            this.assertLexicalRebuildAuthorized();
+            if (
+                this.index !== index
+                || this.status !== "ready"
+                || !this.hasAdmittedReadyMarker()
+            ) {
+                throw createLexicalDiagnosticsError(
+                    "lexical-incremental-index-changed",
+                    "The durable local Memory index changed before lexical diagnostics.",
+                );
+            }
+            const file = this.host.app.vault.getAbstractFileByPath(path);
+            if (
+                !(file instanceof TFile)
+                || !this.isEligible(file)
+                || this.dirty.has(path)
+                || this.verifyQueue.has(path)
+            ) {
+                throw createLexicalDiagnosticsError(
+                    "lexical-incremental-path-not-current",
+                    "The requested indexed path is not a known-current eligible Memory note.",
+                );
+            }
+            const record = await index.getFileRecord(path);
+            if (
+                !record
+                || record.status !== "ready"
+                || record.mtime !== file.stat.mtime
+                || record.size !== file.stat.size
+            ) {
+                throw createLexicalDiagnosticsError(
+                    "lexical-incremental-path-not-current",
+                    "The requested indexed path is not a known-current eligible Memory note.",
+                );
+            }
+            const boundaryFingerprint = this.getLexicalBoundaryFingerprint();
+            if (!boundaryFingerprint) {
+                throw createLexicalDiagnosticsError(
+                    "lexical-incremental-boundary-unavailable",
+                    "The current Memory data boundary cannot be sealed.",
+                );
+            }
+            const lexicalStatus = await index.getLexicalStatus();
+            this.lexicalStatus = lexicalStatus;
+            if (
+                lexicalStatus.state !== "ready"
+                || lexicalStatus.marker?.scopeFingerprint !== boundaryFingerprint
+                || lexicalStatus.marker.eligibleRowCount === undefined
+            ) {
+                throw createLexicalDiagnosticsError(
+                    "lexical-incremental-profile-not-ready",
+                    "The active lexical profile is not ready for indexed-chunk diagnostics.",
+                );
+            }
+            return index.refreshLexicalPathFromIndexedChunks(path, boundaryFingerprint);
+        });
+    }
+
+    async rebuildLexicalIndex(options: VSSLexicalRebuildOptions = {}): Promise<VSSLexicalRebuildSummary> {
+        return (await this.rebuildLexicalIndexInternal(options, false)).summary;
+    }
+
+    /** Diagnostics-only receipt path over the same production rebuild implementation. */
+    async rebuildLexicalIndexWithReceipt(
+        options: VSSLexicalRebuildOptions = {},
+    ): Promise<LexicalRebuildMaintenanceReceipt> {
+        const result = await this.rebuildLexicalIndexInternal(options, true);
+        if (result.receipt) return result.receipt;
+        throw createLexicalDiagnosticsError(
+            "lexical-rebuild-receipt-incomplete",
+            result.summary.reason ?? "The lexical rebuild did not produce a completed receipt.",
+        );
+    }
+
+    private async rebuildLexicalIndexInternal(
+        options: VSSLexicalRebuildOptions,
+        captureReceipt: boolean,
+    ): Promise<{ summary: VSSLexicalRebuildSummary; receipt?: LexicalRebuildMaintenanceReceipt }> {
+        const signal = options.signal;
+        const batchSize = Math.max(1, Math.min(
+            RETRIEVAL_CALIBRATION_PROFILE.lexicalRuntime.maxRebuildBatchSize,
+            Math.floor(options.batchSize ?? RETRIEVAL_CALIBRATION_PROFILE.lexicalRuntime.rebuildBatchSize),
+        ));
+        this.assertLexicalRebuildAuthorized(signal);
+        if (this.disposed || this.closing) {
+            return { summary: { aborted: true, rowsProcessed: 0, rowsTotal: 0, reason: "vss_disposed" } };
+        }
+        await this.initialize();
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: false, mode: "manual" });
+        }
+        if (!isLexicalCapableVectorIndex(this.index) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
+            throw new Error("Lexical Memory search cannot be rebuilt until local Memory is ready.");
+        }
+        const index = this.index;
+        const allowedPaths = this.getLexicalAllowedPaths();
+        const allowedPathSetFingerprint = stableHash(allowedPaths.join("\u0000"));
+        const lexicalBoundaryFingerprint = this.getLexicalBoundaryFingerprint()
+            ?? `allowed_paths:${allowedPathSetFingerprint}`;
+        const runtimeCanaryFingerprint = getCharPhraseRuntimeCanaryFingerprint();
+        let rebuildId: string | null = null;
+        let rowsProcessed = 0;
+        let rowsTotal = 0;
+        let generation: number | undefined;
+        let receipt: LexicalRebuildMaintenanceReceipt | undefined;
+        try {
+            const started = await this.runExclusive(
+                () => {
+                    this.assertLexicalRebuildAuthorized(signal);
+                    const begin = captureReceipt
+                        ? index.beginLexicalRebuildWithReceipt.bind(index)
+                        : index.beginLexicalRebuild.bind(index);
+                    return begin(
+                        CHAR_PHRASE_PROFILE_ID,
+                        runtimeCanaryFingerprint,
+                        lexicalBoundaryFingerprint,
+                        allowedPaths.length,
+                    );
+                },
+            );
+            rebuildId = started.rebuildId;
+            rowsTotal = started.totalRows;
+            generation = started.generation;
+
+            for (let offset = 0; offset < allowedPaths.length; offset += batchSize) {
+                this.assertLexicalRebuildAuthorized(signal);
+                const scopeBatch = allowedPaths.slice(offset, offset + batchSize);
+                const scope = await this.runExclusive(
+                    () => {
+                        this.assertLexicalRebuildAuthorized(signal);
+                        return index.appendLexicalScopeBatch(rebuildId!, scopeBatch);
+                    },
+                );
+                if (scope.sealed) {
+                    rowsTotal = scope.totalRows;
+                }
+            }
+            options.onProgress?.({
+                phase: "lexical-rebuilding",
+                lexicalRowsDone: 0,
+                lexicalRowsTotal: rowsTotal,
+            });
+
+            let afterRowId = 0;
+            let done = rowsTotal === 0;
+            while (!done) {
+                this.assertLexicalRebuildAuthorized(signal);
+                const batch = await this.runExclusive(
+                    () => {
+                        this.assertLexicalRebuildAuthorized(signal);
+                        return index.appendLexicalRebuildBatch(rebuildId!, afterRowId, batchSize);
+                    },
+                );
+                rowsProcessed = batch.processedRows;
+                afterRowId = batch.nextRowId;
+                done = batch.done;
+                options.onProgress?.({
+                    phase: "lexical-rebuilding",
+                    lexicalRowsDone: rowsProcessed,
+                    lexicalRowsTotal: rowsTotal,
+                });
+                if (!done) {
+                    await sleep(0);
+                }
+            }
+
+            this.assertLexicalRebuildAuthorized(signal);
+            options.onProgress?.({
+                phase: "finalizing",
+                lexicalRowsDone: rowsTotal,
+                lexicalRowsTotal: rowsTotal,
+            });
+            this.lexicalStatus = await this.runExclusive(async () => {
+                this.assertLexicalRebuildAuthorized(signal);
+                if (
+                    allowedPathSetFingerprint !== this.getLexicalAllowedPathSetFingerprint()
+                    || lexicalBoundaryFingerprint !== (
+                        this.getLexicalBoundaryFingerprint()
+                        ?? `allowed_paths:${this.getLexicalAllowedPathSetFingerprint()}`
+                    )
+                ) {
+                    throw new Error("Memory note eligibility changed during lexical rebuild.");
+                }
+                if (captureReceipt) {
+                    const finalized = await index.finalizeLexicalRebuildWithReceipt(rebuildId!);
+                    receipt = finalized.receipt;
+                    return finalized.status;
+                }
+                return index.finalizeLexicalRebuild(rebuildId!);
+            });
+            options.onProgress?.({
+                phase: "ready",
+                lexicalRowsDone: rowsTotal,
+                lexicalRowsTotal: rowsTotal,
+            });
+            return {
+                summary: { aborted: false, rowsProcessed: rowsTotal, rowsTotal, generation },
+                receipt,
+            };
+        } catch (error) {
+            const errorCode = getErrorCode(error);
+            const disabled = errorCode === "lexical-profile-disabled";
+            const aborted = Boolean(signal?.aborted) || disabled || errorCode === "vss-disposed";
+            let cleanupError: unknown;
+            if (aborted) {
+                options.onProgress?.({
+                    phase: "cancelling",
+                    lexicalRowsDone: rowsProcessed,
+                    lexicalRowsTotal: rowsTotal,
+                });
+            }
+            if (rebuildId) {
+                await this.runExclusive(() => index.abortLexicalRebuild(
+                    rebuildId!,
+                    aborted ? undefined : getErrorCode(error) ?? "lexical_rebuild_failed",
+                ), "maintenance", true).catch((abortError) => {
+                    cleanupError = abortError;
+                    this.host.log("Failed to clean the interrupted lexical Memory rebuild", abortError);
+                });
+            }
+            this.lexicalStatus = await this.readLexicalStatusFromIndex();
+            if (aborted) {
+                if (cleanupError) throw cleanupError;
+                return {
+                    summary: {
+                        aborted: true,
+                        rowsProcessed,
+                        rowsTotal,
+                        generation,
+                        reason: disabled ? "feature_disabled" : "aborted",
+                    },
+                };
+            }
+            throw error;
+        }
+    }
+
+    private async readLexicalStatusFromIndex(): Promise<LexicalIndexStatus> {
+        if (!isLexicalCapableVectorIndex(this.index) || this.status !== "ready") {
+            return createUnavailableLexicalStatus("sqlite_index_unavailable");
+        }
+        try {
+            const status = await this.index.getLexicalStatus();
+            const boundaryFingerprint = this.getLexicalBoundaryFingerprint();
+            if (
+                status.state === "ready"
+                && boundaryFingerprint
+                && status.marker?.scopeFingerprint !== boundaryFingerprint
+            ) {
+                return {
+                    ...status,
+                    state: "stale",
+                    reason: "scope_changed",
+                };
+            }
+            return status;
+        } catch (error) {
+            if (getErrorCode(error) === "sqlite-vector-index-disposed") {
+                throw error;
+            }
+            this.host.log("Could not read lexical Memory status", error);
+            return createUnavailableLexicalStatus(getErrorCode(error) ?? "status_unavailable");
+        }
+    }
+
+    private getLexicalAllowedPathSetFingerprint(): string {
+        return stableHash(this.getLexicalAllowedPaths().join("\u0000"));
+    }
+
+    private getLexicalAllowedPaths(): string[] {
+        return this.host.getVSSFiles().map((file) => file.path).sort();
+    }
+
+    private isLexicalProfileEnabled(): boolean {
+        return resolveB125RetrievalOptimizationFlags(
+            this.host.getRetrievalOptimizationFlags?.()
+            ?? this.host.settings.retrievalOptimizationFlags,
+        ).lexicalProfile;
+    }
+
+    private getLexicalBoundaryFingerprint(): string | undefined {
+        const policy = this.host.settings.dataBoundary;
+        if (!policy) return undefined;
+        const canonical = {
+            excludedFolders: [...policy.excludedFolders]
+                // Keep this normalization identical to the shared Data Boundary
+                // folder predicate. A leading slash is semantically meaningful;
+                // collapsing it here could leave an old lexical generation ready
+                // after the effective allowlist changed.
+                .map((value) => normalizeVaultPath(value).replace(/\/$/, ""))
+                .filter(Boolean)
+                .sort(),
+            excludedTags: [...policy.excludedTags]
+                .map((value) => value.trim().replace(/^#+/, "").toLowerCase())
+                .filter(Boolean)
+                .sort(),
+            generatedNotePolicy: policy.generatedNotePolicy,
+            vssCacheExcludePath: [...(this.host.settings.vssCacheExcludePath ?? [])]
+                // VSS eligibility uses trim + startsWith verbatim. Preserve the
+                // trailing slash because `private/` and `private` exclude
+                // different path sets.
+                .map((value) => value.trim())
+                .filter(Boolean)
+                .sort(),
+        };
+        return `lexical_boundary:${stableHash(JSON.stringify(canonical))}`;
+    }
+
+    private deleteFileFromIndex(index: VectorIndex, path: string): Promise<void> {
+        return index.deleteFile(path, {
+            lexicalMaintenanceEnabled: this.isLexicalProfileEnabled(),
+            lexicalBoundaryFingerprint: this.getLexicalBoundaryFingerprint(),
+        });
+    }
+
+    private assertLexicalRebuildAuthorized(signal?: AbortSignal): void {
+        throwIfAborted(signal);
+        if (this.disposed) throw createVssDisposedError();
+        if (!this.isLexicalProfileEnabled()) {
+            throw Object.assign(new Error("The lexical Memory search feature is disabled."), {
+                code: "lexical-profile-disabled",
+            });
+        }
+    }
+
     private runExclusive<T>(
         operation: () => Promise<T>,
-        options: { allowDuringClosing?: boolean } = {},
+        priority: VSSOperationPriority = "maintenance",
+        allowDuringClosing = false,
+        signal?: AbortSignal,
     ): Promise<T> {
-        if (this.disposed || this.closing && !options.allowDuringClosing) {
+        if (this.disposed || this.closing && !allowDuringClosing) {
             return Promise.reject(createVssDisposedError());
         }
-        const runOperation = () => {
-            this.assertActive();
-            return operation();
-        };
-        const run = this.operationQueue.then(runOperation, runOperation);
-        this.operationQueue = run.then(() => undefined, () => undefined);
-        return run;
+        if (signal?.aborted) {
+            return Promise.reject(createAbortError());
+        }
+        return new Promise<T>((resolve, reject) => {
+            let callerSettled = false;
+            const settleResolve = (value: T) => {
+                if (callerSettled) return;
+                callerSettled = true;
+                resolve(value);
+            };
+            const settleReject = (error: unknown) => {
+                if (callerSettled) return;
+                callerSettled = true;
+                reject(error);
+            };
+            const queued: VSSQueuedOperation = {
+                started: false,
+                run: async () => {
+                    queued.started = true;
+                    try {
+                        throwIfAborted(signal);
+                        this.assertActive(allowDuringClosing);
+                        settleResolve(await operation());
+                    } catch (error) {
+                        settleReject(error);
+                    } finally {
+                        signal?.removeEventListener("abort", onAbort);
+                    }
+                },
+            };
+            const onAbort = () => {
+                signal?.removeEventListener("abort", onAbort);
+                if (!queued.started) {
+                    this.removeQueuedOperation(queued);
+                }
+                // An active operation retains queue ownership until its
+                // signal-aware local work rejects or its late result drains.
+                settleReject(createAbortError());
+            };
+            signal?.addEventListener("abort", onAbort, { once: true });
+            if (signal?.aborted) {
+                onAbort();
+                return;
+            }
+            if (priority === "foreground") {
+                this.foregroundOperations.push(queued);
+            } else {
+                this.maintenanceOperations.push(queued);
+            }
+            this.drainOperationQueue();
+        });
     }
 
-    private isShuttingDown(): boolean {
-        return this.disposed;
+    private removeQueuedOperation(operation: VSSQueuedOperation): void {
+        for (const queue of [this.foregroundOperations, this.maintenanceOperations]) {
+            const index = queue.indexOf(operation);
+            if (index >= 0) {
+                queue.splice(index, 1);
+                this.notifyOperationQueueDrained();
+                return;
+            }
+        }
     }
 
-    private assertActive(): void {
-        if (this.isShuttingDown()) {
+    private drainOperationQueue(): void {
+        if (this.operationActive) return;
+        const next = this.foregroundOperations.shift() ?? this.maintenanceOperations.shift();
+        if (!next) {
+            this.notifyOperationQueueDrained();
+            return;
+        }
+        this.operationActive = true;
+        void next.run().finally(() => {
+            this.operationActive = false;
+            this.drainOperationQueue();
+        });
+    }
+
+    private waitForOperationQueueDrain(): Promise<void> {
+        if (!this.operationActive && this.foregroundOperations.length === 0 && this.maintenanceOperations.length === 0) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            this.operationDrainWaiters.add(resolve);
+        });
+    }
+
+    private notifyOperationQueueDrained(): void {
+        if (this.operationActive || this.foregroundOperations.length > 0 || this.maintenanceOperations.length > 0) {
+            return;
+        }
+        for (const resolve of this.operationDrainWaiters) resolve();
+        this.operationDrainWaiters.clear();
+    }
+
+    private isShuttingDown(allowDuringClosing = false): boolean {
+        return this.disposed || this.closing && !allowDuringClosing;
+    }
+
+    private assertActive(allowDuringClosing = false): void {
+        if (this.isShuttingDown(allowDuringClosing)) {
             throw createVssDisposedError();
         }
     }
@@ -2719,7 +3723,7 @@ export class VSS {
         this.verifyQueue.delete(path);
         const dirtyChanged = this.dirty.delete(path);
         if (this.index) {
-            await this.index.deleteFile(path);
+            await this.deleteFileFromIndex(this.index, path);
             await this.writeLocalIndexState();
         }
         if (dirtyChanged) {
@@ -2915,6 +3919,8 @@ export class VSS {
             legacyOpfsDirectory: VSS_LEGACY_OPFS_ROOT,
             opfsVfsName: this.getOpfsVfsName(),
             workerFactory: createInlineSqliteWorker,
+            lexicalProfileEnabled: this.isLexicalProfileEnabled(),
+            lexicalBoundaryFingerprint: this.getLexicalBoundaryFingerprint(),
         });
     }
 
@@ -3292,7 +4298,7 @@ export class VSS {
         if (!this.index) return false;
         if (await this.deferSnapshotRefresh(file, snapshot, `${phase}-delete`, abortSignal)) return false;
         throwIfAborted(abortSignal);
-        await this.index.deleteFile(snapshot.path);
+        await this.deleteFileFromIndex(this.index, snapshot.path);
         throwIfAborted(abortSignal);
         if (this.isFileSnapshotCurrent(file, snapshot)) {
             this.clearVerifyRecordIfNotNewerThanSnapshot(snapshot.path, snapshot);
@@ -3830,7 +4836,8 @@ export class VSS {
     }
 
     private isEligible(file: TFile, markdown?: string) {
-        return this.host.isVSSFileEligible(file, markdown);
+        if (!this.host.isVSSFileEligible(file, markdown)) return false;
+        return this.host.isDataBoundaryAllowedPath?.(file.path) !== false;
     }
 }
 
@@ -3845,6 +4852,34 @@ function normalizeSearchResult(result: VectorSearchResult): { score: number; doc
                 metadata: rawDoc.metadata,
             }),
     };
+}
+
+function applyLegacyRetrievalDepthOverrides(
+    selected: RetrievalSearchRuntimeParameters,
+    candidateDepth: number | undefined,
+    resultLimit: number | undefined,
+): RetrievalSearchRuntimeParameters {
+    if (candidateDepth === undefined && resultLimit === undefined) return selected;
+    const resolvedCandidateDepth = candidateDepth === undefined
+        ? selected.vectorRaw
+        : clampInteger(candidateDepth, 1, 96);
+    return Object.freeze({
+        ...selected,
+        vectorRaw: resolvedCandidateDepth,
+        lexicalRaw: resolvedCandidateDepth,
+        fusionRaw: resultLimit === undefined
+            ? selected.fusionRaw
+            : clampInteger(resultLimit, 1, 72),
+    });
+}
+
+function clampInteger(value: number, minimum: number, maximum: number): number {
+    if (!Number.isFinite(value)) return minimum;
+    return Math.max(minimum, Math.min(maximum, Math.floor(value)));
+}
+
+function compareCodePoint(left: string, right: string): number {
+    return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function createDefaultVSSIndexStateStore(host: MemoryHost): VSSIndexStateStore {
@@ -3871,6 +4906,29 @@ function createIndexId(): string {
 
 function createVssDisposedError(): Error {
     return Object.assign(new Error("VSS has been disposed."), { code: "vss-disposed" });
+}
+
+function createUnavailableLexicalStatus(reason: string): LexicalIndexStatus {
+    return {
+        state: "unavailable",
+        reason,
+        chunkCount: 0,
+        lexicalRowCount: 0,
+    };
+}
+
+function isLexicalCapableVectorIndex(index: VectorIndex | null): index is LexicalCapableVectorIndex {
+    if (!index) return false;
+    const candidate = index as Partial<LexicalCapableVectorIndex>;
+    return typeof candidate.getLexicalStatus === "function"
+        && typeof candidate.refreshLexicalPathFromIndexedChunks === "function"
+        && typeof candidate.beginLexicalRebuild === "function"
+        && typeof candidate.beginLexicalRebuildWithReceipt === "function"
+        && typeof candidate.appendLexicalScopeBatch === "function"
+        && typeof candidate.appendLexicalRebuildBatch === "function"
+        && typeof candidate.finalizeLexicalRebuild === "function"
+        && typeof candidate.finalizeLexicalRebuildWithReceipt === "function"
+        && typeof candidate.abortLexicalRebuild === "function";
 }
 
 function getErrorCode(error: unknown): string | undefined {

@@ -16,6 +16,7 @@ import {
     getDashScopeImageSynthesisUrl,
     getDashScopeTasksUrl,
     isDashScopeCompatibleBaseURL,
+    resolveChatTransport,
     supportsDashScopeThinkingControl,
 } from '../src/ai-services/ai-utils';
 
@@ -292,6 +293,28 @@ describe('cleanMarkdownContent', () => {
 });
 
 describe('Qwen DashScope request options', () => {
+    it.each([
+        ['obsidian', 'https://api.openai.com/v1', false, 'obsidian', 'obsidian-request-url', 'buffered', 'local-only', 'requested_transport'],
+        ['obsidian', 'https://example.invalid/v1', true, 'obsidian', 'obsidian-request-url', 'buffered', 'local-only', 'requested_transport'],
+        ['native', 'https://dashscope.aliyuncs.com/compatible-mode/v1', true, 'obsidian', 'obsidian-request-url', 'buffered', 'local-only', 'ios_dashscope_native_body_unreliable'],
+        ['native', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/', true, 'obsidian', 'obsidian-request-url', 'buffered', 'local-only', 'ios_dashscope_native_body_unreliable'],
+        ['native', 'https://dashscope.aliyuncs.com/compatible-mode/v1', false, 'native', 'global-fetch', 'incremental', 'signal-propagating', 'requested_transport'],
+        ['native', 'https://api.openai.com/v1', true, 'native', 'global-fetch', 'incremental', 'signal-propagating', 'requested_transport'],
+        ['native', 'https://example.invalid/v1', true, 'native', 'global-fetch', 'incremental', 'signal-propagating', 'requested_transport'],
+    ] as const)(
+        'resolves transport=%s baseURL=%s iOS=%s to %s',
+        (requested, baseURL, isIosApp, effective, networkBridge, responseDelivery, cancellationCapability, reason) => {
+            expect(resolveChatTransport({ requested, baseURL, isIosApp })).toEqual({
+                requested,
+                effective,
+                networkBridge,
+                responseDelivery,
+                cancellationCapability,
+                reason,
+            });
+        },
+    );
+
     it('recognizes DashScope OpenAI-compatible base URLs with trailing slashes', () => {
         expect(isDashScopeCompatibleBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1/')).toBe(true);
         expect(isDashScopeCompatibleBaseURL('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/')).toBe(true);

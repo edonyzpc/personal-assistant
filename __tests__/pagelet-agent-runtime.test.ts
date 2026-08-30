@@ -1,4 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { RunnableLambda } from '@langchain/core/runnables';
+import { Platform } from 'obsidian';
 
 import type { AiServiceHost } from '../src/ai-services/AiServiceHost';
 import { BUILTIN_WEB_SEARCH_TOOL_NAME } from '../src/ai-services/builtin-web-search-provider';
@@ -8,24 +10,42 @@ import type {
     AgentCapability,
     AgentCapabilityContext,
 } from '../src/ai-services/capability-types';
-import type { ChatToolRegistryDefinition } from '../src/ai-services/chat-tools';
-import type { PaAgentMessage } from '../src/ai-services/chat-types';
+import type {
+    ChatToolProviderSchema,
+    ChatToolRegistryDefinition,
+} from '../src/ai-services/chat-tools';
+import type { MemorySearchResult, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createAgentControlSnapshot } from '../src/ai-services/pa-agent-control-policy';
+import { createProviderRequestScope } from '../src/ai-services/obsidian-fetch';
+import {
+    RetrievalDiagnosticsController,
+    type RetrievalDiagnosticSurface,
+} from '../src/ai-services/retrieval-diagnostics';
 import type {
     PaAgentModel,
     PaAgentModelInput,
     PaAgentModelStreamChunk,
+    PaAgentTurnSummary,
 } from '../src/ai-services/pa-agent-loop';
+import { hashPageletContent } from '../src/pagelet/agent/anchor-snapshot';
 import { createAnchorBoundCurrentNoteTool } from '../src/pagelet/agent/anchor-note-tool';
+import { PageletDeepDiscoverController } from '../src/pagelet/agent/pagelet-deep-discover-controller';
+import {
+    PageletLeadDrivenPolicy,
+    extractPageletExactIdentifiers,
+} from '../src/pagelet/agent/lead-driven-policy';
 import {
     PAGELET_AGENT_READ_ONLY_TOOL_ALLOWLIST,
     createPageletAgentRuntime,
 } from '../src/pagelet/agent/pagelet-agent-runtime';
 import {
+    createDefaultPageletPrompt,
     createPageletNativeModel,
     type PageletNativePrompt,
 } from '../src/pagelet/agent/pagelet-native-model';
 import type {
+    PageletAgentModelContext,
+    PageletAgentPolicyIdentity,
     PageletAgentSourceMaterial,
     PageletAnchorSnapshot,
 } from '../src/pagelet/agent/types';
@@ -49,6 +69,142 @@ const relatedMaterial: PageletAgentSourceMaterial = {
     contentHash: 'b'.repeat(64),
     capturedAt: 101,
 };
+const leadContent = '# Rollback lead\nmissing rollback checkpoint creates action risk';
+const leadMaterial: PageletAgentSourceMaterial = {
+    path: 'notes/rollback-lead.md',
+    content: leadContent,
+    mtime: 12,
+    size: leadContent.length,
+    contentHash: 'c'.repeat(64),
+    capturedAt: 102,
+};
+const exactLeadAnchorContent = [
+    '# Pagelet 单洞察入口',
+    '',
+    '唯一待查问题是：`PGL-KITE-507` 纸鹤队列为什么只在雨天演练中跳过校验？',
+    '',
+    '当前笔记只记录症状，不包含原因、处理方法或其他来源链接。',
+].join('\n');
+const exactLeadAnchor: PageletAnchorSnapshot = {
+    ...anchor,
+    content: exactLeadAnchorContent,
+    size: exactLeadAnchorContent.length,
+    contentHash: 'd'.repeat(64),
+};
+const stagedExactLeadAnchorContent = [
+    '# Incident',
+    'validate first before release.',
+    'PGL-KITE-507 remains unresolved.',
+].join('\n');
+const stagedExactLeadAnchor: PageletAnchorSnapshot = {
+    ...anchor,
+    content: stagedExactLeadAnchorContent,
+    size: stagedExactLeadAnchorContent.length,
+    contentHash: 'e'.repeat(64),
+};
+const unsupportedExactLeadTerminal = [
+    '## Queue validation risk',
+    'The unresolved queue behavior could hide a release validation gap.',
+].join('\n');
+const missingAnchorExactLeadTerminal = [
+    '## Rollback checkpoint risk',
+    '`notes/rollback-lead.md` records a missing rollback checkpoint, which makes the release path unsafe.',
+].join('\n');
+const supportedExactLeadTerminal = [
+    '## Rollback checkpoint risk',
+    '`notes/anchor.md` records the unresolved PGL-KITE-507 validation question, while',
+    '`notes/rollback-lead.md` records a missing rollback checkpoint; this gap makes the release path unsafe.',
+].join('\n');
+const compatibleNonAnchorTerminal = [
+    '## Release validation conflict',
+    '`notes/anchor.md` requires validation before release, while',
+    '`notes/related.md` says release directly creates risk, so the current validation plan needs review.',
+].join('\n');
+const groundedCitationInsight = [
+    '## Release validation conflict',
+    '`notes/anchor.md` requires validation before release, while',
+    '`notes/related.md` says release directly creates risk; this conflict makes the current plan unsafe.',
+].join('\n');
+const shortBasenameCitationInsight = [
+    '## Release validation conflict',
+    '`anchor.md` requires validation before release, while',
+    '`related.md` says release directly creates risk; this conflict makes the current plan unsafe.',
+].join('\n');
+const dualLeadAnchorContent = [
+    '# Two concrete leads',
+    'PGL-CORAL-318 remains unresolved: why does the archive queue wait on Wednesday?',
+    'PGL-SILVER-624 remains unresolved: why is the first morning humidity sample wrong?',
+    'Read [[notes/coral.md]] and [[notes/silver.md]] for the separate source records.',
+].join('\n');
+const dualLeadAnchor: PageletAnchorSnapshot = {
+    ...anchor,
+    content: dualLeadAnchorContent,
+    size: dualLeadAnchorContent.length,
+    contentHash: 'f'.repeat(64),
+};
+const coralContent = [
+    '# Coral archive',
+    'PGL-CORAL-318 waits because compression and archive share one serial queue.',
+].join('\n');
+const coralMaterial: PageletAgentSourceMaterial = {
+    path: 'notes/coral.md',
+    content: coralContent,
+    mtime: 21,
+    size: coralContent.length,
+    contentHash: '1'.repeat(64),
+    capturedAt: 201,
+};
+const silverContent = [
+    '# Silver greenhouse',
+    'PGL-SILVER-624 is wrong because sampling starts before sensor warmup completes.',
+].join('\n');
+const silverMaterial: PageletAgentSourceMaterial = {
+    path: 'notes/silver.md',
+    content: silverContent,
+    mtime: 22,
+    size: silverContent.length,
+    contentHash: '2'.repeat(64),
+    capturedAt: 202,
+};
+const coralInsight = [
+    '## Archive queue conflict',
+    '`notes/anchor.md` records the unresolved PGL-CORAL-318 delay, while',
+    '`notes/coral.md` shows compression and archive share one serial queue; this conflict causes the Wednesday wait.',
+].join('\n');
+const silverInsight = [
+    '## Sensor warmup gap',
+    '`notes/anchor.md` records the unresolved PGL-SILVER-624 symptom, while',
+    '`notes/silver.md` shows sampling starts before warmup completes; this gap causes the false morning reading.',
+].join('\n');
+const shallowSilverInsight = [
+    '## Related records',
+    '`notes/anchor.md` mentions PGL-SILVER-624, and',
+    '`notes/silver.md` also mentions PGL-SILVER-624; the records are related.',
+].join('\n');
+const pageletPolicyIdentity: PageletAgentPolicyIdentity = {
+    dataBoundaryIdentity: 'boundary-two-leads',
+    providerPolicyIdentity: 'provider-policy-two-leads',
+    modelIdentity: 'provider:test-model',
+    locale: 'en',
+};
+
+function leadMemoryResult(query: string): MemorySearchResult {
+    return {
+        usedMemory: true,
+        query,
+        documents: [{
+            content: leadMaterial.content,
+            score: 0.9,
+            source: { path: leadMaterial.path, chunkIndex: 0, score: 0.9 },
+        }],
+        sources: [{ path: leadMaterial.path, chunkIndex: 0, score: 0.9 }],
+        candidates: [],
+        hasAnswerableContent: true,
+        memoryEvidenceState: 'evidence',
+        rerankVerdict: 'relevant',
+        needsMoreEvidence: false,
+    };
+}
 
 function createFakeWebCapability() {
     const definition: ChatToolRegistryDefinition = {
@@ -132,10 +288,11 @@ function createFakeWebCapability() {
     };
 }
 
-function createHost(): AiServiceHost {
+function createHost(extraContents: Record<string, string> = {}): AiServiceHost {
     const contents: Record<string, string> = {
         'notes/anchor.md': anchor.content,
         'notes/related.md': relatedContent,
+        ...extraContents,
     };
     const files = Object.entries(contents).map(([path, content], index) => ({
         path,
@@ -187,7 +344,6 @@ function createHost(): AiServiceHost {
         isOperationsAgentEnabled: false,
         getMemoryExtractionPromptContext: () => undefined,
         memorySearch: {} as AiServiceHost['memorySearch'],
-        getResolvedLinks: () => ({}),
     } as unknown as AiServiceHost;
 }
 
@@ -224,7 +380,579 @@ function scriptedModel(onInput?: (input: PaAgentModelInput) => void): PaAgentMod
     };
 }
 
+function citationCorrectionModel(options: {
+    repeatInvalid?: boolean;
+    emptyCorrectionAttempts?: 0 | 1 | 2;
+    onInput?: (input: PaAgentModelInput) => void;
+} = {}): PaAgentModel {
+    return {
+        stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+            options.onInput?.(input);
+            if (input.turnIndex === 0) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'citation-anchor-call',
+                    name: 'get_current_note_context',
+                    input: { mode: 'full' },
+                    index: 0,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'citation-related-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: relatedMaterial.path },
+                    index: 1,
+                };
+                return;
+            }
+            if (
+                input.turnIndex >= 2
+                && input.turnIndex < 2 + (options.emptyCorrectionAttempts ?? 0)
+            ) return;
+            yield {
+                type: 'text_delta',
+                text: input.turnIndex === 1 || options.repeatInvalid
+                    ? shortBasenameCitationInsight
+                    : groundedCitationInsight,
+            };
+        },
+    };
+}
+
+function stagedInsightModel(
+    terminalText: string,
+    stagedText?: string,
+    onInput?: (input: PaAgentModelInput) => void,
+): PaAgentModel {
+    return {
+        stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+            onInput?.(input);
+            if (input.turnIndex === 0) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'anchor-call',
+                    name: 'get_current_note_context',
+                    input: { mode: 'full' },
+                    index: 0,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'related-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: 'notes/related.md' },
+                    index: 1,
+                };
+                return;
+            }
+            if (input.turnIndex === 1) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'stage-call',
+                    name: 'stage_pagelet_insight',
+                    input: {
+                        insightMarkdown: stagedText ?? [
+                            '## Release validation conflict',
+                            '`notes/anchor.md` requires validate first before release, while',
+                            '`notes/related.md` says release directly creates risk; this conflict increases risk.',
+                        ].join('\n'),
+                        sourceIds: ['notes/anchor.md', 'notes/related.md'],
+                        unresolvedLead: {
+                            leadKey: 'rollback checkpoint evidence',
+                            supportingSourceIds: ['notes/related.md'],
+                            requestRelaxedRecovery: false,
+                        },
+                    },
+                    index: 0,
+                };
+                return;
+            }
+            yield { type: 'text_delta', text: terminalText };
+        },
+    };
+}
+
+function disjointLeadModel(options: {
+    terminalText: string;
+    leadTool?: 'inspect_obsidian_note' | 'search_memory';
+}): PaAgentModel {
+    return {
+        stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+            if (input.turnIndex === 0) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'anchor-call',
+                    name: 'get_current_note_context',
+                    input: { mode: 'full' },
+                    index: 0,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'related-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: relatedMaterial.path },
+                    index: 1,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'lead-call',
+                    name: options.leadTool ?? 'inspect_obsidian_note',
+                    input: options.leadTool === 'search_memory'
+                        ? { query: 'missing rollback checkpoint' }
+                        : { path: leadMaterial.path },
+                    index: 2,
+                };
+                return;
+            }
+            if (input.turnIndex === 1) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'stage-call',
+                    name: 'stage_pagelet_insight',
+                    input: {
+                        insightMarkdown: [
+                            '## Release validation conflict',
+                            '`notes/anchor.md` requires validate first before release, while',
+                            '`notes/related.md` says release directly creates risk; this conflict increases risk.',
+                        ].join('\n'),
+                        sourceIds: [anchor.path, relatedMaterial.path],
+                        unresolvedLead: {
+                            leadKey: 'missing rollback checkpoint action risk',
+                            supportingSourceIds: [leadMaterial.path],
+                            requestRelaxedRecovery: false,
+                        },
+                    },
+                    index: 0,
+                };
+                return;
+            }
+            yield { type: 'text_delta', text: options.terminalText };
+        },
+    };
+}
+
+function sourceCompleteTwoLeadModel(options: {
+    terminalSecond: string;
+    readSecond?: boolean;
+    onInput?: (input: PaAgentModelInput) => void;
+}): PaAgentModel {
+    return {
+        stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+            options.onInput?.(input);
+            if (input.turnIndex === 0) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'anchor-call',
+                    name: 'get_current_note_context',
+                    input: { mode: 'full' },
+                    index: 0,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'coral-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: coralMaterial.path },
+                    index: 1,
+                };
+                if (options.readSecond !== false) {
+                    yield {
+                        type: 'toolcall_delta',
+                        id: 'silver-call',
+                        name: 'inspect_obsidian_note',
+                        input: { path: silverMaterial.path },
+                        index: 2,
+                    };
+                }
+                return;
+            }
+            if (input.turnIndex === 1) {
+                yield { type: 'text_delta', text: coralInsight };
+                return;
+            }
+            if (input.turnIndex === 2) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'stage-call',
+                    name: 'stage_pagelet_insight',
+                    input: {
+                        unresolvedLead: {
+                            leadKey: 'independent sensor warmup finding',
+                            supportingSourceIds: [silverMaterial.path],
+                            requestRelaxedRecovery: false,
+                        },
+                    },
+                    index: 0,
+                };
+                return;
+            }
+            yield { type: 'text_delta', text: options.terminalSecond };
+        },
+    };
+}
+
+function interruptedSourceCompleteTwoLeadModel(
+    mode: 'empty-followup' | 'validation-rejected-stage',
+): PaAgentModel {
+    return {
+        stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+            if (input.turnIndex === 0) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'anchor-call',
+                    name: 'get_current_note_context',
+                    input: { mode: 'full' },
+                    index: 0,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'coral-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: coralMaterial.path },
+                    index: 1,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'silver-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: silverMaterial.path },
+                    index: 2,
+                };
+                return;
+            }
+            if (input.turnIndex === 1) {
+                yield { type: 'text_delta', text: coralInsight };
+                return;
+            }
+            if (input.turnIndex !== 2 || mode === 'empty-followup') return;
+            yield {
+                type: 'toolcall_delta',
+                id: 'stage-call',
+                name: 'stage_pagelet_insight',
+                input: {
+                    unresolvedLead: {
+                        leadKey: 'independent sensor warmup finding',
+                        supportingSourceIds: [silverMaterial.path],
+                        requestRelaxedRecovery: false,
+                    },
+                },
+                index: 0,
+            };
+        },
+    };
+}
+
+function stageShapeRetryModel(options: {
+    repeatInvalid: boolean;
+    invalidKind?: 'source-binding' | 'unread-lead';
+    echoMode?: 'present' | 'omitted' | 'malformed';
+    onInput?: (input: PaAgentModelInput) => void;
+}): PaAgentModel {
+    return {
+        stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+            options.onInput?.(input);
+            if (input.turnIndex === 0) {
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'anchor-call',
+                    name: 'get_current_note_context',
+                    input: { mode: 'full' },
+                    index: 0,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'coral-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: coralMaterial.path },
+                    index: 1,
+                };
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'silver-call',
+                    name: 'inspect_obsidian_note',
+                    input: { path: silverMaterial.path },
+                    index: 2,
+                };
+                return;
+            }
+            if (input.turnIndex === 1) {
+                yield { type: 'text_delta', text: coralInsight };
+                return;
+            }
+            if (input.turnIndex === 2 || (input.turnIndex === 3 && options.repeatInvalid)) {
+                const compatibilityEcho = options.echoMode === 'omitted'
+                    ? {}
+                    : options.echoMode === 'malformed'
+                        ? {
+                            insightMarkdown: { provider: 'rewrite' },
+                            sourceIds: 'notes/not-an-array.md',
+                        }
+                        : {
+                            insightMarkdown: options.invalidKind === 'source-binding'
+                                ? [
+                                    '## Rewritten provider echo',
+                                    '`notes/anchor.md` supplies context while',
+                                    '`notes/silver.md` supplies another path.',
+                                ].join('\n')
+                                : coralInsight,
+                            sourceIds: options.invalidKind === 'unread-lead'
+                                ? [dualLeadAnchor.path, coralMaterial.path]
+                                : [dualLeadAnchor.path, silverMaterial.path],
+                        };
+                yield {
+                    type: 'toolcall_delta',
+                    id: `invalid-stage-${input.turnIndex}`,
+                    name: 'stage_pagelet_insight',
+                    input: {
+                        ...compatibilityEcho,
+                        unresolvedLead: {
+                            leadKey: 'independent sensor warmup finding',
+                            supportingSourceIds: options.invalidKind === 'unread-lead'
+                                ? ['notes/unread-lead.md']
+                                : [silverMaterial.path],
+                            requestRelaxedRecovery: false,
+                        },
+                    },
+                    index: 0,
+                };
+                return;
+            }
+            if (input.turnIndex === 3) {
+                if (!input.runtimeInstruction?.includes('one stage-shape corrective turn')) {
+                    yield { type: 'text_delta', text: silverInsight };
+                    return;
+                }
+                yield {
+                    type: 'toolcall_delta',
+                    id: 'corrected-stage',
+                    name: 'stage_pagelet_insight',
+                    input: {
+                        unresolvedLead: {
+                            leadKey: 'independent sensor warmup finding',
+                            supportingSourceIds: [silverMaterial.path],
+                            requestRelaxedRecovery: false,
+                        },
+                    },
+                    index: 0,
+                };
+                return;
+            }
+            yield { type: 'text_delta', text: silverInsight };
+        },
+    };
+}
+
+function createTwoLeadRuntime(options: {
+    terminalSecond: string;
+    readSecond?: boolean;
+    onInput?: (input: PaAgentModelInput) => void;
+    onStageSchemaRequired?: (required: readonly string[]) => void;
+}) {
+    const host = createHost({
+        [dualLeadAnchor.path]: dualLeadAnchor.content,
+        [coralMaterial.path]: coralMaterial.content,
+        [silverMaterial.path]: silverMaterial.content,
+    });
+    host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+    const materials = new Map<string, PageletAgentSourceMaterial>([
+        [dualLeadAnchor.path, { ...dualLeadAnchor }],
+        [coralMaterial.path, coralMaterial],
+        [silverMaterial.path, silverMaterial],
+    ]);
+    const createModel = jest.fn((context: PageletAgentModelContext) => (
+        sourceCompleteTwoLeadModel({
+            terminalSecond: options.terminalSecond,
+            readSecond: options.readSecond,
+            onInput: (input) => {
+                options.onInput?.(input);
+                if (input.turnIndex !== 2) return;
+                const stageSchema = context.schemas.find((schema) => (
+                    schema.function.name === 'stage_pagelet_insight'
+                ));
+                options.onStageSchemaRequired?.(
+                    stageSchema?.function.parameters.required ?? [],
+                );
+            },
+        })
+    ));
+    return {
+        host,
+        materials,
+        createModel,
+        runtime: createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel,
+        }),
+    };
+}
+
+function createStageShapeRetryRuntime(options: {
+    repeatInvalid: boolean;
+    invalidKind?: 'source-binding' | 'unread-lead';
+    echoMode?: 'present' | 'omitted' | 'malformed';
+    onInput?: (input: PaAgentModelInput) => void;
+    onStageSchemaRequired?: (required: readonly string[]) => void;
+}) {
+    const host = createHost({
+        [dualLeadAnchor.path]: dualLeadAnchor.content,
+        [coralMaterial.path]: coralMaterial.content,
+        [silverMaterial.path]: silverMaterial.content,
+    });
+    host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+    const materials = new Map<string, PageletAgentSourceMaterial>([
+        [dualLeadAnchor.path, { ...dualLeadAnchor }],
+        [coralMaterial.path, coralMaterial],
+        [silverMaterial.path, silverMaterial],
+    ]);
+    return createPageletAgentRuntime({
+        host,
+        isPathAllowed: (path) => path.startsWith('notes/'),
+        executeMemorySearch: async (input) => ({
+            usedMemory: false,
+            query: input.query,
+            documents: [],
+            sources: [],
+        }),
+        revalidateMemorySearch: async (result) => result,
+        captureSourceMaterial: async (path) => materials.get(path) ?? null,
+        createModel: (context) => stageShapeRetryModel({
+            repeatInvalid: options.repeatInvalid,
+            invalidKind: options.invalidKind,
+            echoMode: options.echoMode,
+            onInput: (input) => {
+                options.onInput?.(input);
+                if (input.turnIndex !== 2) return;
+                const stageSchema = context.schemas.find((schema) => (
+                    schema.function.name === 'stage_pagelet_insight'
+                ));
+                options.onStageSchemaRequired?.(
+                    stageSchema?.function.parameters.required ?? [],
+                );
+            },
+        }),
+    });
+}
+
+function providerPromptText(input: unknown): string {
+    const promptValue = input as {
+        toChatMessages?: () => Array<{ content?: unknown }>;
+    };
+    if (typeof promptValue?.toChatMessages === 'function') {
+        return promptValue.toChatMessages().map((message) => (
+            typeof message.content === 'string'
+                ? message.content
+                : JSON.stringify(message.content)
+        )).join('\n');
+    }
+    return JSON.stringify(input);
+}
+
+describe('Pagelet exact-lead identifier extraction', () => {
+    it('extracts the unresolved identifier from the Pagelet 51 live anchor wording', () => {
+        expect(extractPageletExactIdentifiers(exactLeadAnchorContent)).toEqual([
+            'PGL-KITE-507',
+        ]);
+    });
+
+    it('keeps a bounded distinct set of code-like literals and ignores ordinary phrases', () => {
+        expect(extractPageletExactIdentifiers([
+            'release-phase-1 and follow-up are ordinary prose.',
+            'Unresolved: PGL-KITE-507, incident-42, PGL-KITE-507.',
+            'Pending: TASK-9, ERR_TIMEOUT-2, BUG-3, CASE-4, ISSUE-5.',
+        ].join('\n'))).toEqual([
+            'PGL-KITE-507',
+            'incident-42',
+            'TASK-9',
+            'ERR_TIMEOUT-2',
+        ]);
+    });
+
+    it('does not arm the gate for completed technical notes or resolved identifiers', () => {
+        expect(extractPageletExactIdentifiers([
+            '# Completed compatibility note',
+            'Verified UTF-8, SHA-256, HTTP-404, API-v2, and 2026-08-09.',
+            'Endpoint: https://example.com/release-build-42.',
+            'Resolved INC-42 and closed PGL-KITE-507.',
+        ].join('\n'))).toEqual([]);
+    });
+
+    it('ignores common technical literals even when the surrounding prose asks why', () => {
+        expect(extractPageletExactIdentifiers([
+            '待查为什么 UTF-8、SHA-256、HTTP-404 与 API-v2 的输出不同？',
+            '需核查 2026-08-09 和 https://example.com/release-build-42。',
+        ].join('\n'))).toEqual([]);
+    });
+
+    it('pairs resolved and unresolved cues with the identifier in the same clause', () => {
+        expect(extractPageletExactIdentifiers(
+            'INC-41 was fixed. PGL-KITE-507 remains unresolved.',
+        )).toEqual(['PGL-KITE-507']);
+        expect(extractPageletExactIdentifiers(
+            'PGL-OLD-1 已修复；PGL-KITE-507 仍待查。',
+        )).toEqual(['PGL-KITE-507']);
+    });
+
+    it('does not borrow an unresolved cue from the preceding sentence', () => {
+        expect(extractPageletExactIdentifiers(
+            'Why is the build slow? TASK-9 only records routine cleanup.',
+        )).toEqual([]);
+    });
+});
+
 describe('Pagelet agent runtime', () => {
+    it('binds the complete Pagelet run to pagelet diagnostics', async () => {
+        const controller = new RetrievalDiagnosticsController(
+            () => 0,
+            () => 0,
+            () => 'pagelet-surface-session',
+        );
+        const session = controller.start();
+        const requestedSurfaces: RetrievalDiagnosticSurface[] = [];
+        const host = createHost();
+        host.createRetrievalDiagnosticRecorder = (surface) => {
+            requestedSurfaces.push(surface);
+            return controller.createRecorder(surface);
+        };
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* () {
+                    yield {
+                        type: 'text_delta' as const,
+                        text: 'No useful finding survived verification.\nNO_INSIGHT',
+                    };
+                },
+            }),
+        });
+
+        await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-surface-run',
+        });
+
+        const snapshot = controller.snapshot(session.sessionId);
+        expect(requestedSurfaces).toEqual(['pagelet']);
+        expect(snapshot.events.length).toBeGreaterThan(0);
+        expect(snapshot.events.every((event) => event.surface === 'pagelet')).toBe(true);
+        expect(snapshot.events.every((event) => event.runId === 'pagelet-surface-run')).toBe(true);
+    });
+
     it('uses the fixed read-only registry, loop fuses, provenance, and optional turn leases', async () => {
         const host = createHost();
         const registeredNames: string[][] = [];
@@ -284,6 +1012,7 @@ describe('Pagelet agent runtime', () => {
             'read_canvas_summary',
             'list_vault_tags',
             'load_skill',
+            'stage_pagelet_insight',
         ]));
         expect(PAGELET_AGENT_READ_ONLY_TOOL_ALLOWLIST.has('append_to_current_note')).toBe(false);
         expect(releases).toHaveLength(2);
@@ -294,6 +1023,3504 @@ describe('Pagelet agent runtime', () => {
             'The anchor and at least one non-anchor content source are already observed.',
         );
         expect(modelInputs[1]?.runtimeInstruction).toContain('never mention an unverified .md path');
+    });
+
+    it('corrects short inline-code basenames once and delivers the full-path finding', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [anchor.path, { ...anchor }],
+            [relatedMaterial.path, relatedMaterial],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => citationCorrectionModel({
+                onInput: (input) => modelInputs.push(input),
+            }),
+        });
+        let observedRun: Awaited<ReturnType<typeof runtime.run>> | undefined;
+        const controller = new PageletDeepDiscoverController({
+            runtime: {
+                run: async (request) => {
+                    observedRun = await runtime.run(request);
+                    return observedRun;
+                },
+            },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const result = await controller.run({
+            path: anchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(result.status).toBe('verified');
+        if (result.status !== 'verified') throw new Error('expected corrected citation to verify');
+        expect(result.insights).toHaveLength(1);
+        expect(result.insight.body).toBe(groundedCitationInsight);
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]).toMatchObject({ toolMode: 'final_answer_only' });
+        expect(modelInputs[2]?.runtimeInstruction).toContain('one citation-only corrective turn');
+        expect(modelInputs[2]?.runtimeInstruction).toContain(JSON.stringify([
+            anchor.path,
+            relatedMaterial.path,
+        ]));
+        expect(observedRun?.loopResult.status).toBe('completed');
+        expect(observedRun?.finalText).toBe(groundedCitationInsight);
+    });
+
+    it('retries one empty citation-only correction using the current turn state', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [anchor.path, { ...anchor }],
+            [relatedMaterial.path, relatedMaterial],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => citationCorrectionModel({
+                emptyCorrectionAttempts: 1,
+                onInput: (input) => modelInputs.push(input),
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-citation-empty-retry',
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs.slice(2).every((input) => (
+            input.toolMode === 'final_answer_only'
+        ))).toBe(true);
+        expect(modelInputs[3]?.runtimeInstruction).toContain(
+            'one bounded empty-response retry',
+        );
+        expect(result.loopResult.turns[2]).toMatchObject({
+            status: 'incomplete',
+            toolCalls: [],
+            toolResults: [],
+            diagnostics: [expect.objectContaining({ type: 'assistant_empty_response' })],
+        });
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe(groundedCitationInsight);
+        expect(result.runtimeCompletion.emptyFinalAnswerRetryCount).toBe(1);
+    });
+
+    it('fails closed after the single empty citation-only retry is also empty', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [anchor.path, { ...anchor }],
+            [relatedMaterial.path, relatedMaterial],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => citationCorrectionModel({
+                emptyCorrectionAttempts: 2,
+                onInput: (input) => modelInputs.push(input),
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-citation-double-empty',
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs.slice(2).every((input) => (
+            input.toolMode === 'final_answer_only'
+        ))).toBe(true);
+        expect(result.loopResult.turns.slice(2).every((turn) => (
+            turn.toolCalls.length === 0 && turn.toolResults.length === 0
+        ))).toBe(true);
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_empty_finalization_exhausted',
+        });
+        expect(result.finalText).toBe('');
+        expect(result.runtimeCompletion.emptyFinalAnswerRetryCount).toBe(1);
+    });
+
+    it('fails closed after one repeated invalid citation without opening another turn', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [anchor.path, { ...anchor }],
+            [relatedMaterial.path, relatedMaterial],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => citationCorrectionModel({
+                repeatInvalid: true,
+                onInput: (input) => modelInputs.push(input),
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-citation-repeat-invalid',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_citation_protocol_exhausted',
+        });
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+    });
+
+    it('deduplicates Pagelet Memory alias and whitespace equivalents in one batch', async () => {
+        const host = createHost();
+        const executeMemorySearch = jest.fn(async (input: { query: string }) => ({
+            usedMemory: false,
+            query: input.query,
+            documents: [],
+            sources: [],
+            candidates: [],
+            memoryEvidenceState: 'none' as const,
+            rerankVerdict: 'none_relevant' as const,
+            needsMoreEvidence: false,
+        }));
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch,
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta',
+                            id: 'memory-q',
+                            name: 'search_memory',
+                            input: { q: '  project launch  ' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta',
+                            id: 'memory-query',
+                            name: 'search_memory',
+                            input: { query: 'project launch' },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta', text: 'No matching Memory evidence.' };
+                },
+            }),
+            now: (() => {
+                let value = 1_000;
+                return () => value += 5;
+            })(),
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-canonical-dedupe',
+        });
+
+        expect(executeMemorySearch).toHaveBeenCalledTimes(1);
+        expect(executeMemorySearch.mock.calls[0]?.[0]).toEqual(
+            expect.objectContaining({ query: 'project launch' }),
+        );
+        expect(result.loopResult.turns[0]?.toolResults.map((message) => message.content.metadata?.outcome))
+            .toEqual(['success', 'duplicate_skipped']);
+    });
+
+    it('pins the Host pending first when the Provider rewrites its body and sourceIds', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createStageShapeRetryRuntime({
+            repeatInvalid: false,
+            onInput: (input) => modelInputs.push(input),
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-stage-shape-corrected',
+        });
+
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.metrics).toMatchObject({ modelTurns: 4, toolCalls: 4 });
+        expect(result.loopResult.turns[2]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: false,
+            content: {
+                metadata: {
+                    outcome: 'success',
+                },
+            },
+        });
+        expect(modelInputs[3]?.runtimeInstruction).toContain('first insight is pinned');
+        expect(result.insightDrafts).toEqual([
+            expect.objectContaining({
+                body: coralInsight,
+                origin: 'staged',
+                declaredSourceIds: [dualLeadAnchor.path, coralMaterial.path],
+            }),
+            {
+                body: silverInsight,
+                origin: 'terminal',
+                declaredSourceIds: [],
+            },
+        ]);
+        expect(result.recovery).toMatchObject({
+            stageControlCalled: true,
+            relaxedTokenConsumed: false,
+        });
+    });
+
+    it.each(['omitted', 'malformed'] as const)(
+        'accepts a %s non-authoritative stage echo without a corrective model turn',
+        async (echoMode) => {
+            const modelInputs: PaAgentModelInput[] = [];
+            const stageSchemaRequired: string[][] = [];
+            const runtime = createStageShapeRetryRuntime({
+                repeatInvalid: false,
+                echoMode,
+                onInput: (input) => modelInputs.push(input),
+                onStageSchemaRequired: (required) => stageSchemaRequired.push([...required]),
+            });
+
+            const result = await runtime.run({
+                anchor: dualLeadAnchor,
+                triggerReason: 'explicit',
+                runId: `pagelet-stage-${echoMode}-echo`,
+            });
+
+            expect(modelInputs).toHaveLength(4);
+            expect(stageSchemaRequired).toEqual([['unresolvedLead']]);
+            expect(result.metrics).toMatchObject({ modelTurns: 4, toolCalls: 4 });
+            expect(result.loopResult.turns[2]?.toolResults[0]).toMatchObject({
+                toolName: 'stage_pagelet_insight',
+                isError: false,
+                content: { metadata: { outcome: 'success' } },
+            });
+            expect(modelInputs[3]?.runtimeInstruction).not.toContain(
+                'stage-shape corrective turn',
+            );
+            expect(result.insightDrafts).toEqual([
+                expect.objectContaining({
+                    body: coralInsight,
+                    origin: 'staged',
+                    declaredSourceIds: [dualLeadAnchor.path, coralMaterial.path],
+                }),
+                {
+                    body: silverInsight,
+                    origin: 'terminal',
+                    declaredSourceIds: [],
+                },
+            ]);
+            expect(result.recovery).toMatchObject({
+                stageControlCalled: true,
+                relaxedTokenConsumed: false,
+            });
+        },
+    );
+
+    it('falls back to the Host pending first after an invalid unresolvedLead without retrying', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createStageShapeRetryRuntime({
+            repeatInvalid: false,
+            invalidKind: 'unread-lead',
+            onInput: (input) => modelInputs.push(input),
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-stage-unread-lead-corrected',
+        });
+
+        expect(result.loopResult.turns[2]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: true,
+            content: {
+                metadata: {
+                    outcome: 'schema_invalid',
+                    reason: 'input_validation_failed',
+                },
+            },
+        });
+        expect(modelInputs).toHaveLength(3);
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_stage_shape_protocol_incomplete',
+        });
+        expect(result.finalText).toBe(coralInsight);
+        expect(result.insightDrafts).toEqual([{
+            body: coralInsight,
+            origin: 'terminal',
+            declaredSourceIds: [],
+        }]);
+        expect(result.recovery).toMatchObject({
+            stageControlCalled: false,
+            stageValidationSubreason: 'shape',
+        });
+    });
+
+    it('does not open a corrective Provider turn after a pending-first stage shape failure', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createStageShapeRetryRuntime({
+            repeatInvalid: true,
+            invalidKind: 'unread-lead',
+            onInput: (input) => modelInputs.push(input),
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-stage-shape-exhausted',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_stage_shape_protocol_incomplete',
+            diagnostics: [expect.objectContaining({
+                type: 'pagelet_stage_shape_protocol_incomplete',
+            })],
+        });
+        expect(result.finalText).toBe(coralInsight);
+        expect(result.insightDrafts).toEqual([{
+            body: coralInsight,
+            origin: 'terminal',
+            declaredSourceIds: [],
+        }]);
+        expect(result.recovery).toMatchObject({
+            stageControlCalled: false,
+            relaxedTokenConsumed: false,
+            stageValidationSubreason: 'shape',
+        });
+        expect(result.runtimeCompletion.diagnosticTypes).toContain(
+            'pagelet_stage_validation_shape',
+        );
+    });
+
+    it('fails closed without another Provider turn when recovery is disabled before staging', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtimeHost: { current?: AiServiceHost } = {};
+        const setup = createTwoLeadRuntime({
+            terminalSecond: silverInsight,
+            onInput: (input) => {
+                modelInputs.push(input);
+                if (input.turnIndex === 2 && runtimeHost.current) {
+                    runtimeHost.current.settings.retrievalOptimizationFlags = { relaxedRecovery: false };
+                }
+            },
+        });
+        runtimeHost.current = setup.host;
+
+        const result = await setup.runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-stage-disabled-before-execute',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_stage_control_unavailable',
+        });
+        expect(result.loopResult.turns[2]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: true,
+            content: {
+                metadata: {
+                    unavailableReason: 'pagelet_stage_control_unavailable',
+                },
+            },
+        });
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+    });
+
+    it('rejects a reported stage success when the Host staged state was cleared before policy review', async () => {
+        const clearPendingFirstInsight = jest.fn();
+        const policy = new PageletLeadDrivenPolicy({
+            anchorPath: dualLeadAnchor.path,
+            anchorContent: dualLeadAnchor.content,
+            maxTurns: 30,
+            maxToolCalls: 30,
+            maxWallClockMs: 180_000,
+            now: () => 2_000,
+            startedAt: 1_000,
+            hasStagedInsight: () => false,
+            hasPendingFirstInsight: () => false,
+            clearPendingFirstInsight,
+            canStageInsight: true,
+        });
+        const decision = await policy.afterTurn({
+            turnId: 'stage-state-cleared-turn',
+            turnIndex: 2,
+            status: 'tool_results_ready',
+            assistantMessage: {
+                role: 'assistant',
+                id: 'stage-state-cleared-assistant',
+                content: [],
+                timestamp: 2_000,
+            },
+            committedFinalText: '',
+            pendingTextReclassified: false,
+            toolCalls: [],
+            toolResults: [{
+                role: 'toolResult',
+                id: 'stage-state-cleared-result',
+                toolCallId: 'stage-state-cleared-call',
+                toolName: 'stage_pagelet_insight',
+                isError: false,
+                timestamp: 2_000,
+                content: {
+                    promptText: '{"status":"staged"}',
+                    includeInNextPrompt: true,
+                    metadata: { outcome: 'success' },
+                },
+            }],
+            diagnostics: [],
+            metrics: [],
+            timing: {
+                elapsedMs: 1,
+                modelElapsedMs: 1,
+                toolExecutionElapsedMs: 0,
+                toolCallCount: 1,
+                executorInvokedToolNames: ['stage_pagelet_insight'],
+            },
+        } as unknown as PaAgentTurnSummary);
+
+        expect(decision).toMatchObject({
+            action: 'stop',
+            status: 'incomplete',
+            reason: 'pagelet_stage_control_unavailable',
+        });
+        expect(clearPendingFirstInsight).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns quiet with zero drafts when stage validation is aborted mid-flight', async () => {
+        jest.useFakeTimers();
+        const abortController = new AbortController();
+        const modelInputs: PaAgentModelInput[] = [];
+        const host = createHost({
+            [dualLeadAnchor.path]: dualLeadAnchor.content,
+            [coralMaterial.path]: coralMaterial.content,
+            [silverMaterial.path]: silverMaterial.content,
+        });
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [dualLeadAnchor.path, { ...dualLeadAnchor }],
+            [coralMaterial.path, coralMaterial],
+            [silverMaterial.path, silverMaterial],
+        ]);
+        let coralCaptures = 0;
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => {
+                if (path === coralMaterial.path) {
+                    coralCaptures += 1;
+                    if (coralCaptures === 2) abortController.abort();
+                }
+                return materials.get(path) ?? null;
+            },
+            createModel: () => sourceCompleteTwoLeadModel({
+                terminalSecond: silverInsight,
+                onInput: (input) => modelInputs.push(input),
+            }),
+        });
+        let observedRun: Awaited<ReturnType<typeof runtime.run>> | undefined;
+        const controller = new PageletDeepDiscoverController({
+            runtime: {
+                run: async (request) => {
+                    observedRun = await runtime.run(request);
+                    return observedRun;
+                },
+            },
+            captureSnapshot: async () => dualLeadAnchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const result = await controller.run({
+            path: dualLeadAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+            signal: abortController.signal,
+        });
+
+        expect(result).toMatchObject({
+            status: 'quiet',
+            reason: 'aborted',
+            metrics: { modelTurns: 3, toolCalls: 4 },
+            runtimeCompletion: {
+                loopStatus: 'aborted',
+                finalTextState: 'empty',
+                insightDraftCount: 0,
+            },
+        });
+        expect(modelInputs).toHaveLength(3);
+        expect(observedRun).toBeDefined();
+        expect(observedRun?.loopResult.status).toBe('aborted');
+        expect(observedRun?.finalText).toBe('');
+        expect(observedRun?.insightDrafts).toEqual([]);
+        expect(observedRun?.recovery?.stageValidationSubreason).toBe('aborted');
+        jest.clearAllTimers();
+        jest.useRealTimers();
+    });
+
+    it.each([
+        ['after pending-first and before staging', 2, 3, 3],
+        ['after stage success and before the terminal turn', 3, 4, 4],
+    ] as const)('discards all output when aborted %s', async (
+        _case,
+        abortTurn,
+        expectedModelTurns,
+        expectedToolCalls,
+    ) => {
+        jest.useFakeTimers();
+        const abortController = new AbortController();
+        const modelInputs: PaAgentModelInput[] = [];
+        const { runtime } = createTwoLeadRuntime({
+            terminalSecond: silverInsight,
+            onInput: (input) => {
+                modelInputs.push(input);
+                if (input.turnIndex === abortTurn) abortController.abort();
+            },
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: `pagelet-abort-stage-window-${abortTurn}`,
+            signal: abortController.signal,
+        });
+
+        expect(result.loopResult.status).toBe('aborted');
+        expect(modelInputs).toHaveLength(expectedModelTurns);
+        expect(result.metrics.toolCalls).toBe(expectedToolCalls);
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+        jest.clearAllTimers();
+        jest.useRealTimers();
+    });
+
+    it.each([
+        ['NO_INSIGHT', 1],
+        [silverInsight, 2],
+    ])('keeps one canonical model run for terminal %s and collects %i results', async (
+        terminalText,
+        expectedCount,
+    ) => {
+        const { runtime, createModel } = createTwoLeadRuntime({
+            terminalSecond: terminalText as string,
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+        });
+
+        expect(createModel).toHaveBeenCalledTimes(1);
+        expect(result.finalText).toBe(terminalText);
+        expect(result.insightDrafts).toHaveLength(expectedCount as number);
+        expect(result.insightDrafts?.[0]).toMatchObject({ origin: 'staged' });
+        expect(result.recovery).toMatchObject({
+            enabled: true,
+            stageControlCalled: true,
+            relaxedTokenConsumed: false,
+        });
+    });
+
+    it('keeps stage hidden and rejects an early hallucinated call without executing it', async () => {
+        const host = createHost({ [relatedMaterial.path]: relatedMaterial.content });
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => {
+                if (path === anchor.path) return { ...anchor };
+                return path === relatedMaterial.path ? { ...relatedMaterial } : null;
+            },
+            createModel: () => stagedInsightModel(
+                'NO_INSIGHT',
+                undefined,
+                (input) => modelInputs.push(input),
+            ),
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-early-stage-blocked',
+        });
+
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe('NO_INSIGHT');
+        expect(result.insightDrafts).toEqual([]);
+        expect(result.recovery).toMatchObject({ stageControlCalled: false });
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs.slice(0, 2).every((input) => (
+            input.controlSnapshot?.blockedToolNames?.has('stage_pagelet_insight') === true
+        ))).toBe(true);
+        expect(result.loopResult.turns[1]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: true,
+            content: {
+                metadata: {
+                    outcome: 'policy_rejected',
+                    reason: 'control_snapshot_tool_blocked',
+                    preflightOnly: true,
+                },
+            },
+        });
+        expect(result.loopResult.turns[1]?.timing.executorInvokedToolNames ?? [])
+            .not.toContain('stage_pagelet_insight');
+        expect(result.loopResult.turns[1]?.timing.preflightSkippedToolNames)
+            .toContain('stage_pagelet_insight');
+        expect(result.loopResult.endPayload?.endTiming).toMatchObject({
+            executedToolCallCount: 2,
+        });
+    });
+
+    it('keeps Pagelet relaxed recovery disabled on Windows when the raw flag is on', async () => {
+        const originalIsWin = Platform.isWin;
+        Platform.isWin = true;
+        try {
+            const host = createHost();
+            host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+            const executeRelaxedMemorySearch = jest.fn(async (seed: MemorySearchResult) => seed);
+            const runtime = createPageletAgentRuntime({
+                host,
+                isPathAllowed: () => true,
+                executeMemorySearch: async (input) => ({
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                }),
+                executeRelaxedMemorySearch,
+                captureSourceMaterial: async () => null,
+                createModel: () => ({
+                    stream: async function* () {
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    },
+                }),
+            });
+
+            const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+
+            expect(result.recovery).toMatchObject({
+                enabled: false,
+                relaxedTokenConsumed: false,
+            });
+            expect(executeRelaxedMemorySearch).not.toHaveBeenCalled();
+        } finally {
+            Platform.isWin = originalIsWin;
+        }
+    });
+
+    it('stages first-source A and independently verified lead-source B into two unchanged drafts', async () => {
+        const { runtime } = createTwoLeadRuntime({
+            terminalSecond: silverInsight,
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+        });
+
+        expect(result.insightDrafts).toEqual([
+            expect.objectContaining({
+                origin: 'staged',
+                declaredSourceIds: [dualLeadAnchor.path, coralMaterial.path],
+            }),
+            {
+                body: silverInsight,
+                origin: 'terminal',
+                declaredSourceIds: [],
+            },
+        ]);
+        expect(result.insightDrafts?.[0]?.body).not.toContain(silverMaterial.path);
+        expect(result.recovery).toMatchObject({
+            stageControlCalled: true,
+            relaxedTokenConsumed: false,
+        });
+    });
+
+    it('defers a premature one-result terminal when two exact anchor leads already have distinct current content reads', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const stageSchemaRequired: string[][] = [];
+        const { runtime } = createTwoLeadRuntime({
+            terminalSecond: silverInsight,
+            onInput: (input) => modelInputs.push(input),
+            onStageSchemaRequired: (required) => stageSchemaRequired.push([...required]),
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-source-complete-two-leads',
+        });
+
+        expect(result.metrics).toMatchObject({ modelTurns: 4, toolCalls: 4 });
+        expect(result.insightDrafts).toEqual([
+            expect.objectContaining({
+                body: coralInsight,
+                origin: 'staged',
+                declaredSourceIds: [dualLeadAnchor.path, coralMaterial.path],
+            }),
+            {
+                body: silverInsight,
+                origin: 'terminal',
+                declaredSourceIds: [],
+            },
+        ]);
+        expect(modelInputs[1]?.runtimeInstruction).toContain(
+            'content sources for at least two concrete anchor leads are already observed',
+        );
+        expect(modelInputs[1]?.runtimeInstruction).toContain(
+            'if both independently clear',
+        );
+        expect(modelInputs.slice(0, 2).every((input) => (
+            input.controlSnapshot?.blockedToolNames?.has('stage_pagelet_insight') === true
+        ))).toBe(true);
+        expect(modelInputs[2]?.runtimeInstruction).toContain(
+            'Host accepted and pinned the first',
+        );
+        expect(modelInputs[2]?.runtimeInstruction).toContain(
+            'unresolvedLead only',
+        );
+        expect([...modelInputs[2]!.controlSnapshot!.allowedToolNames!]).toEqual([
+            'stage_pagelet_insight',
+        ]);
+        expect(modelInputs[2]?.controlSnapshot?.blockedToolNames?.has(
+            'stage_pagelet_insight',
+        )).not.toBe(true);
+        expect(stageSchemaRequired).toEqual([['unresolvedLead']]);
+        expect(modelInputs[3]?.controlSnapshot?.blockedToolNames?.has(
+            'stage_pagelet_insight',
+        )).toBe(true);
+        expect(result.recovery).toMatchObject({
+            stageControlCalled: true,
+            relaxedTokenConsumed: false,
+        });
+    });
+
+    it.each([
+        ['an empty follow-up', 'empty-followup', 4, 3, false],
+        ['a lead-validation-rejected stage call', 'validation-rejected-stage', 3, 4, true],
+    ] as const)('preserves the first finding after %s without reopening discovery', async (
+        _case,
+        mode,
+        expectedTurns,
+        expectedToolCalls,
+        stageControlCalled,
+    ) => {
+        const host = createHost({
+            [dualLeadAnchor.path]: dualLeadAnchor.content,
+            [coralMaterial.path]: coralMaterial.content,
+            [silverMaterial.path]: silverMaterial.content,
+        });
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [dualLeadAnchor.path, { ...dualLeadAnchor }],
+            [coralMaterial.path, coralMaterial],
+            [silverMaterial.path, silverMaterial],
+        ]);
+        let leadCaptureCount = 0;
+        const captureRuntimeSourceMaterial = async (path: string) => {
+            const material = materials.get(path) ?? null;
+            if (path !== silverMaterial.path || mode !== 'validation-rejected-stage') {
+                return material;
+            }
+            leadCaptureCount += 1;
+            return leadCaptureCount === 2
+                ? {
+                    ...silverMaterial,
+                    mtime: silverMaterial.mtime + 1,
+                    contentHash: '9'.repeat(64),
+                }
+                : material;
+        };
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: captureRuntimeSourceMaterial,
+            createModel: () => interruptedSourceCompleteTwoLeadModel(mode),
+        });
+        let observedRun: Awaited<ReturnType<typeof runtime.run>> | undefined;
+        const controller = new PageletDeepDiscoverController({
+            runtime: {
+                run: async (request) => {
+                    observedRun = await runtime.run(request);
+                    return observedRun;
+                },
+            },
+            captureSnapshot: async () => dualLeadAnchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const controllerResult = await controller.run({
+            path: dualLeadAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(controllerResult.status).toBe('verified');
+        if (controllerResult.status !== 'verified') {
+            throw new Error('expected the preserved first insight to survive');
+        }
+        expect(controllerResult.insights).toHaveLength(1);
+        expect(controllerResult.insight.body).toBe(coralInsight);
+        expect(observedRun).toBeDefined();
+        const result = observedRun!;
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.metrics).toMatchObject({
+            modelTurns: expectedTurns,
+            toolCalls: expectedToolCalls,
+        });
+        expect(result.finalText).toBe(coralInsight);
+        expect(result.insightDrafts).toEqual([{
+            body: coralInsight,
+            origin: 'terminal',
+            declaredSourceIds: [],
+        }]);
+        expect(result.recovery).toMatchObject({
+            stageControlCalled,
+            relaxedTokenConsumed: false,
+        });
+        if (mode === 'validation-rejected-stage') {
+            expect(result.loopResult.turns[2]?.toolResults[0]).toMatchObject({
+                toolName: 'stage_pagelet_insight',
+                isError: true,
+                content: {
+                    metadata: {
+                        outcome: 'recoverable_error',
+                        unavailableReason: 'pagelet_stage_lead_rejected',
+                    },
+                },
+            });
+            expect(result.loopResult.endPayload).toMatchObject({
+                reason: 'pagelet_stage_lead_rejected',
+            });
+        }
+    });
+
+    it('preserves a stage-rejected pending first for controller revalidation and fails closed when it is stale', async () => {
+        const host = createHost({
+            [dualLeadAnchor.path]: dualLeadAnchor.content,
+            [coralMaterial.path]: coralMaterial.content,
+            [silverMaterial.path]: silverMaterial.content,
+        });
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [dualLeadAnchor.path, { ...dualLeadAnchor }],
+            [coralMaterial.path, coralMaterial],
+            [silverMaterial.path, silverMaterial],
+        ]);
+        let firstCaptureCount = 0;
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => {
+                const material = materials.get(path) ?? null;
+                if (path !== coralMaterial.path) return material;
+                firstCaptureCount += 1;
+                return firstCaptureCount >= 2
+                    ? {
+                        ...coralMaterial,
+                        mtime: coralMaterial.mtime + 1,
+                        contentHash: '8'.repeat(64),
+                    }
+                    : material;
+            },
+            createModel: () => interruptedSourceCompleteTwoLeadModel(
+                'validation-rejected-stage',
+            ),
+        });
+        let observedRun: Awaited<ReturnType<typeof runtime.run>> | undefined;
+        const controller = new PageletDeepDiscoverController({
+            runtime: {
+                run: async (request) => {
+                    observedRun = await runtime.run(request);
+                    return observedRun;
+                },
+            },
+            captureSnapshot: async () => dualLeadAnchor,
+            captureSourceMaterial: async (path) => {
+                if (path === coralMaterial.path) {
+                    return {
+                        ...coralMaterial,
+                        mtime: coralMaterial.mtime + 1,
+                        contentHash: '8'.repeat(64),
+                    };
+                }
+                return materials.get(path) ?? null;
+            },
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const controllerResult = await controller.run({
+            path: dualLeadAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+        expect(controllerResult).toMatchObject({ status: 'quiet', reason: 'stale-source' });
+        expect(observedRun).toBeDefined();
+        const result = observedRun!;
+
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe(coralInsight);
+        expect(result.insightDrafts).toEqual([{
+            body: coralInsight,
+            origin: 'terminal',
+            declaredSourceIds: [],
+        }]);
+        expect(result.loopResult.turns[2]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: true,
+            content: {
+                metadata: {
+                    outcome: 'recoverable_error',
+                    unavailableReason: 'pagelet_stage_first_rejected',
+                },
+            },
+        });
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_stage_first_rejected',
+        });
+        expect(result.recovery).toMatchObject({
+            stageValidationSubreason: 'stale-source',
+        });
+        expect(result.runtimeCompletion.diagnosticTypes).toContain(
+            'pagelet_stage_validation_stale_source',
+        );
+        expect(result.metrics).toMatchObject({ modelTurns: 3, toolCalls: 4 });
+    });
+
+    it('does not let a path-only Provider echo replace the source-supported pending first', async () => {
+        const host = createHost({
+            [dualLeadAnchor.path]: dualLeadAnchor.content,
+            [coralMaterial.path]: coralMaterial.content,
+            [silverMaterial.path]: silverMaterial.content,
+        });
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [dualLeadAnchor.path, { ...dualLeadAnchor }],
+            [coralMaterial.path, coralMaterial],
+            [silverMaterial.path, silverMaterial],
+        ]);
+        const pathOnlyStagedInsight = [
+            '## Archive queue conflict',
+            '`notes/anchor.md` supplies the entry context, while',
+            '`notes/coral.md` shows compression and archive share one serial queue.',
+        ].join('\n');
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'path-only-stage-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'path-only-stage-coral-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: coralMaterial.path },
+                            index: 1,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'path-only-stage-silver-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: silverMaterial.path },
+                            index: 2,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield { type: 'text_delta' as const, text: coralInsight };
+                        return;
+                    }
+                    if (input.turnIndex === 2) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'path-only-stage-call',
+                            name: 'stage_pagelet_insight',
+                            input: {
+                                insightMarkdown: pathOnlyStagedInsight,
+                                sourceIds: [dualLeadAnchor.path, coralMaterial.path],
+                                unresolvedLead: {
+                                    leadKey: 'independent sensor warmup finding',
+                                    supportingSourceIds: [silverMaterial.path],
+                                    requestRelaxedRecovery: false,
+                                },
+                            },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: silverInsight };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-path-only-staged-first',
+        });
+
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.loopResult.turns[2]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: false,
+            content: {
+                metadata: {
+                    outcome: 'success',
+                },
+            },
+        });
+        expect(result.finalText).toBe(silverInsight);
+        expect(result.insightDrafts).toEqual([
+            {
+                body: coralInsight,
+                origin: 'staged',
+                declaredSourceIds: [dualLeadAnchor.path, coralMaterial.path],
+            },
+            {
+                body: silverInsight,
+                origin: 'terminal',
+                declaredSourceIds: [],
+            },
+        ]);
+    });
+
+    it.each([
+        ['unread second source', false, silverInsight, 2],
+        ['rewritten second finding', true, coralInsight, 4],
+        ['no-value second finding', true, shallowSilverInsight, 4],
+    ] as const)('keeps the valid first finding when the %s does not qualify', async (
+        _case,
+        readSecond,
+        terminalSecond,
+        expectedTurns,
+    ) => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const { runtime, materials } = createTwoLeadRuntime({
+            terminalSecond,
+            readSecond,
+            onInput: (input) => modelInputs.push(input),
+        });
+        const controller = new PageletDeepDiscoverController({
+            runtime,
+            captureSnapshot: async () => dualLeadAnchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const result = await controller.run({
+            path: dualLeadAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(result.status).toBe('verified');
+        if (result.status !== 'verified') throw new Error('expected the first insight to survive');
+        expect(result.insights).toHaveLength(1);
+        expect(result.insight.body).toBe(coralInsight);
+        expect(modelInputs).toHaveLength(expectedTurns);
+        if (!readSecond) {
+            expect(modelInputs[1]?.runtimeInstruction).toContain(
+                'Normally finalize one worthwhile',
+            );
+            expect(modelInputs[1]?.runtimeInstruction).not.toContain(
+                'stage the complete first',
+            );
+        }
+    });
+
+    it('keeps the staged first insight when the second repeats an invalid short citation', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const invalidSecond = silverInsight.replace('`notes/silver.md`', '`silver.md`');
+        const { runtime, materials } = createTwoLeadRuntime({
+            terminalSecond: invalidSecond,
+            onInput: (input) => modelInputs.push(input),
+        });
+        const controller = new PageletDeepDiscoverController({
+            runtime,
+            captureSnapshot: async () => dualLeadAnchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const result = await controller.run({
+            path: dualLeadAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(result.status).toBe('verified');
+        if (result.status !== 'verified') throw new Error('expected staged first insight to survive');
+        expect(result.insights).toHaveLength(1);
+        expect(result.insight.body).toBe(coralInsight);
+        expect(modelInputs).toHaveLength(5);
+        expect(modelInputs[4]).toMatchObject({ toolMode: 'final_answer_only' });
+        expect(modelInputs[4]?.runtimeInstruction).toContain('one citation-only corrective turn');
+    });
+
+    it.each([
+        ['stale', 'inspect_obsidian_note'],
+        ['search-only', 'search_memory'],
+    ] as const)('keeps stage unavailable before a Host candidate for a %s disjoint lead', async (mode, leadTool) => {
+        const host = createHost({ [leadMaterial.path]: leadMaterial.content });
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        let leadReads = 0;
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => {
+                if (path === anchor.path) return { ...anchor };
+                if (path === relatedMaterial.path) return { ...relatedMaterial };
+                if (path !== leadMaterial.path) return null;
+                leadReads += 1;
+                return mode === 'stale' && leadReads > 1
+                    ? { ...leadMaterial, contentHash: 'd'.repeat(64) }
+                    : { ...leadMaterial };
+            },
+            createModel: () => disjointLeadModel({
+                terminalText: 'NO_INSIGHT',
+                leadTool,
+            }),
+        });
+
+        const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+
+        expect(result.insightDrafts).toEqual([]);
+        expect(result.recovery).toMatchObject({
+            stageControlCalled: false,
+            relaxedTokenConsumed: false,
+        });
+        expect(result.loopResult.turns[1]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: true,
+            content: {
+                metadata: {
+                    outcome: 'policy_rejected',
+                    reason: 'control_snapshot_tool_blocked',
+                },
+            },
+        });
+        if (mode === 'search-only') {
+            expect(result.sourceTools.get(leadMaterial.path)).toEqual(new Set(['search_memory']));
+        }
+    });
+
+    it('projects the one-terminal-insight stage protocol through runtime and native prompts', async () => {
+        const host = createHost();
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: () => true,
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: (context) => {
+                const stage = context.toolDefinitions.find((definition) => (
+                    String(definition.name) === 'stage_pagelet_insight'
+                ));
+                expect(stage?.description).toContain('terminal response may contain at most one insight');
+                return {
+                    stream: async function* (input: PaAgentModelInput) {
+                        modelInputs.push(input);
+                        yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                    },
+                };
+            },
+        });
+
+        await runtime.run({ anchor, triggerReason: 'explicit' });
+
+        expect(modelInputs[0]?.userInput).toContain('First return the strongest complete candidate');
+        expect(modelInputs[0]?.userInput).toContain('stage-only invitation');
+        expect(modelInputs[0]?.userInput).toContain('submit unresolvedLead only');
+        expect(modelInputs[0]?.runtimeInstruction).toContain(
+            'Do not call stage_pagelet_insight during ordinary discovery',
+        );
+        expect(modelInputs[0]?.runtimeInstruction).toContain(
+            'Only after the Host explicitly continues',
+        );
+        expect(modelInputs[0]?.runtimeInstruction).toContain(
+            'Never submit or rewrite the first insight',
+        );
+        expect(modelInputs[0]?.runtimeInstruction).toContain('requestRelaxedRecovery=false');
+        expect(modelInputs[0]?.runtimeInstruction).toContain('return only the second as terminal Markdown');
+        expect(modelInputs[0]?.runtimeInstruction).toContain('normally finalize instead of broadening');
+        expect(modelInputs[0]?.runtimeInstruction).toContain('concrete independent second lead');
+        expect(modelInputs[0]?.runtimeInstruction).toContain('smallest current non-anchor source set');
+        expect(modelInputs[0]?.runtimeInstruction).not.toContain(
+            'support a worthwhile finding, finalize instead of broadening',
+        );
+
+        const nativePrompt = createDefaultPageletPrompt() as unknown as {
+            promptMessages: Array<{ prompt?: { template?: string } }>;
+        };
+        const systemTemplate = nativePrompt.promptMessages[0]?.prompt?.template ?? '';
+        expect(systemTemplate).toContain('Every terminal response may contain at most one');
+        expect(systemTemplate).toContain('stage_pagelet_insight is unavailable during ordinary discovery');
+        expect(systemTemplate).toContain('Host validates and pins the first candidate');
+        expect(systemTemplate).toContain('submit unresolvedLead only');
+        expect(systemTemplate).toContain('Host owns the first body and source IDs');
+        expect(systemTemplate).toContain('requestRelaxedRecovery=false');
+        expect(systemTemplate).toContain('return only the second as terminal Markdown');
+        expect(systemTemplate).toContain('normally finalize instead of broadening');
+        expect(systemTemplate).toContain('concrete independent second lead');
+        expect(systemTemplate).toContain('smallest current non-anchor source set');
+        expect(systemTemplate).toContain('If both already-read findings may independently clear');
+        expect(systemTemplate).not.toContain(
+            'support a worthwhile finding, finalize instead of broadening',
+        );
+        expect(systemTemplate).toContain('During ordinary tool-enabled exploration');
+        expect(systemTemplate).toContain('one or more distinct unresolved leads');
+        expect(systemTemplate).toContain('smallest relevant linked-note set for each lead');
+        expect(systemTemplate).toContain('checking multiple leads never requires producing multiple insights');
+        expect(systemTemplate).toContain('unresolved exact identifier');
+        expect(systemTemplate).toContain('call search_memory with that exact literal');
+        expect(systemTemplate).toContain('same literal is already verified in a successful non-anchor content-reading observation');
+        expect(systemTemplate).toContain('verify any promising search result with a content-reading tool');
+    });
+
+    it('keeps exact NO_INSIGHT as a zero-result terminal when nothing was staged', async () => {
+        const host = createHost();
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: () => true,
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* () {
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+        expect(result.finalText).toBe('NO_INSIGHT');
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.loopResult.turns).toHaveLength(1);
+        expect(result.insightDrafts).toEqual([]);
+    });
+
+    it('shares one Provider request scope between the Pagelet model and Memory work', async () => {
+        let modelScope: unknown;
+        let memoryScope: unknown;
+        let memoryAttemptSignal: AbortSignal | undefined;
+        let memoryPreparationOwnerSignal: AbortSignal | undefined;
+        const runController = new AbortController();
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: () => true,
+            executeMemorySearch: async (input, _context, control) => {
+                memoryScope = control?.providerRequestScope;
+                memoryAttemptSignal = _context.signal;
+                memoryPreparationOwnerSignal = control?.memoryPreparationOwnerSignal;
+                return {
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                };
+            },
+            captureSourceMaterial: async () => null,
+            createModel: (context) => {
+                modelScope = context.providerRequestScope;
+                return {
+                    stream: async function* (input) {
+                        if (input.turnIndex === 0) {
+                            yield {
+                                type: 'toolcall_delta' as const,
+                                id: 'pagelet-scope-memory-call',
+                                name: 'search_memory',
+                                input: { query: 'launch' },
+                                index: 0,
+                            };
+                            return;
+                        }
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    },
+                };
+            },
+        });
+
+        await runtime.run({ anchor, triggerReason: 'explicit', signal: runController.signal });
+
+        expect(modelScope).toBeDefined();
+        expect(memoryScope).toBe(modelScope);
+        expect(memoryAttemptSignal).toBeDefined();
+        expect(memoryAttemptSignal).not.toBe(runController.signal);
+        expect(memoryPreparationOwnerSignal).toBe(runController.signal);
+    });
+
+    it('propagates the dispatcher outer deadline into the Pagelet Memory attempt', async () => {
+        let clock = 1_000;
+        let observedOuterToolDeadlineAt: number | undefined;
+        let observedAttemptDeadlineAt: number | undefined;
+        let clockAtMemoryAttempt: number | undefined;
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: () => true,
+            now: () => {
+                const current = clock;
+                clock += 100;
+                return current;
+            },
+            executeMemorySearch: async (input, context, control) => {
+                observedOuterToolDeadlineAt = context.outerToolDeadlineAt;
+                observedAttemptDeadlineAt = control?.absoluteDeadlineMs;
+                clockAtMemoryAttempt = clock;
+                return {
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                };
+            },
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'pagelet-deadline-memory-call',
+                            name: 'search_memory',
+                            input: { query: 'launch' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({ anchor, triggerReason: 'explicit' });
+
+        expect(observedOuterToolDeadlineAt).toEqual(expect.any(Number));
+        expect(clockAtMemoryAttempt).toBeGreaterThan(observedOuterToolDeadlineAt! - 30_000);
+        expect(observedAttemptDeadlineAt).toBe(observedOuterToolDeadlineAt! - 750);
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe('NO_INSIGHT');
+    });
+
+    it('lets a buffered provider response outlive the incremental idle window', async () => {
+        jest.useFakeTimers();
+        try {
+            let markStreamStarted!: () => void;
+            const streamStarted = new Promise<void>((resolve) => {
+                markStreamStarted = resolve;
+            });
+            const runtime = createPageletAgentRuntime({
+                host: createHost(),
+                isPathAllowed: () => true,
+                executeMemorySearch: async (input) => ({
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                }),
+                captureSourceMaterial: async () => null,
+                providerResponseDelivery: 'buffered',
+                createModel: () => ({
+                    stream: async function* () {
+                        markStreamStarted();
+                        await new Promise<void>((resolve) => {
+                            setTimeout(resolve, 61_000);
+                        });
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    },
+                }),
+            });
+
+            let settled = false;
+            const pending = runtime.run({ anchor, triggerReason: 'explicit' }).finally(() => {
+                settled = true;
+            });
+            await streamStarted;
+            await jest.advanceTimersByTimeAsync(60_000);
+            expect(settled).toBe(false);
+            await jest.advanceTimersByTimeAsync(1_000);
+
+            const result = await pending;
+            expect(result.finalText).toBe('NO_INSIGHT');
+            expect(result.loopResult.status).toBe('completed');
+            expect(result.loopResult.turns.flatMap((turn) => turn.diagnostics)).not.toContainEqual(
+                expect.objectContaining({ type: 'assistant_idle_timeout' }),
+            );
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('lets one dispatched buffered response finish after softAt without starting another Pagelet turn', async () => {
+        jest.useFakeTimers();
+        try {
+            const diagnostics = new RetrievalDiagnosticsController(
+                () => 0,
+                () => 0,
+                () => 'pagelet-buffered-overrun-session',
+            );
+            const diagnosticsSession = diagnostics.start();
+            const host = createHost();
+            host.createRetrievalDiagnosticRecorder = (surface) => diagnostics.createRecorder(surface);
+            const modelInputs: PaAgentModelInput[] = [];
+            let providerSignal: AbortSignal | undefined;
+            const runtime = createPageletAgentRuntime({
+                host,
+                isPathAllowed: () => true,
+                executeMemorySearch: async (input) => ({
+                    usedMemory: false,
+                    query: input.query,
+                    documents: [],
+                    sources: [],
+                }),
+                captureSourceMaterial: async () => null,
+                providerResponseDelivery: 'buffered',
+                createModel: () => ({
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        providerSignal = input.signal;
+                        input.notifyProviderRequestStarted?.();
+                        await new Promise<void>((resolve) => setTimeout(resolve, 151_000));
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    },
+                }),
+            });
+
+            const pending = runtime.run({ anchor, triggerReason: 'explicit' });
+            await jest.advanceTimersByTimeAsync(150_000);
+            expect(providerSignal?.aborted).toBe(false);
+            expect(modelInputs).toHaveLength(1);
+            await jest.advanceTimersByTimeAsync(1_000);
+            const result = await pending;
+
+            expect(result.finalText).toBe('NO_INSIGHT');
+            expect(result.loopResult.status).toBe('completed_with_warning');
+            expect(result.loopResult.turns).toHaveLength(1);
+            expect(result.loopResult.turns[0]?.diagnostics).toContainEqual(expect.objectContaining({
+                type: 'finalization_reserve_overrun',
+                finalizationReserveMs: 30_000,
+            }));
+            expect(modelInputs).toHaveLength(1);
+            expect(diagnostics.snapshot(diagnosticsSession.sessionId).events
+                .filter((event) => event.phase === 'finalization_reserve'))
+                .toEqual([
+                    expect.objectContaining({
+                        outcome: 'started',
+                        metrics: expect.objectContaining({ configuredReserveMs: 30_000 }),
+                    }),
+                    expect.objectContaining({
+                        outcome: 'deadline',
+                        reason: 'reserve_overrun',
+                        metrics: expect.objectContaining({
+                            configuredReserveMs: 30_000,
+                            remainingMs: 29_000,
+                        }),
+                    }),
+                ]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('uses one tool-enabled corrective turn, then fails closed when exact-lead search is ignored twice', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-ignore-twice',
+        });
+
+        expect(modelInputs).toHaveLength(2);
+        expect(modelInputs[1]).toMatchObject({ turnIndex: 1, toolMode: undefined });
+        expect(modelInputs[1]?.runtimeInstruction).toContain('PGL-KITE-507');
+        expect(modelInputs[1]?.runtimeInstruction).toContain('call search_memory with exactly');
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_exact_lead_protocol_incomplete',
+        });
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+    });
+
+    it('preserves the later typed evidence failure after an earlier exact-lead correction', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    yield {
+                        type: 'text_delta' as const,
+                        text: input.turnIndex === 0
+                            ? 'NO_INSIGHT'
+                            : unsupportedExactLeadTerminal,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-then-terminal-evidence-failure',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[1]?.runtimeInstruction).toContain('call search_memory with exactly');
+        expect(modelInputs[2]?.runtimeInstruction).toContain(
+            'one bounded tool-enabled corrective turn for evidence',
+        );
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_terminal_evidence_protocol_exhausted',
+            diagnostics: [expect.objectContaining({
+                type: 'pagelet_terminal_evidence_protocol_incomplete',
+            })],
+        });
+        expect(result.runtimeCompletion).toMatchObject({
+            endReason: 'pagelet_terminal_evidence_protocol_exhausted',
+            diagnosticTypes: ['pagelet_terminal_evidence_protocol_incomplete'],
+        });
+    });
+
+    it('keeps the third live turn tool-enabled after a duplicate anchor read and requires the exact search', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const executeMemorySearch = jest.fn(async (input: { query: string }) => ({
+            usedMemory: false,
+            query: input.query,
+            documents: [],
+            sources: [],
+            candidates: [],
+            memoryEvidenceState: 'none' as const,
+            rerankVerdict: 'none_relevant' as const,
+            needsMoreEvidence: false,
+        }));
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch,
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex <= 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: `duplicate-anchor-${input.turnIndex}`,
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 2) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'duplicate-anchor-exact-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-duplicate-anchor-recovery',
+        });
+
+        expect(result.loopResult.turns[1]?.toolResults[0]).toMatchObject({
+            toolName: 'get_current_note_context',
+            isError: false,
+            content: {
+                includeInNextPrompt: false,
+                metadata: {
+                    outcome: 'duplicate_skipped',
+                    reason: 'duplicate_tool_call',
+                },
+            },
+        });
+        expect(modelInputs[2]).toMatchObject({ turnIndex: 2, toolMode: undefined });
+        expect(modelInputs[2]?.runtimeInstruction).toContain('one bounded tool-enabled corrective turn');
+        expect(modelInputs[2]?.runtimeInstruction).toContain('PGL-KITE-507');
+        expect(executeMemorySearch).toHaveBeenCalledTimes(1);
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe('NO_INSIGHT');
+    });
+
+    it('fails closed when the model repeats duplicate anchor status after the one exact-search correction', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    yield {
+                        type: 'toolcall_delta' as const,
+                        id: `repeat-duplicate-anchor-${input.turnIndex}`,
+                        name: 'get_current_note_context',
+                        input: { mode: 'full' },
+                        index: 0,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-duplicate-anchor-exhausted',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBeUndefined();
+        expect(result.loopResult.turns[2]?.toolResults[0]?.content.metadata).toMatchObject({
+            outcome: 'duplicate_skipped',
+            reason: 'duplicate_tool_call',
+        });
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_exact_lead_protocol_incomplete',
+        });
+        expect(result.finalText).toBe('');
+    });
+
+    it('keeps the ordinary Pagelet0 duplicate path on its existing finalization behavior', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.toolMode === 'final_answer_only') {
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                        return;
+                    }
+                    yield {
+                        type: 'toolcall_delta' as const,
+                        id: `pagelet0-duplicate-anchor-${input.turnIndex}`,
+                        name: 'get_current_note_context',
+                        input: { mode: 'full' },
+                        index: 0,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet0-duplicate-anchor-existing-finalization',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs.every((input) => (
+            !input.runtimeInstruction?.includes('one citation-only corrective turn')
+        ))).toBe(true);
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe('NO_INSIGHT');
+    });
+
+    it('accepts NO_INSIGHT after an exact-literal Memory search returns zero candidates', async () => {
+        const executeMemorySearch = jest.fn(async (input: { query: string }) => ({
+            usedMemory: false,
+            query: input.query,
+            documents: [],
+            sources: [],
+            candidates: [],
+            memoryEvidenceState: 'none' as const,
+            rerankVerdict: 'none_relevant' as const,
+            needsMoreEvidence: false,
+        }));
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch,
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    if (input.turnIndex === 0) {
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-zero-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: 'No useful finding survived verification.\nNO_INSIGHT',
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-zero-result',
+        });
+
+        expect(executeMemorySearch).toHaveBeenCalledTimes(1);
+        expect(executeMemorySearch.mock.calls[0]?.[0]).toEqual(
+            expect.objectContaining({ query: 'PGL-KITE-507' }),
+        );
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.loopResult.committedFinalText).toBe('NO_INSIGHT');
+        expect(result.finalText).toBe('NO_INSIGHT');
+    });
+
+    it('fails closed when an exact search returns a candidate but the corrective content-read is ignored', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-candidate-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-candidate-unread',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.runtimeInstruction).toContain('tool-enabled corrective turn');
+        expect(modelInputs[2]?.runtimeInstruction).toContain('non-anchor content source');
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+    });
+
+    it('corrects an unsupported non-empty terminal once and accepts it after a later same-path content read', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'non-empty-terminal-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'non-empty-terminal-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 2) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'non-empty-terminal-candidate-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: leadMaterial.path },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: input.turnIndex === 3
+                            ? supportedExactLeadTerminal
+                            : unsupportedExactLeadTerminal,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-non-empty-corrected',
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs[2]).toMatchObject({ turnIndex: 2, toolMode: undefined });
+        expect(modelInputs[2]?.runtimeInstruction).toContain('one bounded tool-enabled corrective turn');
+        expect(modelInputs[2]?.runtimeInstruction).toContain(leadMaterial.path);
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe(supportedExactLeadTerminal);
+    });
+
+    it.each(['anchor', 'non-anchor'] as const)(
+        'corrects a path-only %s citation before the controller quality gate',
+        async (missingSource) => {
+        const semanticAnchorContent = '# Frozen symptom\nazure umbrella stalls at dawn';
+        const semanticAnchor: PageletAnchorSnapshot = {
+            ...anchor,
+            content: semanticAnchorContent,
+            size: semanticAnchorContent.length,
+            contentHash: '7'.repeat(64),
+        };
+        const semanticSourceContent = [
+            '# Template diagnosis',
+            'inherited disabled template skip flag causes the validation gap',
+        ].join('\n');
+        const semanticSource: PageletAgentSourceMaterial = {
+            path: 'notes/semantic-source.md',
+            content: semanticSourceContent,
+            mtime: 31,
+            size: semanticSourceContent.length,
+            contentHash: '8'.repeat(64),
+            capturedAt: 301,
+        };
+        const pathOnlyAnchorTerminal = [
+            '## Disabled template risk',
+            '`notes/anchor.md` supplies the entry context, while',
+            '`notes/semantic-source.md` says an inherited disabled template skip flag causes the validation gap.',
+        ].join('\n');
+        const pathOnlyNonAnchorTerminal = [
+            '## Disabled template risk',
+            '`notes/anchor.md` records that the azure umbrella stalls at dawn, while',
+            '`notes/semantic-source.md` supplies the supporting context.',
+        ].join('\n');
+        const initialTerminal = missingSource === 'anchor'
+            ? pathOnlyAnchorTerminal
+            : pathOnlyNonAnchorTerminal;
+        const correctedTerminal = [
+            '## Disabled template risk',
+            '`notes/anchor.md` records that the azure umbrella stalls at dawn, while',
+            '`notes/semantic-source.md` says an inherited disabled template skip flag causes the validation gap.',
+        ].join('\n');
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [semanticAnchor.path, { ...semanticAnchor }],
+            [semanticSource.path, semanticSource],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost({
+                [semanticAnchor.path]: semanticAnchor.content,
+                [semanticSource.path]: semanticSource.content,
+            }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'semantic-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'semantic-source-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: semanticSource.path },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: input.turnIndex === 1
+                            ? initialTerminal
+                            : correctedTerminal,
+                    };
+                },
+            }),
+        });
+        let observedRun: Awaited<ReturnType<typeof runtime.run>> | undefined;
+        const controller = new PageletDeepDiscoverController({
+            runtime: {
+                run: async (request) => {
+                    observedRun = await runtime.run(request);
+                    return observedRun;
+                },
+            },
+            captureSnapshot: async () => semanticAnchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 3_000,
+        });
+
+        const result = await controller.run({
+            path: semanticAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[2]?.runtimeInstruction).toContain(
+            missingSource === 'anchor'
+                ? 'frozen-anchor citation is path-only'
+                : 'non-anchor citation is path-only',
+        );
+        expect(modelInputs[2]?.runtimeInstruction).toContain(
+            'one short source-specific fact or phrase',
+        );
+        expect(observedRun?.loopResult.status).toBe('completed');
+        expect(observedRun?.finalText).toBe(correctedTerminal);
+        expect(result.status).toBe('verified');
+        if (result.status !== 'verified') throw new Error('expected corrected insight');
+        expect(result.insight.body).toBe(correctedTerminal);
+        },
+    );
+
+    it('repairs the real single-insight fixture shape after exact-lead finalization', async () => {
+        const fixtureAnchor: PageletAnchorSnapshot = {
+            ...exactLeadAnchor,
+            path: 'retrieval-smoke/pagelet/51-one-insight.md',
+        };
+        const fixtureSourceContent = [
+            '# 纸鹤队列演练复盘',
+            '',
+            '`PGL-KITE-507` 纸鹤队列在雨天演练中跳过校验，是因为演练排程继承了已停用模板里的',
+            '`skip-validation` 标记。改为从当前模板建立排程后，校验会正常执行。',
+        ].join('\n');
+        const fixtureSource: PageletAgentSourceMaterial = {
+            path: 'retrieval-smoke/pagelet/53-single-source.md',
+            content: fixtureSourceContent,
+            mtime: 41,
+            size: fixtureSourceContent.length,
+            contentHash: '9'.repeat(64),
+            capturedAt: 401,
+        };
+        const pathOnlyAnchorTerminal = [
+            '## 继承标记根因',
+            '`retrieval-smoke/pagelet/51-one-insight.md` supplies the entry context, while',
+            '`retrieval-smoke/pagelet/53-single-source.md` shows 已停用模板里的 `skip-validation` 标记被排程继承。',
+        ].join('\n');
+        const correctedTerminal = [
+            '## 继承标记根因',
+            '`retrieval-smoke/pagelet/51-one-insight.md` 将 PGL-KITE-507 纸鹤队列的症状标为唯一待查问题；',
+            '`retrieval-smoke/pagelet/53-single-source.md` 说明演练排程继承了已停用模板里的 `skip-validation` 标记。',
+        ].join('\n');
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [fixtureAnchor.path, { ...fixtureAnchor }],
+            [fixtureSource.path, fixtureSource],
+        ]);
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({
+                [fixtureAnchor.path]: fixtureAnchor.content,
+                [fixtureSource.path]: fixtureSource.content,
+            }),
+            isPathAllowed: (path) => path.startsWith('retrieval-smoke/pagelet/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: true,
+                query: input.query,
+                documents: [{
+                    content: fixtureSource.content,
+                    score: 0.9,
+                    source: { path: fixtureSource.path, chunkIndex: 0, score: 0.9 },
+                }],
+                sources: [{ path: fixtureSource.path, chunkIndex: 0, score: 0.9 }],
+                candidates: [],
+                hasAnswerableContent: true,
+                memoryEvidenceState: 'evidence',
+                rerankVerdict: 'relevant',
+                needsMoreEvidence: false,
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'fixture-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'fixture-exact-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'fixture-source-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: fixtureSource.path },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: input.turnIndex === 2
+                            ? pathOnlyAnchorTerminal
+                            : correctedTerminal,
+                    };
+                },
+            }),
+        });
+        let observedRun: Awaited<ReturnType<typeof runtime.run>> | undefined;
+        const controller = new PageletDeepDiscoverController({
+            runtime: {
+                run: async (request) => {
+                    observedRun = await runtime.run(request);
+                    return observedRun;
+                },
+            },
+            captureSnapshot: async () => fixtureAnchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('retrieval-smoke/pagelet/'),
+            now: () => 4_000,
+        });
+
+        const result = await controller.run({
+            path: fixtureAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[3]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[3]?.runtimeInstruction).toContain(
+            'frozen-anchor citation is path-only',
+        );
+        expect(observedRun?.loopResult.status).toBe('completed');
+        expect(observedRun?.finalText).toBe(correctedTerminal);
+        expect(result.status).toBe('verified');
+        if (result.status !== 'verified') throw new Error('expected verified fixture insight');
+        expect(result.insight.sourceRefs.map((source) => source.path)).toEqual([
+            fixtureAnchor.path,
+            fixtureSource.path,
+        ]);
+    });
+
+    it('fails closed when the one anchor correction changes into a non-anchor path-only citation', async () => {
+        const semanticAnchorContent = '# Frozen symptom\nazure umbrella stalls at dawn';
+        const semanticAnchor: PageletAnchorSnapshot = {
+            ...anchor,
+            content: semanticAnchorContent,
+            size: semanticAnchorContent.length,
+            contentHash: '7'.repeat(64),
+        };
+        const semanticSourceContent = [
+            '# Template diagnosis',
+            'inherited disabled template skip flag causes the validation gap',
+        ].join('\n');
+        const semanticSource: PageletAgentSourceMaterial = {
+            path: 'notes/semantic-source.md',
+            content: semanticSourceContent,
+            mtime: 31,
+            size: semanticSourceContent.length,
+            contentHash: '8'.repeat(64),
+            capturedAt: 301,
+        };
+        const pathOnlyAnchorTerminal = [
+            '## Disabled template risk',
+            '`notes/anchor.md` supplies the entry context, while',
+            '`notes/semantic-source.md` says an inherited disabled template skip flag causes the validation gap.',
+        ].join('\n');
+        const pathOnlyNonAnchorTerminal = [
+            '## Disabled template risk',
+            '`notes/anchor.md` records that the azure umbrella stalls at dawn, while',
+            '`notes/semantic-source.md` supplies the supporting context.',
+        ].join('\n');
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [semanticAnchor.path, { ...semanticAnchor }],
+            [semanticSource.path, semanticSource],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost({
+                [semanticAnchor.path]: semanticAnchor.content,
+                [semanticSource.path]: semanticSource.content,
+            }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'repeated-semantic-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'repeated-semantic-source-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: semanticSource.path },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: input.turnIndex === 1
+                            ? pathOnlyAnchorTerminal
+                            : pathOnlyNonAnchorTerminal,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: semanticAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-repeated-terminal-source-support',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_terminal_source_support_exhausted',
+            diagnostics: expect.arrayContaining([
+                expect.objectContaining({
+                    type: 'pagelet_terminal_non_anchor_overlap_missing_incomplete',
+                }),
+            ]),
+        });
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+        expect(result.runtimeCompletion.diagnosticTypes).toContain(
+            'pagelet_terminal_non_anchor_overlap_missing_incomplete',
+        );
+    });
+
+    it('fails closed when the unsupported non-empty terminal is repeated after its one correction', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'repeated-non-empty-terminal-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: unsupportedExactLeadTerminal,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-non-empty-repeated',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.runtimeInstruction).toContain('one bounded tool-enabled corrective turn');
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_terminal_evidence_protocol_exhausted',
+        });
+        expect(result.finalText).toBe('');
+    });
+
+    it('does not open a second evidence correction when the first is answered with NO_INSIGHT', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'no-insight-after-evidence-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: input.turnIndex === 1
+                            ? unsupportedExactLeadTerminal
+                            : 'NO_INSIGHT',
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-evidence-correction-no-insight',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBeUndefined();
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_terminal_evidence_protocol_exhausted',
+        });
+        expect(result.finalText).toBe('');
+    });
+
+    it('does not treat a search-only full-path citation as content-read evidence', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const searchOnlyTerminal = [
+            '## Rollback checkpoint risk',
+            '`notes/anchor.md` requires validation before release, while',
+            '`notes/rollback-lead.md` records a missing rollback checkpoint that makes the release path unsafe.',
+        ].join('\n');
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'search-only-citation-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: searchOnlyTerminal };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-search-only-citation',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBeUndefined();
+        expect(modelInputs[2]?.runtimeInstruction).toContain('content-read evidence');
+        expect(modelInputs[2]?.runtimeInstruction).not.toContain('citation-only corrective turn');
+        expect(result.sourceTools.get(leadMaterial.path)).toEqual(new Set(['search_memory']));
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+    });
+
+    it('does not reopen tools for an unsupported non-empty terminal in final-answer-only mode', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex <= 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: `final-only-non-empty-search-${input.turnIndex}`,
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: unsupportedExactLeadTerminal,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-non-empty-final-only',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(result.loopResult.turns[1]?.toolResults[0]?.content.metadata).toMatchObject({
+            outcome: 'duplicate_skipped',
+            reason: 'duplicate_tool_call',
+        });
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_terminal_evidence_protocol_exhausted',
+        });
+        expect(result.finalText).toBe('');
+    });
+
+    it('requires a current anchor read before accepting a terminal with non-anchor content evidence', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [anchor.path, { ...anchor }],
+            [relatedMaterial.path, relatedMaterial],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'compatible-non-empty-terminal-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: relatedMaterial.path },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 2) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'compatible-non-empty-terminal-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: compatibleNonAnchorTerminal,
+                    };
+                },
+            }),
+        });
+        let observedRun: Awaited<ReturnType<typeof runtime.run>> | undefined;
+        const controller = new PageletDeepDiscoverController({
+            runtime: {
+                run: async (request) => {
+                    observedRun = await runtime.run(request);
+                    return observedRun;
+                },
+            },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const result = await controller.run({
+            path: anchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs[2]?.toolMode).toBeUndefined();
+        expect(modelInputs[2]?.runtimeInstruction).toContain(
+            'Call get_current_note_context once',
+        );
+        expect(result.status).toBe('verified');
+        if (result.status !== 'verified') throw new Error('expected corrected result');
+        expect(result.insight.body).toBe(compatibleNonAnchorTerminal);
+        expect(result.insight.sourceRefs.map((source) => source.path)).toEqual([
+            anchor.path,
+            relatedMaterial.path,
+        ]);
+        expect(observedRun?.loopResult.status).toBe('completed');
+        expect(observedRun?.sourceTools.get(anchor.path)).toContain('get_current_note_context');
+        expect(observedRun?.sourceTools.get(relatedMaterial.path)).toContain('inspect_obsidian_note');
+    });
+
+    it.each(['same-turn', 'unrelated-path'] as const)(
+        'does not satisfy exact-candidate verification with a %s content read',
+        async (mode) => {
+            const runtime = createPageletAgentRuntime({
+                host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+                isPathAllowed: (path) => path.startsWith('notes/'),
+                executeMemorySearch: async (input) => leadMemoryResult(input.query),
+                revalidateMemorySearch: async (result) => result,
+                captureSourceMaterial: async (path) => {
+                    if (path === leadMaterial.path) return { ...leadMaterial };
+                    return path === relatedMaterial.path ? { ...relatedMaterial } : null;
+                },
+                createModel: () => ({
+                    stream: async function* (input: PaAgentModelInput) {
+                        if (input.turnIndex === 0) {
+                            yield {
+                                type: 'toolcall_delta' as const,
+                                id: `exact-${mode}-search`,
+                                name: 'search_memory',
+                                input: { query: 'PGL-KITE-507' },
+                                index: 0,
+                            };
+                            if (mode === 'same-turn') {
+                                yield {
+                                    type: 'toolcall_delta' as const,
+                                    id: 'exact-same-turn-read',
+                                    name: 'inspect_obsidian_note',
+                                    input: { path: leadMaterial.path },
+                                    index: 1,
+                                };
+                            }
+                            return;
+                        }
+                        if (mode === 'unrelated-path' && input.turnIndex === 1) {
+                            yield {
+                                type: 'toolcall_delta' as const,
+                                id: 'exact-unrelated-read',
+                                name: 'inspect_obsidian_note',
+                                input: { path: relatedMaterial.path },
+                                index: 0,
+                            };
+                            return;
+                        }
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                    },
+                }),
+            });
+
+            const result = await runtime.run({
+                anchor: exactLeadAnchor,
+                triggerReason: 'explicit',
+                runId: `pagelet-exact-lead-${mode}`,
+            });
+
+            expect(result.loopResult.status).toBe('incomplete');
+            expect(result.finalText).toBe('');
+        },
+    );
+
+    it('fails closed when candidate metadata has no verifiable source path', async () => {
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+                candidates: [{
+                    candidateId: 'hidden-candidate',
+                    path: leadMaterial.path,
+                    score: 0.7,
+                    documents: [],
+                    excerpt: 'host-only candidate',
+                }],
+                hasAnswerableContent: false,
+                memoryEvidenceState: 'none',
+                rerankVerdict: 'none_relevant',
+                needsMoreEvidence: false,
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-hidden-candidate-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-hidden-candidate',
+        });
+
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe('');
+    });
+
+    it('allows quiet when the exact search only returns the immutable anchor itself', async () => {
+        const currentAnchor = {
+            ...exactLeadAnchor,
+            contentHash: await hashPageletContent(exactLeadAnchor.content),
+        };
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [currentAnchor.path]: currentAnchor.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: true,
+                query: input.query,
+                documents: [{
+                    content: currentAnchor.content,
+                    score: 0.9,
+                    source: { path: currentAnchor.path, chunkIndex: 0, score: 0.9 },
+                }],
+                sources: [{ path: currentAnchor.path, chunkIndex: 0, score: 0.9 }],
+                candidates: [],
+                hasAnswerableContent: true,
+                memoryEvidenceState: 'evidence',
+                rerankVerdict: 'relevant',
+                needsMoreEvidence: false,
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-anchor-only-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: currentAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-anchor-only',
+        });
+
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe('NO_INSIGHT');
+    });
+
+    it('accepts NO_INSIGHT after an exact candidate is verified by a non-anchor content read', async () => {
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-candidate-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-candidate-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: leadMaterial.path },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-candidate-read',
+        });
+
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe('NO_INSIGHT');
+        expect(result.sourceTools.get(leadMaterial.path)).toEqual(new Set([
+            'search_memory',
+            'inspect_obsidian_note',
+        ]));
+    });
+
+    it('forces finalization after one exact lead has complete anchor and non-anchor evidence', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const executeMemorySearch = jest.fn(async (input: { query: string }) => (
+            leadMemoryResult(input.query)
+        ));
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch,
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.toolMode === 'final_answer_only') {
+                        yield {
+                            type: 'text_delta' as const,
+                            text: supportedExactLeadTerminal,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'single-lead-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'single-lead-exact-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'single-lead-candidate-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: leadMaterial.path },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'toolcall_delta' as const,
+                        id: 'single-lead-redundant-search',
+                        name: 'search_memory',
+                        input: { query: 'PGL-KITE-507' },
+                        index: 0,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-evidence-complete-finalization',
+        });
+
+        expect(modelInputs).toHaveLength(3);
+        expect(modelInputs[2]).toMatchObject({
+            turnIndex: 2,
+            toolMode: 'final_answer_only',
+        });
+        expect(modelInputs[2]?.runtimeInstruction).toContain(
+            'do not open another tool branch.',
+        );
+        expect(executeMemorySearch).toHaveBeenCalledTimes(1);
+        expect(result.loopResult.status).toBe('completed');
+        expect(result.finalText).toBe(supportedExactLeadTerminal);
+    });
+
+    it('corrects a forced-finalization finding that omits the frozen anchor before controller admission', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [exactLeadAnchor.path, { ...exactLeadAnchor }],
+            [leadMaterial.path, leadMaterial],
+        ]);
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'coverage-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'coverage-exact-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'coverage-candidate-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: leadMaterial.path },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield {
+                        type: 'text_delta' as const,
+                        text: input.turnIndex === 2
+                            ? missingAnchorExactLeadTerminal
+                            : supportedExactLeadTerminal,
+                    };
+                },
+            }),
+        });
+        const controller = new PageletDeepDiscoverController({
+            runtime,
+            captureSnapshot: async () => exactLeadAnchor,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            getPolicyIdentity: () => pageletPolicyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            now: () => 2_000,
+        });
+
+        const result = await controller.run({
+            path: exactLeadAnchor.path,
+            triggerReason: 'explicit',
+            force: true,
+        });
+
+        expect(result.status).toBe('verified');
+        if (result.status !== 'verified') throw new Error('expected corrected result');
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[3]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[3]?.runtimeInstruction).toContain(
+            'did not cite both the frozen anchor and a successful non-anchor content source',
+        );
+        expect(result.insight.body).toBe(supportedExactLeadTerminal);
+        expect(result.insight.sourceRefs.map((source) => source.path)).toEqual([
+            exactLeadAnchor.path,
+            leadMaterial.path,
+        ]);
+        expect(result.runtimeCompletion).toMatchObject({
+            loopStatus: 'completed',
+            endReason: 'final_text_ready',
+            finalTextState: 'candidate',
+            citationCoverage: 'complete',
+            turnCount: 4,
+            insightDraftCount: 1,
+            emptyFinalAnswerRetryCount: 0,
+        });
+    });
+
+    it('retries one empty final-answer-only response without reopening tools', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'empty-retry-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'empty-retry-exact-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'empty-retry-candidate-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: leadMaterial.path },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 2) return;
+                    yield { type: 'text_delta' as const, text: supportedExactLeadTerminal };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-empty-final-answer-retry',
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs[2]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[3]?.toolMode).toBe('final_answer_only');
+        expect(modelInputs[3]?.runtimeInstruction).toContain('one bounded empty-response retry');
+        expect(result.loopResult.turns[2]).toMatchObject({
+            status: 'incomplete',
+            toolCalls: [],
+            toolResults: [],
+            diagnostics: [expect.objectContaining({ type: 'assistant_empty_response' })],
+        });
+        expect(result.loopResult.turns[3]).toMatchObject({
+            status: 'completed',
+            toolCalls: [],
+            toolResults: [],
+        });
+        expect(result.finalText).toBe(supportedExactLeadTerminal);
+        expect(result.runtimeCompletion).toMatchObject({
+            loopStatus: 'completed',
+            endReason: 'final_text_ready',
+            diagnosticTypes: ['assistant_empty_response'],
+            finalTextState: 'candidate',
+            citationCoverage: 'complete',
+            turnCount: 4,
+            toolCallCount: 3,
+            insightDraftCount: 1,
+            emptyFinalAnswerRetryCount: 1,
+        });
+    });
+
+    it('fails closed with a specific reason after the bounded empty final-answer retry is also empty', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host: createHost({ [leadMaterial.path]: leadMaterial.content }),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => leadMemoryResult(input.query),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => (
+                path === leadMaterial.path ? { ...leadMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'double-empty-anchor-read',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        };
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'double-empty-exact-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 1,
+                        };
+                        return;
+                    }
+                    if (input.turnIndex === 1) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'double-empty-candidate-read',
+                            name: 'inspect_obsidian_note',
+                            input: { path: leadMaterial.path },
+                            index: 0,
+                        };
+                    }
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-double-empty-final-answer',
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs.slice(2).every((input) => input.toolMode === 'final_answer_only')).toBe(true);
+        expect(result.loopResult.turns.slice(2).every((turn) => (
+            turn.toolCalls.length === 0 && turn.toolResults.length === 0
+        ))).toBe(true);
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: 'pagelet_empty_finalization_exhausted',
+            diagnostics: [expect.objectContaining({
+                type: 'pagelet_empty_finalization_incomplete',
+            })],
+        });
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+        expect(result.runtimeCompletion).toMatchObject({
+            loopStatus: 'incomplete',
+            endReason: 'pagelet_empty_finalization_exhausted',
+            diagnosticTypes: [
+                'assistant_empty_response',
+                'pagelet_empty_finalization_incomplete',
+            ],
+            finalTextState: 'empty',
+            citationCoverage: 'not-applicable',
+            turnCount: 4,
+            toolCallCount: 3,
+            insightDraftCount: 0,
+            emptyFinalAnswerRetryCount: 1,
+        });
+    });
+
+    it('does not count a successful exact search after currentness revalidation revokes it', async () => {
+        const revalidateMemorySearch = jest.fn(async (result: MemorySearchResult): Promise<MemorySearchResult> => ({
+            ...result,
+            usedMemory: false,
+            documents: [],
+            sources: [],
+            candidates: [],
+            hasAnswerableContent: false,
+            memoryEvidenceState: 'unavailable',
+            rerankVerdict: 'relevant',
+            needsMoreEvidence: false,
+        }));
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+                candidates: [],
+                memoryEvidenceState: 'none',
+                rerankVerdict: 'none_relevant',
+                needsMoreEvidence: false,
+            }),
+            revalidateMemorySearch,
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-revoked-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-revoked-search',
+        });
+
+        expect(revalidateMemorySearch).toHaveBeenCalled();
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe('');
+    });
+
+    it('does not count a successful exact search whose result state is unavailable', async () => {
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+                candidates: [],
+                hasAnswerableContent: false,
+                memoryEvidenceState: 'unavailable',
+                rerankVerdict: 'relevant',
+                needsMoreEvidence: false,
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: 'exact-unavailable-search',
+                            name: 'search_memory',
+                            input: { query: 'PGL-KITE-507' },
+                            index: 0,
+                        };
+                        return;
+                    }
+                    yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-unavailable-search',
+        });
+
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe('');
+    });
+
+    it('does not let an early direct stage bypass the exact-lead protocol', async () => {
+        const host = createHost();
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => {
+                if (path === stagedExactLeadAnchor.path) return { ...stagedExactLeadAnchor };
+                return path === relatedMaterial.path ? { ...relatedMaterial } : null;
+            },
+            createModel: () => stagedInsightModel('NO_INSIGHT'),
+        });
+
+        const result = await runtime.run({
+            anchor: stagedExactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-preserve-staged',
+        });
+
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe('');
+        expect(result.insightDrafts).toEqual([]);
+        expect(result.recovery).toMatchObject({ stageControlCalled: false });
+        expect(result.loopResult.turns[1]?.toolResults[0]).toMatchObject({
+            toolName: 'stage_pagelet_insight',
+            isError: true,
+            content: {
+                metadata: {
+                    outcome: 'policy_rejected',
+                    reason: 'control_snapshot_tool_blocked',
+                },
+            },
+        });
+    });
+
+    it('fails closed without reopening tools when the exact-lead violation occurs in final-answer-only mode', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const executeMemorySearch = jest.fn(async (input: { query: string }) => ({
+            usedMemory: false,
+            query: input.query,
+            documents: [],
+            sources: [],
+        }));
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch,
+            captureSourceMaterial: async (path) => (
+                path === relatedMaterial.path ? { ...relatedMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.toolMode === 'final_answer_only') {
+                        yield { type: 'text_delta' as const, text: 'NO_INSIGHT' };
+                        return;
+                    }
+                    yield {
+                        type: 'toolcall_delta' as const,
+                        id: `recent-${input.turnIndex}`,
+                        name: 'list_recent_notes',
+                        input: {
+                            limit: input.turnIndex + 1,
+                            order: input.turnIndex % 2 === 0 ? 'modified' : 'created',
+                        },
+                        index: 0,
+                    };
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: exactLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-exact-lead-final-only',
+        });
+
+        expect(modelInputs).toHaveLength(4);
+        expect(modelInputs[3]?.toolMode).toBe('final_answer_only');
+        expect(executeMemorySearch).not.toHaveBeenCalled();
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.finalText).toBe('');
+    });
+
+    it('revalidates Memory before Pagelet model requests and removes revoked provenance', async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const staleMemory: MemorySearchResult = {
+            usedMemory: true,
+            query: 'release',
+            documents: [{
+                content: 'STALE MEMORY EVIDENCE',
+                score: 0.9,
+                source: { path: relatedMaterial.path, chunkIndex: 0, score: 0.9 },
+            }],
+            sources: [{ path: relatedMaterial.path, chunkIndex: 0, score: 0.9 }],
+            candidates: [],
+            hasAnswerableContent: true,
+            memoryEvidenceState: 'evidence',
+            rerankVerdict: 'relevant',
+            needsMoreEvidence: false,
+        };
+        const revalidateMemorySearch = jest.fn(async (result: MemorySearchResult): Promise<MemorySearchResult> => ({
+            ...result,
+            usedMemory: false,
+            documents: [],
+            sources: [],
+            candidates: [],
+            hasAnswerableContent: false,
+            memoryEvidenceState: 'unavailable',
+            rerankVerdict: 'relevant',
+            needsMoreEvidence: false,
+            retrievalGuidance: 'Memory evidence is currently unavailable.',
+        }));
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async () => staleMemory,
+            revalidateMemorySearch,
+            captureSourceMaterial: async (path) => (
+                path === relatedMaterial.path ? { ...relatedMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: 'toolcall_delta',
+                            id: 'gate-anchor',
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: 0,
+                        } as const;
+                        yield {
+                            type: 'toolcall_delta',
+                            id: 'gate-memory',
+                            name: 'search_memory',
+                            input: { query: 'release' },
+                            index: 1,
+                        } as const;
+                        return;
+                    }
+                    yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-memory-request-gate',
+        });
+
+        const gatedMemory = modelInputs[1]?.transcript.find((message) => (
+            message.role === 'toolResult' && message.toolName === 'search_memory'
+        ));
+        expect(revalidateMemorySearch).toHaveBeenCalled();
+        expect(gatedMemory).toMatchObject({
+            role: 'toolResult',
+            content: { sourceRecords: [] },
+        });
+        expect((gatedMemory as Extract<PaAgentMessage, { role: 'toolResult' }>).content.promptText)
+            .not.toContain('STALE MEMORY EVIDENCE');
+        expect(result.toolProvenance.find((entry) => entry.toolName === 'search_memory')).toMatchObject({
+            sourceRecords: [],
+        });
+        expect(result.toolProvenance.find((entry) => entry.toolName === 'search_memory')?.promptText)
+            .not.toContain('STALE MEMORY EVIDENCE');
+        expect(result.sourceTools.has(relatedMaterial.path)).toBe(false);
+        expect(result.sourceSnapshots.map((source) => source.path)).not.toContain(relatedMaterial.path);
     });
 
     it('reserves the last available turn for a source-grounded final answer', async () => {
@@ -347,6 +4574,167 @@ describe('Pagelet agent runtime', () => {
         expect(modelInputs[11]?.runtimeInstruction).toContain(
             'never mention an unverified .md path',
         );
+    });
+
+    it('records the Loop-reserved Pagelet finalization boundary', async () => {
+        const diagnostics = new RetrievalDiagnosticsController(
+            () => 0,
+            () => 0,
+            () => 'pagelet-final-reserve-session',
+        );
+        const diagnosticsSession = diagnostics.start();
+        const host = createHost();
+        host.createRetrievalDiagnosticRecorder = (surface) => diagnostics.createRecorder(surface);
+        let nowCalls = 0;
+        const modelInputs: PaAgentModelInput[] = [];
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async () => null,
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
+                },
+            }),
+            now: () => nowCalls++ < 2 ? 0 : 150_001,
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-soft-deadline-reserve-test',
+        });
+
+        expect(result.loopResult.status).toBe('completed');
+        expect(modelInputs).toHaveLength(1);
+        expect(modelInputs[0]?.toolMode).toBe('final_answer_only');
+        expect(diagnostics.snapshot(diagnosticsSession.sessionId).events
+            .filter((event) => event.phase === 'finalization_reserve')
+            .map((event) => ({
+                surface: event.surface,
+                outcome: event.outcome,
+                configuredReserveMs: event.metrics.configuredReserveMs,
+            })))
+            .toEqual([
+                { surface: 'pagelet', outcome: 'started', configuredReserveMs: 30_000 },
+                { surface: 'pagelet', outcome: 'completed', configuredReserveMs: 30_000 },
+            ]);
+    });
+
+    it.each([
+        {
+            label: 'missing anchor evidence',
+            firstTurnTools: ['inspect'] as const,
+            terminalText: groundedCitationInsight,
+            expectedReason: 'pagelet_terminal_evidence_protocol_exhausted',
+            expectedDiagnostic: 'pagelet_terminal_evidence_protocol_incomplete',
+        },
+        {
+            label: 'missing non-anchor evidence',
+            firstTurnTools: ['anchor'] as const,
+            terminalText: groundedCitationInsight,
+            expectedReason: 'pagelet_terminal_evidence_protocol_exhausted',
+            expectedDiagnostic: 'pagelet_terminal_evidence_protocol_incomplete',
+        },
+        {
+            label: 'missing citation coverage',
+            firstTurnTools: ['anchor', 'inspect'] as const,
+            terminalText: [
+                '## Release validation conflict',
+                '`notes/related.md` says release directly creates risk, so the current plan needs review.',
+            ].join('\n'),
+            expectedReason: 'pagelet_citation_protocol_exhausted',
+            expectedDiagnostic: 'pagelet_citation_protocol_incomplete',
+        },
+    ])('classifies a Loop-reserved final with $label without misreporting exact-lead failure', async ({
+        firstTurnTools,
+        terminalText,
+        expectedReason,
+        expectedDiagnostic,
+    }) => {
+        let clock = 0;
+        const modelInputs: PaAgentModelInput[] = [];
+        const toolSet = new Set<string>(firstTurnTools);
+        const runtime = createPageletAgentRuntime({
+            host: createHost(),
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            captureSourceMaterial: async (path) => (
+                path === relatedMaterial.path ? { ...relatedMaterial } : null
+            ),
+            createModel: () => ({
+                stream: async function* (input: PaAgentModelInput) {
+                    modelInputs.push(input);
+                    if (input.toolMode === 'final_answer_only') {
+                        yield { type: 'text_delta' as const, text: terminalText };
+                        return;
+                    }
+                    let index = 0;
+                    if (toolSet.has('anchor')) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: `reserved-${expectedDiagnostic}-anchor`,
+                            name: 'get_current_note_context',
+                            input: { mode: 'full' },
+                            index: index++,
+                        };
+                    }
+                    if (toolSet.has('inspect')) {
+                        yield {
+                            type: 'toolcall_delta' as const,
+                            id: `reserved-${expectedDiagnostic}-inspect`,
+                            name: 'inspect_obsidian_note',
+                            input: { path: relatedMaterial.path },
+                            index,
+                        };
+                    }
+                },
+            }),
+            turnLeaseProvider: async ({ turnIndex }) => {
+                if (turnIndex === 1) clock = 150_001;
+                return { release: () => undefined };
+            },
+            now: () => clock,
+        });
+
+        const result = await runtime.run({
+            anchor,
+            triggerReason: 'explicit',
+            runId: `pagelet-reserved-${expectedDiagnostic}`,
+        });
+
+        expect(modelInputs).toHaveLength(2);
+        expect(modelInputs[1]).toMatchObject({
+            turnIndex: 1,
+            toolMode: 'final_answer_only',
+        });
+        expect(result.loopResult.status).toBe('incomplete');
+        expect(result.loopResult.endPayload).toMatchObject({
+            reason: expectedReason,
+            diagnostics: [expect.objectContaining({ type: expectedDiagnostic })],
+        });
+        expect(result.loopResult.endPayload?.reason).not.toBe(
+            'pagelet_exact_lead_protocol_incomplete',
+        );
+        expect(result.finalText).toBe('');
+        expect(result.runtimeCompletion).toMatchObject({
+            loopStatus: 'incomplete',
+            endReason: expectedReason,
+            diagnosticTypes: [expectedDiagnostic],
+            finalTextState: 'empty',
+        });
     });
 
     it('reserves finalization before a penultimate blocked WebSearch correction', async () => {
@@ -685,10 +5073,13 @@ describe('Pagelet agent runtime', () => {
 
     it('blocks same-turn WebSearch until a successful vault lead unlocks the identical call', async () => {
         const web = createFakeWebCapability();
+        const host = createHost();
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
         const modelInputs: PaAgentModelInput[] = [];
+        let modelScope: unknown;
         const repeatedWebInput = { query: 'official release policy' };
         const runtime = createPageletAgentRuntime({
-            host: createHost(),
+            host,
             isPathAllowed: (path) => path.startsWith('notes/'),
             executeMemorySearch: async (input) => ({
                 usedMemory: false,
@@ -698,8 +5089,10 @@ describe('Pagelet agent runtime', () => {
             }),
             captureSourceMaterial: async () => null,
             webCapabilities: [web.capability],
-            createModel: () => ({
-                stream: async function* (input: PaAgentModelInput) {
+            createModel: (context) => {
+                modelScope = context.providerRequestScope;
+                return {
+                    stream: async function* (input: PaAgentModelInput) {
                     modelInputs.push(input);
                     if (input.turnIndex === 0) {
                         yield {
@@ -729,8 +5122,9 @@ describe('Pagelet agent runtime', () => {
                         return;
                     }
                     yield { type: 'text_delta', text: 'NO_INSIGHT' } as const;
-                },
-            }),
+                    },
+                };
+            },
         });
 
         const result = await runtime.run({
@@ -758,7 +5152,10 @@ describe('Pagelet agent runtime', () => {
         expect(web.execute).toHaveBeenCalledTimes(1);
         expect(web.execute).toHaveBeenCalledWith(
             repeatedWebInput,
-            expect.objectContaining({ turnId: result.loopResult.turns[1]?.turnId }),
+            expect.objectContaining({
+                turnId: result.loopResult.turns[1]?.turnId,
+                providerRequestScope: modelScope,
+            }),
         );
         expect(unlockedWeb).toMatchObject({
             isError: false,
@@ -773,7 +5170,174 @@ describe('Pagelet agent runtime', () => {
         expect(modelInputs[1]?.controlSnapshot?.blockedToolNames?.has(
             BUILTIN_WEB_SEARCH_TOOL_NAME,
         )).not.toBe(true);
+        expect(modelInputs[0]?.controlSnapshot?.blockedToolNames?.has(
+            'stage_pagelet_insight',
+        )).toBe(true);
+        expect(modelInputs[1]?.controlSnapshot?.blockedToolNames?.has(
+            'stage_pagelet_insight',
+        )).toBe(true);
         expect(result.webObservations).toHaveLength(1);
+    });
+
+    it('binds the production stage schema only for the Host-invited turn and restores the exact prior scope', async () => {
+        const web = createFakeWebCapability();
+        const host = createHost({
+            [dualLeadAnchor.path]: dualLeadAnchor.content,
+            [coralMaterial.path]: coralMaterial.content,
+            [silverMaterial.path]: silverMaterial.content,
+        });
+        host.settings.retrievalOptimizationFlags = { relaxedRecovery: true };
+        const materials = new Map<string, PageletAgentSourceMaterial>([
+            [dualLeadAnchor.path, { ...dualLeadAnchor }],
+            [coralMaterial.path, coralMaterial],
+            [silverMaterial.path, silverMaterial],
+        ]);
+        const boundSchemas: ChatToolProviderSchema[][] = [];
+        const nativeInputs: PaAgentModelInput[] = [];
+        let providerTurn = 0;
+        const runnable = {
+            bindTools: jest.fn((schemas: ChatToolProviderSchema[]) => {
+                boundSchemas.push(schemas);
+                return runnable;
+            }),
+            stream: async function* () {
+                const turn = providerTurn++;
+                if (turn === 0) {
+                    yield {
+                        content: '',
+                        tool_calls: [
+                            {
+                                id: 'native-anchor-call',
+                                name: 'get_current_note_context',
+                                args: { mode: 'full' },
+                                index: 0,
+                            },
+                            {
+                                id: 'native-coral-call',
+                                name: 'inspect_obsidian_note',
+                                args: { path: coralMaterial.path },
+                                index: 1,
+                            },
+                            {
+                                id: 'native-silver-call',
+                                name: 'inspect_obsidian_note',
+                                args: { path: silverMaterial.path },
+                                index: 2,
+                            },
+                        ],
+                    };
+                    return;
+                }
+                if (turn === 1) {
+                    yield { content: coralInsight };
+                    return;
+                }
+                if (turn === 2) {
+                    yield {
+                        content: '',
+                        tool_calls: [{
+                            id: 'native-stage-call',
+                            name: 'stage_pagelet_insight',
+                            args: {
+                                unresolvedLead: {
+                                    leadKey: 'independent sensor warmup finding',
+                                    supportingSourceIds: [silverMaterial.path],
+                                    requestRelaxedRecovery: false,
+                                },
+                            },
+                            index: 0,
+                        }],
+                    };
+                    return;
+                }
+                yield { content: silverInsight };
+            },
+            invoke: async () => ({ content: 'NO_INSIGHT' }),
+        };
+        const runtime = createPageletAgentRuntime({
+            host,
+            isPathAllowed: (path) => path.startsWith('notes/'),
+            executeMemorySearch: async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+            }),
+            revalidateMemorySearch: async (result) => result,
+            captureSourceMaterial: async (path) => materials.get(path) ?? null,
+            webCapabilities: [web.capability],
+            createModel: (context) => createPageletNativeModel({
+                registry: context.registry,
+                allowedToolNames: context.allowedToolNames,
+                schemas: context.schemas,
+                toolDefinitions: context.toolDefinitions,
+                providerRequestScope: context.providerRequestScope,
+                createChatModel: async () => runnable,
+                createPrompt: () => ({
+                    pipe: (model) => model as typeof runnable,
+                }),
+                buildPromptInput: (input) => {
+                    nativeInputs.push(input);
+                    return {};
+                },
+            }),
+        });
+
+        const result = await runtime.run({
+            anchor: dualLeadAnchor,
+            triggerReason: 'explicit',
+            runId: 'pagelet-native-stage-visibility',
+        });
+
+        const boundNames = boundSchemas.map((schemas) => (
+            schemas.map((schema) => schema.function.name).sort()
+        ));
+        expect(boundSchemas).toHaveLength(4);
+        expect(boundNames[0]).not.toContain('stage_pagelet_insight');
+        expect(boundNames[0]).not.toContain(BUILTIN_WEB_SEARCH_TOOL_NAME);
+        expect(boundNames[1]).toContain(BUILTIN_WEB_SEARCH_TOOL_NAME);
+        expect(boundNames[1]).not.toContain('stage_pagelet_insight');
+        expect(boundNames[2]).toEqual(['stage_pagelet_insight']);
+        expect(boundSchemas[2]?.[0]?.function.parameters.required).toEqual([
+            'unresolvedLead',
+        ]);
+        expect(boundNames[3]).toEqual(boundNames[1]);
+        expect(boundNames[3]).not.toContain('stage_pagelet_insight');
+        expect(nativeInputs).toHaveLength(4);
+        expect(nativeInputs[0]?.controlSnapshot?.blockedToolNames?.has(
+            BUILTIN_WEB_SEARCH_TOOL_NAME,
+        )).toBe(true);
+        expect(nativeInputs[1]?.controlSnapshot?.blockedToolNames?.has(
+            BUILTIN_WEB_SEARCH_TOOL_NAME,
+        )).not.toBe(true);
+        expect(nativeInputs[1]?.controlSnapshot?.blockedToolNames?.has(
+            'stage_pagelet_insight',
+        )).toBe(true);
+        expect(nativeInputs[3]?.controlSnapshot?.blockedToolNames?.has(
+            BUILTIN_WEB_SEARCH_TOOL_NAME,
+        )).not.toBe(true);
+        expect(nativeInputs[3]?.controlSnapshot?.blockedToolNames?.has(
+            'stage_pagelet_insight',
+        )).toBe(true);
+        expect(nativeInputs[3]?.controlSnapshot?.allowedToolNames).toEqual(
+            nativeInputs[1]?.controlSnapshot?.allowedToolNames,
+        );
+        expect(nativeInputs[3]?.controlSnapshot?.sourceScope).toBe(
+            nativeInputs[1]?.controlSnapshot?.sourceScope,
+        );
+        expect(nativeInputs[3]?.controlSnapshot?.exposureMode).toBe(
+            nativeInputs[1]?.controlSnapshot?.exposureMode,
+        );
+        expect(nativeInputs[3]?.controlSnapshot?.budgetState).toEqual(
+            nativeInputs[1]?.controlSnapshot?.budgetState,
+        );
+        const ordinaryReasons = (input: PaAgentModelInput | undefined) => Object.fromEntries(
+            Object.entries(input?.controlSnapshot?.blockedReasons ?? {})
+                .filter(([toolName]) => toolName !== 'stage_pagelet_insight'),
+        );
+        expect(ordinaryReasons(nativeInputs[3])).toEqual(ordinaryReasons(nativeInputs[1]));
+        expect(result.metrics).toMatchObject({ modelTurns: 4, toolCalls: 4 });
+        expect(result.insightDrafts).toHaveLength(2);
     });
 
     it('provides a reusable native model adapter that binds registry schemas', async () => {
@@ -801,6 +5365,7 @@ describe('Pagelet agent runtime', () => {
         const model = createPageletNativeModel({
             registry,
             allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
             createChatModel: async () => runnable,
             createPrompt: () => prompt,
         });
@@ -824,6 +5389,218 @@ describe('Pagelet agent runtime', () => {
         ]);
         expect(chunks).toContainEqual({ type: 'text_delta', text: 'native answer' });
         expect(streamSignals).toEqual([turnController.signal]);
+    });
+
+    it('does not bind or call the Provider when a deferred stage schema loses pending-first authority', async () => {
+        const registry = new CapabilityRegistry();
+        let pendingFirst = true;
+        const stageSchema: ChatToolProviderSchema = {
+            type: 'function',
+            function: {
+                name: 'stage_pagelet_insight',
+                description: 'Host staging control',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        insightMarkdown: { type: 'string' },
+                        sourceIds: { type: 'array', items: { type: 'string' } },
+                        unresolvedLead: { type: 'object' },
+                    },
+                    get required(): string[] {
+                        return pendingFirst
+                            ? ['unresolvedLead']
+                            : ['insightMarkdown', 'sourceIds', 'unresolvedLead'];
+                    },
+                    additionalProperties: false,
+                },
+            },
+        };
+        const providerStream = jest.fn(async function* () {
+            yield { content: 'must not run' };
+        });
+        const bindTools = jest.fn(() => runnable);
+        const runnable = {
+            bindTools,
+            stream: providerStream,
+            invoke: jest.fn(async () => ({ content: 'must not run' })),
+        };
+        let resolveModel!: (model: typeof runnable) => void;
+        let markModelRequested!: () => void;
+        const modelRequested = new Promise<void>((resolve) => {
+            markModelRequested = resolve;
+        });
+        const deferredModel = new Promise<typeof runnable>((resolve) => {
+            resolveModel = resolve;
+        });
+        const model = createPageletNativeModel({
+            registry,
+            allowedToolNames: new Set(['stage_pagelet_insight']),
+            schemas: [stageSchema],
+            toolDefinitions: [],
+            providerRequestScope: createProviderRequestScope(),
+            createChatModel: async () => {
+                markModelRequested();
+                return deferredModel;
+            },
+            createPrompt: () => ({
+                pipe: (bound) => bound as typeof runnable,
+            }),
+        });
+        const run = (async () => {
+            for await (const chunk of model.stream({
+                runId: 'native-deferred-stage-authority',
+                turnId: 'native-deferred-stage-authority-turn',
+                turnIndex: 2,
+                userInput: 'stage',
+                transcript: [],
+                controlSnapshot: createAgentControlSnapshot({
+                    exposureMode: 'narrowed-required',
+                    sourceScope: 'notes',
+                    allowedToolNames: new Set(['stage_pagelet_insight']),
+                }),
+            })) {
+                void chunk;
+            }
+        })();
+
+        await modelRequested;
+        pendingFirst = false;
+        resolveModel(runnable);
+
+        await expect(run).rejects.toThrow('pagelet_stage_control_unavailable');
+        expect(bindTools).not.toHaveBeenCalled();
+        expect(providerStream).not.toHaveBeenCalled();
+        expect(runnable.invoke).not.toHaveBeenCalled();
+    });
+
+    it('keeps conditional per-lead probes in the second-turn provider prompt', async () => {
+        const registry = new CapabilityRegistry();
+        const providerInputs: unknown[] = [];
+        const runnable = RunnableLambda.from(async (input: unknown) => {
+            providerInputs.push(input);
+            return { content: 'NO_INSIGHT' };
+        });
+        const model = createPageletNativeModel({
+            registry,
+            allowedToolNames: new Set(),
+            providerRequestScope: createProviderRequestScope(),
+            createChatModel: async () => runnable,
+        });
+        const baseInput = {
+            runId: 'native-stable-lead-probes',
+            userInput: 'discover',
+            transcript: [],
+        };
+
+        for (const turnIndex of [0, 1]) {
+            for await (const chunk of model.stream({
+                ...baseInput,
+                turnId: `turn-${turnIndex}`,
+                turnIndex,
+                runtimeInstruction: turnIndex === 0
+                    ? 'Read the anchor first.'
+                    : 'Continue from the observed anchor evidence.',
+            })) {
+                void chunk;
+            }
+        }
+
+        const secondPrompt = providerPromptText(providerInputs[1]);
+        expect(secondPrompt).toContain('During ordinary tool-enabled exploration');
+        expect(secondPrompt).toContain('one or more distinct unresolved leads');
+        expect(secondPrompt).toContain('smallest relevant linked-note set for each lead');
+        expect(secondPrompt).toContain('checking multiple leads never requires producing multiple insights');
+        expect(secondPrompt).toContain('unresolved exact identifier');
+        expect(secondPrompt).toContain('call search_memory with that exact literal');
+        expect(secondPrompt).toContain('Continue from the observed anchor evidence.');
+    });
+
+    it('rebuilds the Pagelet prompt after deferred model construction revokes Memory', async () => {
+        const registry = new CapabilityRegistry();
+        const stalePath = 'notes/revoked-pagelet.md';
+        const staleBody = 'REVOKED PAGELET MEMORY BODY';
+        const staleTranscript: PaAgentMessage[] = [{
+            role: 'toolResult',
+            id: 'stale-pagelet-memory',
+            toolCallId: 'stale-pagelet-memory-call',
+            toolName: 'search_memory',
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: staleBody,
+                includeInNextPrompt: true,
+                sourceRecords: [{
+                    kind: 'memory-reference',
+                    dedupKey: stalePath,
+                    path: stalePath,
+                }],
+            },
+        }];
+        const safeTranscript: PaAgentMessage[] = [{
+            ...staleTranscript[0] as Extract<PaAgentMessage, { role: 'toolResult' }>,
+            content: {
+                promptText: 'Memory evidence is currently unavailable.',
+                includeInNextPrompt: true,
+                sourceRecords: [],
+            },
+        }];
+        const providerInputs: unknown[] = [];
+        const runnable = {
+            stream: jest.fn(async function* (input: unknown) {
+                providerInputs.push(input);
+                yield { content: 'safe pagelet answer' };
+            }),
+            invoke: jest.fn(async () => ({ content: 'fallback answer' })),
+        };
+        let resolveModel!: (model: unknown) => void;
+        let markModelRequested!: () => void;
+        const modelRequested = new Promise<void>((resolve) => {
+            markModelRequested = resolve;
+        });
+        const deferredModel = new Promise<unknown>((resolve) => {
+            resolveModel = resolve;
+        });
+        let sourceRevoked = false;
+        const prepareForProviderRetry = jest.fn(async (input: PaAgentModelInput) => ({
+            ...input,
+            transcript: sourceRevoked ? safeTranscript : staleTranscript,
+        }));
+        const model = createPageletNativeModel({
+            registry,
+            allowedToolNames: new Set(),
+            providerRequestScope: createProviderRequestScope(),
+            createChatModel: async () => {
+                markModelRequested();
+                return deferredModel;
+            },
+            createPrompt: () => ({ pipe: () => runnable }),
+            buildPromptInput: (_input, context) => ({ observations: context.toolObservations }),
+        });
+        const baseInput: PaAgentModelInput = {
+            runId: 'pagelet-deferred-model',
+            turnId: 'turn',
+            turnIndex: 1,
+            userInput: 'discover',
+            transcript: staleTranscript,
+        };
+        const run = (async () => {
+            for await (const chunk of model.stream({
+                ...baseInput,
+                prepareForProviderRetry: () => prepareForProviderRetry(baseInput),
+            })) {
+                void chunk;
+            }
+        })();
+
+        await modelRequested;
+        sourceRevoked = true;
+        resolveModel(runnable);
+        await run;
+
+        expect(prepareForProviderRetry).toHaveBeenCalledTimes(1);
+        expect(providerInputs).toHaveLength(1);
+        expect(JSON.stringify(providerInputs[0])).not.toContain(stalePath);
+        expect(JSON.stringify(providerInputs[0])).not.toContain(staleBody);
     });
 
     it('projects cumulative observations through the Pagelet context budget without mutating provenance', async () => {
@@ -967,6 +5744,7 @@ describe('Pagelet agent runtime', () => {
         const model = createPageletNativeModel({
             registry,
             allowedToolNames: new Set(['get_current_note_context']),
+            providerRequestScope: createProviderRequestScope(),
             createChatModel: async () => runnable,
             createPrompt: () => prompt,
             maxObservationChars: 850,
@@ -1046,6 +5824,7 @@ describe('Pagelet agent runtime', () => {
         const model = createPageletNativeModel({
             registry,
             allowedToolNames,
+            providerRequestScope: createProviderRequestScope(),
             createChatModel: async () => runnable,
             createPrompt: () => prompt,
         });

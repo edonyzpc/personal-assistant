@@ -2,6 +2,66 @@ import { requestUrl, type RequestUrlParam } from 'obsidian';
 
 type RequestBody = string | ArrayBuffer | undefined;
 
+export type ProviderRequestCancellationCapability = 'signal-propagating' | 'local-only';
+
+/**
+ * One logical PA run owns one scope. Obsidian's requestUrl cannot physically
+ * cancel a request, so only locally-aborted requests are retained as barriers.
+ * Ordinary in-flight requests remain concurrent.
+ */
+export class ProviderRequestScope {
+    private readonly detachedRequests = new Set<Promise<void>>();
+
+    async waitForDetachedRequests(signal?: AbortSignal | null): Promise<void> {
+        throwIfAborted(signal);
+        while (this.detachedRequests.size > 0) {
+            await withAbort(
+                Promise.all([...this.detachedRequests]).then(() => undefined),
+                signal,
+            );
+            throwIfAborted(signal);
+        }
+    }
+
+    async startRequest<T>(
+        task: () => Promise<T>,
+        signal?: AbortSignal | null,
+        beforeDispatch?: () => void,
+    ): Promise<T> {
+        while (true) {
+            await this.waitForDetachedRequests(signal);
+            throwIfAborted(signal);
+            // Keep the final barrier check, admission hook, and raw request
+            // construction in one synchronous segment. A detached request
+            // observed after the prior snapshot therefore cannot be skipped.
+            if (this.detachedRequests.size > 0) continue;
+            beforeDispatch?.();
+            throwIfAborted(signal);
+            const rawRequest = task();
+            return await withLocalAbort(rawRequest, signal, () => {
+                this.trackDetachedRequest(rawRequest);
+            });
+        }
+    }
+
+    private trackDetachedRequest(request: Promise<unknown>): void {
+        const barrier = request.then(() => undefined, () => undefined);
+        this.detachedRequests.add(barrier);
+        void barrier.then(() => {
+            this.detachedRequests.delete(barrier);
+        });
+    }
+}
+
+export const createProviderRequestScope = (): ProviderRequestScope => new ProviderRequestScope();
+
+export interface ObsidianFetchControl {
+    /** Run-local barrier for physically-live requestUrl calls after local abort. */
+    providerRequestScope?: ProviderRequestScope;
+    /** Synchronous admission check immediately before each physical HTTP dispatch. */
+    onProviderRequestStart?: () => void;
+}
+
 const createAbortError = (): Error => {
     if (typeof DOMException !== 'undefined') {
         return new DOMException('The operation was aborted.', 'AbortError');
@@ -27,6 +87,45 @@ const withAbort = async <T>(promise: Promise<T>, signal?: AbortSignal | null): P
         promise.then(resolve, reject).finally(() => {
             signal.removeEventListener('abort', onAbort);
         });
+    });
+};
+
+const withLocalAbort = async <T>(
+    promise: Promise<T>,
+    signal: AbortSignal | null | undefined,
+    onDetached: () => void,
+): Promise<T> => {
+    if (!signal) return promise;
+    if (signal.aborted) {
+        onDetached();
+        throw createAbortError();
+    }
+
+    return await new Promise<T>((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => signal.removeEventListener('abort', onAbort);
+        const onAbort = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            onDetached();
+            reject(createAbortError());
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        promise.then(
+            (value) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(value);
+            },
+            (error) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(error);
+            },
+        );
     });
 };
 
@@ -99,6 +198,7 @@ const normalizeStatus = (status: number | undefined): number => {
 export const obsidianFetch = async (
     input: string | URL | Request,
     init: RequestInit = {},
+    control: ObsidianFetchControl = {},
 ): Promise<Response> => {
     throwIfAborted(init.signal);
 
@@ -126,7 +226,18 @@ export const obsidianFetch = async (
         requestParam.body = body;
     }
 
-    const response = await withAbort(requestUrl(requestParam), init.signal);
+    const response = control.providerRequestScope
+        ? await control.providerRequestScope.startRequest(
+            () => requestUrl(requestParam),
+            init.signal,
+            control.onProviderRequestStart,
+        )
+        : await (async () => {
+            throwIfAborted(init.signal);
+            control.onProviderRequestStart?.();
+            throwIfAborted(init.signal);
+            return await withAbort(requestUrl(requestParam), init.signal);
+        })();
     const status = normalizeStatus(response.status);
     const canHaveBody = status !== 204 && status !== 205 && status !== 304;
     const responseBody = response.arrayBuffer?.byteLength
@@ -138,3 +249,10 @@ export const obsidianFetch = async (
         headers: new Headers(response.headers ?? {}),
     });
 };
+
+export const createScopedObsidianFetch = (
+    control: ObsidianFetchControl,
+): typeof fetch => (
+    input: string | URL | Request,
+    init?: RequestInit,
+) => obsidianFetch(input, init, control);

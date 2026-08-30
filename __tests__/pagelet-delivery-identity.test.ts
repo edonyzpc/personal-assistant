@@ -276,6 +276,41 @@ describe("Pagelet delivery identity", () => {
             .toEqual(buildReviewDeliveryReceipt(afterEdit));
     });
 
+    it("uses the stable insight ID as the normative review identity without a schema bump", () => {
+        const visible = {
+            locale: "zh",
+            title: "同一可见标题",
+            body: "同一可见正文",
+            whyNow: "同一出现原因",
+            anchorSourceIdentity: "notes/anchor.md",
+            sourceIdentities: ["notes/anchor.md", "notes/related.md"],
+        };
+        const first = buildReviewDeliveryReceipt({
+            ...visible,
+            insightId: "pagelet-insight:first",
+        });
+        const second = buildReviewDeliveryReceipt({
+            ...visible,
+            insightId: "pagelet-insight:second",
+        });
+        const localizedRetrigger = buildReviewDeliveryReceipt({
+            ...visible,
+            insightId: "pagelet-insight:first",
+            locale: "en",
+            title: "Localized title",
+            body: "Localized visible body",
+            whyNow: "A different trigger explanation",
+        });
+
+        expect(first.version).toBe(1);
+        expect(second.version).toBe(1);
+        expect(localizedRetrigger).toEqual(first);
+        expect(first.fingerprint).not.toBe(second.fingerprint);
+        expect(buildReviewDeliveryReceipt(visible)).toEqual(
+            buildReviewDeliveryReceipt({ ...visible, insightId: "   " }),
+        );
+    });
+
     it.each([
         ["locale", { locale: "zh" }],
         ["title", { title: "Changed title" }],

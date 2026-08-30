@@ -18,7 +18,7 @@ import type {
     ChatToolRegistryDefinition,
 } from "./chat-tools";
 import type { SourceRecord } from "./chat-types";
-import { obsidianFetch } from "./obsidian-fetch";
+import { obsidianFetch, type ProviderRequestScope } from "./obsidian-fetch";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { normalizeSourceRecord } from "./source-store";
 import {
@@ -50,9 +50,14 @@ export interface BuiltinWebSearchHttpResponse {
     rawBodyBytes?: number;
 }
 
+export interface BuiltinWebSearchRequestContext {
+    signal?: AbortSignal;
+    providerRequestScope?: ProviderRequestScope;
+}
+
 export type BuiltinWebSearchRequest = (
     request: BuiltinWebSearchHttpRequest,
-    context: { signal?: AbortSignal },
+    context: BuiltinWebSearchRequestContext,
 ) => Promise<BuiltinWebSearchHttpResponse>;
 
 export interface BuiltinWebSearchProviderOptions {
@@ -86,7 +91,7 @@ export function createBailianWebSearchNetworkPolicy(endpoint = BAILIAN_WEB_SEARC
 
 export async function requestBailianWebSearchMcp(
     request: BuiltinWebSearchHttpRequest,
-    context: { signal?: AbortSignal },
+    context: BuiltinWebSearchRequestContext,
 ): Promise<BuiltinWebSearchHttpResponse> {
     const input = parseWebSearchInput(request.body);
     if (!input) {
@@ -105,7 +110,7 @@ export async function requestBailianWebSearchMcp(
                 version: "1.11.0",
             },
         },
-    }, context.signal);
+    }, context);
     if (initialized.status >= 400 || hasJsonRpcError(initialized.body)) {
         return { status: initialized.status >= 400 ? initialized.status : 502, body: initialized.body };
     }
@@ -115,14 +120,14 @@ export async function requestBailianWebSearchMcp(
         jsonrpc: "2.0",
         method: "notifications/initialized",
         params: {},
-    }, context.signal, sessionId);
+    }, context, sessionId);
 
     const toolsList = await postMcpJsonRpc(request, {
         jsonrpc: "2.0",
         id: "tools-list",
         method: "tools/list",
         params: {},
-    }, context.signal, sessionId);
+    }, context, sessionId);
     if (toolsList.status >= 400 || hasJsonRpcError(toolsList.body)) {
         return { status: toolsList.status >= 400 ? toolsList.status : 502, body: toolsList.body };
     }
@@ -144,7 +149,7 @@ export async function requestBailianWebSearchMcp(
                 count: input.limit,
             },
         },
-    }, context.signal, sessionId);
+    }, context, sessionId);
 
     if (toolCall.status >= 400 || hasJsonRpcError(toolCall.body)) {
         return { status: toolCall.status >= 400 ? toolCall.status : 502, body: toolCall.body };
@@ -266,7 +271,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
         const requestId = `${turnId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
         this.inflightRequests.add(requestId);
         try {
-            const response = await this.runRequestWithAbortAndTimeout(requestId, parsed, context.signal);
+            const response = await this.runRequestWithAbortAndTimeout(requestId, parsed, context);
             if (response === "cancelled") {
                 return unavailableResult(WEB_SEARCH_CANCELLED_MESSAGE, parsed.query, []);
             }
@@ -315,16 +320,18 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
     private async runRequestWithAbortAndTimeout(
         requestId: string,
         input: WebSearchInput,
-        signal?: AbortSignal,
+        context: AgentCapabilityContext,
     ): Promise<BuiltinWebSearchHttpResponse | "cancelled" | "failed" | "timeout"> {
         const endpoint = this.getEndpoint();
         if (!endpoint) return "cancelled";
+        const signal = context.signal;
         if (signal?.aborted) {
             this.inflightRequests.delete(requestId);
             return "cancelled";
         }
 
         return new Promise((resolve) => {
+            const requestController = new AbortController();
             let settled = false;
             let timeoutId: PlatformTimeoutHandle | null = null;
             const settle = (value: BuiltinWebSearchHttpResponse | "cancelled" | "failed" | "timeout") => {
@@ -336,11 +343,13 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             };
             const onAbort = () => {
                 this.inflightRequests.delete(requestId);
+                requestController.abort();
                 settle("cancelled");
             };
             signal?.addEventListener("abort", onAbort, { once: true });
             timeoutId = setPlatformTimeout(() => {
                 this.inflightRequests.delete(requestId);
+                requestController.abort();
                 settle("timeout");
             }, this.timeoutMs);
 
@@ -354,7 +363,10 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
                     query: input.query,
                     limit: input.limit,
                 },
-            }, { signal }).then(
+            }, {
+                signal: requestController.signal,
+                providerRequestScope: context.providerRequestScope,
+            }).then(
                 (response) => {
                     if (!this.inflightRequests.has(requestId)) {
                         settle("cancelled");
@@ -529,7 +541,7 @@ function countRawWebResults(body: unknown): number {
 async function postMcpJsonRpc(
     request: BuiltinWebSearchHttpRequest,
     payload: Record<string, unknown>,
-    signal?: AbortSignal,
+    context: BuiltinWebSearchRequestContext,
     sessionId?: string,
 ): Promise<{ status: number; headers: Headers; body: unknown }> {
     const response = await obsidianFetch(request.endpoint, {
@@ -542,7 +554,9 @@ async function postMcpJsonRpc(
             ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
         },
         body: JSON.stringify(payload),
-        signal,
+        signal: context.signal,
+    }, {
+        providerRequestScope: context.providerRequestScope,
     });
     const text = await response.text();
     return {

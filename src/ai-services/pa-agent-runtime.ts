@@ -5,10 +5,16 @@ import type {
     NativeToolCallingValidation,
     QwenRequestOptions,
 } from "./ai-utils";
-import type { AiServiceHost } from "./AiServiceHost";
+import type { AiServiceHost, RetrievalOptimizationFlags } from "./AiServiceHost";
 import type { MemoryMode } from "../memory-manager";
+import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
 import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { MemorySearchTool } from "./memory-search-tool";
+import {
+    captureExplicitTemporalIntent,
+    ChatMemoryRecoveryCoordinator,
+} from "./retrieval-recovery-coordinator";
+import type { RetrievalDiagnosticEventInput } from "./retrieval-diagnostics";
 import {
     createPaAgentAnswerStreamPrompt,
     createOperationsPromptGuidance,
@@ -57,6 +63,10 @@ import {
     type PolicyEngineOptions,
 } from "./policy-engine";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
+import {
+    createProviderRequestScope,
+    type ProviderRequestScope,
+} from "./obsidian-fetch";
 import { errorMessage } from "./agent-utils";
 import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-provider";
 import { OperationsToolProvider } from "./operations/operations-tool-provider";
@@ -69,6 +79,7 @@ import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
     isAllowedHostToolCall,
+    MemoryEvidenceRegistry,
 } from "./pa-agent-host-tools";
 import {
     ConsoleDebugObserver,
@@ -154,6 +165,8 @@ export interface PaAgentRuntimeOptions {
     nativeToolCallingValidatedModels?: readonly NativeToolCallingValidation[];
     maxModelTurns?: number;
     maxWallClockMs?: number;
+    finalizationReserveMs?: number;
+    providerResponseDelivery?: 'incremental' | 'buffered';
     answerStreamMaxToolCalls?: number;
     answerStreamMaxObservationChars?: number;
     runtimePlatform?: AgentRuntimePlatform;
@@ -207,6 +220,7 @@ interface PaAgentStartupTiming {
 }
 
 const MAX_TURN_WALL_CLOCK_MS = 180_000;
+const DEFAULT_FINALIZATION_RESERVE_MS = 15_000;
 const MAX_CHAT_HISTORY_CHARS = 60_000;
 export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 24000;
 const OPERATIONS_SUPPORT_TOOL_NAMES = [
@@ -524,6 +538,9 @@ export function createWriteActionAwareToolExecutor(
     options: WriteActionAwareToolExecutorOptions,
 ): PaAgentToolExecutor {
     return {
+        getCanonicalToolCallKey: (toolCall, context) => (
+            options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
+        ),
         getExecutionMode: (toolName: string) => {
             return options.baseExecutor.getExecutionMode?.(toolName);
         },
@@ -664,6 +681,7 @@ export class PaAgentRuntime {
      */
     private readonly selfWriteRegistry: SelfWriteRegistry | null;
     private readonly actionExecutor: ActionExecutor | null;
+    private readonly activeMemoryRecoveryCoordinators = new Set<ChatMemoryRecoveryCoordinator>();
 
     constructor(host: AiServiceHost, aiUtils: AIUtils, options: PaAgentRuntimeOptions = {}) {
         this.host = host;
@@ -753,6 +771,9 @@ export class PaAgentRuntime {
      * Write Action Framework. Safe to invoke multiple times.
      */
     dispose(): void {
+        for (const coordinator of this.activeMemoryRecoveryCoordinators) coordinator.close();
+        this.activeMemoryRecoveryCoordinators.clear();
+        this.memoryTool.dispose();
         this.selfWriteRegistry?.dispose();
     }
 
@@ -793,6 +814,64 @@ export class PaAgentRuntime {
         };
 
         const runId = createAgentRunId();
+        const providerRequestScope = createProviderRequestScope();
+        const memoryPreparationOwnerSignal = options.signal;
+        const maxWallClockMs = this.options.maxWallClockMs ?? MAX_TURN_WALL_CLOCK_MS;
+        const configuredReserveMs = this.options.finalizationReserveMs
+            ?? Math.min(DEFAULT_FINALIZATION_RESERVE_MS, Math.max(1, Math.floor(maxWallClockMs / 10)));
+        const finalizationReserveMs = maxWallClockMs > 0
+            ? Math.min(Math.max(1, configuredReserveMs), maxWallClockMs)
+            : 0;
+        const hardAt = runtimeStartedAt + maxWallClockMs;
+        const softAt = hardAt - finalizationReserveMs;
+        const relaxedRecoveryEnabled = isHostRetrievalFlagEnabled(this.host, "relaxedRecovery");
+        const retrievalPolicyEpoch = getHostRetrievalPolicyEpoch(this.host);
+        const unboundRetrievalRecorder = this.host.createRetrievalDiagnosticRecorder
+            ? this.host.createRetrievalDiagnosticRecorder("chat")
+            : this.host.recordRetrievalDiagnostic
+                ? (event: RetrievalDiagnosticEventInput) => (
+                    this.host.recordRetrievalDiagnostic!("chat", event)
+                )
+                : undefined;
+        const retrievalRecorder = unboundRetrievalRecorder
+            ? (event: RetrievalDiagnosticEventInput) => unboundRetrievalRecorder({
+                ...event,
+                runId,
+                ...(event.phase === "finalization_reserve"
+                    ? {
+                        metrics: {
+                            ...event.metrics,
+                            configuredReserveMs: finalizationReserveMs,
+                        },
+                    }
+                    : {}),
+            })
+            : undefined;
+        let finalizationOutcome: "completed" | "aborted" | "deadline" | "failed" = "failed";
+        let finalizationBoundaryEntered = false;
+        let finalizationBoundaryTerminal = false;
+        const memoryRecoveryCoordinator = new ChatMemoryRecoveryCoordinator({
+            runId,
+            runEpoch: runId,
+            hardAt,
+            softAt,
+            toolAt: softAt,
+            signal: options.signal,
+            enabled: relaxedRecoveryEnabled,
+            policyEpoch: retrievalPolicyEpoch,
+            isEnabled: () => isHostRetrievalFlagEnabled(this.host, "relaxedRecovery"),
+            getPolicyEpoch: () => getHostRetrievalPolicyEpoch(this.host),
+            ...(this.host.onSettingsChanged
+                ? { onPolicyChanged: (listener: () => void | Promise<void>) => this.host.onSettingsChanged!(listener) }
+                : {}),
+            temporalIntent: captureExplicitTemporalIntent(options.prompt),
+            recordDiagnostic: retrievalRecorder,
+        });
+        this.activeMemoryRecoveryCoordinators.add(memoryRecoveryCoordinator);
+        const memoryEvidenceRegistry = new MemoryEvidenceRegistry((result, signal, temporalFilter) => (
+            this.memoryTool.revalidateForProvider(result, signal, temporalFilter)
+        ));
+        try {
         const legacyEvents = new AgentEventEmitter(options.onEvent);
         const injectedContext = this.readInjectedContext(options.pageletHandoff);
         const governedMemoryTrace = injectedContext?.governedMemoryTrace ?? [];
@@ -826,7 +905,7 @@ export class PaAgentRuntime {
             "required_capability_classification",
             () => resolveRequiredCapabilityClassification({
                 userInput: options.prompt,
-                classifier: this.createRequiredCapabilityClassifier(),
+                classifier: this.createRequiredCapabilityClassifier(providerRequestScope),
                 signal: options.signal,
             }),
         );
@@ -902,7 +981,7 @@ export class PaAgentRuntime {
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
                 if (!additionalProvidersLoaded) {
                     additionalProvidersLoaded = true;
-                    await loadAdditionalCapabilityProviders(input.turnId, options.signal);
+                    await loadAdditionalCapabilityProviders(input.turnId, input.signal);
                 }
                 const activeToolUseConstraints = toolConstraintsFromAgentControlSnapshot(input.controlSnapshot)
                     ?? toolUseConstraints;
@@ -922,11 +1001,11 @@ export class PaAgentRuntime {
                 const toolDefinitions = input.toolMode === "final_answer_only"
                     ? []
                     : toolRegistry.listDefinitions(exportFilter);
-                const canonicalInput = buildCanonicalModelInput(input, toolDefinitions);
+                const metricsInput = buildCanonicalModelInput(input, toolDefinitions);
                 yield {
                     type: "diagnostic",
                     diagnostic: createPaAgentModelInputMetricsDiagnostic({
-                        canonicalInput,
+                        canonicalInput: metricsInput,
                         providerSchemaExportOk: schemaResult.ok,
                         exportedProviderSchemaCount: schemaResult.ok ? schemaResult.schemas.length : 0,
                         boundProviderSchemas: schemas,
@@ -936,19 +1015,38 @@ export class PaAgentRuntime {
                 const llm = await planner.createFinalAnswerModel(0.8, {
                     transport: "native",
                     qwenRequestOptions: options.qwenRequestOptions,
+                    providerRequestScope,
+                    onProviderRequestStart: input.notifyProviderRequestStarted,
                 });
                 const runnable = bindStreamingToolsIfAvailable(llm, schemas);
                 const streamedToolNames = new Map<string, string>();
                 const prompt = createPaAgentAnswerStreamPrompt();
                 const chain = prompt.pipe(runnable) as unknown as NativeToolStreamingAndInvocableRunnable;
+                // Model/provider construction may suspend after the Loop's
+                // ordinary preflight. Revalidate again only once the real
+                // chain is ready, then synchronously rebuild the canonical
+                // prompt immediately before the first provider request.
+                const providerInput = input.prepareForProviderRetry
+                    ? await input.prepareForProviderRetry()
+                    : input;
+                const canonicalProviderInput = buildCanonicalModelInput(providerInput, toolDefinitions);
                 // P0-D: if streaming fails before any visible output (e.g., provider rejected stream
                 // outright or dropped the connection pre-flight), retry via chain.invoke() so the user
                 // still gets the answer instead of a hard runtime error.
                 for await (const chunk of streamWithInvokeFallback({
                     chain,
-                    input: canonicalInput,
-                    signal: options.signal,
+                    input: canonicalProviderInput,
+                    // The loop-owned signal links user cancellation with the
+                    // current soft/hard deadline. The outer request signal
+                    // alone would let a timed-out stream/invoke keep running.
+                    signal: providerInput.signal,
                     streamedToolNames,
+                    prepareInvokeInput: async () => {
+                        const retryInput = input.prepareForProviderRetry
+                            ? await input.prepareForProviderRetry()
+                            : input;
+                        return buildCanonicalModelInput(retryInput, toolDefinitions);
+                    },
                     onFallback: (reason, error) => {
                         legacyEvents.activity(
                             "fallback-stream-invoke",
@@ -974,6 +1072,18 @@ export class PaAgentRuntime {
             registry: this.toolRegistry,
             host: this.host,
             platform: this.options.runtimePlatform ?? "desktop",
+            memoryEvidenceRegistry,
+            memoryRecoveryCoordinator,
+            providerRequestScope,
+            memoryPreparationOwnerSignal,
+            revalidateMemorySearch: (result, signal, temporalFilter, temporalAudit) => (
+                this.memoryTool.revalidateForProvider(
+                    result,
+                    signal,
+                    temporalFilter,
+                    temporalAudit,
+                )
+            ),
             onBeforeVssSearch: () => {
                 options.onStatus?.({ type: "retrieving", query: "memory" });
             },
@@ -1025,6 +1135,22 @@ export class PaAgentRuntime {
             runId,
             userInput: options.prompt,
             model,
+            prepareModelInput: async (input) => {
+                const failClosedOnAbort = () => memoryEvidenceRegistry.failClosed();
+                input.signal?.addEventListener("abort", failClosedOnAbort, { once: true });
+                if (input.signal?.aborted) failClosedOnAbort();
+                try {
+                    return {
+                        ...input,
+                        transcript: await memoryEvidenceRegistry.prepareTranscript(
+                            input.transcript,
+                            input.signal,
+                        ),
+                    };
+                } finally {
+                    input.signal?.removeEventListener("abort", failClosedOnAbort);
+                }
+            },
             toolExecutor,
             hostPolicy: {
                 afterTurn: async (summary) => {
@@ -1080,7 +1206,37 @@ export class PaAgentRuntime {
             initialControlSnapshot,
             signal: options.signal,
             maxTurns: this.options.maxModelTurns ?? 20,
-            maxWallClockMs: this.options.maxWallClockMs ?? MAX_TURN_WALL_CLOCK_MS,
+            maxWallClockMs,
+            finalizationReserveMs,
+            providerResponseDelivery: this.options.providerResponseDelivery,
+            ...(retrievalRecorder
+                ? {
+                onFinalizationReserve: (event: {
+                        stage: "entered" | "completed" | "aborted" | "failed" | "exhausted" | "overrun";
+                        remainingMs: number;
+                    }) => {
+                        if (event.stage === "entered") finalizationBoundaryEntered = true;
+                        else finalizationBoundaryTerminal = true;
+                        retrievalRecorder({
+                            phase: "finalization_reserve",
+                            outcome: event.stage === "entered"
+                                ? "started"
+                            : event.stage === "exhausted" || event.stage === "overrun" ? "deadline" : event.stage,
+                            reason: event.stage === "overrun"
+                                ? "reserve_overrun"
+                                : event.stage === "exhausted"
+                                    ? "reserve_exhausted"
+                                : event.stage === "aborted"
+                                    ? "reserve_aborted"
+                                    : event.stage === "failed" ? "reserve_failed" : undefined,
+                            metrics: {
+                                remainingMs: event.remainingMs,
+                                configuredReserveMs: finalizationReserveMs,
+                            },
+                        });
+                    },
+                }
+                : {}),
             maxToolCalls: this.options.answerStreamMaxToolCalls ?? 30,
             maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
             startupTimings,
@@ -1091,6 +1247,11 @@ export class PaAgentRuntime {
         });
 
         const result = await loop.run();
+        finalizationOutcome = result.status === "aborted"
+            ? "aborted"
+            : Date.now() >= hardAt
+                ? "deadline"
+                : result.status === "error" ? "failed" : "completed";
         this.logPaAgentTiming(runId, startupTimings, result);
         if (result.status === "aborted") {
             throw createAbortError();
@@ -1102,6 +1263,35 @@ export class PaAgentRuntime {
             // PaAgentLoop only stores plain-object diagnostics in endPayload.
             const detail = result.endPayload ? `: ${safeStringifyEndPayload(result.endPayload)}` : "";
             throw new Error(`PA Agent canonical runtime failed${detail}`);
+        }
+        } finally {
+            try {
+                const observedFinalizationOutcome = options.signal?.aborted
+                    ? "aborted"
+                    : Date.now() >= hardAt ? "deadline" : finalizationOutcome;
+                if (!finalizationBoundaryTerminal) {
+                    retrievalRecorder?.({
+                        phase: "finalization_reserve",
+                        outcome: finalizationBoundaryEntered ? observedFinalizationOutcome : "skipped",
+                        reason: !finalizationBoundaryEntered
+                            ? "reserve_not_entered"
+                            : observedFinalizationOutcome === "deadline"
+                                ? "hard_deadline"
+                                : observedFinalizationOutcome === "aborted"
+                                    ? "reserve_aborted"
+                                    : observedFinalizationOutcome === "failed" ? "reserve_failed" : undefined,
+                        metrics: {
+                            remainingMs: Math.max(0, hardAt - Date.now()),
+                            configuredReserveMs: finalizationReserveMs,
+                        },
+                    });
+                }
+            } catch {
+                // Diagnostics are observational only.
+            }
+            memoryRecoveryCoordinator.close();
+            memoryEvidenceRegistry.clear();
+            this.activeMemoryRecoveryCoordinators.delete(memoryRecoveryCoordinator);
         }
     }
 
@@ -1140,12 +1330,19 @@ export class PaAgentRuntime {
         return available;
     }
 
-    private createRequiredCapabilityClassifier(): RequiredCapabilityClassifier | undefined {
+    private createRequiredCapabilityClassifier(
+        providerRequestScope: ProviderRequestScope,
+    ): RequiredCapabilityClassifier | undefined {
         const policyModelName = this.host.settings.policyModelName.trim();
         if (!policyModelName) return undefined;
         return {
             classify: async ({ userInput, signal }) =>
-                this.planner.classifyRequiredCapabilities(userInput, policyModelName, signal),
+                this.planner.classifyRequiredCapabilities(
+                    userInput,
+                    policyModelName,
+                    signal,
+                    providerRequestScope,
+                ),
         };
     }
 
@@ -1277,6 +1474,7 @@ class ChatPlanner {
         userInput: string,
         policyModelName: string,
         signal?: AbortSignal,
+        providerRequestScope?: ProviderRequestScope,
     ): Promise<unknown> {
         const policyPrompt = ChatPromptTemplate.fromMessages([
             SystemMessagePromptTemplate.fromTemplate([
@@ -1291,6 +1489,7 @@ class ChatPlanner {
         const llm = await this.aiUtils.createChatModel(0, {
             transport: "obsidian",
             modelName: policyModelName,
+            providerRequestScope,
         });
         const response = await policyPrompt.pipe(llm).invoke({ input: userInput }, { signal });
         return response.content;
@@ -1920,6 +2119,32 @@ function createAgentRunId(): string {
     return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function isHostRetrievalFlagEnabled(
+    host: AiServiceHost,
+    flag: keyof RetrievalOptimizationFlags,
+): boolean {
+    return resolveB125RetrievalOptimizationFlags(
+        host.getRetrievalOptimizationFlags?.()
+        ?? host.settings.retrievalOptimizationFlags,
+    )[flag];
+}
+
+function getHostRetrievalPolicyEpoch(host: AiServiceHost): string {
+    const liveEpoch = host.getRetrievalOptimizationEpoch?.();
+    if (liveEpoch) return liveEpoch;
+    const flags = resolveB125RetrievalOptimizationFlags(
+        host.getRetrievalOptimizationFlags?.()
+        ?? host.settings.retrievalOptimizationFlags,
+    );
+    return [
+        "legacy-retrieval-flags",
+        flags?.lexicalProfile === true ? "1" : "0",
+        flags?.strictReranker === true ? "1" : "0",
+        flags?.graphPpr === true ? "1" : "0",
+        flags?.relaxedRecovery === true ? "1" : "0",
+    ].join(":");
+}
+
 /**
  * P0-D: Drives `chain.stream()` and transparently falls back to `chain.invoke()` when streaming
  * fails before any visible chunk has been emitted. Fallback only fires when
@@ -1935,6 +2160,7 @@ export async function* streamWithInvokeFallback(args: {
     signal?: AbortSignal;
     streamedToolNames?: Map<string, string>;
     onFallback?: (reason: StreamWithInvokeFallbackReason, error: unknown) => void;
+    prepareInvokeInput?: () => unknown | PromiseLike<unknown>;
 }): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
     const { chain, input, signal, onFallback } = args;
     const streamedToolNames = args.streamedToolNames ?? new Map<string, string>();
@@ -1946,7 +2172,11 @@ export async function* streamWithInvokeFallback(args: {
     } catch (error) {
         if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
             onFallback?.("stream_setup_failed", error);
-            yield* invokeAsModelChunks(chain, input, signal, streamedToolNames);
+            const invokeInput = args.prepareInvokeInput
+                ? await args.prepareInvokeInput()
+                : input;
+            throwIfAborted(signal);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames);
             return;
         }
         throw error;
@@ -1977,7 +2207,11 @@ export async function* streamWithInvokeFallback(args: {
     } catch (error) {
         if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
             onFallback?.("stream_iteration_failed", error);
-            yield* invokeAsModelChunks(chain, input, signal, streamedToolNames);
+            const invokeInput = args.prepareInvokeInput
+                ? await args.prepareInvokeInput()
+                : input;
+            throwIfAborted(signal);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames);
             return;
         }
         throw error;
@@ -2102,7 +2336,6 @@ export {
     MemorySearchTool,
     parseRerankResponse,
     normalizeSearchCandidates,
-    expandByOneHop,
     type RawSearchResult,
 } from "./memory-search-tool";
 export { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";

@@ -99,6 +99,29 @@ describe("streamWithInvokeFallback (P0-D)", () => {
         expect(onFallback).toHaveBeenCalledWith("stream_setup_failed", expect.objectContaining({ message: "stream setup failed" }));
     });
 
+    it("rebuilds provider input before the physical invoke fallback request", async () => {
+        const invoke = jest.fn<ChainInvoke>(async () => ({ content: "fallback answer" }));
+        const prepareInvokeInput = jest.fn(async () => ({ observation: "REVALIDATED" }));
+        const chain = makeChain({
+            stream: () => {
+                throw new Error("stream setup failed");
+            },
+            invoke,
+        });
+
+        await drain(streamWithInvokeFallback({
+            chain,
+            input: { observation: "STALE" },
+            prepareInvokeInput,
+        }));
+
+        expect(prepareInvokeInput).toHaveBeenCalledTimes(1);
+        expect(invoke).toHaveBeenCalledWith(
+            { observation: "REVALIDATED" },
+            undefined,
+        );
+    });
+
     it("emits provider usage diagnostics from invoke fallback responses", async () => {
         const chain = makeChain({
             stream: () => {

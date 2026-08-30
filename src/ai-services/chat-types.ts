@@ -58,6 +58,47 @@ export interface MemorySearchDocument {
     };
 }
 
+export type RerankVerdict =
+    | "relevant"
+    | "partially_relevant"
+    | "none_relevant";
+
+export type RerankFailOpenReason =
+    | "model_unavailable"
+    | "policy_disabled"
+    | "timeout"
+    | "provider_error"
+    | "malformed"
+    | "invalid_index"
+    | "contradictory";
+
+export type RerankOutcome =
+    | {
+        kind: "valid";
+        verdict: RerankVerdict;
+        needsMoreEvidence: boolean;
+        candidates: MemoryCandidate[];
+        origin: "deterministic_empty" | "model";
+        modelCalled: boolean;
+    }
+    | {
+        kind: "fail_open";
+        verdict: "relevant";
+        needsMoreEvidence: false;
+        reason: RerankFailOpenReason;
+        candidates: MemoryCandidate[];
+        origin: "fail_open";
+        modelCalled: boolean;
+    };
+
+export type MemoryEvidenceState = "evidence" | "partial" | "none" | "unavailable";
+
+/** Host-only current-source identity. The observation projector must omit it. */
+export interface MemorySourceSnapshotHandle {
+    epoch: string;
+    bodyHash: string;
+}
+
 export interface MemoryCandidateAnchor {
     candidateId: string;
     path: string;
@@ -78,6 +119,52 @@ export interface MemoryCandidate {
     documents: MemorySearchDocument[];
     excerpt: string;
     anchor?: MemoryCandidateAnchor;
+    origin?: "direct" | "graph";
+    /** Host-only complete indexed-path generation; never projected to a provider. */
+    pathEvidenceGeneration?: string;
+    sourceSnapshot?: MemorySourceSnapshotHandle;
+}
+
+export interface MemoryTemporalFilter {
+    since?: number;
+    until?: number;
+}
+
+/** Host-only audit populated by the projection that actually enforces the frozen range. */
+export interface MemoryTemporalProjectionAudit {
+    temporalFilterApplied: 0 | 1;
+    temporalViolationCount: number;
+}
+
+/** Host-only frozen inputs reused by one same-query retrieval recovery episode. */
+export interface MemoryFrozenLexicalPlan {
+    ftsQueryOverride: string | null;
+    temporalIntent: import("./query-rewriter").QueryTemporalIntent;
+    temporalFilter: MemoryTemporalFilter | null;
+}
+
+/** Host-only stable identity for evidence admitted to the first reranker. */
+export interface MemoryRejectedEvidence {
+    path: string;
+    pathEvidenceGeneration: string;
+    evidenceFingerprints: string[];
+    /** Needed only to choose zero-fresh relaxed topology roots. */
+    origin?: "direct" | "graph";
+}
+
+/**
+ * Host-only recovery state. It is never projected into the model observation,
+ * persisted Chat history, source records, logs, or telemetry.
+ */
+export interface MemorySearchRecoverySeed {
+    query: string;
+    lexicalPlan: MemoryFrozenLexicalPlan;
+    rejectedEvidence: MemoryRejectedEvidence[];
+    queryEmbedding?: {
+        value: number[];
+        profileSignature: string;
+        sourceEpoch?: string;
+    };
 }
 
 export interface MemorySearchResult {
@@ -89,6 +176,30 @@ export interface MemorySearchResult {
     skipReason?: string;
     hasAnswerableContent?: boolean;
     needsSnippetFollowup?: boolean;
+    /** Strict Host control state. Older persisted/test fixtures may omit it. */
+    memoryEvidenceState?: MemoryEvidenceState;
+    rerankVerdict?: RerankVerdict;
+    needsMoreEvidence?: boolean;
+    retrievalGuidance?: string;
+    /** Host-only reranker outcome; never spread into a model observation. */
+    rerankOutcome?: RerankOutcome;
+    /** Host-only, run-scoped seed for one same-query relaxed recovery attempt. */
+    recoverySeed?: MemorySearchRecoverySeed;
+    /** Content-free Host diagnostic; never spread into a model observation. */
+    recoveryReason?: "recovery_skipped_deadline" | "recovery_disabled";
+    /** Content-free Host diagnostic; never spread into a model observation. */
+    operationalReason?: "memory_not_used" | "current_source_unavailable" | "final_source_changed";
+}
+
+/** Explicit provider-visible allowlist for search_memory observations. */
+export interface MemorySearchObservation {
+    query: string;
+    documents: MemorySearchDocument[];
+    sources: ChatAgentSource[];
+    hasAnswerableContent: boolean;
+    memoryEvidenceState: MemoryEvidenceState;
+    rerankVerdict: RerankVerdict;
+    retrievalGuidance?: string;
 }
 
 export interface AgentPromptPlan {
@@ -490,6 +601,12 @@ export type ChatToolName =
     | "webSearch"
     | "load_skill";
 
+export type ChatToolUnavailableReason =
+    | "pagelet_stage_control_unavailable"
+    | "pagelet_stage_validation_deadline"
+    | "pagelet_stage_first_rejected"
+    | "pagelet_stage_lead_rejected";
+
 export interface ChatToolResult<Output> {
     ok: boolean;
     tool: string;
@@ -498,6 +615,7 @@ export interface ChatToolResult<Output> {
     sources: ChatAgentSource[];
     sourceRecords?: SourceRecord[];
     error?: string;
+    unavailableReason?: ChatToolUnavailableReason;
 }
 
 export type ChatContextKind = "memory" | "current-note" | "tool-note" | "skill-guide";

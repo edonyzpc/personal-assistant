@@ -2,7 +2,7 @@
 
 > [!note] Current authority is this design together with the
 > [PA Product North Star](./pa-product-north-star.md), [DEC-017](./decisions/dec-017-default-background-recap-preparation.md)
-> through [DEC-026](./decisions/dec-026-local-share-card.md),
+> through [DEC-027](./decisions/dec-027-bounded-retrieval-recovery.md),
 > the [B-108 owning Scope Recap spec](./specs/pa-scope-recap-theme-summary-product-spec.md),
 > and the [B-121 Attention-Aware Delivery spec](./specs/pagelet-attention-aware-delivery-product-spec.md).
 > Archive discussions are provenance only, never the current baseline.
@@ -14,15 +14,15 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. |
-| Last revised | 2026-08-07 |
+| Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 defines the current implemented 0–2 insight and single-recovery contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
+| Last revised | 2026-08-30 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
 | Write boundary | Current B-108 delivery is read-only; existing user-confirmed review-note creation uses the **Write Action Framework**; there is no current standalone Periodic Summary save contract |
 | Background preparation engine | Optional timed polling with rate-limited generic background review preparation (D032); disabled by default and enabled explicitly by the user |
 | Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup when the capability is enabled and sources are allowed, bounded to high-intent scope, and persistently disableable. The first actual Pagelet provider call uses one shared non-blocking notice; high-risk runs still block before any call ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md)) |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
-| Current decisions | D001-D040 as reconciled in this document, with DEC-017 through DEC-026 and the owning Scope Recap/Quiet Recall/B-121/B-124 specs taking precedence for their scopes |
+| Current decisions | D001-D041 as reconciled in this document, with DEC-017 through DEC-027 and the owning Scope Recap/Quiet Recall/B-121/B-124/B-125 contracts taking precedence for their scopes |
 | Historical decisions provenance | [review-assistant-decisions.md](../archive/review-assistant-decisions.md) (non-authoritative) |
 | Technical design | See [pagelet-sdd-guide.md](../development/workflows/pagelet-sdd-guide.md); [review-assistant-sdd.md](../archive/review-assistant-sdd.md) is preserved as historical implementation context |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
@@ -192,7 +192,9 @@ Pagelet does NOT try to solve (preserved from historical design):
    consequence: saving an insight, writing a review note, creating or updating
    Memory, or applying maintenance. **[NEW]**
 
-6. **Fewer better findings.** Pagelet may output only a few findings or none. It should not pad all categories for completeness. **[PRESERVED]**
+6. **Fewer better findings.** Pagelet returns `0–2` independently validated
+   insights per Deep Discover run. Two is a ceiling, not a target; it may return
+   one or stay quiet, and it never pads categories for completeness. **[DEC-027]**
 
 7. **Vault-local and transparent.** Settings, pending review drafts, and feedback state are scoped to the current vault. Included and skipped notes should be inspectable. **[PRESERVED]**
 
@@ -482,22 +484,32 @@ opens Bubble with a terse, non-teaching empty result.
 
 **Intent**: "I want to explore connections between this note and the rest of my vault."
 
-**Current beta flow**:
-1. User uses command palette `Pagelet: Discover connections`.
-2. Pagelet reads the current note and builds related-note context from prepared Memory search when available plus explicit wikilinks / embeds found in the current note. Separately, when this surface reuses the Quiet Recall candidate pipeline, its cold semantic query follows DEC-024: one provider-backed embedding through DEC-023 admission before local vector search, charged to the existing Quiet Recall 10/hour、50/day total call budget.
-3. Pagelet sends the current note and selected related-note context through the normal foreground AI provider path, then opens the discovery Panel layout with connections and gaps.
-4. User can optionally save findings as a review note.
+**Current beta flow — B-123 delivered baseline**:
+1. User invokes `Pagelet: Discover connections` or the Pet Discover action；the
+   same Deep Discover path may also start from its approved Pagelet triggers.
+2. Pagelet freezes the target Markdown note and runs its read-only Agent with
+   the configured Chat model and bounded vault tools. The Agent may follow leads
+   across notes, while every source remains subject to Data Boundary.
+3. A source/currentness/novelty gate either accepts one verified insight or
+   returns quiet. Accepted output enters the existing Review delivery path and
+   opens through Bubble → read-only Panel with source links.
+4. This production path does not use the retired single-shot provider flow and
+   does not write a review note.
 
-If provider evaluation is unavailable or rejected, explicit Discover may still
-show a source-backed local match, but only as `Local related clue` /
-`本地关联线索`. It contains no AI why-now, does not use proactive Recall styling,
-does not mix into a Recall stack, and cannot trigger `nudge`.
-When the Memory index is unavailable, metadata-only relations are limited to
-this local Discover fallback and must not be described as semantic relevance.
+If the current Deep Discover provider path is unavailable or fails, the run is
+quiet or reports failure through its existing control path；production does not
+route back to the retired single-shot `Local related clue` implementation.
 
-**Future direction**:
-- Show a Bubble preview such as "Found 5 related notes and 2 potential themes."
+**Approved B-125 successor contract**:
+- Allow one run to surface at most two independently valuable, source-backed
+  insights and own one bounded retrieval retry；Bubble/Panel may summarize the
+  supporting notes without presenting a note count as an insight quota.
 - Continue improving relevance explanations, cross-note themes, and potential research gaps.
+
+Implementation、validation and rollout disposition are closed；the compact historical
+evidence is retained in
+[B-125 closeout evidence](../archive/2026/b-125-retrieval-optimization-closeout.md),
+while this product design remains the current behavior authority.
 
 **Key property**: Results shown in Panel (not just Bubble). This is the deep-analysis path.
 
@@ -1437,6 +1449,7 @@ Pagelet considered successful if:
 | **D038** | Generic proactive hints (主动提示) design | Quiet Recall, Pattern, and generic review hints remain opt-in and OFF by default. When ON, Pet enters `nudge` only after their own quality gates. Cooldown, no sound, no modal, no focus steal. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. The separate Pet Action Ring is reserved for Capture / Review / Discover / Share. |
 | **D040** | Action Ring Share and geometry | Fourth action Share uses exact nonblank selection first, otherwise current Markdown note under DEC-026/B-124. All four icons show localized EN/ZH text labels. Desktop/iPad prefer an inward arc and use a whole-group compact row/column fallback when complete labels cannot fit without overlap; iPhone uses a complete four-label row when it fits and a whole-column fallback when it does not. The first three actions and all 44px/logical/focus boundaries remain unchanged. |
+| **D041** | Bounded retrieval recovery and Pagelet insight depth | Under DEC-027/B-125, one Pagelet run returns 0–2 independently validated insights and owns at most one relaxed retrieval retry. Zero may retry for the first insight; one may retry for a second only with a concrete unresolved lead. Explicit time constraints remain binding; without one, discovery may cross time. B-123's single-result implementation evidence does not validate this successor behavior. |
 
 [DEC-018](./decisions/dec-018-quality-gated-scope-recap-hints.md) is the accepted
 Scope Recap exception to D038: high-value Recap hints default on for an eligible
@@ -1447,7 +1460,7 @@ Recap path when no reliable insight exists: retain any still-valid artifact;
 otherwise show an immediate local scope explanation only after explicit Recap
 open. It does not weaken D003 or create a proactive candidate.
 
-This current document plus DEC-017 through DEC-025 governs these decisions.
+This current document plus DEC-017 through DEC-027 governs these decisions.
 `docs/archive/review-assistant-decisions.md` is provenance only and must not be
 used to override current behavior.
 
@@ -1517,6 +1530,6 @@ Future product definition: [Pagelet Maintenance Review Product Spec](../archive/
 ---
 
 > Document ends. Subsequent revisions must synchronize with the current North
-> Star, DEC-017 through DEC-025, the owning Product Spec, and the current Pagelet
+> Star, DEC-017 through DEC-027, the owning Product Spec, and the current Pagelet
 > technical guide. Archive discussions and decision drafts remain provenance
 > only.

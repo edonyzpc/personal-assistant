@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "authority": "User request 2026-08-23: PR #378 must retain the restored Episodic Memory documents and must not modify Retrieval Optimization documents owned by its parallel branch.",
+  "authority": "User request 2026-08-23: PR #378 must retain the restored Episodic Memory documents; exact findings are removed when their owning branch resolves them.",
   "removeWhen": "Remove each exact entry in the same change that makes its finding disappear; the checker fails on file drift, stale, duplicate, or new findings.",
   "groups": [
     {
@@ -21,54 +21,6 @@
         "Unindexed architecture doc: docs/architecture/pa-episodic-memory-design.md via docs/architecture/README.md",
         "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/architecture/pa-episodic-memory-design-discussion.md",
         "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/architecture/pa-episodic-memory-design.md"
-      ]
-    },
-    {
-      "id": "retrieval-optimization-parallel-work",
-      "reason": "Retrieval Optimization is being developed on its own branch; PR #378 must not rewrite its active package.",
-      "files": [
-        {
-          "path": "docs/development/active/retrieval-optimization/README.md",
-          "sha256": "c7ede940e82a8a4d943efe787655dcf8d17a65615dd425ba93ca3af9691ac290"
-        },
-        {
-          "path": "docs/development/active/retrieval-optimization/plan.md",
-          "sha256": "b8909157e21d73c32264d6273f3b5b52bf7accac48abd1465e29d752c8b2a831"
-        },
-        {
-          "path": "docs/development/active/retrieval-optimization/sdd.md",
-          "sha256": "d7d0373180b41b486c8068171e510b205696dad22864d8172c60ce458ca00124"
-        },
-        {
-          "path": "docs/development/active/retrieval-optimization/tracker.md",
-          "sha256": "f267f8bc429c3ae8662ff1276eb037ead2d93a017740c5177bc986784af6ba3e"
-        }
-      ],
-      "findings": [
-        "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/development/active/retrieval-optimization/README.md",
-        "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/development/active/retrieval-optimization/plan.md",
-        "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/development/active/retrieval-optimization/sdd.md",
-        "Orphan documentation is not reachable from docs/index.md without traversing archive: docs/development/active/retrieval-optimization/tracker.md",
-        "Unregistered active package or tracker: docs/development/active/retrieval-optimization/README.md",
-        "docs/development/active/retrieval-optimization/README.md -> missing or placeholder field: Document status",
-        "docs/development/active/retrieval-optimization/README.md -> missing or placeholder field: Work item",
-        "docs/development/active/retrieval-optimization/README.md -> missing or placeholder field: Authority",
-        "docs/development/active/retrieval-optimization/README.md -> missing or placeholder field: Tracker",
-        "docs/development/active/retrieval-optimization/README.md -> package must declare exactly one authority lane: Decision + Product spec, or Governance contract",
-        "docs/development/active/retrieval-optimization/README.md -> invalid Document status ",
-        "docs/development/active/retrieval-optimization/README.md -> invalid Work item ",
-        "docs/development/active/retrieval-optimization/README.md -> Active Registry Work item/link is missing or stale",
-        "docs/development/active/retrieval-optimization/plan.md -> missing or placeholder field: Work item",
-        "docs/development/active/retrieval-optimization/tracker.md -> missing or placeholder field: Delivery status",
-        "docs/development/active/retrieval-optimization/tracker.md -> missing or placeholder field: Work item",
-        "docs/development/active/retrieval-optimization/tracker.md -> missing or placeholder field: Authority",
-        "docs/development/active/retrieval-optimization/tracker.md -> invalid Document status Active",
-        "docs/development/active/retrieval-optimization/tracker.md -> terminal or invalid active Delivery status ",
-        "docs/development/active/retrieval-optimization/sdd.md -> missing or placeholder field: Work item",
-        "docs/development/active/retrieval-optimization/sdd.md -> missing or placeholder field: Tracker",
-        "docs/development/active/retrieval-optimization/sdd.md -> missing or placeholder field: Plan",
-        "docs/development/active/retrieval-optimization/sdd.md -> missing tracker link: docs/development/active/retrieval-optimization/tracker.md",
-        "docs/development/active/retrieval-optimization/sdd.md -> missing Plan link: docs/development/active/retrieval-optimization/plan.md"
       ]
     }
   ]

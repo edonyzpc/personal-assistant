@@ -16,6 +16,12 @@ export interface ModelChunkConsumerConfig {
     isAborted: () => boolean;
     isWallClockExceeded: () => boolean;
     wallClockRemainingMs: () => number | undefined;
+    /**
+     * A buffered transport may replace the ordinary soft deadline with the
+     * hard deadline exactly when the provider request is dispatched. Let the
+     * active wait reschedule its one-shot timer without polling.
+     */
+    subscribeWallClockDeadlineChange?: (listener: () => void) => () => void;
 }
 
 export class ModelChunkConsumer {
@@ -40,6 +46,7 @@ export class ModelChunkConsumer {
                 if (wallClockTimer !== undefined) {
                     clearPlatformTimeout(wallClockTimer);
                 }
+                unsubscribeWallClockDeadlineChange?.();
                 this.config.signal?.removeEventListener("abort", onAbort);
             };
             const settle = (result: NextModelChunkResult) => {
@@ -60,13 +67,22 @@ export class ModelChunkConsumer {
                     settle({ type: "idle" });
                 }, this.config.assistantIdleTimeoutMs);
             }
-            const wallClockRemainingMs = this.config.wallClockRemainingMs();
-            if (wallClockRemainingMs !== undefined) {
+            const scheduleWallClockTimer = () => {
+                if (wallClockTimer !== undefined) {
+                    clearPlatformTimeout(wallClockTimer);
+                    wallClockTimer = undefined;
+                }
+                const wallClockRemainingMs = this.config.wallClockRemainingMs();
+                if (wallClockRemainingMs === undefined) return;
                 wallClockTimer = setPlatformTimeout(() => {
                     void this.iterator.return?.();
                     settle({ type: "wall_clock_exceeded" });
                 }, wallClockRemainingMs);
-            }
+            };
+            scheduleWallClockTimer();
+            const unsubscribeWallClockDeadlineChange = this.config.subscribeWallClockDeadlineChange?.(
+                scheduleWallClockTimer,
+            );
 
             this.iterator.next().then(
                 (result) => {

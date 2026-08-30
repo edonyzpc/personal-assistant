@@ -287,6 +287,7 @@ export function createChatToolCapability<Input, Output>(
             const chatContext: ChatToolContext = {
                 host: context.host,
                 signal: context.signal,
+                outerToolDeadlineAt: context.outerToolDeadlineAt,
                 onBeforeVssSearch: context.onBeforeVssSearch,
                 onToolRunning: context.onToolRunning,
             };

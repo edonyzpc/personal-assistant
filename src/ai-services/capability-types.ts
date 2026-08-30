@@ -1,5 +1,6 @@
 import type { AiServiceHost } from "./AiServiceHost";
 import type {
+    ChatToolUnavailableReason,
     SourceRecord,
     SourceRecordBoundary,
     SourceRecordKind,
@@ -16,6 +17,7 @@ import type {
     ChatToolSourceBoundary,
 } from "./chat-tools";
 import type { ChatAgentSource } from "./chat-types";
+import type { ProviderRequestScope } from "./obsidian-fetch";
 
 // "tool" is the only active kind today.
 // "context" reserved (0 use) / "action" guarded by policy-engine until action mode lands.
@@ -84,6 +86,10 @@ export interface AgentCapabilityContext {
     host: AiServiceHost;
     turnId?: string;
     signal?: AbortSignal;
+    /** Host-only absolute boundary registered by the outer Tool dispatcher. */
+    outerToolDeadlineAt?: number;
+    /** Shared by every Provider request in one logical Agent run. */
+    providerRequestScope?: ProviderRequestScope;
     platform?: AgentRuntimePlatform;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
@@ -212,6 +218,7 @@ export function agentResultToChatToolResult(
     capabilityName: string,
     result: AgentCapabilityResult,
 ): ChatToolResult<unknown> {
+    const unavailableReason = asChatToolUnavailableReason(result.unavailableReason);
     return {
         ok: result.status === "ok",
         tool: capabilityName,
@@ -220,5 +227,20 @@ export function agentResultToChatToolResult(
         sources: result.sources,
         sourceRecords: result.sourceRecords,
         ...(result.userSafeMessage ?? result.error ? { error: result.userSafeMessage ?? result.error } : {}),
+        ...(unavailableReason ? { unavailableReason } : {}),
     };
+}
+
+function asChatToolUnavailableReason(
+    value: string | undefined,
+): ChatToolUnavailableReason | undefined {
+    switch (value) {
+        case "pagelet_stage_control_unavailable":
+        case "pagelet_stage_validation_deadline":
+        case "pagelet_stage_first_rejected":
+        case "pagelet_stage_lead_rejected":
+            return value;
+        default:
+            return undefined;
+    }
 }

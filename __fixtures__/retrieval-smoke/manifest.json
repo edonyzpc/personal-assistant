@@ -1,0 +1,683 @@
+{
+  "fixtureVersion": "b125-retrieval-smoke-v5",
+  "vaultDirectory": "retrieval-smoke",
+  "excludedFolders": [
+    "retrieval-smoke/excluded"
+  ],
+  "temporalFixtureMtimes": {
+    "retrieval-smoke/temporal/60-old-note.md": "2020-01-15T08:00:00.000Z",
+    "retrieval-smoke/temporal/61-recent-note.md": "2026-07-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/100-standard-insufficient-01.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/101-standard-insufficient-02.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/102-standard-insufficient-03.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/103-standard-insufficient-04.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/104-standard-insufficient-05.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/105-standard-insufficient-06.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/106-standard-insufficient-07.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/107-standard-insufficient-08.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/108-standard-insufficient-09.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/109-standard-insufficient-10.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/110-standard-insufficient-11.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/111-standard-insufficient-12.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/112-relaxed-target.md": "2026-06-15T08:00:00.000Z",
+    "retrieval-smoke/temporal-retry/113-old-forbidden.md": "2020-02-15T08:00:00.000Z"
+  },
+  "requiredCases": [
+    "lexical",
+    "chat-recovery",
+    "temporal-retry",
+    "graph-depth",
+    "opaque-boundary",
+    "pagelet-0",
+    "pagelet-1",
+    "pagelet-2",
+    "temporal"
+  ],
+  "requiredRankingCases": [
+    "lexical-title",
+    "lexical-heading",
+    "lexical-error",
+    "graph-depth",
+    "convergence",
+    "temporal-2026"
+  ],
+  "rankingCases": {
+    "lexical-title": {
+      "prompt": "只从我的笔记中查找“量子灯塔检索”，并根据找到的记录回答。",
+      "relevantPath": "retrieval-smoke/lexical/量子灯塔检索.md",
+      "forbiddenPaths": []
+    },
+    "lexical-heading": {
+      "prompt": "只从我的笔记中查找“延迟恢复矩阵”，并根据找到的记录回答。",
+      "relevantPath": "retrieval-smoke/lexical/量子灯塔检索.md",
+      "forbiddenPaths": []
+    },
+    "lexical-error": {
+      "prompt": "只从我的笔记中查找错误码“ERR_RETRIEVAL_LANTERN_7401”，并根据找到的记录回答。",
+      "relevantPath": "retrieval-smoke/lexical/量子灯塔检索.md",
+      "forbiddenPaths": []
+    },
+    "graph-depth": {
+      "prompt": "只从我的笔记中回答：青铜罗盘为什么出现资源峰值？",
+      "relevantPath": "retrieval-smoke/graph/30-deep-target.md",
+      "forbiddenPaths": [
+        "retrieval-smoke/graph/31-two-opaque-forbidden-target.md",
+        "retrieval-smoke/excluded/20-opaque-bridge.md",
+        "retrieval-smoke/excluded/21-second-opaque.md"
+      ]
+    },
+    "convergence": {
+      "prompt": "只从我的笔记中回答：蓝色账本重复入账的共同原因是什么？",
+      "relevantPath": "retrieval-smoke/graph/42-convergence-target.md",
+      "forbiddenPaths": [
+        "retrieval-smoke/graph/43-weak-single-support.md",
+        "retrieval-smoke/excluded/20-opaque-bridge.md",
+        "retrieval-smoke/excluded/21-second-opaque.md"
+      ]
+    },
+    "temporal-2026": {
+      "prompt": "只从我的笔记中，仅使用 2026 年的记录说明当前时间边界信号。",
+      "relevantPath": "retrieval-smoke/temporal/61-recent-note.md",
+      "forbiddenPaths": [
+        "retrieval-smoke/temporal/60-old-note.md"
+      ]
+    }
+  },
+  "routingObservations": {
+    "bare-error-code": "ERR_RETRIEVAL_LANTERN_7401",
+    "bare-japanese": "日本語検索エンジン"
+  },
+  "recoveryCase": {
+    "prompt": "只从我的笔记中回答：RCV-271 猩红雨伞事故的根因是什么？",
+    "targetPath": "retrieval-smoke/recovery/90-relaxed-target.md",
+    "standardInsufficientPaths": [
+      "retrieval-smoke/recovery/70-standard-insufficient-01.md",
+      "retrieval-smoke/recovery/71-standard-insufficient-02.md",
+      "retrieval-smoke/recovery/72-standard-insufficient-03.md",
+      "retrieval-smoke/recovery/73-standard-insufficient-04.md",
+      "retrieval-smoke/recovery/74-standard-insufficient-05.md",
+      "retrieval-smoke/recovery/75-standard-insufficient-06.md",
+      "retrieval-smoke/recovery/76-standard-insufficient-07.md",
+      "retrieval-smoke/recovery/77-standard-insufficient-08.md",
+      "retrieval-smoke/recovery/78-standard-insufficient-09.md",
+      "retrieval-smoke/recovery/79-standard-insufficient-10.md",
+      "retrieval-smoke/recovery/80-standard-insufficient-11.md",
+      "retrieval-smoke/recovery/81-standard-insufficient-12.md"
+    ],
+    "finalSourceContract": {
+      "maximumSourceCount": 8,
+      "allowedStandardEvidenceModes": [
+        "valid-none",
+        "strict-partial"
+      ],
+      "partialPreservesFrozenStandardSubset": true,
+      "requiresRelaxedTarget": true
+    }
+  },
+  "temporalRetryCase": {
+    "prompt": "只从我的笔记中，仅使用 2026-01-01 到 2026-12-31 的记录回答：TRT-826 紫晶日晷事故的根因是什么？",
+    "timeRange": {
+      "from": "2026-01-01T00:00:00.000Z",
+      "to": "2026-12-31T23:59:59.999Z"
+    },
+    "targetPath": "retrieval-smoke/temporal-retry/112-relaxed-target.md",
+    "forbiddenPath": "retrieval-smoke/temporal-retry/113-old-forbidden.md",
+    "standardInsufficientPaths": [
+      "retrieval-smoke/temporal-retry/100-standard-insufficient-01.md",
+      "retrieval-smoke/temporal-retry/101-standard-insufficient-02.md",
+      "retrieval-smoke/temporal-retry/102-standard-insufficient-03.md",
+      "retrieval-smoke/temporal-retry/103-standard-insufficient-04.md",
+      "retrieval-smoke/temporal-retry/104-standard-insufficient-05.md",
+      "retrieval-smoke/temporal-retry/105-standard-insufficient-06.md",
+      "retrieval-smoke/temporal-retry/106-standard-insufficient-07.md",
+      "retrieval-smoke/temporal-retry/107-standard-insufficient-08.md",
+      "retrieval-smoke/temporal-retry/108-standard-insufficient-09.md",
+      "retrieval-smoke/temporal-retry/109-standard-insufficient-10.md",
+      "retrieval-smoke/temporal-retry/110-standard-insufficient-11.md",
+      "retrieval-smoke/temporal-retry/111-standard-insufficient-12.md"
+    ],
+    "finalSourceContract": {
+      "maximumSourceCount": 8,
+      "allowedStandardEvidenceModes": [
+        "valid-none",
+        "strict-partial"
+      ],
+      "partialPreservesFrozenStandardSubset": true,
+      "requiresRelaxedTarget": true,
+      "forbidsOutOfRangeSource": true
+    }
+  },
+  "pageletCases": {
+    "pagelet-0": {
+      "entryPath": "retrieval-smoke/pagelet/52-no-insight.md",
+      "expectedInsightCount": 0,
+      "sourcePaths": []
+    },
+    "pagelet-1": {
+      "entryPath": "retrieval-smoke/pagelet/51-one-insight.md",
+      "expectedInsightCount": 1,
+      "sourcePaths": [
+        "retrieval-smoke/pagelet/53-single-source.md"
+      ]
+    },
+    "pagelet-2": {
+      "entryPath": "retrieval-smoke/pagelet/50-current-note.md",
+      "expectedInsightCount": 2,
+      "sourcePaths": [
+        "retrieval-smoke/pagelet/54-double-source-a.md",
+        "retrieval-smoke/pagelet/55-double-source-b.md"
+      ]
+    }
+  },
+  "compactProxyPlan": {
+    "schemaVersion": 1,
+    "version": "b125-compact-proxy-v1",
+    "profile": "compact-proxy",
+    "machineStatus": "CANDIDATE",
+    "completionStatus": "READY_FOR_OWNER_REVIEW",
+    "conversationPolicy": "fresh-chat-per-episode",
+    "performanceSurface": "chat",
+    "requiredPlatformClass": "ios-real-device",
+    "requiredRuntimeFamily": "ios-wkwebview",
+    "deviceIdentityPolicy": "operator-provided-sha256",
+    "settingsPhases": {
+      "control": {
+        "lexicalProfile": false,
+        "strictReranker": false,
+        "graphPpr": false,
+        "relaxedRecovery": false
+      },
+      "evaluated": {
+        "lexicalProfile": true,
+        "strictReranker": true,
+        "graphPpr": true,
+        "relaxedRecovery": true
+      },
+      "requiredTransitionCount": 1
+    },
+    "hardBudgets": {
+      "lexicalMs": 500,
+      "graphMs": 8000,
+      "recoveryMs": 30000,
+      "outerTurnMs": 180000,
+      "finalizationReserveMinExclusiveMs": 0
+    },
+    "workload": {
+      "schemaVersion": 1,
+      "fixtureCaseId": "perf-full-graph-two-wave-v1",
+      "prompts": {
+        "standard-v1": {
+          "text": "只从我的笔记中回答：PFS-731 银色潮闸告警的完整原因是什么？"
+        },
+        "retry-v1": {
+          "text": "只从我的笔记中回答：PFR-842 琥珀罗盘事故的完整根因是什么？"
+        },
+        "cancel-v1": {
+          "text": "只从我的笔记中回答：PFS-731 银色潮闸告警的完整原因与修复方向是什么？"
+        }
+      },
+      "stages": {
+        "controlStandard": [
+          {
+            "idPrefix": "compact-control-std-warmup-",
+            "from": 1,
+            "to": 1,
+            "pad": 2,
+            "sampleClass": "warmup",
+            "promptId": "standard-v1",
+            "settingsPhase": "control"
+          },
+          {
+            "idPrefix": "compact-control-std-measured-",
+            "from": 1,
+            "to": 5,
+            "pad": 2,
+            "sampleClass": "measured",
+            "promptId": "standard-v1",
+            "settingsPhase": "control"
+          }
+        ],
+        "evaluatedStandard": [
+          {
+            "idPrefix": "compact-evaluated-std-warmup-",
+            "from": 1,
+            "to": 3,
+            "pad": 2,
+            "sampleClass": "warmup",
+            "promptId": "standard-v1",
+            "settingsPhase": "evaluated"
+          },
+          {
+            "idPrefix": "compact-evaluated-std-measured-",
+            "from": 1,
+            "to": 10,
+            "pad": 2,
+            "sampleClass": "measured",
+            "promptId": "standard-v1",
+            "settingsPhase": "evaluated"
+          }
+        ],
+        "evaluatedRetry": [
+          {
+            "idPrefix": "compact-evaluated-retry-warmup-",
+            "from": 1,
+            "to": 3,
+            "pad": 2,
+            "sampleClass": "warmup",
+            "promptId": "retry-v1",
+            "settingsPhase": "evaluated"
+          },
+          {
+            "idPrefix": "compact-evaluated-retry-measured-",
+            "from": 1,
+            "to": 10,
+            "pad": 2,
+            "sampleClass": "measured",
+            "promptId": "retry-v1",
+            "settingsPhase": "evaluated"
+          }
+        ],
+        "cancellationProbe": [
+          {
+            "id": "compact-cancel-probe-01",
+            "sampleClass": "probe",
+            "promptId": "cancel-v1",
+            "settingsPhase": "evaluated"
+          }
+        ]
+      }
+    },
+    "requiredMaintenance": [
+      "rebuild",
+      "incremental-update"
+    ],
+    "maintenanceOperations": {
+      "rebuild": {
+        "sequence": 1,
+        "kind": "rebuild",
+        "inputSource": "indexed-chunks"
+      },
+      "incrementalUpdate": {
+        "sequence": 2,
+        "kind": "indexed-chunks-incremental",
+        "inputSource": "indexed-chunks",
+        "fixturePath": "retrieval-smoke/lexical/量子灯塔检索.md"
+      }
+    },
+    "requiredResourceMetrics": [
+      "ui.maxEventLoopStallMs",
+      "storage.estimatedDbBytes"
+    ],
+    "optionalResourceMetrics": [
+      "memory.peakProcessFootprintBytes",
+      "memory.heapUsedBytes"
+    ],
+    "independentCorrectnessSlices": [
+      "six-ranking-cases",
+      "structured-temporal-retry"
+    ]
+  },
+  "deviceMeasurementPlan": {
+    "version": "b125-device-measurement-v9",
+    "percentileMethod": "nearest-rank",
+    "warmupSamples": 3,
+    "sampleCount": 20,
+    "diagnosticsEvidence": {
+      "schemaVersion": 1,
+      "sessionIsolation": "standard-performance-then-two-retry-batches-then-cancellation-probe",
+      "standardPerformanceEpisodeCount": 23,
+      "retryPerformanceEpisodeCount": 23,
+      "retryPerformanceBatchEpisodeCounts": [12, 11],
+      "cancellationProbeEpisodeCount": 1,
+      "maximumMemorySearchAttemptsPerEpisode": 2,
+      "requiredSessionCapacity": 512,
+      "performanceSurface": "chat"
+    },
+    "performanceWorkload": {
+      "schemaVersion": 1,
+      "conversationPolicy": "fresh-chat-per-episode",
+      "fixtureCase": {
+        "id": "perf-full-graph-two-wave-v1",
+        "wave1Direct": {
+          "pathPrefix": "retrieval-smoke/performance/200-wave1-direct-",
+          "from": 1,
+          "to": 12,
+          "pad": 2
+        },
+        "wave1GraphHubPath": "retrieval-smoke/performance/212-wave1-graph-hub.md",
+        "wave2FreshDirectPaths": [
+          "retrieval-smoke/performance/220-wave2-target.md",
+          "retrieval-smoke/performance/221-wave2-helper.md"
+        ],
+        "wave2GraphHubPath": "retrieval-smoke/performance/222-wave2-graph-hub.md",
+        "requiredDisconnectedWaves": true
+      },
+      "prompts": {
+        "standard-v1": {
+          "text": "只从我的笔记中回答：PFS-731 银色潮闸告警的完整原因是什么？",
+          "expectedShape": "one-attempt-full-graph"
+        },
+        "retry-v1": {
+          "text": "只从我的笔记中回答：PFR-842 琥珀罗盘事故的完整根因是什么？",
+          "expectedShape": "two-attempt-full-graph-with-projection"
+        },
+        "cancel-v1": {
+          "text": "只从我的笔记中回答：PFS-731 银色潮闸告警的完整原因与修复方向是什么？",
+          "expectedShape": "one-attempt-same-worker-cancel"
+        }
+      },
+      "qualification": {
+        "requiredBeforeEnvelope": [
+          "standard-v1",
+          "retry-v1"
+        ]
+      },
+      "stages": {
+        "standardPerformance": [
+          {
+            "idPrefix": "perf-std-warmup-",
+            "from": 1,
+            "to": 3,
+            "pad": 2,
+            "sampleClass": "warmup",
+            "promptId": "standard-v1"
+          },
+          {
+            "idPrefix": "perf-std-measured-",
+            "from": 1,
+            "to": 20,
+            "pad": 2,
+            "sampleClass": "measured",
+            "promptId": "standard-v1"
+          }
+        ],
+        "retryPerformanceBatch1": [
+          {
+            "idPrefix": "perf-retry-warmup-",
+            "from": 1,
+            "to": 3,
+            "pad": 2,
+            "sampleClass": "warmup",
+            "promptId": "retry-v1"
+          },
+          {
+            "idPrefix": "perf-retry-measured-",
+            "from": 1,
+            "to": 9,
+            "pad": 2,
+            "sampleClass": "measured",
+            "promptId": "retry-v1"
+          }
+        ],
+        "retryPerformanceBatch2": [
+          {
+            "idPrefix": "perf-retry-measured-",
+            "from": 10,
+            "to": 20,
+            "pad": 2,
+            "sampleClass": "measured",
+            "promptId": "retry-v1"
+          }
+        ],
+        "cancellationProbe": [
+          {
+            "id": "perf-cancel-probe-01",
+            "sampleClass": "probe",
+            "promptId": "cancel-v1"
+          }
+        ]
+      }
+    },
+    "externalMemoryEvidence": {
+      "requiredPlatformClass": "ios-real-device",
+      "requiredRuntimeFamily": "ios-wkwebview",
+      "counter": "physical_footprint_bytes",
+      "unit": "bytes",
+      "processName": "Obsidian",
+      "appBundleId": "md.obsidian",
+      "deviceIdentitySha256": null
+    },
+    "requiredMetrics": [
+      {
+        "id": "retrieval.totalDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.lexicalDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.graphDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "collectionMethod": "diagnostics-full-graph-episode-wall-time",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.retryTotalDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "collectionMethod": "diagnostics-two-attempt-retry-episode-total-duration",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.retryGraphDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "collectionMethod": "diagnostics-two-attempt-retry-episode-full-graph-wall-time",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.retryGraphWorkerQueueWaitMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "collectionMethod": "diagnostics-two-attempt-retry-worker-queue-wait",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.retryGraphWorkerMaxBatchDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "collectionMethod": "diagnostics-two-attempt-retry-worker-max-batch-duration",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.graphWorkerQueueWaitMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.graphWorkerMaxBatchDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.finalizationReserveMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "minMin": null }
+      },
+      {
+        "id": "retrieval.retryFinalizationReserveMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "collectionMethod": "diagnostics-two-attempt-retry-episode-finalization-reserve",
+        "threshold": { "minMin": null }
+      },
+      {
+        "id": "ui.eventLoopGapMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "ui.maxEventLoopStallMs",
+        "unit": "ms",
+        "sampleMode": "maximum-observed-series",
+        "minimumSamples": 2,
+        "collectionMethod": "workload-bound-maximum-observed-main-thread-gap-50ms",
+        "threshold": { "maxMax": null }
+      },
+      {
+        "id": "lexical.rebuildDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "lexical.incrementalUpdateDurationMs",
+        "unit": "ms",
+        "sampleMode": "series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "storage.estimatedDbBytes",
+        "unit": "bytes",
+        "sampleMode": "snapshot",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "storage.peakEstimatedDbBytes",
+        "unit": "bytes",
+        "sampleMode": "maximum-observed-series",
+        "minimumSamples": 2,
+        "collectionMethod": "workload-bound-start-stop-runtime-resource-envelope-1000ms",
+        "threshold": { "maxMax": null }
+      },
+      {
+        "id": "memory.peakProcessFootprintBytes",
+        "unit": "bytes",
+        "sampleMode": "maximum-observed-series",
+        "minimumSamples": 2,
+        "collectionMethod": "workload-bound-runtime-process-memory-or-provenanced-system-profiler-envelope",
+        "threshold": { "maxMax": null }
+      },
+      {
+        "id": "retrieval.deadlineExceededCount",
+        "unit": "count",
+        "sampleMode": "snapshot",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.cancelRequestedCount",
+        "unit": "count",
+        "sampleMode": "snapshot",
+        "threshold": { "p95Min": null }
+      },
+      {
+        "id": "retrieval.cancelObservedCount",
+        "unit": "count",
+        "sampleMode": "snapshot",
+        "threshold": { "p95Min": null }
+      },
+      {
+        "id": "retrieval.acceptedAfterCancelCount",
+        "unit": "count",
+        "sampleMode": "snapshot",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.lateDiscardCount",
+        "unit": "count",
+        "sampleMode": "snapshot",
+        "threshold": { "p95Min": null }
+      }
+    ],
+    "optionalMetrics": [
+      {
+        "id": "memory.heapUsedBytes",
+        "unit": "bytes",
+        "sampleMode": "snapshot",
+        "collectionMethod": "runtime-js-heap-diagnostic-when-available",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "ui.longTaskDurationMs",
+        "unit": "ms",
+        "sampleMode": "observed-series",
+        "threshold": { "p95Max": null }
+      },
+      {
+        "id": "retrieval.acceptedCount",
+        "unit": "count",
+        "sampleMode": "snapshot",
+        "threshold": { "p95Max": null }
+      }
+    ],
+    "rerankerGate": {
+      "minimumMrr": null,
+      "flagOffBaselineMrr": null,
+      "maximumMrrRegression": null
+    }
+  },
+  "files": {
+    "retrieval-smoke/README.md": "de67ef4332195456a7fa24a3279ee2d56e6e63a47d1f3727c97250822821718f",
+    "retrieval-smoke/excluded/20-opaque-bridge.md": "39bc81345cfa7cefed2bd5f492ad2b4874e843960dc038725ca81df91083ef17",
+    "retrieval-smoke/excluded/21-second-opaque.md": "19997cc7df0afd2537f8791bf02c7a03c0946845c80bcf78a8172eeb41b75b61",
+    "retrieval-smoke/graph/10-seed-a.md": "37fb7bd670bc34e599f909955872916edcfed14cd3e52a0b429117dd1916294c",
+    "retrieval-smoke/graph/30-deep-target.md": "073deebbac32a09de6920fe746f9e302fcc01c9838d63bc2dc1bd0092248fb5c",
+    "retrieval-smoke/graph/31-two-opaque-forbidden-target.md": "6c1c3a0562cf7502c1dd64998c4de60ffd515e2c45e777c5293c909d5049b692",
+    "retrieval-smoke/graph/40-convergence-seed-a.md": "bf52e53c54bf3675c01ddb6abeba5c6ff2c0c4d8b3ee3405798a469d2b3428f0",
+    "retrieval-smoke/graph/41-convergence-seed-b.md": "b65bbc670c445a0f564c90be96d132f4723c5794ae49fd1f9ad60b6f542e5b86",
+    "retrieval-smoke/graph/42-convergence-target.md": "f9bd6cedd3bc15430a814975d6b16036e2736807b91e87c450c80a3f5726ec29",
+    "retrieval-smoke/graph/43-weak-single-support.md": "acfed11e08c70295ab9aeb991b9300d9da29c24a9c4999d6cbfd3d6717ed1958",
+    "retrieval-smoke/lexical/量子灯塔检索.md": "a92ac4d718e51acc847199391281d0c357da855ed77596b13e159f8fd0882655",
+    "retrieval-smoke/pagelet/50-current-note.md": "0f0df0fd6c2364b14121dc83705bd1552ec38fe91be167f308193b473e3bd104",
+    "retrieval-smoke/pagelet/51-one-insight.md": "a3ea7eafbf98cd148ef92586afc4d3d2d5f5cfb0c2d0eb14a5c138ff48e6ebb4",
+    "retrieval-smoke/pagelet/52-no-insight.md": "dba8b07a630b2ec1e0af3459fbf9d1a810c79cf6b63b7a39667a843fcc6a13e3",
+    "retrieval-smoke/pagelet/53-single-source.md": "514042410c73c72179eeb939f00225cb5df539bab45e1a8ee8748dbabb932ddb",
+    "retrieval-smoke/pagelet/54-double-source-a.md": "8c0715da2ffeede6e33c6e1cb55d1840c3b975f58cd5f1c4548cd00a32b90e3a",
+    "retrieval-smoke/pagelet/55-double-source-b.md": "94650b03f93ef9e7fb0b1f0db162ec8721606e448f3823bf621b7b5277784100",
+    "retrieval-smoke/performance/200-wave1-direct-01.md": "a64c93e22f7503978b9f67aa2603f3459ed04d3c49fb88683c46d85190726463",
+    "retrieval-smoke/performance/200-wave1-direct-02.md": "1bf47225ee5c52167f93d8ee980acbe15c424bfd21ca4a9eeaab379df2b98371",
+    "retrieval-smoke/performance/200-wave1-direct-03.md": "b3789994d67507c4b4c8b193a0f2bd51c9558e819c94d34e744546ce2d3eb1b4",
+    "retrieval-smoke/performance/200-wave1-direct-04.md": "33ca406701aa435eda79dd11b26c4edf756911ee8192a4944b542077fc6d0fe3",
+    "retrieval-smoke/performance/200-wave1-direct-05.md": "171dde1bd10bbbbc726b52638b617d4a9b37c5b90ef06c78811cd1837d2501a9",
+    "retrieval-smoke/performance/200-wave1-direct-06.md": "1aec87fbcea5bdf70181615ad6f509f6ec85928ff5b61d84aab61a4663ac3c8f",
+    "retrieval-smoke/performance/200-wave1-direct-07.md": "0072e092092c39a8708bacf06b38317811b81a2270bc5d280b4b9b51e5b66682",
+    "retrieval-smoke/performance/200-wave1-direct-08.md": "e5230730cf9144d28c9bf38da011b0ee617f02a334c645b90116a2bc369717a2",
+    "retrieval-smoke/performance/200-wave1-direct-09.md": "69b09bffbbfdb8d1598722431b2621472a8b8efef6ee6aab37bede90853f0d94",
+    "retrieval-smoke/performance/200-wave1-direct-10.md": "f475c7713847e3b3c30bd8f94a2c75f3663ac81e63403b06e51a9e2108b95eda",
+    "retrieval-smoke/performance/200-wave1-direct-11.md": "12501ad6da4dff4c8332010b23fe55b7ebe9f05d5d74f94079d05e1706631fd8",
+    "retrieval-smoke/performance/200-wave1-direct-12.md": "c1dab0a3614e5ed91e2e8153de8c00c4b467586d50f86bd94c8a482af4086995",
+    "retrieval-smoke/performance/212-wave1-graph-hub.md": "d0832c8b97f3502da379d51cfe4e7a828c42e02fbf5a05819d2158e42a099424",
+    "retrieval-smoke/performance/220-wave2-target.md": "52ba72d5a4d6e3749defab85bd69f18a4522dae71557c51196782e0ab3349cc3",
+    "retrieval-smoke/performance/221-wave2-helper.md": "317c74e9ac01a492399c6a9c158003f8677f56e62d7c9a3aebe8fcf1a8b345cc",
+    "retrieval-smoke/performance/222-wave2-graph-hub.md": "36a25a6e705ad9e59d44dab10f0517177c810e773ecf47d8ad8a7de0c5d98792",
+    "retrieval-smoke/recovery/70-standard-insufficient-01.md": "6028143fbebba2a4dc9d6a7ead27e21a1d37c5b76fe137b41f1236f0fcc12c7b",
+    "retrieval-smoke/recovery/71-standard-insufficient-02.md": "9d6cdb17f7f8da4ea929bccfc249a7af8565faa896ad09d420139e2b3207c930",
+    "retrieval-smoke/recovery/72-standard-insufficient-03.md": "d9846cba2da00b7a8f02e3bef6522876e59eb9034186ce84f4e419f6bb74d66c",
+    "retrieval-smoke/recovery/73-standard-insufficient-04.md": "0032d8d502a08f40c08a2e959ea38848ab63f1e21003635f0c6b1218c5d3e248",
+    "retrieval-smoke/recovery/74-standard-insufficient-05.md": "283435bfbd95940681c91a60765d4163d7596e38af4d2e4662b89c99e4dee8a5",
+    "retrieval-smoke/recovery/75-standard-insufficient-06.md": "d0cc272e565bb98cceb004bc847cb70c5e0e0a9db14d140a5fe5f618d82fab10",
+    "retrieval-smoke/recovery/76-standard-insufficient-07.md": "f196acffa788cd9b364dce5bc005936eb5a9262aa5439795f54c32eab3c4e105",
+    "retrieval-smoke/recovery/77-standard-insufficient-08.md": "818da666452c50d6ed72942660e22f6f57026dcad67e226ad8ff3b33dd79e4c8",
+    "retrieval-smoke/recovery/78-standard-insufficient-09.md": "0e14662aef6dec36657301c25c79dfb1ddff95238a2298d01244c4b7b14616dd",
+    "retrieval-smoke/recovery/79-standard-insufficient-10.md": "d9d14e2793acde8620fb418e0aa6bf7ae9926301e4827f7a9e349a0f448cb08a",
+    "retrieval-smoke/recovery/80-standard-insufficient-11.md": "93cb1bd72d6668891f0bdaf48cd9d5fea7ac32ca2fe2c99fba8d5e43bce95aa2",
+    "retrieval-smoke/recovery/81-standard-insufficient-12.md": "27361e9477ffcca98d1f8c7e26c0aab5ee67e558967380ad3446989292738148",
+    "retrieval-smoke/recovery/90-relaxed-target.md": "efcda5e9ecd8ad132bd40c5c7ed71c657e9781f93b615d8c199d71fc39d0dd51",
+    "retrieval-smoke/temporal-retry/100-standard-insufficient-01.md": "ab5625071d0a85dd7a517ed9c10e5466c4b864d7588293a0f8f826621d484ba2",
+    "retrieval-smoke/temporal-retry/101-standard-insufficient-02.md": "16d3aab29d01c506327cebfb8659bda9d768ec5143eb0e989a57f5c42a9d5cba",
+    "retrieval-smoke/temporal-retry/102-standard-insufficient-03.md": "999981072b3adc906d0cee7b2beb722cb2cae808310693a90b3a1304d0f81bf5",
+    "retrieval-smoke/temporal-retry/103-standard-insufficient-04.md": "d5c7ca35d5d2d7693ff11cb9bdee1dbb87d092118220ce8bbb0d09b6a8a19fa0",
+    "retrieval-smoke/temporal-retry/104-standard-insufficient-05.md": "cfd7906fe3cadb4e957cdc334d48a341ff692c78b3aeb0cdb2741bf73d5a25c8",
+    "retrieval-smoke/temporal-retry/105-standard-insufficient-06.md": "ef39056228c3a28195b2f8e7c5a92600decbb31f6419211e722eb1018f92eee1",
+    "retrieval-smoke/temporal-retry/106-standard-insufficient-07.md": "0f508d9a7b7301c56bfd3f59f2d54be8eb68b301a75ebd29579c67204dc63f70",
+    "retrieval-smoke/temporal-retry/107-standard-insufficient-08.md": "96fad9d41f450cc63e9f4f447a20219ed8a2849fc73358bd08b1c2890f0f3ee8",
+    "retrieval-smoke/temporal-retry/108-standard-insufficient-09.md": "7f5bd62c8938102de3143669852b1b2b8009bdf90551728d32f7ad49af53b035",
+    "retrieval-smoke/temporal-retry/109-standard-insufficient-10.md": "cbfb6c54783954800fd5a4b87a9ceb760532b82acd4131293c1297f611c248f3",
+    "retrieval-smoke/temporal-retry/110-standard-insufficient-11.md": "f8df496eb5976394f922f6e6ce14c7c2c27338745ccea4596f065818c7b66ed2",
+    "retrieval-smoke/temporal-retry/111-standard-insufficient-12.md": "3cc597bb8ad24bd815a5c83f90e67f620bad5680888bdb406592f10747f8cb2c",
+    "retrieval-smoke/temporal-retry/112-relaxed-target.md": "8e07b8e7831146aa3073d227818965c0071f6f77b9b98165bb51e71b555c94bc",
+    "retrieval-smoke/temporal-retry/113-old-forbidden.md": "69c2dc0195d41f8e706ad78b0deb307fdc6833f03a9584edce3fbba2ceb071c2",
+    "retrieval-smoke/temporal/60-old-note.md": "f713173e882c7d786ebad3f58916949eb65d1b1072e53a966c773331ad3959a8",
+    "retrieval-smoke/temporal/61-recent-note.md": "f715d181bdb41302e48381b5948de935f546576e904f52eefa7e1706a64d59a5"
+  }
+}

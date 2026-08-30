@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-08-07
+Updated: 2026-08-30
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-08-30 | `docs/development/active/retrieval-optimization/**` | deleted-after-absorption | [B-125 closeout evidence](./2026/b-125-retrieval-optimization-closeout.md) | DEC-027、Product Spec、current architecture、源码与 focused tests 已承担稳定行为；最终 local/Desktop/iPhone/Darwin/Linux 证据、owner per-flag rollout disposition、Win32 waiver 与 residual risk 压缩为一份 current-linked closeout。Feature Home、Plan、SDD、Tracker 与逐轮 finding/verification 日志属于已完成过程，Git 历史负责恢复。 |
 | 2026-08-07 | `docs/development/active/share-card/**` | deleted-after-absorption | [DEC-026](../product/decisions/dec-026-local-share-card.md), [B-124 Product Spec](../product/specs/pa-share-card-product-spec.md), [Share Card Architecture](../architecture/share-card-architecture.md), [smoke checklist](../development/validation/pagelet-smoke-checklist.md) | 用户选择当前 `master` 为最终行为；稳定产品、技术与验证边界已由 current authorities、focused tests 和 durable checklist 承接。Feature Home、Tracker、Plan、SDD 与 SnapDOM discussion 属于已完成过程，Git 历史负责恢复。 |
 | 2026-08-06 | `docs/release-process.md` | absorbed | [Release Process](../operations/release-process.md) | Release SOP 已迁入 Operations lane；当前发布规则继续由新路径维护，Git 历史保留旧路径的迁移依据。 |
 | 2026-08-02 | `docs/archive/pagelet-tab-restructure-tracker.md` | deleted-after-absorption | [B-001 closeout evidence](./2026/pagelet-b001-tab-closeout.md) | 当前源码与 tests 承担稳定行为，B-001 最终桌面与 iPhone-profile 模拟证据已吸收到当前 checklist 和紧凑 closeout；历史执行过程可由 Git 恢复。 |

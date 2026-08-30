@@ -1,0 +1,3 @@
+# 性能波次一共享关系
+
+本页只维护以下十二条合成记录的共享链接；除链接外不提供任何主题事实：[[retrieval-smoke/performance/200-wave1-direct-01|D01]]、[[retrieval-smoke/performance/200-wave1-direct-02|D02]]、[[retrieval-smoke/performance/200-wave1-direct-03|D03]]、[[retrieval-smoke/performance/200-wave1-direct-04|D04]]、[[retrieval-smoke/performance/200-wave1-direct-05|D05]]、[[retrieval-smoke/performance/200-wave1-direct-06|D06]]、[[retrieval-smoke/performance/200-wave1-direct-07|D07]]、[[retrieval-smoke/performance/200-wave1-direct-08|D08]]、[[retrieval-smoke/performance/200-wave1-direct-09|D09]]、[[retrieval-smoke/performance/200-wave1-direct-10|D10]]、[[retrieval-smoke/performance/200-wave1-direct-11|D11]]、[[retrieval-smoke/performance/200-wave1-direct-12|D12]]。

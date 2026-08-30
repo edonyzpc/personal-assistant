@@ -7,21 +7,37 @@ import {
 import {
     PageletAgentCache,
     createPageletAgentCacheIdentity,
+    createPageletInsightCollectionId,
+    createPageletInsightId,
+    hashPageletInsightBody,
+    hashPageletInsightClaim,
     hashPageletAgentCacheIdentity,
+    normalizePageletInsightClaim,
+    pageletAgentPolicyIdentityKey,
+    type PageletAgentCacheMutationSnapshot,
+    type PageletAgentPreparedCacheRead,
 } from "./pagelet-agent-cache";
-import { evaluatePageletAgentQuality } from "./pagelet-agent-quality-gate";
 import {
+    arePageletAgentInsightsDistinct,
+    evaluatePageletAgentQuality,
+    resolvePageletInsightSourcePaths,
+} from "./pagelet-agent-quality-gate";
+import {
+    isPageletNoInsightTerminal,
     PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
     PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS,
 } from "./types";
 import type {
     PageletAgentPolicyIdentity,
+    PageletAgentQualityRejectReason,
     PageletAgentRuntime,
     PageletAgentSourceMaterial,
     PageletAgentSourceSnapshot,
     PageletAgentValidationIdentity,
     PageletAgentVerifiedInsight,
+    PageletAgentVerifiedInsightCollection,
     PageletAnchorSnapshot,
+    PageletDeepDiscoverCommitSeal,
     PageletDeepDiscoverControllerResult,
     PageletDeepDiscoverTriggerReason,
 } from "./types";
@@ -34,11 +50,33 @@ export interface PageletDeepDiscoverControllerRequest {
     signal?: AbortSignal;
 }
 
+export interface PageletDeepDiscoverControllerRunIdentity {
+    readonly schemaVersion: 1;
+    /** Controller-owned identity also passed into the canonical Agent runtime. */
+    readonly runId: string;
+    /** Monotonic within one controller lifecycle. */
+    readonly sequence: number;
+    readonly anchorPath: string;
+    readonly triggerReason: PageletDeepDiscoverTriggerReason;
+    readonly force: boolean;
+    readonly cacheBefore: PageletAgentCacheMutationSnapshot;
+}
+
+export interface PageletDeepDiscoverControllerRunCompletion
+    extends PageletDeepDiscoverControllerRunIdentity {
+    readonly resultId: string;
+    readonly cacheAfter: PageletAgentCacheMutationSnapshot;
+}
+
 export interface PageletDeepDiscoverControllerDependencies {
     runtime: PageletAgentRuntime;
     captureSnapshot(path: string, signal?: AbortSignal): Promise<PageletAnchorSnapshot | null>;
     captureSourceMaterial(path: string, signal?: AbortSignal): Promise<PageletAgentSourceMaterial | null>;
-    getPolicyIdentity(): PageletAgentPolicyIdentity | PromiseLike<PageletAgentPolicyIdentity>;
+    getPolicyIdentity(): PageletAgentPolicyIdentity;
+    /** Host-owned content/privacy epoch used to seal grouped latest-source reads. */
+    getEvidenceEpoch(): string;
+    /** Host lifecycle identity; reset/cancel invalidates already-returning results. */
+    controllerEpoch: number;
     isPathAllowed(path: string): boolean;
     admitRun?(input: {
         path: string;
@@ -59,10 +97,54 @@ export interface PageletDeepDiscoverControllerDependencies {
     }): boolean;
     cache?: PageletAgentCache;
     now?: () => number;
+    /** Tests may make the otherwise opaque controller-owned identity deterministic. */
+    createRunId?: () => string;
+    onRunStart?: (
+        run: PageletDeepDiscoverControllerRunIdentity,
+        request: PageletDeepDiscoverControllerRequest,
+    ) => void;
     onResult?: (
         result: PageletDeepDiscoverControllerResult,
         request: PageletDeepDiscoverControllerRequest,
     ) => void;
+    onRunComplete?: (
+        result: PageletDeepDiscoverControllerResult,
+        request: PageletDeepDiscoverControllerRequest,
+        run: PageletDeepDiscoverControllerRunCompletion,
+    ) => void;
+}
+
+export interface PageletDeepDiscoverCommitSealState {
+    seal: PageletDeepDiscoverCommitSeal;
+    collection: PageletAgentVerifiedInsightCollection;
+    controllerEpoch: number;
+    evidenceEpoch: string;
+    currentPolicyIdentityKey: string;
+    controllerPolicyIdentityKey: string | null;
+    isPathAllowed(path: string): boolean;
+}
+
+/** Host-side synchronous fence used immediately before candidate publication. */
+export function pageletDeepDiscoverCommitSealIsCurrent(
+    state: PageletDeepDiscoverCommitSealState,
+): boolean {
+    const { seal, collection } = state;
+    if (
+        seal.schemaVersion !== 1
+        || seal.controllerEpoch !== state.controllerEpoch
+        || seal.evidenceEpoch !== state.evidenceEpoch
+        || seal.policyIdentityKey !== state.currentPolicyIdentityKey
+        || seal.policyIdentityKey !== state.controllerPolicyIdentityKey
+        || !safeAllowed(state.isPathAllowed, collection.anchor.path)
+        || collection.insights.length === 0
+    ) return false;
+    return collection.insights.every((insight) => (
+        insight.collectionId === collection.collectionId
+        && sameSourceSnapshot(insight.anchor, collection.anchor)
+        && sameSourceSnapshot(insight.cacheIdentity.anchor, collection.anchor)
+        && pageletAgentPolicyIdentityKey(insight.cacheIdentity) === seal.policyIdentityKey
+        && insight.sources.every((source) => safeAllowed(state.isPathAllowed, source.path))
+    ));
 }
 
 interface ActiveRun {
@@ -76,6 +158,7 @@ export class PageletDeepDiscoverController {
     private readonly cache: PageletAgentCache;
     private active?: ActiveRun;
     private disposed = false;
+    private nextRunSequence = 0;
 
     constructor(private readonly dependencies: PageletDeepDiscoverControllerDependencies) {
         this.cache = dependencies.cache ?? new PageletAgentCache();
@@ -95,16 +178,41 @@ export class PageletDeepDiscoverController {
         const controller = new AbortController();
         const combined = combineAbortSignals(controller.signal, request.signal);
         const normalizedRequest = { ...request, force: request.force === true };
-        const promise = this.execute(normalizedRequest, combined.signal)
-            .then((result) => {
-                this.dependencies.onResult?.(result, request);
-                return result;
-            })
+        const sequence = this.nextRunSequence >= Number.MAX_SAFE_INTEGER
+            ? 1
+            : this.nextRunSequence + 1;
+        this.nextRunSequence = sequence;
+        const runId = this.dependencies.createRunId?.() ?? createControllerRunId(sequence);
+        const runIdentity: PageletDeepDiscoverControllerRunIdentity = Object.freeze({
+            schemaVersion: 1,
+            runId,
+            sequence,
+            anchorPath: normalizedRequest.path,
+            triggerReason: normalizedRequest.triggerReason,
+            force: normalizedRequest.force,
+            cacheBefore: this.cache.getMutationSnapshot(),
+        });
+        safelyNotify(() => this.dependencies.onRunStart?.(runIdentity, normalizedRequest));
+        const promise = this.execute(normalizedRequest, combined.signal, runId)
             .catch((error): PageletDeepDiscoverControllerResult => {
                 if (isAbortError(error, combined.signal)) {
                     return { status: "quiet", reason: "aborted" };
                 }
                 return { status: "error", reason: "deep-discover-failed" };
+            })
+            .then((result) => {
+                const completion: PageletDeepDiscoverControllerRunCompletion = Object.freeze({
+                    ...runIdentity,
+                    resultId: `${runId}:result`,
+                    cacheAfter: this.cache.getMutationSnapshot(),
+                });
+                safelyNotify(() => this.dependencies.onRunComplete?.(
+                    result,
+                    normalizedRequest,
+                    completion,
+                ));
+                safelyNotify(() => this.dependencies.onResult?.(result, normalizedRequest));
+                return result;
             })
             .finally(() => {
                 combined.dispose();
@@ -143,6 +251,12 @@ export class PageletDeepDiscoverController {
             if (
                 expected.pipelineVersion !== PAGELET_DEEP_DISCOVER_PIPELINE_VERSION
                 || hashPageletAgentCacheIdentity(expected) !== identity.cacheIdentityHash
+                || createPageletInsightId({
+                    anchor: expected.anchor,
+                    normalizedBody: identity.normalizedBody,
+                    normalizedClaim: identity.normalizedClaim,
+                    sources: expected.sources,
+                }) !== identity.insightId
             ) return false;
             if (
                 identity.webObservations.length > 0
@@ -150,23 +264,47 @@ export class PageletDeepDiscoverController {
                     >= PAGELET_DEEP_DISCOVER_WEB_CACHE_TTL_MS
             ) return false;
 
-            const policyBefore = await this.dependencies.getPolicyIdentity();
-            if (!samePolicyIdentity(expected, policyBefore)) return false;
-
             const snapshots = new Map<string, PageletAgentSourceSnapshot>();
-            snapshots.set(expected.anchor.path, expected.anchor);
             for (const source of expected.sources) snapshots.set(source.path, source);
-            for (const snapshot of snapshots.values()) {
-                if (signal?.aborted || !safeAllowed(this.dependencies.isPathAllowed, snapshot.path)) {
-                    return false;
-                }
-                const material = await this.dependencies.captureSourceMaterial(snapshot.path, signal);
-                if (!material || !sameSourceSnapshot(snapshot, material)) return false;
-            }
+            snapshots.set(expected.anchor.path, expected.anchor);
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                throwIfAborted(signal);
+                const epochBefore = this.readEvidenceEpoch();
+                if (!epochBefore.ok) continue;
+                const policyBefore = this.dependencies.getPolicyIdentity();
+                throwIfAborted(signal);
+                if (this.disposed || !samePolicyIdentity(expected, policyBefore)) return false;
 
-            if (signal?.aborted) return false;
-            const policyAfter = await this.dependencies.getPolicyIdentity();
-            return samePolicyIdentity(expected, policyAfter);
+                let current = true;
+                for (const snapshot of snapshots.values()) {
+                    throwIfAborted(signal);
+                    if (!safeAllowed(this.dependencies.isPathAllowed, snapshot.path)) {
+                        current = false;
+                        break;
+                    }
+                    const material = await this.dependencies.captureSourceMaterial(snapshot.path, signal);
+                    throwIfAborted(signal);
+                    if (
+                        !material
+                        || !safeAllowed(this.dependencies.isPathAllowed, snapshot.path)
+                        || !sameSourceSnapshot(snapshot, material)
+                    ) {
+                        current = false;
+                        break;
+                    }
+                }
+
+                const policyAfter = this.dependencies.getPolicyIdentity();
+                throwIfAborted(signal);
+                if (this.disposed) return false;
+                const epochAfter = this.readEvidenceEpoch();
+                if (
+                    !epochAfter.ok
+                    || epochAfter.value !== epochBefore.value
+                ) continue;
+                return current && samePolicyIdentity(expected, policyAfter);
+            }
+            return false;
         } catch {
             return false;
         }
@@ -182,6 +320,7 @@ export class PageletDeepDiscoverController {
     private async execute(
         request: PageletDeepDiscoverControllerRequest & { force: boolean },
         signal: AbortSignal,
+        runId: string,
     ): Promise<PageletDeepDiscoverControllerResult> {
         throwIfAborted(signal);
         if (!safeAllowed(this.dependencies.isPathAllowed, request.path)) {
@@ -192,26 +331,37 @@ export class PageletDeepDiscoverController {
             : await this.dependencies.captureSnapshot(request.path, signal);
         if (!anchor) return { status: "stale", reason: "anchor-snapshot-unavailable" };
         throwIfAborted(signal);
-        const policyIdentity = await this.dependencies.getPolicyIdentity();
+        const policyIdentity = this.dependencies.getPolicyIdentity();
         if (!request.force) {
-            const cached = await this.cache.getValid({
+            const cached = await this.readCacheAtStableCommit(
                 anchor,
                 policyIdentity,
-                isPathAllowed: this.dependencies.isPathAllowed,
-                readSourceSnapshot: async (path, readSignal) => {
-                    const material = await this.dependencies.captureSourceMaterial(path, readSignal);
-                    return material ? sourceSnapshotIdentity(material) : null;
-                },
-                now: (this.dependencies.now ?? Date.now)(),
                 signal,
-            });
-            if (cached) {
-                const policyAfterCacheRead = await this.dependencies.getPolicyIdentity();
-                if (samePolicyIdentity(policyIdentity, policyAfterCacheRead)) {
-                    return { status: "cache-hit", insight: cached };
+            );
+            throwIfAborted(signal);
+            if (cached.status === "stale") {
+                return { status: "stale", reason: cached.reason };
+            }
+            if (cached.status === "hit") {
+                const sealed = this.sealStableCommit(
+                    policyIdentity,
+                    cached.evidenceEpoch,
+                    collectionSourcePaths(cached.prepared.collection),
+                    signal,
+                );
+                if (sealed.status === "stale") {
+                    return { status: "stale", reason: sealed.reason };
                 }
-                this.cache.deleteAnchor(anchor.path);
-                return { status: "stale", reason: "policy-identity-changed" };
+                const collection = this.cache.commitPreparedCollection(cached.prepared);
+                if (collection) {
+                    return {
+                        status: "cache-hit",
+                        insight: collection.insights[0],
+                        insights: collection.insights,
+                        collection,
+                        commitSeal: sealed.commitSeal,
+                    };
+                }
             }
         }
 
@@ -227,77 +377,282 @@ export class PageletDeepDiscoverController {
         const run = await this.dependencies.runtime.run({
             anchor,
             triggerReason: request.triggerReason,
+            runId,
             signal,
         });
-        throwIfAborted(signal);
-        if (run.loopResult.status === "aborted") {
-            return { status: "quiet", reason: "aborted", metrics: run.metrics };
-        }
-        if (!run.finalText) {
-            return { status: "quiet", reason: "runtime-incomplete", metrics: run.metrics };
-        }
+        try {
+            throwIfAborted(signal);
+            if (run.loopResult.status === "aborted") {
+                return {
+                    status: "quiet",
+                    reason: "aborted",
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
+            }
+            const candidateDrafts = run.insightDrafts ?? (
+                run.finalText && !isPageletNoInsightTerminal(run.finalText)
+                    ? [{ body: run.finalText, origin: "terminal" as const, declaredSourceIds: [] }]
+                    : []
+            );
+            const boundedDrafts = candidateDrafts.slice(0, 2);
+            const rejectedNoInsightDraft = boundedDrafts.some((draft) => (
+                isPageletNoInsightTerminal(draft.body)
+            ));
+            const drafts = boundedDrafts.filter((draft) => (
+                !isPageletNoInsightTerminal(draft.body)
+            ));
+            if (drafts.length === 0) {
+                return {
+                    status: "quiet",
+                    reason: isPageletNoInsightTerminal(run.finalText) || rejectedNoInsightDraft
+                        ? "no-insight"
+                        : "runtime-incomplete",
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
+            }
 
-        const sourceMaterials = await this.captureRunSourceMaterials(run.sourceSnapshots, signal);
-        if (!sourceMaterials) {
-            return { status: "quiet", reason: "stale-source", metrics: run.metrics };
-        }
-        const currentPolicyIdentity = await this.dependencies.getPolicyIdentity();
-        if (!samePolicyIdentity(policyIdentity, currentPolicyIdentity)) {
-            return { status: "stale", reason: "policy-identity-changed" };
-        }
+            const currentPolicyIdentity = this.dependencies.getPolicyIdentity();
+            if (!samePolicyIdentity(policyIdentity, currentPolicyIdentity)) {
+                return { status: "stale", reason: "policy-identity-changed" };
+            }
 
-        const proactiveDelivery = request.triggerReason !== "explicit" && !request.force;
-        const quality = await evaluatePageletAgentQuality({
-            run,
-            sourceMaterials,
-            readCurrentSourceSnapshot: async (path, readSignal) => {
-                const material = await this.dependencies.captureSourceMaterial(path, readSignal);
-                return material ? sourceSnapshotIdentity(material) : null;
-            },
-            isPathAllowed: this.dependencies.isPathAllowed,
-            anchorRelations: this.dependencies.getAnchorRelations?.(anchor.path),
-            isDuplicate: proactiveDelivery
-                ? (normalizedBody) => this.cache.hasEquivalent(
+            const proactiveDelivery = request.triggerReason !== "explicit" && !request.force;
+            const acceptedQualities: Array<Extract<
+                Awaited<ReturnType<typeof evaluatePageletAgentQuality>>,
+                { accepted: true }
+            >> = [];
+            let firstRejectReason: PageletAgentQualityRejectReason | undefined;
+            for (const draft of drafts) {
+                try {
+                    const resolvedSources = resolvePageletInsightSourcePaths(
+                        draft.body,
+                        run.sourceSnapshots.map((snapshot) => snapshot.path),
+                    );
+                    const draftSourceSnapshots = run.sourceSnapshots.filter((snapshot) => (
+                        resolvedSources.paths.includes(snapshot.path)
+                    ));
+                    const sourceMaterials = resolvedSources.hasUngroundedPath
+                        ? new Map<string, PageletAgentSourceMaterial>()
+                        : await this.captureRunSourceMaterials(
+                            draftSourceSnapshots,
+                            signal,
+                        );
+                    if (!sourceMaterials) {
+                        firstRejectReason ??= "stale-source";
+                        continue;
+                    }
+                    const quality = await evaluatePageletAgentQuality({
+                        run: resolvedSources.hasUngroundedPath
+                            ? run
+                            : { ...run, sourceSnapshots: draftSourceSnapshots },
+                        body: draft.body,
+                        sourceMaterials,
+                        readCurrentSourceSnapshot: async (path, readSignal) => {
+                            const material = await this.dependencies.captureSourceMaterial(path, readSignal);
+                            return material ? sourceSnapshotIdentity(material) : null;
+                        },
+                        isPathAllowed: this.dependencies.isPathAllowed,
+                        anchorRelations: this.dependencies.getAnchorRelations?.(anchor.path),
+                        isDuplicate: proactiveDelivery
+                            ? (normalizedBody, sources) => this.cache.hasEquivalent(
+                                anchor.path,
+                                normalizedBody,
+                                sources,
+                            )
+                            : undefined,
+                        isSeen: proactiveDelivery && this.dependencies.isSeen
+                            ? (body, normalizedBody, sources) => this.dependencies.isSeen!({
+                                anchor,
+                                body,
+                                normalizedBody,
+                                sources,
+                                triggerReason: request.triggerReason,
+                            })
+                            : undefined,
+                        signal,
+                    });
+                    if (!quality.accepted) {
+                        firstRejectReason ??= quality.reason;
+                        continue;
+                    }
+                    if (
+                        acceptedQualities.length > 0
+                        && !arePageletAgentInsightsDistinct(acceptedQualities[0], quality)
+                    ) continue;
+                    acceptedQualities.push(quality);
+                } catch (error) {
+                    if (isAbortError(error, signal)) throw error;
+                    firstRejectReason ??= "stale-source";
+                }
+            }
+            if (acceptedQualities.length === 0) {
+                return {
+                    status: "quiet",
+                    reason: firstRejectReason ?? "no-insight",
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
+            }
+            const commit = await this.filterCurrentQualitiesAtStableCommit(
+                anchor,
+                acceptedQualities,
+                policyIdentity,
+                signal,
+            );
+            throwIfAborted(signal);
+            if (commit.status === "stale") {
+                return { status: "stale", reason: commit.reason };
+            }
+            const commitQualities = commit.qualities;
+            const sealed = this.sealStableCommit(
+                policyIdentity,
+                commit.evidenceEpoch,
+                [
                     anchor.path,
-                    normalizedBody,
-                    run.sourceSnapshots,
-                )
-                : undefined,
-            isSeen: proactiveDelivery && this.dependencies.isSeen
-                ? (body, normalizedBody, sources) => this.dependencies.isSeen!({
-                    anchor,
-                    body,
-                    normalizedBody,
-                    sources,
-                    triggerReason: request.triggerReason,
-                })
-                : undefined,
-            signal,
-        });
-        if (!quality.accepted) {
-            return { status: "quiet", reason: quality.reason, metrics: run.metrics };
-        }
+                    ...commitQualities.flatMap((quality) => (
+                        quality.sources.map((source) => source.path)
+                    )),
+                ],
+                signal,
+            );
+            if (sealed.status === "stale") {
+                return sealed.reason === "data-boundary-changed"
+                    ? {
+                        status: "quiet",
+                        reason: "stale-source",
+                        metrics: run.metrics,
+                        runtimeCompletion: run.runtimeCompletion,
+                    }
+                    : { status: "stale", reason: sealed.reason };
+            }
+            if (commitQualities.length === 0) {
+                return {
+                    status: "quiet",
+                    reason: firstRejectReason ?? "stale-source",
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
+            }
 
-        const cacheIdentity = createPageletAgentCacheIdentity({
-            anchor,
-            sources: run.sourceSnapshots,
-            policyIdentity,
-        });
-        const insight: PageletAgentVerifiedInsight = {
-            body: quality.body,
-            normalizedBody: quality.normalizedBody,
-            anchor: anchorSnapshotIdentity(anchor),
-            sources: quality.sources,
-            sourceRefs: quality.sourceRefs,
-            cacheIdentity,
-            cacheIdentityHash: hashPageletAgentCacheIdentity(cacheIdentity),
-            triggerReason: request.triggerReason,
-            preparedAt: (this.dependencies.now ?? Date.now)(),
-            metrics: run.metrics,
-            webObservations: run.webObservations,
-        };
-        this.cache.put(insight);
-        return { status: "verified", insight };
+            const preparedAt = (this.dependencies.now ?? Date.now)();
+            const anchorIdentity = anchorSnapshotIdentity(anchor);
+            const identityInputs = commitQualities.map((quality) => {
+                const normalizedClaim = normalizePageletInsightClaim(quality.body);
+                return {
+                    quality,
+                    normalizedClaim,
+                    insightId: createPageletInsightId({
+                        anchor: anchorIdentity,
+                        normalizedBody: quality.normalizedBody,
+                        normalizedClaim,
+                        sources: quality.sources,
+                    }),
+                };
+            });
+            const collectionId = createPageletInsightCollectionId(
+                identityInputs.map((input) => input.insightId),
+            );
+            const insights: PageletAgentVerifiedInsight[] = identityInputs.map((input) => {
+                const cacheIdentity = createPageletAgentCacheIdentity({
+                    anchor,
+                    sources: input.quality.sources,
+                    policyIdentity,
+                });
+                return {
+                    insightId: input.insightId,
+                    collectionId,
+                    body: input.quality.body,
+                    normalizedBody: input.quality.normalizedBody,
+                    normalizedClaim: input.normalizedClaim,
+                    bodyHash: hashPageletInsightBody(input.quality.normalizedBody),
+                    claimHash: hashPageletInsightClaim(input.normalizedClaim),
+                    anchor: anchorIdentity,
+                    sources: input.quality.sources,
+                    sourceRefs: input.quality.sourceRefs,
+                    cacheIdentity,
+                    cacheIdentityHash: hashPageletAgentCacheIdentity(cacheIdentity),
+                    triggerReason: request.triggerReason,
+                    preparedAt,
+                    metrics: run.metrics,
+                    webObservations: run.webObservations,
+                };
+            });
+            const collection: PageletAgentVerifiedInsightCollection = {
+                collectionId,
+                anchor: anchorIdentity,
+                insights,
+                preparedAt,
+            };
+            this.cache.putCollection(collection);
+            return {
+                status: "verified",
+                insight: insights[0],
+                insights,
+                collection,
+                commitSeal: sealed.commitSeal,
+                runtimeCompletion: run.runtimeCompletion,
+            };
+        } catch (error) {
+            if (isAbortError(error, signal)) {
+                return {
+                    status: "quiet",
+                    reason: "aborted",
+                    metrics: run.metrics,
+                    runtimeCompletion: run.runtimeCompletion,
+                };
+            }
+            throw error;
+        }
+    }
+
+    private async readCacheAtStableCommit(
+        anchor: PageletAnchorSnapshot,
+        policyIdentity: PageletAgentPolicyIdentity,
+        signal: AbortSignal,
+    ): Promise<
+        | {
+            status: "hit";
+            prepared: PageletAgentPreparedCacheRead;
+            evidenceEpoch: string;
+        }
+        | { status: "miss" }
+        | { status: "stale"; reason: "evidence-epoch-changed" | "policy-identity-changed" }
+    > {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            throwIfAborted(signal);
+            const epochBefore = this.readEvidenceEpoch();
+            if (!epochBefore.ok) continue;
+            const prepared = await this.cache.prepareValidCollection({
+                anchor,
+                policyIdentity,
+                isPathAllowed: this.dependencies.isPathAllowed,
+                readSourceSnapshot: async (path, readSignal) => {
+                    const material = await this.dependencies.captureSourceMaterial(path, readSignal);
+                    return material ? sourceSnapshotIdentity(material) : null;
+                },
+                now: (this.dependencies.now ?? Date.now)(),
+                signal,
+                getEvidenceEpoch: this.dependencies.getEvidenceEpoch,
+            });
+            throwIfAborted(signal);
+            const policyAfterRead = this.dependencies.getPolicyIdentity();
+            throwIfAborted(signal);
+            const epochAfter = this.readEvidenceEpoch();
+            if (!epochAfter.ok || epochAfter.value !== epochBefore.value) continue;
+            if (!samePolicyIdentity(policyIdentity, policyAfterRead)) {
+                if (prepared) this.cache.deletePreparedCollection(prepared);
+                return { status: "stale", reason: "policy-identity-changed" };
+            }
+            if (!prepared) return { status: "miss" };
+            return {
+                status: "hit",
+                prepared,
+                evidenceEpoch: epochAfter.value,
+            };
+        }
+        return { status: "stale", reason: "evidence-epoch-changed" };
     }
 
     private async captureRunSourceMaterials(
@@ -313,6 +668,131 @@ export class PageletDeepDiscoverController {
         }
         return materials;
     }
+
+    /**
+     * The quality gate is intentionally not the commit point: a source may
+     * change or leave the provider boundary while another draft is being
+     * checked. Re-read every source for every accepted insight immediately
+     * before it enters cache/delivery state so one stale sibling cannot poison
+     * an otherwise-current insight.
+     */
+    private async isQualityCurrentAtCommit(
+        anchor: PageletAnchorSnapshot,
+        sources: readonly PageletAgentSourceSnapshot[],
+        signal: AbortSignal,
+    ): Promise<boolean> {
+        const anchorIdentity = anchorSnapshotIdentity(anchor);
+        const citedAnchor = sources.find((source) => source.path === anchor.path);
+        if (!citedAnchor || !sameSourceSnapshot(citedAnchor, anchorIdentity)) return false;
+        const expectedByPath = new Map<string, PageletAgentSourceSnapshot>();
+        for (const source of sources) expectedByPath.set(source.path, source);
+        expectedByPath.set(anchor.path, anchorIdentity);
+
+        for (const expected of expectedByPath.values()) {
+            throwIfAborted(signal);
+            if (!safeAllowed(this.dependencies.isPathAllowed, expected.path)) return false;
+            const current = await this.dependencies.captureSourceMaterial(expected.path, signal);
+            throwIfAborted(signal);
+            if (
+                !current
+                || !safeAllowed(this.dependencies.isPathAllowed, expected.path)
+                || !sameSourceSnapshot(expected, current)
+            ) return false;
+        }
+        return true;
+    }
+
+    private async filterCurrentQualitiesAtStableCommit<T extends {
+        sources: readonly PageletAgentSourceSnapshot[];
+    }>(
+        anchor: PageletAnchorSnapshot,
+        qualities: readonly T[],
+        expectedPolicyIdentity: PageletAgentPolicyIdentity,
+        signal: AbortSignal,
+    ): Promise<
+        | {
+            status: "current";
+            qualities: T[];
+            evidenceEpoch: string;
+        }
+        | { status: "stale"; reason: "evidence-epoch-changed" | "policy-identity-changed" }
+    > {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            throwIfAborted(signal);
+            const epochBefore = this.readEvidenceEpoch();
+            if (!epochBefore.ok) continue;
+            const current: T[] = [];
+            for (const quality of qualities) {
+                try {
+                    if (await this.isQualityCurrentAtCommit(anchor, quality.sources, signal)) {
+                        current.push(quality);
+                    }
+                } catch (error) {
+                    if (isAbortError(error, signal)) throw error;
+                }
+            }
+            const policyAfterReads = this.dependencies.getPolicyIdentity();
+            throwIfAborted(signal);
+            const epochAfter = this.readEvidenceEpoch();
+            if (!epochAfter.ok || epochAfter.value !== epochBefore.value) continue;
+            if (!samePolicyIdentity(expectedPolicyIdentity, policyAfterReads)) {
+                return { status: "stale", reason: "policy-identity-changed" };
+            }
+            return {
+                status: "current",
+                qualities: current,
+                evidenceEpoch: epochAfter.value,
+            };
+        }
+        return { status: "stale", reason: "evidence-epoch-changed" };
+    }
+
+    private sealStableCommit(
+        expectedPolicyIdentity: PageletAgentPolicyIdentity,
+        expectedEvidenceEpoch: string,
+        sourcePaths: readonly string[],
+        signal: AbortSignal,
+    ):
+        | { status: "current"; commitSeal: PageletDeepDiscoverCommitSeal }
+        | {
+            status: "stale";
+            reason: "evidence-epoch-changed" | "policy-identity-changed" | "data-boundary-changed";
+        } {
+        throwIfAborted(signal);
+        const policyAtCommit = this.dependencies.getPolicyIdentity();
+        throwIfAborted(signal);
+        if (!samePolicyIdentity(expectedPolicyIdentity, policyAtCommit)) {
+            return { status: "stale", reason: "policy-identity-changed" };
+        }
+        const epochAtCommit = this.readEvidenceEpoch();
+        throwIfAborted(signal);
+        if (!epochAtCommit.ok || epochAtCommit.value !== expectedEvidenceEpoch) {
+            return { status: "stale", reason: "evidence-epoch-changed" };
+        }
+        if (sourcePaths.some((path) => !safeAllowed(this.dependencies.isPathAllowed, path))) {
+            return { status: "stale", reason: "data-boundary-changed" };
+        }
+        throwIfAborted(signal);
+        return {
+            status: "current",
+            commitSeal: createCommitSeal(
+                this.dependencies.controllerEpoch,
+                epochAtCommit.value,
+                policyAtCommit,
+            ),
+        };
+    }
+
+    private readEvidenceEpoch():
+    | { ok: true; value: string }
+    | { ok: false } {
+        try {
+            const value = this.dependencies.getEvidenceEpoch();
+            return value ? { ok: true, value } : { ok: false };
+        } catch {
+            return { ok: false };
+        }
+    }
 }
 
 function samePolicyIdentity(
@@ -323,6 +803,30 @@ function samePolicyIdentity(
         && left.providerPolicyIdentity === right.providerPolicyIdentity
         && left.modelIdentity === right.modelIdentity
         && normalizeLocale(left.locale) === normalizeLocale(right.locale);
+}
+
+function createCommitSeal(
+    controllerEpoch: number,
+    evidenceEpoch: string,
+    policyIdentity: PageletAgentPolicyIdentity,
+): PageletDeepDiscoverCommitSeal {
+    return Object.freeze({
+        schemaVersion: 1,
+        controllerEpoch,
+        evidenceEpoch,
+        policyIdentityKey: pageletAgentPolicyIdentityKey(policyIdentity),
+    });
+}
+
+function collectionSourcePaths(
+    collection: PageletAgentVerifiedInsightCollection,
+): string[] {
+    return [
+        collection.anchor.path,
+        ...collection.insights.flatMap((insight) => (
+            insight.sources.map((source) => source.path)
+        )),
+    ];
 }
 
 function normalizeLocale(locale: string): string {
@@ -359,9 +863,31 @@ function combineAbortSignals(
     };
 }
 
-function throwIfAborted(signal: AbortSignal): void {
-    if (!signal.aborted) return;
+function throwIfAborted(signal: AbortSignal | undefined): void {
+    if (!signal?.aborted) return;
     const error = new Error("Aborted");
     error.name = "AbortError";
     throw error;
+}
+
+let controllerRunNonce = 0;
+
+function createControllerRunId(sequence: number): string {
+    controllerRunNonce = controllerRunNonce >= Number.MAX_SAFE_INTEGER
+        ? 1
+        : controllerRunNonce + 1;
+    return [
+        "pagelet-run",
+        Date.now().toString(36),
+        controllerRunNonce.toString(36),
+        sequence.toString(36),
+    ].join(":");
+}
+
+function safelyNotify(callback: () => void): void {
+    try {
+        callback();
+    } catch {
+        // Evidence observers are read-only and must never affect product behavior.
+    }
 }
