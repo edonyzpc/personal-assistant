@@ -99,12 +99,12 @@ jobs:
         run: npm run check:third-party-notices
       - name: Check release documentation
         run: npm run docs:check:release
-      - name: Test
-        run: npm test -- --runInBand --coverage
       - name: Lint
         run: npm run lint
       - name: Build
         run: npm run build --if-present
+      - name: Test
+        run: npm test -- --runInBand --coverage
       - name: Verify built manifest version
         run: |
           node -e '

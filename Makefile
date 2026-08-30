@@ -5,9 +5,11 @@ ICLOUD_PLUGIN_DIR ?= $(HOME)/Library/Mobile Documents/iCloud~md~obsidian/Documen
 install:
 	npm install
 
-bin: test
+bin:
 	bash scripts/check-platform-guards.sh
-	npm run lint && npm run build
+	npm run lint
+	npm run build
+	npm test
 
 deploy: clean bin
 	cp dist/main.js test/.obsidian/plugins/personal-assistant/

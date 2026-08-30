@@ -55,7 +55,9 @@ Treat the source-scan `rg` exit code `1` with no output as PASS. Inspect every m
 | `full-ui` | Visible UI, CSS/layout/copy, Pagelet workflow, settings, keyboard/focus, mobile emulation | `app-runtime` plus real Obsidian interaction, screenshots, UX notes, and provider/write-path checks when applicable |
 | `release-gate` | Release, broad refactor, shared infrastructure | Local Validation Gate, `make deploy`, broad runtime matrix, required UI surfaces, and release evidence reconciliation |
 
-`make deploy` already runs full Jest, lint, build, and asset deployment. Run standalone full Jest first only when serialized failure detail or a separate pre-deploy signal is useful.
+`make deploy` already runs lint, a production build, full Jest, and asset
+deployment. Run standalone full Jest first only when `dist/main.js` is current
+and serialized failure detail or a separate pre-deploy signal is useful.
 
 ## Workflow
 
