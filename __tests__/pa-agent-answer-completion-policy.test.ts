@@ -70,6 +70,26 @@ describe("PA Agent answer completion policy", () => {
         });
     });
 
+    it("treats cumulative Memory none as executed status, not successful evidence", () => {
+        const ledger = createAnswerCompletionLedger();
+        const summary = createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory", {
+                metadata: { memoryEvidenceState: "none", rerankVerdict: "none_relevant" },
+            })],
+        });
+        const facts = deriveAnswerCompletionTurnFacts(summary);
+        recordAnswerCompletionTurn(ledger, summary, facts);
+
+        expect(facts.hasNewSuccessfulEvidence).toBe(false);
+        expect(facts.hasOnlyFailureOrStatusResults).toBe(true);
+        expect(decideAnswerCompletion({ summary, ledger, facts })).toMatchObject({
+            action: "force_finalize",
+            reason: "tool_failure",
+            toolMode: "final_answer_only",
+        });
+    });
+
     it("turns duplicate-only tool results into one finalization attempt, then stops", () => {
         const ledger = createAnswerCompletionLedger();
         const firstSummary = createSummary({
@@ -179,6 +199,7 @@ function createToolResult(
         isError?: boolean;
         outcome?: string;
         promptText?: string;
+        metadata?: Record<string, unknown>;
     } = {},
 ): PaAgentTurnSummary["toolResults"][number] {
     return {
@@ -191,6 +212,7 @@ function createToolResult(
             includeInNextPrompt: true,
             metadata: {
                 outcome: options.outcome ?? "success",
+                ...(options.metadata ?? {}),
             },
         },
         isError: options.isError ?? false,

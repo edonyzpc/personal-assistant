@@ -51,13 +51,27 @@ import {
 } from "./chat-tool-execution-helpers";
 
 export function isSearchMemoryResult(content: unknown): content is MemorySearchResult {
-    return Boolean(
-        content
-        && typeof content === "object"
-        && "query" in content
-        && "documents" in content
-        && "sources" in content,
-    );
+    if (!content || typeof content !== "object" || Array.isArray(content)) return false;
+    const record = content as Record<string, unknown>;
+    if (
+        typeof record.query !== "string"
+        || !Array.isArray(record.documents)
+        || !Array.isArray(record.sources)
+    ) return false;
+    if (
+        record.memoryEvidenceState !== undefined
+        && record.memoryEvidenceState !== "evidence"
+        && record.memoryEvidenceState !== "partial"
+        && record.memoryEvidenceState !== "none"
+        && record.memoryEvidenceState !== "unavailable"
+    ) return false;
+    if (
+        record.rerankVerdict !== undefined
+        && record.rerankVerdict !== "relevant"
+        && record.rerankVerdict !== "partially_relevant"
+        && record.rerankVerdict !== "none_relevant"
+    ) return false;
+    return true;
 }
 
 export function isCurrentNoteContextResult(content: unknown): content is CurrentNoteContextOutput {

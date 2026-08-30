@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, type TAbstractFile, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, type TAbstractFile, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, apiVersion, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
@@ -14,6 +14,7 @@ import {
     type AIReadinessScope,
     type AIReadinessSnapshot,
     type APITokenCacheState,
+    type CreateChatModelOptions,
     type QwenRequestOptions,
 } from "./ai-services/ai-utils";
 import { stableStringify } from "./ai-services/agent-utils";
@@ -31,7 +32,12 @@ import type {
     AgentCapability,
     AgentRuntimePlatform,
 } from "./ai-services/capability-types";
-import { MemorySearchTool } from "./ai-services/memory-search-tool";
+import {
+    MemorySearchTool,
+    createRelaxedMemorySearchInvocation,
+    createStandardMemorySearchInvocation,
+    runWithMemorySearchInvocation,
+} from "./ai-services/memory-search-tool";
 import {
     OperationsService,
     type OperationsExecutionResult,
@@ -104,19 +110,30 @@ import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
 import {
     PageletDeepDiscoverController,
     PageletDeepDiscoverScheduler,
+    PageletDeepDiscoverSmokeEvidenceStore,
     anchorSnapshotIdentity,
     capturePageletAnchorSnapshot,
     capturePageletSourceMaterial,
     createPageletAgentCacheIdentity,
+    createPageletInsightCollectionId,
+    createPageletInsightId,
     createPageletAgentRuntime,
     createPageletNativeModel,
     pageletAgentInsightToDeliveryCandidate,
+    hashPageletInsightBody,
+    hashPageletInsightClaim,
+    normalizePageletInsightClaim,
+    pageletAgentPolicyIdentityKey,
+    pageletDeepDiscoverCommitSealIsCurrent,
     type PageletAgentPolicyIdentity,
     type PageletAgentSourceMaterial,
     type PageletAgentSourceSnapshot,
+    type PageletAgentVerifiedInsightCollection,
     type PageletAnchorSnapshot,
+    type PageletDeepDiscoverCommitSeal,
     type PageletDeepDiscoverControllerRequest,
     type PageletDeepDiscoverControllerResult,
+    type PageletDeepDiscoverSmokeSnapshot,
 } from './pagelet/agent';
 import { AttentionAwareDeliveryStore } from './pagelet/attention';
 import {
@@ -165,9 +182,20 @@ import {
     type UserProfileStore,
 } from './ai-services/memory-extraction';
 import type { AiServiceHost } from './ai-services/AiServiceHost';
+import {
+    RetrievalDiagnosticsController,
+    type RetrievalCancellationProbeAck,
+    type RetrievalDiagnosticsSessionIdentity,
+    type RetrievalDiagnosticsSnapshot,
+    type RetrievalDiagnosticSurface,
+} from './ai-services/retrieval-diagnostics';
+import { resolveB125RetrievalOptimizationFlags } from './retrieval-optimization-platform-policy';
+import type { GraphBoundarySnapshotSource } from './graph/graph-boundary-snapshot';
+import type { GraphPathClass } from './graph/personalized-pagerank';
 import type { PaAgentInjectedContext } from './ai-services/context';
 import type { MemoryHost } from './memory';
 import type { AISetupInput, AISetupResult, ChatHost } from './chat/ChatHost';
+import { getCharPhraseRuntimeCanaryFingerprint } from './vss/lexical-normalizer';
 import {
     QUICK_CAPTURE_COMMAND_ID,
     QUICK_CAPTURE_COMMAND_NAME,
@@ -1232,6 +1260,13 @@ export class PluginManager extends Plugin {
     statsManager: StatsManager | undefined;
     vss: VSS | null = null;
     memoryManager: MemoryManager | null = null;
+    /** Monotonic invalidation clock for invocation-local Memory graph snapshots. */
+    private memoryGraphTopologyEpoch = 0;
+    /** Monotonic policy clock for live retrieval rollout flags. */
+    private retrievalOptimizationEpoch = 0;
+    private retrievalOptimizationSignature = "";
+    /** In-memory and inert until the isolated device harness explicitly starts it. */
+    private readonly retrievalDiagnostics = new RetrievalDiagnosticsController();
     private manualMemoryActionInFlight = false;
     /** Shared capacity-one lane: Chat owns run-level priority over Pagelet turns. */
     private readonly agentRunCoordinator = new AgentRunCoordinator();
@@ -1267,6 +1302,8 @@ export class PluginManager extends Plugin {
     private quietRecallRateLimiterInstance: PageletRateLimiter | null = null;
     private deepDiscoverRateLimiterInstance: PageletRateLimiter | null = null;
     private deepDiscoverAttentionStoreInstance: AttentionAwareDeliveryStore | null = null;
+    private deepDiscoverSmokeEvidence: PageletDeepDiscoverSmokeEvidenceStore | undefined =
+        new PageletDeepDiscoverSmokeEvidenceStore();
     private deepDiscoverScheduler: PageletDeepDiscoverScheduler | null = null;
     private deepDiscoverControllerPolicyIdentitySnapshot: string | null = null;
     private deepDiscoverControllerInitialization: Promise<PageletDeepDiscoverScheduler | null> | null = null;
@@ -1322,6 +1359,17 @@ export class PluginManager extends Plugin {
         error: PageletReviewsFolderError;
     } | null = null;
     private pendingMemoryExtractionConsentMigration = false;
+    private loadedPluginBuildIdentityPromise: Promise<{
+        schemaVersion: 1;
+        pluginId: string;
+        pluginVersion: string;
+        pluginArtifactPath: string;
+        loadedPluginArtifactSha256: string | null;
+        lexicalProfileRuntimeFingerprint: string;
+        capturedAtPluginLoad: string;
+        identitySource: "plugin-onload-cached-main-js";
+        blocker: "loaded_plugin_artifact_unavailable" | null;
+    }> | null = null;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
     private backlinkMapCache: { map: Map<string, string[]>; builtAt: number } | null = null;
@@ -1357,11 +1405,109 @@ export class PluginManager extends Plugin {
         return (this._localGraph ??= new LocalGraph(this.app, this));
     }
 
+    startRetrievalDiagnostics(): RetrievalDiagnosticsSessionIdentity {
+        return this.retrievalDiagnostics.start();
+    }
+
+    armRetrievalCancellationProbe(sessionId: string): RetrievalCancellationProbeAck {
+        return this.retrievalDiagnostics.armCancellationProbe(sessionId);
+    }
+
+    getRetrievalDiagnostics(sessionId: string): RetrievalDiagnosticsSnapshot {
+        return this.retrievalDiagnostics.snapshot(sessionId);
+    }
+
+    stopRetrievalDiagnostics(sessionId: string): RetrievalDiagnosticsSnapshot {
+        return this.retrievalDiagnostics.stop(sessionId);
+    }
+
+    /** Latest real, content-free Pagelet controller/delivery projection for local app smoke. */
+    getPageletDeepDiscoverSmokeSnapshot(): Promise<PageletDeepDiscoverSmokeSnapshot | null> {
+        return this.getDeepDiscoverSmokeEvidence().snapshot();
+    }
+
+    private getDeepDiscoverSmokeEvidence(): PageletDeepDiscoverSmokeEvidenceStore {
+        return (this.deepDiscoverSmokeEvidence ??= new PageletDeepDiscoverSmokeEvidenceStore());
+    }
+
+    /** Content-free runtime identity seam for exact local smoke evidence. */
+    getObsidianRuntimeIdentity(): {
+        loadedAppVersion: string;
+        loadedAppVersionSource: "obsidian.apiVersion";
+    } {
+        return {
+            loadedAppVersion: apiVersion,
+            loadedAppVersionSource: "obsidian.apiVersion",
+        };
+    }
+
+    /**
+     * Content-free build identity captured from the plugin artifact when this
+     * instance starts. Keeping the first read lets an external verifier detect
+     * a newer main.js copied over an older still-loaded instance.
+     */
+    getLoadedPluginBuildIdentity(): Promise<{
+        schemaVersion: 1;
+        pluginId: string;
+        pluginVersion: string;
+        pluginArtifactPath: string;
+        loadedPluginArtifactSha256: string | null;
+        lexicalProfileRuntimeFingerprint: string;
+        capturedAtPluginLoad: string;
+        identitySource: "plugin-onload-cached-main-js";
+        blocker: "loaded_plugin_artifact_unavailable" | null;
+    }> {
+        return this.ensureLoadedPluginBuildIdentity();
+    }
+
+    private ensureLoadedPluginBuildIdentity(): NonNullable<PluginManager["loadedPluginBuildIdentityPromise"]> {
+        if (this.loadedPluginBuildIdentityPromise) return this.loadedPluginBuildIdentityPromise;
+        const capturedAtPluginLoad = new Date().toISOString();
+        const pluginId = this.manifest?.id ?? "personal-assistant";
+        const pluginVersion = this.manifest?.version ?? "";
+        const pluginArtifactPath = this.join(
+            this.app.vault.configDir,
+            `plugins/${pluginId}/main.js`,
+        );
+        this.loadedPluginBuildIdentityPromise = (async () => {
+            let loadedPluginArtifactSha256: string | null = null;
+            try {
+                const artifact = await this.app.vault.adapter.read(pluginArtifactPath);
+                const platformCrypto = getPlatformCrypto();
+                if (!platformCrypto?.subtle) throw new Error("Web Crypto is unavailable.");
+                const digest = await platformCrypto.subtle.digest(
+                    "SHA-256",
+                    new TextEncoder().encode(artifact),
+                );
+                loadedPluginArtifactSha256 = [...new Uint8Array(digest)]
+                    .map((byte) => byte.toString(16).padStart(2, "0"))
+                    .join("");
+            } catch {
+                loadedPluginArtifactSha256 = null;
+            }
+            return {
+                schemaVersion: 1,
+                pluginId,
+                pluginVersion,
+                pluginArtifactPath,
+                loadedPluginArtifactSha256,
+                lexicalProfileRuntimeFingerprint: getCharPhraseRuntimeCanaryFingerprint(),
+                capturedAtPluginLoad,
+                identitySource: "plugin-onload-cached-main-js",
+                blocker: loadedPluginArtifactSha256 === null
+                    ? "loaded_plugin_artifact_unavailable"
+                    : null,
+            };
+        })();
+        return this.loadedPluginBuildIdentityPromise;
+    }
+
     private t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
         return pluginT(key, getPluginUiLanguage(), params, fallback);
     }
 
     async onload() {
+        void this.ensureLoadedPluginBuildIdentity();
         this.memoryEventGateStartedAt = Date.now();
         await this.loadSettings();
         void this.cleanupLegacyMobileDebugLog();
@@ -1835,9 +1981,23 @@ export class PluginManager extends Plugin {
     }
 
     private registerVaultEventDispatch(): void {
+        // `resolvedLinks` and metadata-derived Boundary tags are live Obsidian
+        // structures. Invalidate before any asynchronous consumer can seal a
+        // graph snapshot; the builder checks the same epoch again at publish.
+        this.registerEvent(
+            this.app.metadataCache.on("resolved", () => {
+                this.invalidateMemoryGraphTopology();
+            })
+        );
+        this.registerEvent(
+            this.app.metadataCache.on("changed", () => {
+                this.invalidateMemoryGraphTopology();
+            })
+        );
         // VSS lifecycle events observe possible local changes; approved Memory can then maintain itself in the background.
         this.registerEvent(
             this.app.vault.on("create", async (file) => {
+                this.invalidateMemoryGraphTopology();
                 if (file instanceof TFile) {
                     // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
                     // Obsidian fires `create` (not `modify`) for a NEW file, so the
@@ -1854,6 +2014,7 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("modify", async (file) => {
+                this.invalidateMemoryGraphTopology();
                 if (file instanceof TFile) {
                     // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
                     // when the modify event was triggered by Pagelet's own
@@ -1870,6 +2031,7 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("rename", async (file, oldPath) => {
+                this.invalidateMemoryGraphTopology();
                 this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-rename");
                 if (file instanceof TFile && await this.vss?.handleRename(file, oldPath)) {
                     this.memoryManager?.scheduleAutoFlush("vault-rename");
@@ -1879,6 +2041,7 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("delete", async (file) => {
+                this.invalidateMemoryGraphTopology();
                 if (file instanceof TFile) {
                     this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-delete");
                     await this.vss?.handleDelete(file);
@@ -2468,9 +2631,21 @@ export class PluginManager extends Plugin {
             ),
             createPageletAttentionStorage: () => this.createPageletAttentionStorage(),
             runDeepDiscover: (input) => this.runPageletDeepDiscover(input),
+            acknowledgeDeepDiscoverResult: (result, acceptedCandidates) => {
+                this.getDeepDiscoverSmokeEvidence().acknowledgeOrchestratorResult(
+                    result,
+                    acceptedCandidates,
+                );
+            },
+            discardDeepDiscoverResult: (result) => {
+                this.deepDiscoverSmokeEvidence?.discardOrchestratorResult(result);
+            },
             cancelDeepDiscover: () => this.resetDeepDiscoverController(),
             getDeepDiscoverUsage: () => this.getDeepDiscoverUsage(),
             getDeepDiscoverPolicyIdentity: () => this.pageletDeepDiscoverPolicyIdentityKey(),
+            isDeepDiscoverCommitSealCurrent: (seal, collection) => (
+                this.isPageletDeepDiscoverCommitSealCurrent(seal, collection)
+            ),
             validateDeepDiscoverInsight: async (identity, signal) => {
                 if (
                     !this.deepDiscoverScheduler
@@ -6837,6 +7012,12 @@ export class PluginManager extends Plugin {
         }
     }
 
+    private getEffectiveRetrievalOptimizationFlags() {
+        return resolveB125RetrievalOptimizationFlags(
+            this.settings.retrievalOptimizationFlags,
+        );
+    }
+
     private createMemoryHost(): MemoryHost {
         return {
             app: this.app,
@@ -6848,7 +7029,9 @@ export class PluginManager extends Plugin {
             persistMemoryAdmissionSettings: () => this.persistMemoryAdmissionSettings(),
             getVSSFiles: () => this.getVSSFiles(),
             isVSSFileEligible: (file, markdown) => this.isVSSFileEligible(file, markdown),
+            isDataBoundaryAllowedPath: (path) => this.isDataBoundaryAllowedPath(path),
             getAPIToken: () => this.getAPIToken(),
+            getRetrievalOptimizationFlags: () => this.getEffectiveRetrievalOptimizationFlags(),
             notifyStatusChanged: () => this.debouncedStatusBarUpdate(),
             updateMemorySetting: (key, value) => {
                 (this.settings as unknown as Record<string, unknown>)[key] = value;
@@ -6856,12 +7039,21 @@ export class PluginManager extends Plugin {
         };
     }
 
-    private createAiServiceHost(): AiServiceHost {
+    private createAiServiceHost(surface: RetrievalDiagnosticSurface): AiServiceHost {
         const getOperationsAgentEnabled = () => this.isOperationsAgentEnabled;
+        const retrievalDiagnostics = this.retrievalDiagnostics.bindSurface(surface);
         return {
             app: this.app,
             settings: this.settings,
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            recordRetrievalDiagnostic: retrievalDiagnostics.record,
+            createRetrievalDiagnosticRecorder: retrievalDiagnostics.createRecorder,
+            scheduleArmedGraphWorkerCancellation:
+                retrievalDiagnostics.scheduleArmedGraphWorkerCancellation,
+            isGraphPprEnabled: () => this.getEffectiveRetrievalOptimizationFlags().graphPpr,
+            getRetrievalOptimizationFlags: () => this.getEffectiveRetrievalOptimizationFlags(),
+            getRetrievalOptimizationEpoch: () => this.getRetrievalOptimizationEpoch(),
+            onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             getAPIToken: () => this.getAPIToken(),
             get isOperationsAgentEnabled() {
                 return getOperationsAgentEnabled();
@@ -6869,25 +7061,162 @@ export class PluginManager extends Plugin {
             getMemoryExtractionPromptContext: () =>
                 this.getMemoryExtractionPromptContext() as unknown as Record<string, unknown>,
             memorySearch: {
-                ensureReadyForChat: (query) => this.ensureMemoryReadyForChat(query),
+                ensureReadyForChat: (query, signal, preparationOwnerSignal) => (
+                    this.ensureMemoryReadyForChat(query, signal, preparationOwnerSignal)
+                ),
                 searchHybrid: (query, opts) =>
                     this.vss?.searchHybrid(query, opts) ?? Promise.resolve([]),
                 getChunksByPath: (paths, opts) =>
                     this.vss?.getChunksByPath(paths, opts) ?? Promise.resolve([]),
+                rankGraphCandidates: (queryEmbedding, paths, control, opts) => {
+                    if (!this.vss) {
+                        return Promise.reject(new Error("Memory graph ranking is unavailable."));
+                    }
+                    return this.vss.rankGraphCandidates(queryEmbedding, paths, control, opts);
+                },
+                cancelGraphCandidateRank: (requestId, runEpoch) => {
+                    this.vss?.cancelGraphCandidateRank(requestId, runEpoch);
+                },
+                getPathEvidenceGenerations: (paths, opts) => {
+                    if (!this.vss) {
+                        return Promise.reject(new Error("Memory evidence generations are unavailable."));
+                    }
+                    return this.vss.getPathEvidenceGenerations(paths, opts);
+                },
             },
-            getResolvedLinks: () =>
-                this.app?.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined,
-            isDataBoundaryAllowedPath: (path) => this.isDataBoundaryAllowedPath(path),
+            getMemoryEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("chat"),
+            getGraphBoundarySnapshotSource: () => this.createMemoryGraphBoundarySnapshotSource("chat"),
+            isDataBoundaryAllowedPath: (path) => this.isMemoryProviderPathAllowed(path),
+            readLatestMemorySource: (path, signal) => this.captureLatestMemorySource(
+                path,
+                (candidatePath) => this.isMemoryProviderPathAllowed(candidatePath),
+                "chat",
+                signal,
+            ),
             agentRunCoordinator: this.agentRunCoordinator,
         };
     }
 
-    private ensureMemoryReadyForChat(query?: string): Promise<MemoryDecisionResult> {
+    private ensureMemoryReadyForChat(
+        query?: string,
+        signal?: AbortSignal,
+        preparationOwnerSignal?: AbortSignal,
+    ): Promise<MemoryDecisionResult> {
+        // This bridge is reached only by an admitted AI run. Heal the same
+        // retained-token reload state here as a defence in depth for direct
+        // callers that do not come through Chat's composer or Pagelet's
+        // explicit-action gate. Passive startup still never calls this path.
+        if (this.getAIReadiness("memory").issue === "token_unknown") {
+            this.refreshAPITokenPresence();
+        }
         if (!this.getAIReadiness("memory").ready) {
             return Promise.resolve({ decision: "answer-now" });
         }
-        return this.memoryManager?.ensureReadyForChat(query)
+        return this.memoryManager?.ensureReadyForChat(query, signal, preparationOwnerSignal)
             ?? Promise.resolve({ decision: "answer-now" });
+    }
+
+    private invalidateMemoryGraphTopology(): void {
+        this.memoryGraphTopologyEpoch = this.memoryGraphTopologyEpoch >= Number.MAX_SAFE_INTEGER
+            ? 1
+            : this.memoryGraphTopologyEpoch + 1;
+    }
+
+    private getRetrievalOptimizationEpoch(): string {
+        const flags = this.getEffectiveRetrievalOptimizationFlags();
+        const signature = stableStringify({
+            lexicalProfile: flags.lexicalProfile,
+            strictReranker: flags.strictReranker,
+            graphPpr: flags.graphPpr,
+            relaxedRecovery: flags.relaxedRecovery,
+        });
+        if (signature !== this.retrievalOptimizationSignature) {
+            this.retrievalOptimizationSignature = signature;
+            this.retrievalOptimizationEpoch = this.retrievalOptimizationEpoch >= Number.MAX_SAFE_INTEGER
+                ? 1
+                : this.retrievalOptimizationEpoch + 1;
+        }
+        return `retrieval-flags:${this.retrievalOptimizationEpoch}:${stableHash(signature)}`;
+    }
+
+    private createMemoryGraphBoundarySnapshotSource(
+        consumer: "chat" | "pagelet",
+    ): GraphBoundarySnapshotSource | undefined {
+        const resolvedLinks = this.app?.metadataCache?.resolvedLinks as
+            | Record<string, Record<string, number>>
+            | undefined;
+        if (!resolvedLinks) return undefined;
+        const pageletResolver = consumer === "pagelet"
+            ? this.createPageletProviderSourceResolver()
+            : undefined;
+        return {
+            resolvedLinks,
+            getEpoch: () => this.getMemoryGraphTopologyEpoch(consumer),
+            classifyPath: (path) => this.classifyMemoryGraphPath(path, consumer, pageletResolver),
+            canonicalizePath: (path) => this.canonicalizeMemoryGraphPath(path),
+        };
+    }
+
+    private getMemoryGraphTopologyEpoch(consumer: "chat" | "pagelet"): string {
+        const vssExcludePrefixes = (this.settings.vssCacheExcludePath ?? [])
+            .map((path) => path.trim())
+            .filter(Boolean)
+            .sort();
+        const pageletBoundary = consumer === "pagelet"
+            ? (() => {
+                const settings = this.getPageletSettingsWithDataBoundary();
+                return {
+                    excludedFolders: [...settings.excludedFolders].sort(),
+                    excludedTags: [...settings.excludedTags].sort(),
+                    excludedPatterns: [...settings.excludedPatterns].sort(),
+                    reviewsFolder: settings.reviewsFolder,
+                };
+            })()
+            : undefined;
+        const policyIdentity = stableHash(stableStringify({
+            shared: this.getMemoryDataBoundaryFingerprint(),
+            vssExcludePrefixes,
+            pageletBoundary,
+        }));
+        return `memory-graph:${this.memoryGraphTopologyEpoch}:${consumer}:${policyIdentity}`;
+    }
+
+    private classifyMemoryGraphPath(
+        path: string,
+        consumer: "chat" | "pagelet",
+        pageletResolver?: ScopeResolver,
+    ): GraphPathClass {
+        const canonicalPath = this.canonicalizeMemoryGraphPath(path);
+        if (!canonicalPath) return "blocked";
+        const file = this.app.vault.getAbstractFileByPath(canonicalPath);
+        if (!(file instanceof TFile) || file.extension !== "md") return "blocked";
+
+        const generated = this.isGeneratedDataBoundaryFile(file);
+        const sharedAllowed = this.isMemoryProviderPathAllowed(file.path);
+        const consumerAllowed = consumer === "pagelet"
+            ? Boolean(pageletResolver)
+                && this.isPageletProviderSourceAllowedByResolver(file, pageletResolver!)
+            : true;
+        if (sharedAllowed && consumerAllowed) return "allowed_markdown";
+
+        // Excluded generated material is never an opaque bridge. Ordinary
+        // excluded Markdown may contribute only transient link topology.
+        if (generated || (consumer === "pagelet" && file.path.startsWith(".pagelet/"))) {
+            return "blocked";
+        }
+        return "opaque_excluded_markdown";
+    }
+
+    private canonicalizeMemoryGraphPath(path: string): string | null {
+        if (typeof path !== "string") return null;
+        const canonicalPath = normalizePath(path.trim()).replace(/^\.\//, "");
+        if (
+            !canonicalPath
+            || canonicalPath.startsWith("/")
+            || /^[A-Za-z]:\//.test(canonicalPath)
+            || canonicalPath.split("/").some((segment) => !segment || segment === "..")
+        ) return null;
+        return canonicalPath;
     }
 
     private getOperationsService(): OperationsService {
@@ -7121,7 +7450,7 @@ export class PluginManager extends Plugin {
 
     createChatService(): ChatService {
         const operationsSession = this.getOperationsService().createSession({ surface: "chat" });
-        return new ChatService(this.createAiServiceHost(), operationsSession);
+        return new ChatService(this.createAiServiceHost("chat"), operationsSession);
     }
 
     private openQuickCaptureModal(): void {
@@ -7315,6 +7644,11 @@ export class PluginManager extends Plugin {
     private async runPageletDeepDiscover(
         input: PageletDeepDiscoverControllerRequest,
     ): Promise<PageletDeepDiscoverControllerResult> {
+        // Only a new forced foreground attempt invalidates older smoke
+        // evidence. Automatic runs are product work, not smoke candidates.
+        if (input.triggerReason === "explicit" && input.force === true) {
+            this.deepDiscoverSmokeEvidence?.clear();
+        }
         if (input.signal?.aborted) return { status: "quiet", reason: "aborted" };
         if (
             this.unloading
@@ -7324,11 +7658,25 @@ export class PluginManager extends Plugin {
             return { status: "limit", reason: "unavailable" };
         }
 
+        // Startup deliberately leaves SecretStorage unread so passive Pagelet
+        // work cannot surface a Keychain prompt. A user-triggered Pagelet run
+        // is an explicit provider action, though, and must resolve the retained
+        // token exactly as Chat and manual Memory actions do. Automatic runs
+        // stay silent and fail closed until another explicit surface has
+        // established readiness.
+        if (input.triggerReason === "explicit") {
+            if (!this.ensureAIConfigured()) {
+                return { status: "limit", reason: "unavailable" };
+            }
+        } else if (this.getAISetupIssue() !== null) {
+            return { status: "limit", reason: "unavailable" };
+        }
+
         const path = normalizePath(input.path);
         if (!this.isPageletProviderPathAllowed(path)) {
             return { status: "denied", reason: "data-boundary" };
         }
-        const snapshotHost = this.createAiServiceHost();
+        const snapshotHost = this.createAiServiceHost("pagelet");
         const anchorSnapshot = await this.capturePageletDeepDiscoverAnchorSnapshot(
             snapshotHost,
             path,
@@ -7386,6 +7734,7 @@ export class PluginManager extends Plugin {
 
     private resetDeepDiscoverController(): void {
         this.deepDiscoverControllerEpoch += 1;
+        this.deepDiscoverSmokeEvidence?.clear();
         this.deepDiscoverScheduler?.dispose();
         this.deepDiscoverScheduler = null;
         this.deepDiscoverControllerPolicyIdentitySnapshot = null;
@@ -7419,7 +7768,7 @@ export class PluginManager extends Plugin {
         }
 
         const epoch = this.deepDiscoverControllerEpoch;
-        const initialization = this.createPageletDeepDiscoverScheduler(identity)
+        const initialization = this.createPageletDeepDiscoverScheduler(identity, epoch)
             .catch((error) => {
                 this.log("Pagelet Deep Discover runtime initialization failed", {
                     errorType: error instanceof Error ? error.name : "unknown",
@@ -7454,12 +7803,25 @@ export class PluginManager extends Plugin {
 
     private async createPageletDeepDiscoverScheduler(
         expectedPolicyIdentity: string,
+        controllerEpoch: number,
     ): Promise<PageletDeepDiscoverScheduler | null> {
-        const liveHost = this.createAiServiceHost();
+        const liveHost = this.createAiServiceHost("pagelet");
+        const isPageletMemoryPathAllowed = (path: string) => (
+            this.isMemoryProviderPathAllowed(path)
+            && this.isPageletProviderPathAllowed(path)
+        );
         const runtimeHost: AiServiceHost = {
             ...liveHost,
             settings: { ...liveHost.settings },
-            isDataBoundaryAllowedPath: (path) => this.isPageletProviderPathAllowed(path),
+            isDataBoundaryAllowedPath: isPageletMemoryPathAllowed,
+            getMemoryEvidenceEpoch: () => this.getMemoryGraphTopologyEpoch("pagelet"),
+            getGraphBoundarySnapshotSource: () => this.createMemoryGraphBoundarySnapshotSource("pagelet"),
+            readLatestMemorySource: (path, signal) => this.captureLatestMemorySource(
+                path,
+                isPageletMemoryPathAllowed,
+                "pagelet",
+                signal,
+            ),
         };
         const aiUtils = new AIUtils(runtimeHost);
         const nativeCapability = aiUtils.getNativeToolCallingCapability({
@@ -7480,32 +7842,89 @@ export class PluginManager extends Plugin {
             runtimeHost,
             runtimePlatform,
         );
-        const memorySearch = new MemorySearchTool(runtimeHost, aiUtils);
+        const memorySearch = new MemorySearchTool(runtimeHost, aiUtils, "pagelet");
+        const providerResponseDelivery = aiUtils
+            .resolveChatTransport("native")
+            .responseDelivery;
         const qwenRequestOptions = this.pageletDeepDiscoverQwenRequestOptions(
             runtimeHost.settings,
         );
-        const isPathAllowed = (path: string) => this.isPageletProviderPathAllowed(path);
+        const isPathAllowed = isPageletMemoryPathAllowed;
         const runtime = createPageletAgentRuntime({
             host: runtimeHost,
+            providerResponseDelivery,
             createModel: (context) => createPageletNativeModel({
                 registry: context.registry,
                 allowedToolNames: context.allowedToolNames,
                 schemas: context.schemas,
                 toolDefinitions: context.toolDefinitions,
-                createChatModel: (temperature) => aiUtils.createChatModel(
-                    temperature,
-                    {
-                        modelName: runtimeHost.settings.chatModelName,
-                        transport: "native",
-                        ...(qwenRequestOptions ? { qwenRequestOptions } : {}),
-                    },
+                providerRequestScope: context.providerRequestScope,
+                createChatModel: (temperature, requestOptions) => (
+                    this.createPageletDeepDiscoverChatModel(
+                        aiUtils,
+                        runtimeHost.settings,
+                        qwenRequestOptions,
+                        temperature,
+                        requestOptions,
+                    )
                 ),
                 signal: context.signal,
             }),
-            executeMemorySearch: (input, context) => memorySearch.search(
-                input.query,
-                context.signal,
-                context.onBeforeVssSearch,
+            executeMemorySearch: (input, context, control) => {
+                const signal = context.signal ?? new AbortController().signal;
+                return runWithMemorySearchInvocation(
+                    createStandardMemorySearchInvocation({
+                        temporalIntent: "none",
+                        captureRecoverySeed:
+                            resolveB125RetrievalOptimizationFlags(
+                                runtimeHost.getRetrievalOptimizationFlags?.()
+                                ?? runtimeHost.settings.retrievalOptimizationFlags,
+                            ).relaxedRecovery,
+                        ...(control?.runEpoch ? { runEpoch: control.runEpoch } : {}),
+                        ...(control?.absoluteDeadlineMs !== undefined
+                            ? { absoluteDeadlineMs: control.absoluteDeadlineMs }
+                            : {}),
+                        ...(control?.providerRequestScope
+                            ? { providerRequestScope: control.providerRequestScope }
+                            : {}),
+                        ...(control?.memoryPreparationOwnerSignal
+                            ? { memoryPreparationOwnerSignal: control.memoryPreparationOwnerSignal }
+                            : {}),
+                    }),
+                    signal,
+                    () => memorySearch.search(
+                        input.query,
+                        signal,
+                        context.onBeforeVssSearch,
+                    ),
+                );
+            },
+            executeRelaxedMemorySearch: (seed, context, _goal, control) => {
+                if (!seed.recoverySeed) return Promise.resolve(seed);
+                const signal = context.signal ?? new AbortController().signal;
+                return runWithMemorySearchInvocation(
+                    createRelaxedMemorySearchInvocation(seed.recoverySeed, {
+                        ...(control?.runEpoch ? { runEpoch: control.runEpoch } : {}),
+                        ...(control?.absoluteDeadlineMs !== undefined
+                            ? { absoluteDeadlineMs: control.absoluteDeadlineMs }
+                            : {}),
+                        ...(control?.providerRequestScope
+                            ? { providerRequestScope: control.providerRequestScope }
+                            : {}),
+                        ...(control?.memoryPreparationOwnerSignal
+                            ? { memoryPreparationOwnerSignal: control.memoryPreparationOwnerSignal }
+                            : {}),
+                    }),
+                    signal,
+                    () => memorySearch.search(
+                        seed.query,
+                        signal,
+                        context.onBeforeVssSearch,
+                    ),
+                );
+            },
+            revalidateMemorySearch: (result, signal) => (
+                memorySearch.revalidateForProvider(result, signal)
             ),
             captureSourceMaterial: (path, signal) => (
                 this.capturePageletDeepDiscoverSourceMaterial(
@@ -7537,6 +7956,8 @@ export class PluginManager extends Plugin {
                 signal,
             ),
             getPolicyIdentity: () => this.getPageletDeepDiscoverPolicyIdentity(),
+            getEvidenceEpoch: () => runtimeHost.getMemoryEvidenceEpoch?.() ?? "",
+            controllerEpoch,
             isPathAllowed,
             admitRun: (input) => this.admitPageletDeepDiscoverRun(
                 expectedPolicyIdentity,
@@ -7544,6 +7965,12 @@ export class PluginManager extends Plugin {
             ),
             getAnchorRelations: (path) => this.getPageletDeepDiscoverAnchorRelations(path),
             isSeen: (input) => this.isPageletDeepDiscoverDeliverySeen(input),
+            onRunStart: (run) => {
+                this.getDeepDiscoverSmokeEvidence().begin(run);
+            },
+            onRunComplete: (result, _request, run) => {
+                this.getDeepDiscoverSmokeEvidence().stageControllerResult(run, result);
+            },
             onResult: (result, request) => {
                 this.handlePageletDeepDiscoverResult(result, request);
             },
@@ -7607,6 +8034,24 @@ export class PluginManager extends Plugin {
         return { enableThinking: true };
     }
 
+    private createPageletDeepDiscoverChatModel(
+        aiUtils: Pick<AIUtils, "createChatModel">,
+        settings: AiServiceHost["settings"],
+        qwenRequestOptions: QwenRequestOptions | undefined,
+        temperature: number,
+        options: Record<string, unknown>,
+    ) {
+        const requestOptions = options as CreateChatModelOptions;
+        return aiUtils.createChatModel(temperature, {
+            ...requestOptions,
+            modelName: settings.chatModelName,
+            transport: "native",
+            ...(qwenRequestOptions ? { qwenRequestOptions } : {}),
+            providerRequestScope: requestOptions.providerRequestScope,
+            onProviderRequestStart: requestOptions.onProviderRequestStart,
+        });
+    }
+
     private async capturePageletDeepDiscoverAnchorSnapshot(
         host: AiServiceHost,
         path: string,
@@ -7659,6 +8104,7 @@ export class PluginManager extends Plugin {
         const pagelet = this.getPageletSettingsWithDataBoundary();
         const endpoint = (this.settings.baseURL ?? "").trim().replace(/\/+$/, "");
         const platform: AgentRuntimePlatform = Platform.isMobile ? "mobile" : "desktop";
+        const retrievalOptimizationFlags = this.getEffectiveRetrievalOptimizationFlags();
         return {
             dataBoundaryIdentity: `pagelet-agent-boundary:${stableHash(stableStringify({
                 version: 1,
@@ -7669,13 +8115,19 @@ export class PluginManager extends Plugin {
                 reviewsFolder: pagelet.reviewsFolder,
             }))}`,
             providerPolicyIdentity: `pagelet-agent-provider:${stableHash(stableStringify({
-                version: 1,
+                version: 2,
                 provider: this.settings.aiProvider,
                 providerPreset: this.settings.aiProviderPreset ?? null,
                 endpoint,
                 webSearchEnabled: this.settings.webSearchEnabled === true,
                 licenseTier: this.settings.licenseTier,
                 platform,
+                retrievalOptimizationFlags: {
+                    lexicalProfile: retrievalOptimizationFlags.lexicalProfile,
+                    strictReranker: retrievalOptimizationFlags.strictReranker,
+                    graphPpr: retrievalOptimizationFlags.graphPpr,
+                    relaxedRecovery: retrievalOptimizationFlags.relaxedRecovery,
+                },
             }))}`,
             modelIdentity: `pagelet-agent-model:${stableHash(stableStringify({
                 version: 1,
@@ -7689,7 +8141,29 @@ export class PluginManager extends Plugin {
     }
 
     private pageletDeepDiscoverPolicyIdentityKey(): string {
-        return stableStringify(this.getPageletDeepDiscoverPolicyIdentity());
+        return pageletAgentPolicyIdentityKey(this.getPageletDeepDiscoverPolicyIdentity());
+    }
+
+    private isPageletDeepDiscoverCommitSealCurrent(
+        seal: PageletDeepDiscoverCommitSeal,
+        collection: PageletAgentVerifiedInsightCollection,
+    ): boolean {
+        if (
+            this.unloading
+            || !this.settings.pagelet?.enabled
+            || !this.settings.pagelet.deepDiscoverEnabled
+            || !this.deepDiscoverScheduler
+            || this.deepDiscoverControllerPolicyIdentitySnapshot === null
+        ) return false;
+        return pageletDeepDiscoverCommitSealIsCurrent({
+            seal,
+            collection,
+            controllerEpoch: this.deepDiscoverControllerEpoch,
+            evidenceEpoch: this.getMemoryGraphTopologyEpoch("pagelet"),
+            currentPolicyIdentityKey: this.pageletDeepDiscoverPolicyIdentityKey(),
+            controllerPolicyIdentityKey: this.deepDiscoverControllerPolicyIdentitySnapshot,
+            isPathAllowed: (path) => this.isPageletProviderPathAllowed(path),
+        });
     }
 
     private async admitPageletDeepDiscoverRun(
@@ -7799,10 +8273,24 @@ export class PluginManager extends Plugin {
             sources: input.sources,
             policyIdentity,
         });
+        const normalizedClaim = normalizePageletInsightClaim(input.body);
+        const anchorIdentity = anchorSnapshotIdentity(input.anchor);
+        const insightId = createPageletInsightId({
+            anchor: anchorIdentity,
+            normalizedBody: input.normalizedBody,
+            normalizedClaim,
+            sources: input.sources,
+        });
+        const collectionId = createPageletInsightCollectionId([insightId]);
         const candidate = pageletAgentInsightToDeliveryCandidate({
+            insightId,
+            collectionId,
             body: input.body,
             normalizedBody: input.normalizedBody,
-            anchor: anchorSnapshotIdentity(input.anchor),
+            normalizedClaim,
+            bodyHash: hashPageletInsightBody(input.normalizedBody),
+            claimHash: hashPageletInsightClaim(normalizedClaim),
+            anchor: anchorIdentity,
             sources: input.sources.map((source) => ({ ...source })),
             sourceRefs: input.sources.map((source) => ({ path: source.path })),
             cacheIdentity,
@@ -8651,7 +9139,7 @@ export class PluginManager extends Plugin {
                 targetPath,
             },
             {
-                host: this.createAiServiceHost(),
+                host: this.createAiServiceHost("pagelet"),
                 turnId: `pagelet-review-note-${Date.now()}`,
             },
         );
@@ -8724,6 +9212,7 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        this.retrievalDiagnostics?.clear();
         closeAllShareCardModals();
         this.resetDeepDiscoverController();
         if (this.phase3Handle !== null) {
@@ -10898,6 +11387,15 @@ export class PluginManager extends Plugin {
         return decision.decision === "allow";
     }
 
+    private isMemoryProviderPathAllowed(path: string): boolean {
+        const normalizedPath = normalizePath(path).replace(/^\.\//, "");
+        const excludedByMemoryPath = (this.settings.vssCacheExcludePath ?? [])
+            .map((prefix) => prefix.trim())
+            .filter(Boolean)
+            .some((prefix) => normalizedPath.startsWith(prefix));
+        return !excludedByMemoryPath && this.isDataBoundaryAllowedPath(normalizedPath);
+    }
+
     private isDataBoundaryAllowedFile(file: TFile): boolean {
         const decision = decideDataBoundaryForSource(
             {
@@ -10925,33 +11423,71 @@ export class PluginManager extends Plugin {
             || this.getLatestPageletContentBoundary(file.path, markdown)?.allowed === true;
     }
 
+    private async captureLatestMemorySource(
+        path: string,
+        isPathAllowed: (path: string) => boolean,
+        consumer: "chat" | "pagelet",
+        signal?: AbortSignal,
+    ) {
+        if (signal?.aborted) throw createAbortError();
+        const normalizedPath = normalizePath(path).replace(/^\.\//, "");
+        try {
+            if (!normalizedPath.toLowerCase().endsWith(".md") || !isPathAllowed(normalizedPath)) {
+                return null;
+            }
+            const file = this.app.vault.getAbstractFileByPath(normalizedPath);
+            if (!(file instanceof TFile) || file.extension !== "md") return null;
+            const before = { mtime: file.stat.mtime, size: file.stat.size };
+            const markdown = await this.app.vault.read(file);
+            if (signal?.aborted) throw createAbortError();
+            const current = this.app.vault.getAbstractFileByPath(normalizedPath);
+            if (
+                current !== file
+                || !(current instanceof TFile)
+                || current.extension !== "md"
+                || current.stat.mtime !== before.mtime
+                || current.stat.size !== before.size
+                || !isPathAllowed(current.path)
+            ) return null;
+            const boundary = this.getLatestMemoryContentBoundary(current.path, markdown, consumer);
+            if (boundary?.allowed !== true) return null;
+            return {
+                path: current.path,
+                markdown,
+                mtime: current.stat.mtime,
+                size: current.stat.size,
+            };
+        } catch (error) {
+            if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+                throw createAbortError();
+            }
+            this.log("Latest Memory source read failed closed", {
+                errorType: error instanceof Error ? error.name : "unknown",
+            });
+            return null;
+        }
+    }
+
     /** Re-check explicit boundary markers from the exact body sent to a provider. */
     private getLatestPageletContentBoundary(
         path: string,
         markdown: string,
     ): { allowed: boolean; tags: string[]; isGenerated: boolean } | null {
-        const latestBoundary = this.getLatestDataBoundaryContentBoundary(path, markdown);
-        if (!latestBoundary) return null;
-        const excludedTags = new Set([
-            "no-ai",
-            "no-review",
-            ...(this.settings?.pagelet?.excludedTags ?? []),
-        ].map((tag) => (
-            tag.trim().replace(/^#+/, "").toLowerCase()
-        )));
-        return {
-            allowed: latestBoundary.allowed
-                && !latestBoundary.tags.some((tag) => excludedTags.has(tag))
-                && !latestBoundary.isGenerated,
-            tags: latestBoundary.tags,
-            isGenerated: latestBoundary.isGenerated,
-        };
+        return this.getLatestMemoryContentBoundary(path, markdown, "pagelet");
     }
 
     /** Re-check the shared Data Boundary from the exact Markdown body. */
     private getLatestDataBoundaryContentBoundary(
         path: string,
         markdown: string,
+    ): { allowed: boolean; tags: string[]; isGenerated: boolean } | null {
+        return this.getLatestMemoryContentBoundary(path, markdown, "chat");
+    }
+
+    private getLatestMemoryContentBoundary(
+        path: string,
+        markdown: string,
+        consumer: "chat" | "pagelet",
     ): { allowed: boolean; tags: string[]; isGenerated: boolean } | null {
         try {
             const frontmatterInfo = getFrontMatterInfo(markdown);
@@ -10977,17 +11513,30 @@ export class PluginManager extends Plugin {
             const isGenerated = frontmatter.pagelet === true
                 || (typeof frontmatter.pagelet === "string"
                     && frontmatter.pagelet.trim().toLowerCase() === "true");
+            const excludedTags = new Set([
+                "no-ai",
+                ...(consumer === "pagelet" ? ["no-review"] : []),
+                ...(consumer === "pagelet" ? this.settings?.pagelet?.excludedTags ?? [] : []),
+                ...(this.settings?.dataBoundary?.excludedTags ?? []),
+            ].map((tag) => (
+                tag.trim().replace(/^#+/, "").toLowerCase()
+            )));
+            const tagDenied = normalizedTags.some((tag) => excludedTags.has(tag));
             const dataBoundaryDecision = decideDataBoundaryForSource(
                 { path, tags: normalizedTags, isGenerated },
                 this.settings?.dataBoundary,
             );
             return {
-                allowed: dataBoundaryDecision.decision === "allow",
+                allowed: !tagDenied
+                    && (consumer !== "pagelet" || !isGenerated)
+                    && dataBoundaryDecision.decision === "allow",
                 tags: normalizedTags,
                 isGenerated,
             };
         } catch (error) {
-            this.log("Latest source Data Boundary parse failed closed", { path, error });
+            this.log("Latest Memory source boundary parse failed closed", {
+                errorType: error instanceof Error ? error.name : "unknown",
+            });
             return null;
         }
     }
@@ -11041,7 +11590,14 @@ export class PluginManager extends Plugin {
 
     private isGeneratedDataBoundaryFile(file: TFile): boolean {
         const frontmatter = this.app.metadataCache?.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-        return frontmatter?.pagelet === true;
+        const pageletMarker = frontmatter?.pagelet;
+        const normalizedPath = normalizePath(file.path).replace(/^\.\//, "");
+        return pageletMarker === true
+            || (typeof pageletMarker === "string" && pageletMarker.trim().toLowerCase() === "true")
+            || normalizedPath === ".pagelet"
+            || normalizedPath.startsWith(".pagelet/")
+            || normalizedPath === "pagelet-generated"
+            || normalizedPath.startsWith("pagelet-generated/");
     }
 
     private getPageletSettingsWithDataBoundary(): PageletSettings {
@@ -11163,6 +11719,7 @@ export class PluginManager extends Plugin {
             return;
         }
         this.settingsChangeListeners ??= new Set();
+        this.getRetrievalOptimizationEpoch();
         await Promise.allSettled(
             Array.from(this.settingsChangeListeners, (listener) => Promise.resolve().then(listener)),
         );

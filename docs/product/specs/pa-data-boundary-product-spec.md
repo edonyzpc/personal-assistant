@@ -1,10 +1,10 @@
 # PA Data Boundary Product Spec
 
 Document status: Current
-Updated: 2026-08-11
+Updated: 2026-08-30
 Work item: B-118
-Scope note: DEC-023/DEC-024 reconciliation is owned by B-118; DEC-028's narrow Memory exception is owned by B-126; the base cross-feature contract predates stable Backlog IDs.
-Scoped decisions: [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md)
+Scope note: DEC-023/DEC-024 reconciliation is owned by B-118; DEC-027/B-125 adds one narrow local-topology exception without changing excluded content/provider/output eligibility; DEC-028's narrow Memory exception is owned by B-126; the base cross-feature contract predates stable Backlog IDs.
+Scoped decisions: [DEC-023](../decisions/dec-023-shared-pagelet-provider-first-use.md)、[DEC-024](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md)、[DEC-028](../decisions/dec-028-silent-memory-auto-prepare.md)
 Authority: PA-wide source eligibility、exclusions、provider disclosure、storage、cleanup 与 replay data boundaries。
 
 ## Status
@@ -12,7 +12,7 @@ Authority: PA-wide source eligibility、exclusions、provider disclosure、stora
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Delivery / validation status | Shared v1 Data Boundary implemented; B-118 automated/review and authorized desktop/iPhone gates passed for DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall semantic retrieval and live-source revalidation. DEC-028/B-126 first-use Memory exception is approved and its implementation/validation remains tracked in the active B-126 package. Real high-risk provider calls were not executed; new data classes still require explicit extension. |
+| Delivery / validation status | Shared v1 Data Boundary implemented; B-118 automated/review and authorized desktop/iPhone gates passed for DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall semantic retrieval and live-source revalidation. DEC-027 adds the approved B-125 single-opaque-bridge topology exception without extending content、provider、output or persistence eligibility；B-125 implementation/validation and per-flag rollout dispositions are closed in its [compact evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). DEC-028/B-126 first-use Memory exception is approved and validated under the B-126 package. Real high-risk provider calls were not executed; new data classes still require explicit extension. |
 | Feature family | Data Boundary / Privacy / Local-first controls |
 | Primary surfaces | Settings, Chat, Pagelet, Memory, Maintenance Review |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -40,7 +40,7 @@ controls.
 | --- | --- | --- |
 | DB-D1 | Build one shared Data Boundary System. | Chat/Pagelet/Memory/Maintenance/Indexer/Graph use the same excluded scopes, provider disclosure, and local/cache/vault-artifact boundaries. |
 | DB-D2 | User-visible shape is a lightweight `Data & Privacy Boundaries` settings area. | Users get one place to manage boundaries without a heavy privacy control center. |
-| DB-D3 | Excluded folders/tags are global hard boundaries by default, with explicit per-run override. | A run may include an excluded scope only after user-visible one-time authorization. |
+| DB-D3 | Excluded folders/tags are global hard content、identity、candidate、output and provider boundaries by default, with explicit per-run override. | A run may read or expose an excluded scope only after user-visible one-time authorization; DEC-027's zero-content opaque topology bridge is not such an override. |
 | DB-D4 | AI-generated notes are excluded by default, with configurable inclusion policy. | Prevents self-reference and summary drift while allowing user-confirmed generated artifacts to become sources. |
 | DB-D5 | Data cleanup is unified and grouped by data type. | Cache, queues, graph state, replay, unconfirmed memory, and confirmed memory are cleared separately. |
 | DB-D6 | Provider disclosure is first-use plus actual-input-based high-risk disclosure. | Small scopes stay low-friction; foreground Review uses filtered actual source count, while consequential runs show scope/provider/cost before continuing. |
@@ -51,6 +51,7 @@ controls.
 | DB-D11 | Provider-bound sources are rechecked from the exact latest Markdown body. | Explicit body tags/frontmatter and path policy are enforced at the provider seam; MetadataCache lag or malformed leading frontmatter fails closed, and model findings must cite an exact actual-input path. |
 | DB-D12 | Derived Pagelet text inherits every live source boundary. | All Pagelet provider inputs combine shared and Pagelet-local source rules; a cold embedding validates its primary latest body first, and a Saved Insight reaches an evaluator only when every sourceRef is live-readable, unchanged, and allowed. |
 | DB-D13 | DEC-028 authorizes one narrow silent Memory admission path. | A first-use Chat may schedule one whole eligible vault Memory rebuild without a blocking Modal; reset/provider work requires hydrated known absence or durable marker invalidation, this authority does not derive from Pagelet provider trust, and recovery/manual/costly Memory runs still block. |
+| DB-D14 | PPR may locally traverse at most one excluded Markdown node as an opaque bridge. | The bridge contributes only transient link topology; it never becomes a seed/candidate/result/source or exposes body、excerpt、title、path、metadata. Generated notes、attachments and excluded chains cannot bridge. |
 
 ## 1. Product Decision
 
@@ -77,7 +78,14 @@ Local-first does not mean "never online". It means users understand:
 ### 2.2 Exclusion Is A Hard Default
 
 Excluded folders and tags are not soft rerank signals. They are hard boundaries
-unless the user explicitly grants a one-time per-run override.
+for reading、seed/candidate eligibility、result/source identity、provider input、
+UI and persisted observation unless the user explicitly grants a one-time
+per-run override.
+
+DEC-027 adds one narrow local-topology exception: PPR may cross one excluded
+Markdown routing node without reading or exposing it. This exception is not an
+override, cannot authorize any provider/model input, and cannot make the bridge
+itself relevant evidence.
 
 ### 2.3 Generated Is Not Automatically Source
 
@@ -119,9 +127,26 @@ Default behavior:
 
 - excluded folders/tags apply to Chat, Pagelet, Memory, Maintenance Review,
   Active Vault Indexer, Graph Discovery, and Eval fixtures
-- excluded scope cannot be used by model output or tool calls
+- excluded scope cannot be read, returned, cited, stored or used by model output
+  or provider-bound tool observations
 - model text cannot override exclusion
 - exclusion must be enforced before provider calls
+
+Opaque bridge exception for DEC-027/B-125:
+
+- only one excluded Markdown node may be traversed within a PPR restart excursion
+- it is never a seed、candidate、result、sourceRef or why-shown reason
+- its body、excerpt、title、path and metadata never enter model/provider input、
+  UI、returned DTO、diagnostics、telemetry or Replay Trace
+- an internal path key may exist only in the invocation's transient graph frame
+  to resolve adjacency and is destroyed with that computation
+- generated notes and attachments cannot bridge
+- `excluded → excluded` and a second excluded node in the same excursion are blocked
+- the final allowed candidate is checked again before local vector work and after
+  Worker results return
+
+This topology-only exception neither changes global settings nor counts as the
+explicit per-run override below.
 
 Per-run override:
 
@@ -157,6 +182,10 @@ Default:
 
 > Exclude generated notes from ordinary retrieval, Memory, Maintenance, and
 > discovery scans.
+
+Generated notes remain ineligible as DEC-027 opaque bridges even when an
+ordinary excluded Markdown note could provide local topology. This prevents
+AI-generated summaries or MOCs from recursively amplifying their own links.
 
 Configurable policies:
 
@@ -262,6 +291,12 @@ explicit inline tags, frontmatter tags/generated markers, and path policy. If a
 leading frontmatter block cannot be parsed reliably, the source is skipped.
 Provider output may be cached or shown only when each finding's source path
 exactly matches one of that invocation's actual allowed input paths.
+
+B-125 reranker candidate excerpts are provider inputs and must be Data-Boundary
+filtered before serialization. Runtime attributes the call to the one selected
+model: configured policy model, otherwise Chat model. A failure does not cascade
+to a second model invocation. Opaque bridge identity or content is never part of
+the reranker request.
 
 | Operation | Disclosure / confirmation |
 | --- | --- |
@@ -380,13 +415,13 @@ must not create or update vault files by default.
 
 | Surface | Data boundary behavior |
 | --- | --- |
-| Chat | honors exclusions; broad/sensitive questions use scope/provider disclosure; sources shown after answer |
-| Pagelet | shows included/skipped sources; all provider inputs combine shared Data Boundary and Pagelet-local source exclusions; generated notes excluded by default; foreground Review uses actual allowed-source count (`<=1` standard, `>1` blocking); narrow opted-in changed-only preload uses the 7-day/4K/2-hour/20-day/read-only envelope and silently skips on breach; Quiet Recall cold embeddings validate the primary live body before DEC-023 admission and use the existing 10/50 budget; Saved Insight text requires every sourceRef to pass live all-or-nothing validation; metadata-only fallback stays local Discover-only |
+| Chat | honors exclusions; broad/sensitive questions use scope/provider disclosure; sources shown after answer; DEC-027 retry hint paths remain non-evidence and opaque bridges never enter the model observation |
+| Pagelet | shows included/skipped sources; all provider inputs combine shared Data Boundary and Pagelet-local source exclusions; generated notes excluded by default; foreground Review uses actual allowed-source count (`<=1` standard, `>1` blocking); narrow opted-in changed-only preload uses the 7-day/4K/2-hour/20-day/read-only envelope and silently skips on breach; Quiet Recall cold embeddings validate the primary live body before DEC-023 admission and use the existing 10/50 budget; Saved Insight text requires every sourceRef to pass live all-or-nothing validation; metadata-only fallback stays local Discover-only; each B-125 insight independently passes live source/currentness checks and bridge/hint paths do not count as sources |
 | Memory | candidates require sourceRefs; Confirmed Memory managed separately; excluded scopes do not create candidates |
 | Maintenance Review | scans respect excluded scopes; affected scope shown; write actions have separate confirmation |
 | Active Vault Indexer | centralizes exclusions, generated note policy, sourceRefs, and retrieval outcomes |
-| Graph Discovery | does not use excluded/generated scopes unless allowed; rejected/derived edges remain local |
-| Eval Harness | synthetic fixtures include excluded/private cases and assert no leakage |
+| Graph Discovery | excluded/generated nodes never become items or evidence; only DEC-027 PPR may transiently cross one non-generated excluded Markdown bridge, with no identity/content exposure; rejected/derived edges remain local |
+| Eval Harness | synthetic fixtures include excluded/private cases, the one-opaque-bridge positive case, generated/attachment/excluded-chain negatives, and identity/content leakage assertions |
 
 ## 10. Replay And Audit
 
@@ -427,6 +462,10 @@ Persisted replay must not store raw source excerpts, full prompts, full note
 chunks, or full provider output unless a future spec defines redaction,
 retention, cleanup, export, and security review gates.
 
+An opaque bridge is not a replay source or skipped source. Replay may record only
+content-free aggregate facts such as `opaqueBridgeCount`, never the bridge's
+path、title、hash、metadata or adjacency identity.
+
 ## 11. Metrics
 
 Product metrics:
@@ -441,7 +480,11 @@ Product metrics:
 
 Quality gates:
 
-- excluded paths do not appear without explicit per-run override
+- excluded paths do not appear as seed、candidate、result、source、provider input、
+  UI、diagnostic or replay identity without explicit per-run override
+- the DEC-027 positive topology fixture can surface the final allowed note across
+  exactly one excluded Markdown bridge, while generated/attachment/second-
+  excluded cases remain unreachable and every bridge leakage spy stays empty
 - generated notes are excluded by default
 - provider disclosure appears for admitted foreground/explicit broad、sensitive、
   costly runs; out-of-envelope generic background preload remains silent
@@ -521,6 +564,9 @@ Status: this document.
   its narrow standard envelope.
 - No metadata-only candidate masquerading as semantic/proactive Quiet Recall.
 - No model-controlled override of exclusions.
+- No treating the opaque bridge exception as permission to read、send、show、log
+  or persist an excluded note, and no traversal through generated、attachment or
+  consecutive excluded nodes.
 - No treating AI-generated notes as source by default.
 - No one-click destructive wipe without grouped explanation.
 - No vault-written runtime state by default.
@@ -532,6 +578,8 @@ Data Boundary System keeps PA's local-first promise concrete.
 The intended product shape is:
 
 - one shared exclusion policy
+- one tightly bounded, local-only opaque topology exception that preserves all
+  excluded content/identity/output/provider boundaries
 - one lightweight settings area
 - explicit per-run override for excluded scopes
 - generated notes excluded by default

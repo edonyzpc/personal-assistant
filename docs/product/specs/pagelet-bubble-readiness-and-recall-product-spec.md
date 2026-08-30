@@ -1,10 +1,10 @@
 # Pagelet Bubble Readiness & Recall Product Spec
 
 Document status: Current
-Updated: 2026-08-07
+Updated: 2026-08-30
 Work item: B-108
-Scoped work items: B-118, B-121, B-124
-Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-026](../decisions/dec-026-local-share-card.md)
+Scoped work items: B-118, B-121, B-124, B-125
+Decisions: [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md)
 Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delivery、empty-state 与 progressive-disclosure contract。
 
 ## Status
@@ -13,16 +13,17 @@ Authority: Pagelet Bubble readiness、DeliveryCandidate、Recall/Discover delive
 | --- | --- |
 | Document type | Product specification |
 | Scope | Pagelet Bubble empty-state redesign, Recall/Discover unification, readiness transparency, DeliveryCandidate contract |
-| Delivery / validation status | Phase 6/B-108 substrate and B-118 repairs have recorded automated、review、deploy and bounded desktop/iPhone evidence. Post-F-13 owner admission、raw preload fail-closed and source-invalidation reconciliation pass fixtures、independent review and deployment identity; they did not add a new live owner-path smoke. B-121 portrait/long-press checks and landscape waiver describe the old three-action Ring only；B-124 separately delivered and validated the four-action amendment, then closed on 2026-08-07. |
+| Delivery / validation status | Phase 6/B-108、B-118、B-121 and B-124 retain their linked historical evidence. DEC-027/B-125 defines the current implemented 0–2 insight and Host-owned recovery contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). |
 | Created | 2026-07-05 |
 | North Star | [PA Product North Star](../pa-product-north-star.md): 随手记下，需要时自然浮现 |
 | Design philosophy | 安静且可信 |
-| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-026](../decisions/dec-026-local-share-card.md) |
+| Current authority | This spec, the [B-108 owning Scope Recap spec](./pa-scope-recap-theme-summary-product-spec.md), and [DEC-017](../decisions/dec-017-default-background-recap-preparation.md) through [DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md) |
 | Historical provenance (non-authoritative) | [Pagelet Bubble Next Iteration Context](../../archive/pagelet-bubble-next-iteration-context-2026-07-05.md) |
 | Parent design | [Pagelet Product Design](../pagelet-product-design.md) |
 | Product amendment | [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md) |
 | B-121 scoped amendment | [Attention-Aware Delivery Product Spec](./pagelet-attention-aware-delivery-product-spec.md) governs device-local seen suppression and the Pet Action Ring after acknowledged Ready Empty / Intentionally Quiet. Its [compact closeout](../../archive/2026/pagelet-b121-attention-aware-delivery-closeout.md) remains evidence for the delivered three-action baseline only. |
 | B-124 scoped amendment | The 2026-08-06 owner amendment adds Share as the fourth Ring action, with visible EN/ZH localized labels and selection-first/current-note fallback. The 2026-08-07 amendment keeps Desktop/iPad inward-arc-first geometry with a whole-group compact row/column fallback when labels cannot fit without overlap；iPhone uses a complete row when it fits or a whole-column fallback when it does not. [DEC-026](../decisions/dec-026-local-share-card.md), the [B-124 Product Spec](./pa-share-card-product-spec.md), [Share Card Architecture](../../architecture/share-card-architecture.md) and the [smoke checklist](../../development/validation/pagelet-smoke-checklist.md) own the current contract and evidence. |
+| B-125 scoped amendment | [DEC-027](../decisions/dec-027-bounded-retrieval-recovery.md) and the [Active Vault Indexer B-125 contract](./pa-active-vault-indexer-product-spec.md#101-b-125-scoped-retrieval-optimization) allow 0–2 independently validated Deep Discover insights per run with one Host-owned retry. B-123's single-result validation remains prior implementation evidence only. |
 | Implementation record | [Historical SDD](../../archive/pagelet-bubble-readiness-and-recall-sdd.md) and [redesign tracker](../../archive/pa-product-redesign-development-tracker.md) |
 
 ---
@@ -70,7 +71,7 @@ setup — and they are left facing a feature menu instead of a recall doorway.
 ## 2. Product Principles
 
 Based on the current [PA North Star](../pa-product-north-star.md), the B-108
-owning Product Spec, and DEC-017 through DEC-025:
+owning Product Spec, and DEC-017 through DEC-027:
 
 1. **Bubble is PA's Delivery Surface, not a control panel or feature menu.**
    The Bubble exists to present PA-prepared findings. It should not read like a
@@ -625,7 +626,7 @@ is not a single durable inbox of PA suggestions.
 | Recall | Reuse existing Quiet Recall result; after actual Bubble/Detail visibility, store only its opaque device-local delivery fingerprint; create a queue item only after explicit Later | Recall can be recomputed, while seen state prevents repeated proactive delivery without creating debt. |
 | Recap | Local derived cache plus opaque device-local seen fingerprint after actual visibility | Bubble can claim "prepared" only when a structured artifact already exists; seen gate does not filter explicit routes, while artifact availability still follows its existing lifecycle. |
 | Pattern | Short-term dedupe only | Prevent repeated nudges without creating a long-term review queue. |
-| Review | In-memory qualified candidate only | Generic review findings should not become a durable task list. Raw `PreloadFinding[]` remains Panel-only; a future adapter must produce a separately gated Review candidate before Bubble eligibility. |
+| Review | In-memory qualified candidates only | Generic review findings should not become a durable task list. A DEC-027/B-125 Deep Discover run may hold at most two independently qualified candidates; raw `PreloadFinding[]` remains Panel-only and still needs a separately gated adapter before Bubble eligibility. |
 
 Dismiss may affect only the exact candidate through enabled RHP and never creates
 a queue item. Later is the explicit exception: it creates one existing Review
@@ -641,6 +642,12 @@ Bubble only when it is:
 - connected to a clear why-now
 - specific enough to name the finding, not just "review this note"
 - paired with a low-burden next action
+
+For B-125, each of the at most two insights must pass these gates independently.
+The second cannot be a summary or paraphrase of the first; it needs a distinct
+claim/lead and its own source/currentness/novelty support. Two is not a fill
+target, and a valid run may deliver zero or one. Existing stack admission and
+ranking still decide whether one or both qualified candidates are visible.
 
 Review candidates rank below Recall, Recap, and Pattern. `Review current note`
 remains a Needs Setup fallback or intentional Panel/Tab/Command action, not the

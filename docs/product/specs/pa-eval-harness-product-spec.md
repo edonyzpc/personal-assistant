@@ -1,10 +1,10 @@
 # PA Eval Harness Product Spec
 
 Document status: Current
-Updated: 2026-07-21
+Updated: 2026-08-30
 Work item: B-118
-Scope note: DEC-024 deterministic coverage is owned by B-118; the base cross-feature harness contract predates stable Backlog IDs.
-Scoped decision: [DEC-024 — Quiet Recall cold semantic retrieval](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)
+Scope note: DEC-024 deterministic coverage is owned by B-118; DEC-027/B-125 adds lexical-correctness、retrieval、rerank、retry and opaque-bridge gates. Their implementation/validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md).
+Scoped decisions: [DEC-024 — Quiet Recall cold semantic retrieval](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027 — bounded retrieval recovery](../decisions/dec-027-bounded-retrieval-recovery.md)
 Authority: PA deterministic fixture、cross-spec blocking checks、optional judge layers 与 replay evaluation boundaries。
 
 ## Status
@@ -177,11 +177,11 @@ when a product spec adds a new hard boundary.
 | Spec / surface | Deterministic checks | Blocks |
 | --- | --- | --- |
 | Product IA / Review Queue | canonical queue type accepted; unknown type rejected; required shared fields present | Shared Review Queue data model |
-| Active Vault Indexer | sourceRefs resolve; excluded paths absent; retrieval outcome status matches fixture; replay source refs omit private excerpts | Retrieval substrate phase |
-| Data Boundary | excluded/generated/self-write sources do not reach provider/candidate paths; per-run override recorded; cleanup groups separate cache/user data | Any provider-backed broad scan or memory extraction |
+| Active Vault Indexer | real sqlite-wasm MATCH fixtures prove shared CJK index/query normalization across Chinese、English、mixed CJK/kana、title、heading、path basename、error code and long-note cases；quality/cost reports cover FTS Recall@K、hybrid Recall@12、final Recall@8/MRR、unique-path and index/rebuild/update cost before lexical/fusion constants are selected；Darwin/Linux exact-renderer receipts prove normalization parity；Desktop current-App evidence owns six frozen selected-reranker rankings、structured explicit-temporal acceptance and Pagelet 0/1/2；the owner-accepted current real-iPhone proxy runs 3 core plus at most 1 conditional targeted canary for ordinary Provider、the exact Recovery readiness/approval/timeout + graph-safety path、cancellation/queue release and Pagelet first-use only when same-artifact evidence is absent, with loaded identity and iOS normalization fingerprint as setup probes；record absolute deadline、raw latency/UI/index、hang/termination and cancel safety without a p95 claim；33/47-episode performance profiles、process footprint、Xcode/Instruments and statistical certification are non-blocking B-127 work；sourceRefs resolve; excluded paths absent from seed/candidate/result/source/provider/replay identity; reranker policy-or-Chat selection and fail-open matrix passes, including valid cross-origin mixing versus direct-hybrid-first + graph-cosine fail-open with no score decay/reservation; Local cosine-before-truncation、Deep Breadth exclusion-only-at-selection、Convergence overlap and membership-aware lane nominations pass; 12 direct + 6 graph + 18 reranker limits hold；recovery fixtures prove same-query/frozen-plan reuse、episode-local exact-evidence fingerprints、novel-before-changed admission、cap-before-repeat filtering、rejected-path propagation and zero-fresh-only topology roots；a standard/retry recovery episode exposes one cumulative projection of at most 8 final documents; retrieval outcome status matches fixture | B-125 retrieval substrate phase |
+| Data Boundary | excluded/generated/self-write sources do not reach provider/candidate paths; `allowed A → excluded Markdown B → allowed C` may surface only C through one opaque bridge; generated/attachment/two-excluded variants remain unreachable; provider、DTO、source、log、telemetry and replay spies contain no B path/title/body/metadata; per-run override recorded; cleanup groups separate cache/user data | Any provider-backed broad scan or memory extraction, including B-125 |
 | Pagelet Review / generic preload admission | foreground Review uses the post-filter/de-duplicated actual allowed-source count: current=1 and requested `last7` reduced to 1 are standard, while `>1` blocks before any call/quota/cost reservation; generic background preload is standard only with explicit opt-in、changed-only、recent 7 days、input `<=4K`、output `<=1K`、calls `<=2/rolling-hour` and `<=20/local-day`、`allowWrite=false` and every actual source allowed by the explicit shared Data Boundary without override; violate each condition independently and assert silent skip with zero blocking UI/call/reservation/flag mutation; reconstruct the limiter、cross local midnight and corrupt storage to prove caps persist/fail closed; the narrow envelope is never classified high-risk merely as `weekly` | B-118 DEC-023 foreground Review and background preload runtime admission |
 | Context Pager | displayed used/skipped/dropped counts match retrieval/memory outcomes; why-dropped labels match actual decision reasons | Context transparency UI |
-| Pagelet Trust Layer | Memory Candidate has sourceRefs/type/scope/sensitivity; high-sensitivity inference suppressed; conflict creates review item | Memory admission flow |
+| Pagelet Trust Layer | Memory Candidate has sourceRefs/type/scope/sensitivity; high-sensitivity inference suppressed; conflict creates review item; B-125 Pagelet runs end validly with 0/1/2 independently gated insights and consume at most one Host-owned relaxed retry | Memory admission flow and B-125 Pagelet recovery |
 | Memory Type Taxonomy | candidate uses canonical memory type; archive/forget/export transitions preserve lifecycle contract; tombstone has no raw text | Memory panel / Confirmed Memory |
 | Maintenance Review | preview includes affected paths/diff/reason; forbidden action rejected; apply selected only; undo/recovery metadata present | Any source-note mutation |
 | Quick Capture | capture writes original user note; AI expansion separated; task/memory suggestions stay queue-only until confirmed | Quick Capture AI post-processing |
@@ -189,8 +189,33 @@ when a product spec adds a new hard boundary.
 | Saved Insight Ledger | PA-generated insight has sourceRefs; user-authored insight marked unsourced/user-authored; promotion creates explicit target item | Insight save/promotion |
 | Scope Recap / Theme Summary | important claim has sourceRefs; stale recap flagged; generated recap not used as source unless policy allows; failed/empty/rejected attempt creates no ready/delivery/nudge and preserves any still-valid artifact; explicit open without one returns only local scope/source explanation plus Retry/View sources; local overview cannot enter insight, DeliveryCandidate, or hint pools | Recap generation/write and B-108 prepared-delivery fallback |
 | Weekly Review | scope disclosure present; accepted-only items enter Markdown note; dismissed/unconfirmed items stay out | Weekly Review write |
-| Lightweight Graph Discovery | graph suggestions have sourceRefs; `theme_chain` does not become memory directly; rejected edge remains local | Graph-aware discovery |
+| Lightweight Graph Discovery | graph suggestions have sourceRefs; `theme_chain` does not become memory directly; rejected edge remains local; opaque bridge never becomes an item/edge/source/why-shown and generated/attachment/excluded-chain bridges fail | Graph-aware discovery and B-125 PPR boundary |
 | Retrieval Habit Profile | disabled mode has no influence; weak signal cannot cross explicit scope/Data Boundary/evidence strength | Retrieval adaptation |
+
+For B-125, deterministic correctness、Desktop App behavior、Darwin/Linux platform、
+iOS targeted behavior、performance observations and runner integrity are separate
+evidence slices. Each slice binds its own producer、schema、artifact and applicable
+runtime/settings identity, finalizes independently and is invalidated only by a
+change that can affect that slice. A runner/verifier/docs-only change cannot stale
+an already committed product-runtime observation merely because it is not the
+latest runner. Legal monotonic bookkeeping、a receipt write failure or another
+slice's `BLOCKED`/`FAIL` cannot retroactively poison completed evidence. The
+aggregate references slice hashes/statuses and preserves `NOT_RUN`、`BLOCKED` and
+`FAIL` as distinct states instead of collapsing them into one global result.
+
+The B-125 iPhone slice applies existing absolute runtime budgets and rejects an
+app/renderer hang、OS termination、unbounded local-index growth、unsafe cancellation
+or repeatable material raw latency/UI regression. It does not derive p95 or an
+arbitrary percentage threshold from a handful of samples. Machine-complete
+evidence remains subject to one owner rollout disposition per implicated flag；
+missing evidence keeps that flag off without blocking default-off code integration
+or unrelated completed slices.
+
+Before `lexicalProfile` defaults on, one Desktop source-triggered upsert must prove
+an edited note reaches ordinary incremental lexical maintenance and becomes
+searchable；the iOS setup probe separately binds the `CHAR-PHRASE` fingerprint.
+One graph-enabled iPhone Recovery case carries the required Local/Deep/Convergence
+workset、Worker timing and deadline/skip observation without adding another case.
 
 Blocking rule:
 

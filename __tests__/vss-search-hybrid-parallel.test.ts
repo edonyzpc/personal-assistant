@@ -150,6 +150,7 @@ const createPlugin = () => {
             baseURL: '',
             chatModelName: '',
             statisticsVaultId: 'vault-id',
+            retrievalOptimizationFlags: { lexicalProfile: true },
         },
         manifest: { dir: '.obsidian/plugins/personal-assistant' },
         app: { vault: mockVault },

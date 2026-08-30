@@ -34,9 +34,12 @@ import type { PageletDetailPayload } from "./tab/types";
 import type { DiscoveryResult, PanelMemoryGovernanceState } from "./panel/types";
 import type {
     PageletAgentValidationIdentity,
+    PageletAgentVerifiedInsightCollection,
+    PageletDeepDiscoverCommitSeal,
     PageletDeepDiscoverControllerResult,
     PageletDeepDiscoverTriggerReason,
 } from "./agent/types";
+import type { PageletAgentDeliveryCandidate } from "./agent/delivery-adapter";
 import type {
     ConfirmedMemoryRecord,
     GraphDiscoveryRunResult,
@@ -184,6 +187,15 @@ export interface PageletHost {
         signal?: AbortSignal;
     }): Promise<PageletDeepDiscoverControllerResult>;
 
+    /** Commit content-free smoke evidence only after current-route acceptance. */
+    acknowledgeDeepDiscoverResult?(
+        result: PageletDeepDiscoverControllerResult,
+        acceptedCandidates: readonly PageletAgentDeliveryCandidate[],
+    ): void;
+
+    /** Reject a controller result superseded before Orchestrator acceptance. */
+    discardDeepDiscoverResult?(result: PageletDeepDiscoverControllerResult): void;
+
     /** Cancel active/pending Deep Discover work and clear in-memory derived content. */
     cancelDeepDiscover?(): void;
 
@@ -192,6 +204,12 @@ export interface PageletHost {
 
     /** Opaque runtime identity used to invalidate derived Deep Discover UI. */
     getDeepDiscoverPolicyIdentity?(): string;
+
+    /** Synchronous fail-closed gate before a controller result mutates Pagelet UI/receipts. */
+    isDeepDiscoverCommitSealCurrent?(
+        seal: PageletDeepDiscoverCommitSeal,
+        collection: PageletAgentVerifiedInsightCollection,
+    ): boolean;
 
     /** Provider-free exact-source validation before a Pagelet action or Chat handoff. */
     validateDeepDiscoverInsight?(

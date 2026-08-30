@@ -234,6 +234,13 @@ function hasPromptIncludedObservation(
 function hasSuccessfulEvidence(
     result: PaAgentTurnSummary["toolResults"][number],
 ): boolean {
+    if (
+        result.toolName === "search_memory"
+        && (
+            result.content.metadata?.memoryEvidenceState === "none"
+            || result.content.metadata?.memoryEvidenceState === "unavailable"
+        )
+    ) return false;
     return !result.isError
         && result.content.metadata?.outcome === "success"
         && hasPromptIncludedObservation(result);
@@ -250,6 +257,13 @@ function isFailureOrStatusResult(
     result: PaAgentTurnSummary["toolResults"][number],
 ): boolean {
     if (result.content.metadata?.outcome === "duplicate_skipped") return false;
+    if (
+        result.toolName === "search_memory"
+        && (
+            result.content.metadata?.memoryEvidenceState === "none"
+            || result.content.metadata?.memoryEvidenceState === "unavailable"
+        )
+    ) return true;
     return result.isError
         || result.content.metadata?.outcome === "recoverable_error"
         || result.content.metadata?.outcome === "schema_invalid"

@@ -7,10 +7,16 @@ import {
     getMemoryApprovalCopy,
     type MemoryMaintenancePlan,
 } from '../src/memory-manager';
-import type { VSSMemoryStatusSnapshot, VSSPreparedRebuildHandle } from '../src/vss';
+import type {
+    VSSLexicalRebuildSummary,
+    VSSMemoryStatusSnapshot,
+    VSSPreparedRebuildHandle,
+    VSSProgressEvent,
+} from '../src/vss';
 
 const mockNoticeMessages: string[] = [];
 const mockProgressSteps: string[] = [];
+const mockProgressButtons: Array<{ disabled: boolean }> = [];
 const mockSettingGroups: Array<Array<{ text?: string; click?: () => void; cta?: boolean }>> = [];
 
 const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -18,6 +24,7 @@ const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-esl
         children: [] as any[], // eslint-disable-line @typescript-eslint/no-explicit-any
         textContent: '',
         addClass: jest.fn(),
+        addEventListener: jest.fn(),
         empty: jest.fn(() => {
             element.children.length = 0;
             element.textContent = '';
@@ -25,6 +32,10 @@ const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-esl
         createEl: jest.fn((_tag: string, options?: { text?: string }) => {
             const child = mockCreateDomElement();
             if (options?.text) child.textContent = options.text;
+            if (_tag === 'button') {
+                child.disabled = false;
+                mockProgressButtons.push(child);
+            }
             element.children.push(child);
             return child;
         }),
@@ -142,6 +153,14 @@ const createDeferred = <T,>() => {
     return { promise, resolve, reject };
 };
 
+const waitForCondition = async (condition: () => boolean): Promise<void> => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (condition()) return;
+        await Promise.resolve();
+    }
+    throw new Error('Condition was not reached');
+};
+
 const installMockDocument = () => {
     const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
     Object.defineProperty(globalThis, 'document', {
@@ -200,8 +219,17 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
                 verified: 0,
                 hasMore: false,
             })),
-            refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean; abortSignal?: AbortSignal }) => createOperationSummary()),
-            rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean; abortSignal?: AbortSignal; deferAdmission?: boolean }) => createOperationSummary()),
+            refreshLocalIndex: jest.fn(async (_options?: {
+                silent?: boolean;
+                abortSignal?: AbortSignal;
+                onProgress?: (event: VSSProgressEvent) => void;
+            }) => createOperationSummary()),
+            rebuildLocalIndex: jest.fn(async (_options?: {
+                silent?: boolean;
+                abortSignal?: AbortSignal;
+                deferAdmission?: boolean;
+                onProgress?: (event: VSSProgressEvent) => void;
+            }) => createOperationSummary()),
             admitPreparedRebuild: jest.fn(async (
                 _handle?: VSSPreparedRebuildHandle,
                 _options?: { abortSignal?: AbortSignal },
@@ -210,6 +238,15 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
                 _handle?: VSSPreparedRebuildHandle,
                 _reason?: string,
             ) => true),
+            rebuildLexicalIndex: jest.fn(async (_options?: {
+                signal?: AbortSignal;
+                onProgress?: (event: VSSProgressEvent) => void;
+            }): Promise<VSSLexicalRebuildSummary> => ({
+                aborted: false,
+                rowsProcessed: 2,
+                rowsTotal: 2,
+                generation: 1,
+            })),
         },
         saveSettings: jest.fn(async () => undefined),
         persistMemoryAdmissionSettings: jest.fn(async () => plugin.saveSettings()),
@@ -232,6 +269,7 @@ const createManager = (plugin: ReturnType<typeof createPlugin>) => new MemoryMan
 
 beforeEach(() => {
     mockSettingGroups.length = 0;
+    mockProgressButtons.length = 0;
 });
 
 const createMockDomElement = mockCreateDomElement;
@@ -429,6 +467,315 @@ describe('MemoryManager chat decisions', () => {
         await expect(deciding).resolves.toEqual({ decision: 'answer-now' });
         expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
         expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+    });
+
+    it('cancels a pre-aborted chat before readiness or approval starts', async () => {
+        const plan = createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+        controller.abort();
+
+        await expect(manager.ensureReadyForChat('question', controller.signal))
+            .resolves.toEqual({ decision: 'cancel' });
+        expect(plugin.vss.getMemoryReadiness).not.toHaveBeenCalled();
+        expect(mockSettingGroups).toHaveLength(0);
+        expect(plugin.vss.rebuildLexicalIndex).not.toHaveBeenCalled();
+    });
+
+    it('detaches immediately from pending readiness without opening late approval', async () => {
+        const readiness = createDeferred<MemoryMaintenancePlan>();
+        const stalePlan = createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(stalePlan);
+        plugin.vss.getMemoryReadiness.mockImplementation(() => readiness.promise);
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+
+        const deciding = manager.ensureReadyForChat('question', controller.signal);
+        await waitForCondition(() => plugin.vss.getMemoryReadiness.mock.calls.length === 1);
+        controller.abort();
+
+        await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+        readiness.resolve(stalePlan);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(mockSettingGroups).toHaveLength(0);
+        expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+    });
+
+    it('detaches from a pending local-maintenance check without starting verification later', async () => {
+        const plan = createPlan({ verificationPending: 1 });
+        const localMaintenance = createDeferred<boolean>();
+        const plugin = createPlugin(plan);
+        plugin.vss.canAutoMaintain.mockImplementation(() => localMaintenance.promise);
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+
+        const deciding = manager.ensureReadyForChat('question', controller.signal);
+        await waitForCondition(() => plugin.vss.canAutoMaintain.mock.calls.length === 1);
+        controller.abort();
+
+        await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+        localMaintenance.resolve(true);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(plugin.vss.verifyPendingChanges).not.toHaveBeenCalled();
+        expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+    });
+
+    it('detaches from verification and suppresses late notifications or flush scheduling', async () => {
+        const plan = createPlan({ verificationPending: 1 });
+        const verification = createDeferred<ReturnType<typeof createOperationSummary> & {
+            markedDirty: number;
+            hasMore: boolean;
+            bytesReadEstimate: number;
+        }>();
+        const plugin = createPlugin(plan);
+        plugin.vss.verifyPendingChanges.mockImplementation(() => verification.promise);
+        const manager = createManager(plugin);
+        const scheduleAutoFlush = jest.spyOn(manager, 'scheduleAutoFlush');
+        const controller = new AbortController();
+
+        const deciding = manager.ensureReadyForChat('question', controller.signal);
+        await waitForCondition(() => plugin.vss.verifyPendingChanges.mock.calls.length === 1);
+        const verificationSignal = (
+            plugin.vss.verifyPendingChanges.mock.calls[0]?.[0] as { abortSignal?: AbortSignal } | undefined
+        )?.abortSignal;
+        controller.abort();
+
+        await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+        expect(verificationSignal?.aborted).toBe(true);
+        verification.resolve({
+            ...createOperationSummary({ dirtyConfirmed: 1 }),
+            markedDirty: 1,
+            hasMore: false,
+            bytesReadEstimate: 128,
+        });
+        await manager.waitForIdle();
+        expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
+        expect(scheduleAutoFlush).not.toHaveBeenCalled();
+    });
+
+    it('closes a pending approval on abort and ignores a late approval click', async () => {
+        const plan = createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+        const removeAbortListener = jest.spyOn(controller.signal, 'removeEventListener');
+
+        const deciding = manager.ensureReadyForChat('question', controller.signal);
+        await waitForCondition(() => mockSettingGroups.length > 0);
+        const approve = mockSettingGroups[0][0].click;
+
+        controller.abort();
+
+        await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+        expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function));
+        approve?.();
+        await Promise.resolve();
+        expect(plugin.vss.rebuildLexicalIndex).not.toHaveBeenCalled();
+        expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+    });
+
+    it('lets abort win an approval race before any preparation starts', async () => {
+        const plan = createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+
+        const deciding = manager.ensureReadyForChat('question', controller.signal);
+        await waitForCondition(() => mockSettingGroups.length > 0);
+        mockSettingGroups[0][0].click?.();
+        controller.abort();
+
+        await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+        expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+        expect(plugin.vss.rebuildLexicalIndex).not.toHaveBeenCalled();
+    });
+
+    it('aborts only the full preparation started by the approved chat', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const rebuildStarted = createDeferred<AbortSignal>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { abortSignal?: AbortSignal }) => {
+            const signal = options?.abortSignal;
+            if (!signal) throw new Error('Missing preparation signal');
+            rebuildStarted.resolve(signal);
+            return await new Promise((resolve) => {
+                const finish = () => resolve(createOperationSummary({ aborted: true, preparedRebuildHandle: undefined }));
+                if (signal.aborted) finish();
+                else signal.addEventListener('abort', finish, { once: true });
+            });
+        });
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+        const removeAbortListener = jest.spyOn(controller.signal, 'removeEventListener');
+
+        try {
+            const deciding = manager.ensureReadyForChat('question', controller.signal);
+            await waitForCondition(() => mockSettingGroups.length > 0);
+            mockSettingGroups[0][0].click?.();
+            const preparationSignal = await rebuildStarted.promise;
+
+            controller.abort();
+
+            await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+            expect(preparationSignal.aborted).toBe(true);
+            expect(removeAbortListener).toHaveBeenCalledTimes(3);
+            expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
+            await manager.waitForIdle();
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('keeps first-use preparation owned by the run after the attempt completes', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const rebuildStarted = createDeferred<AbortSignal>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { abortSignal?: AbortSignal }) => {
+            const signal = options?.abortSignal;
+            if (!signal) throw new Error('Missing preparation signal');
+            rebuildStarted.resolve(signal);
+            return await new Promise((resolve) => {
+                const finish = () => resolve(createOperationSummary({ aborted: true, preparedRebuildHandle: undefined }));
+                if (signal.aborted) finish();
+                else signal.addEventListener('abort', finish, { once: true });
+            });
+        });
+        const manager = createManager(plugin);
+        const attemptController = new AbortController();
+        const ownerController = new AbortController();
+
+        try {
+            await expect(manager.ensureReadyForChat(
+                'question',
+                attemptController.signal,
+                ownerController.signal,
+            )).resolves.toEqual({
+                decision: 'answer-now',
+                message: 'Memory is being prepared in the background. It will be used automatically once ready.',
+            });
+            const preparationSignal = await rebuildStarted.promise;
+
+            attemptController.abort();
+            expect(preparationSignal.aborted).toBe(false);
+            ownerController.abort();
+
+            expect(preparationSignal.aborted).toBe(true);
+            await manager.waitForIdle();
+            expect(plugin.vss.admitPreparedRebuild).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).not.toContain('Could not prepare memory. I will answer normally for now.');
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('aborts only the lexical preparation started by the approved chat', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const lexicalStarted = createDeferred<AbortSignal>();
+        plugin.vss.rebuildLexicalIndex.mockImplementation(async (options) => {
+            const signal = options?.signal;
+            if (!signal) throw new Error('Missing preparation signal');
+            lexicalStarted.resolve(signal);
+            return await new Promise((resolve) => {
+                const finish = () => resolve({
+                    aborted: true,
+                    rowsProcessed: 0,
+                    rowsTotal: 2,
+                    reason: 'aborted',
+                });
+                if (signal.aborted) finish();
+                else signal.addEventListener('abort', finish, { once: true });
+            });
+        });
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+
+        try {
+            const deciding = manager.ensureReadyForChat('question', controller.signal);
+            await waitForCondition(() => mockSettingGroups.length > 0);
+            mockSettingGroups[0][0].click?.();
+            const preparationSignal = await lexicalStarted.promise;
+
+            controller.abort();
+
+            await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+            expect(preparationSignal.aborted).toBe(true);
+            expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+            await manager.waitForIdle();
+        } finally {
+            restoreDocument();
+        }
+    });
+
+    it('does not abort a chat-started preparation after a shared caller joins it', async () => {
+        const restoreDocument = installMockDocument();
+        const plan = createPlan({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        const rebuildStarted = createDeferred<AbortSignal>();
+        const rebuildFinished = createDeferred<ReturnType<typeof createOperationSummary>>();
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: { abortSignal?: AbortSignal }) => {
+            const signal = options?.abortSignal;
+            if (!signal) throw new Error('Missing preparation signal');
+            rebuildStarted.resolve(signal);
+            return rebuildFinished.promise;
+        });
+        const manager = createManager(plugin);
+        const controller = new AbortController();
+
+        try {
+            const deciding = manager.ensureReadyForChat('question', controller.signal);
+            await waitForCondition(() => mockSettingGroups.length > 0);
+            mockSettingGroups[0][0].click?.();
+            const preparationSignal = await rebuildStarted.promise;
+            const sharedPreparation = manager.prepareMemory(plan);
+
+            controller.abort();
+
+            await expect(deciding).resolves.toEqual({ decision: 'cancel' });
+            expect(preparationSignal.aborted).toBe(false);
+            rebuildFinished.resolve(createOperationSummary({ updated: 1 }));
+            await expect(sharedPreparation).resolves.toMatchObject({ ok: true });
+        } finally {
+            restoreDocument();
+        }
     });
 
     it('keeps a second chat quiet while first-use preparation is still active', async () => {
@@ -1153,6 +1500,101 @@ describe('MemoryManager command decisions', () => {
             ]));
         } finally {
             nowSpy.mockRestore();
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
+    it('runs a lexical-only rebuild without provider auto-refresh authorization', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plan = createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        plugin.vss.rebuildLexicalIndex.mockImplementation(async (options) => {
+            options?.onProgress?.({ phase: 'lexical-rebuilding', lexicalRowsDone: 1, lexicalRowsTotal: 2 });
+            options?.onProgress?.({ phase: 'finalizing', lexicalRowsDone: 2, lexicalRowsTotal: 2 });
+            options?.onProgress?.({ phase: 'ready', lexicalRowsDone: 2, lexicalRowsTotal: 2 });
+            return { aborted: false, rowsProcessed: 2, rowsTotal: 2, generation: 1 };
+        });
+        const manager = createManager(plugin);
+
+        try {
+            await expect(manager.prepareMemory(plan)).resolves.toEqual({ ok: true, partial: false });
+            expect(plugin.vss.rebuildLexicalIndex).toHaveBeenCalledWith(expect.objectContaining({
+                silent: true,
+                signal: expect.any(AbortSignal),
+                onProgress: expect.any(Function),
+            }));
+            expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.updateMemorySetting).not.toHaveBeenCalled();
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
+            expect(mockProgressSteps).toEqual(expect.arrayContaining([
+                'Updating Memory search 1/2',
+                'Finishing local search setup',
+                'Ready',
+            ]));
+            expect(mockProgressButtons.at(-1)?.disabled).toBe(true);
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
+    it('aborts an in-flight lexical rebuild when Memory maintenance stops', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plan = createPlan({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(plan);
+        let observedSignal: AbortSignal | undefined;
+        plugin.vss.rebuildLexicalIndex.mockImplementation(async (options) => {
+            observedSignal = options?.signal;
+            return await new Promise((resolve) => {
+                options?.signal?.addEventListener('abort', () => resolve({
+                    aborted: true,
+                    rowsProcessed: 1,
+                    rowsTotal: 2,
+                    reason: 'aborted',
+                }), { once: true });
+            });
+        });
+        const manager = createManager(plugin);
+
+        try {
+            const preparing = manager.prepareMemory(plan);
+            await Promise.resolve();
+            await Promise.resolve();
+            manager.stopAutoMaintenance();
+
+            expect(observedSignal?.aborted).toBe(true);
+            await expect(preparing).resolves.toMatchObject({ ok: false, partial: false });
+            expect(plugin.updateMemorySetting).not.toHaveBeenCalled();
+        } finally {
+            manager.stopAutoMaintenance();
             if (originalDocument) {
                 Object.defineProperty(globalThis, 'document', originalDocument);
             } else {

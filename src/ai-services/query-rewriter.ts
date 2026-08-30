@@ -2,9 +2,10 @@ export const REWRITE_TIMEOUT_MS = 30_000;
 
 export const REWRITE_SYSTEM_PROMPT = [
     "Extract search keywords from the user's question for full-text search in a personal knowledge base.",
-    'Return ONLY valid JSON: {"keywords":"<space-separated keywords>","temporal":"recent_7d|recent_30d|range:YYYY-MM-DD..YYYY-MM-DD|none"}',
+    'Return ONLY valid JSON: {"keywords":"<semicolon-separated keyword phrases>","temporal":"recent_7d|recent_30d|range:YYYY-MM-DD..YYYY-MM-DD|none"}',
     "Rules:",
-    "- Extract 2-6 important terms from the query",
+    "- Extract 2-6 important keyword phrases from the query",
+    "- Separate keyword phrases with one ASCII semicolon (;); preserve spaces inside a phrase",
     "- Keep technical terms, proper nouns, error codes, function names verbatim",
     "- Remove filler words and conversational phrases",
     "- For Chinese text, keep key noun phrases (2-4 chars each)",

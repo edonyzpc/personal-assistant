@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "description": "Frozen context-boundary canaries for the B-125 CJK lexical profile decision. These diagnostics are not folded into the Phase 0A admission score.",
+  "canaries": [
+    {
+      "id": "zh-relevant-boundary-drift",
+      "language": "zh",
+      "diagnosticClass": "boundary-hard-positive",
+      "query": "乒乓球拍",
+      "body": "商店里的乒乓球拍卖完了，顾客买走了最后一副球拍。",
+      "semanticExpectation": "relevant",
+      "rationale": "The note explicitly says the customer bought the last paddle even if a word segmenter reads the earlier local surface as 乒乓球 + 拍卖."
+    },
+    {
+      "id": "zh-literal-semantic-collision",
+      "language": "zh",
+      "diagnosticClass": "boundary-collision",
+      "query": "研究生",
+      "body": "团队正在研究生命起源，不是在招收学生。",
+      "semanticExpectation": "irrelevant",
+      "rationale": "The literal characters cross the 研究 + 生命 boundary and do not mean graduate student."
+    },
+    {
+      "id": "ja-relevant-proper-name-drift",
+      "language": "ja",
+      "diagnosticClass": "boundary-hard-positive",
+      "query": "東京大学",
+      "body": "東京大学生協で教科書を買った。",
+      "semanticExpectation": "relevant",
+      "rationale": "The note explicitly refers to the University of Tokyo co-op even if the context is segmented as 東京 + 大学生 + 協."
+    },
+    {
+      "id": "ja-literal-semantic-collision",
+      "language": "ja",
+      "diagnosticClass": "boundary-collision",
+      "query": "京都",
+      "body": "東京都の検索設定を確認した。",
+      "semanticExpectation": "irrelevant",
+      "rationale": "The literal characters span 東京 + 都 and refer to Tokyo Metropolis, not Kyoto."
+    },
+    {
+      "id": "zh-relevant-boundary-aligned-control",
+      "language": "zh",
+      "diagnosticClass": "aligned-positive-control",
+      "query": "乒乓球拍",
+      "body": "乒乓球拍，是本周采购清单里的重点器材。",
+      "semanticExpectation": "relevant",
+      "rationale": "A punctuation boundary keeps the same relevant query aligned with the document word boundary."
+    },
+    {
+      "id": "zh-graduate-boundary-aligned-control",
+      "language": "zh",
+      "diagnosticClass": "aligned-positive-control",
+      "query": "研究生",
+      "body": "研究生正在准备论文答辩。",
+      "semanticExpectation": "relevant",
+      "rationale": "The same query is used in its ordinary graduate-student sense with aligned word boundaries."
+    },
+    {
+      "id": "ja-proper-name-boundary-aligned-control",
+      "language": "ja",
+      "diagnosticClass": "aligned-positive-control",
+      "query": "東京大学",
+      "body": "東京大学で公開講座を受けた。",
+      "semanticExpectation": "relevant",
+      "rationale": "The same proper-name query is followed by a particle and keeps aligned word boundaries."
+    },
+    {
+      "id": "ja-kyoto-boundary-aligned-control",
+      "language": "ja",
+      "diagnosticClass": "aligned-positive-control",
+      "query": "京都",
+      "body": "京都で寺院を見学した。",
+      "semanticExpectation": "relevant",
+      "rationale": "The same query refers directly to Kyoto and is followed by a particle."
+    }
+  ],
+  "stableControlCaseIds": [
+    "cjk-four-character",
+    "cjk-proper-name-ambiguity",
+    "japanese-kanji-kana",
+    "mixed-cjk-latin",
+    "cjk-order-and-adjacency"
+  ]
+}

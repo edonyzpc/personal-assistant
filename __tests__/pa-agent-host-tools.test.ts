@@ -3,9 +3,15 @@ import { describe, expect, it, jest } from "@jest/globals";
 import {
     BUILTIN_WEB_SEARCH_TOOL_NAME,
     BuiltinWebSearchProvider,
+    type BuiltinWebSearchRequest,
 } from "../src/ai-services/builtin-web-search-provider";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
-import type { AgentNetworkPolicy, CapabilityProvider } from "../src/ai-services/capability-types";
+import {
+    agentResultToChatToolResult,
+    type AgentCapabilityResult,
+    type AgentNetworkPolicy,
+    type CapabilityProvider,
+} from "../src/ai-services/capability-types";
 import { createCoreToolCapabilities } from "../src/ai-services/capability-adapter";
 import {
     createCurrentNoteContextTool,
@@ -23,9 +29,18 @@ import {
 import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
+    MemoryEvidenceRegistry,
+    projectMemorySearchObservation,
 } from "../src/ai-services/pa-agent-host-tools";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
-import { formatSkillCatalog, formatToolObservations } from "../src/ai-services/pa-agent-runtime";
+import { extractCanonicalTurnMetadata } from "../src/ai-services/pa-agent-history";
+import {
+    formatSkillCatalog,
+    formatToolObservations,
+    PaAgentRuntime,
+} from "../src/ai-services/pa-agent-runtime";
+import { AgentLifecycleEventEmitter } from "../src/ai-services/agent-runtime-primitives";
+import { ToolExecutionDispatcher } from "../src/ai-services/pa-agent-tool-dispatcher";
 import type { PaAgentMessage } from "../src/ai-services/chat-types";
 import { BUNDLED_SKILL_RESOURCES } from "../src/ai-services/bundled-skills";
 import { SkillContextProvider } from "../src/ai-services/skill-context-provider";
@@ -36,11 +51,361 @@ import {
     type PaAgentModelStreamChunk,
     type PaAgentTurnSummary,
 } from "../src/ai-services/pa-agent-loop";
-import type { AgentEvent, MemorySearchResult } from "../src/ai-services/chat-types";
+import type {
+    AgentEvent,
+    MemorySearchResult,
+    MemoryTemporalFilter,
+} from "../src/ai-services/chat-types";
+import { ChatMemoryRecoveryCoordinator } from "../src/ai-services/retrieval-recovery-coordinator";
+import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
+import { MemorySearchTool } from "../src/ai-services/memory-search-tool";
 
 jest.mock("obsidian");
 
+function createMemoryEvidence(content: string, path = "notes/current.md"): MemorySearchResult {
+    return {
+        usedMemory: true,
+        query: "launch",
+        documents: [{
+            content,
+            score: 0.9,
+            source: { path, chunkIndex: 0, score: 0.9 },
+        }],
+        sources: [{ path, chunkIndex: 0, score: 0.9 }],
+        candidates: [],
+        hasAnswerableContent: true,
+        memoryEvidenceState: "evidence",
+        rerankVerdict: "relevant",
+        needsMoreEvidence: false,
+    };
+}
+
+function registerMemoryEvidence(
+    registry: MemoryEvidenceRegistry,
+    evidence: MemorySearchResult,
+    id: string,
+    temporalFilter: MemoryTemporalFilter | null = null,
+): PaAgentMessage[] {
+    const toolCall = {
+        type: "toolCall" as const,
+        id,
+        index: 0,
+        name: "search_memory",
+        input: { query: "launch" },
+    };
+    const rawResult = {
+        ok: true,
+        tool: "search_memory",
+        inputSummary: "launch",
+        content: evidence,
+        sources: evidence.sources,
+        sourceRecords: evidence.sources.map((source) => ({
+            kind: "memory-reference" as const,
+            dedupKey: source.path,
+            path: source.path,
+            chunkIndex: source.chunkIndex,
+            citationEligible: true,
+        })),
+    };
+    registry.capture(toolCall, rawResult, "turn-memory", temporalFilter);
+    const initial = chatToolResultToPaAgentToolExecutionResult(toolCall, rawResult);
+    return [{
+        role: "toolResult",
+        id: `${id}-result`,
+        toolCallId: id,
+        toolName: "search_memory",
+        isError: false,
+        timestamp: 1,
+        content: {
+            promptText: initial.promptText,
+            includeInNextPrompt: true,
+            sourceRecords: initial.sourceRecords,
+            contextUsed: initial.contextUsed,
+        },
+    }];
+}
+
+function createTestPaAgentRuntime(): PaAgentRuntime {
+    return new PaAgentRuntime({
+        settings: { shareAnonymousCapabilityUsage: false },
+        isOperationsAgentEnabled: false,
+        log: jest.fn(),
+    } as never, {
+        createChatModel: jest.fn(),
+    } as never, {
+        skillContextProvider: null,
+    });
+}
+
 describe("PA Agent canonical host tool executor", () => {
+    it("does not abort the run-owned detached Memory lifetime on normal runtime dispose", () => {
+        const runtime = createTestPaAgentRuntime();
+        const run = new AbortController();
+
+        runtime.dispose();
+
+        expect(run.signal.aborted).toBe(false);
+    });
+
+    it("propagates only allowlisted content-free capability reasons into loop metadata", () => {
+        const baseResult: AgentCapabilityResult = {
+            status: "unavailable",
+            observation: null,
+            sourceRecords: [],
+            inputSummary: "Pagelet insight staging unavailable",
+            sources: [],
+            error: "The provisional insight was not grounded in current allowed evidence.",
+            unavailableReason: "pagelet_stage_first_rejected",
+        };
+        const toolResult = agentResultToChatToolResult("stage_pagelet_insight", baseResult);
+        const execution = chatToolResultToPaAgentToolExecutionResult(
+            {
+                type: "toolCall",
+                id: "stage-call",
+                index: 0,
+                name: "stage_pagelet_insight",
+                input: {},
+            },
+            toolResult,
+        );
+
+        expect(toolResult.unavailableReason).toBe("pagelet_stage_first_rejected");
+        expect(execution.metadata).toMatchObject({
+            outcome: "recoverable_error",
+            unavailableReason: "pagelet_stage_first_rejected",
+        });
+
+        const arbitrary = agentResultToChatToolResult("arbitrary", {
+            ...baseResult,
+            unavailableReason: "SECRET provider detail",
+        });
+        expect(arbitrary).not.toHaveProperty("unavailableReason");
+    });
+
+    it("publishes one cumulative search_memory observation after a hidden relaxed attempt", async () => {
+        let calls = 0;
+        const recoverySeed = {
+            query: "launch",
+            lexicalPlan: {
+                ftsQueryOverride: "launch",
+                temporalIntent: "recent_7d" as const,
+                temporalFilter: { since: 1 },
+            },
+            rejectedEvidence: [],
+            queryEmbedding: { value: [0.1], profileSignature: "profile" },
+        };
+        const relaxedCandidate = {
+            candidateId: "relaxed",
+            path: "notes/relaxed.md",
+            score: 0.9,
+            excerpt: "new current evidence",
+            origin: "direct" as const,
+            documents: [{
+                content: "new current evidence",
+                score: 0.9,
+                source: { path: "notes/relaxed.md", chunkIndex: 0, score: 0.9 },
+            }],
+        };
+        const registry = createCoreRegistry(async () => {
+            calls += 1;
+            if (calls === 1) {
+                return {
+                    usedMemory: false,
+                    query: "launch",
+                    documents: [],
+                    sources: [],
+                    candidates: [],
+                    memoryEvidenceState: "none",
+                    rerankVerdict: "none_relevant",
+                    needsMoreEvidence: true,
+                    rerankOutcome: {
+                        kind: "valid",
+                        verdict: "none_relevant",
+                        needsMoreEvidence: true,
+                        candidates: [],
+                        origin: "deterministic_empty",
+                        modelCalled: false,
+                    },
+                    recoverySeed,
+                };
+            }
+            return {
+                usedMemory: true,
+                query: "launch",
+                documents: relaxedCandidate.documents,
+                sources: relaxedCandidate.documents.map((document) => document.source),
+                candidates: [relaxedCandidate],
+                memoryEvidenceState: "evidence",
+                rerankVerdict: "relevant",
+                needsMoreEvidence: false,
+                rerankOutcome: {
+                    kind: "valid",
+                    verdict: "relevant",
+                    needsMoreEvidence: false,
+                    candidates: [relaxedCandidate],
+                    origin: "model",
+                    modelCalled: true,
+                },
+            };
+        });
+        const coordinator = new ChatMemoryRecoveryCoordinator({
+            runId: "run",
+            runEpoch: "epoch",
+            hardAt: 50_000,
+            softAt: 45_000,
+            toolAt: 40_000,
+            enabled: true,
+            temporalIntent: "recent_7d",
+            now: () => 0,
+        });
+        const executor = createPaAgentCapabilityToolExecutor({
+            registry,
+            host: {
+                settings: {},
+                log: jest.fn(),
+            } as any,
+            memoryRecoveryCoordinator: coordinator,
+            revalidateMemorySearch: async (result) => result,
+        });
+        const result = await executor.execute({
+            runId: "run",
+            turnId: "turn",
+            turnIndex: 0,
+            userInput: "last 7 days",
+            toolCall: {
+                type: "toolCall",
+                id: "call",
+                index: 0,
+                name: "search_memory",
+                input: { query: "launch" },
+            },
+            signal: new AbortController().signal,
+        });
+
+        expect(calls).toBe(2);
+        expect(result.outcome).toBe("success");
+        expect(result.promptText).toContain("new current evidence");
+        expect(result.promptText).not.toContain("recoverySeed");
+        expect(result.metadata).toMatchObject({ hitCount: 1, memoryEvidenceState: "evidence" });
+    });
+
+    it("keeps the recovery attempt signal separate from the run-owned Memory preparation signal", async () => {
+        const ensureReadyForChat = jest.fn(async (
+            _query?: string,
+            _signal?: AbortSignal,
+            _ownerSignal?: AbortSignal,
+        ) => ({ decision: "answer-now" as const }));
+        const memoryTool = new MemorySearchTool({
+            memorySearch: { ensureReadyForChat },
+        } as never, {} as never);
+        const registry = createCoreRegistry((input, context) => memoryTool.search(
+            input.query,
+            context.signal,
+        ));
+        const coordinator = new ChatMemoryRecoveryCoordinator({
+            runId: "run-owner",
+            runEpoch: "epoch-owner",
+            hardAt: 50_000,
+            softAt: 45_000,
+            toolAt: 40_000,
+            enabled: false,
+            temporalIntent: "none",
+            now: () => 0,
+        });
+        const runOwner = new AbortController();
+        const outerTool = new AbortController();
+        const executor = createPaAgentCapabilityToolExecutor({
+            registry,
+            host: { settings: {}, log: jest.fn() } as any,
+            memoryRecoveryCoordinator: coordinator,
+            memoryPreparationOwnerSignal: runOwner.signal,
+            revalidateMemorySearch: async (result) => result,
+        });
+
+        await executor.execute({
+            runId: "run-owner",
+            turnId: "turn-owner",
+            turnIndex: 0,
+            userInput: "launch",
+            toolCall: {
+                type: "toolCall",
+                id: "call-owner",
+                index: 0,
+                name: "search_memory",
+                input: { query: "launch" },
+            },
+            signal: outerTool.signal,
+        });
+
+        const readinessCall = ensureReadyForChat.mock.calls[0];
+        expect(readinessCall?.[0]).toBe("launch");
+        expect(readinessCall?.[1]).toBeDefined();
+        expect(readinessCall?.[1]).not.toBe(outerTool.signal);
+        expect(readinessCall?.[2]).toBe(runOwner.signal);
+        expect(readinessCall?.[1]?.aborted).toBe(false);
+        runOwner.abort();
+        expect(readinessCall?.[2]?.aborted).toBe(true);
+    });
+
+    it("maps a standard Memory child deadline to a recoverable tool result instead of user abort", async () => {
+        jest.useFakeTimers();
+        try {
+            const registry = createCoreRegistry((_input, context) => new Promise<MemorySearchResult>((_resolve, reject) => {
+                context.signal?.addEventListener("abort", () => reject(Object.assign(new Error("child deadline"), {
+                    name: "AbortError",
+                })), { once: true });
+            }));
+            const startedAt = Date.now();
+            const coordinator = new ChatMemoryRecoveryCoordinator({
+                runId: "run-timeout",
+                runEpoch: "epoch-timeout",
+                hardAt: startedAt + 100,
+                softAt: startedAt + 100,
+                toolAt: startedAt + 100,
+                enabled: true,
+                temporalIntent: "none",
+                memoryEpisodeBudgetMs: 40,
+                projectionMarginMs: 5,
+                hostSettlementMarginMs: 5,
+                now: Date.now,
+            });
+            const executor = createPaAgentCapabilityToolExecutor({
+                registry,
+                host: { settings: {}, log: jest.fn() } as any,
+                memoryRecoveryCoordinator: coordinator,
+                revalidateMemorySearch: async (result) => result,
+            });
+            await jest.advanceTimersByTimeAsync(10);
+            let settled = false;
+            const execution = executor.execute({
+                runId: "run-timeout",
+                turnId: "turn-timeout",
+                turnIndex: 0,
+                userInput: "launch",
+                toolCall: {
+                    type: "toolCall",
+                    id: "call-timeout",
+                    index: 0,
+                    name: "search_memory",
+                    input: { query: "launch" },
+                },
+                signal: new AbortController().signal,
+                outerToolDeadlineAt: startedAt + 40,
+            });
+            void execution.then(() => { settled = true; });
+
+            await jest.advanceTimersByTimeAsync(19);
+            expect(settled).toBe(false);
+            await jest.advanceTimersByTimeAsync(1);
+            await expect(execution).resolves.toMatchObject({
+                outcome: "recoverable_error",
+                promptText: expect.stringContaining("timed out"),
+            });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("propagates Memory answerability metadata for same-source follow-up policy", () => {
         const result = chatToolResultToPaAgentToolExecutionResult(
             { type: "toolCall", id: "call-memory", index: 0, name: "search_memory", input: { query: "周至" } },
@@ -73,6 +438,828 @@ describe("PA Agent canonical host tool executor", () => {
             hasAnswerableContent: false,
             needsSnippetFollowup: true,
         });
+        expect(result.promptText).not.toContain("cand-1");
+        expect(result.promptText).not.toContain("candidates");
+    });
+
+    it("projects Memory observations and source records from final documents only", () => {
+        const internal: MemorySearchResult = {
+            usedMemory: true,
+            query: "launch",
+            documents: [{
+                content: "current final evidence",
+                score: 0.9,
+                source: { path: "notes/final.md", chunkIndex: 2, score: 0.9 },
+                anchorMetadata: {
+                    contentHash: "internal-hash",
+                    startLine: 10,
+                    endLine: 12,
+                    headingPath: ["Private anchor"],
+                },
+            }],
+            sources: [
+                { path: "notes/final.md", chunkIndex: 2, score: 0.9 },
+                { path: "notes/rejected.md", chunkIndex: 0, score: 0.8 },
+            ],
+            candidates: [{
+                candidateId: "rejected-candidate",
+                path: "notes/rejected.md",
+                score: 0.8,
+                documents: [],
+                excerpt: "SECRET REJECTED EXCERPT",
+            }],
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+            rerankVerdict: "relevant",
+            needsMoreEvidence: false,
+            operationalReason: "final_source_changed",
+            recoverySeed: {
+                query: "launch",
+                lexicalPlan: {
+                    ftsQueryOverride: "SECRET FROZEN PLAN",
+                    temporalIntent: "none",
+                    temporalFilter: null,
+                },
+                rejectedEvidence: [{
+                    path: "notes/rejected.md",
+                    pathEvidenceGeneration: "SECRET GENERATION",
+                    evidenceFingerprints: ["SECRET FINGERPRINT"],
+                }],
+            },
+        };
+        const observation = projectMemorySearchObservation(internal);
+        expect(observation).toEqual({
+            query: "launch",
+            documents: [{
+                content: "current final evidence",
+                score: 0.9,
+                source: { path: "notes/final.md", chunkIndex: 2, score: 0.9 },
+            }],
+            sources: [{ path: "notes/final.md", chunkIndex: 2, score: 0.9 }],
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+            rerankVerdict: "relevant",
+        });
+
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-memory-projection", index: 0, name: "search_memory", input: { query: "launch" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: internal,
+                sources: internal.sources,
+                sourceRecords: [
+                    {
+                        kind: "memory-reference",
+                        dedupKey: "final",
+                        providerId: "core",
+                        capabilityName: "search_memory",
+                        sourceBoundary: "memory",
+                        path: "notes/final.md",
+                        chunkIndex: 2,
+                        score: 0.9,
+                        citationEligible: true,
+                        metadata: { anchor: "must-not-leak" },
+                    },
+                    {
+                        kind: "memory-reference",
+                        dedupKey: "rejected",
+                        path: "notes/rejected.md",
+                        chunkIndex: 0,
+                        citationEligible: true,
+                    },
+                ],
+            },
+        );
+
+        expect(result.promptText).toContain("current final evidence");
+        expect(result.promptText).not.toContain("SECRET REJECTED EXCERPT");
+        expect(result.promptText).not.toContain("notes/rejected.md");
+        expect(result.promptText).not.toContain("anchorMetadata");
+        expect(result.promptText).not.toContain("operationalReason");
+        expect(result.promptText).not.toContain("SECRET FROZEN PLAN");
+        expect(result.promptText).not.toContain("SECRET GENERATION");
+        expect(result.sourceRecords).toEqual([expect.objectContaining({
+            path: "notes/final.md",
+            chunkIndex: 2,
+            sourceBoundary: "memory",
+        })]);
+        expect(result.sourceRecords?.[0]).not.toHaveProperty("metadata");
+        expect(result.contextUsed?.[0]?.sources).toEqual([
+            { path: "notes/final.md", chunkIndex: 2, score: 0.9 },
+        ]);
+    });
+
+    it("fails closed when a successful Memory result cannot pass the specialized guard", () => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-malformed-memory", index: 0, name: "search_memory", input: { query: "launch" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: {
+                    candidates: [{ path: "notes/private.md", excerpt: "SECRET RAW CANDIDATE" }],
+                },
+                sources: [{ path: "notes/private.md" }],
+                sourceRecords: [{
+                    kind: "memory-reference",
+                    dedupKey: "private",
+                    path: "notes/private.md",
+                    citationEligible: true,
+                }],
+            },
+        );
+
+        expect(result.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(result.promptText).not.toContain("SECRET RAW CANDIDATE");
+        expect(result.promptText).not.toContain("notes/private.md");
+        expect(result.sourceRecords).toEqual([]);
+        expect(result.contextUsed?.[0]).toMatchObject({ statusOnly: true, sources: [] });
+    });
+
+    it("revalidates registered Memory evidence on every provider projection and revokes stale copies", async () => {
+        const toolCall = {
+            type: "toolCall" as const,
+            id: "memory-gate-call",
+            index: 0,
+            name: "search_memory",
+            input: { query: "launch" },
+        };
+        const evidence: MemorySearchResult = {
+            usedMemory: true,
+            query: "launch",
+            documents: [{
+                content: "CURRENT EVIDENCE",
+                score: 0.9,
+                source: { path: "notes/current.md", chunkIndex: 0, score: 0.9 },
+            }],
+            sources: [{ path: "notes/current.md", chunkIndex: 0, score: 0.9 }],
+            candidates: [],
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+            rerankVerdict: "relevant",
+            needsMoreEvidence: false,
+        };
+        const unavailable: MemorySearchResult = {
+            usedMemory: false,
+            query: "launch",
+            documents: [],
+            sources: [],
+            candidates: [],
+            hasAnswerableContent: false,
+            memoryEvidenceState: "unavailable",
+            rerankVerdict: "relevant",
+            needsMoreEvidence: false,
+            retrievalGuidance: "Memory evidence is currently unavailable.",
+        };
+        const revalidate = jest.fn<(
+            result: MemorySearchResult,
+            signal?: AbortSignal,
+        ) => Promise<MemorySearchResult>>()
+            .mockResolvedValueOnce(evidence)
+            .mockResolvedValueOnce(unavailable);
+        const registry = new MemoryEvidenceRegistry(revalidate);
+        const rawResult = {
+            ok: true,
+            tool: "search_memory",
+            inputSummary: "launch",
+            content: evidence,
+            sources: evidence.sources,
+            sourceRecords: [{
+                kind: "memory-reference" as const,
+                dedupKey: "notes/current.md",
+                path: "notes/current.md",
+                chunkIndex: 0,
+                citationEligible: true,
+            }],
+        };
+        registry.capture(toolCall, rawResult, "turn-memory");
+        const initial = chatToolResultToPaAgentToolExecutionResult(toolCall, rawResult);
+        const transcript: PaAgentMessage[] = [{
+            role: "toolResult",
+            id: "memory-result",
+            toolCallId: toolCall.id,
+            toolName: "search_memory",
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: initial.promptText,
+                includeInNextPrompt: true,
+                sourceRecords: initial.sourceRecords,
+                contextUsed: initial.contextUsed,
+            },
+        }];
+
+        const first = await registry.prepareTranscript(transcript);
+        expect(first[0]).toMatchObject({
+            role: "toolResult",
+            content: { sourceRecords: [expect.objectContaining({ path: "notes/current.md" })] },
+        });
+        const second = await registry.prepareTranscript(first);
+
+        expect(revalidate).toHaveBeenCalledTimes(2);
+        expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText)
+            .toContain('"memoryEvidenceState": "unavailable"');
+        expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText)
+            .not.toContain("CURRENT EVIDENCE");
+        expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+        expect((transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+    });
+
+    it("tombstones a reused raw Memory tool-call ID before any same-batch evidence can be projected", async () => {
+        const revalidate = jest.fn(async (result: MemorySearchResult) => result);
+        const registry = new MemoryEvidenceRegistry(revalidate);
+        const first = registerMemoryEvidence(
+            registry,
+            createMemoryEvidence("FIRST PRIVATE BODY", "notes/first.md"),
+            "reused-memory-id",
+            { since: 111 },
+        );
+        const second = registerMemoryEvidence(
+            registry,
+            createMemoryEvidence("SECOND PRIVATE BODY", "notes/second.md"),
+            "reused-memory-id",
+            { since: 222 },
+        );
+
+        const projected = await registry.prepareTranscript([...first, ...second]);
+        const serialized = JSON.stringify(projected);
+
+        expect(revalidate).not.toHaveBeenCalled();
+        expect(projected).toHaveLength(2);
+        for (const message of projected) {
+            if (message.role !== "toolResult") throw new Error("Expected a tool result.");
+            expect(message.content.promptText).toContain('"memoryEvidenceState": "unavailable"');
+            expect(message.content.sourceRecords).toEqual([]);
+            expect(message.content.contextUsed).toEqual([expect.objectContaining({
+                category: "memory",
+                sources: [],
+                statusOnly: true,
+            })]);
+        }
+        expect(serialized).not.toContain("FIRST PRIVATE BODY");
+        expect(serialized).not.toContain("SECOND PRIVATE BODY");
+        expect(serialized).not.toContain("notes/first.md");
+        expect(serialized).not.toContain("notes/second.md");
+        expect(serialized).not.toContain("111");
+        expect(serialized).not.toContain("222");
+        expect((first[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+        expect((second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+    });
+
+    it("finalizes reverse-completing parallel raw-ID collisions before lifecycle emission", async () => {
+        const resolvers = new Map<string, (result: MemorySearchResult) => void>();
+        const executeMemorySearch = jest.fn((input: SearchMemoryInput) => new Promise<MemorySearchResult>((resolve) => {
+            resolvers.set(input.query, resolve);
+        }));
+        const registry = createCoreRegistry(executeMemorySearch);
+        const revalidate = jest.fn(async (result: MemorySearchResult) => result);
+        const memoryEvidenceRegistry = new MemoryEvidenceRegistry(revalidate);
+        const toolExecutor = createPaAgentCapabilityToolExecutor({
+            registry,
+            host: { settings: {}, log: jest.fn() } as never,
+            memoryEvidenceRegistry,
+        });
+        const lifecycleEvents: AgentEvent[] = [];
+        const lifecycle = new AgentLifecycleEventEmitter({
+            runId: "parallel-collision-run",
+            now: deterministicNow(),
+            onEvent: (event) => lifecycleEvents.push(event),
+        });
+        lifecycle.agentStart();
+        lifecycle.turnStart("parallel-collision-turn");
+        let messageIndex = 0;
+        const dispatcher = new ToolExecutionDispatcher({
+            toolExecutor,
+            toolExecutionMode: "parallel",
+            runId: "parallel-collision-run",
+            userInput: "compare two Memory queries",
+            toolTimeoutMs: 10_000,
+            toolTimeoutOutcome: "recoverable_error",
+            toolAbortGraceMs: 100,
+            maxToolCalls: 4,
+            now: deterministicNow(),
+            isAborted: () => false,
+            isWallClockExceeded: () => false,
+            wallClockRemainingMs: () => 10_000,
+            events: lifecycle,
+            emitToolResult: (turnId, toolCall, result) => {
+                const message: Extract<PaAgentMessage, { role: "toolResult" }> = {
+                    role: "toolResult",
+                    id: `parallel-collision-result-${messageIndex++}`,
+                    toolCallId: toolCall.id,
+                    toolName: toolCall.name,
+                    isError: result.outcome !== "success",
+                    timestamp: 1,
+                    content: {
+                        promptText: result.promptText,
+                        ...(result.previewText !== undefined ? { previewText: result.previewText } : {}),
+                        includeInNextPrompt: result.includeInNextPrompt ?? true,
+                        ...(result.sourceRecords ? { sourceRecords: result.sourceRecords } : {}),
+                        ...(result.contextUsed ? { contextUsed: result.contextUsed } : {}),
+                        ...(result.metadata ? { metadata: result.metadata } : {}),
+                    },
+                };
+                lifecycle.messageStart(turnId, message);
+                lifecycle.messageEnd(turnId, message);
+                return message;
+            },
+        });
+        const execution = dispatcher.executeBufferedToolCalls(
+            "parallel-collision-turn",
+            0,
+            [
+                {
+                    key: "index:0",
+                    id: "parallel-reused-memory-id",
+                    name: "search_memory",
+                    index: 0,
+                    argsText: JSON.stringify({ query: "first query" }),
+                    input: { query: "first query" },
+                    hasStructuredInput: true,
+                    partIndex: 0,
+                },
+                {
+                    key: "index:1",
+                    id: "parallel-reused-memory-id",
+                    name: "search_memory",
+                    index: 1,
+                    argsText: JSON.stringify({ query: "second query" }),
+                    input: { query: "second query" },
+                    hasStructuredInput: true,
+                    partIndex: 1,
+                },
+            ],
+            "normal",
+            undefined,
+        );
+        for (let attempt = 0; attempt < 10 && resolvers.size < 2; attempt++) {
+            await Promise.resolve();
+        }
+        expect([...resolvers.keys()].sort()).toEqual(["first query", "second query"]);
+
+        resolvers.get("second query")!({
+            ...createMemoryEvidence("SECOND BODY MUST NOT EMIT", "notes/second-parallel.md"),
+            query: "second query",
+        });
+        await Promise.resolve();
+        resolvers.get("first query")!({
+            ...createMemoryEvidence("FIRST BODY MUST NOT EMIT", "notes/first-parallel.md"),
+            query: "first query",
+        });
+
+        const summary = await execution;
+        lifecycle.turnEnd("parallel-collision-turn", "tool_results_ready", undefined, summary.toolResults);
+        const emitted = lifecycleEvents.flatMap((event) => (
+            event.type === "message_end" && event.message.role === "toolResult"
+                ? [event.message]
+                : []
+        ));
+        const turnEnd = lifecycleEvents.find((event) => event.type === "turn_end");
+        const turnEndResults = turnEnd?.type === "turn_end" ? turnEnd.toolResults ?? [] : [];
+
+        expect(revalidate).not.toHaveBeenCalled();
+        expect(emitted).toHaveLength(2);
+        expect(turnEndResults).toHaveLength(2);
+        for (const message of [...emitted, ...turnEndResults]) {
+            expect(message.content.promptText).toContain('"memoryEvidenceState": "unavailable"');
+            expect(message.content.promptText).not.toContain("BODY MUST NOT EMIT");
+            expect(message.content.previewText).not.toContain("BODY MUST NOT EMIT");
+            expect(message.content.sourceRecords).toEqual([]);
+            expect(message.content.contextUsed).toEqual([expect.objectContaining({
+                category: "memory",
+                sources: [],
+                statusOnly: true,
+            })]);
+        }
+        expect(JSON.stringify(lifecycleEvents)).not.toContain("notes/first-parallel.md");
+        expect(JSON.stringify(lifecycleEvents)).not.toContain("notes/second-parallel.md");
+    });
+
+    it("tombstones duplicate Memory transcript occurrences even when the dispatcher skipped re-execution", async () => {
+        const revalidate = jest.fn(async (result: MemorySearchResult) => result);
+        const registry = new MemoryEvidenceRegistry(revalidate);
+        const first = registerMemoryEvidence(
+            registry,
+            createMemoryEvidence("MUST NOT BE REPLAYED", "notes/replayed.md"),
+            "dispatcher-skipped-id",
+        );
+        const duplicateSkipped: PaAgentMessage = {
+            role: "toolResult",
+            id: "dispatcher-skipped-result",
+            toolCallId: "dispatcher-skipped-id",
+            toolName: "search_memory",
+            isError: false,
+            timestamp: 2,
+            content: {
+                promptText: "",
+                includeInNextPrompt: false,
+                metadata: { outcome: "duplicate_skipped" },
+            },
+        };
+
+        const projected = await registry.prepareTranscript([...first, duplicateSkipped]);
+
+        expect(revalidate).not.toHaveBeenCalled();
+        expect(projected).toHaveLength(2);
+        for (const message of projected) {
+            if (message.role !== "toolResult") throw new Error("Expected a tool result.");
+            expect(message.content.promptText).toContain('"memoryEvidenceState": "unavailable"');
+            expect(message.content.promptText).not.toContain("MUST NOT BE REPLAYED");
+            expect(message.content.sourceRecords).toEqual([]);
+        }
+    });
+
+    it("revokes an earlier turn when a later turn reuses its raw Memory tool-call ID", async () => {
+        const revalidate = jest.fn(async (result: MemorySearchResult) => result);
+        const registry = new MemoryEvidenceRegistry(revalidate);
+        const first = registerMemoryEvidence(
+            registry,
+            createMemoryEvidence("EARLIER TURN BODY", "notes/earlier.md"),
+            "cross-turn-reused-id",
+        );
+        await registry.prepareTranscript(first);
+        expect(revalidate).toHaveBeenCalledTimes(1);
+
+        const later = registerMemoryEvidence(
+            registry,
+            createMemoryEvidence("LATER TURN BODY", "notes/later.md"),
+            "cross-turn-reused-id",
+        );
+        const earlierLiveContent = (first[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+        expect(earlierLiveContent.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(earlierLiveContent.promptText).not.toContain("EARLIER TURN BODY");
+
+        const projected = await registry.prepareTranscript([...first, ...later]);
+        expect(revalidate).toHaveBeenCalledTimes(1);
+        expect(projected.every((message) => (
+            message.role === "toolResult"
+            && message.content.sourceRecords?.length === 0
+            && message.content.promptText.includes('"memoryEvidenceState": "unavailable"')
+        ))).toBe(true);
+        expect(JSON.stringify(projected)).not.toContain("LATER TURN BODY");
+    });
+
+    it("rebuilds revalidated Memory provenance from the exact final source set", async () => {
+        const createRange = (from: number, to: number): MemorySearchResult => {
+            const documents = Array.from({ length: to - from + 1 }, (_, offset) => {
+                const value = from + offset;
+                const score = 1 - value / 100;
+                return {
+                    content: `CURRENT BODY ${value}`,
+                    score,
+                    source: { path: `notes/${value}.md`, chunkIndex: value, score },
+                };
+            });
+            return {
+                usedMemory: true,
+                query: "range",
+                documents,
+                sources: documents.map((document) => ({ ...document.source })),
+                candidates: [],
+                hasAnswerableContent: true,
+                memoryEvidenceState: "evidence",
+                rerankVerdict: "relevant",
+                needsMoreEvidence: false,
+            };
+        };
+        const initial = createRange(1, 8);
+        const current = createRange(2, 9);
+        const toolCall = {
+            type: "toolCall" as const,
+            id: "memory-source-refill",
+            index: 0,
+            name: "search_memory",
+            input: { query: "range" },
+        };
+        const rawResult = {
+            ok: true,
+            tool: "search_memory",
+            inputSummary: "range",
+            content: initial,
+            sources: initial.sources,
+            sourceRecords: initial.sources.map((source) => ({
+                kind: "memory-reference" as const,
+                dedupKey: `old:${source.path}`,
+                turnId: "stale-turn",
+                providerId: "core",
+                capabilityName: "search_memory",
+                sourceBoundary: "memory" as const,
+                path: source.path,
+                chunkIndex: source.chunkIndex,
+                score: source.score,
+                citationEligible: true,
+                metadata: { privateMaterial: "MUST NOT SURVIVE" },
+            })),
+        };
+        const registry = new MemoryEvidenceRegistry(async () => current);
+        registry.capture(toolCall, rawResult, "turn-refill");
+        const initialExecution = chatToolResultToPaAgentToolExecutionResult(toolCall, rawResult);
+        const projected = await registry.prepareTranscript([{
+            role: "toolResult",
+            id: "memory-source-refill-result",
+            toolCallId: toolCall.id,
+            toolName: "search_memory",
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: initialExecution.promptText,
+                includeInNextPrompt: true,
+                sourceRecords: initialExecution.sourceRecords,
+                contextUsed: initialExecution.contextUsed,
+            },
+        }]);
+        const content = (projected[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+        const providerObservation = JSON.parse(content.promptText).observation as {
+            documents: Array<{ source: { path: string; chunkIndex: number; score: number } }>;
+            sources: Array<{ path: string; chunkIndex: number; score: number }>;
+        };
+        const expectedSources = current.sources;
+
+        expect(providerObservation.documents.map((document) => document.source)).toEqual(expectedSources);
+        expect(providerObservation.sources).toEqual(expectedSources);
+        expect(content.sourceRecords?.map((record) => ({
+            path: record.path,
+            chunkIndex: record.chunkIndex,
+            score: record.score,
+        }))).toEqual(expectedSources);
+        expect(content.sourceRecords).toEqual(expectedSources.map((source) => expect.objectContaining({
+            kind: "memory-reference",
+            turnId: "turn-refill",
+            providerId: "core",
+            capabilityName: "search_memory",
+            sourceBoundary: "memory",
+            path: source.path,
+            chunkIndex: source.chunkIndex,
+            score: source.score,
+            citationEligible: true,
+        })));
+        expect(content.sourceRecords?.every((record) => record.metadata === undefined)).toBe(true);
+        expect(content.contextUsed).toEqual([expect.objectContaining({
+            category: "memory",
+            sources: expectedSources,
+            citationEligible: true,
+        })]);
+        expect(extractCanonicalTurnMetadata({ messages: projected }).allowedMemorySourcePaths)
+            .toEqual(expectedSources.map((source) => source.path));
+        expect(JSON.stringify(projected)).not.toContain("notes/1.md");
+        expect(JSON.stringify(projected)).not.toContain("MUST NOT SURVIVE");
+    });
+
+    it("fails closed when revalidation cannot supply an exact document/source set", async () => {
+        const current = createMemoryEvidence("CURRENT BODY", "notes/current.md");
+        const incomplete = {
+            ...current,
+            sources: [],
+        };
+        const registry = new MemoryEvidenceRegistry(async () => incomplete);
+        const transcript = registerMemoryEvidence(
+            registry,
+            createMemoryEvidence("STALE BODY", "notes/stale.md"),
+            "memory-missing-source-material",
+        );
+
+        const projected = await registry.prepareTranscript(transcript);
+        const content = (projected[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+
+        expect(content.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(content.promptText).not.toContain("CURRENT BODY");
+        expect(content.promptText).not.toContain("notes/current.md");
+        expect(content.sourceRecords).toEqual([]);
+        expect(content.contextUsed).toEqual([expect.objectContaining({
+            category: "memory",
+            sources: [],
+            statusOnly: true,
+        })]);
+        expect(extractCanonicalTurnMetadata({ messages: projected }).allowedMemorySourcePaths).toEqual([]);
+    });
+
+    it("keeps the frozen explicit range Host-only and reapplies it on every provider projection", async () => {
+        const temporalFilter = {
+            since: Date.parse("2026-01-01T00:00:00.000Z"),
+            until: Date.parse("2026-12-31T23:59:59.999Z"),
+        };
+        let currentMtime = Date.parse("2026-06-15T12:00:00.000Z");
+        const evidence = createMemoryEvidence("2026 RANGE EVIDENCE", "notes/range.md");
+        const observedFilters: Array<MemoryTemporalFilter | null> = [];
+        const revalidate = jest.fn(async (
+            result: MemorySearchResult,
+            _signal?: AbortSignal,
+            currentFilter?: MemoryTemporalFilter | null,
+        ): Promise<MemorySearchResult> => {
+            observedFilters.push(currentFilter ? { ...currentFilter } : null);
+            const withinRange = currentFilter
+                && (currentFilter.since === undefined || currentMtime >= currentFilter.since)
+                && (currentFilter.until === undefined || currentMtime <= currentFilter.until);
+            if (currentFilter) currentFilter.since = 0;
+            return withinRange
+                ? result
+                : {
+                    ...result,
+                    usedMemory: false,
+                    documents: [],
+                    sources: [],
+                    candidates: [],
+                    hasAnswerableContent: false,
+                    memoryEvidenceState: "unavailable",
+                    retrievalGuidance: "Memory evidence is currently unavailable.",
+                    operationalReason: "final_source_changed",
+                };
+        });
+        const registry = new MemoryEvidenceRegistry(revalidate);
+        const transcript = registerMemoryEvidence(
+            registry,
+            evidence,
+            "memory-explicit-range",
+            temporalFilter,
+        );
+
+        const first = await registry.prepareTranscript(transcript);
+        expect((first[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText)
+            .toContain("2026 RANGE EVIDENCE");
+
+        currentMtime = Date.parse("2027-01-01T00:00:00.000Z");
+        const second = await registry.prepareTranscript(first);
+        const secondContent = (second[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+
+        expect(observedFilters).toEqual([temporalFilter, temporalFilter]);
+        expect(secondContent.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(secondContent.promptText).not.toContain("2026 RANGE EVIDENCE");
+        expect(secondContent.sourceRecords).toEqual([]);
+        expect(JSON.stringify([first, second])).not.toContain("temporalFilter");
+        expect(JSON.stringify([first, second])).not.toContain(String(temporalFilter.since));
+        expect(JSON.stringify([first, second])).not.toContain(String(temporalFilter.until));
+    });
+
+    it("turns an internal revalidation AbortError into unavailable evidence without aborting the run", async () => {
+        const toolCall = {
+            type: "toolCall" as const,
+            id: "memory-internal-abort",
+            index: 0,
+            name: "search_memory",
+            input: { query: "launch" },
+        };
+        const evidence: MemorySearchResult = {
+            usedMemory: true,
+            query: "launch",
+            documents: [{
+                content: "CURRENT EVIDENCE",
+                score: 0.9,
+                source: { path: "notes/current.md", chunkIndex: 0, score: 0.9 },
+            }],
+            sources: [{ path: "notes/current.md", chunkIndex: 0, score: 0.9 }],
+            candidates: [],
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+            rerankVerdict: "relevant",
+            needsMoreEvidence: false,
+        };
+        const registry = new MemoryEvidenceRegistry(async () => {
+            throw Object.assign(new Error("internal read stopped"), { name: "AbortError" });
+        });
+        const rawResult = {
+            ok: true,
+            tool: "search_memory",
+            inputSummary: "launch",
+            content: evidence,
+            sources: evidence.sources,
+        };
+        registry.capture(toolCall, rawResult, "turn-memory");
+        const initial = chatToolResultToPaAgentToolExecutionResult(toolCall, rawResult);
+        const transcript: PaAgentMessage[] = [{
+            role: "toolResult",
+            id: "memory-result",
+            toolCallId: toolCall.id,
+            toolName: "search_memory",
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: initial.promptText,
+                includeInNextPrompt: true,
+            },
+        }];
+
+        const projected = await registry.prepareTranscript(transcript, new AbortController().signal);
+
+        expect((projected[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText)
+            .toContain('"memoryEvidenceState": "unavailable"');
+    });
+
+    it("keeps captured Memory unavailable after provider preparation reaches its deadline", async () => {
+        const toolCall = {
+            type: "toolCall" as const,
+            id: "memory-provider-deadline",
+            index: 0,
+            name: "search_memory",
+            input: { query: "launch" },
+        };
+        const evidence: MemorySearchResult = {
+            usedMemory: true,
+            query: "launch",
+            documents: [{
+                content: "STALE AFTER DEADLINE",
+                score: 0.9,
+                source: { path: "notes/current.md", chunkIndex: 0, score: 0.9 },
+            }],
+            sources: [{ path: "notes/current.md", chunkIndex: 0, score: 0.9 }],
+            candidates: [],
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+            rerankVerdict: "relevant",
+            needsMoreEvidence: false,
+        };
+        const revalidate = jest.fn(async () => evidence);
+        const registry = new MemoryEvidenceRegistry(revalidate);
+        const rawResult = {
+            ok: true,
+            tool: "search_memory",
+            inputSummary: "launch",
+            content: evidence,
+            sources: evidence.sources,
+        };
+        registry.capture(toolCall, rawResult, "turn-memory");
+        registry.failClosed();
+        const initial = chatToolResultToPaAgentToolExecutionResult(toolCall, rawResult);
+        const projected = await registry.prepareTranscript([{
+            role: "toolResult",
+            id: "memory-result",
+            toolCallId: toolCall.id,
+            toolName: "search_memory",
+            isError: false,
+            timestamp: 1,
+            content: {
+                promptText: initial.promptText,
+                includeInNextPrompt: true,
+                sourceRecords: initial.sourceRecords,
+            },
+        }]);
+
+        expect(revalidate).not.toHaveBeenCalled();
+        expect((projected[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText)
+            .toContain('"memoryEvidenceState": "unavailable"');
+        expect((projected[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.promptText)
+            .not.toContain("STALE AFTER DEADLINE");
+        expect((projected[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content.sourceRecords).toEqual([]);
+    });
+
+    it("discards a deferred revalidation success after abort and fail-closed", async () => {
+        const initialEvidence = createMemoryEvidence("INITIAL EVIDENCE");
+        const lateEvidence = createMemoryEvidence("LATE SUCCESS MUST NOT RETURN");
+        let resolveLate!: (value: MemorySearchResult) => void;
+        const revalidate = jest.fn(() => new Promise<MemorySearchResult>((resolve) => {
+            resolveLate = resolve;
+        }));
+        const registry = new MemoryEvidenceRegistry(revalidate);
+        const transcript = registerMemoryEvidence(registry, initialEvidence, "memory-late-success");
+        const controller = new AbortController();
+
+        const pending = registry.prepareTranscript(transcript, controller.signal);
+        await Promise.resolve();
+        controller.abort();
+        registry.failClosed();
+        resolveLate(lateEvidence);
+
+        await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+        const finalProjection = await registry.prepareTranscript(transcript);
+        const content = (finalProjection[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+        expect(revalidate).toHaveBeenCalledTimes(1);
+        expect(content.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(content.promptText).not.toContain("LATE SUCCESS MUST NOT RETURN");
+        expect(content.sourceRecords).toEqual([]);
+    });
+
+    it("prevents an older projection generation from overwriting a newer one", async () => {
+        const initialEvidence = createMemoryEvidence("INITIAL EVIDENCE");
+        const olderEvidence = createMemoryEvidence("OLDER LATE EVIDENCE");
+        const newerEvidence = createMemoryEvidence("NEWER CURRENT EVIDENCE");
+        let resolveOlder!: (value: MemorySearchResult) => void;
+        let calls = 0;
+        const registry = new MemoryEvidenceRegistry(async () => {
+            calls += 1;
+            if (calls === 1) {
+                return new Promise<MemorySearchResult>((resolve) => {
+                    resolveOlder = resolve;
+                });
+            }
+            return newerEvidence;
+        });
+        const transcript = registerMemoryEvidence(registry, initialEvidence, "memory-generation-race");
+
+        const olderProjectionPromise = registry.prepareTranscript(transcript);
+        await Promise.resolve();
+        const newerProjection = await registry.prepareTranscript(transcript);
+        resolveOlder(olderEvidence);
+        const olderProjection = await olderProjectionPromise;
+
+        const newerContent = (newerProjection[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+        const olderContent = (olderProjection[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+        const liveContent = (transcript[0] as Extract<PaAgentMessage, { role: "toolResult" }>).content;
+        expect(newerContent.promptText).toContain("NEWER CURRENT EVIDENCE");
+        expect(olderContent.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(olderContent.promptText).not.toContain("OLDER LATE EVIDENCE");
+        expect(liveContent.promptText).toContain("NEWER CURRENT EVIDENCE");
+        expect(liveContent.promptText).not.toContain("OLDER LATE EVIDENCE");
     });
 
     it("represents skill catalog as host pre-context (A3 progressive disclosure: L1 only)", async () => {
@@ -216,6 +1403,168 @@ describe("PA Agent canonical host tool executor", () => {
         expectNoFullSourceMetadataDuplication(events);
     });
 
+    it("publishes one cumulative visible Memory result for strict-partial Chat recovery", async () => {
+        const query = "project launch evidence";
+        const makeCandidate = (path: string, content: string, score: number) => ({
+            candidateId: path,
+            path,
+            score,
+            excerpt: content,
+            origin: "direct" as const,
+            documents: [{
+                content,
+                score,
+                source: { path, chunkIndex: 0, score },
+            }],
+        });
+        const standardCandidates = Array.from({ length: 8 }, (_, index) => (
+            makeCandidate(`memory/a1-${index}.md`, `A1 evidence ${index}`, 0.99 - index / 100)
+        ));
+        const relaxedTarget = makeCandidate("memory/a2-target.md", "A2 target evidence", 0.95);
+        const standard: MemorySearchResult = {
+            usedMemory: true,
+            query,
+            documents: standardCandidates.flatMap((candidate) => candidate.documents),
+            sources: standardCandidates.flatMap((candidate) => candidate.documents.map((document) => document.source)),
+            candidates: standardCandidates,
+            hasAnswerableContent: true,
+            memoryEvidenceState: "partial",
+            rerankVerdict: "partially_relevant",
+            needsMoreEvidence: true,
+            retrievalGuidance: "The selected Memory evidence is partial; do not fill missing facts by inference.",
+            rerankOutcome: {
+                kind: "valid",
+                verdict: "partially_relevant",
+                needsMoreEvidence: true,
+                candidates: standardCandidates,
+                origin: "model",
+                modelCalled: true,
+            },
+            recoverySeed: {
+                query,
+                lexicalPlan: {
+                    ftsQueryOverride: query,
+                    temporalIntent: "none",
+                    temporalFilter: null,
+                },
+                rejectedEvidence: [],
+                queryEmbedding: { value: [0.1], profileSignature: "profile" },
+            },
+        };
+        const relaxed: MemorySearchResult = {
+            usedMemory: true,
+            query,
+            documents: relaxedTarget.documents,
+            sources: relaxedTarget.documents.map((document) => document.source),
+            candidates: [relaxedTarget],
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+            rerankVerdict: "relevant",
+            needsMoreEvidence: false,
+            rerankOutcome: {
+                kind: "valid",
+                verdict: "relevant",
+                needsMoreEvidence: false,
+                candidates: [relaxedTarget],
+                origin: "model",
+                modelCalled: true,
+            },
+        };
+        expect(standard.documents).toHaveLength(8);
+        expect(standard.sources).toHaveLength(8);
+        expect(relaxed.documents).toHaveLength(1);
+        expect(relaxed.sources).toHaveLength(1);
+
+        const executeMemorySearch = jest.fn<(
+            input: SearchMemoryInput,
+            context: ChatToolContext,
+        ) => Promise<MemorySearchResult>>()
+            .mockResolvedValueOnce(standard)
+            .mockResolvedValueOnce(relaxed);
+        const revalidateMemorySearch = jest.fn(async (memory: MemorySearchResult) => memory);
+        const coordinator = new ChatMemoryRecoveryCoordinator({
+            runId: "run-memory-strict-partial-recovery",
+            runEpoch: "epoch-memory-strict-partial-recovery",
+            hardAt: 60_000,
+            softAt: 50_000,
+            toolAt: 45_000,
+            enabled: true,
+            temporalIntent: "none",
+            now: () => 0,
+        });
+        const registry = createCoreRegistry(executeMemorySearch);
+        const modelInputs: PaAgentModelInput[] = [];
+        const events: AgentEvent[] = [];
+        const loop = new PaAgentLoop({
+            runId: "run-memory-strict-partial-recovery",
+            userInput: "What do my launch notes say?",
+            model: createModel([
+                [toolCallChunk("call_memory_strict_partial", "search_memory", { query })],
+                [{ type: "text_delta", text: "The cumulative evidence is available." }],
+            ], modelInputs),
+            toolExecutor: createPaAgentCapabilityToolExecutor({
+                registry,
+                host: createPlugin(),
+                memoryRecoveryCoordinator: coordinator,
+                revalidateMemorySearch,
+            }),
+            hostPolicy: continueAfterToolResults(),
+            onEvent: (event) => events.push(event),
+            now: deterministicNow(),
+        });
+
+        const result = await loop.run();
+        const visibleMemoryResults = result.transcript.filter((message): message is Extract<
+            PaAgentMessage,
+            { role: "toolResult" }
+        > => message.role === "toolResult" && message.toolName === "search_memory");
+        expect(result.status).toBe("completed");
+        expect(executeMemorySearch).toHaveBeenCalledTimes(2);
+        expect(revalidateMemorySearch).toHaveBeenCalledTimes(1);
+        expect(visibleMemoryResults).toHaveLength(1);
+        expect(events.filter((event) => event.type === "tool_execution_start" && event.toolName === "search_memory"))
+            .toHaveLength(1);
+        expect(events.filter((event) => event.type === "tool_execution_end" && event.toolName === "search_memory"))
+            .toHaveLength(1);
+
+        const toolResult = visibleMemoryResults[0];
+        const providerResult = JSON.parse(toolResult.content.promptText) as {
+            tool: string;
+            observation: {
+                documents: Array<{ content: string; source: { path: string; chunkIndex?: number; score?: number } }>;
+                sources: Array<{ path: string; chunkIndex?: number; score?: number }>;
+            };
+        };
+        const currentSources = providerResult.observation.sources;
+        const currentPaths = currentSources.map((source) => source.path);
+        expect(providerResult.tool).toBe("search_memory");
+        expect(providerResult.observation.documents).toHaveLength(8);
+        expect(currentSources).toHaveLength(8);
+        expect(currentPaths).toContain(relaxedTarget.path);
+        expect(currentPaths.some((path) => path.startsWith("memory/a1-"))).toBe(true);
+        expect(currentPaths).not.toEqual([relaxedTarget.path]);
+        expect(providerResult.observation.documents.map((document) => document.source)).toEqual(currentSources);
+        expect(toolResult.content.metadata).toMatchObject({ hitCount: 8, memoryEvidenceState: "evidence" });
+        expect(toolResult.content.sourceRecords).toHaveLength(currentSources.length);
+        expect(toolResult.content.sourceRecords).toEqual(expect.arrayContaining(currentSources.map((source) => expect.objectContaining({
+            kind: "memory-reference",
+            sourceBoundary: "memory",
+            path: source.path,
+            chunkIndex: source.chunkIndex,
+            score: source.score,
+            citationEligible: true,
+        }))));
+        expect(toolResult.content.contextUsed).toEqual([expect.objectContaining({
+            category: "memory",
+            label: "Selected Memory",
+            sources: currentSources,
+            citationEligible: true,
+        })]);
+        expect(modelInputs[1]?.transcript.filter((message) => (
+            message.role === "toolResult" && message.toolName === "search_memory"
+        ))).toEqual([toolResult]);
+    });
+
     it("normalizes search_memory query aliases before executing the Memory tool", async () => {
         const plugin = createPlugin();
         const executeMemorySearch = jest.fn<(input: SearchMemoryInput, context: ChatToolContext) => Promise<MemorySearchResult>>(async (input): Promise<MemorySearchResult> => ({
@@ -261,6 +1610,47 @@ describe("PA Agent canonical host tool executor", () => {
             repairReason: "alias mapping or normalization applied",
         });
         expect(typeof toolResult?.content.metadata?.originalInputSummary).toBe("string");
+    });
+
+    it("deduplicates alias and whitespace-equivalent calls by prepared canonical input", async () => {
+        const plugin = createPlugin();
+        const executeMemorySearch = jest.fn<(input: SearchMemoryInput, context: ChatToolContext) => Promise<MemorySearchResult>>(
+            async (input) => ({
+                usedMemory: false,
+                query: input.query,
+                documents: [],
+                sources: [],
+                memoryEvidenceState: "none",
+                rerankVerdict: "none_relevant",
+                needsMoreEvidence: false,
+            }),
+        );
+        const registry = createCoreRegistry(executeMemorySearch);
+        const modelInputs: PaAgentModelInput[] = [];
+        const first = toolCallChunk("call-memory-q", "search_memory", { q: "  project launch  " });
+        const second = toolCallChunk("call-memory-query", "search_memory", { query: "project launch" });
+        if (second.type === "toolcall_delta") second.index = 1;
+        const loop = new PaAgentLoop({
+            runId: "run-memory-canonical-dedup",
+            userInput: "What do my launch notes say?",
+            model: createModel([
+                [first, second],
+                [{ type: "text_delta", text: "No matching note." }],
+            ], modelInputs),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
+            hostPolicy: continueAfterToolResults(),
+            now: deterministicNow(),
+        });
+
+        const result = await loop.run();
+
+        expect(executeMemorySearch).toHaveBeenCalledTimes(1);
+        expect(executeMemorySearch).toHaveBeenCalledWith(
+            expect.objectContaining({ query: "project launch" }),
+            expect.any(Object),
+        );
+        expect(result.turns[0]?.toolResults.map((message) => message.content.metadata?.outcome))
+            .toEqual(["success", "duplicate_skipped"]);
     });
 
     it("fails loud with schema_invalid when search_memory tool call omits query (Phase A fail-loud)", async () => {
@@ -433,19 +1823,21 @@ describe("PA Agent canonical host tool executor", () => {
     it("feeds builtin webSearch toolResults into the follow-up assistant turn with web source records", async () => {
         const plugin = createPlugin();
         const registry = createPaidCapabilityRegistry();
+        const providerRequestScope = createProviderRequestScope();
+        const request = jest.fn<BuiltinWebSearchRequest>(async () => ({
+            status: 200,
+            body: {
+                results: [{
+                    title: "Official result",
+                    url: "https://example.com/result?api_key=sk-SECRET_TOKEN_SENTINEL",
+                    snippet: "External context",
+                }],
+            },
+        }));
         await registerProvider(registry, new BuiltinWebSearchProvider({
             policy: createWebSearchPolicy(),
             apiKey: "sk-SECRET_TOKEN_SENTINEL",
-            request: jest.fn(async () => ({
-                status: 200,
-                body: {
-                    results: [{
-                        title: "Official result",
-                        url: "https://example.com/result?api_key=sk-SECRET_TOKEN_SENTINEL",
-                        snippet: "External context",
-                    }],
-                },
-            })),
+            request,
         }));
         const modelInputs: PaAgentModelInput[] = [];
         const loop = new PaAgentLoop({
@@ -455,7 +1847,11 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_web_1", BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "latest docs", limit: 1 })],
                 [{ type: "text_delta", text: "External result found." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({
+                registry,
+                host: plugin,
+                providerRequestScope,
+            }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -464,6 +1860,10 @@ describe("PA Agent canonical host tool executor", () => {
 
         const toolResult = result.turns[0]?.toolResults[0];
         expect(result.status).toBe("completed");
+        expect(request).toHaveBeenCalledWith(
+            expect.any(Object),
+            expect.objectContaining({ providerRequestScope }),
+        );
         expect(modelInputs[1]?.transcript).toEqual(expect.arrayContaining([
             expect.objectContaining({ role: "toolResult", toolName: BUILTIN_WEB_SEARCH_TOOL_NAME }),
         ]));

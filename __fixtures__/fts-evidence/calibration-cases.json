@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "profile": "char-phrase-v1",
+  "description": "Phase 0B EC-02 offline calibration corpus. Synthetic rows and rank lists are deterministic evidence, not production-vault or device-performance claims.",
+  "rows": [
+    { "id": "quarterly-positive", "path": "reviews/q3.md", "chunkIndex": 0, "title": "季度复盘", "heading": "结论", "body": "记录第三季度最重要的决定与后续行动。" },
+    { "id": "quarterly-budget", "path": "negatives/quarterly-budget.md", "chunkIndex": 0, "title": "季度预算", "heading": "费用", "body": "复盘模板的排版说明，与实际复盘内容无关。" },
+    { "id": "weekly-retro", "path": "negatives/weekly-retro.md", "chunkIndex": 0, "title": "每周复盘", "heading": "节奏", "body": "团队每周五进行简短回顾。" },
+
+    { "id": "rollback-positive", "path": "ops/release.md", "chunkIndex": 0, "title": "发布手册", "heading": "发布回滚", "body": "失败时恢复上一份已验证构建。" },
+    { "id": "release-flow", "path": "negatives/release-flow.md", "chunkIndex": 0, "title": "发布流程", "heading": "检查", "body": "这份清单只提到回滚按钮的位置。" },
+    { "id": "rollback-drill", "path": "negatives/rollback-drill.md", "chunkIndex": 0, "title": "回滚演练", "heading": "预案", "body": "独立演练记录，不是发布操作说明。" },
+
+    { "id": "garden-positive", "path": "projects/garden-drought/plan.md", "chunkIndex": 0, "title": "Plan", "heading": "Watering", "body": "A weekly irrigation checklist for the south beds." },
+    { "id": "garden-distractor", "path": "projects/garden/plan.md", "chunkIndex": 0, "title": "Drought notes", "heading": "Archive", "body": "An old clipping with no active project decision." },
+    { "id": "drought-distractor", "path": "projects/drought/plan.md", "chunkIndex": 0, "title": "Garden notes", "heading": "Archive", "body": "A copied index card with no active project decision." },
+
+    { "id": "mars-positive", "path": "projects/mars/register.md", "chunkIndex": 0, "title": "火星计划", "heading": "风险登记", "body": "列出通信延迟、能源与补给的缓解措施。" },
+    { "id": "mars-plan-only", "path": "negatives/mars-plan.md", "chunkIndex": 0, "title": "火星计划", "heading": "愿望清单", "body": "概念草图，没有风险登记。" },
+    { "id": "risk-only", "path": "negatives/risk-register.md", "chunkIndex": 0, "title": "月球项目", "heading": "风险登记", "body": "另一项目的风险列表。" },
+
+    { "id": "travel-positive", "path": "finance/travel-policy.md", "chunkIndex": 0, "title": "差旅政策", "heading": "提交", "body": "差旅报销需要在返程后十天内提交。" },
+    { "id": "invoice-positive", "path": "finance/e-invoice.md", "chunkIndex": 0, "title": "票据指南", "heading": "电子票据", "body": "电子发票应保留原始下载文件。" },
+    { "id": "expense-keyword-dump", "path": "negatives/expense-keyword-dump.md", "chunkIndex": 0, "title": "关键词导入", "heading": "未整理", "body": "差旅报销 电子发票 采购合同，只是导入词表。" },
+    { "id": "tax-invoice", "path": "negatives/tax-invoice.md", "chunkIndex": 0, "title": "税务摘录", "heading": "示例", "body": "电子发票示例来自公开培训材料。" },
+    { "id": "vacation-travel", "path": "negatives/vacation-travel.md", "chunkIndex": 0, "title": "旅行相册", "heading": "假期", "body": "个人旅行照片，与差旅制度无关。" },
+
+    { "id": "sqlite-positive", "path": "engineering/sqlite-migration.md", "chunkIndex": 0, "title": "本地索引", "heading": "迁移", "body": "SQLite 迁移采用影子表和原子切换。" },
+    { "id": "opfs-positive", "path": "engineering/opfs-cache.md", "chunkIndex": 0, "title": "浏览器存储", "heading": "缓存", "body": "OPFS 缓存只保存可重建的设备本地数据。" },
+    { "id": "storage-glossary", "path": "negatives/storage-glossary.md", "chunkIndex": 0, "title": "术语表", "heading": "存储", "body": "SQLite 迁移 OPFS 缓存 IndexedDB，只列名称。" },
+    { "id": "opfs-setup", "path": "negatives/opfs-setup.md", "chunkIndex": 0, "title": "OPFS 安装", "heading": "实验", "body": "缓存浏览器兼容性测试结果。" },
+    { "id": "sqlite-backup", "path": "negatives/sqlite-backup.md", "chunkIndex": 0, "title": "SQLite 备份", "heading": "旧方案", "body": "手工复制数据库文件的过期步骤。" },
+
+    { "id": "coffee-lab-0", "path": "notes/coffee-lab.md", "chunkIndex": 0, "title": "咖啡实验", "heading": "批次 1", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-1", "path": "notes/coffee-lab.md", "chunkIndex": 1, "title": "咖啡实验", "heading": "批次 2", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-2", "path": "notes/coffee-lab.md", "chunkIndex": 2, "title": "咖啡实验", "heading": "批次 3", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-3", "path": "notes/coffee-lab.md", "chunkIndex": 3, "title": "咖啡实验", "heading": "批次 4", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-4", "path": "notes/coffee-lab.md", "chunkIndex": 4, "title": "咖啡实验", "heading": "批次 5", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-5", "path": "notes/coffee-lab.md", "chunkIndex": 5, "title": "咖啡实验", "heading": "批次 6", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-6", "path": "notes/coffee-lab.md", "chunkIndex": 6, "title": "咖啡实验", "heading": "批次 7", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-7", "path": "notes/coffee-lab.md", "chunkIndex": 7, "title": "咖啡实验", "heading": "批次 8", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-8", "path": "notes/coffee-lab.md", "chunkIndex": 8, "title": "咖啡实验", "heading": "批次 9", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-lab-9", "path": "notes/coffee-lab.md", "chunkIndex": 9, "title": "咖啡实验", "heading": "批次 10", "body": "咖啡萃取参数记录。" },
+    { "id": "coffee-summary", "path": "notes/coffee-summary.md", "chunkIndex": 0, "title": "手冲总览", "heading": "结论", "body": "这份总览解释咖啡萃取中的水温、时间和研磨度如何共同影响结果。" },
+    { "id": "coffee-beans", "path": "negatives/coffee-beans.md", "chunkIndex": 0, "title": "咖啡豆", "heading": "采购", "body": "记录产区和烘焙日期。" },
+    { "id": "tea-extraction", "path": "negatives/tea-extraction.md", "chunkIndex": 0, "title": "茶汤", "heading": "冲泡", "body": "萃取时间取决于叶片大小。" },
+
+    { "id": "graduate-positive", "path": "education/graduate-scholarship.md", "chunkIndex": 0, "title": "奖学金", "heading": "研究生申请", "body": "研究生奖学金需要推荐信和研究计划。" },
+    { "id": "life-collision", "path": "negatives/life-science.md", "chunkIndex": 0, "title": "生命起源", "heading": "摘要", "body": "研究生命的起源。" },
+    { "id": "research-work", "path": "negatives/research-work.md", "chunkIndex": 0, "title": "研究工作", "heading": "节奏", "body": "记录实验与写作安排。" },
+    { "id": "freshman-guide", "path": "negatives/freshman-guide.md", "chunkIndex": 0, "title": "新生指南", "heading": "入学", "body": "本科新生报到流程。" },
+
+    { "id": "kyoto-positive", "path": "travel/kyoto.md", "chunkIndex": 0, "title": "京都旅行", "heading": "路线", "body": "京都的寺院路线从清水寺开始。" },
+    { "id": "tokyo-collision", "path": "negatives/tokyo-metropolis.md", "chunkIndex": 0, "title": "东京数据", "heading": "统计", "body": "東京都市圈人口统计。" },
+    { "id": "east-asia", "path": "negatives/east-asia.md", "chunkIndex": 0, "title": "东亚城市", "heading": "地图", "body": "比较东京、首尔与大阪。" },
+    { "id": "kyoto-pottery", "path": "negatives/kyoto-pottery.md", "chunkIndex": 0, "title": "京都陶器", "heading": "展览", "body": "临时展览清单，与旅行路线无关。" },
+
+    { "id": "cache-positive", "path": "engineering/cache-coherence.md", "chunkIndex": 0, "title": "本地缓存", "heading": "一致性协议", "body": "缓存一致性协议使用版本戳避免旧结果覆盖新状态。" },
+    { "id": "cache-glossary", "path": "negatives/cache-glossary.md", "chunkIndex": 0, "title": "缓存一致性", "heading": "术语", "body": "只有一句术语定义，没有实现证据。" },
+    { "id": "cache-invalidation", "path": "negatives/cache-invalidation.md", "chunkIndex": 0, "title": "缓存失效", "heading": "旧记录", "body": "讨论过期按钮的文案。" },
+
+    { "id": "morning-positive", "path": "habits/morning-review.md", "chunkIndex": 0, "title": "晨间回顾", "heading": "三分钟", "body": "快速查看今天最重要的一件事。" },
+    { "id": "morning-plan", "path": "negatives/morning-plan.md", "chunkIndex": 0, "title": "晨间计划", "heading": "模板", "body": "回顾字段的占位说明。" },
+    { "id": "evening-review", "path": "negatives/evening-review.md", "chunkIndex": 0, "title": "夜间回顾", "heading": "收尾", "body": "睡前整理未完成事项。" },
+
+    { "id": "literature-positive", "path": "research/literature.md", "chunkIndex": 0, "title": "阅读方法", "heading": "文献", "body": "文献综述先按研究问题归类，再比较方法与结论。" },
+    { "id": "experiment-positive", "path": "research/experiment.md", "chunkIndex": 0, "title": "实验设计", "heading": "对照", "body": "对照实验需要固定变量并预先定义观察指标。" },
+    { "id": "research-keyword-dump", "path": "negatives/research-keyword-dump.md", "chunkIndex": 0, "title": "导入标签", "heading": "未整理", "body": "文献综述 对照实验 统计显著性，只是标签列表。" },
+    { "id": "reading-notes", "path": "negatives/reading-notes.md", "chunkIndex": 0, "title": "阅读摘录", "heading": "随手记", "body": "文献条目的引用格式。" },
+
+    { "id": "edge-log-0", "path": "engineering/edge-log.md", "chunkIndex": 0, "title": "边缘节点", "heading": "批次 1", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-1", "path": "engineering/edge-log.md", "chunkIndex": 1, "title": "边缘节点", "heading": "批次 2", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-2", "path": "engineering/edge-log.md", "chunkIndex": 2, "title": "边缘节点", "heading": "批次 3", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-3", "path": "engineering/edge-log.md", "chunkIndex": 3, "title": "边缘节点", "heading": "批次 4", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-4", "path": "engineering/edge-log.md", "chunkIndex": 4, "title": "边缘节点", "heading": "批次 5", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-5", "path": "engineering/edge-log.md", "chunkIndex": 5, "title": "边缘节点", "heading": "批次 6", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-6", "path": "engineering/edge-log.md", "chunkIndex": 6, "title": "边缘节点", "heading": "批次 7", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-7", "path": "engineering/edge-log.md", "chunkIndex": 7, "title": "边缘节点", "heading": "批次 8", "body": "边缘计算延迟记录。" },
+    { "id": "edge-log-8", "path": "engineering/edge-log.md", "chunkIndex": 8, "title": "边缘节点", "heading": "批次 9", "body": "边缘计算延迟记录。" },
+    { "id": "edge-summary", "path": "engineering/edge-summary.md", "chunkIndex": 0, "title": "端侧总览", "heading": "结论", "body": "边缘计算通过靠近数据源执行任务来降低响应时间，并保留云端汇总。" },
+    { "id": "edge-cloud", "path": "negatives/edge-cloud.md", "chunkIndex": 0, "title": "云计算", "heading": "边缘术语", "body": "仅比较术语，不含端侧设计。" },
+    { "id": "edge-device", "path": "negatives/edge-device.md", "chunkIndex": 0, "title": "设备清单", "heading": "计算资源", "body": "库存表，与系统方案无关。" },
+
+    { "id": "racket-positive", "path": "sports/racket-guide.md", "chunkIndex": 0, "title": "球拍选购", "heading": "重量", "body": "球拍重量与握柄尺寸需要一起试用。" },
+    { "id": "racket-auction-collision", "path": "negatives/table-tennis-auction.md", "chunkIndex": 0, "title": "二手交易", "heading": "市场", "body": "乒乓球拍卖信息自动抓取。" },
+    { "id": "sports-notes", "path": "negatives/sports-notes.md", "chunkIndex": 0, "title": "运动记录", "heading": "训练", "body": "跑步与游泳训练安排。" },
+    { "id": "auction-notice", "path": "negatives/auction-notice.md", "chunkIndex": 0, "title": "拍卖公告", "heading": "提醒", "body": "家具拍卖时间变更。" },
+
+    { "id": "noise-01", "path": "noise/01.md", "chunkIndex": 0, "title": "天气", "heading": "周一", "body": "午后有短时阵雨。" },
+    { "id": "noise-02", "path": "noise/02.md", "chunkIndex": 0, "title": "书单", "heading": "历史", "body": "记录两本传记。" },
+    { "id": "noise-03", "path": "noise/03.md", "chunkIndex": 0, "title": "食谱", "heading": "晚餐", "body": "番茄和豆类炖煮。" },
+    { "id": "noise-04", "path": "noise/04.md", "chunkIndex": 0, "title": "会议", "heading": "房间", "body": "预订白板和投影仪。" },
+    { "id": "noise-05", "path": "noise/05.md", "chunkIndex": 0, "title": "音乐", "heading": "练习", "body": "慢速练习和弦转换。" },
+    { "id": "noise-06", "path": "noise/06.md", "chunkIndex": 0, "title": "植物", "heading": "阳台", "body": "薄荷需要定期修剪。" },
+    { "id": "noise-07", "path": "noise/07.md", "chunkIndex": 0, "title": "交通", "heading": "地铁", "body": "周末末班车时间调整。" },
+    { "id": "noise-08", "path": "noise/08.md", "chunkIndex": 0, "title": "电影", "heading": "清单", "body": "保留三部纪录片。" },
+    { "id": "noise-09", "path": "noise/09.md", "chunkIndex": 0, "title": "购物", "heading": "家庭", "body": "补充清洁用品。" },
+    { "id": "noise-10", "path": "noise/10.md", "chunkIndex": 0, "title": "散步", "heading": "路线", "body": "沿河步道全程四公里。" },
+    { "id": "noise-11", "path": "noise/11.md", "chunkIndex": 0, "title": "相机", "heading": "电池", "body": "出门前检查备用电池。" },
+    { "id": "noise-12", "path": "noise/12.md", "chunkIndex": 0, "title": "语言", "heading": "练习", "body": "复习十个常用动词。" }
+  ],
+  "cases": [
+    {
+      "id": "field-title-quarterly",
+      "split": "calibration",
+      "tags": ["cross_field"],
+      "query": "季度复盘",
+      "clauses": ["季度复盘"],
+      "relevantPaths": ["reviews/q3.md"],
+      "controlledDistractorPaths": ["negatives/quarterly-budget.md", "negatives/weekly-retro.md"],
+      "vectorRankedChunkIds": ["quarterly-positive", "quarterly-budget", "weekly-retro", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11", "noise-12"]
+    },
+    {
+      "id": "field-heading-rollback",
+      "split": "calibration",
+      "tags": ["cross_field"],
+      "query": "发布回滚",
+      "clauses": ["发布回滚"],
+      "relevantPaths": ["ops/release.md"],
+      "controlledDistractorPaths": ["negatives/release-flow.md", "negatives/rollback-drill.md"],
+      "vectorRankedChunkIds": ["release-flow", "rollback-positive", "rollback-drill", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11", "noise-12", "noise-01"]
+    },
+    {
+      "id": "field-path-garden",
+      "split": "calibration",
+      "tags": ["cross_field"],
+      "query": "garden drought",
+      "clauses": ["garden drought"],
+      "relevantPaths": ["projects/garden-drought/plan.md"],
+      "controlledDistractorPaths": ["projects/garden/plan.md", "projects/drought/plan.md"],
+      "vectorRankedChunkIds": ["garden-distractor", "drought-distractor", "noise-01", "noise-02", "noise-03", "garden-positive", "noise-04", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11", "noise-12"]
+    },
+    {
+      "id": "field-combined-mars",
+      "split": "calibration",
+      "tags": ["cross_field", "clause_or"],
+      "query": "火星计划，风险登记",
+      "clauses": ["火星计划", "风险登记"],
+      "relevantPaths": ["projects/mars/register.md"],
+      "controlledDistractorPaths": ["negatives/mars-plan.md", "negatives/risk-register.md"],
+      "vectorRankedChunkIds": ["mars-plan-only", "risk-only", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "mars-positive", "noise-08", "noise-09", "noise-10", "noise-11", "noise-12"]
+    },
+    {
+      "id": "or-travel-invoice",
+      "split": "calibration",
+      "tags": ["clause_or"],
+      "query": "差旅报销，电子发票",
+      "clauses": ["差旅报销", "电子发票"],
+      "relevantPaths": ["finance/travel-policy.md", "finance/e-invoice.md"],
+      "controlledDistractorPaths": ["negatives/expense-keyword-dump.md", "negatives/tax-invoice.md", "negatives/vacation-travel.md"],
+      "vectorRankedChunkIds": ["expense-keyword-dump", "tax-invoice", "vacation-travel", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "travel-positive", "noise-06", "noise-07", "invoice-positive", "noise-08", "noise-09", "noise-10", "noise-11", "noise-12"]
+    },
+    {
+      "id": "or-sqlite-opfs",
+      "split": "calibration",
+      "tags": ["clause_or", "cross_field"],
+      "query": "SQLite 迁移，OPFS 缓存",
+      "clauses": ["SQLite 迁移", "OPFS 缓存"],
+      "relevantPaths": ["engineering/sqlite-migration.md", "engineering/opfs-cache.md"],
+      "controlledDistractorPaths": ["negatives/storage-glossary.md", "negatives/opfs-setup.md", "negatives/sqlite-backup.md"],
+      "vectorRankedChunkIds": ["storage-glossary", "opfs-setup", "sqlite-backup", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "sqlite-positive", "noise-07", "noise-08", "noise-09", "opfs-positive", "noise-10", "noise-11", "noise-12"]
+    },
+    {
+      "id": "long-note-coffee",
+      "split": "calibration",
+      "tags": ["long_note"],
+      "query": "咖啡萃取",
+      "clauses": ["咖啡萃取"],
+      "relevantPaths": ["notes/coffee-lab.md", "notes/coffee-summary.md"],
+      "controlledDistractorPaths": ["negatives/coffee-beans.md", "negatives/tea-extraction.md"],
+      "vectorRankedChunkIds": ["coffee-lab-0", "coffee-lab-1", "coffee-lab-2", "coffee-lab-3", "coffee-lab-4", "coffee-lab-5", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "coffee-summary", "coffee-beans", "tea-extraction", "noise-07", "noise-08", "noise-09"]
+    },
+    {
+      "id": "collision-graduate-life",
+      "split": "calibration",
+      "tags": ["collision"],
+      "query": "研究生",
+      "clauses": ["研究生"],
+      "relevantPaths": ["education/graduate-scholarship.md"],
+      "controlledDistractorPaths": ["negatives/life-science.md", "negatives/research-work.md", "negatives/freshman-guide.md"],
+      "vectorRankedChunkIds": ["graduate-positive", "life-collision", "research-work", "freshman-guide", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11"]
+    },
+    {
+      "id": "collision-kyoto-tokyo",
+      "split": "calibration",
+      "tags": ["collision"],
+      "query": "京都",
+      "clauses": ["京都"],
+      "relevantPaths": ["travel/kyoto.md"],
+      "controlledDistractorPaths": ["negatives/tokyo-metropolis.md", "negatives/east-asia.md", "negatives/kyoto-pottery.md"],
+      "vectorRankedChunkIds": ["kyoto-positive", "tokyo-collision", "kyoto-pottery", "east-asia", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11"]
+    },
+    {
+      "id": "fusion-cache-tie",
+      "split": "calibration",
+      "tags": ["collision", "cross_field"],
+      "query": "缓存一致性",
+      "clauses": ["缓存一致性"],
+      "relevantPaths": ["engineering/cache-coherence.md"],
+      "controlledDistractorPaths": ["negatives/cache-glossary.md", "negatives/cache-invalidation.md"],
+      "vectorRankedChunkIds": ["cache-positive", "cache-glossary", "cache-invalidation", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11", "noise-12"]
+    },
+    {
+      "id": "field-title-morning-holdout",
+      "split": "holdout",
+      "tags": ["cross_field"],
+      "query": "晨间回顾",
+      "clauses": ["晨间回顾"],
+      "relevantPaths": ["habits/morning-review.md"],
+      "controlledDistractorPaths": ["negatives/morning-plan.md", "negatives/evening-review.md"],
+      "vectorRankedChunkIds": ["morning-plan", "evening-review", "noise-01", "noise-02", "noise-03", "noise-04", "morning-positive", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11", "noise-12"]
+    },
+    {
+      "id": "or-research-holdout",
+      "split": "holdout",
+      "tags": ["clause_or"],
+      "query": "文献综述，对照实验",
+      "clauses": ["文献综述", "对照实验"],
+      "relevantPaths": ["research/literature.md", "research/experiment.md"],
+      "controlledDistractorPaths": ["negatives/research-keyword-dump.md", "negatives/reading-notes.md"],
+      "vectorRankedChunkIds": ["research-keyword-dump", "reading-notes", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "literature-positive", "noise-08", "noise-09", "noise-10", "experiment-positive", "noise-11", "noise-12"]
+    },
+    {
+      "id": "long-note-edge-holdout",
+      "split": "holdout",
+      "tags": ["long_note"],
+      "query": "边缘计算",
+      "clauses": ["边缘计算"],
+      "relevantPaths": ["engineering/edge-log.md", "engineering/edge-summary.md"],
+      "controlledDistractorPaths": ["negatives/edge-cloud.md", "negatives/edge-device.md"],
+      "vectorRankedChunkIds": ["edge-log-0", "edge-log-1", "edge-log-2", "edge-log-3", "edge-log-4", "edge-log-5", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "edge-summary", "edge-cloud", "edge-device", "noise-07", "noise-08", "noise-09"]
+    },
+    {
+      "id": "collision-racket-holdout",
+      "split": "holdout",
+      "tags": ["collision"],
+      "query": "球拍",
+      "clauses": ["球拍"],
+      "relevantPaths": ["sports/racket-guide.md"],
+      "controlledDistractorPaths": ["negatives/table-tennis-auction.md", "negatives/sports-notes.md", "negatives/auction-notice.md"],
+      "vectorRankedChunkIds": ["racket-positive", "racket-auction-collision", "sports-notes", "auction-notice", "noise-01", "noise-02", "noise-03", "noise-04", "noise-05", "noise-06", "noise-07", "noise-08", "noise-09", "noise-10", "noise-11"]
+    }
+  ]
+}

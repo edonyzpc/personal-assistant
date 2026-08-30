@@ -139,6 +139,13 @@ export function buildRecapDeliveryReceipt(
 export function buildReviewDeliveryReceipt(
     input: ReviewDeliveryReceiptInput,
 ): DeliveryReceipt {
+    const insightId = normalizeText(input.insightId);
+    // ID-backed Deep Discover receipts use the stable insight identity alone.
+    // The receipt/ledger wire version stays v1: legacy callers without an ID
+    // retain the exact prior canonical algorithm. Existing opaque legacy hashes
+    // cannot be losslessly remapped to IDs, so both identities coexist and
+    // expire only through the existing bounded ledger eviction.
+    if (insightId) return buildReceipt("review", [["insightId", insightId]]);
     return buildReceipt("review", [
         ["locale", normalizeLocale(input.locale)],
         ["title", normalizeText(input.title)],

@@ -473,6 +473,154 @@ describe("AI readiness gate", () => {
         expect(memoryStatusChanged).toHaveBeenCalledTimes(1);
     });
 
+    it("resolves a retained token when Pagelet is the first explicit provider surface after reload", async () => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+            secretStorageValues: { "pa-api-token": "sk-retained" },
+        });
+        await plugin.loadSettings();
+        plugin.settings.pagelet.enabled = true;
+        plugin.settings.pagelet.deepDiscoverEnabled = true;
+        const captureAnchor = jest.fn(async () => ({ path: "notes/current.md" }));
+        const runNow = jest.fn(async () => ({ status: "quiet", reason: "no-insight" }));
+        const getScheduler = jest.fn(async () => {
+            expect(plugin.getAISetupIssue()).toBeNull();
+            return { runNow };
+        });
+        const runtime = plugin as unknown as {
+            createAiServiceHost(scope: string): unknown;
+            isPageletProviderPathAllowed(path: string): boolean;
+            capturePageletDeepDiscoverAnchorSnapshot(): Promise<{ path: string }>;
+            getOrCreatePageletDeepDiscoverScheduler(): Promise<{ runNow(input: unknown): Promise<unknown> }>;
+            runPageletDeepDiscover(input: {
+                path: string;
+                triggerReason: "explicit";
+                force: true;
+            }): Promise<{ status: string; reason?: string }>;
+        };
+        runtime.createAiServiceHost = jest.fn(() => ({}));
+        runtime.isPageletProviderPathAllowed = jest.fn(() => true);
+        runtime.capturePageletDeepDiscoverAnchorSnapshot = captureAnchor;
+        runtime.getOrCreatePageletDeepDiscoverScheduler = getScheduler;
+
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+        await expect(runtime.runPageletDeepDiscover({
+            path: "notes/current.md",
+            triggerReason: "explicit",
+            force: true,
+        })).resolves.toEqual({ status: "quiet", reason: "no-insight" });
+
+        expect(secretStorage.getSecret).toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe("present");
+        expect(captureAnchor).toHaveBeenCalledTimes(1);
+        expect(getScheduler).toHaveBeenCalledTimes(1);
+        expect(runNow).toHaveBeenCalledTimes(1);
+        expect(secretStorage.getSecret.mock.invocationCallOrder[0])
+            .toBeLessThan(captureAnchor.mock.invocationCallOrder[0]!);
+    });
+
+    it.each([
+        ["missing retained token", false],
+        ["SecretStorage read failure", true],
+    ])("fails the first explicit Pagelet provider action closed for %s", async (_label, throws) => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+        });
+        await plugin.loadSettings();
+        plugin.settings.pagelet.enabled = true;
+        plugin.settings.pagelet.deepDiscoverEnabled = true;
+        if (throws) {
+            secretStorage.getSecret.mockImplementationOnce(() => {
+                throw new Error("SecretStorage unavailable");
+            });
+        }
+        const captureAnchor = jest.fn(async () => ({ path: "notes/current.md" }));
+        const getScheduler = jest.fn(async () => null);
+        const runtime = plugin as unknown as {
+            isPageletProviderPathAllowed(path: string): boolean;
+            capturePageletDeepDiscoverAnchorSnapshot(): Promise<{ path: string }>;
+            getOrCreatePageletDeepDiscoverScheduler(): Promise<unknown>;
+            runPageletDeepDiscover(input: {
+                path: string;
+                triggerReason: "explicit";
+                force: true;
+            }): Promise<{ status: string; reason?: string }>;
+        };
+        runtime.isPageletProviderPathAllowed = jest.fn(() => true);
+        runtime.capturePageletDeepDiscoverAnchorSnapshot = captureAnchor;
+        runtime.getOrCreatePageletDeepDiscoverScheduler = getScheduler;
+
+        await expect(runtime.runPageletDeepDiscover({
+            path: "notes/current.md",
+            triggerReason: "explicit",
+            force: true,
+        })).resolves.toEqual({ status: "limit", reason: "unavailable" });
+
+        expect(secretStorage.getSecret).toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe(throws ? "unknown" : "missing");
+        expect(captureAnchor).not.toHaveBeenCalled();
+        expect(getScheduler).not.toHaveBeenCalled();
+    });
+
+    it("does not read SecretStorage for automatic Pagelet work or during a credential transition", async () => {
+        const setup = async () => {
+            const harness = createPluginHarness({
+                initialData: {
+                    aiProvider: "openai",
+                    baseURL: "https://api.openai.com/v1",
+                    chatModelName: "gpt-4o-mini",
+                    embeddingModelName: "text-embedding-3-small",
+                },
+                secretStorageValues: { "pa-api-token": "sk-retained" },
+            });
+            await harness.plugin.loadSettings();
+            harness.plugin.settings.pagelet.enabled = true;
+            harness.plugin.settings.pagelet.deepDiscoverEnabled = true;
+            const captureAnchor = jest.fn(async () => ({ path: "notes/current.md" }));
+            const runtime = harness.plugin as unknown as {
+                aiProviderCredentialTransitionCount: number;
+                isPageletProviderPathAllowed(path: string): boolean;
+                capturePageletDeepDiscoverAnchorSnapshot(): Promise<{ path: string }>;
+                runPageletDeepDiscover(input: {
+                    path: string;
+                    triggerReason: "leave-note" | "explicit";
+                    force?: boolean;
+                }): Promise<{ status: string; reason?: string }>;
+            };
+            runtime.isPageletProviderPathAllowed = jest.fn(() => true);
+            runtime.capturePageletDeepDiscoverAnchorSnapshot = captureAnchor;
+            return { ...harness, runtime, captureAnchor };
+        };
+
+        const automatic = await setup();
+        await expect(automatic.runtime.runPageletDeepDiscover({
+            path: "notes/current.md",
+            triggerReason: "leave-note",
+        })).resolves.toEqual({ status: "limit", reason: "unavailable" });
+        expect(automatic.secretStorage.getSecret).not.toHaveBeenCalled();
+        expect(automatic.captureAnchor).not.toHaveBeenCalled();
+
+        const transitioning = await setup();
+        transitioning.runtime.aiProviderCredentialTransitionCount = 1;
+        await expect(transitioning.runtime.runPageletDeepDiscover({
+            path: "notes/current.md",
+            triggerReason: "explicit",
+            force: true,
+        })).resolves.toEqual({ status: "limit", reason: "unavailable" });
+        expect(transitioning.secretStorage.getSecret).not.toHaveBeenCalled();
+        expect(transitioning.captureAnchor).not.toHaveBeenCalled();
+    });
+
     it("keeps a raw token presence probe local so inline setup draft state is not re-rendered", async () => {
         const { plugin, secretStorage } = createPluginHarness({
             initialData: {
@@ -1824,7 +1972,11 @@ describe("inline AI setup coordinator", () => {
             canAnswerNow: true,
         }));
         const prepareFromCommand = jest.fn(async () => undefined);
-        const ensureReadyForChat = jest.fn(async () => ({ decision: "use-memory" as const }));
+        const ensureReadyForChat = jest.fn(async (
+            _query?: string,
+            _signal?: AbortSignal,
+            _preparationOwnerSignal?: AbortSignal,
+        ) => ({ decision: "use-memory" as const }));
         (plugin as unknown as { memoryManager: unknown }).memoryManager = {
             getMaintenancePlan,
             prepareFromCommand,
@@ -1842,6 +1994,59 @@ describe("inline AI setup coordinator", () => {
         }).ensureMemoryReadyForChat("question")).resolves.toEqual({ decision: "answer-now" });
         expect(getMaintenancePlan).not.toHaveBeenCalled();
         expect(prepareFromCommand).not.toHaveBeenCalled();
+        expect(ensureReadyForChat).not.toHaveBeenCalled();
+    });
+
+    it("resolves a retained token for a direct Memory-search bridge after reload", async () => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+            secretStorageValues: { "pa-api-token": "sk-retained" },
+        });
+        await plugin.loadSettings();
+        const ensureReadyForChat = jest.fn(async (
+            _query?: string,
+            _signal?: AbortSignal,
+            _preparationOwnerSignal?: AbortSignal,
+        ) => ({ decision: "use-memory" as const }));
+        (plugin as unknown as { memoryManager: unknown }).memoryManager = { ensureReadyForChat };
+
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+        await expect((plugin as unknown as {
+            ensureMemoryReadyForChat(query?: string): Promise<{ decision: string }>;
+        }).ensureMemoryReadyForChat("question")).resolves.toEqual({ decision: "use-memory" });
+
+        expect(secretStorage.getSecret).toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe("present");
+        expect(ensureReadyForChat).toHaveBeenCalledWith("question", undefined, undefined);
+    });
+
+    it("keeps the direct Memory-search bridge closed during a credential transition", async () => {
+        const { plugin, secretStorage } = createPluginHarness({
+            initialData: {
+                aiProvider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                chatModelName: "gpt-4o-mini",
+                embeddingModelName: "text-embedding-3-small",
+            },
+            secretStorageValues: { "pa-api-token": "sk-retained" },
+        });
+        await plugin.loadSettings();
+        const ensureReadyForChat = jest.fn(async () => ({ decision: "use-memory" as const }));
+        (plugin as unknown as { memoryManager: unknown }).memoryManager = { ensureReadyForChat };
+        (plugin as unknown as { aiProviderCredentialTransitionCount: number })
+            .aiProviderCredentialTransitionCount = 1;
+
+        await expect((plugin as unknown as {
+            ensureMemoryReadyForChat(query?: string): Promise<{ decision: string }>;
+        }).ensureMemoryReadyForChat("question")).resolves.toEqual({ decision: "answer-now" });
+
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+        expect(plugin.getAPITokenCacheState()).toBe("unknown");
         expect(ensureReadyForChat).not.toHaveBeenCalled();
     });
 

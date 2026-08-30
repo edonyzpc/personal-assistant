@@ -2,6 +2,8 @@
 
 import type { App, EventRef, TFile } from "obsidian";
 
+import type { RetrievalOptimizationFlags } from "../ai-services/AiServiceHost";
+
 /**
  * Narrow host interface for the Memory subsystem.
  *
@@ -16,12 +18,18 @@ export interface MemoryHost {
         memoryAutoCheckBeforeChat: boolean;
         memoryApprovalPolicy: string;
         vssCacheExcludePath: string[];
+        dataBoundary?: {
+            excludedFolders: string[];
+            excludedTags: string[];
+            generatedNotePolicy: string;
+        };
         debug: boolean;
         aiProvider: string;
         chatModelName: string;
         embeddingModelName: string;
         baseURL: string;
         statisticsVaultId: string;
+        retrievalOptimizationFlags?: RetrievalOptimizationFlags;
     };
 
     /** Structured debug log (no-op when debug is false). */
@@ -46,8 +54,14 @@ export interface MemoryHost {
      */
     isVSSFileEligible(file: TFile, markdown?: string): boolean;
 
+    /** Current shared Data Boundary decision for a single vault path. */
+    isDataBoundaryAllowedPath?(path: string): boolean;
+
     /** Resolve the configured provider API token. */
     getAPIToken(): Promise<string>;
+
+    /** Effective live B-125 flags after platform support policy is applied. */
+    getRetrievalOptimizationFlags?(): Readonly<RetrievalOptimizationFlags>;
 
     /** Notify UI consumers that Memory status has changed. */
     notifyStatusChanged(): void;

@@ -9,6 +9,7 @@ import type { DeliveryCandidate } from "../bubble/types";
 import type {
     PageletAgentValidationIdentity,
     PageletAgentVerifiedInsight,
+    PageletAgentVerifiedInsightCollection,
 } from "./types";
 
 export interface PageletAgentDirectLinkAction {
@@ -40,7 +41,7 @@ export function pageletAgentInsightToDeliveryCandidate(
     const validationIdentity = freezeValidationIdentity(insight);
     const handoff = createPageletChatHandoffContext({
         version: 1,
-        id: insight.cacheIdentityHash,
+        id: insight.insightId,
         body: insight.body,
         anchor: insight.anchor,
         sources: insight.sources,
@@ -55,7 +56,7 @@ export function pageletAgentInsightToDeliveryCandidate(
         pipelineVersion: insight.cacheIdentity.pipelineVersion,
     });
     return {
-        id: insight.cacheIdentityHash,
+        id: insight.insightId,
         kind: "review",
         title,
         body: insight.body,
@@ -71,6 +72,7 @@ export function pageletAgentInsightToDeliveryCandidate(
             payloadType: "pagelet-agent-insight-v1",
         },
         deliveryReceipt: buildReviewDeliveryReceipt({
+            insightId: insight.insightId,
             locale,
             title,
             body: insight.body,
@@ -83,6 +85,15 @@ export function pageletAgentInsightToDeliveryCandidate(
             ...(directAction ? { directAction } : {}),
         }),
     };
+}
+
+export function pageletAgentCollectionToDeliveryCandidates(
+    collection: PageletAgentVerifiedInsightCollection,
+    locale: PageletLocale,
+): PageletAgentDeliveryCandidate[] {
+    return collection.insights.map((insight) => (
+        pageletAgentInsightToDeliveryCandidate(insight, locale)
+    ));
 }
 
 function buildDirectLinkAction(
@@ -98,7 +109,7 @@ function buildDirectLinkAction(
     const relatedTitle = noteTitleFromPath(related.path);
     return Object.freeze({
         kind: "link-related",
-        candidateId: insight.cacheIdentityHash,
+        candidateId: insight.insightId,
         anchorPath: insight.anchor.path,
         sourcePath: related.path,
         label: pageletT("pagelet.panel.agentInsight.link", locale, {
@@ -124,6 +135,9 @@ function freezeValidationIdentity(
         webObservations: Object.freeze(insight.webObservations.map((observation) => (
             Object.freeze({ ...observation })
         ))),
+        insightId: insight.insightId,
+        normalizedBody: insight.normalizedBody,
+        normalizedClaim: insight.normalizedClaim,
     });
 }
 
@@ -162,4 +176,3 @@ function extractInsightTitle(body: string): string {
 function truncateTitle(value: string): string {
     return value.length > 96 ? `${value.slice(0, 95).trimEnd()}…` : value;
 }
-

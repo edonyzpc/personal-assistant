@@ -33,6 +33,22 @@ export interface ToolExecutionSummary {
     stoppedBy?: "aborted" | "wall_clock_exceeded";
 }
 
+/**
+ * Host-only pre-emit seam for results whose safety depends on the complete
+ * parallel batch. A symbol key keeps the callback out of JSON/transcripts and
+ * provider payloads while still surviving the dispatcher's object-spread
+ * normalization copies.
+ */
+export const PA_AGENT_PRE_EMIT_TOOL_RESULTS = Symbol("pa-agent-pre-emit-tool-results");
+
+export type PaAgentPreEmitToolResultsFinalizer = (
+    pendingResults: readonly PaAgentToolExecutionResult[],
+) => void;
+
+type PreEmitFinalizableToolResult = PaAgentToolExecutionResult & {
+    [PA_AGENT_PRE_EMIT_TOOL_RESULTS]?: PaAgentPreEmitToolResultsFinalizer;
+};
+
 // ─── config ──────────────────────────────────────────────────────────
 
 export type EmitToolResultFn = (
@@ -134,7 +150,7 @@ export class ToolExecutionDispatcher {
             if (this.classifyControlSnapshotSkip(toolCall, controlSnapshot)) continue;
             if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) continue;
             if (projectedCount >= this.config.maxToolCalls || toolCall.parseError) continue;
-            const key = normalizeToolCallKey(toolCall);
+            const key = this.normalizeToolCallKey(toolCall);
             if (projectedSeen.has(key)) continue;
             projectedSeen.add(key);
             projectedCount += 1;
@@ -262,7 +278,7 @@ export class ToolExecutionDispatcher {
             if (skipResult) {
                 executionResult = skipResult;
             } else {
-                this.seenToolCallKeys.add(normalizeToolCallKey(toolCall));
+                this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
                 this._toolCallCount += 1;
                 executionResult = preparedToolResults.get(toolCall.id)
                     ?? await this.executeRealToolCall(turnId, turnIndex, toolCall);
@@ -310,7 +326,7 @@ export class ToolExecutionDispatcher {
                 entries.push({ toolCall, skipResult });
                 continue;
             }
-            this.seenToolCallKeys.add(normalizeToolCallKey(toolCall));
+            this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
             this._toolCallCount += 1;
             entries.push({ toolCall });
         }
@@ -328,6 +344,7 @@ export class ToolExecutionDispatcher {
                     .then((prepared) => prepared ?? this.executeRealToolCall(turnId, turnIndex, entry.toolCall)),
         );
         const results = await Promise.all(pending);
+        finalizeParallelToolResultsBeforeEmit(entries, results);
 
         let stoppedBy: "aborted" | "wall_clock_exceeded" | undefined;
         for (let i = 0; i < entries.length; i++) {
@@ -409,7 +426,7 @@ export class ToolExecutionDispatcher {
                 },
             };
         }
-        const toolCallKey = normalizeToolCallKey(toolCall);
+        const toolCallKey = this.normalizeToolCallKey(toolCall);
         if (this.seenToolCallKeys.has(toolCallKey)) {
             return {
                 outcome: "duplicate_skipped",
@@ -423,6 +440,23 @@ export class ToolExecutionDispatcher {
             };
         }
         return null;
+    }
+
+    private normalizeToolCallKey(toolCall: ParsedBufferedToolCall): string {
+        if (!toolCall.parseError) {
+            try {
+                const canonical = this.config.toolExecutor?.getCanonicalToolCallKey?.(
+                    toolCall,
+                    { userInput: this.config.userInput },
+                );
+                if (canonical) return canonical;
+            } catch {
+                // Canonicalization is an optimization over the execution-time
+                // validation gate. A broken optional seam must not execute a
+                // call under an invented key or bypass schema handling.
+            }
+        }
+        return normalizeRawToolCallKey(toolCall);
     }
 
     private classifyControlSnapshotSkip(
@@ -487,6 +521,9 @@ export class ToolExecutionDispatcher {
                 userInput: this.config.userInput,
                 toolCall,
                 signal: controller.signal,
+                ...(interrupt.outerToolDeadlineAt === undefined
+                    ? {}
+                    : { outerToolDeadlineAt: interrupt.outerToolDeadlineAt }),
             }),
         ).then(
             (result) => ({ type: "completed" as const, result }),
@@ -615,10 +652,12 @@ export class ToolExecutionDispatcher {
     private createToolInterruptPromise(controller: AbortController): {
         promise: Promise<ToolExecutionRaceResult>;
         cleanup: () => void;
+        outerToolDeadlineAt?: number;
     } {
         let settled = false;
         let toolTimeoutTimer: PlatformTimeoutHandle | undefined;
         let wallClockTimer: PlatformTimeoutHandle | undefined;
+        let outerToolDeadlineAt: number | undefined;
         let settle: (result: ToolExecutionRaceResult) => void = () => undefined;
 
         const cleanup = () => {
@@ -649,6 +688,7 @@ export class ToolExecutionDispatcher {
             }
 
             if (Number.isFinite(this.config.toolTimeoutMs) && this.config.toolTimeoutMs >= 0) {
+                outerToolDeadlineAt = this.config.now() + this.config.toolTimeoutMs;
                 toolTimeoutTimer = setPlatformTimeout(() => finish({ type: "tool_timeout" }), this.config.toolTimeoutMs);
             }
             const wallClockRemainingMs = this.config.wallClockRemainingMs();
@@ -657,7 +697,33 @@ export class ToolExecutionDispatcher {
             }
         });
 
-        return { promise, cleanup };
+        return { promise, cleanup, outerToolDeadlineAt };
+    }
+}
+
+function finalizeParallelToolResultsBeforeEmit(
+    entries: readonly ParallelToolEntry[],
+    results: readonly PaAgentToolExecutionResult[],
+): void {
+    const memoryResultIndicesByRawId = new Map<string, number[]>();
+    for (let index = 0; index < entries.length; index++) {
+        const toolCall = entries[index]?.toolCall;
+        if (toolCall?.name !== "search_memory") continue;
+        const indices = memoryResultIndicesByRawId.get(toolCall.id) ?? [];
+        indices.push(index);
+        memoryResultIndicesByRawId.set(toolCall.id, indices);
+    }
+
+    for (const indices of memoryResultIndicesByRawId.values()) {
+        if (indices.length < 2) continue;
+        const pendingResults = indices.flatMap((index) => {
+            const result = results[index];
+            return result ? [result] : [];
+        });
+        const finalizer = pendingResults
+            .map((result) => (result as PreEmitFinalizableToolResult)[PA_AGENT_PRE_EMIT_TOOL_RESULTS])
+            .find((candidate): candidate is PaAgentPreEmitToolResultsFinalizer => typeof candidate === "function");
+        finalizer?.(pendingResults);
     }
 }
 
@@ -807,7 +873,7 @@ function isPlaceholderParsedToolCall(toolCall: ParsedBufferedToolCall): boolean 
     return !toolCall.parseError && !hasMeaningfulStructuredToolInput(toolCall.input);
 }
 
-function normalizeToolCallKey(toolCall: ParsedBufferedToolCall): string {
+function normalizeRawToolCallKey(toolCall: ParsedBufferedToolCall): string {
     return `${toolCall.name}:${stableStringify(toolCall.input)}`;
 }
 

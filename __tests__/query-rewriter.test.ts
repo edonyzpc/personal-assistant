@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 import {
     rewriteQuery,
     rewriteQueryForSearch,
+    REWRITE_SYSTEM_PROMPT,
     parseKeywordQuery,
     parseRewrittenQuery,
     isShortQuery,
@@ -18,6 +19,11 @@ function makeFailingInvoker(): RewriteInvoker {
 }
 
 describe("rewriteQuery", () => {
+    it("asks the model for deterministic clause delimiters used by production clause_OR", () => {
+        expect(REWRITE_SYSTEM_PROMPT).toContain("semicolon-separated keyword phrases");
+        expect(REWRITE_SYSTEM_PROMPT).toContain("ASCII semicolon (;)");
+    });
+
     it("extracts keywords from valid JSON response", async () => {
         const invoke = makeInvoker('{"keywords":"React useMemo 性能优化"}');
         const result = await rewriteQuery("React 组件 渲染性能 怎么优化 useMemo有用吗", invoke);
@@ -158,6 +164,13 @@ describe("parseKeywordQuery", () => {
 });
 
 describe("parseRewrittenQuery", () => {
+    it("preserves the semicolon clause contract for production query planning", () => {
+        expect(parseRewrittenQuery('{"keywords":"差旅报销;电子发票","temporal":"none"}')).toEqual({
+            keywords: "差旅报销;电子发票",
+            temporal: "none",
+        });
+    });
+
     it("preserves temporal intent even when the model returns empty keywords", () => {
         expect(parseRewrittenQuery('{"keywords":"","temporal":"recent_30d"}')).toEqual({
             keywords: null,

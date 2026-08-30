@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-08-01
+Updated: 2026-08-09
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -33,12 +33,15 @@ flowchart TD
   Model["Tool-capable model stream"]
   Dispatcher["ToolExecutionDispatcher"]
   Sources["SourceStore / Context Used"]
+  Memory["MemorySearchTool\nHost-only candidates + projector"]
+  Recovery["ChatMemoryRecoveryCoordinator\nrun-scoped one-shot recovery"]
   Events["AgentEvent lifecycle"]
   History["Canonical persisted turn"]
 
   ChatView --> ChatService --> Runtime
   Runtime --> Context
   Runtime --> Registry --> Policy
+  Runtime --> Memory --> Recovery
   Registry --> Providers
   Runtime --> Loop --> Model
   Loop --> Dispatcher --> Registry
@@ -60,6 +63,8 @@ flowchart TD
 | `PolicyEngine` | Enforces platform, run kind, permission, confirmation, recoverability, and capability-kind boundaries before export/execution. |
 | `PaAgentContextManager` | Runs projection, hygiene, compaction, and budget delegates before model calls. |
 | `SourceStore` | Keeps source records and source-boundary metadata separate from answer text. |
+| `MemorySearchTool` | Owns direct/graph candidate collection, selected-model reranking, live-source checks, final allocation, and the allowlisted Memory observation. |
+| `ChatMemoryRecoveryCoordinator` | Owns one run-scoped hidden relaxed attempt, its token/deadlines/frozen plan, exact-repeat suppression, and the cumulative ≤8-document replacement observation. |
 | `ChatView` | Consumes canonical lifecycle events and persists current-turn state without duplicate legacy rendering. |
 
 ## Capability Model
@@ -90,6 +95,71 @@ Input normalization is tool-local through `prepareArguments` / `prepareAndValida
 The runtime registers Memory search and bounded Obsidian/vault read tools, including current-note context, metadata search, recent notes, outline/note/canvas inspection, snippet search, and vault tags.
 
 Core tools remain behind the same `CapabilityRegistry` and Data Boundary checks as optional providers.
+
+### Memory retrieval and projection
+
+The model-facing `search_memory` schema remains `{query}`. Retrieval modes,
+candidate lanes, graph scores, retry state, and internal IDs are Host-owned and
+cannot be selected by the model.
+
+One standard invocation follows these boundaries:
+
+1. Direct hybrid retrieval is collected first and keeps its original order.
+2. When the internal graph flag is enabled, a budgeted invocation-frozen graph
+   snapshot builds complete Local candidates plus fixed-parameter PPR Deep
+   Breadth and Convergence lanes. Excluded Markdown may contribute degree through
+   exactly one opaque bridge, but its identity/content never becomes a candidate
+   or provider payload.
+3. At most 12 unique direct and 6 graph paths enter reranking. Each graph path is
+   represented by real query-cosine chunks; lane scores and topology remain
+   Host-only.
+4. The selected reranker is the configured policy model when present, otherwise
+   the current Chat model. A valid strict response may rank all, some, or none and
+   may explicitly request more evidence. Malformed or failed output preserves the
+   bounded direct-first candidate order.
+5. A two-pass allocator emits at most 8 current documents/sources. A dedicated
+   allowlist projector serializes only those final documents plus small control
+   state; candidates, excerpts, scores, lane membership, PPR state, and retry
+   ledgers never enter the transcript.
+
+Before reranker exposure, before every later Chat/Pagelet provider request, and
+before final delivery, the Host re-reads each source and rechecks its current
+content identity, anchor, combined Data Boundary and retrieval-policy epoch. Model
+or tool binding may suspend, so once the real chain is ready the runtime repeats
+this check and rebuilds the canonical prompt immediately before the first actual
+stream request. A pre-output stream-to-invoke fallback independently repeats the
+same admission and prompt rebuild. A source that changed、became denied or cannot
+be verified is dropped fail-closed；an older serialized observation is never
+reused. The same exact materialized set feeds reranking, the rejection ledger and
+final projection.
+
+All new retrieval paths are controlled by internal default-off flags. Chat and
+Pagelet live-read the normalized flags and a policy epoch at each applicable
+admission/recovery boundary. Epoch drift aborts the flagged lane/coordinator,
+cancels graph work where present and discards late results；turning a flag off
+therefore takes effect without accepting work admitted under the older snapshot.
+The Pagelet scheduler identity also includes the normalized retrieval flags, so a
+change disposes the old scheduling/recovery instance before new work. Flag-off
+does not restore the removed legacy one-hop expansion: it keeps the direct
+retrieval path. The flags are rollout controls, not ordinary settings or model
+arguments.
+
+### Bounded miss recovery
+
+Chat recovery is Host-executed rather than a second model tool call. A standard
+valid-none result, or a valid strict partial result with
+`needsMoreEvidence=true`, may spend one atomic run token on the same query. The
+relaxed attempt reuses the frozen lexical/temporal plan and query embedding; it
+does not rewrite again or add another planning/provider call.
+
+The first attempt's current path generations and visible evidence fingerprints
+form a rejection ledger. Exact repeats are suppressed before direct and graph
+worksets; changed evidence may return only after current live materialization. If
+a non-empty first attempt cannot form a coherent ledger, recovery is not
+authorized. Both attempts share the tool/run deadline and a protected
+finalization reserve. Their current results are merged, deduplicated, and
+reprojected as one cumulative observation with at most 8 documents. Teardown,
+abort, or deadline expiry invalidates the token and discards late work.
 
 ### Builtin WebSearch
 
@@ -143,12 +213,21 @@ Current top-level constants:
 
 The 24k read-only context and 64k loop observation cap are different layers; do not collapse them into one constant.
 
+Immediately before a provider request, including a safe pre-output invoke
+fallback, the loop runs the Memory-specific revalidation hook under the same
+absolute soft/hard deadline envelope and reconstructs the prompt from the result.
+Timeout or unavailable currentness projects Memory as unavailable and preserves
+the final-answer reserve；it does not reuse an older serialized transcript
+payload.
+
 ## Source And Trust Boundaries
 
 - Memory references, Context Used, Web sources, and Skill context retain distinct origin metadata.
 - Tool observations are wrapped and treated as untrusted data, not instructions.
 - Web titles/snippets and vault content cannot alter host policy or capability permissions.
 - Source notes are not modified by retrieval, context projection, or Memory search.
+- Internal retrieval candidates, graph/lexical diagnostics, retry ledgers, and
+  Pagelet episode handles are never provider-visible or persisted as sources.
 - Full provider output is not hidden in Obsidian view state; user-confirmed visible history and curated Insight/Memory records follow their separate persistence contracts.
 
 ## Required Capability And Completion Policy
@@ -164,6 +243,29 @@ Host policy may:
 - stop on budgets, abort, or terminal error.
 
 Warnings stay structured for UI/history; they are not silently appended as answer prose.
+
+A successful Memory call with zero current documents counts as an executed
+capability, not as new evidence. The recovery coordinator may replace it with one
+cumulative current observation. Generic duplicate suppression uses canonical
+validated arguments, so aliases and whitespace cannot create an extra standard
+search.
+
+## Pagelet deep-insight recovery
+
+Pagelet has a separate run-scoped coordinator and never consumes Chat's token.
+The Pagelet model keeps the natural Markdown / exact `NO_INSIGHT` terminal
+contract. One Host-only staging capability may bind the first verified insight
+and lead to the latest eligible partial search episode; neither the query nor the
+episode handle is exposed to the model.
+
+If the first attempt is empty, or a staged partial has an eligible source
+overlap, the Host may spend one Pagelet token on the same frozen retrieval plan.
+The final result contains 0–2 source-backed insights. Every insight is
+independently live-read, boundary-checked, quality-gated, identified, cached, and
+mapped to its own delivery candidate/receipt/seen/dismiss/handoff lifecycle. The
+collection ID only makes the 1–2 item cache/run atomic; one stale or invalid
+sibling does not delete a valid insight. Zero remains quiet and writes no cache
+entry.
 
 ## Persistence And Compatibility
 

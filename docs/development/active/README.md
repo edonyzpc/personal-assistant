@@ -1,7 +1,7 @@
 # Active Development Registry
 
 Document status: Current
-Updated: 2026-08-23
+Updated: 2026-08-30
 Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governance/tooling track 索引。
 
 新 track 只登记 Work item、Feature Home 与 Tracker。执行状态唯一权威是 Tracker，本索引不复制状态、目标、日期或 task 明细。
