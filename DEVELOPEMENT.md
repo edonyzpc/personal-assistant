@@ -44,7 +44,6 @@ npm run lint
 #### 5. test
 ```sh
 mkdir -p test/.obsidian/plugins/personal-assistant/
-npm run build
 make deploy
 # open obsidian vault whose path is `test` and do the testing
 ```
