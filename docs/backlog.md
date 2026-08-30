@@ -14,6 +14,7 @@ Updated: 2026-08-30
 | B-005 | Featured Image Wan 2.7 live provider smoke | 自动化、构建、部署与既有图片渲染通过；真实生成未调用 | 仅在用户明确同意发送测试笔记内容并接受 API 成本后执行 | [Historical tracker](./archive/featured-image-model-upgrade-spec-driven-development.md) |
 | B-006 | GitHub CI 首次远端验证 | 本地 workflow 命令已验证；`actionlint`、GitHub-hosted run 与 branch protection 未验证 | 在明确授权远端操作后验证首个 CI run，并决定 required checks | [Optimization final report](./archive/repo-wide-optimization-2026-07-10-final-report.md) |
 | B-126 | First-run experience and platform robustness | Owner 于 2026-08-11 批准 silent first-use Memory 与 marker unknown fail-closed；2026-08-23 选择保留 bounded Chat inline setup 与 first-Settings focus。Fresh Custom、wizard、Test Connection、progressive build、provider/model 性能、PA Cloud 与 release timing 未获批准 | 完成 PR #378 当前 build 的 runtime/tests/docs/CI 与适用 Obsidian smoke；更宽方向继续 Discovery，不从 DEC-028/DEC-029 外推 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [DEC-028](./product/decisions/dec-028-silent-memory-auto-prepare.md), [DEC-029](./product/decisions/dec-029-inline-ai-setup-and-settings-focus.md), [Product Spec](./product/specs/pa-silent-first-use-memory-preparation-product-spec.md), [Tracker](./development/active/silent-first-use-memory-preparation/tracker.md) |
+| B-128 | PA Agent 长会话 Context Management 演进 | GitHub 项目源码、官方文档与近期 arXiv 研究已形成 Discovery 报告；尚未批准改变当前 runtime、产品行为或 Memory 边界 | 评审 [Discovery report](./development/discovery/pa-agent-context-management-research.md)，再决定是否提升为产品 Decision / Spec 与 source-verified SDD | User request 2026-08-25 |
 
 ## 已延期的产品与工程工作
 
