@@ -40,6 +40,7 @@ interface SearchHybridArgs {
         ftsQueryOverridePromise?: Promise<string | null>;
         temporalFilterPromise?: Promise<{ since?: number; until?: number } | null>;
         signal?: AbortSignal;
+        absoluteDeadlineMs?: number;
         providerRequestScope?: ReturnType<typeof createProviderRequestScope>;
         queryEmbeddingOut?: { value?: number[]; profileSignature?: string; sourceEpoch?: string };
         queryEmbeddingOverride?: { value: readonly number[]; profileSignature: string };
@@ -76,7 +77,7 @@ function makePlugin(opts: {
     rankGraphCandidates?: (...args: any[]) => Promise<any>;
     getPathEvidenceGenerations?: (
         paths: string[],
-        options?: { signal?: AbortSignal },
+        options?: { signal?: AbortSignal; absoluteDeadlineMs?: number },
     ) => Promise<any>;
     recordRetrievalDiagnostic?: (event: RetrievalDiagnosticEventInput) => void;
 }) {
@@ -122,7 +123,7 @@ function makePlugin(opts: {
             cancelGraphCandidateRank: jest.fn(),
             getPathEvidenceGenerations: jest.fn(async (
                 paths: string[],
-                options?: { signal?: AbortSignal },
+                options?: { signal?: AbortSignal; absoluteDeadlineMs?: number },
             ) => (
                 opts.getPathEvidenceGenerations?.(paths, options)
                 ?? {
@@ -1047,7 +1048,7 @@ describe("MemorySearchTool searchVss contract", () => {
 
         expect(plugin.memorySearch.getPathEvidenceGenerations).toHaveBeenCalledWith(
             [blankPath, indexedPath],
-            { signal: undefined },
+            { signal: undefined, absoluteDeadlineMs: expect.any(Number) },
         );
         expect(plugin.memorySearch.rankGraphCandidates).toHaveBeenCalledTimes(1);
         expect(plugin.memorySearch.rankGraphCandidates.mock.calls[0]?.[1]).toEqual([indexedPath]);
@@ -1102,7 +1103,7 @@ describe("MemorySearchTool searchVss contract", () => {
 
         expect(plugin.memorySearch.getPathEvidenceGenerations).toHaveBeenCalledWith(
             [dirtyPath],
-            { signal: undefined },
+            { signal: undefined, absoluteDeadlineMs: expect.any(Number) },
         );
         expect(plugin.memorySearch.rankGraphCandidates).not.toHaveBeenCalled();
         expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([seedPath]);
@@ -1146,7 +1147,7 @@ describe("MemorySearchTool searchVss contract", () => {
 
         expect(plugin.memorySearch.getPathEvidenceGenerations).toHaveBeenCalledWith(
             [graphPath],
-            { signal: undefined },
+            { signal: undefined, absoluteDeadlineMs: expect.any(Number) },
         );
         expect(plugin.memorySearch.rankGraphCandidates).not.toHaveBeenCalled();
         expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([seedPath]);
@@ -1362,6 +1363,7 @@ describe("MemorySearchTool searchVss contract", () => {
         const seedPath = "notes/seed.md";
         const highPath = "notes/high.md";
         const lowPath = "notes/low.md";
+        const mixedScoreDeadlineMs = Date.now() + 5_000;
         const graphBoundarySource = {
             getEpoch: () => "graph-epoch-1",
             resolvedLinks: new Map([[seedPath, new Set([highPath, lowPath])]]),
@@ -1414,12 +1416,19 @@ describe("MemorySearchTool searchVss contract", () => {
                     origin: "direct",
                 }],
                 queryEmbedding: { value: [0.1, 0.2], profileSignature: "profile-v1", sourceEpoch: "epoch-1" },
-            }, { runEpoch: "mixed-score", absoluteDeadlineMs: Date.now() + 5_000 }),
+            }, { runEpoch: "mixed-score", absoluteDeadlineMs: mixedScoreDeadlineMs }),
             controller.signal,
             () => tool.search("launch", controller.signal),
         );
 
         expect(plugin.memorySearch.rankGraphCandidates).toHaveBeenCalledTimes(1);
+        expect(plugin.memorySearch.searchHybrid.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+            absoluteDeadlineMs: mixedScoreDeadlineMs,
+        }));
+        expect(plugin.memorySearch.getPathEvidenceGenerations.mock.calls.length).toBeGreaterThan(0);
+        for (const call of plugin.memorySearch.getPathEvidenceGenerations.mock.calls) {
+            expect(call[1]).toEqual(expect.objectContaining({ absoluteDeadlineMs: mixedScoreDeadlineMs }));
+        }
         expect(result.candidates?.map((candidate: { path: string }) => candidate.path)).toEqual([highPath]);
     });
 

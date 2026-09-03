@@ -2915,6 +2915,11 @@ describe("SPEC-A6 data safety: profile signature compatibility", () => {
                 paths: [fileState.path],
                 maxPathsPerBatch: 64,
                 maxChunksScanned: 6_000,
+                control: {
+                    requestId: "path-evidence-1",
+                    runEpoch: "test-run",
+                    absoluteDeadlineMs: Date.now() + 10_000,
+                },
             },
         });
         const expectedGeneration = computePathEvidenceGeneration(fileState, legacyChunks);
@@ -2972,6 +2977,11 @@ describe("SPEC-A6 data safety: profile signature compatibility", () => {
                 paths: ["oversized.md"],
                 maxPathsPerBatch: 64,
                 maxChunksScanned: 1,
+                control: {
+                    requestId: "path-evidence-1",
+                    runEpoch: "test-run",
+                    absoluteDeadlineMs: Date.now() + 10_000,
+                },
             },
         });
 

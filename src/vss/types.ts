@@ -215,6 +215,14 @@ export interface RankedPathRequestControl {
     maxChunksScanned: number;
 }
 
+/** Invocation identity and wall-clock budget for one standalone evidence lookup. */
+export interface PathEvidenceGenerationRequestControl {
+    requestId: string;
+    runEpoch: string;
+    /** Absolute caller deadline shared across every local retrieval phase. */
+    absoluteDeadlineMs: number;
+}
+
 export interface RankedPathRequestResult {
     requestId: string;
     runEpoch: string;
@@ -274,6 +282,8 @@ export interface IndexedPathEvidenceGenerationResult {
 
 export interface PathEvidenceGenerationLookupOptions {
     signal?: AbortSignal;
+    /** Absolute caller deadline; never reset while crossing VSS/index/Worker queues. */
+    absoluteDeadlineMs?: number;
     maxPathsPerBatch?: number;
     /** Complete-inventory repair cap for legacy rows without a generation. */
     maxChunksScanned?: number;

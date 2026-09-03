@@ -327,6 +327,85 @@ describe('sqlite worker OPFS lifecycle', () => {
         });
     });
 
+    it('aborts a standalone legacy repair at its next checkpoint and releases the Worker queue', async () => {
+        const rows = [
+            graphRow(1, 'legacy-a.md', 0, [1, 0]),
+            graphRow(2, 'legacy-b.md', 0, [0, 1]),
+        ];
+        const generations = new Map<string, string>();
+        let workerScope!: MockWorkerScope;
+        let updateCount = 0;
+        ({ workerScope } = await setupGraphRankingWorker(rows, '7', generations, {
+            onLegacyGenerationUpdated: () => {
+                updateCount += 1;
+                if (updateCount !== 1) return;
+                dispatch(workerScope, {
+                    type: 'cancelPathEvidenceGeneration',
+                    payload: { requestId: 'path-evidence-2', runEpoch: 'run-1' },
+                });
+                dispatch(workerScope, {
+                    id: 3,
+                    type: 'getFileRecord',
+                    payload: { path: 'legacy-a.md' },
+                });
+            },
+        }));
+
+        dispatch(workerScope, pathEvidenceRequest(2, ['legacy-a.md', 'legacy-b.md']));
+        const cancelled = await waitForResponse(workerScope, 2);
+        const foreground = await waitForResponse(workerScope, 3);
+
+        expect(cancelled).toMatchObject({
+            ok: false,
+            error: { code: 'path-evidence-aborted' },
+        });
+        expect(foreground).toMatchObject({
+            ok: true,
+            result: expect.objectContaining({ path: 'legacy-a.md' }),
+        });
+        expect(updateCount).toBe(1);
+        expect(generations).toHaveProperty('size', 0);
+        const responseIds = workerScope.postMessage.mock.calls
+            .map((call) => call[0].id)
+            .filter((id) => id === 2 || id === 3);
+        expect(responseIds).toEqual([2, 3]);
+    });
+
+    it('stops a standalone legacy repair when the shared absolute deadline elapses', async () => {
+        let now = 1_000;
+        const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now);
+        try {
+            const rows = [
+                graphRow(1, 'legacy-a.md', 0, [1, 0]),
+                graphRow(2, 'legacy-b.md', 0, [0, 1]),
+            ];
+            const generations = new Map<string, string>();
+            let updateCount = 0;
+            const { workerScope } = await setupGraphRankingWorker(rows, '7', generations, {
+                onLegacyGenerationUpdated: () => {
+                    updateCount += 1;
+                    now = 1_001;
+                },
+            });
+
+            dispatch(workerScope, pathEvidenceRequest(
+                2,
+                ['legacy-a.md', 'legacy-b.md'],
+                { absoluteDeadlineMs: 1_001 },
+            ));
+            const response = await waitForResponse(workerScope, 2);
+
+            expect(response).toMatchObject({
+                ok: false,
+                error: { code: 'path-evidence-deadline' },
+            });
+            expect(updateCount).toBe(1);
+            expect(generations).toHaveProperty('size', 0);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
     it('does not repair a legacy generation when graph row preflight exceeds the request budget', async () => {
         const rows = [
             graphRow(1, 'legacy.md', 0, [1, 0]),
@@ -526,20 +605,57 @@ function graphRankRequest(
     };
 }
 
+function pathEvidenceRequest(
+    id: number,
+    paths: string[],
+    overrides: { absoluteDeadlineMs?: number } = {},
+): Extract<SqliteWorkerRequest, { type: 'getPathEvidenceGenerations' }> {
+    return {
+        id,
+        type: 'getPathEvidenceGenerations',
+        payload: {
+            paths,
+            maxPathsPerBatch: 2,
+            maxChunksScanned: 100,
+            control: {
+                requestId: `path-evidence-${id}`,
+                runEpoch: 'run-1',
+                absoluteDeadlineMs: overrides.absoluteDeadlineMs ?? Date.now() + 10_000,
+            },
+        },
+    };
+}
+
 async function setupGraphRankingWorker(
     rows: GraphMockRow[],
     initialEpoch: string,
     generations = new Map(rows.map((row) => [row.path, `generation-${row.path}`])),
+    options: { onLegacyGenerationUpdated?: (path: string) => void } = {},
 ): Promise<{
     workerScope: MockWorkerScope;
     meta: Map<string, string>;
     generations: Map<string, string>;
 }> {
     const meta = new Map<string, string>([['chunkMutationEpoch', initialEpoch]]);
+    let transactionGenerations: Map<string, string> | null = null;
     const db = {
         close: jest.fn(),
         exec: jest.fn((request: unknown) => {
-            if (typeof request === 'string') return;
+            if (typeof request === 'string') {
+                const statement = request.trim();
+                if (statement === 'BEGIN') {
+                    transactionGenerations = new Map(generations);
+                } else if (statement === 'ROLLBACK' && transactionGenerations) {
+                    generations.clear();
+                    for (const [path, generation] of transactionGenerations) {
+                        generations.set(path, generation);
+                    }
+                    transactionGenerations = null;
+                } else if (statement === 'COMMIT') {
+                    transactionGenerations = null;
+                }
+                return;
+            }
             if (!request || typeof request !== 'object' || !('sql' in request)) return;
             const query = request as {
                 sql: string;
@@ -628,12 +744,28 @@ async function setupGraphRankingWorker(
             }
             if (query.sql.includes('UPDATE vss_files') && query.sql.includes('SET evidence_generation = ?')) {
                 const [generation, path] = query.bind ?? [];
-                if (!generations.get(String(path))) generations.set(String(path), String(generation));
+                if (!generations.get(String(path))) {
+                    generations.set(String(path), String(generation));
+                    options.onLegacyGenerationUpdated?.(String(path));
+                }
                 return;
             }
             if (query.sql.includes('SELECT evidence_generation') && query.sql.includes('FROM vss_files')) {
                 const generation = generations.get(String(query.bind?.[0]));
                 if (generation) query.resultRows?.push({ evidence_generation: generation });
+                return;
+            }
+            if (query.sql.includes('content_hash AS contentHash') && query.sql.includes('FROM vss_files')) {
+                const path = String(query.bind?.[0]);
+                if (!rows.some((row) => row.path === path)) return;
+                query.resultRows?.push({
+                    path,
+                    contentHash: `content-${path}`,
+                    mtime: 100,
+                    size: 200,
+                    status: 'ready',
+                    updatedAt: 1,
+                });
                 return;
             }
             if (query.sql.trim() === 'SELECT id, embedding FROM vss_chunks') {
