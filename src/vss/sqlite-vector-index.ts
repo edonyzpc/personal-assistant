@@ -8,6 +8,7 @@ import type {
     LexicalRebuildScopeBatchResult,
     LexicalRebuildStartResult,
     IndexedPathEvidenceGenerationResult,
+    PathEvidenceGenerationRequestControl,
     PathEvidenceGenerationRef,
     RankGraphCandidatesOptions,
     RankedPathRequestControl,
@@ -73,6 +74,8 @@ export class SqliteVectorIndex implements VectorIndex {
     private disposePromise: Promise<void> | null = null;
     private readonly activeGraphRequests = new Set<string>();
     private readonly cancelledGraphRequests = new Set<string>();
+    private readonly activePathEvidenceRequests = new Set<string>();
+    private readonly cancelledPathEvidenceRequests = new Set<string>();
     private pending = new Map<number, {
         resolve: (value: unknown) => void;
         reject: (reason?: unknown) => void;
@@ -205,14 +208,164 @@ export class SqliteVectorIndex implements VectorIndex {
 
     getPathEvidenceGenerations(
         paths: string[],
+        control: PathEvidenceGenerationRequestControl,
         maxPathsPerBatch: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
         maxChunksScanned: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxChunksScanned,
+        options: { signal?: AbortSignal } = {},
     ): Promise<IndexedPathEvidenceGenerationResult> {
-        return this.enqueue(() => this.send<IndexedPathEvidenceGenerationResult>("getPathEvidenceGenerations", {
-            paths,
-            maxPathsPerBatch,
-            maxChunksScanned,
-        }));
+        const uniquePaths = [...new Set(paths.filter(Boolean))].sort(compareCodePoint);
+        assertPathEvidenceGenerationRequest(control);
+        if (options.signal?.aborted) {
+            return Promise.reject(createVectorIndexError(
+                "path-evidence-aborted",
+                "Path evidence generation lookup was aborted.",
+            ));
+        }
+        if (Date.now() >= control.absoluteDeadlineMs) {
+            return Promise.reject(createVectorIndexError(
+                "path-evidence-deadline",
+                "Path evidence generation lookup deadline elapsed before queueing.",
+            ));
+        }
+
+        const requestKey = graphRequestKey(control.requestId, control.runEpoch);
+        if (this.activePathEvidenceRequests.has(requestKey)) {
+            return Promise.reject(createVectorIndexError(
+                "path-evidence-request-duplicate",
+                "Path evidence generation request id is already active.",
+            ));
+        }
+        this.activePathEvidenceRequests.add(requestKey);
+
+        let settle: {
+            resolve: (value: IndexedPathEvidenceGenerationResult) => void;
+            reject: (reason?: unknown) => void;
+        } | null = null;
+        let callerSettled = false;
+        let deadlineTimer: ReturnType<typeof setPlatformTimeout> | undefined;
+        const settleResolve = (value: IndexedPathEvidenceGenerationResult) => {
+            if (callerSettled) return;
+            callerSettled = true;
+            settle?.resolve(value);
+        };
+        const settleReject = (reason: unknown) => {
+            if (callerSettled) return;
+            callerSettled = true;
+            settle?.reject(reason);
+        };
+        const onAbort = () => {
+            this.cancelPathEvidenceGeneration(control.requestId, control.runEpoch);
+            settleReject(createVectorIndexError(
+                "path-evidence-aborted",
+                "Path evidence generation lookup was aborted.",
+            ));
+        };
+        const onDeadline = () => {
+            this.cancelPathEvidenceGeneration(control.requestId, control.runEpoch);
+            settleReject(createVectorIndexError(
+                "path-evidence-deadline",
+                "Path evidence generation lookup exceeded its absolute deadline.",
+            ));
+        };
+        const armDeadline = () => {
+            const remainingMs = control.absoluteDeadlineMs - Date.now();
+            if (remainingMs <= 0) {
+                onDeadline();
+                return;
+            }
+            deadlineTimer = setPlatformTimeout(armDeadline, Math.min(remainingMs, 2_147_483_647));
+        };
+        options.signal?.addEventListener("abort", onAbort, { once: true });
+        armDeadline();
+
+        const queued = this.enqueue(async () => {
+            if (this.cancelledPathEvidenceRequests.has(requestKey) || options.signal?.aborted) {
+                throw createVectorIndexError("path-evidence-aborted", "Path evidence generation lookup was aborted.");
+            }
+            if (Date.now() >= control.absoluteDeadlineMs) {
+                throw createVectorIndexError(
+                    "path-evidence-deadline",
+                    "Path evidence generation lookup deadline elapsed before dispatch.",
+                );
+            }
+            const result = await this.send<IndexedPathEvidenceGenerationResult>("getPathEvidenceGenerations", {
+                paths: uniquePaths,
+                maxPathsPerBatch,
+                maxChunksScanned,
+                control,
+            }, options.signal);
+            if (this.cancelledPathEvidenceRequests.has(requestKey)) {
+                throw createVectorIndexError(
+                    Date.now() >= control.absoluteDeadlineMs ? "path-evidence-deadline" : "path-evidence-aborted",
+                    "Discarded a path evidence generation result after cancellation.",
+                );
+            }
+            if (Date.now() >= control.absoluteDeadlineMs) {
+                throw createVectorIndexError(
+                    "path-evidence-deadline",
+                    "Discarded a path evidence generation result after its deadline.",
+                );
+            }
+            return result;
+        });
+
+        const cleanup = () => {
+            options.signal?.removeEventListener("abort", onAbort);
+            if (deadlineTimer !== undefined) clearPlatformTimeout(deadlineTimer);
+            this.activePathEvidenceRequests.delete(requestKey);
+            this.cancelledPathEvidenceRequests.delete(requestKey);
+        };
+        queued.then(
+            (value) => {
+                cleanup();
+                settleResolve(value);
+            },
+            (error) => {
+                cleanup();
+                settleReject(error);
+            },
+        );
+        return new Promise<IndexedPathEvidenceGenerationResult>((resolve, reject) => {
+            settle = { resolve, reject };
+            if (callerSettled) {
+                reject(createVectorIndexError(
+                    options.signal?.aborted ? "path-evidence-aborted" : "path-evidence-deadline",
+                    "Path evidence generation lookup ended before dispatch.",
+                ));
+            }
+        });
+    }
+
+    /** Mark locally first, then post directly without entering the main data queue. */
+    cancelPathEvidenceGeneration(requestId: string, runEpoch: string): void {
+        const requestKey = graphRequestKey(requestId, runEpoch);
+        if (
+            !this.activePathEvidenceRequests.has(requestKey)
+            || this.cancelledPathEvidenceRequests.has(requestKey)
+        ) return;
+        this.cancelledPathEvidenceRequests.add(requestKey);
+        const message: SqliteWorkerControlMessage = {
+            type: "cancelPathEvidenceGeneration",
+            payload: { requestId, runEpoch },
+        };
+        const post = (worker: Worker) => {
+            if (
+                this.disposed
+                || this.worker !== worker
+                || !this.activePathEvidenceRequests.has(requestKey)
+                || !this.cancelledPathEvidenceRequests.has(requestKey)
+            ) return;
+            try {
+                worker.postMessage(message);
+            } catch {
+                // The data request will fail through the normal worker lifecycle.
+            }
+        };
+        if (this.worker) {
+            post(this.worker);
+        } else if (this.workerReady) {
+            void this.workerReady.then(post, () => undefined);
+        }
     }
 
     rankGraphCandidates(
@@ -532,6 +685,8 @@ export class SqliteVectorIndex implements VectorIndex {
         this.disposed = true;
         this.activeGraphRequests.clear();
         this.cancelledGraphRequests.clear();
+        this.activePathEvidenceRequests.clear();
+        this.cancelledPathEvidenceRequests.clear();
         const disposedError = createDisposedError();
         this.rejectPending(disposedError);
 
@@ -748,6 +903,19 @@ export function createVectorIndexError(code: string, message: string): Error {
     const error = new Error(message);
     (error as Error & { code: string }).code = code;
     return error;
+}
+
+function assertPathEvidenceGenerationRequest(control: PathEvidenceGenerationRequestControl): void {
+    if (
+        !control.requestId
+        || !control.runEpoch
+        || !Number.isFinite(control.absoluteDeadlineMs)
+    ) {
+        throw createVectorIndexError(
+            "path-evidence-control-invalid",
+            "Path evidence generation control is incomplete.",
+        );
+    }
 }
 
 function assertGraphRankRequest(

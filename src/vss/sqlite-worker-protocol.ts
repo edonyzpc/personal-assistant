@@ -8,6 +8,7 @@ import type {
     LexicalRebuildScopeBatchResult,
     LexicalRebuildStartResult,
     IndexedPathEvidenceGenerationResult,
+    PathEvidenceGenerationRequestControl,
     PathEvidenceGenerationRef,
     RankedPathRequestControl,
     RankedPathRequestResult,
@@ -65,7 +66,12 @@ export type SqliteWorkerRequest =
     | {
         id: number;
         type: "getPathEvidenceGenerations";
-        payload: { paths: string[]; maxPathsPerBatch: number; maxChunksScanned: number };
+        payload: {
+            paths: string[];
+            maxPathsPerBatch: number;
+            maxChunksScanned: number;
+            control: PathEvidenceGenerationRequestControl;
+        };
     }
     | {
         id: number;
@@ -127,10 +133,15 @@ export type SqliteWorkerRequest =
     | { id: number; type: "clusterVectors"; payload: { maxClusters: number } };
 
 /** Immediate control messages bypass the Worker's serialized data queue. */
-export type SqliteWorkerControlMessage = {
-    type: "cancelGraphRank";
-    payload: Pick<RankedPathRequestControl, "requestId" | "runEpoch">;
-};
+export type SqliteWorkerControlMessage =
+    | {
+        type: "cancelGraphRank";
+        payload: Pick<RankedPathRequestControl, "requestId" | "runEpoch">;
+    }
+    | {
+        type: "cancelPathEvidenceGeneration";
+        payload: Pick<PathEvidenceGenerationRequestControl, "requestId" | "runEpoch">;
+    };
 
 export type SqliteWorkerMessage = SqliteWorkerRequest | SqliteWorkerControlMessage;
 

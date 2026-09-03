@@ -547,6 +547,9 @@ export class MemorySearchTool {
             ftsQueryOverridePromise,
             temporalFilterPromise,
             signal,
+            ...(Number.isFinite(invocation?.absoluteDeadlineMs)
+                ? { absoluteDeadlineMs: invocation!.absoluteDeadlineMs }
+                : {}),
             queryEmbeddingOut,
             ...(invocation?.providerRequestScope
                 ? { providerRequestScope: invocation.providerRequestScope }
@@ -666,6 +669,7 @@ export class MemorySearchTool {
                 signal,
                 false,
                 lexicalPlan.temporalFilter,
+                invocation?.absoluteDeadlineMs,
             );
         } catch (error) {
             preparedReranker?.dispose();
@@ -696,7 +700,11 @@ export class MemorySearchTool {
                 // This is the last asynchronous seam before invoke. A changed
                 // source/Boundary epoch must fail closed without sending the
                 // previously sealed excerpts to the provider.
-                if (!await this.isCoherentCandidateSetStillCurrent(sealedRerankerInput, signal)) {
+                if (!await this.isCoherentCandidateSetStillCurrent(
+                    sealedRerankerInput,
+                    signal,
+                    invocation?.absoluteDeadlineMs,
+                )) {
                     safeRecordDiagnostic(record, {
                         phase: "reranker",
                         outcome: "aborted",
@@ -731,7 +739,11 @@ export class MemorySearchTool {
                 providerCallCount: preparedReranker ? 1 : 0,
             },
         });
-        if (!await this.isCoherentCandidateSetStillCurrent(sealedRerankerInput, signal)) {
+        if (!await this.isCoherentCandidateSetStillCurrent(
+            sealedRerankerInput,
+            signal,
+            invocation?.absoluteDeadlineMs,
+        )) {
             return createOperationalUnavailableResult(query, "final_source_changed", rerankOutcome);
         }
         const strictFilterEnabledAtRerank = this.isRetrievalFlagEnabled("strictReranker");
@@ -748,7 +760,11 @@ export class MemorySearchTool {
             : undefined;
         // Fingerprint generation is asynchronous. Recheck the exact sealed
         // collection once more before any ledger/final result serialization.
-        if (!await this.isCoherentCandidateSetStillCurrent(sealedRerankerInput, signal)) {
+        if (!await this.isCoherentCandidateSetStillCurrent(
+            sealedRerankerInput,
+            signal,
+            invocation?.absoluteDeadlineMs,
+        )) {
             return createOperationalUnavailableResult(query, "final_source_changed", rerankOutcome);
         }
         // A valid deterministic A1=empty miss is created before this branch.
@@ -1077,6 +1093,7 @@ export class MemorySearchTool {
         signal?: AbortSignal,
         requireSameSnapshot = false,
         temporalFilter: MemoryTemporalFilter | null = null,
+        absoluteDeadlineMs?: number,
     ): Promise<CoherentMaterializedCandidateSet | null> {
         const getBoundaryEpoch = this.host.getMemoryEvidenceEpoch;
         if (!getBoundaryEpoch || !this.host.readLatestMemorySource) return null;
@@ -1090,7 +1107,10 @@ export class MemorySearchTool {
             try {
                 const boundaryEpoch = getBoundaryEpoch.call(this.host);
                 const paths = canonicalCandidates.map((candidate) => candidate.path);
-                const before = await this.host.memorySearch.getPathEvidenceGenerations(paths, { signal });
+                const before = await this.host.memorySearch.getPathEvidenceGenerations(paths, {
+                    signal,
+                    ...(Number.isFinite(absoluteDeadlineMs) ? { absoluteDeadlineMs } : {}),
+                });
                 throwIfAborted(signal);
                 if (
                     !before.sourceEpoch
@@ -1138,7 +1158,10 @@ export class MemorySearchTool {
 
                 const after = await this.host.memorySearch.getPathEvidenceGenerations(
                     materialized.map((candidate) => candidate.path),
-                    { signal },
+                    {
+                        signal,
+                        ...(Number.isFinite(absoluteDeadlineMs) ? { absoluteDeadlineMs } : {}),
+                    },
                 );
                 throwIfAborted(signal);
                 if (
@@ -1184,13 +1207,17 @@ export class MemorySearchTool {
     private async isCoherentCandidateSetStillCurrent(
         sealed: CoherentMaterializedCandidateSet,
         signal?: AbortSignal,
+        absoluteDeadlineMs?: number,
     ): Promise<boolean> {
         const getBoundaryEpoch = this.host.getMemoryEvidenceEpoch;
         if (!getBoundaryEpoch || getBoundaryEpoch.call(this.host) !== sealed.boundaryEpoch) return false;
         try {
             const status = await this.host.memorySearch.getPathEvidenceGenerations(
                 sealed.candidates.map((candidate) => candidate.path),
-                { signal },
+                {
+                    signal,
+                    ...(Number.isFinite(absoluteDeadlineMs) ? { absoluteDeadlineMs } : {}),
+                },
             );
             throwIfAborted(signal);
             if (
@@ -1524,6 +1551,7 @@ export class MemorySearchTool {
             input.rejectedEvidence,
             input.queryEmbeddingOut.sourceEpoch,
             input.signal,
+            absoluteDeadlineMs,
         );
         if (!currentness.coherent) {
             safeRecordDiagnostic(input.record, {
@@ -1572,6 +1600,7 @@ export class MemorySearchTool {
             input.queryEmbeddingOut.sourceEpoch,
             input.temporalFilter ?? undefined,
             input.signal,
+            absoluteDeadlineMs,
         );
         if (workerPaths === null) {
             safeRecordDiagnostic(input.record, {
@@ -1872,6 +1901,7 @@ export class MemorySearchTool {
                 input.rejectedEvidence,
                 input.queryEmbeddingOut.sourceEpoch,
                 input.signal,
+                absoluteDeadlineMs,
             );
             if (
                 !rechecked.coherent
@@ -1997,11 +2027,15 @@ export class MemorySearchTool {
         expectedSourceEpoch: string,
         temporalFilter?: { since?: number; until?: number },
         signal?: AbortSignal,
+        absoluteDeadlineMs?: number,
     ): Promise<string[] | null> {
         try {
             const result = await this.host.memorySearch.getPathEvidenceGenerations(
                 [...paths],
-                { signal },
+                {
+                    signal,
+                    ...(Number.isFinite(absoluteDeadlineMs) ? { absoluteDeadlineMs } : {}),
+                },
             );
             throwIfAborted(signal);
             if (result.sourceEpoch !== expectedSourceEpoch || result.paths.length !== paths.length) {
@@ -2107,6 +2141,7 @@ export class MemorySearchTool {
         rejectedEvidence: ReadonlyMap<string, MemoryRejectedEvidence> | undefined,
         expectedSourceEpoch: string,
         signal?: AbortSignal,
+        absoluteDeadlineMs?: number,
     ): Promise<{ coherent: boolean; exactRepeatPaths: Set<string> }> {
         if (!rejectedEvidence || rejectedEvidence.size === 0) {
             return { coherent: true, exactRepeatPaths: new Set() };
@@ -2114,7 +2149,10 @@ export class MemorySearchTool {
         try {
             const result = await this.host.memorySearch.getPathEvidenceGenerations(
                 [...rejectedEvidence.keys()],
-                { signal },
+                {
+                    signal,
+                    ...(Number.isFinite(absoluteDeadlineMs) ? { absoluteDeadlineMs } : {}),
+                },
             );
             throwIfAborted(signal);
             if (result.sourceEpoch !== expectedSourceEpoch) {

@@ -19,7 +19,12 @@ import {
     type VSSRebuildRecoveryReason,
 } from './local-state-store';
 import { toError } from '../error-utils';
-import { getPlatformCrypto, getPlatformNavigatorStorage } from '../platform-dom';
+import {
+    clearPlatformTimeout,
+    getPlatformCrypto,
+    getPlatformNavigatorStorage,
+    setPlatformTimeout,
+} from '../platform-dom';
 import {
     getEmbeddingProfileSignature,
     VSS_DEFAULT_DIMENSIONS,
@@ -32,6 +37,7 @@ import {
     type LexicalSearchStatus,
     type PathEvidenceGenerationRef,
     type PathEvidenceGenerationLookupOptions,
+    type PathEvidenceGenerationRequestControl,
     type PathEvidenceGenerationStatus,
     type PathEvidenceGenerationStatusResult,
     type QueryEmbeddingInput,
@@ -2326,6 +2332,8 @@ export class VSS {
             temporalFilter?: { since?: number; until?: number };
             temporalFilterPromise?: Promise<{ since?: number; until?: number } | null>;
             signal?: AbortSignal;
+            /** Invocation-owned absolute deadline shared with standalone evidence repair. */
+            absoluteDeadlineMs?: number;
             /** Run-scoped requestUrl drain barrier for this query embedding only. */
             providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
             /** Pagelet-only wrapper that admits and immediately invokes query embedding. */
@@ -2500,6 +2508,9 @@ export class VSS {
             const safeExclusions = options?.excludeUnchangedPathGenerations?.length
                 ? (await this.getPathEvidenceGenerationStatusesUnlocked(
                     options.excludeUnchangedPathGenerations.map((entry) => entry.path),
+                    undefined,
+                    undefined,
+                    { signal, absoluteDeadlineMs: options.absoluteDeadlineMs },
                 )).paths
                     .filter((entry) => entry.current)
                     .flatMap((entry): PathEvidenceGenerationRef[] => {
@@ -2536,7 +2547,10 @@ export class VSS {
             assertInvocationIndexCurrent();
             let exclusionsStillCurrent = true;
             if (safeExclusions.length > 0) {
-                exclusionsStillCurrent = await this.arePathEvidenceExclusionsStillCurrent(safeExclusions);
+                exclusionsStillCurrent = await this.arePathEvidenceExclusionsStillCurrent(
+                    safeExclusions,
+                    { signal, absoluteDeadlineMs: options?.absoluteDeadlineMs },
+                );
                 assertInvocationIndexCurrent();
             }
             if (!exclusionsStillCurrent) {
@@ -2701,20 +2715,49 @@ export class VSS {
         paths: string[],
         options: PathEvidenceGenerationLookupOptions = {},
     ): Promise<PathEvidenceGenerationStatusResult> {
-        const signal = options.signal;
-        throwIfAborted(signal);
+        const absoluteDeadlineMs = Number.isFinite(options.absoluteDeadlineMs)
+            ? options.absoluteDeadlineMs
+            : undefined;
+        assertPathEvidenceLookupActive(options.signal, absoluteDeadlineMs);
+        const lifecycle = createPathEvidenceLookupLifecycle(options.signal, absoluteDeadlineMs);
+        try {
+            return await this.getPathEvidenceGenerationsWithinLifecycle(
+                paths,
+                options,
+                lifecycle.signal,
+                absoluteDeadlineMs,
+            );
+        } catch (error) {
+            if (lifecycle.deadlineElapsed() && !options.signal?.aborted) {
+                throw createPathEvidenceDeadlineError();
+            }
+            throw error;
+        } finally {
+            lifecycle.dispose();
+        }
+    }
+
+    private async getPathEvidenceGenerationsWithinLifecycle(
+        paths: string[],
+        options: PathEvidenceGenerationLookupOptions,
+        signal: AbortSignal | undefined,
+        absoluteDeadlineMs: number | undefined,
+    ): Promise<PathEvidenceGenerationStatusResult> {
         const uniquePaths = [...new Set(paths
             .map((path) => normalizeVaultPath(path))
             .filter((path) => path.length > 0))]
             .sort(compareCodePoint);
         if (uniquePaths.length === 0) return { sourceEpoch: "", paths: [] };
         if (this.disposed || this.closing) throw createVssDisposedError();
-        await this.initialize();
-        throwIfAborted(signal);
+        await waitForAbortablePromise(this.initialize(), signal);
+        assertPathEvidenceLookupActive(signal, absoluteDeadlineMs);
         if (this.index) {
-            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+            await waitForAbortablePromise(
+                this.ensureIndex({ allowFallback: false, mode: "foreground" }),
+                signal,
+            );
         }
-        throwIfAborted(signal);
+        assertPathEvidenceLookupActive(signal, absoluteDeadlineMs);
         if (!(this.index instanceof SqliteVectorIndex) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
             throw Object.assign(new Error("Path evidence generation requires ready local Memory."), {
                 code: "path-evidence-unavailable",
@@ -2730,8 +2773,8 @@ export class VSS {
             1,
             RETRIEVAL_CALIBRATION_PROFILE.graph.maxChunksScanned,
         );
-        return waitForAbortablePromise(this.runExclusive(async () => {
-            throwIfAborted(signal);
+        return this.runExclusive(async () => {
+            assertPathEvidenceLookupActive(signal, absoluteDeadlineMs);
             if (!(this.index instanceof SqliteVectorIndex) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
                 throw Object.assign(new Error("Path evidence generation index changed during the invocation."), {
                     code: "path-evidence-unavailable",
@@ -2741,15 +2784,18 @@ export class VSS {
                 uniquePaths,
                 maxPathsPerBatch,
                 maxChunksScanned,
+                { signal, absoluteDeadlineMs },
             );
-        }, "foreground", false, signal), signal);
+        }, "foreground", false, signal);
     }
 
     private async getPathEvidenceGenerationStatusesUnlocked(
         paths: readonly string[],
         maxPathsPerBatch: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
         maxChunksScanned: number = RETRIEVAL_CALIBRATION_PROFILE.graph.maxChunksScanned,
+        options: Pick<PathEvidenceGenerationLookupOptions, "signal" | "absoluteDeadlineMs"> = {},
     ): Promise<PathEvidenceGenerationStatusResult> {
+        assertPathEvidenceLookupActive(options.signal, options.absoluteDeadlineMs);
         if (!(this.index instanceof SqliteVectorIndex) || this.status !== "ready" || !this.hasAdmittedReadyMarker()) {
             throw Object.assign(new Error("Path evidence generation requires ready local Memory."), {
                 code: "path-evidence-unavailable",
@@ -2772,11 +2818,21 @@ export class VSS {
                 && !this.dirty.has(path)
                 && !this.verifyQueue.has(path);
         });
+        const control: PathEvidenceGenerationRequestControl = {
+            requestId: createIndexId(),
+            runEpoch: this.ownerId,
+            absoluteDeadlineMs: Number.isFinite(options.absoluteDeadlineMs)
+                ? options.absoluteDeadlineMs!
+                : Number.MAX_SAFE_INTEGER,
+        };
         const indexed = await this.index.getPathEvidenceGenerations(
             lookupPaths,
+            control,
             maxPathsPerBatch,
             maxChunksScanned,
+            { signal: options.signal },
         );
+        assertPathEvidenceLookupActive(options.signal, options.absoluteDeadlineMs);
         const indexedByPath = new Map(indexed.paths.map((entry) => [entry.path, entry]));
         const statuses: PathEvidenceGenerationStatus[] = uniquePaths.map((path) => {
             const source = sourceByPath.get(path);
@@ -2806,6 +2862,7 @@ export class VSS {
 
     private async arePathEvidenceExclusionsStillCurrent(
         exclusions: readonly PathEvidenceGenerationRef[],
+        options: Pick<PathEvidenceGenerationLookupOptions, "signal" | "absoluteDeadlineMs"> = {},
     ): Promise<boolean> {
         const statuses = await this.getPathEvidenceGenerationStatusesUnlocked(
             exclusions.map((entry) => entry.path),
@@ -2813,6 +2870,8 @@ export class VSS {
                 RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch,
                 Math.max(1, exclusions.length),
             ),
+            undefined,
+            options,
         );
         const requested = new Map(exclusions.map((entry) => [entry.path, entry.generation]));
         return statuses.paths.length === requested.size
@@ -4902,6 +4961,63 @@ function createIndexId(): string {
         return cryptoApi.randomUUID();
     }
     return `vss-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function assertPathEvidenceLookupActive(
+    signal?: AbortSignal,
+    absoluteDeadlineMs?: number,
+): void {
+    throwIfAborted(signal);
+    if (Number.isFinite(absoluteDeadlineMs) && Date.now() >= absoluteDeadlineMs!) {
+        throw createPathEvidenceDeadlineError();
+    }
+}
+
+function createPathEvidenceLookupLifecycle(
+    callerSignal?: AbortSignal,
+    absoluteDeadlineMs?: number,
+): {
+    signal: AbortSignal | undefined;
+    deadlineElapsed: () => boolean;
+    dispose: () => void;
+} {
+    if (!Number.isFinite(absoluteDeadlineMs)) {
+        return {
+            signal: callerSignal,
+            deadlineElapsed: () => false,
+            dispose: () => undefined,
+        };
+    }
+    const controller = new AbortController();
+    let elapsed = false;
+    let timer: ReturnType<typeof setPlatformTimeout> | undefined;
+    const onCallerAbort = () => controller.abort();
+    const armDeadline = () => {
+        const remainingMs = absoluteDeadlineMs! - Date.now();
+        if (remainingMs <= 0) {
+            elapsed = true;
+            controller.abort();
+            return;
+        }
+        timer = setPlatformTimeout(armDeadline, Math.min(remainingMs, 2_147_483_647));
+    };
+    callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+    if (callerSignal?.aborted) onCallerAbort();
+    armDeadline();
+    return {
+        signal: controller.signal,
+        deadlineElapsed: () => elapsed,
+        dispose: () => {
+            callerSignal?.removeEventListener("abort", onCallerAbort);
+            if (timer !== undefined) clearPlatformTimeout(timer);
+        },
+    };
+}
+
+function createPathEvidenceDeadlineError(): Error {
+    return Object.assign(new Error("Path evidence generation lookup exceeded its absolute deadline."), {
+        code: "path-evidence-deadline",
+    });
 }
 
 function createVssDisposedError(): Error {

@@ -129,6 +129,10 @@ Current storage/search behavior:
   message outside the data queue；each continuation yields via a posted-message
   task, checks cancellation/deadline/source epoch before another batch and
   discards every partial or late result.
+- Standalone path-evidence lookup carries the same invocation-owned absolute
+  deadline through VSS, the index proxy and the Worker. Legacy empty-generation
+  repair yields between bounded batches；abort or deadline control rolls back the
+  repair transaction before the serialized Worker queue admits later work.
 - Current runtime does not load `sqlite-vector`, call `vector_init`, or call `vector_full_scan`.
 - Current runtime does not provide ANN; exact worker-side scan remains the default.
 
@@ -238,8 +242,9 @@ Three layers coordinate mutation:
 Lexical shadow rebuild deliberately releases the first two queues after each
 bounded batch. Foreground vector reads therefore wait for at most the current
 maintenance batch, not the whole rebuild. Worker cancellation is a separate
-control message; posted-message continuations let an already queued cancel update
-the registry before another graph batch starts.
+control message for graph ranking and standalone path-evidence repair；
+posted-message continuations let an already queued cancel update the request
+registry before another bounded batch starts.
 
 The lexical rollout flag is read again before every shadow batch and before the
 atomic finalize. Turning it off aborts the in-flight rebuild, removes only its

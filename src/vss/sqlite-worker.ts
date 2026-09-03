@@ -20,6 +20,7 @@ import {
     type LexicalRebuildStartResult,
     type IndexedPathEvidenceGeneration,
     type IndexedPathEvidenceGenerationResult,
+    type PathEvidenceGenerationRequestControl,
     type PathEvidenceGenerationRef,
     type RankedPathChunk,
     type RankedPathRequestControl,
@@ -132,6 +133,8 @@ let lexicalProfileEnabled = false;
 let activeLexicalBoundaryFingerprint: string | undefined;
 const pendingGraphRequests = new Set<string>();
 const cancelledGraphRequests = new Set<string>();
+const pendingPathEvidenceRequests = new Set<string>();
+const cancelledPathEvidenceRequests = new Set<string>();
 
 const GRAPH_RANK_HARD_MAX_PATHS = RETRIEVAL_CALIBRATION_PROFILE.graph.maxCandidatePaths;
 const GRAPH_RANK_HARD_MAX_PATHS_PER_BATCH = RETRIEVAL_CALIBRATION_PROFILE.graph.maxPathsPerBatch;
@@ -208,6 +211,11 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 ctx.onmessage = (event: MessageEvent<SqliteWorkerMessage>) => {
     const request = event.data;
+    if (request.type === "cancelPathEvidenceGeneration") {
+        const key = graphRequestKey(request.payload.requestId, request.payload.runEpoch);
+        if (pendingPathEvidenceRequests.has(key)) cancelledPathEvidenceRequests.add(key);
+        return;
+    }
     if (request.type === "cancelGraphRank") {
         const key = graphRequestKey(request.payload.requestId, request.payload.runEpoch);
         if (pendingGraphRequests.has(key)) cancelledGraphRequests.add(key);
@@ -227,6 +235,21 @@ ctx.onmessage = (event: MessageEvent<SqliteWorkerMessage>) => {
             return;
         }
         pendingGraphRequests.add(key);
+    }
+    if (request.type === "getPathEvidenceGenerations") {
+        const key = graphRequestKey(request.payload.control.requestId, request.payload.control.runEpoch);
+        if (pendingPathEvidenceRequests.has(key)) {
+            ctx.postMessage({
+                id: request.id,
+                ok: false,
+                error: {
+                    code: "path-evidence-request-duplicate",
+                    message: "Path evidence generation request id is already active.",
+                },
+            } as SqliteWorkerResponse);
+            return;
+        }
+        pendingPathEvidenceRequests.add(key);
     }
     requestQueue = requestQueue.then(
         () => handleAndPostRequest(request),
@@ -254,6 +277,11 @@ async function handleAndPostRequest(request: SqliteWorkerRequest): Promise<void>
             const key = graphRequestKey(request.payload.control.requestId, request.payload.control.runEpoch);
             pendingGraphRequests.delete(key);
             cancelledGraphRequests.delete(key);
+        }
+        if (request.type === "getPathEvidenceGenerations") {
+            const key = graphRequestKey(request.payload.control.requestId, request.payload.control.runEpoch);
+            pendingPathEvidenceRequests.delete(key);
+            cancelledPathEvidenceRequests.delete(key);
         }
     }
 }
@@ -309,10 +337,20 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
             );
         case "getPathEvidenceGenerations":
             requireDb();
+            validatePathEvidenceGenerationControl(request.payload.control);
             return await getPathEvidenceGenerations(
                 request.payload.paths,
                 request.payload.maxPathsPerBatch,
                 request.payload.maxChunksScanned,
+                {
+                    checkpoint: () => checkPathEvidenceGenerationCheckpoint(
+                        graphRequestKey(
+                            request.payload.control.requestId,
+                            request.payload.control.runEpoch,
+                        ),
+                        request.payload.control,
+                    ),
+                },
             );
         case "rankGraphCandidates":
             requireDb();
@@ -2313,7 +2351,9 @@ function listFileRecords(): VSSFileRecord[] {
 function computeStoredPathEvidenceGeneration(
     fileState: VSSFileState,
     expectedChunkCount?: number,
+    checkpoint?: () => void,
 ): string {
+    checkpoint?.();
     const rows: Array<Record<string, unknown>> = [];
     requireDb().exec({
         sql: `
@@ -2335,6 +2375,7 @@ function computeStoredPathEvidenceGeneration(
     }
     const seenChunkIndexes = new Set<number>();
     const chunks: VSSChunk[] = rows.map((row) => {
+        checkpoint?.();
         const path = primitiveString(row.path);
         const chunkIndex = Number(row.chunk_index);
         if (
@@ -2359,6 +2400,7 @@ function computeStoredPathEvidenceGeneration(
             metadata: parseMetadata(row.metadata),
         };
     });
+    checkpoint?.();
     return computePathEvidenceGeneration(fileState, chunks);
 }
 
@@ -2551,6 +2593,7 @@ async function getPathEvidenceGenerations(
                     size: row.size,
                 },
                 expectedChunkCounts.get(row.path),
+                hooks.checkpoint,
             );
             if (!generation) {
                 throw createWorkerError("path-evidence-inventory-unavailable", "Path evidence inventory is unavailable.");
@@ -2571,10 +2614,12 @@ async function getPathEvidenceGenerations(
             row.generation = generation;
             await finishPathEvidenceBatch(hooks, batchStartedAt);
         }
+        hooks.checkpoint?.();
         if (String(getChunkMutationEpoch()) !== sourceEpoch) {
             throw createWorkerError("path-evidence-source-changed", "Path evidence inventory changed during repair.");
         }
         for (const row of missingRows) {
+            hooks.checkpoint?.();
             const verificationRows: Array<Record<string, unknown>> = [];
             database.exec({
                 sql: `
@@ -2593,6 +2638,7 @@ async function getPathEvidenceGenerations(
                 throw createWorkerError("path-evidence-repair-conflict", "Path evidence generation changed during repair.");
             }
         }
+        hooks.checkpoint?.();
         advanceIndexMutationEpoch();
         database.exec("COMMIT");
     } catch (error) {
@@ -2970,6 +3016,34 @@ function validateGraphRankControl(
         || !Number.isFinite(control.absoluteDeadlineMs)
     ) {
         throw createWorkerError("graph-rank-budget-invalid", "Graph candidate ranking request exceeds hard bounds.");
+    }
+}
+
+function validatePathEvidenceGenerationControl(control: PathEvidenceGenerationRequestControl): void {
+    if (
+        !control.requestId
+        || !control.runEpoch
+        || !Number.isFinite(control.absoluteDeadlineMs)
+    ) {
+        throw createWorkerError(
+            "path-evidence-control-invalid",
+            "Path evidence generation control is incomplete.",
+        );
+    }
+}
+
+function checkPathEvidenceGenerationCheckpoint(
+    requestKey: string,
+    control: PathEvidenceGenerationRequestControl,
+): void {
+    if (Date.now() >= control.absoluteDeadlineMs) {
+        throw createWorkerError(
+            "path-evidence-deadline",
+            "Path evidence generation lookup exceeded its absolute deadline.",
+        );
+    }
+    if (cancelledPathEvidenceRequests.has(requestKey)) {
+        throw createWorkerError("path-evidence-aborted", "Path evidence generation lookup was cancelled.");
     }
 }
 
@@ -3484,6 +3558,8 @@ function reset(): void {
             vectorCache = null;
             pendingGraphRequests.clear();
             cancelledGraphRequests.clear();
+            pendingPathEvidenceRequests.clear();
+            cancelledPathEvidenceRequests.clear();
             lexicalRebuildContext = null;
             lexicalProfileMarker = null;
             lexicalProfileState = "failed";
@@ -3530,6 +3606,8 @@ function dispose(): void {
     vectorCache = null;
     pendingGraphRequests.clear();
     cancelledGraphRequests.clear();
+    pendingPathEvidenceRequests.clear();
+    cancelledPathEvidenceRequests.clear();
     lexicalRebuildContext = null;
     lexicalProfileMarker = null;
     lexicalProfileState = "unavailable";

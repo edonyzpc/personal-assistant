@@ -4219,8 +4219,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
             getPathEvidenceGenerations: jest.Mock<
                 (
                     paths: string[],
+                    control: { requestId: string; runEpoch: string; absoluteDeadlineMs: number },
                     maxPathsPerBatch?: number,
                     maxChunksScanned?: number,
+                    options?: { signal?: AbortSignal },
                 ) => Promise<IndexedPathEvidenceGenerationResult>
             >;
         };
@@ -4241,7 +4243,12 @@ describe('VSS SQLite/WASM lifecycle', () => {
         (vss as any).dirty.set('dirty.md', { first: 1, last: 1, epoch: 1 }); // eslint-disable-line @typescript-eslint/no-explicit-any
         (vss as any).verifyQueue.set('verify.md', { path: 'verify.md' }); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-        const result = await vss.getPathEvidenceGenerations([...files.keys()]);
+        const controller = new AbortController();
+        const absoluteDeadlineMs = Date.now() + 5_000;
+        const result = await vss.getPathEvidenceGenerations([...files.keys()], {
+            signal: controller.signal,
+            absoluteDeadlineMs,
+        });
         expect(result.sourceEpoch).toBe('9');
         expect(Object.fromEntries(result.paths.map((entry) => [entry.path, entry.reason]))).toEqual({
             'blocked.md': 'boundary_denied',
@@ -4258,9 +4265,53 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(result.paths.filter((entry) => entry.path !== 'current.md').every((entry) => !entry.current)).toBe(true);
         expect(index.getPathEvidenceGenerations).toHaveBeenCalledWith(
             ['current.md', 'mismatch.md', 'unknown.md'],
+            expect.objectContaining({
+                requestId: expect.any(String),
+                runEpoch: expect.any(String),
+                absoluteDeadlineMs,
+            }),
             64,
             6_000,
+            { signal: expect.anything() },
         );
+    });
+
+    it('expires a path evidence lookup while it is still waiting for the VSS exclusive queue', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-08-11T03:00:00.000Z'));
+        let releaseBlocker: (() => void) | undefined;
+        try {
+            const file = createTFile('current.md', { mtime: 10, size: 20 });
+            const { plugin, mockVault } = createPlugin();
+            mockVault.getAbstractFileByPath.mockReturnValue(file);
+            const vss = new VSS(plugin, 'cache');
+            const index = new FakeVectorIndex() as FakeVectorIndex & {
+                getPathEvidenceGenerations: jest.Mock<() => Promise<IndexedPathEvidenceGenerationResult>>;
+            };
+            index.getPathEvidenceGenerations = jest.fn(async () => ({ sourceEpoch: '9', paths: [] }));
+            Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
+            attachReadyIndex(vss, index);
+
+            const blocker = (vss as any).runExclusive( // eslint-disable-line @typescript-eslint/no-explicit-any
+                () => new Promise<void>((resolve) => { releaseBlocker = resolve; }),
+                'foreground',
+            ) as Promise<void>;
+            const deadlineAt = Date.now() + 25;
+            const lookup = vss.getPathEvidenceGenerations([file.path], {
+                absoluteDeadlineMs: deadlineAt,
+            });
+            const rejection = expect(lookup).rejects.toMatchObject({ code: 'path-evidence-deadline' });
+
+            await jest.advanceTimersByTimeAsync(25);
+            await rejection;
+            expect(index.getPathEvidenceGenerations).not.toHaveBeenCalled();
+
+            releaseBlocker?.();
+            await blocker;
+        } finally {
+            releaseBlocker?.();
+            jest.useRealTimers();
+        }
     });
 
     it('runs the diagnostics-only incremental lexical seam from a known-current indexed path without Markdown or providers', async () => {

@@ -72,6 +72,28 @@ async function waitForPostMessage(worker: MockWorker): Promise<void> {
     throw new Error('Worker postMessage was not called.');
 }
 
+async function waitForMockCalls(
+    mockFn: { mock: { calls: unknown[][] } },
+    expectedCount: number,
+): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (mockFn.mock.calls.length >= expectedCount) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error(`Mock was not called ${expectedCount} times.`);
+}
+
+async function waitForWorkerControl(
+    worker: MockWorker,
+    type: 'cancelGraphRank' | 'cancelPathEvidenceGeneration',
+): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (worker.postMessage.mock.calls.some((call) => call[0].type === type)) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error(`Worker control ${type} was not posted.`);
+}
+
 describe('SqliteVectorIndex worker recovery', () => {
     afterEach(() => {
         if (originalWorker) {
@@ -533,6 +555,119 @@ describe('SqliteVectorIndex worker recovery', () => {
         }));
     });
 
+    it('cancels a dispatched legacy evidence repair and releases the queue for the next foreground lookup', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(false);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+        const controller = new AbortController();
+        const control = pathEvidenceControl('legacy-repair');
+        const lookup = index.getPathEvidenceGenerations(
+            ['legacy.md'],
+            control,
+            1,
+            100,
+            { signal: controller.signal },
+        );
+        const request = await waitForWorkerRequest(worker, 'getPathEvidenceGenerations');
+        const foreground = index.getFileRecord('foreground.md');
+
+        controller.abort();
+        await expect(lookup).rejects.toMatchObject({ code: 'path-evidence-aborted' });
+        expect(worker.postMessage.mock.calls.map((call) => call[0])).toContainEqual({
+            type: 'cancelPathEvidenceGeneration',
+            payload: { requestId: control.requestId, runEpoch: control.runEpoch },
+        });
+        expect(worker.postMessage.mock.calls.map((call) => call[0])).not.toContainEqual(
+            expect.objectContaining({ type: 'getFileRecord' }),
+        );
+
+        worker.failRequest(request.id, 'path-evidence-aborted');
+        const foregroundRequest = await waitForWorkerRequest(worker, 'getFileRecord', request.id);
+        worker.succeedRequest(foregroundRequest.id, null);
+        await expect(foreground).resolves.toBeNull();
+        expect(pathEvidenceRegistrySizes(index)).toEqual({ active: 0, cancelled: 0 });
+    });
+
+    it('does not dispatch evidence repair after abort during replacement Worker initialization', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const firstWorker = new MockWorker(false);
+        firstWorker.postMessage = jest.fn((request: SqliteWorkerMessage) => {
+            if (!("id" in request) || request.type !== 'initialize') return;
+            queueMicrotask(() => firstWorker.succeedRequest(request.id, { status: 'ready' }));
+        }) as typeof firstWorker.postMessage;
+        const replacementWorker = new MockWorker(false);
+        let resolveReplacement: (worker: Worker) => void = () => undefined;
+        const replacementReady = new Promise<Worker>((resolve) => {
+            resolveReplacement = resolve;
+        });
+        const workerFactory = jest.fn<(url: string) => Worker | Promise<Worker>>()
+            .mockImplementationOnce(() => firstWorker as unknown as Worker)
+            .mockImplementationOnce(() => replacementReady);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory,
+        });
+        await index.initialize({
+            provider: 'openai',
+            baseURL: '',
+            model: 'model',
+            dimensions: 2,
+            distanceMetric: 'COSINE',
+        });
+
+        const failedStats = index.getStats();
+        await waitForWorkerRequest(firstWorker, 'getStats');
+        firstWorker.fail('replacement required');
+        await expect(failedStats).rejects.toThrow('replacement required');
+
+        const controller = new AbortController();
+        const control = pathEvidenceControl('replacement-init-abort');
+        const lookup = index.getPathEvidenceGenerations(
+            ['legacy.md'],
+            control,
+            1,
+            100,
+            { signal: controller.signal },
+        );
+        await waitForMockCalls(workerFactory, 2);
+        controller.abort();
+        await expect(lookup).rejects.toMatchObject({ code: 'path-evidence-aborted' });
+
+        const foreground = index.getFileRecord('foreground.md');
+        resolveReplacement(replacementWorker as unknown as Worker);
+        const replacementInitialize = await waitForWorkerRequest(replacementWorker, 'initialize');
+        await waitForWorkerControl(replacementWorker, 'cancelPathEvidenceGeneration');
+        expect(replacementWorker.postMessage.mock.calls.map((call) => call[0])).toContainEqual({
+            type: 'cancelPathEvidenceGeneration',
+            payload: { requestId: control.requestId, runEpoch: control.runEpoch },
+        });
+        replacementWorker.succeedRequest(replacementInitialize.id, { status: 'ready' });
+        const foregroundRequest = await waitForWorkerRequest(
+            replacementWorker,
+            'getFileRecord',
+            replacementInitialize.id,
+        );
+        replacementWorker.succeedRequest(foregroundRequest.id, null);
+        await expect(foreground).resolves.toBeNull();
+        await waitForPathEvidenceRegistriesEmpty(index);
+
+        expect(replacementWorker.postMessage.mock.calls
+            .map((call) => call[0])
+            .filter((message) => 'id' in message && message.type === 'getPathEvidenceGenerations'))
+            .toEqual([]);
+        expect(pathEvidenceRegistrySizes(index)).toEqual({ active: 0, cancelled: 0 });
+        expect(workerFactory).toHaveBeenCalledTimes(2);
+    });
+
     it('posts graph cancellation immediately even while the data queue is blocked', async () => {
         Object.defineProperty(globalThis, 'Worker', {
             configurable: true,
@@ -791,6 +926,14 @@ function graphControl(requestId: string) {
     };
 }
 
+function pathEvidenceControl(requestId: string) {
+    return {
+        requestId,
+        runEpoch: 'path-evidence-run',
+        absoluteDeadlineMs: Date.now() + 10_000,
+    };
+}
+
 function graphResult(control: ReturnType<typeof graphControl>, paths: string[]) {
     return {
         requestId: control.requestId,
@@ -851,4 +994,24 @@ async function waitForGraphRegistriesEmpty(index: SqliteVectorIndex): Promise<vo
         await new Promise((resolve) => setTimeout(resolve, 0));
     }
     throw new Error('Graph request registries did not drain.');
+}
+
+function pathEvidenceRegistrySizes(index: SqliteVectorIndex): { active: number; cancelled: number } {
+    const internal = index as unknown as {
+        activePathEvidenceRequests: Set<string>;
+        cancelledPathEvidenceRequests: Set<string>;
+    };
+    return {
+        active: internal.activePathEvidenceRequests.size,
+        cancelled: internal.cancelledPathEvidenceRequests.size,
+    };
+}
+
+async function waitForPathEvidenceRegistriesEmpty(index: SqliteVectorIndex): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const sizes = pathEvidenceRegistrySizes(index);
+        if (sizes.active === 0 && sizes.cancelled === 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error('Path evidence request registries did not drain.');
 }
