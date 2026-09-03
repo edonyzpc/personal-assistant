@@ -5542,6 +5542,39 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
     });
 
+    it('shows unavailable Memory as status-only context instead of citation-eligible context', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'memory unavailable prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            contextUsed: [{
+                category: 'memory',
+                label: 'Selected Memory',
+                detail: '0 selected notes',
+                sources: [],
+                citationEligible: false,
+                statusOnly: true,
+            }],
+        });
+        streamCalls[0].onChunk('Memory from notes was unavailable.');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const text = allText(containerEl);
+        expect(text).toContain('Context Used');
+        expect(text).toContain('Selected Memory');
+        expect(text).toContain('0 selected notes');
+        expect(text).toContain('Status only');
+        expect(text).not.toContain('Eligible for Memory references');
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+    });
+
     it('opens the exact Saved understanding Settings target from Context Used', async () => {
         const { view, containerEl, plugin } = createView();
         await view.onOpen();

@@ -1072,14 +1072,16 @@ function createMemoryContextUsed(result: ChatToolResult<unknown>): ChatContextUs
     const memory = isSearchMemoryResult(result.content) ? result.content : undefined;
     const sources = dedupeSources(result.sources);
     const sourceCount = sources.length;
+    const citationEligible = sourceCount > 0
+        && (memory?.memoryEvidenceState === "evidence" || memory?.memoryEvidenceState === "partial");
     return {
         category: "memory",
         label: "Selected Memory",
         detail: memory?.skipReason
             ?? (sourceCount === 1 ? "1 selected note" : `${sourceCount} selected notes`),
         sources,
-        citationEligible: true,
-        ...(sourceCount === 0 ? { statusOnly: true } : {}),
+        citationEligible,
+        ...(citationEligible ? {} : { statusOnly: true }),
     };
 }
 
