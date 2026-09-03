@@ -768,7 +768,10 @@ export function chatToolResultToPaAgentToolExecutionResult(
             ...(result.unavailableReason
                 ? { unavailableReason: result.unavailableReason }
                 : {}),
-            ...getToolResultControlMetadata(result),
+            // Trust-sensitive evidence metadata comes from the same fail-closed
+            // projection serialized for the Provider. The helper may retain
+            // only safe raw candidate aggregates for valid same-source follow-up.
+            ...getToolResultControlMetadata(providerResult, result),
         },
     };
 }
@@ -777,19 +780,13 @@ function projectToolResultForProvider(result: ChatToolResult<unknown>): ChatTool
     if (result.tool !== "search_memory" || !result.ok) {
         return result;
     }
-    if (!isSearchMemoryResult(result.content)) {
-        const observation: MemorySearchObservation = {
-            query: result.inputSummary,
-            documents: [],
-            sources: [],
-            hasAnswerableContent: false,
-            memoryEvidenceState: "unavailable",
-            rerankVerdict: "relevant",
-            retrievalGuidance: "Memory evidence is currently unavailable; do not infer note content.",
-        };
+    if (
+        !isSearchMemoryResult(result.content)
+        || result.content.query.trim() !== result.inputSummary.trim()
+    ) {
         return {
             ...result,
-            content: observation,
+            content: createUnavailableMemoryObservation(result.inputSummary),
             sources: [],
             sourceRecords: [],
         };
@@ -804,17 +801,18 @@ function projectToolResultForProvider(result: ChatToolResult<unknown>): ChatTool
 }
 
 export function projectMemorySearchObservation(result: MemorySearchResult): MemorySearchObservation {
-    const documents = projectMemoryDocuments(result.documents);
+    const projection = projectMemoryDocumentsWithIntegrity(result.documents);
+    const memoryEvidenceState = projection.lostEvidence
+        ? null
+        : deriveCoherentMemoryEvidenceState(result, projection.documents.length > 0);
+    if (!memoryEvidenceState) {
+        return createUnavailableMemoryObservation(result.query);
+    }
+    const documents = projection.documents;
     const sources = sourcesFromProjectedDocuments(documents);
     const hasAnswerableContent = documents.length > 0;
-    const memoryEvidenceState = hasAnswerableContent
-        ? result.memoryEvidenceState === "partial" ? "partial" : "evidence"
-        : result.memoryEvidenceState === "unavailable" ? "unavailable" : "none";
-    const rerankVerdict = result.rerankVerdict === "partially_relevant"
-        || result.rerankVerdict === "none_relevant"
-        || result.rerankVerdict === "relevant"
-        ? result.rerankVerdict
-        : hasAnswerableContent ? "relevant" : "none_relevant";
+    const rerankVerdict = result.rerankVerdict
+        ?? defaultRerankVerdict(memoryEvidenceState);
     const retrievalGuidance = typeof result.retrievalGuidance === "string"
         ? truncate(result.retrievalGuidance.trim(), 500)
         : "";
@@ -829,24 +827,105 @@ export function projectMemorySearchObservation(result: MemorySearchResult): Memo
     };
 }
 
+function deriveCoherentMemoryEvidenceState(
+    result: MemorySearchResult,
+    hasProjectedDocuments: boolean,
+): MemorySearchObservation["memoryEvidenceState"] | null {
+    if (
+        !result.query.trim()
+        || typeof result.usedMemory !== "boolean"
+        || (
+            result.hasAnswerableContent !== undefined
+            && typeof result.hasAnswerableContent !== "boolean"
+        )
+    ) return null;
+
+    if (hasProjectedDocuments) {
+        if (
+            !result.usedMemory
+            || result.hasAnswerableContent === false
+            || result.memoryEvidenceState === "none"
+            || result.memoryEvidenceState === "unavailable"
+        ) return null;
+        const evidenceState = result.memoryEvidenceState
+            ?? (result.rerankVerdict === "partially_relevant" ? "partial" : "evidence");
+        return result.rerankVerdict !== undefined
+            && result.rerankVerdict !== defaultRerankVerdict(evidenceState)
+            ? null
+            : evidenceState;
+    }
+    if (
+        result.usedMemory
+        || result.hasAnswerableContent === true
+        || result.memoryEvidenceState === "evidence"
+        || result.memoryEvidenceState === "partial"
+    ) return null;
+    if (result.memoryEvidenceState === "unavailable") {
+        return result.rerankVerdict === "partially_relevant" ? null : "unavailable";
+    }
+    return result.rerankVerdict !== undefined && result.rerankVerdict !== "none_relevant"
+        ? null
+        : "none";
+}
+
+function defaultRerankVerdict(
+    state: MemorySearchObservation["memoryEvidenceState"],
+): MemorySearchObservation["rerankVerdict"] {
+    if (state === "partial") return "partially_relevant";
+    if (state === "none") return "none_relevant";
+    return "relevant";
+}
+
+function createUnavailableMemoryObservation(query: string): MemorySearchObservation {
+    return {
+        query,
+        documents: [],
+        sources: [],
+        hasAnswerableContent: false,
+        memoryEvidenceState: "unavailable",
+        rerankVerdict: "relevant",
+        retrievalGuidance: "Memory evidence is currently unavailable; do not infer note content.",
+    };
+}
+
 function projectMemoryDocuments(documents: readonly MemorySearchDocument[]): MemorySearchDocument[] {
+    return projectMemoryDocumentsWithIntegrity(documents).documents;
+}
+
+function projectMemoryDocumentsWithIntegrity(
+    documents: readonly MemorySearchDocument[],
+): { documents: MemorySearchDocument[]; lostEvidence: boolean } {
     const projected: MemorySearchDocument[] = [];
     const seen = new Set<string>();
+    let lostEvidence = false;
     for (const document of documents) {
-        if (projected.length >= 8) break;
-        if (typeof document?.content !== "string") continue;
+        if (
+            typeof document?.content !== "string"
+            || !document.content.trim()
+            || !Number.isFinite(document.score)
+        ) {
+            lostEvidence = true;
+            continue;
+        }
         const source = projectMemorySource(document.source, document.score);
-        if (!source) continue;
+        if (!source) {
+            lostEvidence = true;
+            continue;
+        }
         const key = memorySourceKey(source);
-        if (seen.has(key)) continue;
+        if (seen.has(key)) {
+            lostEvidence = true;
+            continue;
+        }
         seen.add(key);
+        if (projected.length >= 8) continue;
         projected.push({
             content: document.content,
-            score: Number.isFinite(document.score) ? document.score : source.score ?? 0,
+            score: document.score,
             source,
         });
     }
-    return projected;
+    return { documents: projected, lostEvidence };
 }
 
 function projectMemorySource(source: ChatAgentSource, fallbackScore: number): ChatAgentSource | null {
@@ -919,14 +998,33 @@ function normalizeMemoryObservationPath(path: unknown): string | null {
     return normalized;
 }
 
-function getToolResultControlMetadata(result: ChatToolResult<unknown>): Record<string, unknown> {
+function getToolResultControlMetadata(
+    result: ChatToolResult<unknown>,
+    rawResult: ChatToolResult<unknown>,
+): Record<string, unknown> {
     if (result.tool !== "search_memory" || !isSearchMemoryResult(result.content)) return {};
     const memory = result.content;
+    const rawMemory = rawResult.tool === "search_memory" && isSearchMemoryResult(rawResult.content)
+        ? rawResult.content
+        : undefined;
     const documentCount = memory.documents.length;
-    const candidateCount = memory.candidates?.length ?? 0;
+    // Candidate excerpts are intentionally absent from the Provider projection.
+    // Retain only their safe aggregate for the Host's same-source follow-up
+    // policy, and never let raw control hints override an unavailable projection.
+    const rawCandidateCount = Array.isArray(rawMemory?.candidates)
+        ? rawMemory.candidates.length
+        : 0;
+    const candidateCount = memory.memoryEvidenceState === "unavailable"
+        ? 0
+        : rawCandidateCount;
     const hasAnswerableContent = memory.hasAnswerableContent ?? (memory.usedMemory && documentCount > 0);
-    const needsSnippetFollowup = memory.needsSnippetFollowup
-        ?? (!hasAnswerableContent && candidateCount > 0);
+    const rawNeedsSnippetFollowup = typeof rawMemory?.needsSnippetFollowup === "boolean"
+        ? rawMemory.needsSnippetFollowup
+        : undefined;
+    const needsSnippetFollowup = memory.memoryEvidenceState !== "unavailable"
+        && rawNeedsSnippetFollowup !== false
+        && !hasAnswerableContent
+        && candidateCount > 0;
     return {
         hitCount: documentCount,
         candidateCount,
@@ -936,7 +1034,9 @@ function getToolResultControlMetadata(result: ChatToolResult<unknown>): Record<s
             ?? (hasAnswerableContent ? "evidence" : "none"),
         rerankVerdict: memory.rerankVerdict
             ?? (hasAnswerableContent ? "relevant" : "none_relevant"),
-        needsMoreEvidence: memory.needsMoreEvidence === true,
+        needsMoreEvidence: memory.memoryEvidenceState === "unavailable"
+            ? false
+            : rawMemory?.needsMoreEvidence === true,
     };
 }
 

@@ -7,6 +7,7 @@ import {
     MAX_READ_ONLY_TOOL_CONTEXT_CHARS,
     getReadOnlyToolObservationMessage,
     isReadOnlyContextToolResult,
+    OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
     parseNativeToolCallsFromModelResponse,
 } from '../src/ai-services/pa-agent-runtime';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
@@ -20,7 +21,10 @@ import type {
     LegacyAgentEvent as AgentEvent,
     MemorySearchResult,
 } from '../src/ai-services/chat-types';
-import type { OperationsIntent } from '../src/ai-services/operations/types';
+import type {
+    OperationsIntent,
+    StageOperationsIntentInput,
+} from '../src/ai-services/operations/types';
 import type { OperationsSession } from '../src/ai-services/operations/operations-service';
 import { OperationsToolProvider } from '../src/ai-services/operations/operations-tool-provider';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
@@ -310,6 +314,26 @@ function createRuntime(
         } as never,
         { nativeToolPlanningInternalGate, ...extraOptions },
     );
+}
+
+function createPendingOperationsIntent(input: StageOperationsIntentInput): OperationsIntent {
+    return {
+        id: 'intent-runtime-reserve',
+        runId: input.runId,
+        turnId: input.turnId,
+        createdAt: 1,
+        expiresAt: 10_000,
+        state: 'pending',
+        operations: input.operations.map((operation, index) => ({
+            id: `operation-runtime-reserve-${index}`,
+            toolCallId: operation.toolCallId,
+            name: operation.name,
+            input: operation.input as never,
+            path: (operation.input as { path: string }).path,
+            expectedBefore: null,
+            expectedAfter: '',
+        })),
+    };
 }
 
 function createMarkdownView(overrides: {
@@ -879,6 +903,295 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
+    it('keeps the Operations acknowledgement contract when its empty response crosses into reserve', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        try {
+            let streamCall = 0;
+            let markAcknowledgementStarted!: () => void;
+            const acknowledgementStarted = new Promise<void>((resolve) => {
+                markAcknowledgementStarted = resolve;
+            });
+            const providerInputs: Array<Record<string, string>> = [];
+            const boundToolNames: string[][] = [];
+            const model = {
+                bindTools: jest.fn((schemas: Array<{ function?: { name?: string } }>) => {
+                    boundToolNames.push(schemas.flatMap((schema) => (
+                        schema.function?.name ? [schema.function.name] : []
+                    )));
+                    return model;
+                }),
+                stream: jest.fn((input: Record<string, string>, config?: { signal?: AbortSignal }) => {
+                    providerInputs.push(input);
+                    streamCall += 1;
+                    if (streamCall === 1) {
+                        return {
+                            async *[Symbol.asyncIterator]() {
+                                yield {
+                                    tool_call_chunks: [{
+                                        index: 0,
+                                        id: 'operations-near-soft-call',
+                                        name: 'vault_create',
+                                        args: JSON.stringify({
+                                            path: '0.unsorted/near-soft.md',
+                                            content: '# Near soft deadline',
+                                        }),
+                                    }],
+                                };
+                            },
+                        };
+                    }
+                    if (streamCall === 2) {
+                        markAcknowledgementStarted();
+                        return {
+                            async *[Symbol.asyncIterator]() {
+                                await new Promise<void>((resolve) => {
+                                    if (config?.signal?.aborted) {
+                                        resolve();
+                                        return;
+                                    }
+                                    config?.signal?.addEventListener('abort', () => resolve(), { once: true });
+                                });
+                                yield { content: '' };
+                            },
+                        };
+                    }
+                    return {
+                        async *[Symbol.asyncIterator]() {
+                            // The inline confirmation card is already the
+                            // successful output, so an empty reserved
+                            // acknowledgement must not turn the run incomplete.
+                            yield { content: '' };
+                        },
+                    };
+                }),
+                invoke: jest.fn(async () => ({ content: '' })),
+            };
+            mockCreateChatModel.mockResolvedValue(model);
+            const stageIntent = jest.fn(async (input: StageOperationsIntentInput) => (
+                createPendingOperationsIntent(input)
+            ));
+            const runtime = createRuntime(createPlugin({ operationsAgentEnabled: true }), false, {
+                skillContextProvider: null,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                operationsIntentController: { stageIntent },
+                operationsToolProvider: new OperationsToolProvider(),
+            });
+            const lifecycleEvents: CanonicalAgentEvent[] = [];
+
+            const run = runtime.streamTurn({
+                prompt: 'Create a note for this decision.',
+                memoryMode: 'auto',
+                onLifecycleEvent: (event) => lifecycleEvents.push(event),
+            });
+            await acknowledgementStarted;
+            expect(streamCall).toBe(2);
+
+            await jest.advanceTimersByTimeAsync(70);
+            await run;
+
+            expect(stageIntent).toHaveBeenCalledTimes(1);
+            expect(streamCall).toBe(3);
+            expect(providerInputs[1].input).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(providerInputs[2].input).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(providerInputs[2].input).not.toContain('The ordinary turn deadline has been reached.');
+            expect(boundToolNames[0]).toEqual(expect.arrayContaining([
+                'vault_create',
+                'vault_append',
+                'vault_process',
+                'frontmatter_update',
+            ]));
+            expect(boundToolNames).toHaveLength(1);
+            expect(providerInputs[1].tool_definitions).toBe('None');
+            expect(providerInputs[2].tool_definitions).toBe('No tools are available in this finalization turn.');
+            expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
+                status: 'completed',
+                metadata: {
+                    reason: 'operations_intent_staged_acknowledgement_completed',
+                    diagnostics: [expect.objectContaining({
+                        type: 'operations_intent_staged_acknowledgement_completed',
+                    })],
+                },
+            });
+            expect(jest.getTimerCount()).toBe(0);
+            runtime.dispose();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('keeps required-capability warnings when an Operations acknowledgement is empty', async () => {
+        let streamCall = 0;
+        const model = {
+            bindTools: jest.fn(() => model),
+            stream: jest.fn(async function* () {
+                streamCall += 1;
+                if (streamCall === 1) {
+                    yield {
+                        tool_call_chunks: [{
+                            index: 0,
+                            id: 'operations-without-required-memory',
+                            name: 'vault_create',
+                            args: JSON.stringify({
+                                path: '0.unsorted/unverified.md',
+                                content: '# Unverified',
+                            }),
+                        }],
+                    };
+                    return;
+                }
+                yield { content: '' };
+            }),
+            invoke: jest.fn(async () => ({ content: '' })),
+        };
+        mockCreateChatModel.mockResolvedValue(model);
+        const stageIntent = jest.fn(async (input: StageOperationsIntentInput) => (
+            createPendingOperationsIntent(input)
+        ));
+        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const runtime = createRuntime(plugin, false, {
+            skillContextProvider: null,
+            operationsIntentController: { stageIntent },
+            operationsToolProvider: new OperationsToolProvider(),
+        });
+        const lifecycleEvents: CanonicalAgentEvent[] = [];
+
+        await runtime.streamTurn({
+            prompt: 'Use Memory from my notes, then create a note for the verified result.',
+            memoryMode: 'auto',
+            onLifecycleEvent: (event) => lifecycleEvents.push(event),
+        });
+
+        expect(stageIntent).toHaveBeenCalledTimes(1);
+        expect(model.stream).toHaveBeenCalledTimes(2);
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        expect(plugin.vss.searchHybrid).not.toHaveBeenCalled();
+        expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
+            status: 'incomplete',
+            metadata: {
+                reason: 'required_capability_missing',
+                warnings: [expect.objectContaining({
+                    type: 'required_capability_missing',
+                    capability: 'search_memory',
+                })],
+                diagnostics: expect.arrayContaining([
+                    expect.objectContaining({
+                        type: 'operations_intent_staged_acknowledgement_empty',
+                    }),
+                ]),
+            },
+        });
+        runtime.dispose();
+    });
+
+    it('accepts a staged Operations card when a buffered empty acknowledgement finishes after softAt', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(0);
+        try {
+            let streamCall = 0;
+            let markAcknowledgementStarted!: () => void;
+            const acknowledgementStarted = new Promise<void>((resolve) => {
+                markAcknowledgementStarted = resolve;
+            });
+            const providerInputs: Array<Record<string, string>> = [];
+            const boundToolNames: string[][] = [];
+            let acknowledgementSignal: AbortSignal | undefined;
+            mockCreateChatModel.mockImplementation(async (_temperature, requestOptions) => {
+                const runtimeModel = {
+                    bindTools: jest.fn((schemas: Array<{ function?: { name?: string } }>) => {
+                        boundToolNames.push(schemas.flatMap((schema) => (
+                            schema.function?.name ? [schema.function.name] : []
+                        )));
+                        return runtimeModel;
+                    }),
+                    stream: jest.fn((input: Record<string, string>, config?: { signal?: AbortSignal }) => {
+                        (requestOptions as { onProviderRequestStart?: () => void })
+                            ?.onProviderRequestStart?.();
+                        providerInputs.push(input);
+                        streamCall += 1;
+                        if (streamCall === 1) {
+                            return {
+                                async *[Symbol.asyncIterator]() {
+                                    yield {
+                                        tool_call_chunks: [{
+                                            index: 0,
+                                            id: 'operations-buffered-empty-ack',
+                                            name: 'vault_create',
+                                            args: JSON.stringify({
+                                                path: '0.unsorted/buffered-ack.md',
+                                                content: '# Buffered acknowledgement',
+                                            }),
+                                        }],
+                                    };
+                                },
+                            };
+                        }
+                        acknowledgementSignal = config?.signal;
+                        markAcknowledgementStarted();
+                        return {
+                            async *[Symbol.asyncIterator]() {
+                                await new Promise<void>((resolve) => setTimeout(resolve, 75));
+                                yield { content: '' };
+                            },
+                        };
+                    }),
+                    invoke: jest.fn(async () => ({ content: '' })),
+                };
+                return runtimeModel;
+            });
+            const stageIntent = jest.fn(async (input: StageOperationsIntentInput) => (
+                createPendingOperationsIntent(input)
+            ));
+            const runtime = createRuntime(createPlugin({ operationsAgentEnabled: true }), false, {
+                skillContextProvider: null,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                providerResponseDelivery: 'buffered',
+                operationsIntentController: { stageIntent },
+                operationsToolProvider: new OperationsToolProvider(),
+            });
+            const lifecycleEvents: CanonicalAgentEvent[] = [];
+
+            const run = runtime.streamTurn({
+                prompt: 'Create a note for this decision.',
+                memoryMode: 'auto',
+                onLifecycleEvent: (event) => lifecycleEvents.push(event),
+            });
+            await acknowledgementStarted;
+
+            await jest.advanceTimersByTimeAsync(70);
+            expect(acknowledgementSignal?.aborted).toBe(false);
+            expect(streamCall).toBe(2);
+
+            await jest.advanceTimersByTimeAsync(5);
+            await run;
+
+            expect(stageIntent).toHaveBeenCalledTimes(1);
+            expect(streamCall).toBe(2);
+            expect(providerInputs[1].input).toContain(OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION);
+            expect(providerInputs[1].input).not.toContain('The ordinary turn deadline has been reached.');
+            expect(providerInputs[1].tool_definitions).toBe('None');
+            expect(boundToolNames).toHaveLength(1);
+            expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
+                status: 'completed_with_warning',
+                metadata: {
+                    reason: 'finalization_reserve_overrun',
+                    diagnostics: expect.arrayContaining([
+                        expect.objectContaining({ type: 'finalization_reserve_overrun' }),
+                        expect.objectContaining({
+                            type: 'operations_intent_staged_acknowledgement_completed',
+                        }),
+                    ]),
+                },
+            });
+            expect(jest.getTimerCount()).toBe(0);
+            runtime.dispose();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it('uses only the hard deadline for buffered responses and never overlaps finalization', async () => {
         jest.useFakeTimers();
         try {
@@ -1052,21 +1365,37 @@ describe('ChatService.streamLLM integration', () => {
         memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult): Promise<MemorySearchResult> => (
             sourceRevoked ? unavailableMemory : result
         ));
+        const lifecycleEvents: CanonicalAgentEvent[] = [];
 
         const run = runtime.streamTurn({
             prompt: 'Use Memory for launch.',
             memoryMode: 'auto',
             onEvent: () => undefined,
+            onLifecycleEvent: (event) => lifecycleEvents.push(event),
         });
         await finalModelRequested;
         sourceRevoked = true;
         resolveFinalModel(finalModel);
         await run;
 
-        expect(providerInputs).toHaveLength(1);
-        expect(JSON.stringify(providerInputs[0])).not.toContain(stalePath);
-        expect(JSON.stringify(providerInputs[0])).not.toContain(staleBody);
-        expect(memoryTool.revalidateForProvider).toHaveBeenCalledTimes(2);
+        expect(providerInputs).toHaveLength(2);
+        expect(JSON.stringify(providerInputs)).not.toContain(stalePath);
+        expect(JSON.stringify(providerInputs)).not.toContain(staleBody);
+        expect(JSON.stringify(providerInputs[1])).toContain(
+            'was already attempted but returned an unavailable or invalid tool result',
+        );
+        expect(memoryTool.search).toHaveBeenCalledTimes(1);
+        expect(memoryTool.revalidateForProvider).toHaveBeenCalledTimes(4);
+        expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
+            status: 'completed_with_warning',
+            metadata: {
+                reason: 'required_capability_failed',
+                warnings: [expect.objectContaining({
+                    type: 'required_capability_missing',
+                    capability: 'search_memory',
+                })],
+            },
+        });
     });
 
     it('routes a simple PA canonical turn from model chunk to onChunk callback', async () => {
