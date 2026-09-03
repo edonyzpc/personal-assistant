@@ -120,8 +120,56 @@ export interface PaAgentTurnSummary {
     controlSnapshot?: AgentControlSnapshot;
 }
 
+export interface PaAgentTerminalPolicyContext {
+    reason: string;
+    defaultStatus: AgentEndStatus;
+    /** Turn summary skipped by the Loop when it entered the reserved final turn. */
+    unobservedTurnSummary?: PaAgentTurnSummary;
+}
+
+export type PaAgentTerminalDecision = Extract<PaAgentAfterTurnDecision, { action: "stop" }> & {
+    status: AgentEndStatus;
+};
+
+export interface PaAgentFinalizationTurnPreparationContext {
+    /** Loop-owned fallback instruction used when the Host has no narrower terminal contract. */
+    defaultRuntimeInstruction: string;
+    /** Loop-owned final-only projection before any Host refinement. */
+    defaultControlSnapshot?: AgentControlSnapshot;
+}
+
+export interface PaAgentFinalizationTurnPreparation {
+    runtimeInstruction?: string;
+    controlSnapshot?: AgentControlSnapshot;
+    /**
+     * Treat an otherwise ordinary empty reserved response as success because
+     * the Host already produced a complete non-text result (for example, an
+     * inline confirmation card). Deadline, abort, error, and tool-call paths
+     * remain ineligible.
+     */
+    allowEmptyResponse?: boolean;
+}
+
 export interface PaAgentHostPolicy {
     afterTurn(summary: PaAgentTurnSummary): PaAgentAfterTurnDecision | Promise<PaAgentAfterTurnDecision>;
+    /**
+     * Synchronous preparation seam for the single Loop-owned reserved turn.
+     * The Host may narrow its instruction/control projection, but the Loop
+     * always keeps the turn in `final_answer_only` mode and never reopens tools.
+     */
+    prepareFinalizationTurn?(
+        summary: PaAgentTurnSummary,
+        context: PaAgentFinalizationTurnPreparationContext,
+    ): PaAgentFinalizationTurnPreparation;
+    /**
+     * Terminal-only policy seam for a Loop-owned deadline finalization. It may
+     * refine status/warnings/diagnostics, but cannot schedule another turn or
+     * reopen tools after the ordinary-turn soft deadline.
+     */
+    finalizeAfterTurn?(
+        summary: PaAgentTurnSummary,
+        context: PaAgentTerminalPolicyContext,
+    ): PaAgentTerminalDecision | Promise<PaAgentTerminalDecision>;
 }
 
 export interface PaAgentTurnLeaseContext {
@@ -286,6 +334,8 @@ export class PaAgentLoop {
         let nextControlSnapshot = this.options.initialControlSnapshot;
         let finalizationTurnRequested = false;
         let nextTurnIsLoopReservedFinal = false;
+        let unobservedFinalizationTurnSummary: PaAgentTurnSummary | undefined;
+        let allowEmptyReservedFinalResponse = false;
         let finalizationReserveTerminalReported = false;
         const reportFinalizationReserve = (
             stage: "entered" | "completed" | "aborted" | "failed" | "exhausted" | "overrun",
@@ -301,16 +351,42 @@ export class PaAgentLoop {
                 // Calibration must never change loop behavior.
             }
         };
+        const resolveFinalizationTurnPreparation = (summary: PaAgentTurnSummary) => {
+            const defaultRuntimeInstruction = FINALIZATION_RESERVE_RUNTIME_INSTRUCTION;
+            const defaultControlSnapshot = deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
+                runtimeInstruction: defaultRuntimeInstruction,
+                toolMode: "final_answer_only",
+            });
+            let preparation: PaAgentFinalizationTurnPreparation | undefined;
+            try {
+                preparation = this.options.hostPolicy?.prepareFinalizationTurn?.(summary, {
+                    defaultRuntimeInstruction,
+                    ...(defaultControlSnapshot ? { defaultControlSnapshot } : {}),
+                });
+            } catch (error) {
+                summary.diagnostics.push({
+                    type: "finalization_policy_preparation_error",
+                    message: errorMessage(error),
+                });
+            }
+            return { defaultRuntimeInstruction, preparation };
+        };
         const scheduleReservedFinalTurn = (summary: PaAgentTurnSummary): boolean => {
             if (finalizationTurnRequested) return false;
             finalizationTurnRequested = true;
             nextTurnIsLoopReservedFinal = true;
-            nextRuntimeInstruction = FINALIZATION_RESERVE_RUNTIME_INSTRUCTION;
+            unobservedFinalizationTurnSummary = summary;
+            const { defaultRuntimeInstruction, preparation } = resolveFinalizationTurnPreparation(summary);
+            nextRuntimeInstruction = preparation?.runtimeInstruction ?? defaultRuntimeInstruction;
             nextToolMode = "final_answer_only";
-            nextControlSnapshot = deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
+            allowEmptyReservedFinalResponse = preparation?.allowEmptyResponse === true;
+            nextControlSnapshot = deriveContinuedAgentControlSnapshot(
+                preparation?.controlSnapshot ?? summary.controlSnapshot,
+                {
                 runtimeInstruction: nextRuntimeInstruction,
                 toolMode: nextToolMode,
-            });
+                },
+            );
             reportFinalizationReserve("entered");
             return true;
         };
@@ -475,9 +551,26 @@ export class PaAgentLoop {
                 reportFinalizationReserve("overrun");
                 const producedFinalText = turnSummary.toolCalls.length === 0
                     && turnSummary.committedFinalText.slice(committedTextBeforeTurn.length).trim().length > 0;
-                const status: AgentEndStatus = producedFinalText
+                const acceptedEmptyResponse = !producedFinalText
+                    && isEmptyBufferedFinalizationOverrun(turnSummary)
+                    && resolveFinalizationTurnPreparation(turnSummary).preparation?.allowEmptyResponse === true;
+                const status: AgentEndStatus = producedFinalText || acceptedEmptyResponse
                     ? "completed_with_warning"
                     : "incomplete";
+                if (producedFinalText || acceptedEmptyResponse) {
+                    const decision = await this.decideFinalizationAfterTurn(turnSummary, {
+                        action: "stop",
+                        status,
+                        reason: "finalization_reserve_overrun",
+                        diagnostics: turnSummary.diagnostics,
+                    });
+                    this.endAgent(decision.status, {
+                        reason: decision.reason,
+                        ...(decision.warnings ? { warnings: decision.warnings } : {}),
+                        ...(decision.diagnostics ? { diagnostics: decision.diagnostics } : {}),
+                    });
+                    return this.createResult(decision.status);
+                }
                 this.endAgent(status, {
                     reason: "finalization_reserve_overrun",
                     diagnostics: turnSummary.diagnostics,
@@ -488,11 +581,26 @@ export class PaAgentLoop {
             if (loopReservedFinalTurn) {
                 const producedFinalText = turnSummary.toolCalls.length === 0
                     && turnSummary.committedFinalText.slice(committedTextBeforeTurn.length).trim().length > 0;
-                if (producedFinalText) {
+                const acceptedEmptyResponse = allowEmptyReservedFinalResponse
+                    && isOrdinaryEmptyFinalizationResponse(turnSummary);
+                if (producedFinalText || acceptedEmptyResponse) {
                     reportFinalizationReserve("completed");
-                    const status = this.agentStatusFromTurn(turnSummary.status);
-                    this.endAgent(status, { reason: "finalization_reserve_completed" });
-                    return this.createResult(status);
+                    const status = acceptedEmptyResponse
+                        ? "completed" as const
+                        : this.agentStatusFromTurn(turnSummary.status);
+                    const decision = await this.decideFinalizationAfterTurn(turnSummary, {
+                        action: "stop",
+                        status,
+                        reason: acceptedEmptyResponse
+                            ? "finalization_reserve_empty_response_accepted"
+                            : "finalization_reserve_completed",
+                    }, unobservedFinalizationTurnSummary);
+                    this.endAgent(decision.status, {
+                        reason: decision.reason,
+                        ...(decision.warnings ? { warnings: decision.warnings } : {}),
+                        ...(decision.diagnostics ? { diagnostics: decision.diagnostics } : {}),
+                    });
+                    return this.createResult(decision.status);
                 }
                 const diagnostics = [
                     ...turnSummary.diagnostics,
@@ -1031,38 +1139,7 @@ export class PaAgentLoop {
 
     private async decideAfterTurn(summary: PaAgentTurnSummary): Promise<PaAgentAfterTurnDecision> {
         if (this.options.hostPolicy) {
-            const interrupt = this.createPolicyInterruptPromise();
-            const decisionPromise: Promise<PolicyDecisionRaceResult> = Promise.resolve().then(() =>
-                this.options.hostPolicy!.afterTurn(summary),
-            ).then(
-                (decision) => ({ type: "completed" as const, decision }),
-                (error) => ({ type: "rejected" as const, error }),
-            );
-            try {
-                const result = await Promise.race([decisionPromise, interrupt.promise]);
-                switch (result.type) {
-                    case "completed":
-                        return result.decision;
-                    case "rejected":
-                        return {
-                            action: "stop",
-                            status: "error",
-                            reason: "host_policy_error",
-                            warnings: [{ type: "host_policy_error", message: errorMessage(result.error) }],
-                        };
-                    case "aborted":
-                        return { action: "stop", status: "aborted", reason: "user_abort" };
-                    case "wall_clock_exceeded":
-                        return {
-                            action: "stop",
-                            status: "incomplete",
-                            reason: "wall_clock_exceeded",
-                            warnings: [{ type: "wall_clock_exceeded", maxWallClockMs: this.maxWallClockMs }],
-                        };
-                }
-            } finally {
-                interrupt.cleanup();
-            }
+            return this.evaluateHostPolicy(() => this.options.hostPolicy!.afterTurn(summary));
         }
         return {
             action: "stop",
@@ -1070,6 +1147,71 @@ export class PaAgentLoop {
             reason: summary.status,
             ...(summary.diagnostics.length > 0 ? { diagnostics: summary.diagnostics } : {}),
         };
+    }
+
+    private async decideFinalizationAfterTurn(
+        summary: PaAgentTurnSummary,
+        fallback: PaAgentTerminalDecision,
+        unobservedTurnSummary?: PaAgentTurnSummary,
+    ): Promise<PaAgentTerminalDecision> {
+        const hostPolicy = this.options.hostPolicy;
+        if (!hostPolicy?.finalizeAfterTurn) return fallback;
+
+        const decision = await this.evaluateHostPolicy(() => hostPolicy.finalizeAfterTurn!(summary, {
+            reason: fallback.reason,
+            defaultStatus: fallback.status,
+            ...(unobservedTurnSummary ? { unobservedTurnSummary } : {}),
+        }));
+        if (decision.action === "continue") {
+            return mergeTerminalDecisions(fallback, {
+                action: "stop",
+                status: "incomplete",
+                reason: "finalization_policy_requested_continuation",
+                diagnostics: [{
+                    type: "finalization_policy_requested_continuation",
+                    message: "The terminal Host Policy requested another turn after the finalization boundary.",
+                }],
+            });
+        }
+        return mergeTerminalDecisions(fallback, {
+            ...decision,
+            status: decision.status ?? fallback.status,
+        });
+    }
+
+    private async evaluateHostPolicy(
+        evaluate: () => PaAgentAfterTurnDecision | Promise<PaAgentAfterTurnDecision>,
+    ): Promise<PaAgentAfterTurnDecision> {
+        const interrupt = this.createPolicyInterruptPromise();
+        const decisionPromise: Promise<PolicyDecisionRaceResult> = Promise.resolve().then(evaluate).then(
+            (decision) => ({ type: "completed" as const, decision }),
+            (error) => ({ type: "rejected" as const, error }),
+        );
+        try {
+            const result = await Promise.race([decisionPromise, interrupt.promise]);
+            switch (result.type) {
+                case "completed":
+                    return result.decision;
+                case "rejected":
+                    return {
+                        action: "stop",
+                        status: "error",
+                        reason: "host_policy_error",
+                        warnings: [{ type: "host_policy_error", message: errorMessage(result.error) }],
+                    };
+                case "aborted":
+                    return { action: "stop", status: "aborted", reason: "user_abort" };
+                case "wall_clock_exceeded":
+                    return {
+                        action: "stop",
+                        status: "incomplete",
+                        reason: "wall_clock_exceeded",
+                        warnings: [{ type: "wall_clock_exceeded", maxWallClockMs: this.maxWallClockMs }],
+                    };
+            }
+        } finally {
+            interrupt.cleanup();
+        }
     }
 
     private endAgent(status: AgentEndStatus, payload: Record<string, unknown>): void {
@@ -1408,6 +1550,65 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
         type: "provider_error",
         message: errorMessage(error),
     };
+}
+
+function isOrdinaryEmptyFinalizationResponse(summary: PaAgentTurnSummary): boolean {
+    return summary.status === "incomplete"
+        && summary.toolCalls.length === 0
+        && summary.diagnostics.some((diagnostic) => diagnostic.type === "assistant_empty_response")
+        && !summary.diagnostics.some((diagnostic) => (
+            diagnostic.type === "finalization_reserve_reached"
+            || diagnostic.type === "wall_clock_exceeded"
+            || diagnostic.type === "finalization_reserve_exhausted_by_buffered_provider"
+            || diagnostic.type === "finalization_reserve_overrun"
+        ));
+}
+
+function isEmptyBufferedFinalizationOverrun(summary: PaAgentTurnSummary): boolean {
+    return summary.status === "incomplete"
+        && summary.toolCalls.length === 0
+        && summary.diagnostics.some((diagnostic) => diagnostic.type === "finalization_reserve_overrun")
+        && !summary.diagnostics.some((diagnostic) => (
+            diagnostic.type === "user_abort"
+            || diagnostic.type === "wall_clock_exceeded"
+            || diagnostic.type === "provider_error"
+            || diagnostic.type === "model_input_preparation_error"
+        ));
+}
+
+function mergeTerminalDecisions(
+    fallback: PaAgentTerminalDecision,
+    decision: PaAgentTerminalDecision,
+): PaAgentTerminalDecision {
+    const warnings = [
+        ...(fallback.warnings ?? []),
+        ...(decision.warnings ?? []),
+    ];
+    const diagnostics = [
+        ...(fallback.diagnostics ?? []),
+        ...(decision.diagnostics ?? []),
+    ];
+    return {
+        action: "stop",
+        status: moreConservativeTerminalStatus(fallback.status, decision.status),
+        reason: decision.reason,
+        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(diagnostics.length > 0 ? { diagnostics } : {}),
+    };
+}
+
+function moreConservativeTerminalStatus(
+    fallback: AgentEndStatus,
+    decision: AgentEndStatus,
+): AgentEndStatus {
+    const priority: Record<AgentEndStatus, number> = {
+        completed: 0,
+        completed_with_warning: 1,
+        incomplete: 2,
+        error: 3,
+        aborted: 4,
+    };
+    return priority[decision] > priority[fallback] ? decision : fallback;
 }
 
 function isPreflightOnlyToolResult(result: PaAgentToolExecutionResult): boolean {

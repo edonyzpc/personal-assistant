@@ -576,6 +576,196 @@ describe("PA Agent canonical host tool executor", () => {
         expect(result.promptText).not.toContain("notes/private.md");
         expect(result.sourceRecords).toEqual([]);
         expect(result.contextUsed?.[0]).toMatchObject({ statusOnly: true, sources: [] });
+        expect(result.metadata).toMatchObject({
+            outcome: "success",
+            hitCount: 0,
+            candidateCount: 0,
+            hasAnswerableContent: false,
+            memoryEvidenceState: "unavailable",
+        });
+    });
+
+    it("fails closed when guarded Memory documents are dropped by the Provider projection", () => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-malformed-memory-document", index: 0, name: "search_memory", input: { query: "launch" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: {
+                    usedMemory: true,
+                    query: "launch",
+                    documents: [{
+                        content: 123,
+                        score: 0.9,
+                        source: { path: "notes/malformed-evidence.md", score: 0.9 },
+                    }],
+                    sources: [{ path: "notes/malformed-evidence.md", score: 0.9 }],
+                    hasAnswerableContent: true,
+                    memoryEvidenceState: "evidence",
+                    rerankVerdict: "relevant",
+                },
+                sources: [{ path: "notes/malformed-evidence.md", score: 0.9 }],
+            },
+        );
+
+        expect(result.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(result.promptText).not.toContain("notes/malformed-evidence.md");
+        expect(result.sourceRecords).toEqual([]);
+        expect(result.contextUsed?.[0]).toMatchObject({ statusOnly: true, sources: [] });
+        expect(result.metadata).toMatchObject({
+            outcome: "success",
+            hitCount: 0,
+            candidateCount: 0,
+            hasAnswerableContent: false,
+            memoryEvidenceState: "unavailable",
+        });
+    });
+
+    it("preserves a coherent zero-hit Memory search as none", () => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-valid-memory-none", index: 0, name: "search_memory", input: { query: "missing" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "missing",
+                content: {
+                    usedMemory: false,
+                    query: "missing",
+                    documents: [],
+                    sources: [],
+                    candidates: [],
+                    hasAnswerableContent: false,
+                    memoryEvidenceState: "none",
+                    rerankVerdict: "none_relevant",
+                    needsMoreEvidence: true,
+                },
+                sources: [],
+            },
+        );
+
+        expect(result.promptText).toContain('"memoryEvidenceState": "none"');
+        expect(result.metadata).toMatchObject({
+            outcome: "success",
+            hitCount: 0,
+            hasAnswerableContent: false,
+            memoryEvidenceState: "none",
+            needsMoreEvidence: true,
+        });
+    });
+
+    it("fails closed when Memory evidence belongs to a different query", () => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-wrong-memory-query", index: 0, name: "search_memory", input: { query: "launch" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: {
+                    usedMemory: true,
+                    query: "different query",
+                    documents: [{
+                        content: "evidence from the wrong query",
+                        score: 0.9,
+                        source: { path: "notes/wrong-query.md", score: 0.9 },
+                    }],
+                    sources: [{ path: "notes/wrong-query.md", score: 0.9 }],
+                    hasAnswerableContent: true,
+                    memoryEvidenceState: "evidence",
+                    rerankVerdict: "relevant",
+                },
+                sources: [{ path: "notes/wrong-query.md", score: 0.9 }],
+            },
+        );
+
+        expect(result.promptText).toContain('"memoryEvidenceState": "unavailable"');
+        expect(result.promptText).not.toContain("notes/wrong-query.md");
+        expect(result.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
+    });
+
+    it("keeps the intentional eight-document Provider cap distinct from projection loss", () => {
+        const documents = Array.from({ length: 9 }, (_, index) => ({
+            content: `evidence ${index}`,
+            score: 0.9 - index / 100,
+            source: { path: `notes/evidence-${index}.md`, score: 0.9 - index / 100 },
+        }));
+        const observation = projectMemorySearchObservation({
+            usedMemory: true,
+            query: "launch",
+            documents,
+            sources: documents.map((document) => document.source),
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+            rerankVerdict: "relevant",
+        });
+
+        expect(observation).toMatchObject({
+            documents: expect.any(Array),
+            hasAnswerableContent: true,
+            memoryEvidenceState: "evidence",
+        });
+        expect(observation.documents).toHaveLength(8);
+    });
+
+    it("fails closed when Memory evidence flags contradict projected documents", () => {
+        const contradictoryResults: MemorySearchResult[] = [
+            {
+                usedMemory: true,
+                query: "missing",
+                documents: [],
+                sources: [],
+                hasAnswerableContent: true,
+                memoryEvidenceState: "evidence",
+                rerankVerdict: "relevant",
+            },
+            {
+                usedMemory: false,
+                query: "launch",
+                documents: [{
+                    content: "valid shape but contradictory state",
+                    score: 0.9,
+                    source: { path: "notes/contradictory.md", score: 0.9 },
+                }],
+                sources: [{ path: "notes/contradictory.md", score: 0.9 }],
+                hasAnswerableContent: false,
+                memoryEvidenceState: "none",
+                rerankVerdict: "none_relevant",
+            },
+            {
+                usedMemory: false,
+                query: "unavailable",
+                documents: [],
+                sources: [],
+                hasAnswerableContent: false,
+                memoryEvidenceState: "unavailable",
+                rerankVerdict: "partially_relevant",
+            },
+        ];
+
+        for (const content of contradictoryResults) {
+            expect(projectMemorySearchObservation(content)).toMatchObject({
+                documents: [],
+                sources: [],
+                hasAnswerableContent: false,
+                memoryEvidenceState: "unavailable",
+            });
+        }
+        expect(projectMemorySearchObservation(contradictoryResults[2])).toMatchObject({
+            memoryEvidenceState: "unavailable",
+            rerankVerdict: "relevant",
+        });
+        expect(projectMemorySearchObservation({
+            usedMemory: false,
+            query: "not prepared",
+            documents: [],
+            sources: [],
+            hasAnswerableContent: false,
+            memoryEvidenceState: "unavailable",
+            rerankVerdict: "none_relevant",
+        })).toMatchObject({
+            memoryEvidenceState: "unavailable",
+            rerankVerdict: "none_relevant",
+        });
     });
 
     it("revalidates registered Memory evidence on every provider projection and revokes stale copies", async () => {

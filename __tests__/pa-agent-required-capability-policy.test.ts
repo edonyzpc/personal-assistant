@@ -8,6 +8,7 @@ import {
     type RequiredCapability,
 } from "../src/ai-services/pa-agent-required-capability-policy";
 import { createAgentControlSnapshot } from "../src/ai-services/pa-agent-control-policy";
+import { chatToolResultToPaAgentToolExecutionResult } from "../src/ai-services/pa-agent-host-tools";
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 
 describe("PA Agent required capability HostPolicy", () => {
@@ -614,6 +615,220 @@ describe("PA Agent required capability HostPolicy", () => {
                     failedRequiredToolRetryAttempted: true,
                 }),
             })],
+        });
+    });
+
+    it("retracts required Memory satisfaction when the provider projection becomes unavailable", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for the launch plan.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const initialMemory = createToolResult("search_memory", {
+            metadata: { memoryEvidenceState: "evidence" },
+        });
+
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [initialMemory],
+        }))).toMatchObject({ action: "continue" });
+
+        policy.synchronizeProjectedTranscript([{
+            ...initialMemory,
+            content: {
+                ...initialMemory.content,
+                metadata: {
+                    ...initialMemory.content.metadata,
+                    memoryEvidenceState: "unavailable",
+                },
+            },
+        }]);
+
+        await expect(Promise.resolve(policy.hostPolicy.finalizeAfterTurn!(createSummary({
+            committedFinalText: "I cannot verify the launch plan from available notes.",
+        }), {
+            defaultStatus: "completed",
+            reason: "finalization_reserve_completed",
+            // The Loop skipped normal afterTurn at the soft boundary. Its raw
+            // summary still carries the pre-projection evidence and must not
+            // restore it over the unavailable provider projection above.
+            unobservedTurnSummary: createSummary({
+                status: "tool_results_ready",
+                toolResults: [initialMemory],
+            }),
+        }))).resolves.toMatchObject({
+            action: "stop",
+            status: "completed_with_warning",
+            reason: "required_capability_failed",
+            warnings: [expect.objectContaining({
+                capability: "search_memory",
+                detail: "Memory from notes was required but failed or was unavailable.",
+            })],
+        });
+    });
+
+    it("keeps projected zero-hit Memory satisfied without requesting another search", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for the launch plan.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const noHits = createToolResult("search_memory", {
+            metadata: { memoryEvidenceState: "none" },
+        });
+
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [noHits],
+        }))).toMatchObject({ action: "continue" });
+        policy.synchronizeProjectedTranscript([noHits]);
+
+        await expect(Promise.resolve(policy.hostPolicy.finalizeAfterTurn!(createSummary({
+            committedFinalText: "No matching notes were found.",
+        }), {
+            defaultStatus: "completed",
+            reason: "finalization_reserve_completed",
+        }))).resolves.toEqual({
+            action: "stop",
+            status: "completed",
+            reason: "finalization_reserve_completed",
+        });
+    });
+
+    it("does not erase prior Memory satisfaction when a projection contains no Memory result", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for the launch plan.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const evidence = createToolResult("search_memory", {
+            metadata: { memoryEvidenceState: "evidence" },
+        });
+
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [evidence],
+        }))).toMatchObject({ action: "continue" });
+        policy.synchronizeProjectedTranscript([]);
+
+        await expect(Promise.resolve(policy.hostPolicy.finalizeAfterTurn!(createSummary({
+            committedFinalText: "The launch plan is in the available notes.",
+        }), {
+            defaultStatus: "completed",
+            reason: "finalization_reserve_completed",
+        }))).resolves.toEqual({
+            action: "stop",
+            status: "completed",
+            reason: "finalization_reserve_completed",
+        });
+    });
+
+    it("treats malformed-but-ok Memory projection metadata as a failed required capability", async () => {
+        const execution = chatToolResultToPaAgentToolExecutionResult(
+            {
+                type: "toolCall",
+                id: "malformed-memory-call",
+                index: 0,
+                name: "search_memory",
+                input: { query: "launch" },
+            },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: { documents: "not-an-array" },
+                sources: [{ path: "notes/must-not-pass.md" }],
+            },
+        );
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for the launch plan.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+
+        expect(execution.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [{
+                ...createToolResult("search_memory"),
+                toolCallId: "malformed-memory-call",
+                content: {
+                    promptText: execution.promptText,
+                    includeInNextPrompt: true,
+                    metadata: execution.metadata,
+                },
+            }],
+        }))).toMatchObject({
+            action: "continue",
+            reason: "needs_follow_up",
+            toolMode: "final_answer_only",
+        });
+
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            committedFinalText: "Memory is unavailable.",
+        }))).toMatchObject({
+            action: "stop",
+            status: "completed_with_warning",
+            warnings: [expect.objectContaining({ capability: "search_memory" })],
+        });
+    });
+
+    it("treats a malformed guarded Memory document as unavailable through the real converter", async () => {
+        const execution = chatToolResultToPaAgentToolExecutionResult(
+            {
+                type: "toolCall",
+                id: "malformed-memory-document-call",
+                index: 0,
+                name: "search_memory",
+                input: { query: "launch" },
+            },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: {
+                    usedMemory: true,
+                    query: "launch",
+                    documents: [{
+                        content: 123,
+                        score: 0.9,
+                        source: { path: "notes/malformed.md", score: 0.9 },
+                    }],
+                    sources: [{ path: "notes/malformed.md", score: 0.9 }],
+                    hasAnswerableContent: true,
+                    memoryEvidenceState: "evidence",
+                    rerankVerdict: "relevant",
+                },
+                sources: [{ path: "notes/malformed.md", score: 0.9 }],
+            },
+        );
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for the launch plan.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+
+        expect(execution.promptText).not.toContain("notes/malformed.md");
+        expect(execution.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [{
+                ...createToolResult("search_memory"),
+                toolCallId: "malformed-memory-document-call",
+                content: {
+                    promptText: execution.promptText,
+                    includeInNextPrompt: true,
+                    metadata: execution.metadata,
+                },
+            }],
+        }))).toMatchObject({
+            action: "continue",
+            reason: "needs_follow_up",
+            toolMode: "final_answer_only",
+        });
+
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            committedFinalText: "Memory evidence is unavailable.",
+        }))).toMatchObject({
+            action: "stop",
+            reason: "required_capability_failed",
+            status: "completed_with_warning",
+            warnings: [expect.objectContaining({ capability: "search_memory" })],
         });
     });
 

@@ -1140,12 +1140,14 @@ export class PaAgentRuntime {
                 input.signal?.addEventListener("abort", failClosedOnAbort, { once: true });
                 if (input.signal?.aborted) failClosedOnAbort();
                 try {
+                    const transcript = await memoryEvidenceRegistry.prepareTranscript(
+                        input.transcript,
+                        input.signal,
+                    );
+                    requiredCapabilityPolicy.synchronizeProjectedTranscript(transcript);
                     return {
                         ...input,
-                        transcript: await memoryEvidenceRegistry.prepareTranscript(
-                            input.transcript,
-                            input.signal,
-                        ),
+                        transcript,
                     };
                 } finally {
                     input.signal?.removeEventListener("abort", failClosedOnAbort);
@@ -1161,14 +1163,26 @@ export class PaAgentRuntime {
                         && operationsAcknowledgementRequested
                         && decision.action === "continue"
                     ) {
+                        const terminalPolicy = requiredCapabilityPolicy.hostPolicy;
+                        const terminalDecision = terminalPolicy.finalizeAfterTurn
+                            ? await terminalPolicy.finalizeAfterTurn(summary, {
+                                defaultStatus: "completed",
+                                reason: "operations_intent_staged_acknowledgement_empty",
+                            })
+                            : {
+                                action: "stop" as const,
+                                status: "completed" as const,
+                                reason: "operations_intent_staged_acknowledgement_empty",
+                            };
                         return {
-                            action: "stop" as const,
-                            status: "completed" as const,
-                            reason: "operations_intent_staged_acknowledgement_empty",
-                            diagnostics: [{
-                                type: "operations_intent_staged_acknowledgement_empty",
-                                message: "The inline confirmation card is the successful output; no generic finalization turn was run.",
-                            }],
+                            ...terminalDecision,
+                            diagnostics: [
+                                ...(terminalDecision.diagnostics ?? []),
+                                {
+                                    type: "operations_intent_staged_acknowledgement_empty",
+                                    message: "The inline confirmation card is the successful output; no generic finalization turn was run.",
+                                },
+                            ],
                         };
                     }
                     if (operationsIntentStaged && decision.action === "continue") {
@@ -1195,6 +1209,55 @@ export class PaAgentRuntime {
                             decision.controlSnapshot,
                             operationsActionsEligible,
                         ),
+                    };
+                },
+                prepareFinalizationTurn: (summary, context) => {
+                    operationsIntentStaged ||= hasStagedOperationsIntent(summary);
+                    if (!operationsIntentStaged && !operationsAcknowledgementRequested) return {};
+
+                    operationsAcknowledgementRequested = true;
+                    return {
+                        runtimeInstruction: OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
+                        controlSnapshot: createOperationsAcknowledgementControlSnapshot(
+                            context.defaultControlSnapshot ?? summary.controlSnapshot,
+                        ),
+                        allowEmptyResponse: true,
+                    };
+                },
+                finalizeAfterTurn: async (summary, context) => {
+                    operationsIntentStaged ||= Boolean(
+                        context.unobservedTurnSummary
+                        && hasStagedOperationsIntent(context.unobservedTurnSummary)
+                    );
+                    const operationsAcknowledgementCompleted = operationsIntentStaged
+                        && operationsAcknowledgementRequested
+                        && context.defaultStatus === "completed";
+                    const terminalContext = operationsAcknowledgementCompleted
+                        ? {
+                            ...context,
+                            reason: "operations_intent_staged_acknowledgement_completed",
+                        }
+                        : context;
+                    const terminalPolicy = requiredCapabilityPolicy.hostPolicy;
+                    const decision = terminalPolicy.finalizeAfterTurn
+                        ? await terminalPolicy.finalizeAfterTurn(summary, terminalContext)
+                        : {
+                            action: "stop" as const,
+                            status: context.defaultStatus,
+                            reason: terminalContext.reason,
+                        };
+                    if (!operationsIntentStaged || !operationsAcknowledgementRequested) {
+                        return decision;
+                    }
+                    return {
+                        ...decision,
+                        diagnostics: [
+                            ...(decision.diagnostics ?? []),
+                            {
+                                type: "operations_intent_staged_acknowledgement_completed",
+                                message: "The reserved final turn acknowledged the inline confirmation card; no write occurred.",
+                            },
+                        ],
                     };
                 },
             },

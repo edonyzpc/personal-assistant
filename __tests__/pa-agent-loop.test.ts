@@ -10,10 +10,12 @@ import {
     type PaAgentModel,
     type PaAgentModelInput,
     type PaAgentModelStreamChunk,
+    type PaAgentTerminalPolicyContext,
+    type PaAgentTurnSummary,
 } from "../src/ai-services/pa-agent-loop";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
-import type { AgentEvent } from "../src/ai-services/chat-types";
+import type { AgentEvent, PaAgentMessage } from "../src/ai-services/chat-types";
 import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy";
 
 describe("PaAgentLoop", () => {
@@ -268,6 +270,410 @@ describe("PaAgentLoop", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    it("applies Required Capability terminal warnings after a Loop-reserved final answer", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Use Memory to answer this.",
+                availableCapabilities: new Set<"search_memory">(["search_memory"]),
+                classification: {
+                    items: [{
+                        capability: "search_memory",
+                        confidence: 1,
+                        level: "required",
+                        reason: "explicit Memory request",
+                    }],
+                },
+            });
+            const loop = new PaAgentLoop({
+                runId: "run-production-policy-missing-at-reserve",
+                userInput: "Use Memory to answer this.",
+                prepareModelInput: (input) => {
+                    if (input.toolMode === "final_answer_only") return Promise.resolve(input);
+                    return new Promise((_resolve, reject) => {
+                        input.signal?.addEventListener("abort", () => {
+                            const error = new Error("provider preparation aborted");
+                            error.name = "AbortError";
+                            reject(error);
+                        }, { once: true });
+                    });
+                },
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        yield { type: "text_delta", text: "Answer without Memory." } as const;
+                    },
+                },
+                hostPolicy: policy.hostPolicy,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(modelInputs).toHaveLength(1);
+            expect(modelInputs[0]?.toolMode).toBe("final_answer_only");
+            expect(result.turns.map((turn) => turn.status)).toEqual(["incomplete", "completed"]);
+            expect(result.status).toBe("completed_with_warning");
+            expect(result.endPayload).toMatchObject({
+                reason: "required_capability_missing",
+                warnings: [expect.objectContaining({
+                    type: "required_capability_missing",
+                    capability: "search_memory",
+                })],
+            });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("carries successful required results from the interrupted turn into terminal policy", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const executedTools: string[] = [];
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Compare my notes with the latest web information.",
+                availableCapabilities: new Set(["search_memory", "webSearch"] as const),
+                classification: {
+                    items: [
+                        {
+                            capability: "search_memory",
+                            confidence: 1,
+                            level: "required",
+                            reason: "explicit Memory request",
+                        },
+                        {
+                            capability: "webSearch",
+                            confidence: 1,
+                            level: "required",
+                            reason: "explicit Web request",
+                        },
+                    ],
+                },
+            });
+            const loop = new PaAgentLoop({
+                runId: "run-production-policy-partial-tools-at-reserve",
+                userInput: "Compare my notes with the latest web information.",
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        if (input.toolMode !== "final_answer_only") {
+                            yield {
+                                type: "toolcall_delta",
+                                id: "memory-before-reserve",
+                                name: "search_memory",
+                                input: { query: "launch" },
+                                index: 0,
+                            } as const;
+                            yield {
+                                type: "toolcall_delta",
+                                id: "web-at-reserve",
+                                name: "webSearch",
+                                input: { query: "latest launch" },
+                                index: 1,
+                            } as const;
+                            return;
+                        }
+                        yield { type: "text_delta", text: "Final answer from partial evidence." } as const;
+                    },
+                },
+                toolExecutor: {
+                    execute: async ({ toolCall, signal }) => {
+                        executedTools.push(toolCall.name);
+                        if (toolCall.name === "search_memory") {
+                            return {
+                                outcome: "success",
+                                promptText: "Memory evidence",
+                                metadata: { memoryEvidenceState: "evidence" },
+                            };
+                        }
+                        return await new Promise((resolve) => {
+                            signal.addEventListener("abort", () => resolve({
+                                outcome: "recoverable_error",
+                                promptText: "Web unavailable",
+                            }), { once: true });
+                        });
+                    },
+                },
+                toolExecutionMode: "parallel",
+                hostPolicy: policy.hostPolicy,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(executedTools).toEqual(["search_memory", "webSearch"]);
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([
+                undefined,
+                "final_answer_only",
+            ]);
+            expect(result.turns.map((turn) => turn.status)).toEqual(["incomplete", "completed"]);
+            expect(result.turns[0]?.toolResults).toEqual(expect.arrayContaining([
+                expect.objectContaining({ toolName: "search_memory", isError: false }),
+                expect.objectContaining({ toolName: "webSearch", isError: true }),
+            ]));
+            expect(result.status).toBe("completed_with_warning");
+            expect(result.endPayload).toMatchObject({
+                reason: "required_capability_failed",
+                warnings: [expect.objectContaining({ capability: "webSearch" })],
+            });
+            expect(result.endPayload?.warnings).toHaveLength(1);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("does not restore raw Memory evidence after reserved-turn provider projection revokes it", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const execute = jest.fn(async ({ toolCall, signal }) => {
+                if (toolCall.name === "search_memory") {
+                    return {
+                        outcome: "success" as const,
+                        promptText: "Memory evidence before revalidation",
+                        metadata: { memoryEvidenceState: "evidence" },
+                    };
+                }
+                return await new Promise<{
+                    outcome: "recoverable_error";
+                    promptText: string;
+                }>((resolve) => {
+                    signal.addEventListener("abort", () => resolve({
+                        outcome: "recoverable_error",
+                        promptText: "Slow context tool stopped at the soft boundary",
+                    }), { once: true });
+                });
+            });
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Use Memory to answer this.",
+                availableCapabilities: new Set<"search_memory">(["search_memory"]),
+                classification: {
+                    items: [{
+                        capability: "search_memory",
+                        confidence: 1,
+                        level: "required",
+                        reason: "explicit Memory request",
+                    }],
+                },
+            });
+            const loop = new PaAgentLoop({
+                runId: "run-memory-revoked-in-reserved-preparation",
+                userInput: "Use Memory to answer this.",
+                prepareModelInput: async (input) => {
+                    if (input.toolMode !== "final_answer_only") return input;
+                    const transcript: PaAgentMessage[] = input.transcript.map((message) => {
+                        if (message.role !== "toolResult" || message.toolName !== "search_memory") {
+                            return message;
+                        }
+                        return {
+                            ...message,
+                            content: {
+                                ...message.content,
+                                metadata: {
+                                    ...message.content.metadata,
+                                    memoryEvidenceState: "unavailable",
+                                },
+                            },
+                        };
+                    });
+                    policy.synchronizeProjectedTranscript(transcript);
+                    return { ...input, transcript };
+                },
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        if (input.toolMode !== "final_answer_only") {
+                            yield {
+                                type: "toolcall_delta",
+                                id: "memory-revoked-at-reserve",
+                                name: "search_memory",
+                                input: { query: "launch" },
+                                index: 0,
+                            } as const;
+                            yield {
+                                type: "toolcall_delta",
+                                id: "slow-context-at-reserve",
+                                name: "get_current_note_context",
+                                input: { mode: "full" },
+                                index: 1,
+                            } as const;
+                            return;
+                        }
+                        yield {
+                            type: "text_delta",
+                            text: "I cannot verify the requested Memory evidence.",
+                        } as const;
+                    },
+                },
+                toolExecutor: { execute },
+                toolExecutionMode: "parallel",
+                hostPolicy: policy.hostPolicy,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                createId: createDeterministicId,
+            });
+
+            const resultPromise = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await resultPromise;
+
+            expect(execute).toHaveBeenCalledTimes(2);
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([
+                undefined,
+                "final_answer_only",
+            ]);
+            expect(result.turns[0]).toMatchObject({
+                status: "incomplete",
+                toolResults: expect.arrayContaining([
+                    expect.objectContaining({
+                        toolCallId: "memory-revoked-at-reserve",
+                        content: expect.objectContaining({
+                            metadata: expect.objectContaining({ memoryEvidenceState: "evidence" }),
+                        }),
+                    }),
+                ]),
+            });
+            expect(result.status).toBe("completed_with_warning");
+            expect(result.endPayload).toMatchObject({
+                reason: "required_capability_failed",
+                warnings: [expect.objectContaining({ capability: "search_memory" })],
+            });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("finalizes once with a warning when required Memory is unavailable", async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const execute = jest.fn(async () => ({
+            outcome: "success" as const,
+            promptText: JSON.stringify({ memoryEvidenceState: "unavailable", documents: [] }),
+            metadata: {
+                memoryEvidenceState: "unavailable",
+            },
+        }));
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Use Memory to answer this.",
+            availableCapabilities: new Set<"search_memory">(["search_memory"]),
+            classification: {
+                items: [{
+                    capability: "search_memory",
+                    confidence: 1,
+                    level: "required",
+                    reason: "explicit Memory request",
+                }],
+            },
+        });
+        const loop = new PaAgentLoop({
+            runId: "run-required-memory-unavailable",
+            userInput: "Use Memory to answer this.",
+            model: {
+                stream: async function* (input) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: "toolcall_delta",
+                            id: "memory-unavailable-call",
+                            name: "search_memory",
+                            input: { query: "launch" },
+                            index: 0,
+                        } as const;
+                        return;
+                    }
+                    yield { type: "text_delta", text: "Memory is currently unavailable." } as const;
+                },
+            },
+            toolExecutor: { execute },
+            hostPolicy: policy.hostPolicy,
+            createId: createDeterministicId,
+        });
+
+        const result = await loop.run();
+
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(modelInputs.map((input) => input.toolMode)).toEqual([
+            undefined,
+            "final_answer_only",
+        ]);
+        expect(result.status).toBe("completed_with_warning");
+        expect(result.endPayload).toMatchObject({
+            reason: "required_capability_failed",
+            warnings: [expect.objectContaining({
+                capability: "search_memory",
+                detail: "Memory from notes was required but failed or was unavailable.",
+                metadata: expect.objectContaining({
+                    failedRequiredToolRetryAttempted: true,
+                }),
+            })],
+        });
+    });
+
+    it("counts a required Memory none result as a completed search without repeating it", async () => {
+        const modelInputs: PaAgentModelInput[] = [];
+        const execute = jest.fn(async () => ({
+            outcome: "success" as const,
+            promptText: JSON.stringify({ memoryEvidenceState: "none", documents: [] }),
+            metadata: {
+                memoryEvidenceState: "none",
+            },
+        }));
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Use Memory to answer this.",
+            availableCapabilities: new Set<"search_memory">(["search_memory"]),
+            classification: {
+                items: [{
+                    capability: "search_memory",
+                    confidence: 1,
+                    level: "required",
+                    reason: "explicit Memory request",
+                }],
+            },
+        });
+        const loop = new PaAgentLoop({
+            runId: "run-required-memory-none",
+            userInput: "Use Memory to answer this.",
+            model: {
+                stream: async function* (input) {
+                    modelInputs.push(input);
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: "toolcall_delta",
+                            id: "memory-none-call",
+                            name: "search_memory",
+                            input: { query: "launch" },
+                            index: 0,
+                        } as const;
+                        return;
+                    }
+                    yield { type: "text_delta", text: "No matching note was found." } as const;
+                },
+            },
+            toolExecutor: { execute },
+            hostPolicy: policy.hostPolicy,
+            createId: createDeterministicId,
+        });
+
+        const result = await loop.run();
+
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(modelInputs.map((input) => input.toolMode)).toEqual([
+            undefined,
+            "final_answer_only",
+        ]);
+        expect(result.status).toBe("completed");
+        expect(result.endPayload).not.toHaveProperty("warnings");
     });
 
     it("stops after one empty Loop-reserved turn under the production Required Capability policy", async () => {
@@ -658,6 +1064,14 @@ describe("PaAgentLoop", () => {
                 action: "continue" as const,
                 reason: "corrective_turn" as const,
             }));
+            const terminalPolicy = jest.fn((
+                _summary: PaAgentTurnSummary,
+                _context: PaAgentTerminalPolicyContext,
+            ) => ({
+                action: "stop" as const,
+                status: "completed" as const,
+                reason: "terminal-policy-completed",
+            }));
             const reserveEvents: Array<{ stage: string; remainingMs: number }> = [];
             let providerSignal: AbortSignal | undefined;
             const loop = new PaAgentLoop({
@@ -673,7 +1087,10 @@ describe("PaAgentLoop", () => {
                     },
                 },
                 toolExecutor: { execute },
-                hostPolicy: { afterTurn: hostPolicy },
+                hostPolicy: {
+                    afterTurn: hostPolicy,
+                    finalizeAfterTurn: terminalPolicy,
+                },
                 providerResponseDelivery: "buffered",
                 maxWallClockMs: 100,
                 finalizationReserveMs: 30,
@@ -697,11 +1114,78 @@ describe("PaAgentLoop", () => {
                 finalizationReserveMs: 30,
                 reservePreserved: false,
             }));
-            expect(result.endPayload).toMatchObject({ reason: "finalization_reserve_overrun" });
+            expect(result.endPayload).toMatchObject({ reason: "terminal-policy-completed" });
             expect(reserveEvents.map((event) => event.stage)).toEqual(["entered", "overrun"]);
             expect(execute).not.toHaveBeenCalled();
             expect(hostPolicy).not.toHaveBeenCalled();
+            expect(terminalPolicy).toHaveBeenCalledTimes(1);
+            expect(terminalPolicy).toHaveBeenCalledWith(
+                expect.objectContaining({ status: "completed_with_warning" }),
+                {
+                    reason: "finalization_reserve_overrun",
+                    defaultStatus: "completed_with_warning",
+                },
+            );
             expect(modelInputs).toHaveLength(1);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("accepts a buffered empty overrun only when the Host declares a completed non-text result", async () => {
+        jest.useFakeTimers();
+        try {
+            const runBufferedEmpty = async (allowEmptyResponse: boolean) => {
+                const terminalPolicy = jest.fn(() => ({
+                    action: "stop" as const,
+                    status: "completed" as const,
+                    reason: "host-non-text-output-completed",
+                }));
+                const loop = new PaAgentLoop({
+                    runId: allowEmptyResponse
+                        ? "run-buffered-empty-host-output"
+                        : "run-buffered-empty-generic",
+                    userInput: "prepare",
+                    model: {
+                        stream: async function* (input) {
+                            input.notifyProviderRequestStarted?.();
+                            await new Promise<void>((resolve) => setTimeout(resolve, 75));
+                        },
+                    },
+                    hostPolicy: {
+                        afterTurn: () => ({ action: "continue", reason: "corrective_turn" }),
+                        ...(allowEmptyResponse
+                            ? { prepareFinalizationTurn: () => ({ allowEmptyResponse: true }) }
+                            : {}),
+                        finalizeAfterTurn: terminalPolicy,
+                    },
+                    providerResponseDelivery: "buffered",
+                    maxWallClockMs: 100,
+                    finalizationReserveMs: 30,
+                    createId: createDeterministicId,
+                });
+
+                const pending = loop.run();
+                await jest.advanceTimersByTimeAsync(75);
+                return { result: await pending, terminalPolicy };
+            };
+
+            const generic = await runBufferedEmpty(false);
+            expect(generic.result.status).toBe("incomplete");
+            expect(generic.result.endPayload).toMatchObject({
+                reason: "finalization_reserve_overrun",
+            });
+            expect(generic.terminalPolicy).not.toHaveBeenCalled();
+
+            const hostBacked = await runBufferedEmpty(true);
+            expect(hostBacked.result.status).toBe("completed_with_warning");
+            expect(hostBacked.result.endPayload).toMatchObject({
+                reason: "host-non-text-output-completed",
+                diagnostics: expect.arrayContaining([
+                    expect.objectContaining({ type: "finalization_reserve_overrun" }),
+                ]),
+            });
+            expect(hostBacked.terminalPolicy).toHaveBeenCalledTimes(1);
         } finally {
             jest.useRealTimers();
         }
