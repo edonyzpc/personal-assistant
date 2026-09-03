@@ -549,6 +549,8 @@ describe("PA Agent canonical host tool executor", () => {
         expect(result.contextUsed?.[0]?.sources).toEqual([
             { path: "notes/final.md", chunkIndex: 2, score: 0.9 },
         ]);
+        expect(result.contextUsed?.[0]).toMatchObject({ citationEligible: true });
+        expect(result.contextUsed?.[0]).not.toHaveProperty("statusOnly");
     });
 
     it("fails closed when a successful Memory result cannot pass the specialized guard", () => {
@@ -575,7 +577,11 @@ describe("PA Agent canonical host tool executor", () => {
         expect(result.promptText).not.toContain("SECRET RAW CANDIDATE");
         expect(result.promptText).not.toContain("notes/private.md");
         expect(result.sourceRecords).toEqual([]);
-        expect(result.contextUsed?.[0]).toMatchObject({ statusOnly: true, sources: [] });
+        expect(result.contextUsed?.[0]).toMatchObject({
+            citationEligible: false,
+            statusOnly: true,
+            sources: [],
+        });
         expect(result.metadata).toMatchObject({
             outcome: "success",
             hitCount: 0,
@@ -612,7 +618,11 @@ describe("PA Agent canonical host tool executor", () => {
         expect(result.promptText).toContain('"memoryEvidenceState": "unavailable"');
         expect(result.promptText).not.toContain("notes/malformed-evidence.md");
         expect(result.sourceRecords).toEqual([]);
-        expect(result.contextUsed?.[0]).toMatchObject({ statusOnly: true, sources: [] });
+        expect(result.contextUsed?.[0]).toMatchObject({
+            citationEligible: false,
+            statusOnly: true,
+            sources: [],
+        });
         expect(result.metadata).toMatchObject({
             outcome: "success",
             hitCount: 0,
@@ -652,6 +662,74 @@ describe("PA Agent canonical host tool executor", () => {
             memoryEvidenceState: "none",
             needsMoreEvidence: true,
         });
+        expect(result.contextUsed?.[0]).toMatchObject({
+            citationEligible: false,
+            statusOnly: true,
+            sources: [],
+        });
+    });
+
+    it("shows coherent unavailable Memory as status-only and not citation eligible", () => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-valid-memory-unavailable", index: 0, name: "search_memory", input: { query: "launch" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: {
+                    usedMemory: false,
+                    query: "launch",
+                    documents: [],
+                    sources: [],
+                    candidates: [],
+                    hasAnswerableContent: false,
+                    memoryEvidenceState: "unavailable",
+                    rerankVerdict: "relevant",
+                    needsMoreEvidence: false,
+                },
+                sources: [],
+            },
+        );
+
+        expect(result.metadata).toMatchObject({ memoryEvidenceState: "unavailable" });
+        expect(result.contextUsed?.[0]).toMatchObject({
+            citationEligible: false,
+            statusOnly: true,
+            sources: [],
+        });
+    });
+
+    it("keeps coherent partial Memory evidence citation eligible", () => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-valid-memory-partial", index: 0, name: "search_memory", input: { query: "launch" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "launch",
+                content: {
+                    usedMemory: true,
+                    query: "launch",
+                    documents: [{
+                        content: "partial launch evidence",
+                        score: 0.9,
+                        source: { path: "notes/partial.md", chunkIndex: 0, score: 0.9 },
+                    }],
+                    sources: [{ path: "notes/partial.md", chunkIndex: 0, score: 0.9 }],
+                    candidates: [],
+                    hasAnswerableContent: true,
+                    memoryEvidenceState: "partial",
+                    rerankVerdict: "partially_relevant",
+                    needsMoreEvidence: true,
+                },
+                sources: [{ path: "notes/partial.md", chunkIndex: 0, score: 0.9 }],
+            },
+        );
+
+        expect(result.contextUsed?.[0]).toMatchObject({
+            citationEligible: true,
+            sources: [{ path: "notes/partial.md", chunkIndex: 0, score: 0.9 }],
+        });
+        expect(result.contextUsed?.[0]).not.toHaveProperty("statusOnly");
     });
 
     it("fails closed when Memory evidence belongs to a different query", () => {
