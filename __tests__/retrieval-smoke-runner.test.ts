@@ -4571,6 +4571,20 @@ describe("B-125 retrieval app-smoke fixture", () => {
         });
         expect(stopped.processMemory).toMatchObject({ status: "BLOCKED", method: "unsupported" });
 
+        const profilerSampleIntervalMs = 1_000;
+        const runtimeWindowDurationMs = (
+            Date.parse(stopped.envelope.finishedAt!)
+            - Date.parse(stopped.envelope.startedAt!)
+        );
+        const profilerSamples = Array.from({
+            length: Math.max(
+                2,
+                Math.ceil(runtimeWindowDurationMs / profilerSampleIntervalMs) + 1,
+            ),
+        }, (_, index) => 100 + index);
+        expect((profilerSamples.length - 1) * profilerSampleIntervalMs)
+            .toBeGreaterThanOrEqual(runtimeWindowDurationMs);
+
         const validArtifact = {
             schemaVersion: 1,
             collectorKind: "system-memory-profiler",
@@ -4606,8 +4620,8 @@ describe("B-125 retrieval app-smoke fixture", () => {
             deviceIdentitySha256: "d".repeat(64),
             windowStartedAt: stopped.envelope.startedAt,
             windowFinishedAt: stopped.envelope.finishedAt,
-            sampleIntervalMs: 1_000,
-            samples: [100, 200],
+            sampleIntervalMs: profilerSampleIntervalMs,
+            samples: profilerSamples,
             rawExportPath: IOS_MEMORY_RAW_EXPORT_PATH,
             rawExportSha256: createHash("sha256").update(IOS_MEMORY_RAW_EXPORT).digest("hex"),
         };
@@ -4645,7 +4659,7 @@ describe("B-125 retrieval app-smoke fixture", () => {
         const futureWindowFinishedAt = new Date(Date.now() + 60_000).toISOString();
         const futureWindowSampleCount = Math.ceil((
             Date.parse(futureWindowFinishedAt) - Date.parse(validArtifact.windowStartedAt)
-        ) / 1_000) + 1;
+        ) / profilerSampleIntervalMs) + 1;
         const invalidArtifacts: Array<{
             name: string;
             artifact: Record<string, unknown>;
@@ -4762,8 +4776,26 @@ describe("B-125 retrieval app-smoke fixture", () => {
         await expect(recorder.recordExternalMemoryEnvelope({ artifactPath }))
             .rejects.toThrow("artifact or raw Instruments export is unavailable or invalid");
         externalMemoryArtifactControl.setRawExport(IOS_MEMORY_RAW_EXPORT);
+        const longWindowStartedAt = new Date(
+            Date.parse(stopped.envelope.startedAt!) - 1_001,
+        ).toISOString();
+        const longWindowDurationMs = (
+            Date.parse(stopped.envelope.finishedAt!)
+            - Date.parse(longWindowStartedAt)
+        );
+        const longWindowSamples = Array.from({
+            length: Math.max(
+                2,
+                Math.ceil(longWindowDurationMs / profilerSampleIntervalMs) + 1,
+            ),
+        }, (_, index) => 100 + index);
+        expect(longWindowDurationMs).toBeGreaterThan(profilerSampleIntervalMs);
+        expect((longWindowSamples.length - 1) * profilerSampleIntervalMs)
+            .toBeGreaterThanOrEqual(longWindowDurationMs);
         externalMemoryArtifactControl.setArtifact({
             ...validArtifact,
+            windowStartedAt: longWindowStartedAt,
+            samples: longWindowSamples,
             rawExportSha256: "f".repeat(64),
         });
         await expect(recorder.recordExternalMemoryEnvelope({ artifactPath }))
