@@ -2,7 +2,7 @@
 
 Decision ID: DEC-027
 Status: Accepted
-Updated: 2026-08-30
+Updated: 2026-09-04
 Authority: 用户于 2026-08-08 对 retrieval-optimization 逐项分析并依次确认模型选择、失败语义、Chat/Pagelet retry、Pagelet insight 上限、Data Boundary opaque bridge、multi-seed PPR、候选/文档预算与 query-embedding 生命周期；随后在 PPR 效果复审后确认 additive Local / Deep Breadth / Convergence 三 lane、membership-aware 单候选提名与分层失败降级，并确认有效 reranker 可自由混排、fail-open 采用 direct-first 且不做跨 origin score decay；同日继续确认保留 SQLite FTS5 + RRF、先修 CJK lexical correctness、再评测多字段 BM25、AND/OR 与 fusion 参数，暂不新增 semantic query rewrite 或重型 sparse/search engine；并确认 Phase 0A 以 deterministic bigram + indexed unigram fallback 为主候选、symmetric character phrase 为确定性对照、显式 locale/fingerprint 的 `Intl.Segmenter` 为挑战者、trigram 仅作限制对照；随后确认 OD-05A 复用首次有效查询与 lexical plan，并以 run-scoped exact-evidence replay suppression 保证 relaxed retry 探索新证据而不切断图传播；在补充上下文边界、大库规模与当前 macOS Obsidian renderer 对照证据后，明确确认 OD-06A 选择 `CHAR-PHRASE` 作为 shipping CJK profile family；并明确要求把全部已确认内容写入当前权威文档。用户于 2026-08-11 进一步指定 B-125 rollout 的硬件型号下限为 `iPhone 15`，同时明确暂缓 Xcode/Instruments 与性能工作；用户于 2026-08-13 确认 `minimumIOSVersion=17.0`、`minimumObsidianVersion=1.11.4`，随后接受 2026-08-11 freshness window 内记录的较新版本 real-iOS verifier PASS 结果作为该声明下限中软件版本部分的 B-125 proxy validation baseline，并承担未直接测试精确 floor tuple 的向后兼容风险；同日进一步明确仅对 B-125 临时豁免 Win32 runtime support，把 Win32 排除出本 track 的 required desktop rollout matrix，同时要求四个 B-125 rollout flags 在 Windows fail-closed 强制关闭；这些决定不构成 Win32 PASS、兼容证明或 PA 对 Windows 的永久支持变更。同日 owner 重新评估性能工作的产品价值与投入后，批准 B-125 采用当前可用 iPhone 的 practical performance proxy 和精简实用门禁，接受不采集 process physical footprint 的残余风险，并将 Xcode/Instruments、18 个 device-derived thresholds 与原 47-episode 扩展认证移至非阻塞 B-127。用户于 2026-08-30 进一步纠正验证投入：B-125 不再以重复真机长跑或单体 runner 的全局结果作为交付门禁，改用按风险分层、按证据切片复用、仅重跑受影响路径的验证；33-episode compact profile、p95 声明和统计性能认证一并移入 B-127
 Work item: B-125
 
@@ -111,6 +111,18 @@ Work item: B-125
 > shipping-default 实现/发布 lane；当前 default-off 源码、commit、push、tag、publish
 > 与 release 均未因此获授权或发生。最终证据与 residual risk 见
 > [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md)。
+
+> [!note] Owner shipping-default successor decision 2026-09-04
+> Owner 确认按建议将 `lexicalProfile`、`strictReranker`、`graphPpr`
+> 与 `relaxedRecovery` 四项一起设为 build default on。该当日决定由
+> [DEC-031](./dec-031-b125-retrieval-shipping-default.md) 作为有日期的 B-125
+> shipping-default amendment：只有明确 macOS/Linux/iOS identity 进入支持范围，
+> Win32/Android 与无 allowlist signal 的 unknown/partial identity 分别通过
+> `windows` / `android` / `unsupported` mask 强制 all-false；sparse raw boolean override 保留显式
+> `false` 逐项回滚且不回填隐式默认；无 Settings UI、Beta-only
+> 特判、算法/provider/Data Boundary/预算变更。本段不追溯改写
+> B-125 closeout 或当时 default-off 事实，也不自动授权 commit、push、
+> Beta branch、tag、publish 或 release。
 
 ## Context
 
@@ -327,7 +339,8 @@ deadline/finalization reserve 由 SDD EC-03 收束为可验证的工程合同，
   footprint、Instruments 与统计阈值留给 B-127，不阻塞默认关闭候选交付。
 - Work created or removed: B-125 Active Package 在实现、验证与 owner disposition
   关闭后删除；B-123 的单结果 Deep Discover 验证继续只是 predecessor evidence，
-  B-127 承接非阻塞的扩展性能认证。
+  B-127 承接非阻塞的扩展性能认证；2026-09-04 起，DEC-031 下的
+  B-125 continuation 承接不改算法的 shipping-default 实现与验证。
 
 ## Revisit Trigger
 
@@ -351,5 +364,6 @@ deadline/finalization reserve 由 SDD EC-03 收束为可验证的工程合同，
 - Pagelet contract: [Pagelet Product Design](../pagelet-product-design.md)
 - Architecture: [VSS SQLite/WASM architecture](../../architecture/vss-sqlite-wasm-architecture.md), [PA Agent architecture](../../architecture/pa-agent-architecture-plan.md)
 - Final implementation / validation evidence: [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md)
+- Shipping-default amendment: [DEC-031](./dec-031-b125-retrieval-shipping-default.md), [B-125 Product Spec amendment](../specs/pa-active-vault-indexer-product-spec.md#102-b-125-shipping-default-amendment), [B-125 continuation Tracker](../../development/active/retrieval-optimization-shipping-default/tracker.md)
 - Source request: Owner discussion and sequential confirmations, 2026-08-08
-- Supersedes / superseded by: supersedes the conflicting algorithm, boundary, projection and retry-state choices in the 2026-08-07 retrieval-optimization draft; none otherwise
+- Supersedes / superseded by: supersedes the conflicting algorithm, boundary, projection and retry-state choices in the 2026-08-07 retrieval-optimization draft; DEC-031 supersedes only the pending/default-off shipping disposition and does not supersede this retrieval behavior decision

@@ -1,10 +1,10 @@
 # PA Eval Harness Product Spec
 
 Document status: Current
-Updated: 2026-08-30
+Updated: 2026-09-04
 Work item: B-118
-Scope note: DEC-024 deterministic coverage is owned by B-118; DEC-027/B-125 adds lexical-correctness、retrieval、rerank、retry and opaque-bridge gates. Their implementation/validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md).
-Scoped decisions: [DEC-024 — Quiet Recall cold semantic retrieval](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027 — bounded retrieval recovery](../decisions/dec-027-bounded-retrieval-recovery.md)
+Scope note: DEC-024 deterministic coverage is owned by B-118; DEC-027/B-125 adds lexical-correctness、retrieval、rerank、retry and opaque-bridge gates. Their implementation/validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). DEC-031 extends B-125 with the shipping default and owns its affected-slice current-artifact revalidation.
+Scoped decisions: [DEC-024 — Quiet Recall cold semantic retrieval](../decisions/dec-024-quiet-recall-cold-semantic-retrieval.md)、[DEC-027 — bounded retrieval recovery](../decisions/dec-027-bounded-retrieval-recovery.md)、[DEC-031 — platform-scoped retrieval shipping default](../decisions/dec-031-b125-retrieval-shipping-default.md)
 Authority: PA deterministic fixture、cross-spec blocking checks、optional judge layers 与 replay evaluation boundaries。
 
 ## Status
@@ -207,13 +207,19 @@ The B-125 iPhone slice applies existing absolute runtime budgets and rejects an
 app/renderer hang、OS termination、unbounded local-index growth、unsafe cancellation
 or repeatable material raw latency/UI regression. It does not derive p95 or an
 arbitrary percentage threshold from a handful of samples. Machine-complete
-evidence remains subject to one owner rollout disposition per implicated flag；
-missing evidence keeps that flag off without blocking default-off code integration
-or unrelated completed slices.
+evidence remained subject to one owner rollout disposition per implicated flag
+during B-125；missing evidence kept only that flag off without blocking the
+then-default-off code integration or unrelated completed slices. DEC-031 now uses
+build-default-on for supported platforms；an affected-slice failure in this B-125
+continuation therefore requires explicit rollback of the implicated flag and stays visible in the B-125
+Tracker rather than retroactively invalidating unrelated closed B-125 evidence.
 
-Before `lexicalProfile` defaults on, one Desktop source-triggered upsert must prove
-an edited note reaches ordinary incremental lexical maintenance and becomes
-searchable；the iOS setup probe separately binds the `CHAR-PHRASE` fingerprint.
+Before the 2026-08-30 rollout disposition, one Desktop source-triggered upsert had
+to prove an edited note reached ordinary incremental lexical maintenance and became
+searchable；the iOS setup probe separately bound the `CHAR-PHRASE` fingerprint.
+The DEC-031 B-125 amendment reuses that closed evidence only where the runtime slice is unchanged
+and adds current-artifact validation for the shipping-default、OPFS and iOS paths it
+affects.
 One graph-enabled iPhone Recovery case carries the required Local/Deep/Convergence
 workset、Worker timing and deadline/skip observation without adding another case.
 

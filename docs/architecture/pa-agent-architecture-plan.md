@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-08-09
+Updated: 2026-09-04
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -133,16 +133,27 @@ be verified is dropped fail-closed；an older serialized observation is never
 reused. The same exact materialized set feeds reranking, the rejection ledger and
 final projection.
 
-All new retrieval paths are controlled by internal default-off flags. Chat and
-Pagelet live-read the normalized flags and a policy epoch at each applicable
+[DEC-031, the dated B-125 shipping-default amendment](../product/decisions/dec-031-b125-retrieval-shipping-default.md)
+controls these retrieval paths through an internal versioned rollout profile.
+`lexicalProfile`、`strictReranker`、`graphPpr` and `relaxedRecovery` use build
+default `true` only when platform identity explicitly matches macOS/Linux/iOS；
+Win32/Android and unknown/partial identity without an allowlist signal resolve all
+four effective flags to `false` through `windows` / `android` / `unsupported`
+masks. Win32/Android signals win even if an allowlist signal is also present.
+Sparse raw booleans remain internal per-flag overrides on supported
+platforms, so explicit `false` rolls back one capability while absent/invalid
+fields use the build default without settings backfill. This policy is independent
+of the EC-02 calibration identity and has no Beta-version special case.
+
+Chat and Pagelet live-read the effective flags and a policy epoch at each applicable
 admission/recovery boundary. Epoch drift aborts the flagged lane/coordinator,
 cancels graph work where present and discards late results；turning a flag off
 therefore takes effect without accepting work admitted under the older snapshot.
-The Pagelet scheduler identity also includes the normalized retrieval flags, so a
+The Pagelet scheduler identity also includes the effective retrieval flags, so a
 change disposes the old scheduling/recovery instance before new work. Flag-off
 does not restore the removed legacy one-hop expansion: it keeps the direct
 retrieval path. The flags are rollout controls, not ordinary settings or model
-arguments.
+arguments, and no user-facing technical switch is added.
 
 ### Bounded miss recovery
 

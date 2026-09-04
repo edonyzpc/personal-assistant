@@ -1,8 +1,8 @@
 # VSS SQLite/WASM Current Architecture
 
-Updated: 2026-08-30
+Updated: 2026-09-04
 
-Status: Current runtime contract. The SQLite/WASM baseline was verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure; DEC-028/B-126 is the approved 2026-08-11 amendment, with implementation validation tracked in the [active package](../development/active/silent-first-use-memory-preparation/tracker.md).
+Status: Current runtime contract. The SQLite/WASM baseline was verified against `src/vss/`, `src/plugin.ts`, `src/memory-manager.ts`, the current package manifest, and VSS tests during the documentation restructure; DEC-028/B-126 owns silent first-use Memory, while DEC-031 is the dated B-125 amendment for the platform-scoped retrieval shipping default and tracks its current implementation/validation in the [B-125 continuation package](../development/active/retrieval-optimization-shipping-default/tracker.md).
 
 ## Authority And Product Boundary
 
@@ -12,6 +12,7 @@ Status: Current runtime contract. The SQLite/WASM baseline was verified against 
 - `VSS` is the internal facade for search, refresh, rebuild, reset, reconcile, verification, and index maintenance.
 - `VectorIndex` hides the concrete storage/search implementation from product code.
 - [DEC-028](../product/decisions/dec-028-silent-memory-auto-prepare.md) is the narrow first-use exception: the first Chat may start one non-blocking whole eligible vault rebuild without an Approval Modal and answer immediately. Shared folder/tag/generated-note exclusions still apply.
+- [DEC-031](../product/decisions/dec-031-b125-retrieval-shipping-default.md) makes the four owner-approved B-125 capabilities build-default-on only for explicit macOS/Linux/iOS identity, retains sparse explicit per-flag rollback, and masks Win32/Android plus identity without an allowlist signal all-false without adding a user-facing technical setting or changing B-125 algorithms/data boundaries.
 - Owner's later 2026-08-11 option 1 adds a prerequisite to that exception: an in-memory null marker cannot authorize destructive work until IndexedDB marker state has hydrated as known absent or the prior/unknown marker is durably invalidated. Before reset/provider work, VSS must durably save retry state and establish that truth; an unavailable transition fails closed while Chat remains answer-now.
 - Missing local index, profile/settings stale, manual Prepare/Update, and other non-first-use costly rebuild paths require explicit user confirmation.
 - Automatic background maintenance is allowed only after a confirmed or DEC-028 first-use prepare reaches durable usable ready. Abort, total failure, ready-marker publication failure, unavailable durable backend, unload, or Memory opt-out must not upgrade `memoryApprovalPolicy` or manufacture ready state. A denied persistent-storage request alone keeps the existing usable-but-evictable behavior and warning.
@@ -300,13 +301,25 @@ The B-126 first-use contract additionally requires focused coverage for immediat
 
 Desktop and real-device iOS evidence exist for the current Memory path. Physical Android validation remains in [Backlog B-003](../backlog.md#下一步可执行); do not infer Android parity from desktop or iOS.
 
-Each retrieval-optimization flag remains internal and default-off in current source.
-B-125 has closed the mapped deterministic、Desktop、platform and targeted-iPhone
-evidence, and the owner approved all four flags for a later shipping-default lane on
-2026-08-30. The aggregate is reporting/closeout only；it is not an all-or-nothing
-default-on switch. This disposition does not itself mutate defaults or authorize a
-release；see the
+Each retrieval-optimization flag remains internal. B-125 closed the mapped
+deterministic、Desktop、platform and targeted-iPhone evidence, and the owner approved
+all four flags for rollout on 2026-08-30. That historical disposition did not itself
+mutate defaults；see the
 [B-125 closeout evidence](../archive/2026/b-125-retrieval-optimization-closeout.md).
+On 2026-09-04 [DEC-031](../product/decisions/dec-031-b125-retrieval-shipping-default.md)
+and the [B-125 Product Spec amendment](../product/specs/pa-active-vault-indexer-product-spec.md#102-b-125-shipping-default-amendment)
+approved one versioned rollout profile；the B-125 shipping-default candidate implements
+macOS/Linux/iOS build defaults that set `lexicalProfile`、`strictReranker`、`graphPpr` and
+`relaxedRecovery` to `true`. Sparse raw booleans remain per-flag overrides；explicit
+`false` rolls back one capability, while absent/invalid fields use the build default
+without settings backfill. Win32 and Android resolve all four effective flags to
+`false`, regardless of raw `true`; identity without an explicit macOS/Linux/iOS
+allowlist signal receives `unsupported` and the same all-false result. Win32/Android
+signals take precedence even if an allowlist signal is also present. The resolver
+does not mutate raw settings.
+This rollout identity is separate from calibration evidence and uses no Beta-version
+special case. Implementation/validation state and release authority remain in the
+[B-125 continuation Tracker](../development/active/retrieval-optimization-shipping-default/tracker.md).
 Desktop owns real selected-reranker、structured temporal、Pagelet 0/1/2 and one
 source-triggered lexical upsert；OPFS restart runs only when persistence code/input
 changed.
@@ -351,11 +364,14 @@ temporarily excludes Win32 runtime support: Windows resolves the four B-125
 effective flags to `false` without rewriting raw settings and retains the existing
 direct/vector path. This does not remove any other PA Windows capability or change
 the manifest；DEC-027 owns the explicit re-entry contract and the compact closeout
-record retains the completed B-125 evidence.
-Existing Memory-path device evidence does not by itself validate the new lexical,
-graph or recovery path. Physical Android validation remains in
-[Backlog B-003](../backlog.md#下一步可执行); do not infer Android parity from desktop
-or iOS. Likewise, the current macOS Obsidian renderer fingerprint does not by
+record retains the completed B-125 evidence. The DEC-031 B-125 amendment applies the same
+effective all-false behavior to Android until physical current-artifact validation
+and a new owner decision widen the rollout；it also assigns `unsupported`/all-false
+to unknown or partial platform identity without an explicit macOS/Linux/iOS signal
+instead of treating every non-Windows/non-Android value as supported. Physical Android validation remains in
+[Backlog B-003](../backlog.md#下一步可执行); existing desktop/iOS Memory-path evidence does
+not validate Android lexical、graph、recovery、fallback or cancellation parity.
+Likewise, the current macOS Obsidian renderer fingerprint does not by
 itself prove Windows/Linux parity；each supported desktop must either execute the
 same canary or present exact Electron/V8/ICU/Unicode/profile-fingerprint identity
 evidence before sharing one equivalence class.
@@ -366,13 +382,14 @@ SQLite receives the inherited strict/equal `8 vector / 8 lexical / 12 fusion /
 RRF k=60` baseline and the lexical leg is honestly disabled. With the flag on,
 standard retrieval may receive the exact offline candidate `8 / 12 / 18`,
 top-level clause OR, body-favoring BM25 weights and equal-leg `RRF k=30`；the
-profile remains explicitly provisional and default-off in source. Its
+profile remains explicitly provisional. Its historical `defaultEnabled=false`、
 `offline_provisional_winner` / `inherited_unvalidated` labels preserve how the dormant
-payload originated；they no longer express B-125 rollout status after the owner
-accepted the completed targeted-device/platform evidence. They are intentionally not
-silently relabelled in a docs-only closeout. A future shipping-default source lane
-must version any changed evidence/profile identity and preserve explicit false
-rollback plus the Win32 mask. Legacy callers may still supply bounded depth aliases,
+payload originated；they do not express current rollout status after the DEC-031 B-125 amendment
+introduced a separate versioned shipping-default authority. They are intentionally
+not relabelled without changed calibration evidence. Any future algorithm/search-
+parameter or calibration-evidence change must version the affected calibration
+identity；a rollout-only change versions the rollout profile instead. Legacy callers
+may still supply bounded depth aliases,
 but those ad-hoc combinations carry no versioned profile identity；the Worker exact-
 validates every registered profile payload and rejects drift or alias mismatch.
 

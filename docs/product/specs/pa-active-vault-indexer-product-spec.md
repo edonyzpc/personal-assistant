@@ -1,17 +1,18 @@
 # PA Active Vault Indexer Product Spec
 
 Document status: Approved
-Updated: 2026-08-30
+Updated: 2026-09-04
 Work item: B-125
-Decision: [DEC-027 — 采用有界、汇合感知的检索恢复](../decisions/dec-027-bounded-retrieval-recovery.md)
-Authority: Active Vault Indexer 的共享 retrieval behavior、surface policy、source/evidence contract 与 B-125 scoped requirements；早于 stable Backlog ID 的 bounded v1 baseline 继续保留其历史来源。
+Decision: [DEC-031 — B-125 检索优化采用受平台约束的默认开启](../decisions/dec-031-b125-retrieval-shipping-default.md)
+Source behavior decision: [DEC-027 — 采用有界、汇合感知的检索恢复](../decisions/dec-027-bounded-retrieval-recovery.md)
+Authority: DEC-027 owns B-125/REQ-01..08 and B-125/AC-01..08 retrieval behavior；DEC-031 owns the dated B-125/REQ-09 and B-125/AC-09 shipping-default amendment。早于 stable Backlog ID 的 bounded v1 baseline 继续保留其历史来源。
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Delivery status | Bounded v1 and AVI deepening slices have shipped. DEC-027/B-125 implementation and validation are closed；the owner approved rollout for all four internal flags on 2026-08-30, while the current source remains default-off pending a separately authorized shipping-default/release lane. See [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). |
+| Delivery status | Bounded v1 and AVI deepening slices have shipped. DEC-027/B-125 implementation and validation are closed；the owner approved rollout for all four internal flags on 2026-08-30. On 2026-09-04 the owner approved a dated B-125 amendment that makes all four build defaults active only for explicit macOS/Linux/iOS identity, with Win32/Android and identity lacking an allowlist signal masked off and sparse explicit rollback preserved. Current implementation/validation is owned by [DEC-031](../decisions/dec-031-b125-retrieval-shipping-default.md) and the [B-125 continuation Tracker](../../development/active/retrieval-optimization-shipping-default/tracker.md), without rewriting the [B-125 closeout evidence](../../archive/2026/b-125-retrieval-optimization-closeout.md). |
 | Primary surfaces | Chat, Pagelet, Memory, Maintenance Review |
 | Feature family | Active Vault Indexer / Retrieval Substrate |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -31,7 +32,9 @@ This document reflects the one-question-at-a-time product decisions confirmed on
 2026-06-28. It is now a durable contract for the implemented bounded slices;
 explicit future scope still requires a new SDD. DEC-027 is a dated B-125 scoped
 amendment；its target behavior is current product authority, and its closed delivery
-evidence is retained only in the linked compact closeout record.
+evidence is retained only in the linked compact closeout record. DEC-031 is the
+2026-09-04 B-125 amendment that activates that unchanged behavior as a
+platform-scoped shipping default；it is a continuation of B-125, not a new feature.
 
 ## Confirmed Decisions
 
@@ -563,13 +566,16 @@ and focused tests；the completed implementation/validation trail is historical
   B-125 makes no p95、percentage or floor-performance claim. Six frozen selected-
   reranker ranking cases、the structured explicit-temporal canary and Pagelet 0/1/2
   remain independent deterministic/Desktop current-App quality gates and are not
-  repeated on iPhone. One Desktop source-triggered upsert must prove ordinary
-  incremental lexical maintenance before `lexicalProfile` defaults on. Every
+  repeated on iPhone. Before any later shipping-default decision, the B-125 gate
+  required one Desktop source-triggered upsert proving ordinary incremental lexical
+  maintenance；that evidence is part of the closed 2026-08-30 disposition. Every
   evidence slice finalizes and invalidates independently；
   runner/verifier/docs-only changes、legal monotonic bookkeeping or a different
   slice's failure cannot retroactively erase a committed product observation.
-  Missing evidence keeps only the implicated rollout flag off until investigated or
-  explicitly accepted by the owner. Process physical footprint、the compact
+  During B-125, missing evidence kept only the implicated rollout flag off until
+  investigated or explicitly accepted by the owner. The DEC-031 B-125 amendment
+  now owns any shipping-default rollback caused by changed-path validation. Process physical
+  footprint、the compact
   33-episode profile、p95 and extended profiler certification are B-127 scope. A
   profile upgrade rebuilds
   only local derived FTS state from allowed existing chunk records, with no
@@ -581,6 +587,54 @@ and focused tests；the completed implementation/validation trail is historical
   only when all core CJK cases reach Top-8、English/code does not regress、MATCH
   errors stay zero and equal-weight metadata fields make title/heading/path-only
   relevant notes reachable. Passing does not automatically choose a winner.
+
+### 10.2 B-125 Shipping-Default Amendment
+
+This dated amendment changes only how the already-approved B-125 capabilities
+become the shipping default. It does not reopen the algorithm, evidence boundary,
+provider contract, budget, storage ownership or the historical 2026-08-30 closeout.
+
+#### Requirement
+
+- **B-125/REQ-09 — Platform-scoped, reversible shipping default.** B-125 uses a
+  versioned rollout identity that is separate from calibration provenance. Only
+  runtime identity explicitly allowlisted as macOS, Linux or iOS receives build
+  defaults of `true` for `lexicalProfile`, `strictReranker`, `graphPpr` and
+  `relaxedRecovery`. Win32, Android and unknown/incomplete identity without an
+  allowlist signal receive a higher-priority all-false platform mask and retain
+  the direct/vector fallback. On supported platforms, sparse raw booleans remain
+  independent overrides: explicit `true` or `false` wins per field, explicit
+  `false` is the rollback, and absent or invalid values use the build default.
+  Load, startup, unrelated settings saves and platform masking must not materialize,
+  backfill or overwrite raw values. Chat, Pagelet, Memory and VSS consume the same
+  effective policy. This amendment uses no Beta-version special case, adds no
+  ordinary-user technical control and changes none of B-125/REQ-01 through
+  B-125/REQ-08, including algorithm, model-call, candidate/document/time budgets,
+  Data Boundary, Markdown/OPFS ownership, lifecycle or fallback contracts.
+
+#### Acceptance Criterion
+
+- **B-125/AC-09:** Focused automated evidence and current-artifact smoke jointly
+  prove the dated shipping-default amendment:
+  1. the rollout ID, version, B-125/DEC-031 authority, deep-freeze and four build
+     defaults are fixed；supported-platform missing, empty, partial or invalid raw
+     state resolves per field to the expected default, while explicit booleans remain intact；
+  2. settings merge, unrelated save, JSON round-trip and reload do not materialize
+     implicit defaults, and any explicit `false` survives reload as an independent rollback；
+  3. macOS, Linux and iOS resolve supported/default-on；Win32, Android and
+     unknown/incomplete identity resolve all-false across missing, partial and
+     all-true raw matrices, masks outrank raw/allowlist, input objects are not
+     mutated, and the snapshot records `none`, `windows`, `android` or `unsupported`；
+  4. Chat, Pagelet, Memory and VSS share the effective policy；affected default/on/
+     off/lifecycle tests and B-125/REQ-01 through B-125/REQ-08 regressions pass,
+     while policy-epoch changes, cancel, supersede and unload reject stale work；
+  5. Desktop smoke, affected lexical/OPFS restart evidence and a targeted real-iPhone
+     canary bind the behavior to the exact production artifact, prove lexical
+     generation uses only admitted existing chunk records with atomic activation,
+     retain previous-valid or vector-only fallback on failure/cancel, and record
+     zero provider calls, re-embedding and Markdown mutation. This change-scoped
+     canary does not reopen B-127's 33/47 episodes, p95, profiler or floor-grade
+     certification.
 
 ## 11. Relationship To Current Memory/VSS
 
@@ -734,8 +788,11 @@ B-125 EC-02 selected the standard candidate `8 vector / 12 lexical / 18 fusion`,
 top-level clause OR、body-favoring BM25 weights and equal-leg `RRF k=30`；the inherited
 relaxed、graph、deadline and batch envelopes passed the required deterministic、
 Desktop、platform and targeted-device safety slices and were accepted for rollout.
-Their source labels remain provenance for the current dormant default-off profile,
-not delivery status or permanent architecture constants.
+Their source labels remain provenance for the historical calibration candidate,
+not current shipping-default status, delivery status or permanent architecture
+constants. [DEC-031](../decisions/dec-031-b125-retrieval-shipping-default.md),
+the dated B-125 shipping-default amendment, owns the independent rollout identity
+and does not relabel this calibration evidence.
 
 There are no remaining B-125 retrieval-behavior or runtime-architecture choices.
 The owner set `minimumIPhoneModel=iPhone 15` on 2026-08-11 and confirmed
@@ -789,6 +846,19 @@ commit、push、tag、publish or release. A later shipping-default change must p
 explicit per-flag false rollback and the Win32 mask, version any changed calibration
 identity, and run only its affected focused/default/on/off/lifecycle gates.
 
+On 2026-09-04 the owner made that separate shipping-default decision: all four
+flags use build default `true` on macOS、Linux and iOS；Win32 and Android resolve all
+four effective flags to `false`; platform identity without an explicit macOS/Linux/iOS
+allowlist signal receives `unsupported` and the same all-false result. Sparse raw booleans remain internal per-flag
+overrides, explicit `false` remains rollback, and absent/invalid fields use the
+current build default without settings backfill. This adds no user-visible
+technical switches or Beta-version special case and changes no algorithm、model-call、
+budget、provider、Data Boundary or storage semantics. The accepted contract and
+current execution state live in [DEC-031](../decisions/dec-031-b125-retrieval-shipping-default.md),
+this B-125/REQ-09 and B-125/AC-09 amendment, and its
+[Tracker](../../development/active/retrieval-optimization-shipping-default/tracker.md).
+It does not alter the historical B-125 closeout.
+
 Because no Windows device is currently available, the owner temporarily excludes Win32
 runtime support from B-125 only. The required desktop rollout matrix for this
 track is therefore `darwin` + `linux`; a missing Win32 receipt is not a B-125
@@ -805,6 +875,14 @@ the compact/extended performance-certification lanes are deferred to B-127 rathe
 than being B-125 blockers. B-125's targeted current-device safety canaries are
 complete and retained in the compact closeout evidence. These rollout choices select
 evidence baselines and do not change the approved retrieval behavior above.
+
+DEC-031 additionally keeps Android effective flags all-false until a physical
+Android current-artifact Memory/OPFS/lexical/graph/recovery/fallback/cancel gate
+and a new owner decision explicitly widen the rollout. This is a temporary DEC-031
+platform mask within B-125, not an Android incompatibility claim or a permanent change to PA's
+mobile support. Unknown/partial runtime identity without an explicit macOS/Linux/iOS
+allowlist signal likewise fails closed as `unsupported`; it is not inferred supported
+merely because Win32/Android were not detected.
 
 The following are non-blocking future Active Vault Indexer questions:
 
