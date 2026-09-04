@@ -7,7 +7,7 @@ import {
 } from "../src/vss/retrieval-calibration";
 
 describe("EC-02 retrieval calibration profile", () => {
-    it("freezes the provisional default-off standard candidate identity", () => {
+    it("freezes the provisional standard candidate and its historical default state", () => {
         expect(RETRIEVAL_CALIBRATION_PROFILE).toMatchObject({
             id: "ec02-char-phrase-runtime-v1",
             version: 1,

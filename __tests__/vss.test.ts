@@ -33,7 +33,14 @@ jest.mock('obsidian', () => {
             }
         },
         normalizePath: (p: string) => p,
-        Platform: { isMobile: false, isWin: false },
+        Platform: {
+            isMobile: false,
+            isWin: false,
+            isAndroidApp: false,
+            isMacOS: true,
+            isLinux: false,
+            isIosApp: false,
+        },
     };
 });
 
@@ -74,7 +81,14 @@ jest.mock('../src/confirm', () => ({
 const MockSqliteVectorIndex = (jest.requireMock('../src/vss/sqlite-vector-index') as { SqliteVectorIndex: jest.Mock }).SqliteVectorIndex;
 const mockConfirmUserAction = (jest.requireMock('../src/confirm') as { confirmUserAction: jest.Mock }).confirmUserAction;
 const mockPlatform = (jest.requireMock('obsidian') as {
-    Platform: { isMobile: boolean; isWin: boolean };
+    Platform: {
+        isMobile: boolean;
+        isWin: boolean;
+        isAndroidApp: boolean;
+        isMacOS: boolean;
+        isLinux: boolean;
+        isIosApp: boolean;
+    };
 }).Platform;
 
 class FakeVectorIndex implements VectorIndex {
@@ -1275,7 +1289,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.upsertFile).not.toHaveBeenCalled();
         expect(index.deleteFile).toHaveBeenCalledWith(
             file.path,
-            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+            expect.objectContaining({ lexicalMaintenanceEnabled: true }),
         );
         await vss.dispose();
     });
@@ -1314,7 +1328,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.upsertFile).not.toHaveBeenCalled();
         expect(index.deleteFile).toHaveBeenCalledWith(
             file.path,
-            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+            expect.objectContaining({ lexicalMaintenanceEnabled: true }),
         );
         await vss.dispose();
     });
@@ -2252,7 +2266,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         await vss.flush({ limit: 5, reason: 'test-large-file' });
 
         expect(dirtyMap.has(largeFile.path)).toBe(false);
-        expect(index.deleteFile).toHaveBeenCalledWith('large.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
+        expect(index.deleteFile).toHaveBeenCalledWith('large.md', expect.objectContaining({ lexicalMaintenanceEnabled: true }));
         expect(await vssStateStore.getDirtyJournal()).toEqual(new Map());
         expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
@@ -2281,7 +2295,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         await vss.flush({ force: true, reason: 'test-stale-delete' });
 
         expect(index.listFilePaths).toHaveBeenCalled();
-        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
+        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md', expect.objectContaining({ lexicalMaintenanceEnabled: true }));
         expect(index.records.has('deleted.md')).toBe(false);
         expect(index.upsertFile).toHaveBeenCalledWith(expect.objectContaining({ path: 'keep.md' }), expect.any(Array), expect.any(Array));
     });
@@ -2297,7 +2311,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const status = await vss.refreshFileCache(emptyFile);
 
         expect(status).toBe('removed');
-        expect(index.deleteFile).toHaveBeenCalledWith('empty.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
+        expect(index.deleteFile).toHaveBeenCalledWith('empty.md', expect.objectContaining({ lexicalMaintenanceEnabled: true }));
     });
 
     it('keeps a note dirty when a removal write races with newer content', async () => {
@@ -2330,7 +2344,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
         expect(status).toBe('removed');
         expect(dirtyMap.has('empty-race.md')).toBe(true);
-        expect(index.deleteFile).toHaveBeenCalledWith('empty-race.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
+        expect(index.deleteFile).toHaveBeenCalledWith('empty-race.md', expect.objectContaining({ lexicalMaintenanceEnabled: true }));
     });
 
     it('defers refresh writes when a note changes while its content snapshot is being read', async () => {
@@ -2708,7 +2722,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(dirtyMap.has('changed.md')).toBe(false);
         expect(dirtyMap.has('created.md')).toBe(true);
         expect(verifyQueue.has('changed.md')).toBe(true);
-        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md', expect.objectContaining({ lexicalMaintenanceEnabled: false }));
+        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md', expect.objectContaining({ lexicalMaintenanceEnabled: true }));
         const persistedDirty = await vssStateStore.getDirtyJournal();
         expect(persistedDirty.has('created.md')).toBe(true);
         expect(persistedDirty.has('changed.md')).toBe(false);
@@ -3333,29 +3347,23 @@ describe('VSS SQLite/WASM lifecycle', () => {
         });
     });
 
-    it('keeps the lexical slice default-off and requests explicit lexical-only approval when enabled', async () => {
+    it('requests lexical-only approval by default and preserves explicit lexical rollback', async () => {
         const { plugin } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         const index = new FakeLexicalVectorIndex();
         attachReadyIndex(vss, index);
 
         await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
-            reason: 'ready',
-            action: 'none',
-        });
-
-        index.lexicalStatus = {
-            state: 'unavailable',
-            reason: 'feature_disabled',
-            chunkCount: 2,
-            lexicalRowCount: 0,
-        };
-        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: true };
-        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
             reason: 'lexical-profile-stale',
             action: 'rebuild-lexical',
             requiresApproval: true,
             canAnswerNow: true,
+        });
+
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: false };
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'ready',
+            action: 'none',
         });
     });
 
@@ -3382,6 +3390,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
     it('selects exact baseline/candidate payloads when the lexical calibration flag changes', async () => {
         const { plugin } = createPlugin();
+        plugin.settings.retrievalOptimizationFlags = { lexicalProfile: false };
         const vss = new VSS(plugin, 'cache');
         const index = new FakeLexicalVectorIndex();
         Object.setPrototypeOf(index, MockSqliteVectorIndex.prototype);
@@ -4750,7 +4759,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.upsertFile).not.toHaveBeenCalled();
         expect(index.deleteFile).toHaveBeenCalledWith(
             file.path,
-            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+            expect.objectContaining({ lexicalMaintenanceEnabled: true }),
         );
         await vss.dispose();
     });
@@ -4786,7 +4795,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.upsertFile).not.toHaveBeenCalled();
         expect(index.deleteFile).toHaveBeenCalledWith(
             file.path,
-            expect.objectContaining({ lexicalMaintenanceEnabled: false }),
+            expect.objectContaining({ lexicalMaintenanceEnabled: true }),
         );
         expect(vss.hasDirtyChanges()).toBe(false);
         await vss.dispose();

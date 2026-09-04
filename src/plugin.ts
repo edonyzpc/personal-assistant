@@ -189,7 +189,11 @@ import {
     type RetrievalDiagnosticsSnapshot,
     type RetrievalDiagnosticSurface,
 } from './ai-services/retrieval-diagnostics';
-import { resolveB125RetrievalOptimizationFlags } from './retrieval-optimization-platform-policy';
+import {
+    resolveB125RetrievalOptimizationFlags,
+    resolveB125RetrievalOptimizationPolicySnapshot,
+    type B125RetrievalOptimizationPolicySnapshot,
+} from './retrieval-optimization-platform-policy';
 import type { GraphBoundarySnapshotSource } from './graph/graph-boundary-snapshot';
 import type { GraphPathClass } from './graph/personalized-pagerank';
 import type { PaAgentInjectedContext } from './ai-services/context';
@@ -7012,10 +7016,19 @@ export class PluginManager extends Plugin {
         }
     }
 
-    private getEffectiveRetrievalOptimizationFlags() {
-        return resolveB125RetrievalOptimizationFlags(
+    /**
+     * Content-free runtime policy identity for diagnostics and smoke evidence.
+     * Raw sparse overrides remain private settings data; callers receive only
+     * the resolved rollout, platform mask, and effective flags.
+     */
+    getRetrievalOptimizationPolicySnapshot(): B125RetrievalOptimizationPolicySnapshot {
+        return resolveB125RetrievalOptimizationPolicySnapshot(
             this.settings.retrievalOptimizationFlags,
         );
+    }
+
+    private getEffectiveRetrievalOptimizationFlags() {
+        return this.getRetrievalOptimizationPolicySnapshot().effectiveFlags;
     }
 
     private createMemoryHost(): MemoryHost {
@@ -7123,13 +7136,8 @@ export class PluginManager extends Plugin {
     }
 
     private getRetrievalOptimizationEpoch(): string {
-        const flags = this.getEffectiveRetrievalOptimizationFlags();
-        const signature = stableStringify({
-            lexicalProfile: flags.lexicalProfile,
-            strictReranker: flags.strictReranker,
-            graphPpr: flags.graphPpr,
-            relaxedRecovery: flags.relaxedRecovery,
-        });
+        const snapshot = this.getRetrievalOptimizationPolicySnapshot();
+        const signature = stableStringify(snapshot);
         if (signature !== this.retrievalOptimizationSignature) {
             this.retrievalOptimizationSignature = signature;
             this.retrievalOptimizationEpoch = this.retrievalOptimizationEpoch >= Number.MAX_SAFE_INTEGER

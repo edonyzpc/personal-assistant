@@ -80,8 +80,9 @@ const RERANK_TIMEOUT_MS = 30_000;
 // Leave the same projection reserve used by Recovery before its attempt deadline.
 const RERANK_PROJECTION_MARGIN_MS = 500;
 
-// Development-only EC-02 safety envelopes. graphPpr remains default-off until
-// representative desktop/slow-device/iOS calibration validates this profile.
+// EC-02 safety envelopes calibrated before shipping-default activation.
+// Current enablement comes only from the versioned rollout policy; these
+// provisional evidence labels do not independently enable or disable graph PPR.
 const PROVISIONAL_EC02_GRAPH = RETRIEVAL_CALIBRATION_PROFILE.graph;
 const RELAXED_DIRECT_RESULT_LIMIT = RETRIEVAL_CALIBRATION_PROFILE.candidate.relaxed.fusionRaw;
 // Absolute diagnostics safety envelope only. This is not a calibrated maximum

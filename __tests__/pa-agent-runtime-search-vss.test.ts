@@ -24,6 +24,7 @@ import {
     type RetrievalDiagnosticSurface,
 } from "../src/ai-services/retrieval-diagnostics";
 import { createProviderRequestScope } from "../src/ai-services/obsidian-fetch";
+import { resolveB125RetrievalOptimizationFlags } from "../src/retrieval-optimization-platform-policy";
 
 // Minimal host / AIUtils stubs for the searchVss contract tests. We do NOT
 // boot a full PaAgentRuntime — searchVss only needs:
@@ -96,7 +97,9 @@ function makePlugin(opts: {
     const plugin = {
         settings,
         log: jest.fn(),
-        isGraphPprEnabled: () => settings.retrievalOptimizationFlags?.graphPpr === true,
+        isGraphPprEnabled: () => resolveB125RetrievalOptimizationFlags(
+            settings.retrievalOptimizationFlags,
+        ).graphPpr,
         onSettingsChanged: (listener: () => void | Promise<void>) => {
             settingsChangeListeners.add(listener);
             return () => settingsChangeListeners.delete(listener);
@@ -848,6 +851,7 @@ describe("MemorySearchTool searchVss contract", () => {
     it("keeps graph flag-off retrieval direct-only and never enters the legacy one-hop path", async () => {
         const { plugin, calls } = makePlugin({
             policyModelName: "",
+            retrievalOptimizationFlags: { graphPpr: false },
             searchHybrid: async () => [{
                 score: 0.9,
                 doc: { pageContent: "root chunk", metadata: { path: "notes/a.md", chunkIndex: 0 } },
@@ -1001,7 +1005,7 @@ describe("MemorySearchTool searchVss contract", () => {
         ]);
     });
 
-    it("removes an unrankable graph path before sending the remaining current workset to the Worker", async () => {
+    it("uses the default-on graph policy and removes an unrankable path before Worker dispatch", async () => {
         const seedPath = "notes/seed.md";
         const blankPath = "notes/blank.md";
         const indexedPath = "notes/indexed.md";
@@ -1013,7 +1017,6 @@ describe("MemorySearchTool searchVss contract", () => {
         };
         const { plugin } = makePlugin({
             policyModelName: "",
-            retrievalOptimizationFlags: { graphPpr: true },
             graphBoundarySource,
             searchHybrid: async ({ options }) => {
                 if (options?.queryEmbeddingOut) {

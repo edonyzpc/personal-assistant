@@ -1406,7 +1406,9 @@ describe('safeParseInt', () => {
 describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
     it('keeps retrieval optimization flags absent by default and preserves explicit internal overrides only', () => {
         expect(DEFAULT_SETTINGS.retrievalOptimizationFlags).toBeUndefined();
-        expect(mergeLoadedSettings({}).retrievalOptimizationFlags).toBeUndefined();
+        const mergedDefaults = mergeLoadedSettings({});
+        expect(mergedDefaults.retrievalOptimizationFlags).toBeUndefined();
+        expect(JSON.parse(JSON.stringify(mergedDefaults))).not.toHaveProperty('retrievalOptimizationFlags');
         expect(mergeLoadedSettings({
             retrievalOptimizationFlags: {
                 lexicalProfile: true,
@@ -1418,6 +1420,13 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
             strictReranker: false,
             graphPpr: undefined,
             relaxedRecovery: undefined,
+        });
+        expect(JSON.parse(JSON.stringify(mergeLoadedSettings({
+            retrievalOptimizationFlags: {
+                strictReranker: false,
+            },
+        }))).retrievalOptimizationFlags).toEqual({
+            strictReranker: false,
         });
         expect(mergeLoadedSettings({ retrievalOptimizationFlags: 'invalid' }).retrievalOptimizationFlags).toBeUndefined();
     });

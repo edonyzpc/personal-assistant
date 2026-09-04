@@ -76,7 +76,14 @@ jest.mock('obsidian', () => ({
         };
         messageEl = this.noticeEl;
     },
-    Platform: { isMobile: false },
+    Platform: {
+        isMobile: false,
+        isWin: false,
+        isAndroidApp: false,
+        isMacOS: true,
+        isLinux: false,
+        isIosApp: false,
+    },
     Modal: class {
         contentEl = mockCreateDomElement();
         constructor(_app: unknown) { }

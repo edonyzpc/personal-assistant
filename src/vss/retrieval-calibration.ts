@@ -97,15 +97,19 @@ const candidateRelaxed = searchParameters({
 /**
  * Single source of truth for the current EC-02 runtime candidate.
  *
- * This profile is intentionally provisional and default-off. Its standard
- * lexical settings reproduce the frozen offline winner; graph, deadline,
- * batching, and relaxed values remain inherited device-calibration inputs.
+ * This profile is intentionally provisional. Its `defaultEnabled` field is a
+ * frozen record of the candidate's state when this calibration evidence was
+ * produced; it is not the current rollout or shipping-default authority. Its
+ * standard lexical settings reproduce the frozen offline winner; graph,
+ * deadline, batching, and relaxed values remain inherited device-calibration
+ * inputs.
  */
 export const RETRIEVAL_CALIBRATION_PROFILE = Object.freeze({
     id: PROFILE_ID,
     version: PROFILE_VERSION,
     lexicalProfileId: "char-phrase-v1",
     provisional: true as const,
+    /** Historical calibration provenance only; see the B-125 rollout profile. */
     defaultEnabled: false as const,
     offlineWinnerId: "clause_OR/body_favor/compact/k30_equal",
     scoreThreshold: 0.01,

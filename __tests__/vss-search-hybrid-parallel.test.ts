@@ -34,7 +34,14 @@ jest.mock('obsidian', () => {
             constructor(_message?: unknown) { /* noop */ }
         },
         normalizePath: (p: string) => p,
-        Platform: { isMobile: false },
+        Platform: {
+            isMobile: false,
+            isWin: false,
+            isAndroidApp: false,
+            isMacOS: true,
+            isLinux: false,
+            isIosApp: false,
+        },
     };
 });
 

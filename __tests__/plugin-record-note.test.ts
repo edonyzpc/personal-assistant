@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { MarkdownRenderer, TFile } from 'obsidian';
+import { MarkdownRenderer, Platform, TFile } from 'obsidian';
 import type { App, MarkdownFileInfo } from 'obsidian';
 
 const mockNoticeMessages: string[] = [];
@@ -96,7 +96,15 @@ jest.mock('obsidian', () => {
                 mockNoticeMessages.push(String(message));
             }
         },
-        Platform: { isDesktop: false, isMobile: false },
+        Platform: {
+            isDesktop: false,
+            isMobile: false,
+            isWin: false,
+            isAndroidApp: false,
+            isMacOS: true,
+            isLinux: false,
+            isIosApp: false,
+        },
         normalizePath: (path: string) => {
             const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/g, '');
             return normalized === '' && path === '/' ? '/' : normalized;
@@ -6660,6 +6668,149 @@ describe('Pagelet Review and preload provider first-use admission', () => {
     });
 });
 
+describe('Retrieval optimization policy snapshot lifecycle', () => {
+    const runtimePlatform = Platform as typeof Platform & {
+        isWin: boolean;
+        isAndroidApp: boolean;
+        isMacOS: boolean;
+        isLinux: boolean;
+        isIosApp: boolean;
+    };
+
+    afterEach(() => {
+        runtimePlatform.isWin = false;
+        runtimePlatform.isAndroidApp = false;
+        runtimePlatform.isMacOS = true;
+        runtimePlatform.isLinux = false;
+        runtimePlatform.isIosApp = false;
+    });
+
+    function createPolicyHarness() {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {};
+        plugin.retrievalOptimizationEpoch = 0;
+        plugin.retrievalOptimizationSignature = '';
+        return plugin;
+    }
+
+    it('exposes a content-free build-default snapshot without persisting raw overrides', () => {
+        const plugin = createPolicyHarness();
+        plugin.settings.retrievalOptimizationFlags = {
+            lexicalProfile: false,
+            privateMarker: 'must-not-leak',
+        };
+
+        const snapshot = (plugin as PluginManager).getRetrievalOptimizationPolicySnapshot();
+
+        expect(snapshot).toMatchObject({
+            rolloutId: 'b125-retrieval-optimization-rollout',
+            rolloutVersion: 1,
+            authority: {
+                featureId: 'B-125',
+                sourceDecisionId: 'DEC-027',
+                decisionId: 'DEC-031',
+                ownerApprovalDate: '2026-09-04',
+            },
+            platformSupported: true,
+            platformMask: 'none',
+            effectiveFlags: {
+                lexicalProfile: false,
+                strictReranker: true,
+                graphPpr: true,
+                relaxedRecovery: true,
+            },
+        });
+        expect(JSON.stringify(snapshot)).not.toContain('must-not-leak');
+        expect(plugin.settings.retrievalOptimizationFlags).toEqual({
+            lexicalProfile: false,
+            privateMarker: 'must-not-leak',
+        });
+    });
+
+    it('does not materialize implicit build defaults during an unrelated settings save', async () => {
+        const plugin = createPolicyHarness();
+        plugin.settings.focusMode = true;
+        plugin.unloading = false;
+        plugin.settingsSaveTail = null;
+        plugin.legacyMemoryCompatibilityBarrier = null;
+        let persisted: Record<string, unknown> | undefined;
+        plugin.saveData = jest.fn(async (payload: Record<string, unknown>) => {
+            persisted = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+        });
+        plugin.notifySettingsChanged = jest.fn(async () => undefined);
+
+        await plugin.saveSettings();
+
+        expect(persisted).toBeDefined();
+        expect(persisted).not.toHaveProperty('retrievalOptimizationFlags');
+        expect(plugin.settings).not.toHaveProperty('retrievalOptimizationFlags');
+    });
+
+    it('keeps the epoch stable for one snapshot and invalidates for effective flags', () => {
+        const plugin = createPolicyHarness();
+
+        const defaultEpoch = plugin.getRetrievalOptimizationEpoch();
+        expect(plugin.getRetrievalOptimizationEpoch()).toBe(defaultEpoch);
+
+        plugin.settings.retrievalOptimizationFlags = { graphPpr: false };
+        const overriddenEpoch = plugin.getRetrievalOptimizationEpoch();
+        expect(overriddenEpoch).not.toBe(defaultEpoch);
+        expect(plugin.getRetrievalOptimizationEpoch()).toBe(overriddenEpoch);
+    });
+
+    it('binds platform support and the exact platform mask even when flags stay disabled', () => {
+        const plugin = createPolicyHarness();
+
+        runtimePlatform.isWin = true;
+        const windowsSnapshot = plugin.getRetrievalOptimizationPolicySnapshot();
+        const windowsEpoch = plugin.getRetrievalOptimizationEpoch();
+        expect(windowsSnapshot).toMatchObject({
+            platformSupported: false,
+            platformMask: 'windows',
+            effectiveFlags: {
+                lexicalProfile: false,
+                strictReranker: false,
+                graphPpr: false,
+                relaxedRecovery: false,
+            },
+        });
+
+        runtimePlatform.isWin = false;
+        runtimePlatform.isAndroidApp = true;
+        const androidSnapshot = plugin.getRetrievalOptimizationPolicySnapshot();
+        const androidEpoch = plugin.getRetrievalOptimizationEpoch();
+        expect(androidSnapshot).toMatchObject({
+            platformSupported: false,
+            platformMask: 'android',
+            effectiveFlags: windowsSnapshot.effectiveFlags,
+        });
+        expect(androidEpoch).not.toBe(windowsEpoch);
+    });
+
+    it('binds rollout and authority identity even when effective behavior is unchanged', () => {
+        const plugin = createPolicyHarness();
+        const snapshot = plugin.getRetrievalOptimizationPolicySnapshot();
+        const initialEpoch = plugin.getRetrievalOptimizationEpoch();
+
+        plugin.getRetrievalOptimizationPolicySnapshot = () => ({
+            ...snapshot,
+            rolloutVersion: 2,
+        });
+        const rolloutEpoch = plugin.getRetrievalOptimizationEpoch();
+        expect(rolloutEpoch).not.toBe(initialEpoch);
+
+        plugin.getRetrievalOptimizationPolicySnapshot = () => ({
+            ...snapshot,
+            rolloutVersion: 2,
+            authority: {
+                ...snapshot.authority,
+                decisionId: 'DEC-999',
+            },
+        });
+        expect(plugin.getRetrievalOptimizationEpoch()).not.toBe(rolloutEpoch);
+    });
+});
+
 describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
     it('forwards the Pagelet run scope and physical-dispatch hook to the native chat model', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -6733,7 +6884,7 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
         expect(plugin.deepDiscoverControllerEpoch).toBe(5);
     });
 
-    it('rebuilds an existing scheduler across retrieval flags absent-to-on-to-off', () => {
+    it('keeps explicit-on equivalent to the build default and rebuilds across off-to-default', () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
             pagelet: {
@@ -6766,10 +6917,11 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
         plugin.deepDiscoverControllerInitialization = null;
         plugin.deepDiscoverControllerInitializationIdentity = null;
 
-        const absentIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
-        const disposeAbsent = jest.fn();
-        plugin.deepDiscoverScheduler = { dispose: disposeAbsent };
-        plugin.deepDiscoverControllerPolicyIdentitySnapshot = absentIdentity;
+        const defaultIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
+        const disposeDefault = jest.fn();
+        const defaultScheduler = { dispose: disposeDefault };
+        plugin.deepDiscoverScheduler = defaultScheduler;
+        plugin.deepDiscoverControllerPolicyIdentitySnapshot = defaultIdentity;
 
         plugin.settings.retrievalOptimizationFlags = {
             lexicalProfile: true,
@@ -6779,14 +6931,11 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
         };
         const enabledIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
         plugin.syncPageletDeepDiscoverControllerIdentity();
-        expect(enabledIdentity).not.toBe(absentIdentity);
-        expect(disposeAbsent).toHaveBeenCalledTimes(1);
-        expect(plugin.deepDiscoverScheduler).toBeNull();
-        expect(plugin.deepDiscoverControllerEpoch).toBe(11);
+        expect(enabledIdentity).toBe(defaultIdentity);
+        expect(disposeDefault).not.toHaveBeenCalled();
+        expect(plugin.deepDiscoverScheduler).toBe(defaultScheduler);
+        expect(plugin.deepDiscoverControllerEpoch).toBe(10);
 
-        const disposeEnabled = jest.fn();
-        plugin.deepDiscoverScheduler = { dispose: disposeEnabled };
-        plugin.deepDiscoverControllerPolicyIdentitySnapshot = enabledIdentity;
         plugin.settings.retrievalOptimizationFlags = {
             lexicalProfile: false,
             strictReranker: false,
@@ -6795,8 +6944,19 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
         };
         const disabledIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
         plugin.syncPageletDeepDiscoverControllerIdentity();
-        expect(disabledIdentity).toBe(absentIdentity);
-        expect(disposeEnabled).toHaveBeenCalledTimes(1);
+        expect(disabledIdentity).not.toBe(defaultIdentity);
+        expect(disposeDefault).toHaveBeenCalledTimes(1);
+        expect(plugin.deepDiscoverScheduler).toBeNull();
+        expect(plugin.deepDiscoverControllerEpoch).toBe(11);
+
+        const disposeDisabled = jest.fn();
+        plugin.deepDiscoverScheduler = { dispose: disposeDisabled };
+        plugin.deepDiscoverControllerPolicyIdentitySnapshot = disabledIdentity;
+        delete plugin.settings.retrievalOptimizationFlags;
+        const restoredDefaultIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
+        plugin.syncPageletDeepDiscoverControllerIdentity();
+        expect(restoredDefaultIdentity).toBe(defaultIdentity);
+        expect(disposeDisabled).toHaveBeenCalledTimes(1);
         expect(plugin.deepDiscoverScheduler).toBeNull();
         expect(plugin.deepDiscoverControllerEpoch).toBe(12);
     });
