@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Implementing
-Updated: 2026-09-04
+Updated: 2026-09-05
 Work item: B-125
 Authority: 本次 B-125 continuation 的唯一执行状态、finding、验证证据与 closeout readiness。
 Product spec: [PA Active Vault Indexer — B-125 shipping-default amendment](../../../product/specs/pa-active-vault-indexer-product-spec.md#102-b-125-shipping-default-amendment)
@@ -10,41 +10,49 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: DEC-031 批准的版本化 shipping-default policy、sparse
-  rollback 与 positive platform allowlist 已形成候选；独立 risk audit 发现并
-  修正 unknown/partial platform 被误当 supported 的 P1；post-fix 多组 affected
-  suites 已通过。Feature identity 折回 B-125 后，完整 `make deploy` 与
-  Desktop current-App identity/mount/error smoke 已按新 artifact 刷新通过；
-  OPFS full-app restart 仅复用行为未变的 pre-fold evidence，不冒充新 SHA 重跑。
-  复审未发现剩余 P0/P1/P2。当前 Linux session 无 iCloud/iPhone 能力，
-  该预期环境限制不记为产品失败；候选将通过普通工作分支交接到 Mac mini，
-  再完成 real-iPhone current-artifact canary 与后续集成/release gate。
-- Next action: 获得明确 Git 授权后，在 Linux 将当前完整候选固化到
-  `codex/retrieval-default-on-b125` 并推送该工作分支；Mac mini 从精确远端
-  commit 接续本 Tracker，完成 local prerequisite、`make deploy-icloud`、
-  current-artifact iPhone canary，再决定 master integration 与 Beta 版本。
-- Blocker / decision needed: 无未决产品问题。尚未获得 commit、push、Beta
-  branch、tag、publish 或 release 授权。Linux 到 Mac 的远端工作分支传递
-  需要 commit/push 授权；Mac 上的 iCloud/iPhone 部署需要明确的 real-device
-  smoke 请求。Hosted Community scan 同样未获授权；目标 Beta 版本尚未决定。
-- Last verified behavior: post-fold `make deploy` 通过 platform guards、完整
-  lint、production build 与 210 suites / 5489 tests，并把四项产物部署到
-  repo-local `test` vault。Linux Obsidian 1.14.0 / installer 1.11.7 实际加载
-  `main.js` SHA-256 `db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`；
-  raw flags 缺失时 snapshot 为 rollout v1、`featureId=B-125`、
-  `sourceDecisionId=DEC-027`、`decisionId=DEC-031`、`platformMask=none` 与
-  four-on，不再有独立 track field。Chat view/container/input 各 mount 1，
-  fresh errors=0。Lexical-only 与 OPFS full-app restart 的行为证据来自
-  pre-fold same-behavior artifact；Mac 仍须从 handoff commit 重建并完成
-  current real-iPhone canary。
+- Current phase: M0 精确交接、M1 Mac 本地重验与 M2 real-iPhone
+  current-artifact canary 均为 PASS。Mac checkout 与 live remote work branch
+  在验证前同为 `e63ffc98c50eb7a1a709240cbc49589d48b78370`，tree
+  `216bc3895d8eb1d4f854b940287839c0ac5caeda`；工作树 clean。DEC-031
+  shipping-default、sparse rollback 与 positive platform allowlist 已在
+  macOS/iOS current artifact 上闭合，未发现新的 P0/P1/P2。
+- Next action: 将本次结果固化为仅含本 Tracker 的本地 evidence-only signed
+  commit 后停止，等待另行授权 master integration、push、Hosted Community
+  scan、Beta 版本选择及 release/publish。
+- Blocker / decision needed: B-125 的 Mac/iPhone 验证 blocker 已解除，无未决
+  产品问题。后续仍缺 master integration/push、Hosted Community scan、Beta
+  branch/tag/release/publish 的明确授权；目标 Beta 版本仍未决定，推荐
+  `2.10.0-beta.1`。Mac `make deploy` 仍有 Jest worker forced-exit warning，
+  因此 final master 的 natural-exit release-equivalent gate 必须重跑，当前
+  device canary PASS 不替代该门禁。
+- Last verified behavior: macOS 26.6.2 arm64、Node 22.22.3、npm 10.9.8 上，
+  focused Local Validation Gate 为 8 suites / 763 tests、TypeScript、
+  whitespace 与 DOM Community source scan 全部 PASS；`make deploy` 的
+  lint、production build 与 210 suites / 5489 tests 亦 PASS。Mac
+  `dist/main.js` SHA-256
+  `db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`
+  与 Linux post-fold、iCloud `main.js` 及 iPhone loaded artifact 完全一致；
+  其余三项连同 `main.js` 的 dist/iCloud copies 各自 byte-match。iPhone
+  （iOS 26.6.1）上 plugin 2.9.2 的 rollout v1 /
+  B-125/DEC-027/DEC-031、`platformMask=none`、raw root/四项字段 absent
+  与 four-on 前后稳定；Memory 为 ready（69 documents）、plan
+  `ready/none`、无需批准且可立即回答。一次真实触摸 Chat turn 完成并取得
+  一组严格配对、进入后续 Provider prompt 的 `search_memory` positive
+  receipt，唯一命中含 `Dog.md`；UI responsive、Markdown mutation=0、
+  fresh errors=0。
 
 ## Linux To Mac Mini Handoff
 
 ### Invariants
 
 - Linux handoff baseline is commit
-  `927895722bda2054ac7de7bb13ee2315aa970054`; the B-125 shipping-default continuation candidate currently
-  exists only as tracked and untracked working-tree changes above that baseline.
+  `927895722bda2054ac7de7bb13ee2315aa970054`. The exact work-branch handoff is
+  `codex/retrieval-default-on-b125` at
+  `e63ffc98c50eb7a1a709240cbc49589d48b78370`, composed of
+  `c311984dce8774a4875d5414ce3f53e1c8008cef` and
+  `e63ffc98c50eb7a1a709240cbc49589d48b78370`, with tree
+  `216bc3895d8eb1d4f854b940287839c0ac5caeda`. Mac local/tracking/live remote
+  refs matched before validation and the checkout was clean.
 - The current Linux session cannot reach the Mac iCloud path, iPhone Mirroring,
   or Safari Web Inspector. Do not retry those operations here and do not classify
   their expected environment failure as a B-125 product failure.
@@ -61,8 +69,8 @@ SDD: [Software Design Document](./sdd.md)
 - The post-fold Linux current-App artifact SHA-256 is
   `db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`.
   It passed the exact-source full local deploy gate and loaded-identity smoke.
-  Mac must still rebuild from the exact handoff commit, record its own artifact
-  SHA and require equality before reusing this receipt.
+  Mac rebuilt the exact handoff commit to the same SHA; that SHA also matched
+  the iCloud asset and the artifact loaded by the real-iPhone canary.
 
 ### Phase L — Freeze And Transfer From Linux
 
@@ -79,11 +87,15 @@ SDD: [Software Design Document](./sdd.md)
    push `master`, create a Beta branch/tag, or publish from Linux as part of this
    transfer.
 
-Handoff receipt required by Mac: baseline SHA, work-branch full SHA(s), tree SHA,
-exact remote branch name, all 25 intended path names/statuses, clean Linux
-worktree status after commit, post-fold Linux current-App artifact SHA plus the
-clearly labeled pre-fold behavior-provenance SHA, and the Linux gate summary
-already recorded above.
+Mac handoff receipt consumed: baseline
+`927895722bda2054ac7de7bb13ee2315aa970054`, work branch
+`codex/retrieval-default-on-b125`, commits
+`c311984dce8774a4875d5414ce3f53e1c8008cef` /
+`e63ffc98c50eb7a1a709240cbc49589d48b78370`, tree
+`216bc3895d8eb1d4f854b940287839c0ac5caeda`, all 25 intended paths, clean
+source worktree, post-fold artifact
+`db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`,
+clearly separated pre-fold provenance SHA, and the recorded Linux gates.
 
 ### Phase M1 — Rehydrate And Revalidate On Mac Mini
 
@@ -184,9 +196,9 @@ artifact identity, one integrated Chat/Memory path, and fresh errors.
 | T-02 | B-125/REQ-09 / B-125/AC-09 | Sparse raw boolean override、显式 false 回滚、不回填持久化 | [x] | Undefined/empty/partial/invalid、JSON round-trip 和 raw immutability 纳入 focused PASS；最新 plugin unrelated-save fixture 于 303-test suite PASS |
 | T-03 | B-125/REQ-09 / B-125/AC-09 | macOS/Linux/iOS positive allowlist；Win32/Android/unknown/partial all-false mask、raw preservation 与 direct/vector fallback | [x] | Negative-exclusion P1 已改为 positive allowlist 并新增 `unsupported` mask/fixtures；policy + calibration 2 suites / 13 tests PASS |
 | T-04 | B-125/REQ-09 / B-125/AC-09；inherited B-125 behavior contract | Chat、Pagelet、Memory/VSS 共享 effective policy；算法/provider/budget/Data Boundary/lifecycle 不变 | [x] | 原 8 suites / 797 tests PASS；positive-allowlist 修正后又通过 48/504/260-test 重叠 affected sets、typecheck 与 diff check；独立复审无剩余 P0/P1/P2 |
-| T-05 | B-125/AC-09 | Desktop current-App + targeted OPFS restart + real-iPhone current-artifact canary | [~] | Post-fold exact artifact 的 full deploy、loaded identity、policy snapshot、Chat mount 与 fresh errors PASS；indexed-chunk-only lexical 与 OPFS full-app restart 为 same-behavior pre-fold evidence；real-iPhone 仍 open；B-127 33/47/p95/profiler 不在本项 |
+| T-05 | B-125/AC-09 | Desktop current-App + targeted OPFS restart + real-iPhone current-artifact canary | [x] | Mac-built `db4c41…` 等于 Linux post-fold；四项 iCloud assets byte-match；real-iPhone loaded 同一 SHA，iOS `none`/four-on、真实触摸 Chat/Memory positive receipt、ready/none 与 fresh-errors=0 全部 PASS。OPFS/lexical 继续使用已接受的 same-behavior provenance；B-127 33/47/p95/profiler 不在本项 |
 | T-06 | B-125/REQ-09 / B-125/AC-09 | DEC/Product Spec/Architecture/Active Package 权威链 | [x] | DEC-031、B-125 Product Spec amendment、continuation SDD/Tracker、DEC-027 source behavior 与两份 current Architecture 已对齐；全局 docs finding 另行记录 |
-| T-07 | B-125/AC-09 | Final local/release gate 与 Beta readiness | [~] | Post-fold full deploy gate、bundle/release-doc/local Community source scan 与 current-App receipt PASS；worktree 尚未 commit/integrate，real-iPhone、hosted Community、target version、release dry-run 与 publish preflight 均 open |
+| T-07 | B-125/AC-09 | Final local/release gate 与 Beta readiness | [~] | Work-branch assertions/command exit、current-App 与 real-iPhone exact-artifact canary PASS；Jest worker forced-exit warning 使 natural-exit release gate 保持 open，须在 final master 重跑。本地 evidence-only Tracker commit 已获授权；master integration/final SHA、live remote match、Hosted Community、target version、release dry-run 与 publish preflight 仍 open |
 
 Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancelled`。
 
@@ -201,12 +213,12 @@ The current dated amendment is `B-125/REQ-09` with `B-125/AC-09`.
 
 | ID | Severity | Finding | Decision / fix | Verification | State |
 | --- | --- | --- | --- | --- | --- |
-| F-01 | P1 | B-125 四项已获 rollout disposition，但 raw flags 缺失时仍全部 effective-off，直接发布不会测到完整 B-125。 | DEC-031 确认在 macOS/Linux/iOS 一起 build-default-on，不做 Beta-only 特判。 | T-01、T-04、T-05 | Implemented；focused + Linux current-artifact verified，real-iPhone open |
+| F-01 | P1 | B-125 四项已获 rollout disposition，但 raw flags 缺失时仍全部 effective-off，直接发布不会测到完整 B-125。 | DEC-031 确认在 macOS/Linux/iOS 一起 build-default-on，不做 Beta-only 特判。 | T-01、T-04、T-05 | Implemented；focused + Linux/Mac/iPhone current-artifact verified |
 | F-02 | P1 | 把默认值合并或回填到普通 settings 会消除 absent / explicit true / explicit false 三态，破坏可逆 rollout。 | Build defaults 只属于 rollout policy；settings 保留 sparse raw overrides，加载/保存不物化隐式值。 | T-02 | Implemented and focused-validated |
 | F-03 | P1 | 用“非 Windows/Android”作支持判定会让没有明确 macOS/Linux/iOS signal 的 unknown/partial Platform 同样 default-on；Win/Android 与 allowlist signal 同时出现时也必须 mask 优先。 | 改为 macOS/Linux/iOS positive allowlist；Win32/Android 分别 mask，无 allowlist signal 用 `unsupported` mask，全部 all-false 且不改写 raw settings。 | T-03 | Closed by 2-suite / 13-test post-fix focused gate；overall affected/full gates remain separate |
-| F-04 | P1 | 历史 B-125 receipts 不证明 shipping-default 后的当前产物，尤其是 lexical preparation/OPFS restart 与 iOS 默认路径。 | 只重验受影响的 current-artifact Desktop/OPFS/iPhone slices；不重跑 B-127 扩展认证。 | T-05 | Desktop/OPFS closed；real-iPhone open pending explicit device-deploy authority |
+| F-04 | P1 | 历史 B-125 receipts 不证明 shipping-default 后的当前产物，尤其是 lexical preparation/OPFS restart 与 iOS 默认路径。 | 只重验受影响的 current-artifact Desktop/OPFS/iPhone slices；不重跑 B-127 扩展认证。 | T-05 | Desktop 与 real-iPhone current-artifact PASS；OPFS/lexical same-behavior provenance accepted |
 | F-05 | P2 | 历史 aggregate runner 如果只读 raw flags，会把“raw absent + build default-on”误报为关闭。 | 本 B-125 amendment 以 effective policy snapshot/focused smoke 为准；不为产生历史 aggregate 而修复/重跑 B-127 runner。 | T-04、T-05 | Closed by running-App effective snapshot and selected Desktop/OPFS smoke |
-| F-06 | P1 | 完整 release gate 若不自然退出，或 publish 时无法证明 live `origin/master` 精确一致，候选不可发布。 | Final full Jest coverage 必须自然返回 0，publish 前必须实时验证远程 SHA；失败时禁止继续。 | T-07 | Current uncommitted candidate gate PASS；integration/publish-time remote check remains mandatory |
+| F-06 | P1 | 完整 release gate 若不自然退出，或 publish 时无法证明 live `origin/master` 精确一致，候选不可发布。 | Final full Jest coverage 必须自然返回 0，publish 前必须实时验证远程 SHA；失败时禁止继续。 | T-07 | Work-branch assertions/command exit 与 device canary PASS，但 Jest worker forced-exit warning 未闭合 natural-exit gate；final master natural-exit/live-remote checks remain mandatory |
 
 ## Validation Log
 
@@ -225,6 +237,10 @@ The current dated amendment is `B-125/REQ-09` with `B-125/AC-09`.
 | 2026-09-04 | B-125/AC-09 | Pre-fold OPFS full-app restart | Behavior pass / identity superseded | Before/after receipt 均 PASS；renderer PID、main PID、time origin 均变化，证明完整 App restart；Linux x64 `sqlite-wasm-opfs-sahpool` remained ready/non-fallback，67 files / 218 chunks、2,539,520 bytes、`char-phrase-v1` generation 1、database/index/build/epoch/storage-scope hashes 全部连续；matched artifact SHA-256 `c78cf12096f4cf34bf540a8f49a7548d367d445f8919bb9c7d2677d6059755e7`，issues=[]。该 hash 仅作 pre-fold provenance。 |
 | 2026-09-04 | B-125/REQ-09 / B-125/AC-09 | Post-fold full local deploy + current-App identity smoke | Pass | Exact-source `make deploy` 通过 platform guards、lint、production build 与 210 suites / 5489 tests；bundle audit PASS（6,799,638 bytes，gzip 2,697,702 < 2,883,584 budget），third-party notices 覆盖 35 runtime packages / 12 bundled resources，release docs 9 files / 51 links 与本地 Community source scan PASS。Repo-local `test` vault plugin reload 后，loaded SHA-256=`db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`、blocker=null、rollout v1、B-125/DEC-027/DEC-031 authority、`none`/four-on、raw=null、无独立 track field；Chat view/container/input 各 1，fresh errors=0，debug/mobile 均恢复 off。OPFS restart 未用新 SHA 重跑，保留为上条 same-behavior provenance；real-iPhone 仍 open。 |
 | 2026-09-04 | B-125/AC-09 / T-07 | iPhone / hosted Community / integration-release boundary | Not run / open | iOS skill requires an explicit real-device request before writing current assets to the iCloud `test` vault；本轮一般 implementation authority 不外推该权限。Hosted scan、commit、push、target beta version、beta branch/tag/release/publish 也未获授权。Live read-only `origin/master` 与 local HEAD 在当前未提交 baseline 同为 `927895722bda2054ac7de7bb13ee2315aa970054`；任何 integration 后必须重新核对 |
+| 2026-09-05 | B-125/REQ-09 / B-125/AC-09 | M0 Mac handoff rehydrate / checkout | Pass | Consumed baseline `927895722bda2054ac7de7bb13ee2315aa970054`、branch `codex/retrieval-default-on-b125`、commits `c311984dce8774a4875d5414ce3f53e1c8008cef` / `e63ffc98c50eb7a1a709240cbc49589d48b78370`、tree `216bc3895d8eb1d4f854b940287839c0ac5caeda` 与全部 25 paths。验证前 local HEAD/tracking ref/live `git ls-remote` 均为 `e63ffc98c50eb7a1a709240cbc49589d48b78370`，worktree clean。 |
+| 2026-09-05 | B-125/REQ-09 / B-125/AC-09 | M1 Mac local prerequisite + current-App | Pass | macOS 26.6.2 (25G83) arm64、Node 22.22.3、npm 10.9.8、Desktop Obsidian runtime 1.13.7 / installer 1.12.7；focused Local Validation Gate 8 suites / 763 tests、TypeScript、whitespace 与 DOM Community source scan PASS。Exact-source `make deploy` 的 lint、production build 与 210 suites / 5489 tests PASS；bundle audit PASS（6,799,638 bytes，gzip 2,697,702 < 2,883,584 budget），third-party notices 覆盖 35 runtime packages / 12 bundled resources，`docs:check:release` 为 9 files / 51 links，local Community blocker scan PASS。已知 Jest worker forced-exit warning 保留为 residual，不冒充最终 natural-exit release gate。Mac `dist/main.js` SHA-256=`db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`，manifest / manifest-beta=`f12e21b0cceb42e7392d21589564725372e95348288774bff8e64e6a704fec5d`，styles=`8ac8b174824f0d9be6e26204d1354090155b91d7b572c092843a919f5aacab0c`；Desktop current-App loaded identity/mount/fresh-error receipt PASS。 |
+| 2026-09-05 | B-125/REQ-09 / B-125/AC-09 / T-05 | M2 iCloud assets + real-iPhone current-artifact canary | Pass | 仅执行一次已授权 `make deploy-icloud`；`main.js`、`manifest.json`、`manifest-beta.json`、`styles.css` 当前逐字节 MATCH。设备 preflight 为 Safari Develop target `Edony iPhone 15` / iOS 26.6.1；plugin 2.9.2 loaded SHA=`db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`、`capturedAtPluginLoad=2026-09-04T15:47:30.855Z`、blocker=null，且 canary 前后 identity stable。Rollout v1 / B-125/DEC-027/DEC-031、supported / mask `none` / four-on 与 raw root/四字段 absent 前后稳定。用户明确授权本次 note content 外发后，一次真实触摸 turn（probe token `1788538573462-0.735782919705027`）精确绑定 prompt hash `7e16b05a3cc59235f82e76a0e0ce4055e6b57bfaf77298722c5f1bbe5b2f5dd3`，canonical completed；1 call / 1 result 严格配对，`search_memory` success、hit=1、`evidence`、`Dog.md` positive source、`includeInNextPrompt=true`、observationChars=2726，最终 Provider answer committed。该证据证明 Memory observation 进入后续 Provider prompt；未插桩底层 provider/embedding 精确请求数，因此不作 zero-call 或精确计数声明。Memory 前后 ready（69 documents）、plan `ready/none`、no approval/canAnswerNow；UI responsive、Markdown mutation=0、console/window/unhandled fresh errors=0、error hook intact。一个无 token 的重复 Console evaluation 被 active-probe guard 在 setup 前拒绝，未产生第二个 Chat/provider turn；同 token READY/RESULT 为唯一验收 receipt。Content-free temp receipt SHA-256=`69325e5eebc3fb6750e8dac783e4123240ee6b6db510392b31c1a79f5e9c0cf7`。明确跳过 B-127 aggregate/p95/profiler/recovery/cancellation、Desktop OPFS restart 重跑与 Hosted Community scan；remaining risk 为 final master artifact/SHA、release-equivalent gate、live remote、hosted scan、Beta target/release/publish 尚未执行。 |
+| 2026-09-05 | B-125/REQ-09 / B-125/AC-09 / T-07 | Tracker evidence validation | Continuation pass / repo-unrelated finding | `npm run docs:check` 未产生 B-125 continuation finding；仍仅报告独立 DEC-030 的 3 个 index/reachability finding 与 4 个既有 Episodic Architecture advisory warning。`git diff --check` PASS；本次仅修改 Tracker。 |
 
 ## Closeout Readiness
 
