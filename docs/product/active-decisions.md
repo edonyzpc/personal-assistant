@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-032 | Context 可靠性和长会话连续性分别验收，长期 Memory 保持独立 | 完整原文与可逆表示优先，超限时采用有来源的结构化会话/工具摘要；不引入工具归档或执行恢复 | [Decision](./decisions/dec-032-context-reliability-and-conversation-continuity.md), [Product Spec](./specs/pa-context-management-product-spec.md) | 摘要遗漏重要语义或递归漂移，或存在独立重启续跑需求 |
 | DEC-002 | 产品北极星是“随手记下，需要时自然浮现”，设计约束是“安静且可信” | 优先用户真实笔记的轻量 Capture 与有证据的自然返回 | [North Star](./pa-product-north-star.md) | 用户明确选择新的产品方向 |
 | DEC-003 | 保留“管理工具 + AI Chat/Memory”双产品线，不拆分插件；资源优先 AI 侧 | 管理能力仍是产品边界，AI 侧承担主要新增价值 | [Decision Record](./decisions/dec-003-dual-product-line.md), [Product IA](./pa-product-information-architecture-spec.md) | 用户明确批准拆分或产品定位改变 |
 | DEC-004 | Quiet Recall 候选来自整个 vault，使用打开笔记、保存后自然间隙与快捷键等低打扰触发 | 回忆自己的内容，不制造待处理队列 | [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | Dogfood 证明触发负担高于返回价值 |

@@ -8,13 +8,13 @@ Updated: 2026-08-30
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
+| B-128 | 长会话 Context 策略演进 | 当前投影与结构化摘要执行只见 Tracker；剩余研究关注真实失败与后续性能/成本优化 | 按连续性需求验证语义质量，长期 Memory 独立，不将历史排除项当作 LLM 调用禁止 | [Discovery](./development/discovery/pa-agent-context-management-research.md), [Tracker](./development/active/context-management/tracker.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
 | B-005 | Featured Image Wan 2.7 live provider smoke | 自动化、构建、部署与既有图片渲染通过；真实生成未调用 | 仅在用户明确同意发送测试笔记内容并接受 API 成本后执行 | [Historical tracker](./archive/featured-image-model-upgrade-spec-driven-development.md) |
 | B-006 | GitHub CI 首次远端验证 | 本地 workflow 命令已验证；`actionlint`、GitHub-hosted run 与 branch protection 未验证 | 在明确授权远端操作后验证首个 CI run，并决定 required checks | [Optimization final report](./archive/repo-wide-optimization-2026-07-10-final-report.md) |
 | B-126 | First-run experience and platform robustness | Owner 于 2026-08-11 批准 silent first-use Memory 与 marker unknown fail-closed；2026-08-23 选择保留 bounded Chat inline setup 与 first-Settings focus。Fresh Custom、wizard、Test Connection、progressive build、provider/model 性能、PA Cloud 与 release timing 未获批准 | 完成 PR #378 当前 build 的 runtime/tests/docs/CI 与适用 Obsidian smoke；更宽方向继续 Discovery，不从 DEC-028/DEC-029 外推 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [DEC-028](./product/decisions/dec-028-silent-memory-auto-prepare.md), [DEC-029](./product/decisions/dec-029-inline-ai-setup-and-settings-focus.md), [Product Spec](./product/specs/pa-silent-first-use-memory-preparation-product-spec.md), [Tracker](./development/active/silent-first-use-memory-preparation/tracker.md) |
-| B-128 | PA Agent 长会话 Context Management 演进 | Discovery 已按 PA 当前 per-send runtime 与 final-pair persistence 重写为 solution draft v0.2；已明确排除当前 checkpoint/archive/window/CAS/LLM-compactor 交付，runtime 仍未获批准 | 决定是否只批准 [deterministic projection reliability core + current Context receipt contract bridge](./development/discovery/pa-agent-context-management-research.md#16-decision-needed) 进入 Draft Decision / Product Spec 准备；最小 terminal overflow 说明已纳入候选范围，Accepted 后才进入 source-verified SDD | [Discovery report](./development/discovery/pa-agent-context-management-research.md) |
 
 ## 已延期的产品与工程工作
 

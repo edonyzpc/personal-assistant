@@ -2,9 +2,11 @@
 
 Document status: Current
 Delivery status: Exploring
-Updated: 2026-08-28
+Updated: 2026-09-05
 Work item: B-128
 Authority: 本报告是跨项目实现与学术研究证据，不代表已批准改变 PA runtime、产品行为、数据边界或长期 Memory 契约。
+
+2026-09-05 promotion: Owner 接受“先修 Context 可靠性，再独立验收长会话连续性，长期 Memory 保持独立”的路线，并澄清排除 LLM 调用不是决策，应按需求完成技术选型、成本后优化。当前范围见 [DEC-032](../../product/decisions/dec-032-context-reliability-and-conversation-continuity.md) 与 [Product Spec](../../product/specs/pa-context-management-product-spec.md)，执行状态只见 [Tracker](../active/context-management/tracker.md)。本 Brief 的 Exploring 仅指后续策略、质量与效率研究；会话及工具语义摘要已进入当前执行范围。下文 v0.2 的未批准及排除措辞保留为历史研究背景，不能作为当前实施或额外成本审批门；§16 已由当前决定承接。
 
 ## 1. Executive Summary
 
@@ -1180,6 +1182,8 @@ current questions. Raising them now would transfer theoretical design burden to 
 
 ## 16. Decision Needed
 
+本节原 decision card 已于 2026-09-05 由 [DEC-032](../../product/decisions/dec-032-context-reliability-and-conversation-continuity.md) 承接，并增加独立的长会话连续性验收。下表保留当时备选项来源，不再作为当前 implementation gate；当前 authority 和摘要边界见 Product Spec。
+
 Current decision card — answer only this decision before the next one is raised:
 
 | Field | Decision context |
@@ -1191,7 +1195,7 @@ Current decision card — answer only this decision before the next one is raise
 | Recommendation rationale | Option B fixes verified behavior inside existing module and metadata boundaries. It adds no new context platform, provider cost, raw-data lifecycle or user management surface. |
 | Rollback | Runtime reduction/admission and the Context receipt bridge remain separate reversible slices; the bounded receipt contains only three booleans in existing completed-turn metadata. |
 
-Decision authority: User / product maintainer. Until an explicit answer is recorded, keep
+Historical decision authority (superseded by DEC-032, including the Owner's LLM clarification): User / product maintainer. Until an explicit answer is recorded, keep
 `Document status: Current`, `Delivery status: Exploring`, make no runtime changes, and create no
 Decision, Product Spec, Active Package or SDD for B-128.
 
@@ -1242,3 +1246,26 @@ Decision, Product Spec, Active Package or SDD for B-128.
 | 2026-08-25 | User request + Agent source research | 著名 Agent 已从简单截断收敛到 durable log、tool pruning、structured checkpoint、recent tail、verification 与 recoverable archive 的组合 | 是否将研究提升为 PA 的正式产品和 runtime 演进 |
 | 2026-08-28 | User requested a project-compliant solution draft + Agent source review follow-up | 曾将确定性 correctness/contract 修复与 checkpoint、持久化恢复、LLM compactor 分阶段；草案保持 Discovery / unapproved | 已由下一行的 PA-fit v0.2 范围取代 |
 | 2026-08-28 | User requested a PA-fit rewrite after detailed Codex CLI review | Reject Codex parity: replace the former multi-phase checkpoint/archive target with v0.2 stateless deterministic projection reliability; move semantic summary, recovery and window lifecycle behind evidence gates | 是否仅批准 §10.6 的 projection reliability core + current Context receipt contract bridge 进入正式 Decision / Product Spec 准备 |
+| 2026-09-05 | Owner accepted the proposed route and prioritized Context / long-conversation continuity | 确定性投影、最终准入和 Context 回执进入 [DEC-032](../../product/decisions/dec-032-context-reliability-and-conversation-continuity.md) 与 [Active Tracker](../active/context-management/tracker.md)；Memory 保持独立 | Agent 曾将 LLM 调用误设为成本批准门，已由下一行纠正 |
+| 2026-09-05 | Owner clarified that excluding LLM calls was not a decision | 按连续性需求选择结构化会话摘要、工具发现摘要与近期完整原文；复用配置的 Chat 模型，成本后优化 | 技术质量、延迟、失败回退与真实模型评测由当前执行包处理，无待 Owner 的调用成本决定 |
+
+## 19. Continuity Evidence And Next Candidate
+
+Source fixtures in `__tests__/pa-agent-context-continuity.test.ts` establish
+that fitting histories retain early constraints, later corrections and prior
+decisions beyond ten turns. Repeated projections are stable and the original
+history is unchanged. Under severe pressure, the earliest SQLite requirement
+can disappear from both the recent tail and old excerpts. This is evidence of
+lost input, not a model-quality evaluation; passing character-budget tests
+cannot establish semantic continuity.
+
+The selected follow-up uses a bounded structured conversation summary plus
+recent complete raw turns, with separate summaries for tool findings that would
+otherwise be reduced. It uses the configured Chat model under history/tool
+pressure, retains source references and remains derived conversation state.
+The in-memory cache invalidates on conversation/history/configuration change;
+invalid output or timeout falls back to deterministic projection. Summaries do
+not enter Memory, grant execution authority or create a raw-tool archive.
+The Owner explicitly rejected the Agent's additional cost-approval gate.
+Technical limits and lifecycle design are defined in the current SDD; current
+implementation and validation status belong only to the linked Tracker.

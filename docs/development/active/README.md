@@ -8,6 +8,7 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 
 | Track | Work item | Feature Home | Tracker |
 | --- | --- | --- | --- |
+| Context reliability and conversation continuity | B-128 | [Feature Home](./context-management/README.md) | [Tracker](./context-management/tracker.md) |
 | First-run AI setup and silent Memory preparation | B-126 | [Feature Home](./silent-first-use-memory-preparation/README.md) | [Tracker](./silent-first-use-memory-preparation/tracker.md) |
 | B-125 retrieval shipping-default continuation | B-125 | [Feature Home](./retrieval-optimization-shipping-default/README.md) | [Tracker](./retrieval-optimization-shipping-default/tracker.md) |
 
