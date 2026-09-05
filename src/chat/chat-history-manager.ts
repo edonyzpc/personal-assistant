@@ -18,6 +18,7 @@ import {
     type PersistedTurn,
 } from "./chat-history-store";
 import { getPlatformCrypto } from "../platform-dom";
+import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 
 const TITLE_MAX_LENGTH = 60;
 const PREVIEW_MAX_LENGTH = 200;
@@ -391,8 +392,11 @@ function cloneContextUsedItem(item: ChatContextUsedItem): ChatContextUsedItem {
 }
 
 function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {
+    const { reduction: rawReduction, ...rest } = trace;
+    const reduction = cloneContextReductionReceipt(rawReduction);
     return {
-        ...trace,
+        ...rest,
+        ...(reduction ? { reduction } : {}),
         usedSourceRefs: trace.usedSourceRefs.map((ref) => ({
             ...ref,
             whyShown: ref.whyShown ? [...ref.whyShown] : undefined,

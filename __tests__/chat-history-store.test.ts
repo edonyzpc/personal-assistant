@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import type { Vault } from "obsidian";
+import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
 
 class FakeIDBKeyRange {
     constructor(
@@ -90,6 +91,29 @@ function createVault(basePath: string, configDir = ".obsidian"): Vault {
 }
 
 describe("MemoryChatHistoryStore", () => {
+    it("whitelists and independently clones reduction receipts at storage boundaries", async () => {
+        const store = new MemoryChatHistoryStore();
+        await store.initialize();
+        const trace = createContextPagerStateFromChatContextUsed("receipt", []).persistedTrace;
+        trace.reduction = {
+            historyCompressed: true,
+            toolContextReduced: false,
+            budgetLimited: false,
+            text: "private source content",
+        } as NonNullable<typeof trace.reduction>;
+        await store.appendTurn(makeTurn({
+            memoryMetadata: { hasMemoryContent: false, allowedMemorySourcePaths: [], contextTrace: trace },
+        }));
+        trace.reduction.historyCompressed = false;
+        const saved = (await store.getTurns("conv-1"))[0];
+        expect(saved.memoryMetadata?.contextTrace?.reduction).toEqual({
+            historyCompressed: true, toolContextReduced: false, budgetLimited: false,
+        });
+        expect(JSON.stringify(saved)).not.toContain("private source content");
+        saved.memoryMetadata!.contextTrace!.reduction!.budgetLimited = true;
+        expect((await store.getTurns("conv-1"))[0].memoryMetadata?.contextTrace?.reduction?.budgetLimited).toBe(false);
+    });
+
     it("supports conversation CRUD and active-conversation tracking", async () => {
         const store = new MemoryChatHistoryStore();
         await store.initialize();
