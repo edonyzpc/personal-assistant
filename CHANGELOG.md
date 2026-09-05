@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.9.2...2.10.0-beta.1) (2026-09-05)
+
+### Features
+- memory: harden first-run setup and preparation
+- skill: add PM needs analysis framework and skill
+- retrieval: complete B-125 retrieval optimization
+- retrieval: enable platform-scoped B-125 defaults
+
+### Fix
+- settings: guard mobile getLeaf and cache hasToken to avoid iOS keychain freeze
+- memory: harden first-run readiness and setup
+- docs: quarantine inherited lifecycle debt exactly
+- memory: enforce prepared rebuild ownership
+- ai: serialize provider and credential transitions
+- validation: build artifacts before receipt tests
+- agent: enforce terminal Memory policy
+- retrieval: bound path-evidence repair lifecycle
+- validation: size profiler samples to runtime window
+- agent: gate Memory citation eligibility on evidence
+
+### Improvements
+- vss: parallelize embedding batches and raise safe TPM to 1M
+- keep lifecycle findings advisory
+
+### Docs
+- discovery: add first-run and platform robustness analysis brief
+- architecture: add episodic memory and attunement design
+- memory: codify silent first-use authority
+- memory: codify inline setup authority
+- memory: update first-run user guidance
+- memory: record PR 378 validation
+- memory: record PR 378 remediation evidence
+- memory: record PR 378 publication gate
+- decision: DEC-028 multimodal chat + image copywriting
+- decision: resolve multimodal decision identity
+- workflow: index PM needs analysis framework
+- agent: add context management research
+- retrieval: record B-125 shipping-default continuation
+- retrieval: record B-125 iPhone validation
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
