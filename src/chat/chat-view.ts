@@ -1088,6 +1088,14 @@ export class LLMView extends ItemView {
             if (plan.reason === 'ready') {
                 return { label: t("plugin.chat.memory.ready"), visualState: 'ready' };
             }
+            if (plan.reason === 'lexical-profile-stale') {
+                return {
+                    label: t("plugin.chat.memory.needsUpdate"),
+                    visualState: 'needs-update',
+                    actionLabel: t("plugin.memory.approval.primary.rebuildSearch"),
+                    actionKind: 'prepare',
+                };
+            }
             if (plan.reason === 'changed-notes') {
                 return {
                     label: t("plugin.chat.memory.needsUpdate"),

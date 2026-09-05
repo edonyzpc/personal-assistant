@@ -6148,6 +6148,50 @@ describe('LLMView turn lifecycle', () => {
         expect(plugin.memoryStatus.updateFromCommand).toHaveBeenCalledTimes(1);
     });
 
+    it.each([false, true])('keeps lexical preparation actionable and refreshes its result (completed: %s)', async (completed) => {
+        const { view, containerEl, plugin } = createView();
+        plugin.memoryStatus.getMaintenancePlan.mockResolvedValue({
+            reason: 'lexical-profile-stale',
+            action: 'rebuild-lexical',
+            notesToCheck: 1852,
+            requiresApproval: true,
+            canAnswerNow: true,
+        });
+        plugin.memoryStatus.prepareFromCommand.mockImplementation(async () => {
+            if (completed) {
+                plugin.memoryStatus.getMaintenancePlan.mockResolvedValue({
+                    reason: 'ready',
+                    action: 'none',
+                    notesToCheck: 1852,
+                    requiresApproval: false,
+                    canAnswerNow: true,
+                });
+            }
+        });
+        await view.onOpen();
+        await flushPromises();
+
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        expect(memoryChip.getAttribute('aria-label')).toBe('Memory needs update');
+        expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-needs-update')).toBe(true);
+        memoryChip.click();
+        await flushPromises();
+
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        expect(allText(memoryMenu)).not.toContain('Memory unavailable');
+        getButtonByText(memoryMenu, 'Update Memory search').click();
+        await flushPromises();
+
+        expect(plugin.memoryStatus.prepareFromCommand).toHaveBeenCalledTimes(1);
+        expect(plugin.memoryStatus.updateFromCommand).not.toHaveBeenCalled();
+        expect(memoryMenu.hidden).toBe(true);
+        expect(memoryChip.getAttribute('aria-label')).toBe(completed ? 'Memory ready' : 'Memory needs update');
+
+        memoryChip.click();
+        await flushPromises();
+        expect(allText(memoryMenu).includes('Update Memory search')).toBe(!completed);
+    });
+
     it('refreshes the Memory chip when background memory status changes', async () => {
         const { view, containerEl, plugin, emitMemoryStatusChanged } = createView();
         plugin.memoryStatus.getMaintenancePlan

@@ -317,6 +317,8 @@
     "plugin.memory.diagnostics.storageBestEffort": "尽力保留存储",
     "plugin.memory.diagnostics.storagePersistent": "持久存储",
     "plugin.memory.diagnostics.maintenance": "维护状态",
+    "plugin.memory.diagnostics.lexicalIndex": "关键词索引",
+    "plugin.memory.diagnostics.lexicalReason": "关键词索引详情",
     "plugin.memory.diagnostics.lastVerified": "上次校验",
     "plugin.memory.diagnostics.lastError": "上次错误",
     "plugin.memory.diagnostics.opfsScope": "OPFS 范围",

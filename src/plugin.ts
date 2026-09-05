@@ -11885,6 +11885,23 @@ export class PluginManager extends Plugin {
             },
         ];
 
+        if (stats.lexicalProfileState) {
+            details.push({
+                label: this.t("plugin.memory.diagnostics.lexicalIndex"),
+                value: stats.lexicalProfileState,
+                tone: stats.lexicalProfileState === "failed" ? "danger"
+                    : stats.lexicalProfileState === "awaiting_confirmation"
+                        || stats.lexicalProfileState === "stale"
+                        || stats.lexicalProfileState === "rebuilding" ? "warning" : undefined,
+            });
+        }
+        if (stats.lexicalFallbackReason) {
+            details.push({
+                label: this.t("plugin.memory.diagnostics.lexicalReason"),
+                value: stats.lexicalFallbackReason,
+            });
+        }
+
         if (stats.lastVerifiedAt) {
             details.push({ label: this.t("plugin.memory.diagnostics.lastVerified"), value: stats.lastVerifiedAt });
         }

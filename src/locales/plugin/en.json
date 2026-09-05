@@ -317,6 +317,8 @@
     "plugin.memory.diagnostics.storageBestEffort": "Best-effort storage",
     "plugin.memory.diagnostics.storagePersistent": "Persistent storage",
     "plugin.memory.diagnostics.maintenance": "Maintenance",
+    "plugin.memory.diagnostics.lexicalIndex": "Keyword index",
+    "plugin.memory.diagnostics.lexicalReason": "Keyword index detail",
     "plugin.memory.diagnostics.lastVerified": "Last verified",
     "plugin.memory.diagnostics.lastError": "Last error",
     "plugin.memory.diagnostics.opfsScope": "OPFS scope",
