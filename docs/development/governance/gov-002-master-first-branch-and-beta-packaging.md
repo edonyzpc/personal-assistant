@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-002
-Updated: 2026-08-07
+Updated: 2026-09-05
 Work item: B-117
 Authority: PA 仓库的代码、测试、研究/设计文档、工程治理与 BRAT beta 分支来源规则；不定义 PA runtime 或用户产品行为。
 
@@ -29,6 +29,33 @@ flowchart LR
 - B-117/REQ-04: beta 反馈修复必须先进入 `master`；需要重新测试时从更新后的 `master` 创建新的 `beta/<next-version>`，不得改写已发布 beta 分支或 tag。
 - B-117/REQ-05: stable release 始终直接从已验证 `master` 创建；允许 PR merge 或用户授权的 direct commit，两者不形成不同发布通道。
 - B-117/REQ-06: beta/stable 发布只把 source/tag、版本/包装完整性、公开与法律文档、tests/lint/build/bundle 及 Community `Error` 作为硬门；Backlog、Discovery、Active Package、Tracker、Decision/Spec/Governance 状态和跨 tag 文档连续性只由独立 docs/CI gate 管理，不得阻断发布。
+
+## Proportional Validation And Deployment
+
+2026-09-05 用户授权按测试/发布流程审察建议实施第一阶段优化。此轮是本
+contract 下的同会话工程维护，不创建产品 Decision 或新的跨会话 Active Package。
+
+- 默认 `npm test` 运行不依赖仓库 `dist/` 的源码测试；工具链测试和两个绑定
+  当前 production bundle 的测试分别提供显式入口。`test:all` 保留全部测试，
+  CI 的完整路径、本地完整验证和发布都必须在 build 后调用它。覆盖率阈值不变，
+  完整门禁在一次 Jest invocation 中统计，不能用分组覆盖率代替。
+- 常规 CI 保持同一个 `validate` job。只有全部变更路径属于明确允许的仓库
+  文档范围，才运行文档契约测试而跳过 runtime gates；完整 `docs:check` 始终
+  advisory。未知路径、混合修改、缺失/无效 diff 基线回退完整验证。
+  被打包的 `skills/**`、公开/法律/发布文档、workflow 和脚本不走文档捷径。
+- 默认 `make deploy` / `make deploy-icloud` 继续完整验证。新增显式复用部署
+  入口，只复制与当前 checkout 匹配的 production 产物；复用既有 build provenance
+  校验 main.js，并比对 styles 与两个 manifest 的源/产物内容。
+  校验失败必须在修改目标目录前退出。该入口仅证明构建身份，不代表测试已通过；
+  仅在当前改动已经完成相应验证、构建输入未变时使用。
+- 正式发布仍独立验证最终 tag 的版本、来源、构建与完整测试。预先验证的旧版本
+  `dist/` 不能替代版本更新后的 tag 构建；不增加默认 skip-checks 或跨提交绿色缓存。
+
+验证映射：CI classifier 用真实临时 Git 仓库覆盖重命名、删除、混合与未知基线；
+测试分组验证无重叠且并集等于 Jest 的完整发现结果；部署测试覆盖当前产物复制及
+过期/缺失/不匹配时目标不变；原 release tests 继续锁定 build-before-full-test。
+回滚只需恢复 CI 的无条件完整路径、`npm test` 的完整入口及默认部署调用；无 PA
+数据迁移或产品行为变化。
 
 ## Non-goals
 

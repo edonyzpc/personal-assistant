@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-icloud clean bin install changelog release-dry-run release publish test
+.PHONY: deploy deploy-icloud deploy-current deploy-icloud-current clean bin install changelog release-dry-run release publish test
 
 ICLOUD_PLUGIN_DIR ?= $(HOME)/Library/Mobile Documents/iCloud~md~obsidian/Documents/test/.obsidian/plugins/personal-assistant
 
@@ -9,20 +9,21 @@ bin:
 	bash scripts/check-platform-guards.sh
 	npm run lint
 	npm run build
-	npm test
+	npm run test:all -- --runInBand
 
-deploy: clean bin
-	cp dist/main.js test/.obsidian/plugins/personal-assistant/
-	cp dist/manifest.json test/.obsidian/plugins/personal-assistant/
-	cp dist/manifest-beta.json test/.obsidian/plugins/personal-assistant/
-	cp dist/styles.css test/.obsidian/plugins/personal-assistant/
+deploy: bin
+	node scripts/deploy-current.mjs "test/.obsidian/plugins/personal-assistant"
 
 deploy-icloud: bin
-	mkdir -p "$(ICLOUD_PLUGIN_DIR)"
-	cp dist/main.js "$(ICLOUD_PLUGIN_DIR)/"
-	cp dist/manifest.json "$(ICLOUD_PLUGIN_DIR)/"
-	cp dist/manifest-beta.json "$(ICLOUD_PLUGIN_DIR)/"
-	cp dist/styles.css "$(ICLOUD_PLUGIN_DIR)/"
+	node scripts/deploy-current.mjs "$(ICLOUD_PLUGIN_DIR)"
+
+# Copy a current production build after appropriate checks have already passed.
+# These explicit targets check artifact identity; they do not run tests or lint.
+deploy-current:
+	node scripts/deploy-current.mjs "test/.obsidian/plugins/personal-assistant"
+
+deploy-icloud-current:
+	node scripts/deploy-current.mjs "$(ICLOUD_PLUGIN_DIR)"
 
 clean:
 	rm -rf test/.obsidian/plugins/personal-assistant/main.js

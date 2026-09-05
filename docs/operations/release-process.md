@@ -30,7 +30,7 @@ make publish VERSION=1.6.6
 2. Verifies the target version is valid, greater than `package.json`, and not already tagged. For prereleases, it also requires the matching `beta/<VERSION>` branch with pre-release `HEAD` exactly equal to local `master`.
 3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
 4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
-5. Runs `git diff --check`, `npm run check:third-party-notices`, `npm run docs:check:release`, `npm run lint`, `npm run build`, `npm test -- --runInBand --coverage`, and `npm run audit:bundle`. The production build precedes Jest because receipt suites bind the current `dist/main.js` and its production provenance.
+5. Runs `git diff --check`, `npm run check:third-party-notices`, `npm run docs:check:release`, `npm run lint`, `npm run build`, `npm run test:all -- --runInBand --coverage`, and `npm run audit:bundle`. The production build precedes Jest because receipt suites bind the current `dist/main.js` and its production provenance.
 6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, `CHANGELOG.md`, and release-tag references in `NOTICE`.
 7. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
 8. Creates annotated tag `x.y.z`.
@@ -61,6 +61,49 @@ Future paid hosted services or commercial backends need their own service
 launch gate for Terms, Privacy, billing, support/warranty, security, data
 retention, entitlement systems, and commercial license terms. Do not mix that
 future service gate into ordinary plugin release preparation.
+
+## Local Validation And CI Scope
+
+| Purpose | Command | Build required |
+| --- | --- | --- |
+| Source behavior, including tests under `src/` | `npm test -- --runInBand` | No |
+| Scripts, offline fixture and documentation contracts | `npm run test:tooling -- --runInBand` | No |
+| Current-bundle receipt and runtime probe contracts | `npm run test:artifacts -- --runInBand` | Yes |
+| Complete CI/release coverage | `npm run test:all -- --runInBand --coverage` | Yes |
+| Documentation checker and skill contracts | `npm run test:docs -- --runInBand` | No |
+
+Use `--runTestsByPath <suite>` with the matching group for focused checks.
+Bare `npx jest` still uses the complete configuration; use `npm test` for the
+default source group.
+The complete gate includes every group in one run and preserves the existing
+coverage thresholds. Adding a test does not require registration in the default
+source group; tooling names follow `*-script.test.ts` or the explicit list in
+`scripts/lib/jest-test-groups.cjs`. Add a newly build-dependent suite to the
+artifact list and keep it out of default source tests.
+
+Regular CI keeps the same `validate` job. Changes entirely within ordinary
+Markdown under `docs/development/`, `docs/product/`, `docs/architecture/`,
+`docs/archive/`, or the exact `docs/backlog.md`, `docs/index.md`, and
+`docs/development-roadmap.md` paths run dependency installation, advisory
+`docs:check`, and documentation contract tests. Unknown or mixed paths,
+missing/invalid Git baselines, and classifier errors take the complete path.
+Public/legal/release docs, bundled `skills/**`, `.agents/**`, build configuration,
+scripts, and workflows take the complete path.
+
+`make deploy` and `make deploy-icloud` still run full validation. When the
+required validation has already passed for the current changes, reuse the current
+production build with `make deploy-current` or `make deploy-icloud-current`.
+Both verify build provenance plus styles/manifest contents before touching the
+target. They prove artifact identity, not passed tests; test/config changes still
+require the corresponding checks. Plugin settings are preserved, and obsolete
+external worker/WASM assets are removed after a successful copy. When both
+deployments are authorized together, `make deploy deploy-icloud` shares one
+full validation run.
+
+The tag release workflow always rebuilds and runs complete coverage against the
+final versioned tag. A pre-version-bump local build cannot substitute for those
+release assets. This optimization does not authorize publishing or change the
+release gates.
 
 ## Changelog
 

@@ -26,13 +26,23 @@ jobs:
         with:
           node-version-file: package.json
           cache: npm
+      - name: Classify validation scope
+        id: validation_scope
+        # Missing output or a classifier failure takes the full path below.
+        continue-on-error: true
+        env:
+          CI_VALIDATION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/ci-validation-scope.mjs
       - name: Install dependencies
         run: npm ci
       - name: Check platform guards
+        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: bash scripts/check-platform-guards.sh
       - name: Self-test platform guards
+        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: bash scripts/test-platform-guards.sh
       - name: Check third-party notices
+        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: npm run check:third-party-notices
       - name: Check documentation workflow (advisory)
         id: docs_check
@@ -43,11 +53,18 @@ jobs:
       - name: Report documentation workflow findings
         if: ${{ steps.docs_check.outcome == 'failure' }}
         run: echo "::warning title=Documentation workflow findings::npm run docs:check reported lifecycle findings. Review the advisory step; source and runtime validation will continue."
+      - name: Test documentation contracts
+        if: ${{ steps.validation_scope.outcome == 'success' && steps.validation_scope.outputs.scope == 'docs' }}
+        run: npm run test:docs -- --runInBand
       - name: Lint
+        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: npm run lint
       - name: Build
+        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: npm run build
       - name: Test
-        run: npm test -- --runInBand --coverage
+        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
+        run: npm run test:all -- --runInBand --coverage
       - name: Audit bundle
+        if: ${{ steps.validation_scope.outcome != 'success' || steps.validation_scope.outputs.scope != 'docs' }}
         run: npm run audit:bundle

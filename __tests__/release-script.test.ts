@@ -3,6 +3,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
+
+const loadYaml = createRequire(join(process.cwd(), "package.json"))("js-yaml").load;
 
 describe("scripts/release.mjs", () => {
     it("requires prerelease versions to be cut from beta version branches", () => {
@@ -106,26 +109,51 @@ describe("scripts/release.mjs", () => {
                 "bash scripts/check-platform-guards.sh",
                 "npm run lint",
                 "npm run build",
-                "npm test",
+                "npm run test:all -- --runInBand",
             ],
         });
         expect(readMakeTarget(makefile, "deploy").prerequisites).toContain("bin");
         expect(readMakeTarget(makefile, "deploy-icloud").prerequisites).toContain("bin");
-        expectSnippetsInOrder(ciWorkflow, [
-            "- name: Lint\n        run: npm run lint",
-            "- name: Build\n        run: npm run build",
-            "- name: Test\n        run: npm test -- --runInBand --coverage",
-        ]);
-        expectSnippetsInOrder(releaseWorkflow, [
-            "- name: Lint\n        run: npm run lint",
-            "- name: Build\n        run: npm run build --if-present",
-            "- name: Test\n        run: npm test -- --runInBand --coverage",
-        ]);
+        // Read step structure so adding a safe CI condition does not require
+        // mirroring whitespace or line placement in the test.
+        for (const [workflow, job] of [[ciWorkflow, "validate"], [releaseWorkflow, "build"]]) {
+            const steps = loadYaml(workflow).jobs[job].steps;
+            const lintIndex = steps.findIndex((step: { name: string }) => step.name === "Lint");
+            const buildIndex = steps.findIndex((step: { name: string }) => step.name === "Build");
+            const testIndex = steps.findIndex((step: { name: string }) => step.name === "Test");
+            expect(lintIndex).toBeGreaterThan(-1);
+            expect(buildIndex).toBeGreaterThan(lintIndex);
+            expect(testIndex).toBeGreaterThan(buildIndex);
+            expect(steps[lintIndex].run).toBe("npm run lint");
+            expect(steps[buildIndex].run).toMatch(/^npm run build(?: --if-present)?$/u);
+            expect(steps[testIndex].run).toBe("npm run test:all -- --runInBand --coverage");
+            expect(steps[testIndex].if).toBe(steps[buildIndex].if);
+            expect(steps[lintIndex].if).toBe(steps[buildIndex].if);
+        }
         expectSnippetsInOrder(releaseScript, [
             'run("npm", ["run", "lint"]);',
             'run("npm", ["run", "build"]);',
-            'run("npm", ["test", "--", "--runInBand", "--coverage"]);',
+            'run("npm", ["run", "test:all", "--", "--runInBand", "--coverage"]);',
         ]);
+    });
+
+    it("shares full validation across desktop and iCloud and keeps reuse explicit", () => {
+        const planned = execFileSync("make", ["-n", "deploy", "deploy-icloud"], {
+            cwd: process.cwd(), encoding: "utf8",
+        });
+        expect(planned.match(/^npm run test:all -- --runInBand$/gmu)).toHaveLength(1);
+        expect(planned.match(/^npm run build$/gmu)).toHaveLength(1);
+        const copies = planned.split("\n").filter((line) => line.startsWith("node scripts/deploy-current.mjs"));
+        expect(copies).toHaveLength(2);
+        expect(planned.indexOf(copies[0])).toBeGreaterThan(planned.indexOf("npm run test:all"));
+        expect(planned).not.toContain("rm -rf");
+
+        const reused = execFileSync("make", ["-n", "deploy-current", "deploy-icloud-current"], {
+            cwd: process.cwd(), encoding: "utf8",
+        });
+        expect(reused).not.toContain("npm ");
+        expect(reused.split("\n").filter((line) => line.startsWith("node scripts/deploy-current.mjs")))
+            .toHaveLength(2);
     });
 
     it("guards prerelease tags against the current origin/master parent", () => {

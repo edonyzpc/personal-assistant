@@ -46,7 +46,8 @@ describe("PA lifecycle skill forward contracts", () => {
 
     it("enforces one Now plus one Next and no standalone handoff or closeout", () => {
         expect(docsSkill).toContain("Enforce `1 Now + 1 Next`");
-        expect(docsSkill).toContain("When a Tracker reaches `Validated`, ask one compact closeout question");
+        expect(normalize(docsSkill)).toContain("When a Tracker reaches `Validated`, continue closeout if already authorized; otherwise ask one compact closeout question");
+        expect(normalize(sddSkill)).toContain("At `Validated`, continue already-authorized closeout; ask once only if closeout authority is missing");
         expect(docsSkill).toContain("Do not create\n  standalone `handoff*.md` or `closeout.md`");
         expect(sddSkill).toContain("Enforce `1 Now + 1 Next`");
         expect(sddSkill).toContain("Never create\n  standalone `handoff*.md` or `closeout.md`");
@@ -59,6 +60,7 @@ describe("PA lifecycle skill forward contracts", () => {
     });
 
     it("keeps plan-and-implement, closeout, and Git boundaries separate", () => {
+        expect(normalize(sddSkill)).toContain("Choose the mode covering the full authorized request");
         expect(docsSkill).toContain("implement-approved-spec");
         expect(docsSkill).toContain("Only explicit full-lifecycle or closeout language");
         expect(sddSkill).toContain("never implies closeout,\narchive, or commit");

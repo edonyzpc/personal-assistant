@@ -161,7 +161,7 @@ function runChecks() {
   run("npm", ["run", "docs:check:release"]);
   run("npm", ["run", "lint"]);
   run("npm", ["run", "build"]);
-  run("npm", ["test", "--", "--runInBand", "--coverage"]);
+  run("npm", ["run", "test:all", "--", "--runInBand", "--coverage"]);
   run("npm", ["run", "audit:bundle"]);
   assertCleanWorktree("after validation checks");
 }

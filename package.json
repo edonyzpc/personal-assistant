@@ -25,7 +25,11 @@
     "release": "node scripts/release.mjs",
     "release:dry-run": "node scripts/release.mjs --dry-run",
     "release:publish": "node scripts/publish-release.mjs",
-    "test": "jest"
+    "test": "jest --config jest.source.config.cjs",
+    "test:tooling": "jest --config jest.tooling.config.cjs",
+    "test:artifacts": "jest --config jest.artifacts.config.cjs",
+    "test:docs": "jest --runTestsByPath __tests__/check-docs-script.test.ts __tests__/pa-docs-lifecycle-skills.test.ts",
+    "test:all": "jest"
   },
   "keywords": [],
   "author": "edonyzpc",

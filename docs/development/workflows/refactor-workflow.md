@@ -111,8 +111,8 @@ git diff --check
 For broad behavior, shared runtime, release, packaging, or rollout changes, run:
 
 ```bash
-npm test -- --runInBand
 npm run build
+npm run test:all -- --runInBand
 ```
 
 For dependency or lockfile changes, add:
