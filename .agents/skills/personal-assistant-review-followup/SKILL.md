@@ -17,7 +17,9 @@ confirmed fix set, and verify the result without over-claiming.
 Hard boundary: do not make product decisions while fixing review findings.
 If a finding can be fixed by removing, hiding, narrowing, or adding friction to
 a user-facing capability, ask the user before coding unless the user already
-made that exact product choice in the current turn.
+made that exact product choice in this conversation and it still applies, or
+the fix restores a current accepted product contract. An agent-authored approval
+is not evidence of a user decision.
 
 ## Workflow
 
@@ -36,15 +38,19 @@ made that exact product choice in the current turn.
 4. Identify decision points before coding.
 5. If the user only asked for analysis, stop after the classification and
    decision options.
-6. Ask for a concrete decision when implementation semantics, product behavior,
-   or user effort differ. Do not infer these decisions from reviewer severity.
+6. Ask for an unresolved product decision when viable fixes materially differ
+   in behavior or user effort. Reuse applicable user decisions and current
+   accepted contracts; do not infer a decision from reviewer severity.
 7. Implement the confirmed fix set only after the user explicitly asks to
-   implement or fix it.
-8. Add a regression test for the accepted trigger path.
+   implement or fix it. If that authorization already exists in this conversation
+   and still covers the fix set, proceed without asking again.
+8. Add a regression test for the accepted runtime trigger when needed; do not
+   add tests that merely assert documentation wording.
 9. Validate with focused checks, then app smoke only when the changed surface
    needs deployed Obsidian evidence.
 
-Mandatory decision prompts:
+Product choices requiring a decision when not already resolved by applicable
+user authority or a current accepted contract:
 - Removing or hiding a visible control, command, workflow, or shortcut.
 - Increasing or decreasing confirmation burden for durable, provider-backed,
   cost-bearing, privacy-sensitive, or future-behavior-changing actions.
@@ -54,9 +60,9 @@ Mandatory decision prompts:
 - Reinterpreting a current product doc, roadmap, tracker, or user-stated
   product principle.
 
-When a mandatory decision appears, stop and present the smallest viable options
+When an unresolved product decision appears, present the smallest viable options
 with a recommendation and tradeoff. Do not continue into code edits for that
-decision until the user chooses.
+decision until the user chooses; continue independent authorized fixes.
 
 ## Decision Lens
 
@@ -99,9 +105,11 @@ Product:
 ## Validation
 
 Start with the smallest checks that prove the accepted finding is fixed.
-Run the **Local Validation Gate** from AGENTS.md, scoped to the affected
-suites. For plugin command, worker, DOM/CSS, or shared runtime changes, also
-include `npm run lint`.
+For code/DOM changes, run the **Local Validation Gate** from AGENTS.md, scoped
+to the affected suites. For plugin command, worker, DOM/CSS, or shared runtime
+changes, also include `npm run lint`. For documentation-only fixes, use the
+relevant documentation checks and `git diff --check`; do not run runtime gates
+without a runtime change.
 
 For Obsidian runtime smoke, use `obsidian-test-vault-smoke` and prefer a
 provider-free probe unless the accepted fix specifically requires live provider

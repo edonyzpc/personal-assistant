@@ -7,7 +7,8 @@ description: Deliver non-trivial Personal Assistant work with explicit plan-only
 
 ## Boundaries
 
-Choose the earliest mode authorized by the request. An upstream `review-only`,
+Choose the mode covering the full authorized request; complete its stop point
+without pausing at intermediate modes. A still-applicable `review-only`,
 `analysis-only`, `read-only`, `no-file-changes`, “只分析”, or “不要改文件”
 request means **zero writes**.
 
@@ -42,8 +43,8 @@ Archive as historical evidence, not approval.
 - Tracker is the only execution status and validation log. Active Registry and
   Feature Home contain links, not status mirrors.
 - Enforce `1 Now + 1 Next`: at most one `Implementing | Validating | Blocked`
-  package plus one `Planned` package. Ask for closeout when a Tracker reaches
-  `Validated`.
+  package plus one `Planned` package. At `Validated`, continue already-authorized
+  closeout; ask once only if closeout authority is missing.
 - Tracker `Current Snapshot` is the cross-session handoff. Never create
   standalone `handoff*.md` or `closeout.md` in an Active Package.
 - Follow `docs/development/documentation-workflow.md` for exact lifecycle and
@@ -53,7 +54,8 @@ Archive as historical evidence, not approval.
 
 Before implementation:
 
-1. Confirm approved product scope or explicit governance authority.
+1. Verify approved product scope or explicit governance authority from current
+   contracts and the conversation; do not ask again for an already-made choice.
 2. Search the actual dependency surface with `rg`.
 3. Create/update Feature Home and Tracker; register the Feature Home.
 4. Create a Plan only when its delivery/risk content would not fit concisely in

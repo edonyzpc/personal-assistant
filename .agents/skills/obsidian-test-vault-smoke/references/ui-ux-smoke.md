@@ -9,7 +9,12 @@
 
 ## Interaction Method
 
-Use the real Obsidian window. Use `computer-use:computer-use` for clicking, typing, scrolling, keyboard shortcuts, modal confirmation, and visual inspection. Use CLI only to prepare state, reload, capture screenshots, and query supporting DOM/runtime details.
+Use the real Obsidian window. Discover and use the available native UI tools for
+clicking, typing, scrolling, keyboard shortcuts, modal confirmation, and visual
+inspection; do not require or install a legacy skill by name. Use CLI only to
+prepare state, reload, capture screenshots, and query supporting DOM/runtime
+details. If real interaction is unavailable, report that evidence as blocked;
+supporting DOM/runtime results alone do not prove UI interaction.
 
 Before interacting, deploy, reload, open the exact target, and capture a baseline screenshot using the commands in `references/cli-runtime.md`.
 
@@ -61,7 +66,11 @@ Chat:
 Memory:
 
 - Trigger `Prepare memory` or `Update memory` only when user-facing readiness changed.
-- Verify first-use, missing-index, stale-settings, and costly rebuild paths request confirmation.
+- Per `AGENTS.md` and `docs/product/decisions/dec-028-silent-memory-auto-prepare.md`,
+  verify eligible first Chat schedules silent background preparation while Chat
+  answers immediately. Verify marker truth failure prevents reset/provider work
+  without blocking Chat. Missing-index, stale-settings, manual Prepare/Update,
+  and other costly rebuild paths still request confirmation.
 - Do not claim background maintenance in fallback/non-durable states.
 
 Records Preview and Vault Statistics:

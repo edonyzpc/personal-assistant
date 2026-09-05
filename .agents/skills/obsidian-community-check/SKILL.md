@@ -7,7 +7,7 @@ description: Trigger and inspect the Obsidian Community plugin review-branch sca
 
 ## Core Rules
 
-- Use the real Obsidian Community account page with the user's existing Chrome login state. Do not invent a public API or CLI for the hosted scan.
+- Use the real Obsidian Community account page with the user's existing authenticated browser session. Do not invent a public API or CLI for the hosted scan.
 - Treat this hosted submission as distinct from the repo-local source scan in the `AGENTS.md` Local Validation Gate. Neither replaces the other.
 - Submit only a ref whose intended local commit is proven reachable and identical on the remote. Stop on every SHA mismatch.
 - If the user explicitly asked to trigger the hosted check, that authorizes this specific submission. Still obey any browser action-time confirmation.
@@ -80,9 +80,12 @@ Never push automatically. If a branch/tag is absent, ahead, divergent, or otherw
 
 4. Avoid duplicates. Before submitting, inspect the Reviews list for an existing `Pending` entry with the same ref and exact commit. Reuse it unless the user explicitly asks to resubmit.
 
-## Chrome Workflow
+## Browser Workflow
 
-Use `chrome:control-chrome` because the page depends on the user's existing `community.obsidian.md` login.
+Discover the browser tools available in this session and use one that can access
+the user's existing `community.obsidian.md` login, respecting any browser the user
+specified. Do not require or install a legacy skill by name. Tool availability
+does not replace the visible page and commit evidence below.
 
 1. Open the review form.
 2. Verify the logged-in page shows:
@@ -104,7 +107,10 @@ https://community.obsidian.md/account/plugins/personal-assistant
 
 Treat any page commit that is not an exact prefix of `INTENDED_SHA` as `FAIL: wrong commit scanned`. Stop and do not claim completion.
 
-If Chrome is unavailable, logged out, blocked by browser security, or shows CAPTCHA/account prompts, stop and report `BLOCKED`. Do not inspect cookies, passwords, profiles, local storage, or session files. Keep the existing tab open for handoff when useful.
+If no available browser tool can access the authenticated page, or the page is
+logged out, blocked by browser security, or shows CAPTCHA/account prompts, stop
+and report `BLOCKED`. Do not inspect cookies, passwords, profiles, local storage,
+or session files. Keep the existing tab open for handoff when useful.
 
 ## Short-Batch Polling
 
@@ -138,7 +144,7 @@ Community check:
   - WARNING: `<category>` - Warning
 - Complete: yes / no
 - Local source scan: `<separate result or not run>`
-- Chrome tab: kept open / closed
+- Browser tab: kept open / closed
 ```
 
 ## Related Skills

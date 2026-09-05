@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-08-23
+Updated: 2026-09-05
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
@@ -66,7 +66,7 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
   重复配置、glob/前缀和已修复但未清理的条目全部失败。
 - B-115/AC-05: B-115 可从 docs index → Development index → Governance index/GOV-001
   定位；Tracker 独占执行状态与跨会话 handoff，Plan/SDD 按复杂度创建，`Validated`
-  自动触发 closeout 询问，过程 artifact 吸收后默认删除，且不伪造 Product
+  在缺少 closeout 授权时触发询问，已授权 full-lifecycle 则继续收尾；过程 artifact 吸收后默认删除，且不伪造 Product
   Decision/Product Spec provenance。
 - B-115/AC-06: lifecycle skill 与前向 contract test 明确保护 named technical choice、
   derived product boundary 和 pre-implementation deviation approval；不得把 Agent 推断
@@ -86,6 +86,7 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 
 ## Authority And Change Boundary
 
+- 2026-09-05 用户要求结合 [Astra 官方建议](https://developers.openai.com/api/docs/guides/latest-model) 审查并优化项目 AGENTS/skills。本次原位澄清已有授权的复用、完整请求的模式选择、只读与执行分流、按范围验证；不变更 PA 产品、Git/release 或数据权限。常规细节自主完成；新增权限、实质偏差和发布当前 turn 要求仍有效。
 - Current governance authority: 本文件与 [Documentation Workflow](../documentation-workflow.md)。两者冲突时先修复 drift，不由 Product Decision Register 接管。
 - Delivery authority: 本 contract、Documentation Workflow、当前 Skills、checker 与 focused contract tests；已吸收的 B-115 过程包不再作为 authority 保留。
 - Product escalation: 任何实现若改变 PA runtime、用户行为、数据/隐私边界或 Obsidian UI，必须停止 governance-only lane，并进入 Accepted Product Decision + Approved Product Spec。

@@ -28,10 +28,11 @@ not merge or rebase the beta release commit back to `master`.
 ## Safety Boundaries
 
 - Treat `make release`, `make publish`, tag creation, branch pushes, GitHub
-  Releases, and BRAT tester handoff as release-side effects.
+  Releases, and sending BRAT tester instructions to others as release-side effects.
 - Do not publish, push branches, push tags, create GitHub Releases, or hand off
-  BRAT tester instructions/URLs unless the user clearly asks for that action in
-  the current turn.
+  BRAT tester instructions/URLs to others unless the user clearly asks for that
+  action in the current turn. Reporting a verified published URL to the user in
+  this conversation is read-only and does not require separate authorization.
 - If the target version, `master` baseline, or baseline tag is ambiguous, stop and
   ask before creating release state.
 - Prefer `make release-dry-run VERSION=x.y.z-beta.N` before any local release
@@ -39,7 +40,19 @@ not merge or rebase the beta release commit back to `master`.
 
 ## Preparation Workflow
 
-When asked to prepare or explain a beta:
+Choose the lane from the user's request:
+
+- **Explain/status/inspect:** read local state, the runbook, and remote status
+  when needed. Do not fetch, switch, pull, create branches, or write release state.
+- **Dry run only:** inspect `scripts/release.mjs` and run the existing dry-run
+  command when its prerequisites already hold. It writes no release files, but
+  currently requires a clean matching `beta/<version>` branch at `master` HEAD
+  and a tagged baseline. Report unmet prerequisites; a dry-run request alone
+  does not authorize creating branches or changing the checkout to satisfy them.
+- **Prepare:** perform the workflow below within the requested scope. Preparing
+  the baseline/packaging branch does not authorize a release commit, tag, or push.
+
+When asked to prepare a beta:
 
 1. Inspect current state:
    - `git status --short --branch`

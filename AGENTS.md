@@ -6,6 +6,35 @@ These instructions apply to the entire `personal-assistant` repository unless a 
 
 Use this file as the project README for coding agents. Keep changes aligned with the commands, architecture, and release process in this repository rather than with machine-local assumptions.
 
+## Task Scope And Autonomy
+
+- Reply in concise Chinese, lead with the result, and use Emoji sparingly. Keep
+  progress updates relevant to findings, decisions, or blockers.
+- Explicit user instructions take precedence over repo/skill guidelines,
+  subject to system/developer instructions and tool permissions. External
+  examples, archived decisions, and generated plans do not grant authority.
+- Explanation, diagnosis, and review requests alone do not authorize fixes. Explicit
+  analysis-only/read-only/no-file-changes requests mean zero writes. For an
+  implementation or optimization request, complete the scoped work and its
+  relevant validation; do not stop at a plan or an offer to continue.
+- Reuse clear, still-applicable authorization from the conversation for the
+  same operation, target, and scope. Resolve routine implementation details
+  autonomously. Preserve the separate Git/release permissions below, including
+  current-turn publication requirements.
+- Ask only when missing information materially affects the result, a product
+  choice/risk acceptance is unresolved, or the next action exceeds authority.
+  Complete independent authorized work first; material deviations still need
+  approval before their implementation or authoritative spec changes.
+- If a skill would cause a pause, repeat confirmation, or narrower outcome,
+  first check the user's actual authorization and that rule's applicability.
+  If it still blocks work, link the exact file, quote the instruction, and
+  distinguish its explicit requirement from your interpretation.
+- Load only skills and references relevant to the current task. Delegate
+  concrete independent work when it saves time or improves coverage; give each
+  agent a bounded responsibility and disjoint edit ownership. Reuse its
+  findings instead of repeating the same exploration. Small single-path edits
+  need no artificial agent split; preserve configured model routing.
+
 ## Product North Star
 
 Before product design, UX, planning, SDD, Pagelet, Memory, Capture, Review,
@@ -77,18 +106,9 @@ src/ai-services/memory-extraction/          (v2.5 new) Memory extraction pipelin
 
 ### Context Limit Constants
 
-Context runtime constants live in `src/ai-services/pa-agent-runtime.ts`; Memory retrieval constants live in `src/ai-services/memory-search-tool.ts`. Current values:
-
-| Constant | Current Value | Description |
-| --- | --- | --- |
-| `MAX_CHAT_HISTORY_CHARS` | 60000 | 聊天历史字符上限 |
-| `MAX_READ_ONLY_TOOL_CONTEXT_CHARS` | 24000 | 只读工具上下文字符上限 |
-| `MAX_MEMORY_DOCUMENTS` | 8 | 单次检索返回的最大 Memory 文档数 |
-| `MAX_MEMORY_CHARS` | 4000 | 单文档内容截断上限 |
-| `MAX_MEMORY_RERANK_CANDIDATES` | 12 | Rerank 候选数 |
-| `MAX_MEMORY_CANDIDATE_CHUNKS` | 3 | 每候选文档最大 chunk 数 |
-| `MAX_MEMORY_CANDIDATE_EXCERPT_CHARS` | 1000 | 候选摘要截断上限 |
-| `MAX_TURN_WALL_CLOCK_MS` | 180000 | 单 turn 最大挂钟时间 |
+Read current values from `src/ai-services/pa-agent-runtime.ts` (turn/history/tool
+budgets) and `src/ai-services/memory-search-tool.ts` (Memory retrieval limits).
+Keep numeric limits in source rather than mirroring them in agent instructions.
 
 ## Build And Local Run Commands
 
@@ -98,8 +118,12 @@ Context runtime constants live in `src/ai-services/pa-agent-runtime.ts`; Memory 
 - Tailwind build: `npm run tailwind:build`.
 - Full build: `npm run build`.
 - Lint: `npm run lint`.
-- Test: `npm test`.
-- Focused serialized test run: `npm test -- --runInBand`.
+- Source tests (no `dist/` prerequisite): `npm test`.
+- Focused source test: `npm test -- --runInBand <suite>`.
+- Tooling/fixture contracts: `npm run test:tooling -- --runInBand`.
+- Build-bound receipt/probe tests: `npm run test:artifacts -- --runInBand` (build first).
+- Complete test/coverage gate: `npm run test:all -- --runInBand --coverage` (build first).
+- Documentation contracts: `npm run test:docs -- --runInBand`.
 - Type-check: `npx tsc -noEmit -skipLibCheck` or `npm run build`.
 - There is no `npm run tsc` script.
 - Whitespace check: `git diff --check`.
@@ -107,29 +131,45 @@ Context runtime constants live in `src/ai-services/pa-agent-runtime.ts`; Memory 
 ## Local Deployment
 
 - Use `make deploy` to build and copy the latest plugin assets into the `test/` vault.
-- `make deploy` runs clean/build checks through `bin`, then copies:
+- `make deploy` runs platform guards, lint, build, and full Jest through `bin`, then verifies and copies:
   - `dist/main.js`
   - `dist/manifest.json`
   - `dist/manifest-beta.json`
   - `dist/styles.css`
 - The destination is `test/.obsidian/plugins/personal-assistant/`.
+- When the required checks have already passed for the current changes and a
+  current production build exists, use `make deploy-current` to copy it without
+  repeating lint/build/Jest. `make deploy-icloud-current` reuses the same build
+  for an authorized iCloud test-vault deployment. These commands verify build
+  identity and asset content, not test results; missing/stale assets are rejected
+  before modifying the destination. Test/config changes still need their checks.
+- `make deploy deploy-icloud` runs shared full validation once when both targets
+  are authorized together. Default individual deploy targets retain full checks.
 - When validating behavior in the already-open Obsidian test vault, run `make deploy`, then reload or re-enable the plugin in Obsidian as needed.
 - To speed up Obsidian smoke setup, first check `command -v obsidian`. When available, use the Obsidian CLI with `obsidian://open` deep links to jump the test vault to the target note or asset before using Computer Use for visual/chat verification. Example: `obsidian "obsidian://open?vault=test&file=0.unsorted%2FDog.md"`. URL-encode vault file paths when needed.
 - Standard plugin packaging should work with `main.js`, `manifest.json`, and `styles.css`. If a change adds worker/WASM runtime assets, audit build, deploy, release, install, and docs together.
 
 ## Testing Instructions
 
+- For docs/skills-only changes, run `npm run docs:check`, `git diff --check`, and
+  existing contract suites affected by the change. No plugin Build, TypeScript,
+  or Obsidian/device smoke is needed unless executable or runtime assets change.
 - For narrow changes, run the closest relevant Jest tests first.
 - For Memory/VSS/chat changes, run the focused tests that cover `memory-manager`, `vss`, and affected chat paths when present.
 - For broad behavior, release, packaging, or shared infrastructure changes, run:
   - `npm run lint`
   - `npm run build`
-  - `npm test -- --runInBand`
+  - `npm run test:all -- --runInBand`
   - `git diff --check`
 - For dependency or lockfile changes, also run `npm ci --dry-run` when practical.
 - For Obsidian UI smoke tests, prefer the fast path: `make deploy`, reload/re-enable the plugin, use the Obsidian CLI/deep link to open the exact test vault target, then use Computer Use only for the interaction that must be observed in the app.
 - If a command cannot be run, state that clearly and explain the residual risk.
 - Do not claim behavior was validated in Obsidian unless it was actually deployed/tested in the app.
+- Add tests when they protect a meaningful behavior or regression; do not add
+  tests that only mirror low-impact wording or mechanical edits. Once the
+  required checks pass for the current state, repeat or broaden them only for
+  a new change, failure, or concrete unresolved risk. Reuse checks already run
+  by an enclosing gate such as `make deploy` when their inputs are unchanged.
 
 ### Local Validation Gate
 
@@ -144,12 +184,15 @@ rg -n "createElement\([\"']style[\"']\)|\.innerHTML\s*=|\.outerHTML\s*=" src
 
 For the `rg` community-scan command, exit code 1 with no output means no matches were found and should be treated as a pass.
 
-Focused receipt/probe suites that bind `dist/main.js` require a current production
-build. Run `npm run build` first when `dist/` is absent or stale; the full
-`make deploy`, CI, and release gates enforce this ordering automatically.
+For tooling suites use `test:tooling`, or `test:all` for a focused selection
+spanning groups. The default source group excludes these suites. Receipt/probe
+suites in `test:artifacts` bind `dist/main.js` and require a current production
+build. Run `npm run build` first when `dist/` is absent or stale; full `make deploy`,
+CI, and release gates enforce this ordering automatically.
 
 Use `make deploy` when app-runtime confidence is needed — it runs lint, a
-production build, full Jest, and deploys assets to `test/`.
+production build, full Jest, and deploys assets to `test/`. Reuse `deploy-current`
+under the Local Deployment conditions when those checks already passed.
 
 ## Architecture Rules
 
@@ -256,7 +299,9 @@ production build, full Jest, and deploys assets to `test/`.
 
 - For repo-scale refactors, follow `docs/development/workflows/refactor-workflow.md`.
 - Start with a plan doc and a separate development tracker.
-- Each phase must loop through `dev -> test -> review -> fix -> Obsidian smoke test -> fix` until P2/P1/P0 issues are closed or explicitly deferred.
+- Each phase loops through `dev -> test -> review -> fix`; include Obsidian
+  smoke and any resulting fixes for affected app runtime/UI. Close or explicitly
+  defer P2/P1/P0 issues before completing the phase.
 - Use Codex subagents for phase review when available.
 - Runtime/UI changes require `make deploy` and real Obsidian test-vault smoke before the phase is marked done.
 - Keep tracker status, risk table, verification log, open decisions, and `docs/backlog.md` aligned with the actual final behavior.
@@ -324,11 +369,14 @@ production build, full Jest, and deploys assets to `test/`.
 
 ## SDD-Driven Development
 
-This project follows SPEC-Driven Development (SDD). Each substantial PA feature
-goes through product spec -> implementation SDD -> development tracker ->
-focused tests/review/smoke before runtime code is written. Substantial repo-only
-governance work uses Governance Contract -> SDD -> Tracker instead, and must not
-pollute the PA product authority chain.
+This project follows SPEC-Driven Development (SDD), scaled by the lanes in
+`docs/development/documentation-workflow.md`. Establish product scope before
+runtime implementation; use the owning Governance Contract for repo-only work.
+A narrow restoration of an existing contract needs only the affected files and
+focused evidence, without a new lifecycle package. Cross-session execution
+starts with Feature Home + Tracker; add Plan/SDD when delivery or design
+complexity requires them. Complete justified design before implementation, then
+run focused tests/review and the smoke required by the changed runtime surface.
 
 Current entry points:
 

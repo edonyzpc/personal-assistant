@@ -10,12 +10,14 @@ description: Validate personal-assistant Obsidian plugin changes on a USB-connec
 - Do not claim iOS real-device validation for a plugin-asset change unless the current build was written to the iCloud Obsidian `test` vault, all copied assets matched `dist`, the loaded plugin identity matched that artifact, and the affected behavior was observed on the connected iPhone.
 - If only a vault-resident smoke runner changed, sync and hash-check that runner, then re-evaluate it in the existing page. Do not redeploy or reload the plugin when `dist` and plugin runtime assets did not change.
 - Treat Safari Web Inspector as DOM/CSS/console/network evidence, not touch automation. Use iPhone Mirroring or the user for real touch interaction.
-- Use `computer-use:computer-use` for Safari and iPhone Mirroring UI actions. For
+- Discover and use the available native UI tools for Safari and iPhone Mirroring;
+  do not require or install a legacy skill by name. If no tool can operate the
+  real target, report the blocked evidence instead of substituting emulation. For
   Safari Console JavaScript, use a real paste/input event and verify the command
   entered Console history or produced its sentinel before counting execution.
   Accessibility `set_value` may change the displayed editor text without creating
   executable Web Inspector input, so it is never submission evidence by itself.
-- Treat an explicit user request to run iOS real-device smoke as authorization for exactly `make deploy-icloud` for plugin assets, or the existing scoped preparation/sync command for a runner-only change, targeting only the iCloud `test` vault. Do not ask again. If the user requested only planning, review, or inspection without a real-device run, do not deploy or sync.
+- Treat an explicit user request to run iOS real-device smoke as authorization for plugin-asset deployment through `make deploy-icloud` (or its current-build reuse target), or the existing scoped preparation/sync command for a runner-only change, targeting only the iCloud `test` vault. Do not ask again. If the user requested only planning, review, or inspection without a real-device run, do not deploy or sync.
 - Choose the smallest lane that covers the latest runtime delta and stop once
   that lane has sufficient current-build evidence.
 - Judge a targeted canary against its current Decision/Spec/SDD contract, not a
@@ -114,6 +116,12 @@ git diff --name-only
 make deploy-icloud
 ```
 
+If the required checks already passed for the current changes (for example,
+during desktop smoke), use `make deploy-icloud-current` to verify and copy the
+same current production build. It checks build identity, not test results; follow
+`AGENTS.md` Local Deployment reuse conditions. If both destinations are authorized
+together, `make deploy deploy-icloud` shares full validation once.
+
 This writes only plugin assets under:
 
 ```text
@@ -162,7 +170,7 @@ a plugin lifecycle transition as extra evidence.
 - Stop repeated attempts if Obsidian stalls at `body.in-progress`.
 - Do not classify an unresponsive tap as a product bug until asset comparison passed and the iPhone loaded the new build.
 
-6. Use `computer-use:computer-use` to inspect Safari Web Inspector attached to the iPhone target named like `-- Obsidian -- localhost` and to operate iPhone Mirroring when available.
+6. Use the available native UI tools to inspect Safari Web Inspector attached to the iPhone target named like `-- Obsidian -- localhost` and to operate iPhone Mirroring when available.
 
 - If the target, device trust, Develop menu, or Web Inspector connection is unavailable, report `BLOCKED`; do not guess from desktop/mobile emulation.
 - Use paste for long Console probes and verify history/output; do not submit a
@@ -274,6 +282,6 @@ Separate “deployed and asset-matched” from “observed on iPhone.” Never p
 ## Related Skills
 
 - Use `obsidian-test-vault-smoke` first at `app-runtime` tier or higher.
-- Use `computer-use:computer-use` for Safari and iPhone Mirroring UI control.
+- Use available native UI tools for Safari and iPhone Mirroring UI control.
 - Use `obsidian-community-check` only for an authorized hosted community scan.
 - Use `personal-assistant-review` for code-level review gates.

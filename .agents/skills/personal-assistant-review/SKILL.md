@@ -55,9 +55,11 @@ optional exploration findings under a separate `Optional Polish` section.
 
 ## Subagent Lanes
 
-If multi-agent tools are available and the user asks for agent team,
-subagents, or broad review, split review into independent lanes. If subagents
-are unavailable, perform the same lanes locally.
+Select lanes from the actual diff and its affected dependencies; the examples
+below are not mandatory read sets. Use independent subagent lanes when requested
+or when parallel work saves time or improves coverage. Keep a narrow review
+local when splitting adds no value; if tools are unavailable, cover the relevant
+risks locally. Docs/skills-only reviews need no unrelated Pagelet/runtime lane.
 
 ### Gate Mode Lanes
 
@@ -201,8 +203,9 @@ compatibility, or release impact.
 
 ## Validation
 
-Run the **Local Validation Gate** from AGENTS.md, scoped to the changed
-surface. For broad Pagelet or shared-runtime diffs, also include `npm run lint`.
+For code/DOM changes, run the **Local Validation Gate** from AGENTS.md, scoped to
+the changed surface. Use its docs/skills-only checks for instruction changes.
+For broad Pagelet or shared-runtime diffs, also include `npm run lint`.
 
 Per AGENTS.md Testing Instructions, do not claim Obsidian validation without
 deployed evidence. If `make deploy` and real test-vault smoke were not run, state it.

@@ -8,9 +8,10 @@ description: Route Personal Assistant ideas, decisions, planning, implementation
 ## Contract
 
 Act as a low-burden router. Infer lanes, IDs, paths, and status transitions; do
-not ask the user to operate the documentation system. Ask only about product
-judgment, risk acceptance, target ambiguity, or implementation/Git/release
-authority.
+not ask the user to operate the documentation system. Resolve routine choices
+and reuse still-applicable user authorization from the conversation. Ask only
+about unresolved product judgment, risk acceptance, target ambiguity, or missing
+implementation/Git/release authority; preserve release-specific timing rules.
 
 An explicit `review-only`, `analysis-only`, `read-only`, `no-file-changes`,
 “只分析”, “不要改文件”, or equivalent request means **zero writes**. This guard
@@ -22,7 +23,7 @@ phrases do not grant write authority.
 - Treat a named library, framework, API, architecture, or explicit product/data/media boundary in a user-provided spec or current authority as binding until explicitly superseded.
 - Analysis/design/implementation authority does not authorize silently replacing it, inventing a narrower or broader boundary, or treating an Agent inference as user approval.
 - Before production code or authoritative docs, separate explicit requirements, verified facts, inferences, and open decisions. A material deviation needs one compact decision card: original choice, evidence, options/tradeoffs, recommendation, and rollback.
-- Continue only after explicit user approval. An Agent-authored `Accepted`/`Approved` status or post-hoc Decision, SDD, test, or implementation cannot manufacture authority. If discovered later, label the deviation and ask whether to restore the original constraint or accept a new dated decision; never backdate approval.
+- Continue only after explicit user approval for a material deviation; routine compatible work continues within the existing authorization. An Agent-authored `Accepted`/`Approved` status or post-hoc Decision, SDD, test, or implementation cannot manufacture authority. If discovered later, label the deviation and ask whether to restore the original constraint or accept a new dated decision; never backdate approval.
 
 ## Read Minimally
 
@@ -79,8 +80,8 @@ tracker as the default inbox, planning mirror, state authority, or sync gate.
   mirrors Tracker status.
 - Enforce `1 Now + 1 Next`: at most one `Implementing | Validating | Blocked`
   package and at most one `Planned` package.
-- When a Tracker reaches `Validated`, ask one compact closeout question
-  immediately; do not leave it as indefinite active work.
+- When a Tracker reaches `Validated`, continue closeout if already authorized;
+  otherwise ask one compact closeout question. Do not leave it as indefinite active work.
 - An Active Package starts with `README.md` and `tracker.md`.
 - Add `plan.md` only for phased, risky, or cross-session delivery.
 - Add `sdd.md` only when source-verified design is needed for behavior, data,

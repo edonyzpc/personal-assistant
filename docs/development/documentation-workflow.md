@@ -27,6 +27,9 @@ Authority: PA 需求、决策、工程治理、开发状态、验证与历史证
 - “收尾/关闭/归档”才授权终态处置。
 - commit、push、tag、publish、release 始终分别授权。
 - review-only、analysis-only、read-only、no-file-changes 一律零写入。
+- 用户已明确授权且仍适用的同一操作、目标与范围，无需因进入下一个 skill 或阶段重复
+  询问；常规实现细节由 Agent 处理。未定产品取舍、material deviation 与新增 Git/release
+  动作仍遵守各自授权边界，发布操作保留当前 turn 明确授权要求。
 - 用户提供的 Spec 或 current authority 明确命名的 library、framework、API、architecture，
   以及明确的产品、数据或媒体边界，均是 binding constraint，直到新的显式决定完成
   supersede；同一草稿存在其他缺陷，不会把这些选择自动降级为实现建议。
@@ -103,8 +106,8 @@ docs/development/active/<feature>/
 - Feature Home 不复制 delivery status、阶段 task 或验证日志。
 - Tracker 的 `Delivery status` 是唯一执行状态。
 - Active WIP 上限为 `1 Now + 1 Next`：`Implementing | Validating | Blocked` 合计最多
-  一条，`Planned` 最多一条。`Validated` 是待 closeout 状态，不占 Next；Agent 必须
-  立即向用户提出一个简短的 closeout 决定，不能把它长期当作活跃执行。
+  一条，`Planned` 最多一条。`Validated` 是待 closeout 状态，不占 Next；已有 full-lifecycle
+  或 closeout 授权时继续收尾，否则立即提出一个简短的 closeout 决定，不能把它长期当作活跃执行。
 - Plan 只有在其内容无法简洁放入 Tracker 时才创建。
 - SDD 只有在实现需要 source-verified design 时才创建；存在 SDD 且已进入实现时，必须为 `Approved`。
 - Tracker `Current Snapshot` 就是跨会话 handoff。Active Package 不创建独立
