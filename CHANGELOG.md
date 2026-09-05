@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.2](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.1...2.10.0-beta.2) (2026-09-05)
+
+### Fix
+- dependencies: patch nanoid high-severity vulnerabilities
+- memory: surface lexical stale state and keyword diagnostics
+
+### Improvements
+- ci: optimize validation scopes and current-build deploy reuse
+
+### Docs
+- retrieval: record B-125 beta publication
+- skills: refine agent lifecycle and authorization contracts
+- decisions: add DEC-030 proposed entry
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
