@@ -182,6 +182,13 @@ The marker binds `profileId`, active generation, source-chunk epoch, runtime
 canary, allowed-scope fingerprint and eligible row count. SQLite is canonical;
 IndexedDB may mirror product readiness but cannot activate a lexical generation.
 
+Chat maps `lexical-profile-stale` to `Memory needs update` with an `Update Memory
+search` entry. The entry uses the existing Prepare command so it requests local
+lexical-only confirmation and becomes a no-op if Memory is already ready when
+clicked. Technical diagnostics expose keyword-index state and reason separately
+from vector readiness and the dirty/verification maintenance queues; an empty
+maintenance queue does not imply that the keyword index has been prepared.
+
 ### IndexedDB Local State
 
 `VSSIndexStateStore` persists the local marker, dirty journal, and migration/diagnostic state separately from OPFS.

@@ -10790,6 +10790,35 @@ describe('VSS status performance notices', () => {
         });
     });
 
+    it.each([
+        { state: 'awaiting_confirmation', reason: 'profile_missing', tone: 'warning' },
+        { state: 'stale', reason: 'scope_changed', tone: 'warning' },
+        { state: 'failed', reason: 'rebuild_failed', tone: 'danger' },
+        { state: 'rebuilding', reason: undefined, tone: 'warning' },
+        { state: 'ready', reason: undefined, tone: undefined },
+        { state: 'unavailable', reason: 'feature_disabled', tone: undefined },
+    ])('distinguishes keyword index $state from ready vector Memory', ({ state, reason, tone }) => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const model = plugin.buildTechnicalMemoryStatusModel({
+            status: 'ready',
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: 13920,
+            fileCount: 1852,
+            storagePersisted: true,
+            fallbackMode: false,
+            lexicalProfileState: state,
+            lexicalFallbackReason: reason,
+        }, { dirtyCount: 0, verificationPending: 0 });
+
+        expect(model.summary).toBe('Ready');
+        expect(model.details).toEqual(expect.arrayContaining([
+            { label: 'Maintenance', value: 'Up to date', tone: undefined },
+            { label: 'Keyword index', value: state, tone },
+        ]));
+        expect(model.details.filter((detail: { label: string }) => detail.label === 'Keyword index detail'))
+            .toEqual(reason ? [{ label: 'Keyword index detail', value: reason }] : []);
+    });
+
     it('keeps pending maintenance and performance notes readable', () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
