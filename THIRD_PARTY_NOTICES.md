@@ -196,7 +196,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 | `ldrs` | `1.1.7` | `MIT` | `node_modules/ldrs` |
 | `loose-envify` | `1.4.0` | `MIT` | `node_modules/loose-envify` |
 | `mustache` | `4.2.0` | `MIT` | `node_modules/mustache` |
-| `nanoid` | `5.1.5` | `MIT` | `node_modules/nanoid` |
+| `nanoid` | `5.1.16` | `MIT` | `node_modules/nanoid` |
 | `obsidian-callout-manager` | `1.0.2-alpha1` | `MIT` | `node_modules/obsidian-callout-manager` |
 | `obsidian-extra` | `0.1.5` | `MIT` | `node_modules/obsidian-extra` |
 | `openai` | `6.35.0` | `Apache-2.0` | `node_modules/openai` |
@@ -978,7 +978,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~
 
-### nanoid@5.1.5
+### nanoid@5.1.16
 
 - License: `MIT`
 - Lockfile path: `node_modules/nanoid`
@@ -987,7 +987,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ~~~text
 The MIT License (MIT)
 
-Copyright 2017 Andrey Sitnik <andrey@sitnik.ru>
+Copyright 2017 Andrey Sitnik <andrey@sitnik.es>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
