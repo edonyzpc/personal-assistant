@@ -1,7 +1,7 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-04
+Updated: 2026-09-05
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
@@ -27,6 +27,7 @@ Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 | DEC-027 | Bounded, convergence-aware retrieval recovery | Accepted | Owner-selected `CHAR-PHRASE` profile；bounded rerank/PPR/retry；B-125 software proxy、Win32 scoped exclusion、independent evidence slices and 3–4 targeted current-iPhone canaries；implementation/validation and per-flag rollout disposition closed；DEC-031 now extends B-125 with the shipping default；33/47、p95/profiler certification remains in B-127 | [Record](./dec-027-bounded-retrieval-recovery.md) |
 | DEC-028 | Silent Memory auto-prepare for first-use | Accepted | Owner-approved 2026-08-11 first-Chat exception plus same-day option 1: unknown IndexedDB marker truth blocks destructive reset/provider work; failed/cancelled rebuilds retain their original reason, failed admission rolls back to non-ready, and recovery/manual paths still block | [Record](./dec-028-silent-memory-auto-prepare.md) |
 | DEC-029 | Inline AI setup and first Settings focus | Accepted | Owner-approved 2026-08-23 scoped B-126 slice: three built-in Chat presets, token-only/existing-token preservation, explicit token probe, compensated save, and persisted first-Settings focus | [Record](./dec-029-inline-ai-setup-and-settings-focus.md) |
+| DEC-030 | Multimodal Chat and image-based social copywriting | Proposed | B-129 discussion pending; image input, privacy, provider, storage, mobile and Capture boundaries do not yet authorize implementation | [Record](./dec-030-multimodal-chat-image-copywriting.md) |
 | DEC-031 | Platform-scoped B-125 retrieval shipping default | Accepted | Owner-approved 2026-09-04 all-four build-default-on for explicit macOS/Linux/iOS；Win32/Android and unknown/partial identity without an allowlist signal fail closed through `windows` / `android` / `unsupported` masks；sparse explicit false rollback without settings backfill；no UI、Beta-only special case or algorithm/provider/Data Boundary/budget change | [Record](./dec-031-b125-retrieval-shipping-default.md) |
 
 Accepted 记录必须出现在 Active Decision Register。Rejected/Superseded 记录如果只剩历史价值，应移动到年度 Archive 并在 successor/年度索引中可追溯。
