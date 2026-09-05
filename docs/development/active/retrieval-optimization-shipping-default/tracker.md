@@ -1,7 +1,7 @@
 # B-125 Retrieval Shipping-Default Continuation Tracker
 
 Document status: Current
-Delivery status: Implementing
+Delivery status: Validated
 Updated: 2026-09-05
 Work item: B-125
 Authority: 本次 B-125 continuation 的唯一执行状态、finding、验证证据与 closeout readiness。
@@ -10,21 +10,18 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: M0 精确交接、M1 Mac 本地重验与 M2 real-iPhone
-  current-artifact canary 均为 PASS。Mac checkout 与 live remote work branch
-  在验证前同为 `e63ffc98c50eb7a1a709240cbc49589d48b78370`，tree
-  `216bc3895d8eb1d4f854b940287839c0ac5caeda`；工作树 clean。DEC-031
-  shipping-default、sparse rollback 与 positive platform allowlist 已在
-  macOS/iOS current artifact 上闭合，未发现新的 P0/P1/P2。
-- Next action: 将本次结果固化为仅含本 Tracker 的本地 evidence-only signed
-  commit 后停止，等待另行授权 master integration、push、Hosted Community
-  scan、Beta 版本选择及 release/publish。
-- Blocker / decision needed: B-125 的 Mac/iPhone 验证 blocker 已解除，无未决
-  产品问题。后续仍缺 master integration/push、Hosted Community scan、Beta
-  branch/tag/release/publish 的明确授权；目标 Beta 版本仍未决定，推荐
-  `2.10.0-beta.1`。Mac `make deploy` 仍有 Jest worker forced-exit warning，
-  因此 final master 的 natural-exit release-equivalent gate 必须重跑，当前
-  device canary PASS 不替代该门禁。
+- Current phase: M0 精确交接、M1 Mac 本地重验、M2 real-iPhone
+  current-artifact canary、M3 exact-master/Hosted Community gate 与 M4 Beta
+  packaging/publish 均为 PASS。Release-source `master` 为
+  `1b91dec8c27c9afb9411595e983d3d3773d5b7ce`；发布前 local/tracking/live
+  remote 完全一致。Hosted Community 对该 SHA 的 `master` preview 为
+  `Completed` / `Error=0`。BRAT prerelease `2.10.0-beta.1` 已发布，唯一 Beta
+  release commit 为 `c16693e37592fc99afcd5fb8ae3d78c000a1e2a1`。
+- Next action: 发布目标已完成；按 lifecycle 仅待 owner 决定是否立即 closeout，
+  或先保留本 Active Package 观察 Beta dogfood。实际 BRAT 安装/升级 smoke 是
+  独立后续验证，本次未执行且不冒充 GitHub Release 证据。
+- Blocker / decision needed: 无发布 blocker 或未决产品问题。Closeout 是当前唯一
+  owner decision；在明确 closeout authority 前不删除或归档 Active Package。
 - Last verified behavior: macOS 26.6.2 arm64、Node 22.22.3、npm 10.9.8 上，
   focused Local Validation Gate 为 8 suites / 763 tests、TypeScript、
   whitespace 与 DOM Community source scan 全部 PASS；`make deploy` 的
@@ -198,7 +195,7 @@ artifact identity, one integrated Chat/Memory path, and fresh errors.
 | T-04 | B-125/REQ-09 / B-125/AC-09；inherited B-125 behavior contract | Chat、Pagelet、Memory/VSS 共享 effective policy；算法/provider/budget/Data Boundary/lifecycle 不变 | [x] | 原 8 suites / 797 tests PASS；positive-allowlist 修正后又通过 48/504/260-test 重叠 affected sets、typecheck 与 diff check；独立复审无剩余 P0/P1/P2 |
 | T-05 | B-125/AC-09 | Desktop current-App + targeted OPFS restart + real-iPhone current-artifact canary | [x] | Mac-built `db4c41…` 等于 Linux post-fold；四项 iCloud assets byte-match；real-iPhone loaded 同一 SHA，iOS `none`/four-on、真实触摸 Chat/Memory positive receipt、ready/none 与 fresh-errors=0 全部 PASS。OPFS/lexical 继续使用已接受的 same-behavior provenance；B-127 33/47/p95/profiler 不在本项 |
 | T-06 | B-125/REQ-09 / B-125/AC-09 | DEC/Product Spec/Architecture/Active Package 权威链 | [x] | DEC-031、B-125 Product Spec amendment、continuation SDD/Tracker、DEC-027 source behavior 与两份 current Architecture 已对齐；全局 docs finding 另行记录 |
-| T-07 | B-125/AC-09 | Final local/release gate 与 Beta readiness | [~] | Work-branch assertions/command exit、current-App 与 real-iPhone exact-artifact canary PASS；Jest worker forced-exit warning 使 natural-exit release gate 保持 open，须在 final master 重跑。本地 evidence-only Tracker commit 已获授权；master integration/final SHA、live remote match、Hosted Community、target version、release dry-run 与 publish preflight 仍 open |
+| T-07 | B-125/AC-09 | Final local/release gate 与 Beta readiness | [x] | `master`/live remote=`1b91dec8…`；final `make release` 自然退出且 210 suites / 5489 tests、lint/build/legal/docs/bundle 全部 PASS；Hosted Community exact-SHA `Completed` / `Error=0`；`2.10.0-beta.1` branch/tag/Release、workflow `33938756443` 与六资产核验 PASS |
 
 Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancelled`。
 
@@ -218,7 +215,7 @@ The current dated amendment is `B-125/REQ-09` with `B-125/AC-09`.
 | F-03 | P1 | 用“非 Windows/Android”作支持判定会让没有明确 macOS/Linux/iOS signal 的 unknown/partial Platform 同样 default-on；Win/Android 与 allowlist signal 同时出现时也必须 mask 优先。 | 改为 macOS/Linux/iOS positive allowlist；Win32/Android 分别 mask，无 allowlist signal 用 `unsupported` mask，全部 all-false 且不改写 raw settings。 | T-03 | Closed by 2-suite / 13-test post-fix focused gate；overall affected/full gates remain separate |
 | F-04 | P1 | 历史 B-125 receipts 不证明 shipping-default 后的当前产物，尤其是 lexical preparation/OPFS restart 与 iOS 默认路径。 | 只重验受影响的 current-artifact Desktop/OPFS/iPhone slices；不重跑 B-127 扩展认证。 | T-05 | Desktop 与 real-iPhone current-artifact PASS；OPFS/lexical same-behavior provenance accepted |
 | F-05 | P2 | 历史 aggregate runner 如果只读 raw flags，会把“raw absent + build default-on”误报为关闭。 | 本 B-125 amendment 以 effective policy snapshot/focused smoke 为准；不为产生历史 aggregate 而修复/重跑 B-127 runner。 | T-04、T-05 | Closed by running-App effective snapshot and selected Desktop/OPFS smoke |
-| F-06 | P1 | 完整 release gate 若不自然退出，或 publish 时无法证明 live `origin/master` 精确一致，候选不可发布。 | Final full Jest coverage 必须自然返回 0，publish 前必须实时验证远程 SHA；失败时禁止继续。 | T-07 | Work-branch assertions/command exit 与 device canary PASS，但 Jest worker forced-exit warning 未闭合 natural-exit gate；final master natural-exit/live-remote checks remain mandatory |
+| F-06 | P1 | 完整 release gate 若不自然退出，或 publish 时无法证明 live `origin/master` 精确一致，候选不可发布。 | Final full Jest coverage 必须自然返回 0，publish 前必须实时验证远程 SHA；失败时禁止继续。 | T-07 | Closed；final `make release` 日志无 forced-exit/open-handle warning，且 local/tracking/live `master` 在 publish preflight 均为 `1b91dec8…` |
 
 ## Validation Log
 
@@ -241,11 +238,13 @@ The current dated amendment is `B-125/REQ-09` with `B-125/AC-09`.
 | 2026-09-05 | B-125/REQ-09 / B-125/AC-09 | M1 Mac local prerequisite + current-App | Pass | macOS 26.6.2 (25G83) arm64、Node 22.22.3、npm 10.9.8、Desktop Obsidian runtime 1.13.7 / installer 1.12.7；focused Local Validation Gate 8 suites / 763 tests、TypeScript、whitespace 与 DOM Community source scan PASS。Exact-source `make deploy` 的 lint、production build 与 210 suites / 5489 tests PASS；bundle audit PASS（6,799,638 bytes，gzip 2,697,702 < 2,883,584 budget），third-party notices 覆盖 35 runtime packages / 12 bundled resources，`docs:check:release` 为 9 files / 51 links，local Community blocker scan PASS。已知 Jest worker forced-exit warning 保留为 residual，不冒充最终 natural-exit release gate。Mac `dist/main.js` SHA-256=`db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`，manifest / manifest-beta=`f12e21b0cceb42e7392d21589564725372e95348288774bff8e64e6a704fec5d`，styles=`8ac8b174824f0d9be6e26204d1354090155b91d7b572c092843a919f5aacab0c`；Desktop current-App loaded identity/mount/fresh-error receipt PASS。 |
 | 2026-09-05 | B-125/REQ-09 / B-125/AC-09 / T-05 | M2 iCloud assets + real-iPhone current-artifact canary | Pass | 仅执行一次已授权 `make deploy-icloud`；`main.js`、`manifest.json`、`manifest-beta.json`、`styles.css` 当前逐字节 MATCH。设备 preflight 为 Safari Develop target `Edony iPhone 15` / iOS 26.6.1；plugin 2.9.2 loaded SHA=`db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`、`capturedAtPluginLoad=2026-09-04T15:47:30.855Z`、blocker=null，且 canary 前后 identity stable。Rollout v1 / B-125/DEC-027/DEC-031、supported / mask `none` / four-on 与 raw root/四字段 absent 前后稳定。用户明确授权本次 note content 外发后，一次真实触摸 turn（probe token `1788538573462-0.735782919705027`）精确绑定 prompt hash `7e16b05a3cc59235f82e76a0e0ce4055e6b57bfaf77298722c5f1bbe5b2f5dd3`，canonical completed；1 call / 1 result 严格配对，`search_memory` success、hit=1、`evidence`、`Dog.md` positive source、`includeInNextPrompt=true`、observationChars=2726，最终 Provider answer committed。该证据证明 Memory observation 进入后续 Provider prompt；未插桩底层 provider/embedding 精确请求数，因此不作 zero-call 或精确计数声明。Memory 前后 ready（69 documents）、plan `ready/none`、no approval/canAnswerNow；UI responsive、Markdown mutation=0、console/window/unhandled fresh errors=0、error hook intact。一个无 token 的重复 Console evaluation 被 active-probe guard 在 setup 前拒绝，未产生第二个 Chat/provider turn；同 token READY/RESULT 为唯一验收 receipt。Content-free temp receipt SHA-256=`69325e5eebc3fb6750e8dac783e4123240ee6b6db510392b31c1a79f5e9c0cf7`。明确跳过 B-127 aggregate/p95/profiler/recovery/cancellation、Desktop OPFS restart 重跑与 Hosted Community scan；remaining risk 为 final master artifact/SHA、release-equivalent gate、live remote、hosted scan、Beta target/release/publish 尚未执行。 |
 | 2026-09-05 | B-125/REQ-09 / B-125/AC-09 / T-07 | Tracker evidence validation | Continuation pass / repo-unrelated finding | `npm run docs:check` 未产生 B-125 continuation finding；仍仅报告独立 DEC-030 的 3 个 index/reachability finding 与 4 个既有 Episodic Architecture advisory warning。`git diff --check` PASS；本次仅修改 Tracker。 |
+| 2026-09-05 | B-125/REQ-09 / B-125/AC-09 / T-07 | M3 exact-master local/remote/Hosted Community gate | Pass | Work branch 以 fast-forward 集成；release-source local/tracking/live `master` 均为 `1b91dec8c27c9afb9411595e983d3d3773d5b7ce`。Final release gate 通过 notices 35 packages / 12 resources、release docs 9 files / 51 links、lint、production build、210 suites / 5489 tests、bundle 6,799,638 bytes / gzip 2,697,702 < 2,883,584，Jest 自然返回 0 且完整日志无 forced-exit/open-handle warning；`dist/main.js` SHA-256 仍为 iPhone canary 的 `db4c41b174e1e27d983f4d981b53647760cd101e7b813ba7a4cba4727c22089e`。GitHub source CI `33937177557` success。Hosted Community preview 精确命中 `master` / `1b91dec`，最终 `Completed`、`Error=0`、33 Warning、7 Recommendation。 |
+| 2026-09-05 | B-125/REQ-09 / B-125/AC-09 / T-07 | M4 BRAT Beta `2.10.0-beta.1` packaging/publish/cloud verification | Pass | Dry-run 基线 `2.9.2..HEAD`；唯一 single-parent signed release commit `c16693e37592fc99afcd5fb8ae3d78c000a1e2a1` 的 parent 为 source `master`，且仅含 7 个 generated packaging files。Annotated tag object=`d016734d39c58236b2e1423ae607fba05a23682d`，peeled tag 与 remote `beta/2.10.0-beta.1` 均为 `c16693e3…`。GitHub workflow `33938756443` success；Release 为 non-draft prerelease，六资产为 `LICENSE`、`main.js`、`manifest.json`、`NOTICE`、`styles.css`、`THIRD_PARTY_NOTICES.md`。下载 manifest version=`2.10.0-beta.1`、SHA-256=`069dcac35c7971f7eea718e98a570e7d7bed2bc1941a5c5b9f4ed678bb83688c`；GitHub `main.js` digest 与 iPhone canary SHA 相同。实际 BRAT install/update smoke 未运行，保持为独立 follow-up。 |
 
 ## Closeout Readiness
 
-- [ ] Owning contract 与实际行为一致。
-- [ ] Required review/smoke/release evidence 已记录。
+- [x] Owning contract 与实际行为一致。
+- [x] Required review/smoke/release evidence 已记录。
 - [ ] 未完成项已进入 Backlog。
 - [ ] 稳定结论已吸收到 current contract/tests。
 - [ ] 过程文档已标记 delete-after-absorption 或 unique archive evidence。
