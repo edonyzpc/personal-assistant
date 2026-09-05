@@ -11,8 +11,42 @@ import {
     type ChatTurnMemoryMetadata,
     type PaAgentMessage,
 } from "../src/ai-services/chat-types";
+import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
 
 describe("PA Agent canonical history metadata", () => {
+    it("retains only the reduction receipt while canonical sources replace legacy source counts", () => {
+        const legacyTrace = createContextPagerStateFromChatContextUsed("legacy", [{
+            category: "memory",
+            label: "old Memory",
+            sources: [{ path: "legacy.md" }],
+        }]).persistedTrace;
+        legacyTrace.reduction = {
+            historyCompressed: true,
+            toolContextReduced: true,
+            budgetLimited: false,
+            content: "private tool result",
+        } as NonNullable<typeof legacyTrace.reduction>;
+        const metadata = readChatHistoryTurnMetadata({
+            role: "assistant",
+            content: "answer",
+            canonicalTurn: createPaAgentPersistedTurn({ runId: "run-1", turnId: "turn-1", messages: [] }),
+        }, { hasMemoryContent: true, allowedMemorySourcePaths: ["legacy.md"], contextTrace: legacyTrace });
+
+        expect(metadata).toMatchObject({
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            contextTrace: {
+                runId: "run-1",
+                usedSourceCount: 0,
+                usedMemoryCount: 0,
+                skippedScopeCount: 0,
+                reduction: { historyCompressed: true, toolContextReduced: true, budgetLimited: false },
+            },
+        });
+        expect(metadata?.contextTrace?.reduction).not.toBe(legacyTrace.reduction);
+        expect(JSON.stringify(metadata)).not.toContain("private tool result");
+    });
+
     it("persists canonical turns with an explicit schema version", () => {
         const messages = [createUserMessage()];
 

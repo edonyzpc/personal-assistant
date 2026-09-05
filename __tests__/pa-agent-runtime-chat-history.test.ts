@@ -29,21 +29,38 @@ describe("formatCanonicalChatHistory (#2.2)", () => {
         expect(out).toContain('"content": "hi"');
     });
 
-    it("summarizes older history instead of dropping it behind a fixed turn cap", () => {
+    it("preserves older raw history beyond ten turns when the full history fits", () => {
         const history = Array.from({ length: 25 }, (_, i) => ([
             { role: "user" as const, content: `user-turn-${i}` },
             { role: "assistant" as const, content: `assistant-turn-${i}` },
         ])).flat();
         const out = formatCanonicalChatHistory(history);
-        expect(out).toContain("<compaction_summary context_only=\"true\">");
-        expect(out).toContain("User: user-turn-0");
-        expect(out).toContain("Assistant: assistant-turn-0");
-        expect(out).not.toContain('"content": "user-turn-0"');
-        expect(out).not.toContain('"content": "assistant-turn-0"');
+        expect(out).not.toContain("<compaction_summary");
+        expect(out).toContain('"content": "user-turn-0"');
+        expect(out).toContain('"content": "assistant-turn-0"');
         expect(out).toContain('"content": "user-turn-15"');
         expect(out).toContain('"content": "assistant-turn-15"');
         expect(out).toContain("user-turn-24");
         expect(out).toContain("assistant-turn-24");
+    });
+
+    it("uses complete recent pairs when long content exceeds the runtime history budget", () => {
+        const history = Array.from({ length: 25 }, (_, index) => ([
+            { role: "user" as const, content: `user-turn-${index} ${"x".repeat(3000)}` },
+            { role: "assistant" as const, content: `assistant-turn-${index} ${"y".repeat(3000)}` },
+        ])).flat();
+        const out = formatCanonicalChatHistory(history);
+        const match = out.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/);
+        const retained = JSON.parse(match![1]) as Array<{ role: string; content: string }>;
+
+        expect(out.length).toBeLessThanOrEqual(60000);
+        expect(retained).toHaveLength(18);
+        expect(retained[0].content).toBe(history[32].content);
+        expect(retained[retained.length - 1].content).toBe(history[history.length - 1].content);
+        for (let index = 0; index < retained.length; index += 2) {
+            expect(retained[index].role).toBe("user");
+            expect(retained[index + 1].role).toBe("assistant");
+        }
     });
 
     it("escapes chat_history closing tags inside prior messages", () => {

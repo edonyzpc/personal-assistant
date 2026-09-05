@@ -7,4 +7,5 @@ export type { PaAgentContextHygieneResult } from "./PaAgentContextHygiene";
 export { PaAgentContextProjector } from "./PaAgentContextProjector";
 export type { PaAgentInjectedContext, PaAgentProjectedHistory } from "./PaAgentContextProjector";
 export { PaAgentContextManager } from "./PaAgentContextManager";
-export type { PaAgentContextManagerInput, PaAgentContextProjection } from "./PaAgentContextManager";
+export type { PaAgentContextManagerInput, PaAgentContextProjection, PaAgentContextOutcome } from "./PaAgentContextManager";
+export { PaAgentContextOverflowError } from "./PaAgentContextOverflowError";

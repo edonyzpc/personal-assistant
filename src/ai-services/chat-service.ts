@@ -23,6 +23,8 @@ import {
 import type { CapabilityProvider } from './capability-types';
 import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent } from './chat-types';
 import { OperationsService, OperationsSession } from './operations/operations-service';
+import { PaAgentContextSummarizer } from './context/PaAgentContextSummarizer';
+import { createAbortError, throwIfAborted } from './chat-utils';
 import type {
     OperationsControllerEvent,
     OperationsExecutionResult,
@@ -44,6 +46,8 @@ export function getBailianWebSearchEndpointForBaseURL(baseURL: string): string {
 
 export interface StreamLLMOptions {
     memoryMode?: MemoryMode;
+    /** Optional per-turn history cap; the runtime only permits lowering its normal limit. */
+    historyBudgetChars?: number;
     /** Visible Pagelet evidence to inject into this explicit user turn only. */
     pageletHandoff?: PageletChatHandoffContext;
     onLifecycleEvent?: (event: AgentEvent) => void;
@@ -62,6 +66,9 @@ export class ChatService {
     private host: AiServiceHost;
     private readonly operationsSession: OperationsSession;
     private readonly ownedOperationsService: OperationsService | null;
+    private readonly contextSummarizer = new PaAgentContextSummarizer();
+    private contextModelKey: string | undefined;
+    private contextEpoch = 0;
 
     constructor(host: AiServiceHost, operationsSession?: OperationsSession) {
         this.host = host;
@@ -109,8 +116,16 @@ export class ChatService {
     }
 
     dispose(): void {
+        this.contextEpoch += 1;
+        this.contextSummarizer.dispose();
         this.operationsSession.dispose();
         this.ownedOperationsService?.dispose();
+    }
+
+    /** Derived context belongs to this view's current conversation only. */
+    resetContext(): void {
+        this.contextEpoch += 1;
+        this.contextSummarizer.reset();
     }
 
     private getFinalAnswerQwenRequestOptions(): QwenRequestOptions | undefined {
@@ -157,6 +172,14 @@ export class ChatService {
         chatHistory?: ChatMessage[],
         options: StreamLLMOptions = {},
     ): Promise<void> {
+        const modelKey = JSON.stringify([
+            this.host.settings.aiProvider,
+            this.host.settings.baseURL,
+            this.host.settings.chatModelName,
+        ]);
+        if (this.contextModelKey !== undefined && this.contextModelKey !== modelKey) this.resetContext();
+        this.contextModelKey = modelKey;
+        const contextEpoch = this.contextEpoch;
         const lease = await this.host.agentRunCoordinator?.acquireChatLease(signal);
         const unsubscribeOperations = options.onOperationsIntentStaged
             ? this.operationsSession.subscribe((event: OperationsControllerEvent) => {
@@ -165,11 +188,15 @@ export class ChatService {
             : undefined;
         let runtime: PaAgentRuntime | undefined;
         try {
+            throwIfAborted(signal);
+            if (contextEpoch !== this.contextEpoch) throw createAbortError();
             const memoryMode = options.memoryMode ?? "auto";
             const nativeToolPlanningOptions = {
                 nativeToolPlanningInternalGate: true,
             };
             const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
+            throwIfAborted(signal);
+            if (contextEpoch !== this.contextEpoch) throw createAbortError();
             const providerResponseDelivery = this.aiUtils
                 .resolveChatTransport("native")
                 .responseDelivery;
@@ -178,6 +205,7 @@ export class ChatService {
                 this.aiUtils,
                 {
                     ...nativeToolPlanningOptions,
+                    contextSummarizer: this.contextSummarizer,
                     runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
                     providerResponseDelivery,
                     additionalCapabilityProviders,
@@ -191,6 +219,7 @@ export class ChatService {
             await runtime.streamTurn({
                 prompt,
                 chatHistory,
+                historyBudgetChars: options.historyBudgetChars,
                 memoryMode,
                 pageletHandoff: options.pageletHandoff,
                 signal,

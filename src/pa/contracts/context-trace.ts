@@ -41,6 +41,13 @@ export interface SkippedContextSourceRef extends UISourceRef {
     privateTitle?: string;
 }
 
+/** Run-level receipt only: no prompt, tool text, or cross-conversation memory. */
+export interface ContextReductionReceipt {
+    historyCompressed: boolean;
+    toolContextReduced: boolean;
+    budgetLimited: boolean;
+}
+
 export interface ContextTrace {
     runId: string;
     retrievalOutcomeId?: string;
@@ -50,6 +57,7 @@ export interface ContextTrace {
     droppedMemories: DroppedMemoryRef[];
     skippedScopes: string[];
     compressionSummary?: string;
+    reduction?: ContextReductionReceipt;
     retrievalOutcome?: RetrievalOutcome;
 }
 
@@ -66,6 +74,20 @@ export interface PersistedContextTrace {
     usedMemoryCount: number;
     droppedMemoryCount: number;
     compressionSummaryHash?: string;
+    reduction?: ContextReductionReceipt;
+}
+
+export function cloneContextReductionReceipt(value: unknown): ContextReductionReceipt | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as Record<string, unknown>;
+    const receipt = {
+        historyCompressed: record.historyCompressed === true,
+        toolContextReduced: record.toolContextReduced === true,
+        budgetLimited: record.budgetLimited === true,
+    };
+    return receipt.historyCompressed || receipt.toolContextReduced || receipt.budgetLimited
+        ? receipt
+        : undefined;
 }
 
 export function isContextDropReason(value: unknown): value is ContextDropReason {
@@ -83,6 +105,7 @@ export function formatContextTraceSummary(trace: ContextTrace): string {
 }
 
 export function toPersistedContextTrace(trace: ContextTrace): PersistedContextTrace {
+    const reduction = cloneContextReductionReceipt(trace.reduction);
     return {
         runId: trace.runId,
         retrievalOutcomeId: trace.retrievalOutcomeId,
@@ -107,6 +130,7 @@ export function toPersistedContextTrace(trace: ContextTrace): PersistedContextTr
         usedMemoryCount: trace.usedMemories.length,
         droppedMemoryCount: trace.droppedMemories.length,
         compressionSummaryHash: trace.compressionSummary ? stableHash(trace.compressionSummary) : undefined,
+        ...(reduction ? { reduction } : {}),
     };
 }
 

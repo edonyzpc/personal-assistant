@@ -9,7 +9,7 @@ import type {
     TurnEndStatus,
 } from "./chat-types";
 import { PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION } from "./chat-types";
-import { createContextPagerStateFromChatContextUsed } from "../pa";
+import { cloneContextReductionReceipt, createContextPagerStateFromChatContextUsed } from "../pa";
 
 export interface CreatePaAgentPersistedTurnInput {
     runId: string;
@@ -42,10 +42,23 @@ export function readChatHistoryTurnMetadata(
     assistantMessage: ChatMessage,
     legacyMetadata?: ChatTurnMemoryMetadata,
 ): ChatTurnMemoryMetadata | undefined {
-    if (assistantMessage.canonicalTurn) {
-        return extractCanonicalTurnMetadata(assistantMessage.canonicalTurn);
-    }
     const metadata = assistantMessage.memoryMetadata ?? legacyMetadata;
+    if (assistantMessage.canonicalTurn) {
+        const canonical = extractCanonicalTurnMetadata(assistantMessage.canonicalTurn);
+        // Source/Memory truth still comes from the canonical turn. The body-free
+        // reduction receipt lives in turn metadata, including after rehydration.
+        const reduction = cloneContextReductionReceipt(metadata?.contextTrace?.reduction);
+        if (reduction) {
+            canonical.contextTrace = {
+                ...(canonical.contextTrace ?? createContextPagerStateFromChatContextUsed(
+                    assistantMessage.canonicalTurn.runId,
+                    canonical.contextUsed ?? [],
+                ).persistedTrace),
+                reduction,
+            };
+        }
+        return canonical;
+    }
     return metadata ? cloneTurnMetadata(metadata) : undefined;
 }
 
@@ -160,8 +173,11 @@ function cloneTurnMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMeta
 }
 
 function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {
+    const { reduction: rawReduction, ...rest } = trace;
+    const reduction = cloneContextReductionReceipt(rawReduction);
     return {
-        ...trace,
+        ...rest,
+        ...(reduction ? { reduction } : {}),
         usedSourceRefs: trace.usedSourceRefs.map((ref) => ({
             ...ref,
             whyShown: ref.whyShown ? [...ref.whyShown] : undefined,

@@ -14,11 +14,32 @@ import {
     type PaAgentTurnSummary,
 } from "../src/ai-services/pa-agent-loop";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
+import { PaAgentContextOverflowError } from "../src/ai-services/context";
 import { createRequiredCapabilityHostPolicy } from "../src/ai-services/pa-agent-required-capability-policy";
 import type { AgentEvent, PaAgentMessage } from "../src/ai-services/chat-types";
 import { PageletLeadDrivenPolicy } from "../src/pagelet/agent/lead-driven-policy";
 
 describe("PaAgentLoop", () => {
+    it("surfaces local admission failure from an async generator as a specific terminal diagnostic", async () => {
+        const events: AgentEvent[] = [];
+        const loop = new PaAgentLoop({
+            runId: "local-overflow",
+            userInput: "keep the original request",
+            model: { stream: async function* () { throw new PaAgentContextOverflowError(121000, 120000); } },
+            onEvent: (event) => events.push(event),
+        });
+        const result = await loop.run();
+        expect(result.status).toBe("error");
+        expect(events.find((event) => event.type === "turn_end")).toMatchObject({
+            status: "error",
+            metadata: { diagnostics: expect.arrayContaining([
+                { type: "context_local_overflow", promptChars: 121000, maxPromptChars: 120000 },
+            ]) },
+        });
+        expect(JSON.stringify(result.endPayload)).not.toContain("provider_error");
+        expect(result.transcript[0]).toMatchObject({ role: "user", content: "keep the original request" });
+    });
+
     beforeEach(() => {
         deterministicCounters.clear();
     });

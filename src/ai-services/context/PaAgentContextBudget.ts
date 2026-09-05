@@ -22,6 +22,8 @@ export interface PaAgentBudgetInput {
     toolObservations: string;
     maxPromptChars?: number;
     maxObservationChars?: number;
+    /** Fully rendered request + bound schema estimate + local safety reserve. */
+    localEnvelopeChars?: number;
 }
 
 const DEFAULT_MAX_PROMPT_CHARS = 120_000;
@@ -32,10 +34,10 @@ export class PaAgentContextBudget {
     private providerUsage: PaAgentProviderUsage | undefined;
 
     snapshot(input: PaAgentBudgetInput): PaAgentContextBudgetSnapshot {
-        const promptChars = input.input.length
+        const promptChars = input.localEnvelopeChars ?? (input.input.length
             + input.availableSkills.length
             + input.toolDefinitions.length
-            + input.toolObservations.length;
+            + input.toolObservations.length);
         const maxPromptChars = input.maxPromptChars ?? DEFAULT_MAX_PROMPT_CHARS;
         const maxObservationChars = input.maxObservationChars ?? DEFAULT_MAX_OBSERVATION_CHARS;
         const toolObservationChars = input.toolObservations === "None" ? 0 : input.toolObservations.length;
