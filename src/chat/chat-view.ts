@@ -460,6 +460,8 @@ export class LLMView extends ItemView {
         skillTypeahead.hidden = true;
 
         textArea.addEventListener('keydown', (e: KeyboardEvent) => {
+            // IME confirmation can arrive after compositionend with keyCode 229.
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === 'Escape' && !skillTypeahead.hidden) {
                 e.preventDefault();
                 hideSkillTypeahead();

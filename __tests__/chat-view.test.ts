@@ -4117,6 +4117,84 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[0].prompt).toBe('keyboard prompt');
     });
 
+    describe.each([
+        { state: 'active composition', isComposing: true, keyCode: 13 },
+        { state: 'IME commit after compositionend', isComposing: false, keyCode: 229 },
+    ])('composer keys during $state', ({ isComposing, keyCode }) => {
+        it('leaves Enter to the IME and sends the complete draft on the next ordinary Enter', async () => {
+            const { view, containerEl } = createView();
+            await view.onOpen();
+
+            const textArea = getTextArea(containerEl);
+            textArea.value = '请解释 ';
+            const preventDefault = jest.fn();
+            textArea.dispatchEvent('keydown', {
+                key: 'Enter', shiftKey: false, isComposing, keyCode, preventDefault,
+            });
+            await flushPromises();
+
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(streamCalls).toHaveLength(0);
+            expect(textArea.value).toBe('请解释 ');
+
+            // The IME commits its pending English word after its confirmation key.
+            textArea.value = '请解释 skill';
+            textArea.dispatchEvent('keydown', {
+                key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13, preventDefault,
+            });
+            await flushPromises();
+
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(streamCalls).toHaveLength(1);
+            expect(streamCalls[0].prompt).toBe('请解释 skill');
+        });
+
+        it('does not interrupt IME confirmation with a generation wait hint', async () => {
+            const { view, containerEl } = createView();
+            await view.onOpen();
+
+            const textArea = getTextArea(containerEl);
+            textArea.value = 'first prompt';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+
+            textArea.value = '下一条 ';
+            const preventDefault = jest.fn();
+            textArea.dispatchEvent('keydown', {
+                key: 'Enter', shiftKey: false, isComposing, keyCode, preventDefault,
+            });
+
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(streamCalls).toHaveLength(1);
+            expect(textArea.value).toBe('下一条 ');
+            expect(allText(containerEl)).not.toContain('Wait for this answer to finish or stop it first.');
+        });
+
+        it('leaves Escape to the IME before handling ordinary skill-menu dismissal', async () => {
+            const { view, containerEl } = createView();
+            await view.onOpen();
+            await flushPromises();
+
+            const textArea = getTextArea(containerEl);
+            textArea.value = '#';
+            const typeahead = getElementByClass(containerEl, 'pa-chat-skill-typeahead');
+            expect(typeahead.hidden).toBe(false);
+
+            const preventDefault = jest.fn();
+            textArea.dispatchEvent('keydown', {
+                key: 'Escape', isComposing, keyCode: isComposing ? 27 : keyCode, preventDefault,
+            });
+
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(typeahead.hidden).toBe(false);
+            textArea.dispatchEvent('keydown', {
+                key: 'Escape', isComposing: false, keyCode: 27, preventDefault,
+            });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(typeahead.hidden).toBe(true);
+        });
+    });
+
     it('keeps a draft next message during generation and shows the wait hint on Enter', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
