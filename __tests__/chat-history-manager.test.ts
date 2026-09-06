@@ -440,6 +440,44 @@ describe("ChatHistoryManager", () => {
         await expect(store.getSchemaVersion()).resolves.toBe(CHAT_HISTORY_SCHEMA_VERSION);
     });
 
+    it("upgrades the legacy schema marker without resetting text history", async () => {
+        const { manager, store } = makeManager();
+        await store.setSchemaVersion(1);
+        await store.upsertConversation({ id: "old", title: "Old text", preview: "kept", turnCount: 0,
+            createdAt: "2026-01-01", updatedAt: "2026-01-01" });
+        await manager.initialize();
+        expect(manager.isAvailable()).toBe(true);
+        expect((await manager.listConversations())[0].title).toBe("Old text");
+        expect(await store.getSchemaVersion()).toBe(CHAT_HISTORY_SCHEMA_VERSION);
+    });
+
+    it("refuses a newer schema without overwriting its version or data", async () => {
+        const { manager, store } = makeManager();
+        await store.setSchemaVersion(CHAT_HISTORY_SCHEMA_VERSION + 1);
+        await manager.initialize();
+        expect(manager.isAvailable()).toBe(false);
+        expect(await store.getSchemaVersion()).toBe(CHAT_HISTORY_SCHEMA_VERSION + 1);
+    });
+
+    it("round-trips image references and host provenance without aliasing caller state", () => {
+        const { manager } = makeManager();
+        const entry: HistoryTurnEntry = {
+            kind: "history",
+            user: { role: "user", content: "", images: [{ ref: { assetId: "asset-1", contentHash: "a".repeat(64) }, ordinal: 1, label: "one.jpg" }],
+                hostProvenance: { version: 1, messageId: "user-1", kind: "writing_request" } },
+            assistant: { role: "assistant", content: "draft", hostProvenance: { version: 1, messageId: "assistant-1", kind: "ai_draft" } },
+        };
+        const serialized = manager.serializeTurn(entry, "conversation", 0);
+        entry.user.images![0].ref.assetId = "changed";
+        entry.user.hostProvenance!.kind = "ordinary_user_statement";
+        const hydrated = manager.deserializeTurn(serialized);
+        expect(hydrated.userMessage.images![0].ref.assetId).toBe("asset-1");
+        expect(hydrated.userMessage.hostProvenance?.kind).toBe("writing_request");
+        expect(hydrated.assistantMessage.hostProvenance?.kind).toBe("ai_draft");
+        hydrated.userMessage.images![0].ref.assetId = "also-changed";
+        expect(serialized.user.images![0].ref.assetId).toBe("asset-1");
+    });
+
     it("gracefully marks itself unavailable if store.initialize throws", async () => {
         const broken = new MemoryChatHistoryStore();
         const original = broken.initialize.bind(broken);

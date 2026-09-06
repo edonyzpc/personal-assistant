@@ -432,7 +432,8 @@ describe("MemoryExtractionScheduler", () => {
             proposed: expect.objectContaining({ records: [expect.objectContaining({ confirmed: true })] }),
             candidates: [expect.objectContaining({ kind: "user_explicit" })],
             baseline,
-            evidence: { conversationId: "c1", throughTurnIndex: 1 },
+            evidence: expect.objectContaining({ conversationId: "c1", throughTurnIndex: 1,
+                chatMessages: [expect.objectContaining({ kind: "ordinary_user_statement" })] }),
         }));
         expect(snapshot).toBeNull();
         expect(await userProfileStore.getProfile()).toBeNull();
@@ -885,7 +886,7 @@ describe("MemoryExtractionScheduler lifecycle", () => {
         expect(admitTypeACandidates).toHaveBeenCalledTimes(1);
         expect(admitTypeACandidates).toHaveBeenCalledWith(expect.objectContaining({
             baseline,
-            evidence: { conversationId: "replacement", throughTurnIndex: 1 },
+            evidence: expect.objectContaining({ conversationId: "replacement", throughTurnIndex: 1 }),
         }));
         expect((scheduler as any).typeAProcessedTurnByConversation.get("cancelled")).toBeUndefined();
         expect((scheduler as any).typeAProcessedTurnByConversation.get("replacement")).toBe(1);

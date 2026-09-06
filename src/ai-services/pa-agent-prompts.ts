@@ -1,4 +1,4 @@
-import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate, renderTemplate } from "@langchain/core/prompts";
+import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate, MessagesPlaceholder, renderTemplate } from "@langchain/core/prompts";
 
 import { PaAgentContextProjector } from "./context";
 import { escapeTaggedBoundary } from "./agent-utils";
@@ -76,10 +76,10 @@ export function measurePaAgentRequestChars(input: Record<string, string>, boundS
         + PA_AGENT_REQUEST_SAFETY_RESERVE_CHARS;
 }
 
-export function createPaAgentAnswerStreamPrompt() {
+export function createPaAgentAnswerStreamPrompt(multimodal = false) {
     return ChatPromptTemplate.fromMessages([
         SystemMessagePromptTemplate.fromTemplate(PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n")),
-        HumanMessagePromptTemplate.fromTemplate(PA_AGENT_HUMAN_PROMPT_TEMPLATE),
+        multimodal ? new MessagesPlaceholder("messages") : HumanMessagePromptTemplate.fromTemplate(PA_AGENT_HUMAN_PROMPT_TEMPLATE),
     ]);
 }
 

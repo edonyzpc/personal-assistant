@@ -110,7 +110,11 @@ export function getPlatformCrypto(): Crypto | undefined {
 }
 
 export function getPlatformIndexedDB(): IDBFactory | undefined {
-    return getOptionalPlatformWindow()?.indexedDB ?? getOptionalPlatformGlobalScope()?.indexedDB;
+    // Stores outlive activeWindow (for example, a separately opened Settings
+    // window). Keep their factory in the plugin's own execution realm.
+    if (typeof self !== "undefined") return self.indexedDB;
+    if (typeof window !== "undefined") return window.indexedDB;
+    return undefined;
 }
 
 export function getPlatformIDBKeyRange(): typeof IDBKeyRange | undefined {

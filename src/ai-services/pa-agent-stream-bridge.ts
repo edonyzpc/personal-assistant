@@ -1,11 +1,25 @@
 import { AgentEventEmitter } from "./agent-runtime-primitives";
 import { extractCanonicalTurnMetadata } from "./pa-agent-history";
+import { cloneChatWritingRequest, decodeWritingOutput } from "./writing-output";
+import { cloneMessageImages, type MessageImage } from "../chat/image-types";
 import type {
     AgentEvent,
     AssistantMessagePart,
     ChatAgentStatus,
     PaAgentMessage,
+    ChatWritingRequest,
+    WritingRecoveryReason,
 } from "./chat-types";
+
+export interface WritingEventContext {
+    request: ChatWritingRequest;
+    maxTextChars: number;
+    /** Host-owned current source/run guard, never model evidence. */
+    isCurrent: () => boolean;
+    getStyleRevisionIds?: () => readonly string[];
+    /** Frozen host provenance, independent of the model envelope and provider pixel subset. */
+    getAssociatedImages?: () => readonly MessageImage[];
+}
 
 /**
  * Translates canonical PaAgentLoop lifecycle events into the v1 LegacyAgentEvent stream
@@ -17,13 +31,23 @@ export class CanonicalToLegacyEventAdapter {
     private readonly canonicalMessages = new Map<string, PaAgentMessage>();
     private committedLegacySnapshot = "";
     private legacyMetadataEmitted = false;
+    private ended = false;
+    private runId?: string;
+    private writingCandidate?: Extract<PaAgentMessage, { role: "assistant" }>;
+    private readonly writing?: WritingEventContext;
 
     constructor(
         private readonly legacyEvents: AgentEventEmitter,
         private readonly onLifecycleEvent?: (event: AgentEvent) => void,
-    ) {}
+        writing?: WritingEventContext,
+    ) {
+        this.writing = writing ? { ...writing, request: cloneChatWritingRequest(writing.request) } : undefined;
+    }
 
     handle(event: AgentEvent): void {
+        if (this.ended) return;
+        this.runId ??= event.runId;
+        if (event.runId !== this.runId) return;
         this.onLifecycleEvent?.(event);
         switch (event.type) {
             case "agent_start":
@@ -36,6 +60,7 @@ export class CanonicalToLegacyEventAdapter {
                 return;
             case "message_start":
                 this.canonicalMessages.set(event.message.id, event.message);
+                if (event.message.role === "assistant") this.writingCandidate = undefined;
                 return;
             case "message_update":
                 if (event.update.kind === "thinking_delta") {
@@ -45,6 +70,10 @@ export class CanonicalToLegacyEventAdapter {
             case "message_end":
                 this.canonicalMessages.set(event.message.id, event.message);
                 if (event.message.role !== "assistant") return;
+                if (this.writing) {
+                    this.writingCandidate = { ...event.message, content: event.message.content.map((part) => ({ ...part })) };
+                    return;
+                }
                 if (event.message.content.some((part) => part.type === "toolCall")) return;
                 this.appendAssistantText(event.message.content);
                 return;
@@ -79,7 +108,9 @@ export class CanonicalToLegacyEventAdapter {
                 }
                 return;
             case "agent_end":
+                this.ended = true;
                 this.emitLegacyMetadata();
+                if (this.writing) this.emitWritingResult(event);
                 if (event.status === "aborted") {
                     this.legacyEvents.aborted();
                 } else if (event.status === "error") {
@@ -91,6 +122,32 @@ export class CanonicalToLegacyEventAdapter {
             case "tool_execution_update":
                 return;
         }
+    }
+
+    private emitWritingResult(event: Extract<AgentEvent, { type: "agent_end" }>): void {
+        const writing = this.writing!;
+        const candidate = this.writingCandidate;
+        const rawText = candidate?.content.filter((part) => part.type === "text").map((part) => part.text).join("") ?? "";
+        let reason: WritingRecoveryReason | undefined;
+        // A warning's impact is unknown here. It must not silently become a verified version.
+        if (event.status !== "completed" || !candidate || candidate.stopReason !== "stop"
+            || candidate.content.some((part) => part.type === "toolCall")) reason = "incomplete";
+        else if (candidate.providerCompletion !== "stop") reason = "provider_incomplete";
+        else {
+            try { if (!writing.isCurrent()) reason = "source_changed"; }
+            catch { reason = "source_changed"; }
+        }
+        const output = reason ? undefined : decodeWritingOutput(rawText, writing.request, writing.maxTextChars);
+        const material = writing.getAssociatedImages ? { associatedImages: cloneMessageImages(writing.getAssociatedImages()) } : {};
+        if (!output) {
+            this.legacyEvents.writingRecovery({ runId: event.runId, requestId: writing.request.requestId,
+                ...(candidate ? { messageId: candidate.id } : {}), rawText, reason: reason ?? "invalid_output", ...material });
+            return;
+        }
+        this.legacyEvents.writingArtifact({ runId: event.runId, requestId: output.requestId,
+            messageId: candidate!.id, body: output.body, explanation: output.explanation, ...material,
+            ...(writing.getStyleRevisionIds ? { styleRevisionIds: [...writing.getStyleRevisionIds()] } : {}) });
+        this.appendAssistantText([{ type: "text", text: output.body }]);
     }
 
     private appendAssistantText(content: AssistantMessagePart[]): void {

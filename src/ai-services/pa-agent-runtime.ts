@@ -52,9 +52,14 @@ import { PaAgentContextSummarizer, type PaAgentSummaryInvoke } from "./context/P
 import { cloneMessage } from "./context/clone-utils";
 import { isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
+import { readProviderCompletion, writingOutputInstruction, cloneChatWritingRequest, selectedWritingContext } from "./writing-output";
+import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
+import { ChatImageRequestError, isStructuredImageUnsupportedError, type ChatImageCapability } from "./image-capability";
+import { formatInjectedContext, MEMORY_CONTEXT_MAX_CHARS } from "./context/PaAgentContextProjector";
+import { WRITING_STYLE_MAX_CONTEXT_CHARS } from "../pa/writing-style";
 import { BUNDLED_SKILL_RESOURCES } from "./bundled-skills";
 import { CapabilityRegistry } from "./capability-registry";
-import { createCoreToolCapabilities } from "./capability-adapter";
+import { createCoreToolCapabilities, createChatToolCapability } from "./capability-adapter";
 import {
     agentResultToChatToolResult,
     type AgentCapability,
@@ -153,6 +158,15 @@ export type {
 export interface PaAgentRunOptions {
     prompt: string;
     chatHistory?: ChatMessage[];
+    images?: import("../chat/image-types").MessageImage[];
+    imageAssetService?: import("../chat/image-assets").ImageAssetService;
+    writingRequest?: import("./chat-types").ChatWritingRequest;
+    writingContext?: import("./chat-types").ChatWritingContext;
+    writingMaterialContext?: import("./chat-types").ChatWritingMaterialContext;
+    prepareWritingStyle?: import("./chat-types").ChatWritingStylePreparation;
+    /** Host-owned model/conversation epoch; checked at physical dispatch. */
+    isCurrent?: () => boolean;
+    imageCapability?: { get: () => ChatImageCapability; onSuccess: () => void; onError: (error: unknown) => void };
     memoryMode: MemoryMode;
     /** Visible Pagelet evidence. It is context-only and never grants tool authority. */
     pageletHandoff?: PageletChatHandoffContext;
@@ -271,6 +285,8 @@ export const canFallbackToNonStreaming = (
 ): boolean => {
     return !receivedAnyVisibleOutput
         && !(error instanceof PaAgentContextOverflowError)
+        && !(error instanceof ChatImageRequestError)
+        && !isStructuredImageUnsupportedError(error)
         && !isAbortError(error, signal);
 };
 
@@ -798,10 +814,23 @@ export class PaAgentRuntime {
     }
 
     private async streamPaAgentCanonicalTurn(options: PaAgentStreamOptions): Promise<void> {
+        if (options.writingRequest) options = { ...options, writingRequest: cloneChatWritingRequest(options.writingRequest) };
+        const imageScope = options.images?.length || options.chatHistory?.some((message) => message.images?.length) || options.writingContext || options.writingMaterialContext
+            ? new ChatImageRequestScope({ images: options.images, history: options.chatHistory, writingContext: options.writingContext,
+                writingMaterialContext: options.writingMaterialContext,
+                prompt: options.prompt, service: options.imageAssetService, isCurrent: options.isCurrent }) : undefined;
+        let writingStyle: import("./chat-types").ChatWritingStyleResult | undefined;
+        const assertRequestCurrent = (signal?: AbortSignal): void => {
+            throwIfAborted(signal ?? options.signal);
+            if (options.isCurrent?.() === false) throw createAbortError();
+            imageScope?.assertReady(signal);
+            if (writingStyle && !writingStyle.isCurrent()) throw new ChatImageRequestError("request_changed");
+            if (imageScope?.hasSelectedImages && options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
+        };
         // Reject an irreducibly large current request before optional startup classifier calls.
         // This lower bound does not replace the complete, revalidated per-attempt guard below.
         const minimumRequestChars = measurePaAgentRequestChars({
-            input: options.prompt,
+            input: [options.prompt, selectedWritingContext(options.writingContext), options.writingRequest ? writingOutputInstruction(options.writingRequest) : ""].filter(Boolean).join("\n\n"),
             available_skills: "",
             tool_definitions: "",
             tool_observations: "",
@@ -901,7 +930,7 @@ export class PaAgentRuntime {
         ));
         try {
         const legacyEvents = new AgentEventEmitter(options.onEvent);
-        const injectedContext = this.readInjectedContext(options.pageletHandoff);
+        let injectedContext = this.readInjectedContext(options.pageletHandoff);
         const governedMemoryTrace = injectedContext?.governedMemoryTrace ?? [];
         if (governedMemoryTrace.length > 0) {
             legacyEvents.turnMetadata({
@@ -918,7 +947,17 @@ export class PaAgentRuntime {
                 })),
             });
         }
-        const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent);
+        const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent, options.writingRequest ? {
+            request: options.writingRequest, maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
+            isCurrent: () => { assertRequestCurrent(); return imageScope?.isUsable() ?? true; },
+            getStyleRevisionIds: () => writingStyle?.revisionIds ?? [],
+            getAssociatedImages: () => imageScope?.writingMaterials ?? [],
+        } : undefined);
+        if (imageScope?.hasImages) {
+            const capability = createChatToolCapability(createResolveChatImagesTool(imageScope), { providerId: "chat-images" });
+            capability.executionMode = "sequential";
+            this.toolRegistry.register(capability);
+        }
         let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
             "capability_preload",
@@ -957,6 +996,7 @@ export class PaAgentRuntime {
             }
         }
         const availableMetaToolNames = new Set<string>();
+        if (imageScope?.hasImages) availableMetaToolNames.add(RESOLVE_CHAT_IMAGES);
         if (this.toolRegistry.getDefinition(LOAD_SKILL_TOOL_NAME)) {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
         }
@@ -996,6 +1036,9 @@ export class PaAgentRuntime {
         const contextManager = this.contextManager;
         const contextSummarizer = this.contextSummarizer;
         let runSummaries: PaAgentContextSummaries = {};
+        const withImageContext = (input: PaAgentModelInput): PaAgentModelInput => imageScope?.hasImages ? {
+            ...input, runtimeInstruction: combineRuntimeInstructions([input.runtimeInstruction, imageScope.contextText()]),
+        } : input;
         const buildCanonicalModelInput = (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
@@ -1003,7 +1046,7 @@ export class PaAgentRuntime {
         ) =>
             this.buildPaAgentCanonicalModelInput(
                 options,
-                input,
+                withImageContext(input),
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
                 injectedContext,
@@ -1015,12 +1058,47 @@ export class PaAgentRuntime {
             toolDefinitions: ChatToolRegistryDefinition[],
             boundSchemas: ChatToolProviderSchema[],
         ) => this.projectPaAgentCanonicalModelInput(
-            options, input,
+            options, withImageContext(input),
             toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
             toolDefinitions, injectedContext, boundSchemas,
         ).projection;
+        const readInjectedContext = () => this.readInjectedContext(options.pageletHandoff);
+        const buildProviderInput = (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]): Record<string, unknown> => {
+            assertRequestCurrent(input.signal);
+            const result: Record<string, unknown> = buildCanonicalModelInput(input, definitions, schemas);
+            if (imageScope?.hasImages) result.messages = [imageScope.message(result.input as string, input.signal)];
+            return result;
+        };
+        const prepareCanonicalProviderInput = async (
+            input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[],
+        ): Promise<Record<string, unknown>> => {
+            if (imageScope?.hasSelectedImages && options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
+            if (imageScope?.hasSelectedImages) await imageScope.prepare(input.signal);
+            let prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
+            if (options.writingRequest && options.prepareWritingStyle) {
+                injectedContext = readInjectedContext();
+                writingStyle = undefined;
+                const baseline = previewCanonicalModelInput(prepared, definitions, schemas);
+                const memoryChars = formatInjectedContext({ ...injectedContext, pageletHandoff: undefined, writingStyleContext: undefined }).length;
+                const remainingTextChars = Math.max(0, MAX_PA_AGENT_PROMPT_CHARS - baseline.budget.promptChars - 2);
+                const remainingMemoryChars = Math.max(0, MEMORY_CONTEXT_MAX_CHARS - memoryChars - 2);
+                const style = await options.prepareWritingStyle({ remainingTextChars, remainingMemoryChars, signal: input.signal });
+                const styleIsCurrent = typeof style.isCurrent === "function" && style.isCurrent();
+                if (style.context && !styleIsCurrent) throw new ChatImageRequestError("request_changed");
+                if (style.context && style.context.length <= Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, remainingTextChars, remainingMemoryChars)
+                    && styleIsCurrent
+                    && Array.isArray(style.revisionIds) && style.revisionIds.every((id) => typeof id === "string")) {
+                    writingStyle = { ...style, revisionIds: [...style.revisionIds] };
+                    injectedContext = { ...injectedContext, writingStyleContext: style.context };
+                }
+                // Style source reads may suspend after Memory's preflight.
+                prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
+            }
+            return buildProviderInput(prepared, definitions, schemas);
+        };
         const model: PaAgentModel = {
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
+                try {
                 if (!additionalProvidersLoaded) {
                     additionalProvidersLoaded = true;
                     await loadAdditionalCapabilityProviders(input.turnId, input.signal);
@@ -1047,12 +1125,16 @@ export class PaAgentRuntime {
                     transport: "native",
                     qwenRequestOptions: options.qwenRequestOptions,
                     providerRequestScope,
-                    onProviderRequestStart: input.notifyProviderRequestStarted,
+                    onProviderRequestStart: () => { assertRequestCurrent(input.signal); input.notifyProviderRequestStarted?.(); },
                 });
                 const runnable = bindStreamingToolsIfAvailable(llm, schemas);
                 const streamedToolNames = new Map<string, string>();
-                const prompt = createPaAgentAnswerStreamPrompt();
-                const chain = prompt.pipe(runnable) as unknown as NativeToolStreamingAndInvocableRunnable;
+                const prompt = createPaAgentAnswerStreamPrompt(imageScope?.hasImages ?? false);
+                const rawChain = prompt.pipe(runnable) as unknown as NativeToolStreamingAndInvocableRunnable;
+                const chain: NativeToolStreamingAndInvocableRunnable = {
+                    stream: (request, config) => { assertRequestCurrent(input.signal); return rawChain.stream(request, config); },
+                    invoke: (request, config) => { assertRequestCurrent(input.signal); return rawChain.invoke(request, config); },
+                };
                 // Model/provider construction may suspend after the Loop's
                 // ordinary preflight. Revalidate again only once the real
                 // chain is ready, then synchronously rebuild the canonical
@@ -1128,7 +1210,9 @@ export class PaAgentRuntime {
                     providerInput = input.prepareForProviderRetry
                         ? await input.prepareForProviderRetry() : input;
                 }
-                const canonicalProviderInput = buildCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                const canonicalProviderInput = imageScope?.hasSelectedImages || (options.writingRequest && options.prepareWritingStyle)
+                    ? await prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas)
+                    : buildProviderInput(providerInput, toolDefinitions, schemas);
                 // P0-D: if streaming fails before any visible output (e.g., provider rejected stream
                 // outright or dropped the connection pre-flight), retry via chain.invoke() so the user
                 // still gets the answer instead of a hard runtime error.
@@ -1153,18 +1237,18 @@ export class PaAgentRuntime {
                                 boundProviderSchemas: schemas,
                                 plannerToolDefinitions: toolDefinitions,
                             }),
+                            ...(imageScope?.hasImages ? [imageScope.diagnostics()] : []),
                         ];
                     },
                     prepareInvokeInput: async () => {
-                        const retryInput = input.prepareForProviderRetry
-                            ? await input.prepareForProviderRetry()
-                            : input;
-                        return buildCanonicalModelInput(retryInput, toolDefinitions, schemas);
+                        return prepareCanonicalProviderInput(input, toolDefinitions, schemas);
                     },
                     onFallback: (reason, error) => {
                         legacyEvents.activity(
                             "fallback-stream-invoke",
-                            `Native streaming failed (${reason}); retrying via invoke(): ${errorMessage(error)}`,
+                            imageScope?.hasImages
+                                ? `Native streaming failed (${reason}); retrying the same image request via invoke().`
+                                : `Native streaming failed (${reason}); retrying via invoke(): ${errorMessage(error)}`,
                             {
                                 legacyStatus: {
                                     type: "fallback",
@@ -1179,6 +1263,13 @@ export class PaAgentRuntime {
                         contextManager.recordProviderUsage(providerUsage);
                     }
                     yield chunk;
+                }
+                if (imageScope?.hasSelectedImages) options.imageCapability?.onSuccess();
+                } catch (error) {
+                    if (!imageScope?.hasImages || isAbortError(error, input.signal) || error instanceof PaAgentContextOverflowError) throw error;
+                    options.imageCapability?.onError(error);
+                    throw error instanceof ChatImageRequestError ? error
+                        : new ChatImageRequestError(isStructuredImageUnsupportedError(error) ? "unsupported_model" : "provider_failed");
                 }
             },
         };
@@ -1248,6 +1339,8 @@ export class PaAgentRuntime {
         const loop = new PaAgentLoop({
             runId,
             userInput: options.prompt,
+            userImages: options.images,
+            writingRequest: options.writingRequest,
             model,
             prepareModelInput: async (input) => {
                 const failClosedOnAbort = () => memoryEvidenceRegistry.failClosed();
@@ -1442,6 +1535,7 @@ export class PaAgentRuntime {
             throw new Error(`PA Agent canonical runtime failed${detail}`);
         }
         } finally {
+            imageScope?.dispose();
             try {
                 const observedFinalizationOutcome = options.signal?.aborted
                     ? "aborted"
@@ -1627,7 +1721,9 @@ export class PaAgentRuntime {
             transcript: input.transcript,
             turnIndex: input.turnIndex,
             hostContext,
-            runtimeInstruction: input.runtimeInstruction,
+            runtimeInstruction: combineRuntimeInstructions([input.runtimeInstruction,
+                selectedWritingContext(options.writingContext),
+                options.writingRequest ? writingOutputInstruction(options.writingRequest) : ""]),
             injectedContext,
             summaries,
             availableSkills,
@@ -2374,6 +2470,7 @@ export async function* streamWithInvokeFallback(args: {
     const { chain, input, signal, onFallback } = args;
     const streamedToolNames = args.streamedToolNames ?? new Map<string, string>();
     let receivedAnyVisibleOutput = false;
+    let providerCompletion: import("./chat-types").ProviderCompletion | undefined;
 
     let stream: AsyncIterable<unknown>;
     try {
@@ -2397,6 +2494,7 @@ export async function* streamWithInvokeFallback(args: {
     try {
         for await (const chunk of stream) {
             throwIfAborted(signal);
+            providerCompletion = readProviderCompletion(chunk) ?? providerCompletion;
             const providerUsage = extractProviderUsage(chunk);
             if (providerUsage) {
                 yield { type: "diagnostic", diagnostic: { type: "provider_usage", usage: providerUsage } };
@@ -2416,6 +2514,7 @@ export async function* streamWithInvokeFallback(args: {
                 yield toolDelta;
             }
         }
+        if (providerCompletion) yield { type: "provider_completion", completion: providerCompletion };
     } catch (error) {
         if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
             onFallback?.("stream_iteration_failed", error);
@@ -2461,6 +2560,8 @@ async function* invokeAsModelChunks(
     for (const toolDelta of getCanonicalToolCallDeltas(response, streamedToolNames)) {
         yield toolDelta;
     }
+    const completion = readProviderCompletion(response);
+    if (completion) yield { type: "provider_completion", completion };
 }
 
 function* requestDiagnosticChunks(

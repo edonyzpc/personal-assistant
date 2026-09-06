@@ -189,6 +189,27 @@ const buildHarness = (
 };
 
 describe('PluginManager.getVSSFiles', () => {
+    it('excludes saved AI and edited writing from indexing and current provider reads even before metadata cache catches up', () => {
+        const FileCtor = TFile as unknown as new (path: string) => TFile;
+        const ai = new FileCtor('notes/saved-ai.md');
+        const edited = new FileCtor('notes/edited.md');
+        const uncached = new FileCtor('notes/new.md');
+        const own = new FileCtor('notes/own.md');
+        const plugin = buildHarness([ai, edited, uncached, own], [], {
+            metadataByPath: {
+                [ai.path]: { frontmatter: { pa_writing: { version: 1, origin: 'ai_generated' } } },
+                [edited.path]: { frontmatter: { pa_writing: { version: 1, origin: 'user_edited' } } },
+                [uncached.path]: { frontmatter: {} },
+            },
+        });
+        expect(plugin.getVSSFiles()).toEqual([uncached, own]);
+        expect(plugin.isDataBoundaryAllowedPath(ai.path)).toBe(false);
+        expect(plugin.isDataBoundaryAllowedPath(edited.path)).toBe(false);
+        expect(plugin.isVSSFileEligible(uncached, '---\npa_writing: partial\n---\n新创建或局部改写的正文')).toBe(false);
+        expect(plugin.isVSSFileEligible(uncached, '---\npa_writing: false\n---\n损坏字段也不变成自写')).toBe(false);
+        expect(plugin.isVSSFileEligible(own, '自己记下的正文')).toBe(true);
+    });
+
     it('uses both Memory path exclusions and the shared Data Boundary at the provider seam', () => {
         const files = [
             { path: 'notes/keep.md' },

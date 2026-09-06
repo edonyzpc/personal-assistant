@@ -19,6 +19,8 @@ import {
 } from "./chat-history-store";
 import { getPlatformCrypto } from "../platform-dom";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
+import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
+import { cloneMessageImages } from "./image-types";
 
 const TITLE_MAX_LENGTH = 60;
 const PREVIEW_MAX_LENGTH = 200;
@@ -68,12 +70,10 @@ export class ChatHistoryManager {
                 .initialize()
                 .then(async () => {
                     const existing = await this.store.getSchemaVersion();
-                    if (existing === null) {
+                    if (existing === null || existing < CHAT_HISTORY_SCHEMA_VERSION) {
                         await this.store.setSchemaVersion(CHAT_HISTORY_SCHEMA_VERSION);
                     } else if (existing > CHAT_HISTORY_SCHEMA_VERSION) {
-                        this.log(
-                            `Chat history schema version ${existing} is newer than ${CHAT_HISTORY_SCHEMA_VERSION}; reading anyway.`,
-                        );
+                        throw new Error("Chat history was created by a newer plugin version");
                     }
                     this.initialized = true;
                 })
@@ -116,7 +116,7 @@ export class ChatHistoryManager {
         await this.store.deleteConversation(id);
     }
 
-    async startConversation(firstUserMessage: string): Promise<PersistedConversation> {
+    async startConversation(firstUserMessage: string, imageAnchor?: PersistedConversation['imageAnchor']): Promise<PersistedConversation> {
         const id = this.generateId();
         const timestamp = this.toIso(this.now());
         const conversation: PersistedConversation = {
@@ -126,6 +126,7 @@ export class ChatHistoryManager {
             updatedAt: timestamp,
             turnCount: 0,
             preview: derivePreview(firstUserMessage),
+            ...(imageAnchor ? { imageAnchor: { ...imageAnchor } } : {}),
         };
         if (this.isAvailable()) {
             await this.store.upsertConversation(conversation);
@@ -233,6 +234,8 @@ export class ChatHistoryManager {
         const userMessage: PersistedChatMessage = {
             role: "user",
             content: entry.user.content,
+            ...(entry.user.images ? { images: cloneMessageImages(entry.user.images) } : {}),
+            ...(entry.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.user.hostProvenance) } : {}),
             ...(entry.user.runtimeWarnings && entry.user.runtimeWarnings.length > 0
                 ? { runtimeWarnings: entry.user.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
@@ -242,6 +245,10 @@ export class ChatHistoryManager {
         const assistantMessage: PersistedChatMessage = {
             role: "assistant",
             content: entry.assistant.content,
+            ...(entry.assistant.writingVersionId !== undefined ? { writingVersionId: entry.assistant.writingVersionId } : {}),
+            ...(entry.assistant.writingRecovery !== undefined ? { writingRecovery: { ...entry.assistant.writingRecovery } } : {}),
+            ...(entry.assistant.images ? { images: cloneMessageImages(entry.assistant.images) } : {}),
+            ...(entry.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.assistant.hostProvenance) } : {}),
             ...(entry.assistant.shareCardEligible !== undefined
                 ? { shareCardEligible: entry.assistant.shareCardEligible }
                 : {}),
@@ -276,6 +283,8 @@ export class ChatHistoryManager {
         const userMessage: ChatMessage = {
             role: "user",
             content: turn.user.content,
+            ...(turn.user.images ? { images: cloneMessageImages(turn.user.images) } : {}),
+            ...(turn.user.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.user.hostProvenance) } : {}),
             ...(turn.user.runtimeWarnings && turn.user.runtimeWarnings.length > 0
                 ? { runtimeWarnings: turn.user.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
@@ -292,6 +301,10 @@ export class ChatHistoryManager {
         const assistantMessage: ChatMessage = {
             role: "assistant",
             content: turn.assistant.content,
+            ...(turn.assistant.writingVersionId !== undefined ? { writingVersionId: turn.assistant.writingVersionId } : {}),
+            ...(turn.assistant.writingRecovery !== undefined ? { writingRecovery: { ...turn.assistant.writingRecovery } } : {}),
+            ...(turn.assistant.images ? { images: cloneMessageImages(turn.assistant.images) } : {}),
+            ...(turn.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.assistant.hostProvenance) } : {}),
             canonicalTurn,
             ...(turn.assistant.shareCardEligible !== undefined
                 ? { shareCardEligible: turn.assistant.shareCardEligible }

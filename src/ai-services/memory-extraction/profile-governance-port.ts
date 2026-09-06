@@ -3,6 +3,7 @@ import {
     type UserProfileSnapshot,
 } from "./type-a-extractor";
 import type { UserProfileStore } from "./profile-store";
+import { cloneChatMemoryCandidateEvidence } from "../../pa/chat-memory-admission";
 
 export type ProfileGovernanceMutation = (
     current: UserProfileSnapshot | null,
@@ -112,6 +113,7 @@ function cloneSnapshot(snapshot: UserProfileSnapshot): UserProfileSnapshot {
         markdown: snapshot.markdown,
         records: snapshot.records.map((record) => ({
             ...record,
+            ...(record.chatEvidence ? { chatEvidence: cloneChatMemoryCandidateEvidence(record.chatEvidence) } : {}),
             conversationIds: [...record.conversationIds],
         })),
     };

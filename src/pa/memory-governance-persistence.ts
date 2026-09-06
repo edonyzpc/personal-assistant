@@ -25,9 +25,11 @@ import type {
     MemoryControlCenterEffect,
 } from "./memory-control-center";
 import type { ReviewQueueItem } from "./review-queue-store";
+import { parseWritingStyle, parseWritingStyleAuthorization, isGovernableWritingStyle,
+    type WritingStylePayload, type WritingStyleAuthorization } from "./writing-style";
 
-export const MEMORY_GOVERNANCE_SCHEMA_VERSION = 1 as const;
-export const MEMORY_GOVERNANCE_INDEXED_DB_VERSION = 1;
+export const MEMORY_GOVERNANCE_SCHEMA_VERSION = 2 as const;
+export const MEMORY_GOVERNANCE_INDEXED_DB_VERSION = 2;
 export const MEMORY_GOVERNANCE_DEFAULT_DB_NAME = "personal-assistant-memory-governance-device-v1";
 
 const META_STORE = "meta";
@@ -184,6 +186,8 @@ export interface MemoryClaimRevision {
     authority: MemoryControlCenterAuthority;
     supersedesRevisionId?: string;
     createdAt: string;
+    writingStyle?: WritingStylePayload;
+    writingStyleAuthorization?: WritingStyleAuthorization;
 }
 
 export interface MemoryQueueAdmissionEnvelope {
@@ -394,7 +398,7 @@ export interface MemoryRollbackPayloadEntry {
 }
 
 export interface DeviceMemoryGovernanceStateV1 {
-    schemaVersion: 1;
+    schemaVersion: 1 | 2;
     commitSequence: number;
     claims: GovernedMemoryClaim[];
     revisions: MemoryClaimRevision[];
@@ -418,9 +422,15 @@ export type MemoryGovernanceTransaction<T> = (
     draft: DeviceMemoryGovernanceStateV1,
 ) => T | Promise<T>;
 
+export interface MemoryGovernanceCommitGuard {
+    (): void;
+    signal?: AbortSignal;
+}
+
 export interface MemoryGovernanceRepository {
     initialize(): Promise<DeviceMemoryGovernanceStateV1>;
-    transact<T>(operation: MemoryGovernanceTransaction<T>): Promise<T>;
+    /** Called inside the final commit boundary; throwing leaves persistence unchanged. */
+    transact<T>(operation: MemoryGovernanceTransaction<T>, assertCurrent?: MemoryGovernanceCommitGuard): Promise<T>;
     subscribe(listener: (commitSequence: number) => void): () => void;
     dispose(): Promise<void>;
 }
@@ -490,9 +500,22 @@ export function cloneDeviceMemoryGovernanceStateV1(
 
 type ParseResult<T> = { ok: true; value: T } | { ok: false; reason: string };
 
+function hasMisplacedWritingStyle(value: unknown, path: Array<string | number>, legacy: boolean): boolean {
+    if (Array.isArray(value)) return value.some((entry, i) => hasMisplacedWritingStyle(entry, [...path, i], legacy));
+    if (!isRecord(value)) return false;
+    const revision = path.length === 2 && path[0] === "revisions" && typeof path[1] === "number";
+    const undo = path.length === 4 && path[0] === "undoSnapshots" && typeof path[1] === "number"
+        && path[2] === "revisions" && typeof path[3] === "number";
+    return Object.entries(value).some(([key, child]) => (
+        ((key === "writingStyle" || key === "writingStyleAuthorization") && (legacy || (!revision && !undo)))
+        || hasMisplacedWritingStyle(child, [...path, key], legacy)
+    ));
+}
+
 function parseDeviceMemoryGovernanceStateV1(value: unknown): ParseResult<DeviceMemoryGovernanceStateV1> {
     if (!isRecord(value)) return invalid("state_not_object");
-    if (value.schemaVersion !== MEMORY_GOVERNANCE_SCHEMA_VERSION) return invalid("unsupported_schema_version");
+    if (value.schemaVersion !== 1 && value.schemaVersion !== MEMORY_GOVERNANCE_SCHEMA_VERSION) return invalid("unsupported_schema_version");
+    if (hasMisplacedWritingStyle(value, [], value.schemaVersion === 1)) return invalid("invalid_writing_style_location");
     if (!isNonNegativeSafeInteger(value.commitSequence)) return invalid("invalid_commit_sequence");
 
     const claims = parseArray(value.claims, parseClaim, "invalid_claim");
@@ -579,6 +602,8 @@ function validateStateIntegrity(state: DeviceMemoryGovernanceStateV1): ParseResu
     }
     for (const revision of state.revisions) {
         if (!claimById.has(revision.claimId)) return invalid("revision_claim_missing");
+        if (revision.writingStyle && !isGovernableWritingStyle(claimById.get(revision.claimId)!, revision,
+            claimById.get(revision.claimId)!.partition.key, false)) return invalid("invalid_writing_style_binding");
         if (claimById.get(revision.claimId)?.lifecycle === "undone_add_tombstone") {
             return invalid("undone_add_claim_has_revision");
         }
@@ -593,6 +618,9 @@ function validateStateIntegrity(state: DeviceMemoryGovernanceStateV1): ParseResu
         if (!claimById.has(link.claimId)) return invalid("projection_link_claim_missing");
         if (claimById.get(link.claimId)?.lifecycle === "undone_add_tombstone" && link.state === "active") {
             return invalid("undone_add_claim_has_active_link");
+        }
+        if (link.target.kind === "type_a_profile" && state.revisions.some((revision) => revision.claimId === link.claimId && revision.writingStyle)) {
+            return invalid("writing_style_legacy_projection_forbidden");
         }
     }
     for (const event of state.changeEvents) {
@@ -624,6 +652,11 @@ function validateStateIntegrity(state: DeviceMemoryGovernanceStateV1): ParseResu
             return invalid("undo_snapshot_event_missing");
         }
         if (!claimById.has(snapshot.claimId)) return invalid("undo_snapshot_claim_missing");
+        if (snapshot.restoreMode !== "remove_added_claim") for (const revision of snapshot.revisions) {
+            if (revision.writingStyle && !isGovernableWritingStyle(snapshot.claim, revision, snapshot.partition.key, false)) {
+                return invalid("invalid_writing_style_undo_binding");
+            }
+        }
     }
     const preparedLegacyMutationVaults = new Set<string>();
     for (const operation of state.pendingOperations) {
@@ -729,6 +762,9 @@ function parseRevision(value: unknown): MemoryClaimRevision | null {
     if (!provenance.ok) return null;
     const supersedesRevisionId = optionalString(value.supersedesRevisionId);
     if (value.supersedesRevisionId !== undefined && !supersedesRevisionId) return null;
+    const writingStyle = value.writingStyle === undefined ? undefined : parseWritingStyle(value.writingStyle);
+    const writingStyleAuthorization = value.writingStyleAuthorization === undefined ? undefined : parseWritingStyleAuthorization(value.writingStyleAuthorization);
+    if (writingStyle === null || writingStyleAuthorization === null || Boolean(writingStyle) !== Boolean(writingStyleAuthorization)) return null;
     return {
         id,
         claimId,
@@ -737,6 +773,7 @@ function parseRevision(value: unknown): MemoryClaimRevision | null {
         authority: value.authority,
         ...(supersedesRevisionId ? { supersedesRevisionId } : {}),
         createdAt,
+        ...(writingStyle && writingStyleAuthorization ? { writingStyle, writingStyleAuthorization } : {}),
     };
 }
 
@@ -1429,10 +1466,12 @@ export class InMemoryMemoryGovernanceBackend {
         return cloneDeviceMemoryGovernanceStateV1(this.state);
     }
 
-    run<T>(operation: (current: DeviceMemoryGovernanceStateV1) => Promise<SharedBackendCommit<T>>): Promise<T> {
+    run<T>(operation: (current: DeviceMemoryGovernanceStateV1) => Promise<SharedBackendCommit<T>>, assertCurrent?: MemoryGovernanceCommitGuard): Promise<T> {
         const run = this.mutationTail.then(async () => {
             const commit = await operation(this.read());
             const next = cloneDeviceMemoryGovernanceStateV1(commit.next);
+            if (assertCurrent?.signal?.aborted) throw new MemoryGovernancePersistenceError("commit_conflict");
+            assertCurrent?.();
             this.state = next;
             this.notify(next.commitSequence);
             return commit.result;
@@ -1468,7 +1507,7 @@ export class InMemoryMemoryGovernanceRepository implements MemoryGovernanceRepos
         return this.backend.read();
     }
 
-    async transact<T>(operation: MemoryGovernanceTransaction<T>): Promise<T> {
+    async transact<T>(operation: MemoryGovernanceTransaction<T>, assertCurrent?: MemoryGovernanceCommitGuard): Promise<T> {
         this.assertActive();
         return this.backend.run(async (current) => {
             this.assertActive();
@@ -1483,7 +1522,7 @@ export class InMemoryMemoryGovernanceRepository implements MemoryGovernanceRepos
             const next = normalizeDeviceMemoryGovernanceStateV1(draft);
             if (!next) throw new MemoryGovernancePersistenceError("invalid_state");
             return { next, result };
-        });
+        }, assertCurrent);
     }
 
     subscribe(listener: (commitSequence: number) => void): () => void {
@@ -1527,7 +1566,7 @@ export interface IndexedDbMemoryGovernanceRepositoryOptions {
 }
 
 interface PersistedMetaRecord {
-    schemaVersion: 1;
+    schemaVersion: 1 | 2;
     commitSequence: number;
 }
 
@@ -1589,7 +1628,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
         return this.initializePromise.then(cloneDeviceMemoryGovernanceStateV1);
     }
 
-    async transact<T>(operation: MemoryGovernanceTransaction<T>): Promise<T> {
+    async transact<T>(operation: MemoryGovernanceTransaction<T>, assertCurrent?: MemoryGovernanceCommitGuard): Promise<T> {
         this.assertActive();
         const run = this.mutationTail.then(async () => {
             this.assertActive();
@@ -1607,7 +1646,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
                 draft.commitSequence = current.commitSequence + 1;
                 const next = normalizeDeviceMemoryGovernanceStateV1(draft);
                 if (!next) throw new MemoryGovernancePersistenceError("invalid_state");
-                const committed = await this.compareAndSwap(current.commitSequence, next);
+                const committed = await this.compareAndSwap(current.commitSequence, next, assertCurrent);
                 if (!committed) continue;
                 this.publishCommit(next.commitSequence);
                 return result;
@@ -1678,7 +1717,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
             const request = store.get(META_KEY);
             request.onsuccess = () => {
                 if (request.result === undefined) {
-                    store.put({ schemaVersion: 1, commitSequence: 0 } satisfies PersistedMetaRecord, META_KEY);
+                    store.put({ schemaVersion: 2, commitSequence: 0 } satisfies PersistedMetaRecord, META_KEY);
                 }
             };
             request.onerror = () => reject(new MemoryGovernancePersistenceError("database_read_failed"));
@@ -1754,6 +1793,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
     private async compareAndSwap(
         expectedCommitSequence: number,
         next: DeviceMemoryGovernanceStateV1,
+        assertCurrent?: MemoryGovernanceCommitGuard,
     ): Promise<boolean> {
         const db = await this.getDatabase();
         this.assertActive();
@@ -1768,15 +1808,28 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
             }
             this.activeTransactions.add(transaction);
             let committed = false;
+            const cancelCommit = (): void => {
+                try { transaction.abort(); } catch { /* Already committed or aborted. */ }
+            };
+            const detachGuard = (): void => assertCurrent?.signal?.removeEventListener("abort", cancelCommit);
+            assertCurrent?.signal?.addEventListener("abort", cancelCommit, { once: true });
             const metaStore = transaction.objectStore(META_STORE);
             const request = metaStore.get(META_KEY);
             request.onsuccess = () => {
                 const current = request.result as PersistedMetaRecord | undefined;
-                if (!current || current.schemaVersion !== 1 || current.commitSequence !== expectedCommitSequence) {
+                if (!current || current.schemaVersion !== 2 || current.commitSequence !== expectedCommitSequence) {
+                    return;
+                }
+                try {
+                    if (assertCurrent?.signal?.aborted) throw new MemoryGovernancePersistenceError("commit_conflict");
+                    assertCurrent?.();
+                } catch (error) {
+                    reject(error);
+                    transaction.abort();
                     return;
                 }
                 committed = true;
-                metaStore.put({ schemaVersion: 1, commitSequence: next.commitSequence } satisfies PersistedMetaRecord, META_KEY);
+                metaStore.put({ schemaVersion: 2, commitSequence: next.commitSequence } satisfies PersistedMetaRecord, META_KEY);
                 for (const storeName of ARRAY_STORES) {
                     const store = transaction.objectStore(storeName);
                     store.clear();
@@ -1793,14 +1846,17 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
             };
             request.onerror = () => reject(new MemoryGovernancePersistenceError("database_read_failed"));
             transaction.oncomplete = () => {
+                detachGuard();
                 this.activeTransactions.delete(transaction);
                 resolve(committed);
             };
             transaction.onerror = () => {
+                detachGuard();
                 this.activeTransactions.delete(transaction);
                 reject(new MemoryGovernancePersistenceError("database_write_failed"));
             };
             transaction.onabort = () => {
+                detachGuard();
                 this.activeTransactions.delete(transaction);
                 reject(new MemoryGovernancePersistenceError("database_write_failed"));
             };
@@ -1855,10 +1911,36 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
                 db.onversionchange = () => this.invalidateDatabase(db);
                 resolve(db);
             };
-            request.onupgradeneeded = () => {
+            request.onupgradeneeded = (event) => {
+                if (settled || this.disposed) { request.transaction?.abort(); return; }
                 const db = request.result;
                 for (const storeName of ALL_INDEXED_DB_STORES) {
                     if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName);
+                }
+                if (event.oldVersion === 1 && request.transaction) {
+                    const transaction = request.transaction;
+                    const candidate = {} as Record<string, unknown>;
+                    let remaining = 1 + ARRAY_STORES.length + MAP_STORES.length;
+                    const complete = (): void => {
+                        if (settled || this.disposed) { transaction.abort(); return; }
+                        if (--remaining) return;
+                        const parsed = normalizeDeviceMemoryGovernanceStateV1(candidate);
+                        if (!parsed || candidate.schemaVersion !== 1) { transaction.abort(); return; }
+                        transaction.objectStore(META_STORE).put({ schemaVersion: 2, commitSequence: parsed.commitSequence }, META_KEY);
+                    };
+                    const meta = transaction.objectStore(META_STORE).get(META_KEY);
+                    meta.onsuccess = () => { Object.assign(candidate, meta.result); complete(); };
+                    meta.onerror = () => transaction.abort();
+                    for (const name of ARRAY_STORES) {
+                        const rows = transaction.objectStore(name).getAll();
+                        rows.onsuccess = () => { candidate[name] = rows.result; complete(); };
+                        rows.onerror = () => transaction.abort();
+                    }
+                    for (const name of MAP_STORES) {
+                        const rows = transaction.objectStore(name).getAll();
+                        rows.onsuccess = () => { candidate[name] = Object.fromEntries(rows.result.map((row: PersistedMapEntry<unknown>) => [row.key, row.value])); complete(); };
+                        rows.onerror = () => transaction.abort();
+                    }
                 }
             };
             request.onsuccess = () => finishSuccess(request.result);

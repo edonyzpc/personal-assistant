@@ -1,9 +1,11 @@
 import type { PaAgentMessage } from "../chat-types";
+import { cloneMessageImages } from "../../chat/image-types";
 
 export function cloneMessage(message: PaAgentMessage): PaAgentMessage {
     if (message.role === "user") {
         return {
             ...message,
+            ...(message.images ? { images: cloneMessageImages(message.images) } : {}),
             content: Array.isArray(message.content)
                 ? message.content.map((part) => ({ ...part, metadata: part.metadata ? { ...part.metadata } : undefined }))
                 : message.content,

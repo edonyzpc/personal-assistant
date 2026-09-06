@@ -187,7 +187,9 @@ export class PaAgentContextCompactor {
             const turn = older[index];
             const user = turn.find((message) => message.role === "user")?.content ?? "";
             const assistant = turn.find((message) => message.role === "assistant")?.content ?? "";
-            const line = `${index + 1}. User: ${truncateOneLine(user, 160)} | Assistant: ${truncateOneLine(assistant, 220)}`;
+            const images = turn.flatMap((message) => message.images ?? []);
+            const imageIndex = images.length ? ` | Image references (not pixels): ${JSON.stringify(images)}` : "";
+            const line = `${index + 1}. User: ${truncateOneLine(user, 160)} | Assistant: ${truncateOneLine(assistant, 220)}${imageIndex}`;
             if ([line, ...lines].join("\n").length > maxSummaryChars) break;
             lines.unshift(line);
             compactedCount += turn.length;

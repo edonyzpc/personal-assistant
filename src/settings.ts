@@ -4,6 +4,8 @@ import { App, Modal, Notice, Platform, PluginSettingTab, Setting, debounce } fro
 
 import type { AIProviderConfigurationPatch, PluginManager } from "./plugin"
 import type { AISetupResult } from "./chat/ChatHost";
+import { getWritingSceneDisplayValues, normalizeWritingScene } from './chat/writing-style-service';
+import type { WritingStyleScene } from './pa/writing-style';
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
 import { DEFAULT_NOTE_TEMPLATE } from "./note-template";
 import { isRecord } from "./pa/helpers";
@@ -3178,6 +3180,7 @@ export class SettingTab extends PluginSettingTab {
                 ? this.t(snapshot.boundary.explanationKey as PluginMessageKey, undefined, snapshot.boundary.explanationKey)
                 : this.t("plugin.settings.memoryControlCenter.boundary.compatibility"),
         });
+        this.renderMemoryControlCenterUpgrade(parentEl, snapshot);
         this.renderMemoryControlCenterFinalization(parentEl, snapshot);
 
         if (snapshot.governanceMode === "unavailable") {
@@ -3329,6 +3332,35 @@ export class SettingTab extends PluginSettingTab {
         if (detail) card.createEl("p", { text: detail, cls: "pa-memory-control-center__card-detail" });
     }
 
+    private renderMemoryControlCenterUpgrade(parentEl: HTMLElement, snapshot: MemoryControlCenterSnapshot): void {
+        if (snapshot.governanceMode !== "legacy_threshold") return;
+        const section = parentEl.createDiv({ cls: "pa-memory-control-center__card" });
+        section.createEl("h3", { text: this.t("plugin.settings.memoryControlCenter.upgrade.title") });
+        section.createEl("p", { text: this.t("plugin.settings.memoryControlCenter.upgrade.desc") });
+        const status = section.createEl("p", { attr: { role: "status", "aria-live": "polite" } });
+        const button = section.createEl("button", { text: this.t("plugin.settings.memoryControlCenter.upgrade.action"), attr: { type: "button" } });
+        button.addEventListener("click", () => {
+            if (button.disabled) return;
+            const generation = this.memoryControlCenterGeneration;
+            button.disabled = true;
+            status.textContent = this.t("plugin.settings.memoryControlCenter.upgrade.checking");
+            void this.plugin.checkAndUpgradeMemoryGovernance().then((result) => {
+                if (generation !== this.memoryControlCenterGeneration) return;
+                status.textContent = result.message;
+                if (result.ok) {
+                    new Notice(result.message, 5000);
+                    this.display();
+                    this.openGroup("memory-personalization");
+                } else button.disabled = false;
+            }).catch((error) => {
+                this.log("Memory compatibility upgrade unavailable", error);
+                if (generation !== this.memoryControlCenterGeneration) return;
+                status.textContent = this.t("plugin.settings.memoryControlCenter.upgrade.unavailable");
+                button.disabled = false;
+            });
+        });
+    }
+
     private renderMemoryControlCenterFinalization(
         parentEl: HTMLElement,
         snapshot: MemoryControlCenterSnapshot,
@@ -3428,6 +3460,12 @@ export class SettingTab extends PluginSettingTab {
                     : item.label,
         });
         const metadata = article.createEl("dl", { cls: "pa-memory-control-center__metadata" });
+        if (item.writingStyle) {
+            const details = article.createEl('details');
+            details.createEl('summary', { text: getPluginUiLanguage() === 'zh' ? '风格样例' : 'Style example' });
+            details.createEl('textarea', { text: item.writingStyle.exactText,
+                cls: 'pa-memory-control-center__style-example', attr: { rows: '6', readonly: '', 'aria-label': getPluginUiLanguage() === 'zh' ? '完整风格样例' : 'Complete style example' } });
+        }
         if (item.lifecycle === "forget_pending") {
             article.createEl("p", {
                 text: this.t("plugin.settings.memoryControlCenter.pendingForget.desc"),
@@ -3547,12 +3585,26 @@ export class SettingTab extends PluginSettingTab {
         if (article.querySelector(".pa-memory-control-center__correction")) return;
         const editor = article.createDiv({ cls: "pa-memory-control-center__correction" });
         const input = editor.createEl("textarea", {
-            text: item.label,
+            text: item.writingStyle?.exactText ?? item.label,
             attr: {
                 rows: "3",
                 "aria-label": this.t("plugin.settings.memoryControlCenter.action.correct"),
             },
         });
+        const sceneInputs = {} as Record<keyof WritingStyleScene, HTMLInputElement>;
+        if (item.writingStyle) {
+            const displayScene = getWritingSceneDisplayValues(item.writingStyle.scene, getPluginUiLanguage());
+            const labels = getPluginUiLanguage() === 'zh'
+                ? { writingTask: '写作类型', purpose: '用途', audience: '读者', domain: '主题' }
+                : { writingTask: 'Writing task', purpose: 'Purpose', audience: 'Audience', domain: 'Domain' };
+            for (const key of Object.keys(labels) as Array<keyof WritingStyleScene>) {
+                const label = editor.createEl('label', { text: labels[key] });
+                sceneInputs[key] = label.createEl('input', { attr: { type: 'text', value: displayScene[key], maxlength: '64' } });
+            }
+        }
+        const readScene = (): WritingStyleScene | null => item.writingStyle
+            ? normalizeWritingScene(Object.fromEntries(Object.entries(sceneInputs).map(([key, value]) => [key, value.value]))) : null;
+        const styleFeedback = item.writingStyle ? editor.createEl('p', { attr: { role: 'status' } }) : null;
         const buttons = editor.createDiv({ cls: "pa-memory-control-center__actions" });
         const save = buttons.createEl("button", {
             text: this.t("plugin.settings.memoryControlCenter.action.saveCorrection"),
@@ -3563,12 +3615,28 @@ export class SettingTab extends PluginSettingTab {
             attr: { type: "button" },
         });
         const updateSaveAvailability = (): void => {
+            if (item.writingStyle) {
+                const scene = readScene();
+                const tooLong = new TextEncoder().encode(input.value).length > 8192;
+                if (styleFeedback) styleFeedback.textContent = tooLong
+                    ? getPluginUiLanguage() === 'zh' ? '风格样例过长，请缩短后保存。' : 'This style example is too long. Shorten it before saving.' : '';
+                save.disabled = !input.value.trim() || tooLong || !scene
+                    || (input.value === item.writingStyle.exactText && JSON.stringify(scene) === JSON.stringify(item.writingStyle.scene));
+                return;
+            }
             const summary = input.value.trim();
             save.disabled = !summary || summary === item.label.trim();
         };
         input.addEventListener("input", updateSaveAvailability);
+        Object.values(sceneInputs).forEach((field) => field.addEventListener('input', updateSaveAvailability));
         updateSaveAvailability();
         save.addEventListener("click", () => {
+            if (item.writingStyle) {
+                const scene = readScene();
+                if (!scene || save.disabled) return;
+                void this.runMemoryControlCenterAction(save, 'correct', item.claimId!, input.value, input, scene);
+                return;
+            }
             const summary = input.value.trim();
             if (!summary || summary === item.label.trim()) return;
             void this.runMemoryControlCenterAction(save, "correct", item.claimId!, summary, input);
@@ -3672,11 +3740,14 @@ export class SettingTab extends PluginSettingTab {
         targetId: string,
         summary?: string,
         failureFocusEl?: HTMLElement,
+        writingStyleScene?: WritingStyleScene,
     ): Promise<void> {
         const generation = this.memoryControlCenterGeneration;
         button.disabled = true;
         try {
-            const result = await this.plugin.runMemoryControlCenterAction(action, targetId, summary);
+            const result = writingStyleScene && action === 'correct'
+                ? await this.plugin.correctWritingStyleMemory(targetId, summary ?? '', writingStyleScene)
+                : await this.plugin.runMemoryControlCenterAction(action, targetId, summary);
             new Notice(result.message, result.ok ? 3000 : 5000);
             if (!result.ok) {
                 if (generation === this.memoryControlCenterGeneration) {

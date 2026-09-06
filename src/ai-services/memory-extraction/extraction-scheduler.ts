@@ -17,6 +17,12 @@ import type { PersistedConversation, PersistedTurn } from "../../chat/chat-histo
 import { getOptionalPlatformDocument } from "../../platform-dom";
 import { TypeCVaultMetacognitionAnalyzer, type SemanticClusterProvider, type VaultMetacognitionSnapshot } from "./type-c-analyzer";
 import type { TypeAAdmissionBaseline } from "../../pa/memory-admission-coordinator";
+import {
+    collectChatMemorySources,
+    cloneChatMemoryCandidateEvidence,
+    isChatMemoryRecordAdmissible,
+    type ChatMemoryAdmissionEvidence,
+} from "../../pa/chat-memory-admission";
 
 export type CreateModelForExtraction = () => Promise<{ invoke: (prompt: string) => Promise<string> } | null>;
 
@@ -25,10 +31,7 @@ export interface TypeAAdmissionBatch {
     proposed: UserProfileSnapshot;
     candidates: UserProfileCandidate[];
     baseline?: TypeAAdmissionBaseline;
-    evidence: {
-        conversationId: string;
-        throughTurnIndex: number;
-    };
+    evidence: ChatMemoryAdmissionEvidence;
 }
 
 export type TypeAAdmissionResult = { status: "processed" | "retry" };
@@ -296,24 +299,34 @@ export class MemoryExtractionScheduler {
         );
         const newTurns = turns.filter((turn) => turn.turnIndex > lastProcessedTurn);
         if (newTurns.length === 0) return this.userProfileSnapshot;
-        const candidates = await this.extractTypeACandidates(conversation, newTurns);
+        const evidence: ChatMemoryAdmissionEvidence = {
+            conversationId,
+            throughTurnIndex: Math.max(...newTurns.map((turn) => turn.turnIndex)),
+            chatMessages: collectChatMemorySources(conversationId, newTurns)
+                .map(({ text: _text, ...source }) => ({ ...source })),
+        };
+        const extracted = await this.extractTypeACandidates(conversation, newTurns);
+        if (this.disposed) return null;
+        // An extractor or model adapter cannot bypass either admission route.
+        const candidates = extracted.filter((candidate) => isChatMemoryRecordAdmissible(candidate, evidence));
         if (this.admitTypeACandidates) {
             const current = this.userProfileSnapshot
                 ? cloneUserProfileSnapshot(this.userProfileSnapshot)
                 : null;
             const proposed = this.typeAExtractor.mergeCandidates(current, candidates, this.now());
-            const throughTurnIndex = Math.max(...newTurns.map((turn) => turn.turnIndex));
             const admitted = await this.admitTypeACandidates({
                 current,
                 proposed: cloneUserProfileSnapshot(proposed),
-                candidates: candidates.map((candidate) => ({ ...candidate })),
+                candidates: candidates.map((candidate) => ({ ...candidate,
+                    ...(candidate.chatEvidence ? { chatEvidence: cloneChatMemoryCandidateEvidence(candidate.chatEvidence) } : {}) })),
                 ...(baseline ? { baseline } : {}),
-                evidence: { conversationId, throughTurnIndex },
+                evidence,
             });
             if (admitted.status === "retry") return this.userProfileSnapshot;
         } else {
             this.userProfileSnapshot = await this.mutateUserProfile((current) => (
-                this.typeAExtractor.mergeCandidates(current, candidates, this.now())
+                this.typeAExtractor.mergeCandidates(current,
+                    candidates.filter((candidate) => isChatMemoryRecordAdmissible(candidate, evidence)), this.now())
             ));
         }
         this.typeAProcessedTurnByConversation.set(
@@ -453,6 +466,7 @@ function cloneUserProfileSnapshot(snapshot: UserProfileSnapshot): UserProfileSna
         markdown: snapshot.markdown,
         records: snapshot.records.map((record) => ({
             ...record,
+            ...(record.chatEvidence ? { chatEvidence: cloneChatMemoryCandidateEvidence(record.chatEvidence) } : {}),
             conversationIds: [...record.conversationIds],
         })),
     };

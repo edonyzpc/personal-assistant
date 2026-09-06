@@ -135,6 +135,7 @@ export interface PanelMemoryActionPolicy {
 
 /** UI-facing projection over a legacy record; optional fields keep old payloads compatible. */
 export interface PanelMemoryGovernanceRecord extends ConfirmedMemoryRecord {
+    writingStyle?: import('../../pa/memory-governance-view').GovernedMemoryRecordView['writingStyle'];
     effect?: MemoryControlCenterEffect;
     /** Gate-aware status shown to the user. */
     useStatus?: PanelMemoryUseStatus;

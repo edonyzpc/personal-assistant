@@ -73,6 +73,15 @@ import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
 import { ChatHistoryManager } from './chat/chat-history-manager';
+import { ImageAssetService } from './chat/image-assets';
+import { hasWritingNoteProvenance } from './chat/writing-note-provenance';
+import { WritingVersionService } from './chat/writing-versions';
+import { WritingSaveAction } from './chat/writing-save-action';
+import { WritingStyleService, WritingStyleUnavailableError, inferWritingScene } from './chat/writing-style-service';
+import { hashWritingText, type WritingScene } from './chat/writing-types';
+import type { ChatWritingStylePreparation, ChatWritingStyleResult } from './ai-services/chat-types';
+import { ImageProcessor } from './chat/image-processor';
+import { isChatMemoryRecordAdmissible } from './pa/chat-memory-admission';
 import {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
@@ -293,6 +302,7 @@ import {
     type TypeAAdmissionBaseline,
 } from './pa/memory-admission-coordinator';
 import { LegacyMemoryCompatibilityBarrier } from './pa/memory-governance-compatibility';
+import { MemoryGovernanceUpgradeCoordinator } from './pa/memory-governance-upgrade';
 import {
     MemoryGovernanceFinalizationCoordinator,
     previewMemoryGovernanceFinalization,
@@ -1286,6 +1296,11 @@ export class PluginManager extends Plugin {
     >();
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
+    imageAssetService: ImageAssetService | undefined;
+    writingVersions: WritingVersionService | undefined;
+    writingSave: WritingSaveAction | undefined;
+    private writingStyleService: WritingStyleService | undefined;
+    private writingStyleCoordinator: MemoryGovernanceCoordinator | undefined;
     private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
     /**
      * Pagelet (Review Assistant) per-plugin runtime — lazy-constructed on
@@ -1574,6 +1589,24 @@ export class PluginManager extends Plugin {
         this.chatHistoryManager = new ChatHistoryManager({
             store: this.chatHistoryStore,
             log: (message, error) => this.log(message, error),
+        });
+        this.imageAssetService = new ImageAssetService(this.app, this.chatHistoryStore, {
+            processor: new ImageProcessor(this.app),
+            isPathAllowed: (path) => {
+                const file = this.app.vault.getAbstractFileByPath(path);
+                return file instanceof TFile ? this.isDataBoundaryAllowedFile(file) : this.isDataBoundaryAllowedPath(path);
+            },
+        });
+        this.writingVersions = new WritingVersionService(this.chatHistoryStore);
+        this.writingSave = new WritingSaveAction(this.app, this.chatHistoryStore, this.imageAssetService, {
+            // Generated-note eligibility controls reading into Memory, not
+            // completion of the user's already-approved output note.
+            isPathAllowed: (path) => {
+                const file = this.app.vault.getAbstractFileByPath(path);
+                return decideDataBoundaryForSource({ path,
+                    tags: file instanceof TFile ? this.getDataBoundaryTags(file) : [], isGenerated: false,
+                }, this.settings.dataBoundary).decision === 'allow';
+            },
         });
         await this.initializeMemorySubsystem();
         if (this.unloading) return;
@@ -1891,7 +1924,10 @@ export class PluginManager extends Plugin {
         await this.initializeMemorySubsystem();
         if (this.unloading) return;
 
-        void this.chatHistoryManager?.initialize();
+        void this.chatHistoryManager?.initialize().then(async () => {
+            if (this.unloading || !this.chatHistoryManager?.isAvailable()) return;
+            await this.imageAssetService?.recoverPending();
+        }).catch((error) => this.log("Failed to recover registered image imports", error));
         this.initializeStatsSubsystem();
         void this.initializeCalloutManager();
         if (this.unloading) return;
@@ -2265,6 +2301,7 @@ export class PluginManager extends Plugin {
             let stateChanged = false;
             let shouldRetry = false;
             for (const record of changed) {
+                if (!isChatMemoryRecordAdmissible(record, batch.evidence)) continue;
                 const admission = this.buildGovernedTypeAAdmission(
                     vaultKey,
                     record,
@@ -5484,6 +5521,7 @@ export class PluginManager extends Plugin {
                 useStatus: projection.useStatus,
                 durableUseStatus: projection.durableUseStatus,
                 actionPolicy: { ...projection.actionPolicy },
+                ...(entry.writingStyle ? { writingStyle: cloneSerializable(entry.writingStyle) } : {}),
             };
         });
         const recentChanges: PanelMemoryRecentChange[] = governed.recentChanges.map((change) => ({
@@ -5588,6 +5626,24 @@ export class PluginManager extends Plugin {
                 dataBoundaryAllowed,
             }),
         );
+    }
+
+    correctWritingStyleMemory(claimId: string, exactText: string, scene: WritingScene): Promise<MemoryRecordActionResult> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const current = this.getMemoryGovernancePanelState().records.find((record) => record.id === claimId);
+            const service = this.getWritingStyleService();
+            const crypto = getPlatformCrypto();
+            if (!current?.writingStyle || current.actionPolicy?.correct !== true || !service || !crypto?.randomUUID) {
+                return this.governedMemoryActionFailure('correct', 'action_unavailable');
+            }
+            try {
+                await service.correct(claimId, exactText, scene, `writing_style_${crypto.randomUUID().replace(/-/g, '')}`);
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+                const record = this.getMemoryGovernancePanelState().records.find((item) => item.id === claimId);
+                return { ok: true, message: this.governedMemoryActionSuccessMessage('correct'), ...(record ? { record: cloneSerializable(record) } : {}) };
+            } catch { return this.governedMemoryActionFailure('correct', 'operation_threw'); }
+        });
     }
 
     private pauseGovernedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
@@ -5946,6 +6002,71 @@ export class PluginManager extends Plugin {
             default:
                 return this.t("plugin.settings.memoryControlCenter.finalization.failed");
         }
+    }
+
+    /** One explicit local action; failure never repairs or filters the old Profile. */
+    checkAndUpgradeMemoryGovernance(): Promise<{ ok: boolean; message: string }> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const result = await this.enqueueSettingsWrite(async () => {
+                const repository = this.deviceMemoryGovernanceRepository;
+                const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+                const barrier = this.legacyMemoryCompatibilityBarrier;
+                const history = this.chatHistoryStore;
+                const vault = this.app.vault;
+                const localVaultId = this.settings.statisticsVaultId;
+                const configScope = getVaultConfigDirStorageScope(vault);
+                if (!repository || !vaultKey || !barrier?.isActive() || this.unloading
+                    || this.memoryGovernanceBootstrapState !== "ready") return { ok: false as const, reason: "upgrade_not_available" };
+                const epoch = this.getMemoryGraphTopologyEpoch("chat");
+                const compatibilityFingerprint = hashLegacyMemoryPayload(barrier.snapshot());
+                const coordinator = new MemoryGovernanceUpgradeCoordinator({
+                    repository, opaqueVaultKey: vaultKey, profileReader: this.createExistingUserProfileReader(),
+                    readLegacySource: () => this.readPersistedLegacyMemorySourceSnapshot(),
+                    readConversation: async (id) => {
+                        if (!history || !(await history.getConversation(id))) return undefined;
+                        return history.getTurns(id);
+                    },
+                    isPathAllowed: (path) => this.isDataBoundaryAllowedPath(path),
+                    isCurrent: () => !this.unloading && this.deviceMemoryGovernanceRepository === repository
+                        && this.app.vault === vault && this.settings.statisticsVaultId === localVaultId
+                        && getVaultConfigDirStorageScope(this.app.vault) === configScope
+                        && this.memoryGovernanceOpaqueVaultKey === vaultKey && this.chatHistoryStore === history
+                        && this.legacyMemoryCompatibilityBarrier === barrier && barrier.isActive()
+                        && hashLegacyMemoryPayload(barrier.snapshot()) === compatibilityFingerprint
+                        && this.getMemoryGraphTopologyEpoch("chat") === epoch,
+                });
+                return coordinator.run();
+            });
+            if (!result.ok) {
+                this.log("Memory compatibility upgrade left existing data unchanged", { reason: result.reason });
+                return { ok: false, message: this.getMemoryUpgradeStatusMessage(result.reason) };
+            }
+            try {
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+            } catch (error) {
+                this.log("Memory upgrade committed; local display refresh remains pending", error);
+                return { ok: true, message: this.t("plugin.settings.memoryControlCenter.upgrade.refreshPending") };
+            }
+            return { ok: true, message: this.t("plugin.settings.memoryControlCenter.upgrade.complete", { count: result.adoptedCount }) };
+        });
+    }
+
+    getMemoryUpgradeStatusMessage(reason: string): string {
+        if (reason === "pending_operations") return this.t("plugin.settings.memoryControlCenter.upgrade.pending");
+        if (reason === "source_suppressed") return this.t("plugin.settings.memoryControlCenter.upgrade.suppressed");
+        if (reason === "conversation_missing" || reason === "conversation_evidence_mismatch" || reason === "profile_evidence_unsupported") {
+            return this.t("plugin.settings.memoryControlCenter.upgrade.evidence");
+        }
+        if (reason === "source_excluded") return this.t("plugin.settings.memoryControlCenter.upgrade.excluded");
+        if (reason === "profile_invalid" || reason === "profile_projection_mismatch" || reason === "legacy_projection_mismatch") {
+            return this.t("plugin.settings.memoryControlCenter.upgrade.mismatch");
+        }
+        if (reason === "profile_absence_unlocked") return this.t("plugin.settings.memoryControlCenter.upgrade.absent");
+        if (reason === "source_changed" || reason === "profile_changed" || reason === "governance_changed" || reason === "legacy_source_changed") {
+            return this.t("plugin.settings.memoryControlCenter.upgrade.changed");
+        }
+        return this.t("plugin.settings.memoryControlCenter.upgrade.unavailable");
     }
 
     finalizeMemoryGovernance(
@@ -7461,6 +7582,63 @@ export class PluginManager extends Plugin {
         return new ChatService(this.createAiServiceHost("chat"), operationsSession);
     }
 
+    private getWritingStyleService(): WritingStyleService | undefined {
+        const coordinator = this.memoryGovernanceCoordinator;
+        if (!coordinator || !this.writingVersions || this.unloading) return undefined;
+        if (this.writingStyleService && this.writingStyleCoordinator === coordinator) return this.writingStyleService;
+        this.writingStyleService?.dispose();
+        this.writingStyleCoordinator = coordinator;
+        this.writingStyleService = new WritingStyleService({
+            versions: this.writingVersions, coordinator,
+            getStateSnapshot: () => {
+                const snapshot = this.getGovernedMemoryProjectionSnapshot();
+                // A committed pause/forget invalidates dispatch immediately,
+                // before the asynchronous settings/UI snapshot refresh finishes.
+                return snapshot && snapshot.state.commitSequence >= this.deviceMemoryCacheRefreshTargetSequence ? snapshot : null;
+            },
+            isRuntimeEnabled: () => !this.unloading && this.memoryGovernanceCoordinator === coordinator
+                && this.settings.memoryEnabled === true && this.getMemoryGovernanceUiMode() === 'effect_based',
+            canManage: () => !this.unloading && this.memoryGovernanceCoordinator === coordinator && this.getMemoryGovernanceUiMode() === 'effect_based',
+            verifyNoteSource: async (ref, signal) => {
+                const denied = { allowed: false, isCurrent: () => false };
+                if (!ref.contentHash) return denied;
+                const epoch = this.getMemoryGraphTopologyEpoch('chat');
+                const source = await this.captureLatestMemorySource(ref.path, (path) => this.isMemoryProviderPathAllowed(path), 'chat', signal);
+                if (!source || await hashWritingText(source.markdown) !== ref.contentHash) return denied;
+                const file = this.app.vault.getAbstractFileByPath(source.path);
+                if (!(file instanceof TFile)) return denied;
+                const isCurrent = () => !this.unloading && !signal?.aborted && this.getMemoryGraphTopologyEpoch('chat') === epoch
+                    && this.app.vault.getAbstractFileByPath(source.path) === file
+                    && file.stat.mtime === source.mtime && file.stat.size === source.size && this.isMemoryProviderPathAllowed(file.path);
+                return { allowed: isCurrent(), isCurrent };
+            },
+        });
+        return this.writingStyleService;
+    }
+
+    private rememberWritingStyle(versionId: string, scene: WritingScene): Promise<void> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const mode = this.getMemoryGovernanceUiMode();
+            if (mode !== 'effect_based') {
+                throw new WritingStyleUnavailableError(mode === 'legacy_threshold' ? 'legacy_memory' : 'governance_unavailable');
+            }
+            const service = this.getWritingStyleService();
+            const crypto = getPlatformCrypto();
+            if (!service || !crypto?.randomUUID) throw new Error('Writing style unavailable');
+            await service.remember(versionId, scene, `writing_style_${crypto.randomUUID().replace(/-/g, '')}`);
+            await this.refreshGovernedMemoryActionState();
+            await this.notifySettingsChanged();
+        });
+    }
+
+    private async prepareWritingStyle(prompt: string, parentScene: WritingScene | undefined,
+        budget: Parameters<ChatWritingStylePreparation>[0]): Promise<ChatWritingStyleResult> {
+        if (this.deviceMemoryCacheRefreshPromise) await this.deviceMemoryCacheRefreshPromise;
+        const service = this.getWritingStyleService();
+        if (!service) return { context: '', revisionIds: [], isCurrent: () => true };
+        return service.prepare(inferWritingScene(prompt, parentScene), budget);
+    }
+
     private openQuickCaptureModal(): void {
         if (!this.settings.quickCapture.enabled) {
             new Notice(this.t("plugin.quickCapture.notice.disabled"), 3000);
@@ -7563,6 +7741,11 @@ export class PluginManager extends Plugin {
                 onStatusChanged: (listener) => this.onMemoryStatusChanged(listener),
             },
             createChatService: () => this.createChatService(),
+            imageAssetService: this.imageAssetService,
+            writingVersions: this.writingVersions,
+            writingSave: this.writingSave,
+            rememberWritingStyle: (versionId, scene) => this.rememberWritingStyle(versionId, scene),
+            prepareWritingStyle: (prompt, parentScene, budget) => this.prepareWritingStyle(prompt, parentScene, budget),
             onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 this.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),
@@ -9244,6 +9427,15 @@ export class PluginManager extends Plugin {
             statsManager.dispose();
             void flush.catch((error) => this.log("Failed to flush statistics during unload", error));
         }
+        await this.writingSave?.dispose().catch((error) => this.log("Failed to finish writing save cleanup", error));
+        this.writingSave = undefined;
+        this.writingStyleService?.dispose();
+        this.writingStyleService = undefined;
+        this.writingStyleCoordinator = undefined;
+        await this.writingVersions?.dispose();
+        this.writingVersions = undefined;
+        await this.imageAssetService?.dispose().catch((error) => this.log("Failed to dispose image resources", error));
+        this.imageAssetService = undefined;
         const chatHistoryStore = this.chatHistoryStore;
         if (chatHistoryStore) {
             void chatHistoryStore
@@ -9522,7 +9714,9 @@ export class PluginManager extends Plugin {
         ));
         return projectGovernedMemoryUiState(entry, {
             runtimeUseEnabled: overrides.runtimeUseEnabled
-                ?? this.canRunMemoryExtractionRuntime(),
+                ?? (entry.writingStyle
+                    ? this.settings.memoryEnabled === true && this.getMemoryGovernanceUiMode() === 'effect_based'
+                    : this.canRunMemoryExtractionRuntime()),
             sourceEligible,
             hasPendingOperation,
             coordinatorAvailable: Boolean(this.memoryGovernanceCoordinator),
@@ -9863,6 +10057,7 @@ export class PluginManager extends Plugin {
                 ? { profileRecordId: profileLink.target.profileRecordId }
                 : {}),
             label: projection.lifecycle === "forgotten_marker" ? "" : entry.record.summary,
+            ...(entry.writingStyle && projection.lifecycle !== 'forgotten_marker' ? { writingStyle: cloneSerializable(entry.writingStyle) } : {}),
             origin: profileLink
                 ? "user_profile"
                 : entry.effect === "collaboration_default"
@@ -11520,7 +11715,8 @@ export class PluginManager extends Plugin {
             const normalizedTags = [...tags];
             const isGenerated = frontmatter.pagelet === true
                 || (typeof frontmatter.pagelet === "string"
-                    && frontmatter.pagelet.trim().toLowerCase() === "true");
+                    && frontmatter.pagelet.trim().toLowerCase() === "true")
+                || hasWritingNoteProvenance(frontmatter);
             const excludedTags = new Set([
                 "no-ai",
                 ...(consumer === "pagelet" ? ["no-review"] : []),
@@ -11602,6 +11798,7 @@ export class PluginManager extends Plugin {
         const normalizedPath = normalizePath(file.path).replace(/^\.\//, "");
         return pageletMarker === true
             || (typeof pageletMarker === "string" && pageletMarker.trim().toLowerCase() === "true")
+            || hasWritingNoteProvenance(frontmatter)
             || normalizedPath === ".pagelet"
             || normalizedPath.startsWith(".pagelet/")
             || normalizedPath === "pagelet-generated"

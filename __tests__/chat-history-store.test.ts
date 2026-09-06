@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import type { Vault } from "obsidian";
+import type { ImageAsset } from "../src/chat/image-types";
+import { hashWritingText, type WritingVersion } from "../src/chat/writing-types";
+jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
 
 class FakeIDBKeyRange {
@@ -298,8 +301,8 @@ describe("IndexedDbChatHistoryStore", () => {
         const store = new IndexedDbChatHistoryStore("chat-history-test", factory as unknown as IDBFactory);
         await store.initialize();
         expect(factory.openCalls).toBe(1);
-        // 3 stores: conversations, turns, metadata
-        expect(factory.db.createObjectStoreCalls).toBe(3);
+        // Original stores plus additive multimodal metadata and Blob cache.
+        expect(factory.db.createObjectStoreCalls).toBe(7);
 
         await store.upsertConversation(makeConversation({ id: "c1", title: "Topic A" }));
         await store.upsertConversation(makeConversation({ id: "c2", title: "Topic B", updatedAt: "2026-05-29T11:00:00.000Z" }));
@@ -357,7 +360,7 @@ describe("IndexedDbChatHistoryStore", () => {
         const newCalls = factory.db.transactionCalls.slice(callsBefore);
         // Exactly one transaction was opened, and it spans both stores.
         expect(newCalls).toHaveLength(1);
-        expect(new Set(newCalls[0])).toEqual(new Set(["turns", "conversations"]));
+        expect(new Set(newCalls[0])).toEqual(new Set(["turns", "conversations", "assets", "writingVersions"]));
         // Both records reflect the atomic write.
         await expect(store.getTurns("c1")).resolves.toHaveLength(1);
         const updated = await store.getConversation("c1");
@@ -444,9 +447,23 @@ class FakeTransaction {
     error: DOMException | null = null;
     private completed = false;
     private pendingOperations = 0;
+    private readonly snapshots = new Map<string, Map<string, unknown>>();
 
     constructor(private readonly db: FakeIdbDatabase, private readonly allowedStoreNames: string[]) {
-        queueMicrotask(() => this.maybeComplete());
+        for (const name of allowedStoreNames) this.snapshots.set(name, new Map([...db.getStore(name)].map(([key, value]) => [key, cloneValue(value)])));
+        // Browser transactions stay active through the request task's promise
+        // reactions; a microtask-only fake commits before async abort handlers.
+        setImmediate(() => this.maybeComplete());
+    }
+
+    abort(): void {
+        if (this.completed) throw new Error('Transaction already complete');
+        this.completed = true;
+        for (const [name, snapshot] of this.snapshots) {
+            const store = this.db.getStore(name); store.clear();
+            for (const [key, value] of snapshot) store.set(key, cloneValue(value));
+        }
+        this.onabort?.call(this as unknown as IDBTransaction, {} as Event);
     }
 
     objectStore(name: string): IDBObjectStore {
@@ -463,7 +480,7 @@ class FakeTransaction {
     endOperation(): void {
         this.pendingOperations = Math.max(0, this.pendingOperations - 1);
         if (this.pendingOperations === 0) {
-            queueMicrotask(() => this.maybeComplete());
+            setImmediate(() => this.maybeComplete());
         }
     }
 
@@ -553,3 +570,108 @@ class FakeRequest<T> {
 function cloneValue<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
 }
+
+describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s)', (backend) => {
+    const asset = (): ImageAsset => ({ id: 'image_one', source: 'vault_reference', originalPath: 'photos/a.jpg',
+        originalHash: 'a'.repeat(64), byteLength: 3, detectedMime: 'image/jpeg', acquisition: 'original_file',
+        state: 'available', anchorPath: 'PA Chat.md', anchorKind: 'logical_root', createdAt: 1, owners: [] });
+    const open = async () => {
+        const store = backend === 'memory' ? new MemoryChatHistoryStore()
+            : new IndexedDbChatHistoryStore('images', new FakeIndexedDbFactory() as unknown as IDBFactory);
+        await store.initialize(); return store;
+    };
+    it('retains a fixed conversation anchor before any image and does not let a stale turn snapshot undo a folder rename', async () => {
+        const store = await open(), original = makeConversation({ imageAnchor: { kind: 'existing_note', path: 'notes/source.md' } });
+        await store.upsertConversation(original);
+        await store.renameConversationImageAnchors('notes', 'moved');
+        await store.appendTurnAndUpdateConversation(makeTurn(), { ...original, turnCount: 1 });
+        const latest = await store.getConversation('conv-1');
+        expect(latest).toMatchObject({ turnCount: 1, imageAnchor: { kind: 'existing_note', path: 'moved/source.md' } });
+        latest!.imageAnchor!.path = 'mutation.md';
+        expect((await store.getConversation('conv-1'))?.imageAnchor?.path).toBe('moved/source.md');
+        await expect(store.upsertConversation(makeConversation({ id: 'bad', imageAnchor: { kind: 'logical_root', path: 'notes/missing.md' } }))).rejects.toThrow('logical');
+    });
+    it('rejects an unresolved image without changing conversation or existing turn owners', async () => {
+        const store = await open();
+        await store.putImageAsset(asset());
+        await store.upsertConversation(makeConversation());
+        const image = { ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'one' };
+        const turn = makeTurn({ user: { role: 'user', content: 'look', images: [image] } });
+        await store.appendTurnAndUpdateConversation(turn, makeConversation({ turnCount: 1 }));
+        await expect(store.appendTurnAndUpdateConversation({ ...turn, user: { ...turn.user, images: [
+            { ...image, ref: { assetId: 'unregistered', contentHash: 'b'.repeat(64) } },
+        ] } }, makeConversation({ turnCount: 2 }))).rejects.toThrow('registered');
+        expect((await store.getConversation('conv-1'))?.turnCount).toBe(1);
+        expect((await store.getTurns('conv-1'))[0].user.images).toEqual([image]);
+        expect((await store.getImageAsset('image_one'))?.owners).toHaveLength(1);
+        await store.updateImageAssetOwner(image.ref, { kind: 'save', id: 'save-1' }, true);
+        await store.deleteConversation('conv-1');
+        expect((await store.getImageAsset('image_one'))?.owners).toEqual([{ kind: 'save', id: 'save-1' }]);
+        expect((await store.getImageAsset('image_one'))?.state).toBe('available');
+    });
+    it('rejects corrupt provenance/image metadata and forbids changing registered content identity', async () => {
+        const store = await open();
+        await store.putImageAsset(asset());
+        await expect(store.putImageAsset({ ...asset(), originalHash: 'b'.repeat(64) })).rejects.toThrow('identity');
+        const malformed = makeTurn({ user: { role: 'user', content: 'must not become ordinary input', hostProvenance: {
+            version: 1, messageId: 'm', kind: 'forged',
+        } as never } });
+        await expect(store.appendTurn(malformed)).rejects.toThrow();
+        await expect(store.appendTurn(makeTurn({ user: { role: 'user', content: 'x', images: [{}] as never } }))).rejects.toThrow();
+        expect(await store.getTurns('conv-1')).toEqual([]);
+    });
+    it('requires immutable writing identity in the same conversation and preserves a validated recovery envelope', async () => {
+        const store = await open();
+        await store.putImageAsset(asset());
+        const text = 'selected text';
+        const version: WritingVersion = { id: 'writing_1', requestId: 'request_1', messageId: 'message_1',
+            text, textHash: await hashWritingText(text), explanation: '', origin: 'ai_generated', conversationId: 'conv-1',
+            turnIndex: 0, createdAt: 1, associatedImages: [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }],
+            backgroundSourceRefs: [], styleRevisionIds: [] };
+        await store.putWritingVersion(version);
+        await expect(store.putWritingVersion({ ...version, text: 'changed', textHash: await hashWritingText('changed') })).rejects.toThrow('immutable');
+        await expect(store.appendTurn(makeTurn({ conversationId: 'other', assistant: { role: 'assistant', content: text, writingVersionId: version.id } }))).rejects.toThrow('reference');
+        const recovery = { requestId: 'request_2', rawText: '<incomplete>', reason: 'incomplete' as const,
+            parentVersionId: 'writing_1', backgroundSourceRefs: [{ path: 'notes/background.md', contentHash: 'b'.repeat(64) }] };
+        await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: text, writingVersionId: version.id, writingRecovery: recovery } }));
+        expect((await store.getTurns('conv-1'))[0].assistant).toMatchObject({ writingVersionId: version.id, writingRecovery: recovery });
+        await expect(store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: '', writingRecovery: { ...recovery, reason: 'forged' as never } } }))).rejects.toThrow('recovery');
+        await expect(store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: '', writingRecovery: {
+            ...recovery, backgroundSourceRefs: [{ path: '../outside.md' }],
+        } } }))).rejects.toThrow('recovery source');
+        await store.appendTurn(makeTurn({ turnIndex: 1, assistant: { role: 'assistant', content: 'recoverable', writingRecovery: recovery } }));
+        await store.deleteTurn('conv-1', 0);
+        expect(await store.getWritingVersion(version.id)).not.toBeNull();
+        await store.deleteTurn('conv-1', 1);
+        expect(await store.getWritingVersion(version.id)).toBeNull();
+        await store.deleteConversation('conv-1');
+        expect(await store.getWritingVersion(version.id)).toBeNull();
+        expect((await store.getImageAsset('image_one'))?.owners).toEqual([]);
+    });
+});
+
+it('adds v2 stores without removing v1 text history or metadata', async () => {
+    const factory = new FakeIndexedDbFactory({ hasStores: true });
+    factory.db.getStore('turns').set(buildTurnRecordKey('conv-1', 0), { key: buildTurnRecordKey('conv-1', 0), turn: makeTurn() });
+    factory.db.getStore('metadata').set('schema-version', { key: 'schema-version', value: 1 });
+    const store = new IndexedDbChatHistoryStore('existing', factory as unknown as IDBFactory);
+    await store.initialize();
+    expect(factory.db.createObjectStoreCalls).toBe(4);
+    expect((await store.getTurns('conv-1'))[0]).toEqual(makeTurn());
+    expect(await store.getSchemaVersion()).toBe(1);
+});
+
+it('rolls back asset owner registration when the turn write fails inside the shared IDB transaction', async () => {
+    const factory = new FakeIndexedDbFactory(), store = new IndexedDbChatHistoryStore('atomic', factory as unknown as IDBFactory);
+    await store.initialize();
+    await store.putImageAsset({ id: 'asset', originalHash: 'a'.repeat(64), source: 'vault_reference', originalPath: 'a.jpg',
+        byteLength: 1, detectedMime: 'image/jpeg', acquisition: 'original_file', state: 'available', anchorPath: 'PA Chat.md', anchorKind: 'logical_root', createdAt: 1, owners: [] });
+    const records = factory.db.getStore('turns'), set = records.set.bind(records);
+    jest.spyOn(records, 'set').mockImplementationOnce(() => { throw new Error('disk write failure'); }).mockImplementation(set);
+    await expect(store.appendTurnAndUpdateConversation(makeTurn({ user: { role: 'user', content: 'image', images: [
+        { ref: { assetId: 'asset', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'image' },
+    ] } }), makeConversation({ turnCount: 1 }))).rejects.toThrow('disk write failure');
+    expect((await store.getImageAsset('asset'))?.owners).toEqual([]);
+    expect(await store.getTurns('conv-1')).toEqual([]);
+    expect(await store.getConversation('conv-1')).toBeNull();
+});

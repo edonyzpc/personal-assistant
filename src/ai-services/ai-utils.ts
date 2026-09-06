@@ -12,6 +12,7 @@ import {
 } from './obsidian-fetch';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { getPlatformDocument } from '../platform-dom';
+import { throwIfAborted } from './chat-utils';
 
 export type ChatTransport = 'obsidian' | 'native';
 
@@ -225,7 +226,7 @@ export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCalling
     buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS);
 export interface ProviderRequestOptions {
     providerRequestScope?: ProviderRequestScope;
-    /** Runs synchronously immediately before each physical requestUrl dispatch. */
+    /** Runs synchronously immediately before each physical HTTP dispatch, including SDK retries. */
     onProviderRequestStart?: () => void;
 }
 
@@ -344,6 +345,16 @@ export class AIUtils {
                 || providerRequestOptions.onProviderRequestStart
                 ? createScopedObsidianFetch(providerRequestOptions)
                 : obsidianFetch;
+        } else if (providerRequestOptions.onProviderRequestStart) {
+            // Keep native fetch and its propagating AbortSignal. The SDK may
+            // await serialization/retry backoff after prompt preparation.
+            options.fetch = (input, init) => {
+                const signal = init?.signal ?? (typeof Request !== 'undefined' && input instanceof Request ? input.signal : undefined);
+                throwIfAborted(signal ?? undefined);
+                providerRequestOptions.onProviderRequestStart?.();
+                throwIfAborted(signal ?? undefined);
+                return globalThis.fetch(input, init);
+            };
         }
 
         return options;

@@ -23,6 +23,7 @@ export class ConversationPersistence {
     private activeConversation: PersistedConversation | null = null;
     private activeId: string | null = null;
     private nextTurnIndex = 0;
+    private initialImageAnchor?: PersistedConversation['imageAnchor'];
     private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
     private persistChain: Promise<void> = Promise.resolve();
     private unpersistedFinalizedEntries = new Set<TimelineEntry>();
@@ -31,6 +32,16 @@ export class ConversationPersistence {
 
     get activeConversationId(): string | null {
         return this.activeId;
+    }
+
+    get imageAnchor(): PersistedConversation['imageAnchor'] {
+        const anchor = this.activeConversation?.imageAnchor ?? this.initialImageAnchor;
+        return anchor ? { ...anchor } : undefined;
+    }
+
+    setImageAnchor(anchor: NonNullable<PersistedConversation['imageAnchor']>): void {
+        this.initialImageAnchor = { ...anchor };
+        if (this.activeConversation) this.activeConversation = { ...this.activeConversation, imageAnchor: { ...anchor } };
     }
 
     get activeConversationTurnCount(): number {
@@ -63,6 +74,7 @@ export class ConversationPersistence {
         this.activeConversation = null;
         this.activeId = null;
         this.nextTurnIndex = 0;
+        this.initialImageAnchor = undefined;
         this.persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
         this.unpersistedFinalizedEntries.clear();
     }
@@ -236,6 +248,7 @@ export class ConversationPersistence {
 
         this.activeConversation = conversation;
         this.activeId = conversation.id;
+        this.initialImageAnchor = conversation.imageAnchor ? { ...conversation.imageAnchor } : undefined;
         this.nextTurnIndex = maxTurnIndex + 1;
         this.persistedTurnIndexByEntry = persistedTurnIndexByEntry;
         this.unpersistedFinalizedEntries.clear();
@@ -243,20 +256,28 @@ export class ConversationPersistence {
         return { chatHistory, timelineEntries };
     }
 
-    persistFinalizedTurn(prompt: string, entry: TimelineEntry): Promise<boolean> {
+    persistFinalizedTurn(
+        prompt: string,
+        entry: TimelineEntry,
+        beforeRecord?: (context: { conversationId: string; turnIndex: number }) => Promise<void>,
+    ): Promise<boolean> {
         if (entry.kind !== 'history') return Promise.resolve(true);
         this.unpersistedFinalizedEntries.add(entry);
         let persisted = false;
         const next = this.persistChain
             .catch(() => undefined)
             .then(async () => {
-                persisted = await this.runPersistFinalizedTurn(prompt, entry);
+                persisted = await this.runPersistFinalizedTurn(prompt, entry, beforeRecord);
             });
         this.persistChain = next;
         return next.then(() => persisted);
     }
 
-    private async runPersistFinalizedTurn(prompt: string, entry: TimelineEntry): Promise<boolean> {
+    private async runPersistFinalizedTurn(
+        prompt: string,
+        entry: TimelineEntry,
+        beforeRecord?: (context: { conversationId: string; turnIndex: number }) => Promise<void>,
+    ): Promise<boolean> {
         if (entry.kind !== 'history') return true;
         const manager = await this.getReadyManager();
         if (!manager) return false;
@@ -265,7 +286,8 @@ export class ConversationPersistence {
             let conversation = this.activeConversation;
             let conversationId = this.activeId;
             if (!conversation || !conversationId) {
-                const created = await manager.startConversation(prompt);
+                const created = this.initialImageAnchor
+                    ? await manager.startConversation(prompt, this.initialImageAnchor) : await manager.startConversation(prompt);
                 conversation = created;
                 conversationId = created.id;
                 this.activeConversation = conversation;
@@ -273,6 +295,7 @@ export class ConversationPersistence {
                 this.nextTurnIndex = 0;
             }
             const turnIndex = this.nextTurnIndex;
+            if (beforeRecord) await beforeRecord({ conversationId, turnIndex });
             const updated = await manager.recordTurn({
                 conversationId,
                 turnIndex,
@@ -315,5 +338,31 @@ export class ConversationPersistence {
         } catch (error) {
             this.options.log("Failed to delete persisted chat turn", error);
         }
+    }
+
+    /** Attach an explicitly recovered version to the existing turn, without a new chat or extraction event. */
+    reviseFinalizedTurn(
+        entry: TimelineEntry,
+        prepare: (context: { conversationId: string; turnIndex: number }) => Promise<void>,
+    ): Promise<boolean> {
+        if (entry.kind !== 'history') return Promise.resolve(false);
+        const conversationId = this.activeId;
+        const turnIndex = this.persistedTurnIndexByEntry.get(entry);
+        if (!conversationId || turnIndex === undefined) return Promise.resolve(false);
+        let persisted = false;
+        const next = this.persistChain.catch(() => undefined).then(async () => {
+            const manager = await this.getReadyManager();
+            if (!manager || this.activeId !== conversationId) return;
+            const conversation = await manager.findConversation(conversationId);
+            if (!conversation || this.activeId !== conversationId) return;
+            await prepare({ conversationId, turnIndex });
+            if (this.activeId !== conversationId) return;
+            const updated = await manager.recordTurn({ conversationId, turnIndex, entry,
+                userPrompt: entry.user.content, conversation });
+            if (this.activeId === conversationId) this.activeConversation = updated;
+            persisted = true;
+        }).catch((error) => this.options.log('Failed to attach recovered writing version', error));
+        this.persistChain = next;
+        return next.then(() => persisted);
     }
 }

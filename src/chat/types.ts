@@ -1,6 +1,10 @@
 import type { Component } from 'obsidian';
 import type { ChatContextUsedItem, ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import type { ChatMessage, ChatRuntimeWarning, PaAgentMessage, PaAgentPersistedTurn, SourceRecord } from '../ai-services/chat-types';
+import type { MessageImage } from './image-types';
+import type { ChatHostProvenance } from '../ai-services/chat-provenance';
+import type { ChatWritingRecovery, ChatWritingMaterialContext } from '../ai-services/chat-types';
+import type { WritingVersion } from './writing-types';
 
 export interface ThinkingStatusView {
     messageDiv: HTMLDivElement;
@@ -32,6 +36,7 @@ export type RenderedMessage = {
     addMessageButton?: HTMLButtonElement;
     shareButton?: HTMLButtonElement;
     deleteButton?: HTMLButtonElement;
+    writingButton?: HTMLButtonElement;
     renderToken: number;
     copyContent: string;
     renderOwner?: Component;
@@ -63,6 +68,14 @@ export type CanonicalLifecycleUiState = {
 export type UiTurn = {
     id: number;
     prompt: string;
+    images?: MessageImage[];
+    userProvenance?: ChatHostProvenance;
+    writingRequestId?: string;
+    writingParent?: WritingVersion;
+    writingMaterialContext?: ChatWritingMaterialContext;
+    writingMaterials?: MessageImage[];
+    writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[] };
+    writingRecovery?: ChatWritingRecovery;
     memoryMetadata?: ChatTurnMemoryMetadata;
     contextUsedItems: ChatContextUsedItem[];
     activityDetails: string[];
@@ -88,6 +101,9 @@ export type TerminalTurnEntry = {
     kind: 'terminal';
     id: number;
     prompt: string;
+    images?: MessageImage[];
+    writingParent?: WritingVersion;
+    writingMaterialContext?: ChatWritingMaterialContext;
     content: string;
     terminalKind: 'error' | 'cancelled';
     errorDetail?: string;

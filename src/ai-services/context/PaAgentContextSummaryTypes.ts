@@ -1,4 +1,5 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
+import { chatImageIdentity } from "../chat-image-identity";
 
 /** Request-only derived state. Never serialized to Chat history or Memory. */
 export interface PaAgentHistorySummary {
@@ -30,7 +31,8 @@ export function isCurrentHistorySummary(summary: PaAgentHistorySummary, history:
     return summary.sourceMessages.length > 0
         && summary.sourceMessages.length <= history.length
         && summary.sourceMessages.every((message, index) =>
-            message.role === history[index].role && message.content === history[index].content);
+            message.role === history[index].role && message.content === history[index].content
+                && chatImageIdentity(message.images) === chatImageIdentity(history[index].images));
 }
 
 export function isCurrentToolSummary(summary: PaAgentToolSummary, message: PaAgentToolSummarySource): boolean {

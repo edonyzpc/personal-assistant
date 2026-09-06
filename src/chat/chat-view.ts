@@ -1,10 +1,11 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, type EventRef } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, Platform, TFile, type EventRef } from 'obsidian';
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
 import { PaAgentContextOverflowError } from '../ai-services/context';
 import type {
     ChatRuntimeWarning,
+    ChatWritingMaterialContext,
     PaAgentMessage,
     PaAgentPersistedTurn,
     TurnEndStatus,
@@ -60,6 +61,16 @@ import type {
 } from '../ai-services/operations/types';
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
 import { ShareCardModal } from '../share-card/share-card-modal';
+import { ComposerDraft, type SentComposerDraft, type ComposerSnapshot } from './composer-draft';
+import { cloneMessageImages, type ImageAcquisition, type MessageImage } from './image-types';
+import { renderImageAttachments } from './image-attachment-view';
+import { ImageManagementModal, VaultImagePickerModal } from './image-management-modal';
+import { classifyChatUserProvenanceKind } from '../pa/chat-memory-admission';
+import { mergeChatImageMaterials } from '../ai-services/chat-image-identity';
+import { isNewWritingTopicPrompt, isWritingContinuationPrompt, isWritingRequestPrompt } from '../ai-services/writing-output';
+import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal, newWritingActionId, type WritingModalHost } from './writing-modal';
+import { mergeWritingImages, type WritingVersion } from './writing-types';
+import { inferWritingScene } from './writing-style-service';
 
 export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
@@ -217,6 +228,8 @@ export class LLMView extends ItemView {
     private markdownRenderOwners = new Set<Component>();
     private chatDrawerHost: HTMLElement | null = null;
     private composerTextArea: HTMLTextAreaElement | null = null;
+    private composerDraft: ComposerDraft<MessageImage> | null = null;
+    private readonly imageRenderCleanups = new Map<HTMLElement, () => void>();
     private syncComposerControlsForExternalPrefill: (() => void) | null = null;
     private pendingPageletHandoff: PageletChatHandoffContext | null = null;
     private renderPageletHandoffForOpenView: (() => void) | null = null;
@@ -235,11 +248,13 @@ export class LLMView extends ItemView {
 
     prefillComposer(prompt: string): boolean {
         if (!this.composerTextArea || !this.syncComposerControlsForExternalPrefill) return false;
+        if (this.composerDraft?.snapshot('').images.length) return false;
         if (this.composerTextArea.value.trim().length > 0 && this.composerTextArea.value !== prompt) {
             this.composerTextArea.focus();
             return false;
         }
         this.composerTextArea.value = prompt;
+        this.composerDraft?.touchText();
         this.syncComposerControlsForExternalPrefill();
         this.composerTextArea.focus();
         return true;
@@ -309,6 +324,8 @@ export class LLMView extends ItemView {
     }
 
     private unloadAllMarkdownRenderOwners() {
+        for (const cleanup of this.imageRenderCleanups.values()) cleanup();
+        this.imageRenderCleanups.clear();
         for (const owner of this.markdownRenderOwners) {
             owner.unload();
         }
@@ -345,6 +362,9 @@ export class LLMView extends ItemView {
 
     async onOpen() {
         const sessionId = this.startViewSession();
+        const composerDraft = new ComposerDraft<MessageImage>();
+        this.composerDraft = composerDraft;
+        this.registerViewTeardown(() => composerDraft.dispose());
         this.resetRoleIdenticonSessionSeed();
         const t = makePluginTranslator(getPluginUiLanguage());
         ensureChatLoadersRegistered((message, error) => this.host.log(message, error));
@@ -453,6 +473,8 @@ export class LLMView extends ItemView {
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: t("plugin.chat.placeholder.askAboutNotes") }
         });
+        const imageDraftEl = inputDiv.createDiv({ cls: 'pa-chat-image-draft' });
+        imageDraftEl.hidden = true;
         const skillTypeahead = inputDiv.createDiv({
             cls: 'pa-chat-skill-typeahead',
             attr: {
@@ -476,12 +498,13 @@ export class LLMView extends ItemView {
                 showComposerHint(t("plugin.chat.hint.waitForAnswer"));
                 return;
             }
-            if (textArea.value.trim()) {
+            if (composerDraft.canSend(textArea.value)) {
                 e.preventDefault();
                 sendButton.click();
             }
         });
         textArea.addEventListener('input', () => {
+            composerDraft.touchText();
             hideComposerHint();
             renderSkillTypeahead();
             syncComposerControls();
@@ -500,6 +523,19 @@ export class LLMView extends ItemView {
         });
 
         const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-buttons pa-chat-composer-actions' });
+        const addImageButton = buttonDiv.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-add-images',
+            attr: { type: 'button', title: t('plugin.chat.images.add'), 'aria-label': t('plugin.chat.images.add') },
+        });
+        setIcon(addImageButton, 'image-plus');
+        const imagePicker = buttonDiv.createEl('input', { attr: { type: 'file', accept: 'image/*,.heic,.heif,.svg', multiple: '' } });
+        imagePicker.hidden = true;
+        const originalPicker = buttonDiv.createEl('input', { attr: { type: 'file', multiple: '' } });
+        originalPicker.hidden = true;
+        addImageButton.onclick = () => {
+            if (this.chatService.getImageCapability?.() === 'unsupported') { new Notice(t('plugin.chat.writing.unsupportedImages')); return; }
+            imagePicker.click();
+        };
         const sendButton = buttonDiv.createEl('button', {
             text: t("plugin.chat.action.ask"),
             cls: 'pa-chat-icon-button send-button-visible',
@@ -565,6 +601,20 @@ export class LLMView extends ItemView {
             text: t("plugin.chat.action.copyConversation"),
             icon: 'copy',
         });
+        const addOriginalImageButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.images.addOriginal'), icon: 'file-image' });
+        addOriginalImageButton.onclick = () => originalPicker.click();
+        const addVaultImageButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.images.fromVault'), icon: 'folder-open' });
+        const manageImagesButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.images.manage'), icon: 'images' });
+        manageImagesButton.onclick = () => {
+            const service = this.host.imageAssetService;
+            if (service) new ImageManagementModal(this.app, service).open();
+            else new Notice(t('plugin.chat.images.unavailable'));
+        };
+        const pendingSavesButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.writing.pendingSaves'), icon: 'file-clock' });
+        pendingSavesButton.onclick = () => {
+            if (this.host.writingSave && this.host.writingVersions) new WritingSaveRecoveryListModal(this.app, this.host.writingSave, this.host.writingVersions).open();
+            else new Notice(t('plugin.chat.writing.unavailable'));
+        };
         createChatMenuDivider(composerMenu);
         const technicalMemoryButton = createChatMenuItem(composerMenu, {
             text: t("plugin.chat.action.showMemoryStatus"),
@@ -700,12 +750,30 @@ export class LLMView extends ItemView {
 
 
         let uiTurnId = 0;
+        let selectedWritingVersion: WritingVersion | undefined;
+        let selectedWritingParentExplicit = false;
+        let restoredTerminalDraft: { turnId: number; snapshot: ComposerSnapshot<MessageImage> } | undefined;
         let thinkingStatusId = 0;
         let historyDeleteButtons: HTMLButtonElement[] = [];
         let timelineEntries: TimelineEntry[] = [];
         let emptyStateEl: HTMLElement | null = null;
         let isStopping = false;
         let isFinalizing = false;
+        let conversationAnchorFile: TFile | undefined;
+        const readConversationImageAnchor = () => {
+            const anchor = this.conversationPersistence.imageAnchor ?? (this.pendingPageletHandoff
+                ? { path: this.pendingPageletHandoff.anchor.path, kind: 'existing_note' as const }
+                : { path: 'PA Chat.md', kind: 'logical_root' as const });
+            if (anchor.kind === 'existing_note') {
+                if (!conversationAnchorFile) {
+                    const file = this.app.vault.getAbstractFileByPath?.(anchor.path);
+                    if (file instanceof TFile) conversationAnchorFile = file;
+                }
+                if (conversationAnchorFile) anchor.path = conversationAnchorFile.path;
+            }
+            this.conversationPersistence.setImageAnchor(anchor);
+            return anchor;
+        };
 
         const isGenerating = () => this.abortController !== null;
         const createCanonicalLifecycleState = (): CanonicalLifecycleUiState => ({
@@ -813,6 +881,7 @@ export class LLMView extends ItemView {
                     const currentMatch = getSkillTriggerMatch();
                     if (!currentMatch || typeof currentMatch.index !== 'number') return;
                     const triggerStart = currentValue.lastIndexOf('#');
+                    composerDraft.touchText();
                     textArea.value = `${currentValue.slice(0, triggerStart)}#${skill.id} `;
                     hideSkillTypeahead();
                     syncComposerControls();
@@ -872,9 +941,11 @@ export class LLMView extends ItemView {
         };
         const syncComposerControls = () => {
             const generating = isGenerating();
-            const hasDraft = textArea.value.trim().length > 0;
+            const hasDraft = composerDraft.canSend(textArea.value);
             const setupIssue = getBlockingAISetupIssue();
-            sendButton.disabled = generating || !hasDraft || setupIssue !== null;
+            const imagesUnsupported = composerDraft.snapshot(textArea.value).images.length > 0
+                && this.chatService.getImageCapability?.() === 'unsupported';
+            sendButton.disabled = generating || !hasDraft || setupIssue !== null || imagesUnsupported;
             if (generating && !isStopping && !isFinalizing) {
                 textArea.setAttribute('placeholder', t("plugin.chat.placeholder.draftNextMessage"));
                 sendButton.classList.replace('send-button-visible', 'send-button-hidden');
@@ -892,12 +963,158 @@ export class LLMView extends ItemView {
                 cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
             }
         };
+        let draftPreviewCleanup: (() => void) | undefined;
+        const unverifiedImageIds = new Set<number>();
+        const renderImageDraft = () => {
+            draftPreviewCleanup?.();
+            imageDraftEl.empty();
+            const entries = composerDraft.snapshot(textArea.value).images;
+            imageDraftEl.hidden = entries.length === 0;
+            const ready = entries.filter((entry) => entry.status === 'ready' && entry.value)
+                .map((entry) => entry.value!);
+            if (ready.length && this.host.imageAssetService) {
+                draftPreviewCleanup = renderImageAttachments(imageDraftEl, ready, this.host.imageAssetService, this.app);
+            }
+            for (const entry of entries) {
+                const row = imageDraftEl.createDiv({ cls: 'pa-chat-image-draft__item' });
+                row.createSpan({ text: entry.label });
+                if (entry.status !== 'ready') row.createSpan({
+                    cls: 'pa-chat-image__status',
+                    text: entry.status === 'processing' ? t('plugin.chat.images.loading') : entry.error ?? t('plugin.chat.images.failed'),
+                });
+                if (unverifiedImageIds.has(entry.id)) row.createSpan({ cls: 'pa-chat-image__status', text: t('plugin.chat.images.unverified') });
+                const remove = row.createEl('button', {
+                    attr: { type: 'button', 'aria-label': `${t('plugin.chat.images.remove')}: ${entry.label}` },
+                });
+                setIcon(remove, 'x');
+                remove.onclick = () => { composerDraft.removeImage(entry.id); unverifiedImageIds.delete(entry.id); renderImageDraft(); };
+            }
+            if (entries.length) {
+                const original = imageDraftEl.createEl('button', { text: t('plugin.chat.images.addOriginal'), attr: { type: 'button' } });
+                original.onclick = () => originalPicker.click();
+            }
+            syncComposerControls();
+        };
+        this.registerViewTeardown(() => draftPreviewCleanup?.());
+        const showImageProviderNotice = (isCurrent: () => boolean) =>
+            this.host.imageAssetService?.showProviderNoticeIfNeeded(() => {
+                if (!isCurrent()) return false;
+                new Notice(`${t('plugin.chat.images.providerNotice')}\n\n${t('plugin.chat.images.metadataNotice')}\n\n${t('plugin.chat.images.providerHelpLocation')}`, 18000);
+                return true;
+            });
+        const addImageFiles = async (files: readonly File[], acquisition: ImageAcquisition) => {
+            if (this.chatService.getImageCapability?.() === 'unsupported') { new Notice(t('plugin.chat.writing.unsupportedImages')); return; }
+            const service = this.host.imageAssetService;
+            if (!service) { new Notice(t('plugin.chat.images.unavailable')); return; }
+            const importDraftId = composerDraft.snapshot('').draftId;
+            for (const file of files) {
+                if (!isCurrentSession() || composerDraft.snapshot('').draftId !== importDraftId) return;
+                let handle;
+                try { handle = composerDraft.beginImport(file.name); }
+                catch { new Notice(t('plugin.chat.images.limit')); break; }
+                renderImageDraft();
+                let messageImage: MessageImage | undefined;
+                try {
+                    const isCurrentImport = () => isCurrentSession() && !handle.signal.aborted
+                        && composerDraft.snapshot('').draftId === importDraftId;
+                    await showImageProviderNotice(isCurrentImport);
+                    if (!isCurrentImport()) return;
+                    const anchor = readConversationImageAnchor();
+                    const imported = await service.importFile(file, {
+                        anchorPath: anchor.path, anchorKind: anchor.kind, acquisition, signal: handle.signal,
+                        onSyncNotice: (receipt) => {
+                            if (isCurrentSession() && !handle.signal.aborted) {
+                                new Notice(t('plugin.chat.images.sync', { directory: receipt.directory }), 12000);
+                            }
+                        },
+                    });
+                    messageImage = { ref: imported.ref, ordinal: handle.entryId, label: file.name.slice(0, 240) };
+                    if (handle.signal.aborted) continue;
+                    const preview = await service.resolveVariant(imported.ref, 'preview', { signal: handle.signal });
+                    preview.release();
+                    if (composerDraft.completeImport(handle, messageImage)) {
+                        if (imported.asset.acquisition === 'unverified_import') unverifiedImageIds.add(handle.entryId);
+                    }
+                } catch {
+                    composerDraft.failImport(handle, t('plugin.chat.images.failed'), messageImage);
+                } finally {
+                    if (isCurrentSession()) renderImageDraft();
+                }
+            }
+        };
+        addVaultImageButton.onclick = () => {
+            if (this.chatService.getImageCapability?.() === 'unsupported') { new Notice(t('plugin.chat.writing.unsupportedImages')); return; }
+            const service = this.host.imageAssetService;
+            if (!service) { new Notice(t('plugin.chat.images.unavailable')); return; }
+            const selectedDraftId = composerDraft.snapshot('').draftId;
+            new VaultImagePickerModal(this.app, (file) => {
+                if (!isCurrentSession() || composerDraft.snapshot('').draftId !== selectedDraftId) return;
+                let handle;
+                try { handle = composerDraft.beginImport(file.name); }
+                catch { new Notice(t('plugin.chat.images.limit')); return; }
+                renderImageDraft();
+                void (async () => {
+                    let selectedImage: MessageImage | undefined;
+                    try {
+                        const isCurrentImport = () => isCurrentSession() && !handle.signal.aborted
+                            && composerDraft.snapshot('').draftId === selectedDraftId;
+                        await showImageProviderNotice(isCurrentImport);
+                        if (!isCurrentImport()) return;
+                        const anchor = readConversationImageAnchor();
+                        const selected = await service.addVaultReference(file.path, { signal: handle.signal,
+                            anchorPath: anchor.path, anchorKind: anchor.kind });
+                        selectedImage = { ref: selected.ref, ordinal: handle.entryId, label: file.name.slice(0, 240) };
+                        const preview = await service.resolveVariant(selected.ref, 'preview', { signal: handle.signal });
+                        preview.release();
+                        composerDraft.completeImport(handle, selectedImage);
+                    } catch { composerDraft.failImport(handle, t('plugin.chat.images.failed'), selectedImage); }
+                    if (isCurrentSession()) renderImageDraft();
+                })();
+            }).open();
+        };
+        imagePicker.onchange = () => {
+            const files = Array.from(imagePicker.files ?? []);
+            imagePicker.value = '';
+            void addImageFiles(files, Platform.isMobileApp ? 'unverified_import' : 'original_file');
+        };
+        originalPicker.onchange = () => {
+            const files = Array.from(originalPicker.files ?? []);
+            originalPicker.value = '';
+            void addImageFiles(files, 'original_file');
+        };
+        const onImagePaste = (event: ClipboardEvent) => {
+            const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
+                file.type.startsWith('image/') || /\.(?:heic|heif|png|jpe?g|gif|webp|svg)$/i.test(file.name));
+            if (!files.length) return;
+            event.preventDefault();
+            // Clipboard encoders may change camera bytes before delivering a File.
+            void addImageFiles(files, 'unverified_import');
+        };
+        const onImageDrop = (event: DragEvent) => {
+            const files = Array.from(event.dataTransfer?.files ?? []).filter((file) =>
+                file.type.startsWith('image/') || /\.(?:heic|heif|png|jpe?g|gif|webp|svg)$/i.test(file.name));
+            if (!files.length) return;
+            event.preventDefault();
+            void addImageFiles(files, 'original_file');
+        };
+        const onImageDragOver = (event: DragEvent) => {
+            if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+        };
+        textArea.addEventListener('paste', onImagePaste);
+        composerRow.addEventListener('drop', onImageDrop);
+        composerRow.addEventListener('dragover', onImageDragOver);
+        this.registerViewTeardown(() => {
+            textArea.removeEventListener('paste', onImagePaste);
+            composerRow.removeEventListener('drop', onImageDrop);
+            composerRow.removeEventListener('dragover', onImageDragOver);
+        });
         const setHistoryDeleteButtonsDisabled = (disabled: boolean) => {
             historyDeleteButtons.forEach((button) => {
                 button.disabled = disabled;
             });
         };
         const removeElement = (element?: HTMLElement | null) => {
+            if (element) { this.imageRenderCleanups.get(element)?.(); this.imageRenderCleanups.delete(element); }
             if (element?.parentElement) {
                 element.parentElement.removeChild(element);
             }
@@ -1072,7 +1289,9 @@ export class LLMView extends ItemView {
             return Boolean(workspace.getLeavesOfType?.('markdown')?.some(isMarkdownLeaf));
         };
         const fillComposer = (prompt: string) => {
+            if (composerDraft.hasDraft(textArea.value)) { textArea.focus(); return; }
             textArea.value = prompt;
+            composerDraft.touchText();
             hideComposerHint();
             syncComposerControls();
             textArea.focus();
@@ -1910,6 +2129,58 @@ export class LLMView extends ItemView {
             }
         };
 
+        const writingModalHost = (): WritingModalHost | undefined => {
+            const versions = this.host.writingVersions;
+            if (!versions) return undefined;
+            return {
+                versions, save: this.host.writingSave,
+                rememberStyle: this.host.rememberWritingStyle
+                    ? (versionId, scene) => this.host.rememberWritingStyle!(versionId, scene) : undefined,
+                onSelect: (version) => {
+                    if (!isCurrentSession() || version.conversationId !== this.conversationPersistence.activeConversationId) return;
+                    selectedWritingVersion = version;
+                    selectedWritingParentExplicit = true;
+                    showComposerHint(t('plugin.chat.writing.continueHint'));
+                },
+            };
+        };
+        const renderWritingActions = (rendered: RenderedMessage, message: ChatMessage) => {
+            rendered.writingButton?.remove(); rendered.writingButton = undefined;
+            const host = writingModalHost();
+            if (!host || (!message.writingVersionId && !message.writingRecovery)) return;
+            const button = createMessageActionButton(rendered.actionDiv, {
+                cls: 'pa-chat-writing-action', icon: 'file-pen-line',
+                label: t(message.writingVersionId ? 'plugin.chat.writing.title' : 'plugin.chat.writing.recovery'),
+            });
+            rendered.writingButton = button;
+            button.onclick = () => {
+                if (message.writingVersionId) { new WritingVersionModal(this.app, host, message.writingVersionId).open(); return; }
+                const recovery = message.writingRecovery;
+                if (!recovery) return;
+                new WritingRecoveryModal(this.app, recovery, async (text, origin) => {
+                    if (!isCurrentSession()) throw new Error('Writing view closed');
+                    const entry = timelineEntries.find((entry) => entry.kind === 'history' && entry.assistant === message);
+                    if (!entry || entry.kind !== 'history') throw new Error('Writing turn unavailable');
+                    let version: WritingVersion | undefined;
+                    const persisted = await this.conversationPersistence.reviseFinalizedTurn(entry, async (context) => {
+                        version = await host.versions.create({ ...context, requestId: newWritingActionId(),
+                            messageId: recovery.messageId ?? recovery.requestId, text, origin,
+                            parentVersionId: recovery.parentVersionId,
+                            backgroundSourceRefs: recovery.backgroundSourceRefs,
+                            images: mergeWritingImages(entry.user.images ?? [], message.images ?? []),
+                        });
+                        message.writingVersionId = version.id;
+                    });
+                    if (!persisted || !version) { delete message.writingVersionId; throw new Error('Writing persistence unavailable'); }
+                    if (isCurrentSession() && version.conversationId === this.conversationPersistence.activeConversationId) {
+                        selectedWritingVersion = version;
+                        selectedWritingParentExplicit = false;
+                    }
+                    renderWritingActions(rendered, message);
+                    return version;
+                }, host).open();
+            };
+        };
         const createMessageElement = (
             message: ChatMessage,
             options: {
@@ -1939,6 +2210,11 @@ export class LLMView extends ItemView {
                 activeIdenticon: options.showAssistantLoader,
             });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
+            if (message.images?.length && this.host.imageAssetService) {
+                this.imageRenderCleanups.set(messageDiv, renderImageAttachments(
+                    messageDiv, message.images, this.host.imageAssetService, this.app,
+                ));
+            }
             const actionDiv = messageDiv.createDiv({
                 cls: 'message-actions message-action-toolbar',
                 attr: {
@@ -2001,6 +2277,7 @@ export class LLMView extends ItemView {
             };
 
             ensureCompletedMessageActions(rendered, options);
+            renderWritingActions(rendered, message);
 
             if (!options.skipInitialRender) {
                 void renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), {
@@ -2371,7 +2648,7 @@ export class LLMView extends ItemView {
                 }
 
                 entry.userMessage = createMessageElement(
-                    { role: 'user', content: entry.prompt },
+                    { role: 'user', content: entry.prompt, images: entry.images },
                     { forceScroll },
                 );
                 createTerminalRow(entry);
@@ -2408,7 +2685,7 @@ export class LLMView extends ItemView {
             retryButton.onclick = () => {
                 if (retryButton.disabled || isGenerating()) return;
                 removeTerminalEntry(entry);
-                void sendPrompt(entry.prompt);
+                void sendPrompt(entry.prompt, entry.images ?? [], entry.id, entry.writingParent, entry.writingMaterialContext);
             };
 
             const deleteButton = actions.createEl('button', {
@@ -2470,6 +2747,9 @@ export class LLMView extends ItemView {
                 kind: 'terminal',
                 id: turn.id,
                 prompt: turn.prompt,
+                writingParent: turn.writingParent,
+                writingMaterialContext: turn.writingMaterialContext,
+                images: turn.images ? cloneMessageImages(turn.images) : undefined,
                 content,
                 terminalKind,
                 errorDetail,
@@ -3123,10 +3403,21 @@ export class LLMView extends ItemView {
 
             if (!isLiveTurn()) return false;
 
-            const userMessage: ChatMessage = { role: 'user', content: prompt };
+            const userMessage: ChatMessage = { role: 'user', content: prompt,
+                ...(turn.images?.length ? { images: cloneMessageImages(turn.images) } : {}),
+                ...(turn.userProvenance ? { hostProvenance: turn.userProvenance } : {}),
+            };
             const assistantMessage: ChatMessage = {
                 role: 'assistant',
                 content: responseContent,
+                hostProvenance: { version: 1, messageId: `${turn.userProvenance?.messageId ?? turn.id}-assistant`, kind: 'ai_draft' },
+                ...(turn.writingRecovery ? { writingRecovery: { ...turn.writingRecovery,
+                    parentVersionId: turn.writingParent?.id,
+                    backgroundSourceRefs: (turn.canonicalLifecycle.hostSourceRecords ?? [])
+                        .filter((record) => record.path && record.citationEligible !== false && !record.redacted)
+                        .map((record) => ({ path: record.path! })),
+                } } : {}),
+                ...(turn.writingRequestId ? { images: cloneMessageImages(turn.writingMaterials ?? []) } : {}),
                 ...(
                     sawLegacyPartialFailure
                     || (
@@ -3161,8 +3452,27 @@ export class LLMView extends ItemView {
             };
             timelineEntries.push(historyEntry);
             this.result = responseContent;
-            await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry);
-            await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
+            readConversationImageAnchor();
+            const persisted = await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry,
+                turn.writingArtifact && this.host.writingVersions ? async (context) => {
+                    const artifact = turn.writingArtifact!;
+                    const version = await this.host.writingVersions!.create({ ...context,
+                        requestId: artifact.requestId, messageId: artifact.messageId, text: artifact.body,
+                        explanation: artifact.explanation, parentVersionId: turn.writingParent?.id,
+                        images: turn.writingMaterials ?? [], styleRevisionIds: artifact.styleRevisionIds,
+                        scene: inferWritingScene(prompt, turn.writingParent?.scene),
+                        backgroundSourceRefs: (turn.canonicalLifecycle.hostSourceRecords ?? [])
+                            .filter((record) => record.path && record.citationEligible !== false && !record.redacted)
+                            .map((record) => ({ path: record.path! })),
+                    });
+                    assistantMessage.writingVersionId = version.id;
+                    selectedWritingVersion = version;
+                    selectedWritingParentExplicit = false;
+                } : undefined,
+            );
+            if (turn.writingRequestId && !persisted && isCurrentSession()) new Notice(t('plugin.chat.writing.historyUnavailable'), 12000);
+            if (!turn.writingRequestId) await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
+            renderWritingActions(assistantRendered, assistantMessage);
 
             const deleteCompletedPair = () => deleteHistoryPairForMessages(userMessage, assistantMessage);
             ensureCompletedMessageActions(userRendered, {
@@ -3219,8 +3529,14 @@ export class LLMView extends ItemView {
             return true;
         };
 
-        const sendPrompt = async (prompt: string) => {
-            if (!prompt.trim() || isGenerating()) return;
+        const sendPrompt = async (prompt: string, retryImages?: MessageImage[], retryTurnId?: number, retryWritingParent?: WritingVersion,
+            retryWritingMaterialContext?: ChatWritingMaterialContext) => {
+            if (isGenerating()) return;
+            if (retryImages === undefined ? !composerDraft.canSend(prompt) : !prompt.trim() && !retryImages.length) return;
+            if ((retryImages === undefined ? composerDraft.snapshot(prompt).images.length : retryImages.length)
+                && this.chatService.getImageCapability?.() === 'unsupported') {
+                showComposerHint(t('plugin.chat.writing.unsupportedImages')); return;
+            }
             if (this.host.getAIReadiness?.("chat").issue === "token_unknown") {
                 const tokenState = this.host.refreshAPITokenPresence?.() ?? "unknown";
                 if (tokenState === "unknown") {
@@ -3236,6 +3552,34 @@ export class LLMView extends ItemView {
                 syncComposerControls();
                 return;
             }
+            const consumeRestoredRetry = retryTurnId !== undefined && restoredTerminalDraft?.turnId === retryTurnId
+                && composerDraft.isUnchanged(restoredTerminalDraft.snapshot) && textArea.value === restoredTerminalDraft.snapshot.text;
+            const sentDraft: SentComposerDraft<MessageImage> | null = retryImages === undefined || consumeRestoredRetry ? composerDraft.take(prompt) : null;
+            if (consumeRestoredRetry) restoredTerminalDraft = undefined;
+            if (retryImages === undefined && !sentDraft) return;
+            const turnImages = cloneMessageImages(retryImages ?? sentDraft!.snapshot.images.map((entry) => entry.value!));
+            if (retryImages === undefined && isNewWritingTopicPrompt(prompt)) {
+                selectedWritingVersion = undefined;
+                selectedWritingParentExplicit = false;
+            }
+            // Only the immediately preceding failed task supplies implicit
+            // material lineage. An unrelated history image is merely resolvable.
+            const previousTurn = timelineEntries.at(-1);
+            const previousAssistant = previousTurn?.kind === 'history' ? previousTurn.assistant : undefined;
+            const previousUser = previousTurn?.kind === 'history' ? previousTurn.user : undefined;
+            const failedWriting = previousAssistant?.role === 'assistant' && !previousAssistant.writingVersionId
+                ? previousAssistant.writingRecovery : undefined;
+            const continueFailedWriting = retryImages === undefined && !selectedWritingParentExplicit
+                && isWritingContinuationPrompt(prompt) && failedWriting;
+            const writingRequest = this.host.writingVersions && isWritingRequestPrompt(prompt,
+                !!(retryWritingParent ?? selectedWritingVersion ?? retryWritingMaterialContext ?? failedWriting))
+                ? { requestId: newWritingActionId() } : undefined;
+            const writingParent = !writingRequest ? undefined : retryImages !== undefined ? retryWritingParent
+                : !isNewWritingTopicPrompt(prompt) && (selectedWritingParentExplicit || isWritingContinuationPrompt(prompt))
+                    && (!continueFailedWriting || selectedWritingVersion?.id === failedWriting?.parentVersionId) ? selectedWritingVersion : undefined;
+            const writingMaterialContext = !writingRequest ? undefined : retryImages !== undefined ? retryWritingMaterialContext
+                : continueFailedWriting ? { requestId: continueFailedWriting.requestId,
+                    associatedImages: mergeChatImageMaterials(previousUser?.images ?? [], previousAssistant?.images ?? []) } : undefined;
             isStopping = false;
             isFinalizing = false;
             removeElement(emptyStateEl);
@@ -3255,6 +3599,21 @@ export class LLMView extends ItemView {
             const turn: UiTurn = {
                 id: ++uiTurnId,
                 prompt,
+                images: turnImages,
+                writingRequestId: writingRequest?.requestId,
+                writingParent,
+                writingMaterialContext,
+                writingMaterials: mergeChatImageMaterials(writingMaterialContext?.associatedImages ?? [], writingParent?.associatedImages ?? [], turnImages),
+                userProvenance: {
+                    version: 1,
+                    messageId: `chat-${sessionId}-${turnId}-${Date.now()}`,
+                    kind: classifyChatUserProvenanceKind(prompt, {
+                        hasImages: turnImages.length > 0,
+                        writingContext: ['writing_request', 'user_local_edit'].includes(
+                            [...this.chatHistory].reverse().find((message) => message.role === 'user')?.hostProvenance?.kind ?? '',
+                        ),
+                    }),
+                },
                 contextUsedItems: [],
                 activityDetails: [],
                 canonicalLifecycle: createCanonicalLifecycleState(),
@@ -3267,10 +3626,11 @@ export class LLMView extends ItemView {
 
             try {
                 turn.userMessage = createMessageElement(
-                    { role: 'user', content: prompt },
+                    { role: 'user', content: prompt, images: turnImages },
                     { animate: true, forceScroll: true, isLive: isUiTurnVisible, sourcePath: turnSourcePath },
                 );
-                textArea.value = '';
+                if (sentDraft) textArea.value = '';
+                renderImageDraft();
                 hideComposerHint();
                 setHistoryDeleteButtonsDisabled(true);
                 syncComposerControls();
@@ -3324,6 +3684,12 @@ export class LLMView extends ItemView {
                     renderLiveMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn);
                 };
 
+                // Existing image conversations can be reopened after upgrading,
+                // without using either add-image entry point first.
+                if (turnImages.length || turn.writingMaterials?.length || modelHistory.some((message) => message.images?.length)) {
+                    await showImageProviderNotice(isLiveTurn);
+                    if (!isLiveTurn()) throw new DOMException('Cancelled', 'AbortError');
+                }
                 await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
@@ -3335,6 +3701,16 @@ export class LLMView extends ItemView {
                     modelHistory,
                     {
                         memoryMode: "auto",
+                        images: turnImages,
+                        imageAssetService: this.host.imageAssetService,
+                        writingRequest,
+                        prepareWritingStyle: writingRequest && this.host.prepareWritingStyle
+                            ? (budget) => this.host.prepareWritingStyle!(prompt, turn.writingParent?.scene, budget) : undefined,
+                        writingContext: turn.writingParent ? {
+                            parentVersionId: turn.writingParent.id, text: turn.writingParent.text,
+                            textHash: turn.writingParent.textHash, associatedImages: turn.writingParent.associatedImages,
+                        } : undefined,
+                        writingMaterialContext: turn.writingMaterialContext,
                         pageletHandoff: turnPageletHandoff ?? undefined,
                         onOperationsIntentStaged: (intent) => {
                             if (!isLiveTurn() || !turn.assistantMessage) return;
@@ -3342,12 +3718,27 @@ export class LLMView extends ItemView {
                             if (handle) operationsCardHandles.push(handle);
                         },
                         onLifecycleEvent: (event) => {
-                            handleCanonicalLifecycleEvent(turn, event, updateResponseContent, isLiveTurn);
+                            handleCanonicalLifecycleEvent(turn, event, writingRequest ? () => undefined : updateResponseContent, isLiveTurn);
                         },
                         onStatus: handleStatus,
                         onReasoningChunk: handleProviderReasoning,
                         onTurnMetadata: handleTurnMetadata,
                         onEvent: (event) => {
+                            if (event.kind === 'writing-artifact') {
+                                if (!isLiveTurn() || event.requestId !== writingRequest?.requestId) return;
+                                turn.writingMaterials = mergeChatImageMaterials(event.associatedImages ?? [], turn.writingMaterials ?? []);
+                                turn.writingArtifact = event;
+                                updateResponseContent(event.body);
+                                return;
+                            }
+                            if (event.kind === 'writing-recovery') {
+                                if (!isSameTurn() || event.requestId !== writingRequest?.requestId) return;
+                                turn.writingMaterials = mergeChatImageMaterials(event.associatedImages ?? [], turn.writingMaterials ?? []);
+                                turn.writingRecovery = { requestId: event.requestId, messageId: event.messageId,
+                                    rawText: event.rawText, reason: event.reason };
+                                if (isLiveTurn()) updateResponseContent(t('plugin.chat.writing.recoveryHint'));
+                                return;
+                            }
                             if (event.kind === 'partial-output-error' || event.kind === 'aborted') {
                                 sawLegacyPartialFailure = true;
                             }
@@ -3416,7 +3807,14 @@ export class LLMView extends ItemView {
             } catch (error) {
                 for (const handle of operationsCardHandles) handle.discard();
                 if (!isSameTurn()) return;
-                if (error instanceof DOMException && error.name === 'AbortError') {
+                if (turn.writingRecovery) {
+                    // A terminal failure may retain raw output for explicit recovery,
+                    // but can never commit the earlier candidate as a writing version.
+                    delete turn.writingArtifact;
+                    isFinalizing = true;
+                    syncComposerControls();
+                    await finalizeSuccessfulTurn(turn, prompt, t('plugin.chat.writing.recoveryHint'), isSameTurn, true);
+                } else if (error instanceof DOMException && error.name === 'AbortError') {
                     createTerminalEntry(turn, t("plugin.chat.notice.generationCancelled"), 'cancelled');
                     this.result = previousResult;
                 } else {
@@ -3432,6 +3830,14 @@ export class LLMView extends ItemView {
                         localOverflow ? undefined : String(error),
                     );
                     this.result = previousResult;
+                }
+                if (sentDraft) {
+                    const restoredText = composerDraft.restore(sentDraft, textArea.value);
+                    if (restoredText !== null) {
+                        textArea.value = restoredText;
+                        restoredTerminalDraft = { turnId: turn.id, snapshot: composerDraft.snapshot(restoredText) };
+                        renderImageDraft();
+                    }
                 }
             } finally {
                 if (isSameTurn()) {
@@ -3480,10 +3886,16 @@ export class LLMView extends ItemView {
             this.chatHistory = [];
             timelineEntries = [];
             this.conversationPersistence.resetActiveConversationState();
+            conversationAnchorFile = undefined;
             this.resetRoleIdenticonSessionSeed();
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
+            composerDraft.clear();
+            selectedWritingVersion = undefined;
+            selectedWritingParentExplicit = false;
+            unverifiedImageIds.clear();
+            renderImageDraft();
             this.result = '';
             hideComposerHint();
             syncComposerControls();
@@ -3544,6 +3956,12 @@ export class LLMView extends ItemView {
         ) => {
             const hydrated = this.conversationPersistence.hydrateConversation(conversation, turns);
             if (!hydrated) return;
+            conversationAnchorFile = undefined;
+            composerDraft.clear();
+            selectedWritingVersion = undefined;
+            selectedWritingParentExplicit = false;
+            unverifiedImageIds.clear();
+            renderImageDraft();
             this.clearPendingPageletHandoff();
             this.invalidateActiveTurn();
             isStopping = false;
@@ -3551,6 +3969,21 @@ export class LLMView extends ItemView {
             this.cancelScheduledScroll();
             this.chatHistory = hydrated.chatHistory;
             timelineEntries = hydrated.timelineEntries;
+            // Restore only the current task (or its exact failed-parent lineage),
+            // never revive an older writing task across a later ordinary turn.
+            const restoredTimeline = timelineEntries;
+            const restoredTurnId = this.activeTurnId;
+            const latestTurn = restoredTimeline.at(-1);
+            const latestWritingId = latestTurn?.kind === 'history'
+                ? latestTurn.assistant.writingVersionId ?? latestTurn.assistant.writingRecovery?.parentVersionId : undefined;
+            if (latestWritingId && this.host.writingVersions) {
+                void this.host.writingVersions.get(latestWritingId).then((version) => {
+                    if (isCurrentSession() && this.activeTurnId === restoredTurnId
+                        && timelineEntries === restoredTimeline && timelineEntries.at(-1) === latestTurn
+                        && version?.id === latestWritingId && version.conversationId === this.conversationPersistence.activeConversationId
+                        && !selectedWritingVersion && !isGenerating()) selectedWritingVersion = version;
+                }).catch(() => undefined);
+            }
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             this.result = '';
@@ -3566,11 +3999,13 @@ export class LLMView extends ItemView {
         };
 
         const restoreActiveConversation = async () => {
+            const initialDraft = composerDraft.snapshot(textArea.value);
             try {
                 const loaded = await this.conversationPersistence.loadActiveConversation();
                 if (!loaded) return;
                 if (!isCurrentSession()) return;
                 if (isGenerating() || this.chatHistory.length > 0 || this.pendingPageletHandoff) return;
+                if (composerDraft.hasDraft(textArea.value) || !composerDraft.isUnchanged(initialDraft)) return;
                 applyRestoredConversation(loaded.conversation, loaded.turns);
             } catch (error) {
                 this.host.log?.("Failed to restore chat history", error);
@@ -3624,10 +4059,16 @@ export class LLMView extends ItemView {
             this.chatHistory = [];
             timelineEntries = [];
             this.conversationPersistence.resetActiveConversationState();
+            conversationAnchorFile = undefined;
             this.resetRoleIdenticonSessionSeed();
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
+            composerDraft.clear();
+            selectedWritingVersion = undefined;
+            selectedWritingParentExplicit = false;
+            unverifiedImageIds.clear();
+            renderImageDraft();
             this.result = '';
             hideComposerHint();
             syncComposerControls();
@@ -3640,15 +4081,17 @@ export class LLMView extends ItemView {
             if (!isCurrentSession()) return { status: "unavailable" };
             if (signal?.aborted) return { status: "unavailable" };
             if (isGenerating()) return { status: "busy" };
-            if (textArea.value.trim().length > 0) {
+            if (composerDraft.hasDraft(textArea.value)) {
                 textArea.focus();
                 return { status: "draft-conflict" };
             }
 
+            const handoffDraft = composerDraft.snapshot(textArea.value);
             const canCommitHandoff = () => isCurrentSession()
                 && !signal?.aborted
                 && !isGenerating()
-                && textArea.value.trim().length === 0;
+                && !composerDraft.hasDraft(textArea.value)
+                && composerDraft.isUnchanged(handoffDraft);
             const clearedActivePointer = await this.conversationPersistence
                 .clearActiveConversationPointerForHandoff({
                     hasVisibleConversation: this.chatHistory.length > 0 || timelineEntries.length > 0,
@@ -3662,13 +4105,16 @@ export class LLMView extends ItemView {
                         this.chatHistory = [];
                         timelineEntries = [];
                         this.conversationPersistence.resetActiveConversationState();
+                        conversationAnchorFile = undefined;
                         this.resetRoleIdenticonSessionSeed();
                         this.unloadAllMarkdownRenderOwners();
                         this.responseDiv.empty();
                         this.result = '';
                         this.pendingPageletHandoff = context;
+                        readConversationImageAnchor();
                         renderPageletHandoff();
                         textArea.value = t("plugin.chat.pageletAttachment.defaultPrompt");
+                        composerDraft.touchText();
                         hideComposerHint();
                         syncComposerControls();
                         renderEmptyState();
@@ -3677,10 +4123,10 @@ export class LLMView extends ItemView {
                 });
             if (!clearedActivePointer) {
                 if (signal?.aborted) return { status: "unavailable" };
-                if (textArea.value.trim().length > 0) textArea.focus();
+                if (composerDraft.hasDraft(textArea.value)) textArea.focus();
                 return isGenerating()
                     ? { status: "busy" }
-                    : textArea.value.trim().length > 0
+                    : composerDraft.hasDraft(textArea.value)
                         ? { status: "draft-conflict" }
                         : { status: "unavailable" };
             }
@@ -3812,6 +4258,7 @@ export class LLMView extends ItemView {
         this.clearChatDrawerHost();
         this.clearPendingPageletHandoff();
         this.composerTextArea = null;
+        this.composerDraft = null;
         this.syncComposerControlsForExternalPrefill = null;
         this.renderPageletHandoffForOpenView = null;
         this.preparePageletHandoffForOpenView = null;

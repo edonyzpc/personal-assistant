@@ -9,6 +9,7 @@ import type {
     MemoryProjectionLink,
     PersistedMemoryProvenance,
 } from "./memory-governance-persistence";
+import { isGovernableWritingStyle, parseWritingStyle, type WritingStylePayload } from './writing-style';
 import type { MemoryControlCenterEffect } from "./memory-control-center";
 
 const DEFAULT_RECENT_WINDOW_MS = 7 * 24 * 60 * 60_000;
@@ -16,6 +17,7 @@ const DEFAULT_RECENT_WINDOW_MS = 7 * 24 * 60 * 60_000;
 export type GovernedMemoryUseStatus = "active" | "paused" | "stored_not_in_use";
 
 export interface GovernedMemoryRecordView {
+    writingStyle?: Pick<WritingStylePayload, 'exactText' | 'scene' | 'writingVersionId'>;
     claimId: string;
     record: ConfirmedMemoryRecord;
     authority: MemoryClaimRevision["authority"];
@@ -173,6 +175,9 @@ function buildRecordView(
         claimId: claim.id,
         record,
         authority: revision.authority,
+        ...(isGovernableWritingStyle(claim, revision, claim.partition.key) ? {
+            writingStyle: ((style) => ({ exactText: style.exactText, scene: style.scene, writingVersionId: style.writingVersionId }))(parseWritingStyle(revision.writingStyle)!),
+        } : {}),
         effect: claim.effect,
         useStatus: useStatusForClaim(claim),
         provenance: revision.provenance.map(clonePersistedProvenance),

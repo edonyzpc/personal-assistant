@@ -48,6 +48,30 @@ function makePersistence(manager: ChatHistoryManager) {
 }
 
 describe("ConversationPersistence", () => {
+    it("prepares version identity after creating the conversation but before the single turn commit", async () => {
+        const order: string[] = [];
+        const recordTurn = jest.fn(async () => { order.push('turn'); return conversation; });
+        const manager = {
+            initialize: jest.fn(async () => undefined), isAvailable: () => true,
+            startConversation: jest.fn(async () => { order.push('conversation'); return { ...conversation, turnCount: 0 }; }),
+            recordTurn, maybePrune: jest.fn(async () => []), findConversation: jest.fn(async () => conversation),
+        } as unknown as ChatHistoryManager;
+        const extraction = jest.fn();
+        const persistence = new ConversationPersistence({ getManager: () => manager, log: jest.fn(), scheduleMemoryExtractionAfterChatTurn: extraction });
+        const entry: TimelineEntry = { kind: 'history', user: { role: 'user', content: 'caption' }, assistant: { role: 'assistant', content: 'body' } };
+        await expect(persistence.persistFinalizedTurn('caption', entry, async (context) => {
+            expect(context).toEqual({ conversationId: 'conv-1', turnIndex: 0 });
+            order.push('version'); entry.assistant.writingVersionId = 'writing1';
+        })).resolves.toBe(true);
+        expect(order).toEqual(['conversation', 'version', 'turn']);
+        await expect(persistence.reviseFinalizedTurn(entry, async (context) => {
+            expect(context).toEqual({ conversationId: 'conv-1', turnIndex: 0 });
+            entry.assistant.writingVersionId = 'recovered1';
+        })).resolves.toBe(true);
+        expect(recordTurn).toHaveBeenCalledTimes(2);
+        expect(extraction).toHaveBeenCalledTimes(1);
+    });
+
     it("loads a conversation without committing the active conversation pointer", async () => {
         const manager = makeManager();
         const persistence = makePersistence(manager);

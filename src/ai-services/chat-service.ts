@@ -25,6 +25,7 @@ import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, Cha
 import { OperationsService, OperationsSession } from './operations/operations-service';
 import { PaAgentContextSummarizer } from './context/PaAgentContextSummarizer';
 import { createAbortError, throwIfAborted } from './chat-utils';
+import { ChatImageCapabilityRegistry, chatImageModelKey, type ChatImageCapability } from './image-capability';
 import type {
     OperationsControllerEvent,
     OperationsExecutionResult,
@@ -45,6 +46,12 @@ export function getBailianWebSearchEndpointForBaseURL(baseURL: string): string {
 }
 
 export interface StreamLLMOptions {
+    images?: import('../chat/image-types').MessageImage[];
+    imageAssetService?: import('../chat/image-assets').ImageAssetService;
+    writingRequest?: import('./chat-types').ChatWritingRequest;
+    writingContext?: import('./chat-types').ChatWritingContext;
+    writingMaterialContext?: import('./chat-types').ChatWritingMaterialContext;
+    prepareWritingStyle?: import('./chat-types').ChatWritingStylePreparation;
     memoryMode?: MemoryMode;
     /** Optional per-turn history cap; the runtime only permits lowering its normal limit. */
     historyBudgetChars?: number;
@@ -69,6 +76,9 @@ export class ChatService {
     private readonly contextSummarizer = new PaAgentContextSummarizer();
     private contextModelKey: string | undefined;
     private contextEpoch = 0;
+    private readonly imageCapabilities = new ChatImageCapabilityRegistry();
+
+    getImageCapability(): ChatImageCapability { return this.imageCapabilities.get(this.host.settings); }
 
     constructor(host: AiServiceHost, operationsSession?: OperationsSession) {
         this.host = host;
@@ -180,6 +190,8 @@ export class ChatService {
         if (this.contextModelKey !== undefined && this.contextModelKey !== modelKey) this.resetContext();
         this.contextModelKey = modelKey;
         const contextEpoch = this.contextEpoch;
+        const imageModelIdentity = { aiProvider: this.host.settings.aiProvider, baseURL: this.host.settings.baseURL, chatModelName: this.host.settings.chatModelName };
+        const imageModelKey = chatImageModelKey(imageModelIdentity);
         const lease = await this.host.agentRunCoordinator?.acquireChatLease(signal);
         const unsubscribeOperations = options.onOperationsIntentStaged
             ? this.operationsSession.subscribe((event: OperationsControllerEvent) => {
@@ -219,6 +231,18 @@ export class ChatService {
             await runtime.streamTurn({
                 prompt,
                 chatHistory,
+                images: options.images,
+                imageAssetService: options.imageAssetService,
+                writingRequest: options.writingRequest,
+                writingContext: options.writingContext,
+                writingMaterialContext: options.writingMaterialContext,
+                prepareWritingStyle: options.prepareWritingStyle,
+                isCurrent: () => contextEpoch === this.contextEpoch && imageModelKey === chatImageModelKey(this.host.settings),
+                imageCapability: {
+                    get: () => this.imageCapabilities.get(imageModelIdentity),
+                    onSuccess: () => this.imageCapabilities.recordSupported(imageModelIdentity),
+                    onError: (error) => this.imageCapabilities.recordError(imageModelIdentity, error),
+                },
                 historyBudgetChars: options.historyBudgetChars,
                 memoryMode,
                 pageletHandoff: options.pageletHandoff,
@@ -259,6 +283,8 @@ function adaptAgentEvent(
             options.onTurnMetadata?.(event.metadata);
             return;
         case "answer-started":
+        case "writing-artifact":
+        case "writing-recovery":
         case "answer-complete":
         case "partial-output-error":
         case "aborted":

@@ -2,6 +2,7 @@ import type { ChatMessage } from "../chat-types";
 import { escapeTaggedBoundary } from "../agent-utils";
 import type { PaAgentHistoryContextPlan } from "./PaAgentContextSummaryTypes";
 import { encodeAdjacentRepeats } from "./PaAgentContextTextEncoding";
+import { chatHistoryImageMetadata } from "../chat-image-identity";
 
 /** Both planning and projection admit exactly the same complete serialized history. */
 export function fitFullHistory(
@@ -16,7 +17,7 @@ export function fitFullHistory(
     const messages = history.map((message) => {
         const encoded = encodeAdjacentRepeats(message.content);
         encodedAny ||= encoded !== undefined;
-        return { role: message.role, content: encoded ?? message.content };
+        return { role: message.role, content: encoded ?? message.content, ...chatHistoryImageMetadata(message) };
     });
     if (!encodedAny) return undefined;
     const body = JSON.stringify(messages, null, 2);
@@ -66,6 +67,7 @@ export function formatHistoryMessages(history: readonly ChatMessage[]): string {
     const body = JSON.stringify(history.map((message) => ({
         role: message.role,
         content: message.content,
+        ...chatHistoryImageMetadata(message),
     })), null, 2);
     return `<chat_history context_only="true" format="json">\n${escapeTaggedBoundary(body, "chat_history")}\n</chat_history>`;
 }

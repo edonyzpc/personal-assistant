@@ -9,7 +9,11 @@ import { groupChatTurns, PaAgentContextCompactor } from "./PaAgentContextCompact
 import { fitFullHistory, formatHistoryMessages, formatSemanticHistorySummary } from "./PaAgentHistoryContextPlan";
 import { isCurrentHistorySummary, type PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
 
+export const MEMORY_CONTEXT_MAX_CHARS = 6_000;
+
 export interface PaAgentInjectedContext {
+    /** Host-rendered typed samples; admission counts their complete wrapper. */
+    writingStyleContext?: string;
     /** Select exactly one Memory projection path for this prompt. */
     memoryContextMode?: "legacy" | "governed";
     userProfile?: string;
@@ -176,7 +180,7 @@ function formatProjectedHistory(summary: string, history: ChatMessage[]): string
     return [summaryText, recentText].filter(Boolean).join("\n\n");
 }
 
-function formatInjectedContext(context: PaAgentInjectedContext | undefined): string {
+export function formatInjectedContext(context: PaAgentInjectedContext | undefined): string {
     if (!context) return "";
     const blocks: string[] = [];
     const governedMemoryContext = context.governedMemoryContext?.trim();
@@ -187,7 +191,7 @@ function formatInjectedContext(context: PaAgentInjectedContext | undefined): str
         // including when the governed selector intentionally returns empty.
         if (governedMemoryContext) {
             blocks.push(`<governed_memory_projection context_only="true" source="memory_governance" grants_tool_authority="false" grants_write_authority="false" grants_network_authority="false" grants_external_action_authority="false">\n${escapeTaggedBoundary(
-                governedMemoryContext.slice(0, 6_000),
+                governedMemoryContext.slice(0, MEMORY_CONTEXT_MAX_CHARS),
                 "governed_memory_projection",
             )}\n</governed_memory_projection>`);
         }
@@ -202,6 +206,7 @@ function formatInjectedContext(context: PaAgentInjectedContext | undefined): str
             blocks.push(`<vault_insights context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(context.vaultInsights.trim(), "vault_insights")}\n</vault_insights>`);
         }
     }
+    if (context.writingStyleContext) blocks.push(context.writingStyleContext);
     if (context.pageletHandoff) {
         const handoff = createPageletChatHandoffContext(context.pageletHandoff);
         const serialized = JSON.stringify(handoff, null, 2);

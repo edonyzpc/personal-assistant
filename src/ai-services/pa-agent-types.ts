@@ -14,6 +14,7 @@ import type {
     AgentEndStatus,
     AssistantMessagePart,
     PaToolResultContent,
+    ProviderCompletion,
     ToolExecutionOutcome,
 } from "./chat-types";
 
@@ -30,6 +31,7 @@ import type {
 export type PaAgentToolExecutionMode = "sequential" | "parallel" | "hybrid";
 
 export type PaAgentModelStreamChunk =
+    | { type: "provider_completion"; completion: ProviderCompletion }
     | { type: "thinking_delta"; text: string }
     | { type: "text_delta"; text: string }
     | { type: "toolcall_delta"; id?: string; name: string; input?: unknown; argsText?: string; index?: number }

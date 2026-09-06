@@ -300,6 +300,15 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
 
         const summary = this.correctedSummaries.get(record.id) ?? record.summary;
         cardEl.appendChild(el("h4", "pa-pagelet-tab-memory-summary", summary));
+        if (record.writingStyle) {
+            const details = el('details', 'pa-pagelet-tab-memory-style');
+            details.appendChild(el('summary', '', this.locale === 'zh' ? '风格样例' : 'Style example'));
+            const sample = el('textarea', 'pa-pagelet-tab-memory-correction-input');
+            sample.value = record.writingStyle.exactText; sample.readOnly = true; sample.rows = 6;
+            sample.setAttribute('aria-label', this.locale === 'zh' ? '完整风格样例' : 'Complete style example');
+            details.appendChild(sample);
+            cardEl.appendChild(details);
+        }
         const sourcePath = record.sourceRefs[0]?.path;
         if (sourcePath) this.appendSourceMetaRow(cardEl, sourcePath);
         this.appendMemoryMetaRow(
@@ -461,6 +470,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
                 "pa-pagelet-tab-memory-correct",
                 pageletT("pagelet.tab.memory.correct", this.locale),
                 () => {
+                    if (record.writingStyle) { this.callbacks.onOpenMemorySettings?.(record.id); return; }
                     this.recordActionState.delete(record.id);
                     this.editingRecordIds.add(record.id);
                     this.requestRerenderWithFocus(

@@ -69,6 +69,7 @@ export type MemoryControlCenterAction =
     | "retry_forget";
 
 export interface MemoryControlCenterItem {
+    writingStyle?: import('./memory-governance-view').GovernedMemoryRecordView['writingStyle'];
     id: string;
     claimId?: string;
     profileRecordId?: string;
@@ -726,4 +727,3 @@ function nonEmptyString(value: unknown): string | null {
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
 }
-

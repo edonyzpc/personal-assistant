@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { Component, MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
+import { Component, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, TFile, type App } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
@@ -9,9 +9,18 @@ import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/cha
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
+import { WritingVersionService } from '../src/chat/writing-versions';
+import { WritingRecoveryModal, WritingSaveModal, WritingStyleModal } from '../src/chat/writing-modal';
+import { WritingStyleUnavailableError } from '../src/chat/writing-style-service';
+import type { WritingVersion } from '../src/chat/writing-types';
+import type { WritingSaveAction, PreparedWritingSave } from '../src/chat/writing-save-action';
+import { ImageManagementModal, VaultImagePickerModal } from '../src/chat/image-management-modal';
+import { ImageAssetService } from '../src/chat/image-assets';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
+import type { ComposerDraft } from '../src/chat/composer-draft';
+import type { MessageImage } from '../src/chat/image-types';
 import type {
     OperationsExecutionResult,
     OperationsIntent,
@@ -997,6 +1006,631 @@ describe('LLMView turn lifecycle', () => {
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
     });
 
+    it('freezes a host-bound writing artifact once and keeps the raw envelope out of the visible/copy answer', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'writing-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('帮我写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        expect(call.options.writingRequest?.requestId).toBeTruthy();
+        const raw = '{"body":"不直接展示整个 envelope"}';
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_end', message: assistantMessage('writing_answer', [{ type: 'text', text: raw }]) }));
+        expect(allText(containerEl)).not.toContain(raw);
+        const artifact = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-artifact' as const, runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'writing_answer', body: '  海边的风。\n带着盐味。🙂', explanation: '辅助说明单独保留' };
+        call.options.onEvent?.(artifact);
+        call.options.onEvent?.(artifact);
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        const stored = await versions.list('writing-conversation');
+        expect(stored).toHaveLength(1);
+        expect(stored[0].text).toBe(artifact.body);
+        expect(stored[0].explanation).toBe(artifact.explanation);
+        expect(view.chatHistory[1].content).toBe(artifact.body);
+        expect(view.chatHistory[1].writingVersionId).toBe(stored[0].id);
+        expect((await store.getTurns('writing-conversation'))[0].assistant.writingVersionId).toBe(stored[0].id);
+        expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
+        expect(allText(containerEl)).not.toContain(raw);
+    });
+
+    it('retains incomplete writing separately and does not infer an artifact from valid-looking JSON', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'recovery-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('重写文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const rawText = '{"kind":"pa.writing","body":"被截断的输出也不自动采纳"}';
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'incomplete_answer', rawText, reason: 'provider_incomplete' });
+        call.resolve();
+        for (let i = 0; i < 6; i++) await flushPromises();
+        expect(await versions.list('recovery-conversation')).toEqual([]);
+        expect(view.chatHistory[1].writingRecovery?.rawText).toBe(rawText);
+        expect(view.chatHistory[1].content).not.toContain(rawText);
+        expect((await store.getTurns('recovery-conversation'))[0].assistant.writingRecovery?.rawText).toBe(rawText);
+        expect(allText(containerEl)).not.toContain(rawText);
+        expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
+    });
+
+    it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'resolved-writing' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('继续刚才的文案任务：请重新查看第3张图片');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const material: MessageImage = { ordinal: 3, label: 'source.png', ref: { assetId: 'png', contentHash: 'a'.repeat(64) } };
+        await store.putImageAsset({ id: material.ref.assetId, originalHash: material.ref.contentHash, source: 'vault_reference',
+            originalPath: 'source.png', detectedMime: 'image/png', byteLength: 3, acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
+        const shared = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
+            requestId: call.options.writingRequest!.requestId, messageId: 'writing_answer', associatedImages: [material] };
+        call.options.onEvent?.(kind === 'artifact' ? { ...shared, kind: 'writing-artifact', body: 'BODY', explanation: '' }
+            : { ...shared, kind: 'writing-recovery', rawText: 'prefix BODY suffix', reason: 'invalid_output' });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        const turns = await store.getTurns('resolved-writing');
+        expect(turns[0].assistant.images).toEqual([material]);
+        if (kind === 'artifact') expect((await versions.list('resolved-writing'))[0].associatedImages.map((image) => image.ref)).toEqual([material.ref]);
+        else {
+            expect(await versions.list('resolved-writing')).toEqual([]);
+            await view.onClose();
+            const restored = createView({ chatHistoryManager: manager });
+            Object.assign(restored.plugin, { writingVersions: versions });
+            await restored.view.onOpen();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const openedRecoveries: WritingRecoveryModal[] = [];
+            const openRecovery = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { openedRecoveries.push(this); });
+            getElementByClass(restored.containerEl, 'pa-chat-writing-action').click();
+            const recoveryModal = openedRecoveries[0];
+            const modalRoot = new MockElement('div');
+            recoveryModal.contentEl = modalRoot as unknown as HTMLElement;
+            recoveryModal.onOpen();
+            const areas = walkAll(modalRoot, (element) => element.tagName === 'textarea');
+            const buttons = walkAll(modalRoot, (element) => element.tagName === 'button');
+            Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+            buttons[0].click(); buttons[1].click();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const recovered = (await versions.list('resolved-writing'))[0];
+            expect(recovered.text).toBe('BODY');
+            expect(recovered.associatedImages.map((image) => image.ref)).toEqual([material.ref]);
+            expect((await store.getTurns('resolved-writing'))[0].assistant.writingVersionId).toBe(recovered.id);
+            recoveryModal.onClose();
+            openRecovery.mockRestore();
+            restored.view.prefillComposer('短一点');
+            getElementByClass(restored.containerEl, 'send-button-visible').click();
+            await flushPromises();
+            expect(streamCalls[1].options.writingContext).toMatchObject({ parentVersionId: recovered.id,
+                associatedImages: [{ ...material, ordinal: 1 }] });
+            streamCalls[1].resolve();
+        }
+    });
+
+    it.each([false, true])('inherits only the immediately preceding failed writing material on explicit continuation, including reopen: %s', async (reopen) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'failed-material' });
+        const versions = new WritingVersionService(store);
+        let fixture = createView({ chatHistoryManager: manager });
+        Object.assign(fixture.plugin, { writingVersions: versions });
+        await fixture.view.onOpen();
+        const material: MessageImage = { ordinal: 3, label: 'source.png', ref: { assetId: 'png', contentHash: 'a'.repeat(64) } };
+        await store.putImageAsset({ id: material.ref.assetId, originalHash: material.ref.contentHash, source: 'vault_reference',
+            originalPath: 'source.png', detectedMime: 'image/png', byteLength: 3, acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
+        fixture.view.chatHistory.push({ role: 'user', content: 'unrelated HEIC question', images: [
+            { ordinal: 1, label: 'source.heic', ref: { assetId: 'heic', contentHash: 'b'.repeat(64) } },
+        ] }, { role: 'assistant', content: 'unrelated answer' });
+        fixture.view.prefillComposer('写一段旅行文案');
+        const draft = (fixture.view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        draft.completeImport(draft.beginImport(material.label), material);
+        getElementByClass(fixture.containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const failed = streamCalls[0];
+        failed.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
+            kind: 'writing-recovery', requestId: failed.options.writingRequest!.requestId,
+            rawText: '{"body":""}', reason: 'invalid_output' });
+        failed.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        if (reopen) {
+            await fixture.view.onClose();
+            fixture = createView({ chatHistoryManager: manager });
+            Object.assign(fixture.plugin, { writingVersions: versions });
+            await fixture.view.onOpen();
+            for (let i = 0; i < 8; i++) await flushPromises();
+        }
+        fixture.view.prefillComposer('继续刚才的文案任务：请重新查看第3张图片');
+        getElementByClass(fixture.containerEl, 'send-button-visible').click();
+        await flushPromises();
+        expect(streamCalls[1].options).toMatchObject({ writingMaterialContext: {
+            requestId: failed.options.writingRequest!.requestId, associatedImages: [material],
+        } });
+        expect(streamCalls[1].options.writingContext).toBeUndefined();
+        streamCalls[1].resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        fixture.view.prefillComposer('换个话题，帮我写一封工作邮件');
+        getElementByClass(fixture.containerEl, 'send-button-visible').click();
+        await flushPromises();
+        expect(streamCalls[2].options).not.toHaveProperty('writingMaterialContext', expect.anything());
+        streamCalls[2].resolve();
+    });
+
+    it.each(['before_reopen', 'while_lookup', 'same_task'] as const)('keeps the restored writing parent within the current topic: %s', async (timing) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'writing-topic-boundary' });
+        const versions = new WritingVersionService(store);
+        const material: MessageImage = { ordinal: 3, label: 'travel.png', ref: { assetId: 'travel', contentHash: 'a'.repeat(64) } };
+        await store.putImageAsset({ id: material.ref.assetId, originalHash: material.ref.contentHash, source: 'vault_reference',
+            originalPath: 'travel.png', detectedMime: 'image/png', byteLength: 3, acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
+        let fixture = createView({ chatHistoryManager: manager });
+        Object.assign(fixture.plugin, { writingVersions: versions });
+        await fixture.view.onOpen();
+        const send = async (text: string) => {
+            fixture.view.prefillComposer(text);
+            getElementByClass(fixture.containerEl, 'send-button-visible').click();
+            await flushPromises();
+            return streamCalls.at(-1)!;
+        };
+        const settle = async (call: StreamCall) => { call.resolve(); for (let i = 0; i < 8; i++) await flushPromises(); };
+        const writing = await send('写一段旅行文案');
+        writing.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1', kind: 'writing-artifact',
+            requestId: writing.options.writingRequest!.requestId, messageId: 'travel-writing', body: 'Trip body', explanation: '', associatedImages: [material] });
+        await settle(writing);
+        expect((await versions.list('writing-topic-boundary'))[0].associatedImages).toHaveLength(1);
+        const newTopic = async () => {
+            const call = await send('换个话题，今天星期几？');
+            expect(call.options.writingContext).toBeUndefined();
+            call.onChunk('Today is Sunday.');
+            await settle(call);
+        };
+        if (timing === 'before_reopen') await newTopic();
+        await fixture.view.onClose();
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        const readVersion = versions.get.bind(versions);
+        const lookup = timing === 'while_lookup' ? jest.spyOn(versions, 'get').mockImplementation(async (id) => {
+            const version = await readVersion(id); await pending; return version;
+        }) : undefined;
+        fixture = createView({ chatHistoryManager: manager });
+        Object.assign(fixture.plugin, { writingVersions: versions });
+        await fixture.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        if (lookup) {
+            expect(lookup).toHaveBeenCalledTimes(1);
+            await newTopic();
+            release();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            lookup.mockRestore();
+        }
+        const short = await send('短一点');
+        if (timing === 'same_task') {
+            expect(short.options.writingRequest).toBeDefined();
+            expect(short.options.writingContext).toMatchObject({ text: 'Trip body', associatedImages: [{ ...material, ordinal: 1 }] });
+        } else {
+            expect(short.options.writingRequest).toBeUndefined();
+            expect(short.options.writingContext).toBeUndefined();
+        }
+        expect(short.options.writingMaterialContext).toBeUndefined();
+        await settle(short);
+    });
+
+    it('keeps the writing visible and discloses when its chat turn could not be persisted', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'history-failure-conversation' });
+        jest.spyOn(manager, 'recordTurn').mockRejectedValue(new Error('IDB quota'));
+        const versions = new WritingVersionService(store);
+        const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
+        const previousNoticeCount = notices.length;
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-artifact', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'writing_answer', body: 'Keep this exact writing.', explanation: '' });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(view.chatHistory[1].content).toBe('Keep this exact writing.');
+        expect(await store.getTurns('history-failure-conversation')).toEqual([]);
+        expect(notices.slice(previousNoticeCount).some((notice) => String(notice.message).includes('chat history could not be saved'))).toBe(true);
+    });
+
+    it.each(['cancel', 'error'])('keeps writing recovery after a thrown %s without accepting a candidate', async (failure) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'failed-writing-conversation' });
+        const versions = new WritingVersionService(store);
+        const material: MessageImage = { ordinal: 3, label: 'source.png', ref: { assetId: 'png', contentHash: 'a'.repeat(64) } };
+        await store.putImageAsset({ id: material.ref.assetId, originalHash: material.ref.contentHash, source: 'vault_reference',
+            originalPath: 'source.png', detectedMime: 'image/png', byteLength: 3, acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        const rawText = '{"body":"中断的原始回答"';
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'failed_answer', rawText, reason: 'incomplete', associatedImages: [material] });
+        call.reject(failure === 'cancel' ? new DOMException('Cancelled', 'AbortError') : new Error('transport failed'));
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(await versions.list('failed-writing-conversation')).toEqual([]);
+        expect(view.chatHistory[1].writingRecovery?.rawText).toBe(rawText);
+        expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        expect((await store.getTurns('failed-writing-conversation'))[0].assistant.writingRecovery?.rawText).toBe(rawText);
+        expect((await store.getTurns('failed-writing-conversation'))[0].assistant.images).toEqual([material]);
+        expect(allText(containerEl)).not.toContain(rawText);
+        expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
+    });
+
+    it.each(['artifact', 'recovery'] as const)('ignores a stale writing %s material receipt after closing the view', async (kind) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'stale-writing' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const stale = streamCalls[0];
+        await view.onClose();
+        const shared = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
+            requestId: stale.options.writingRequest!.requestId, messageId: 'old-result', associatedImages: [
+                { ordinal: 3, label: 'old.png', ref: { assetId: 'old-png', contentHash: 'a'.repeat(64) } },
+            ] };
+        stale.options.onEvent?.(kind === 'artifact' ? { ...shared, kind: 'writing-artifact', body: 'old body', explanation: '' }
+            : { ...shared, kind: 'writing-recovery', rawText: 'old raw', reason: 'incomplete' });
+        stale.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(await store.getTurns('stale-writing')).toEqual([]);
+        expect(await versions.list('stale-writing')).toEqual([]);
+    });
+
+    it.each([false, true])('requires an explicit body selection and records actual edits: %s', async (edited) => {
+        const commit = jest.fn(async (_text: string, _origin: WritingVersion['origin']) => ({ id: 'recovered' } as WritingVersion));
+        const root = new MockElement('div');
+        const modal = new WritingRecoveryModal({} as never, { requestId: 'request', rawText: 'prefix BODY suffix', reason: 'incomplete' },
+            commit, { versions: {} as WritingVersionService });
+        modal.contentEl = root as unknown as HTMLElement;
+        modal.onOpen();
+        const areas = walkAll(root, (element) => element.tagName === 'textarea');
+        const buttons = walkAll(root, (element) => element.tagName === 'button');
+        buttons[1].click();
+        await flushPromises();
+        expect(commit).not.toHaveBeenCalled();
+        Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+        buttons[0].click();
+        if (edited) areas[1].value = 'MY BODY';
+        buttons[1].click();
+        await flushPromises();
+        expect(commit).toHaveBeenCalledWith(edited ? 'MY BODY' : 'BODY', edited ? 'user_edited' : 'ai_generated');
+    });
+
+    it('prepares all version images by default and releases a preview that completes after close', async () => {
+        let resolvePrepare!: (prepared: PreparedWritingSave) => void;
+        const prepare = jest.fn((_input: Parameters<WritingSaveAction['prepare']>[0]) => new Promise<PreparedWritingSave>((resolve) => { resolvePrepare = resolve; }));
+        const execute = jest.fn();
+        const save = { prepare, execute, listReceipts: async () => [] } as unknown as WritingSaveAction;
+        const root = new MockElement('div');
+        const images = [1, 2].map((ordinal) => ({ ordinal, label: `image-${ordinal}.png`, ref: { assetId: `asset-${ordinal}`, contentHash: 'a'.repeat(64) } }));
+        const modal = new WritingSaveModal({} as never, save, { id: 'version', text: 'Exact body', associatedImages: images } as WritingVersion);
+        modal.contentEl = root as unknown as HTMLElement;
+        modal.onOpen();
+        const preview = walkAll(root, (element) => element.tagName === 'button').at(-1)!;
+        preview.click();
+        expect(prepare.mock.calls[0][0].images).toEqual(images);
+        expect(execute).not.toHaveBeenCalled();
+        modal.onClose();
+        expect(prepare.mock.calls[0][0].signal?.aborted).toBe(true);
+        const release = jest.fn();
+        resolvePrepare({ release } as unknown as PreparedWritingSave);
+        await flushPromises();
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(execute).not.toHaveBeenCalled();
+    });
+
+    it.each(['legacy_memory', 'governance_unavailable'] as const)('keeps the style choice and explains its Memory blocker: %s', async (code) => {
+        const remember = jest.fn(async () => { throw new WritingStyleUnavailableError(code); });
+        const root = new MockElement('div');
+        const version = { id: 'version', text: 'Exact text', scene: {
+            writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel',
+        } } as WritingVersion;
+        const modal = new WritingStyleModal({} as never, version, remember);
+        modal.contentEl = root as unknown as HTMLElement;
+        modal.onOpen();
+        const accept = walkAll(root, (element) => element.tagName === 'button')[0];
+        accept.click();
+        await flushPromises();
+        expect(remember).toHaveBeenCalledTimes(1);
+        expect(accept.disabled).toBe(false);
+        expect(walk(root, (element) => element.getAttribute('role') === 'status')?.textContent)
+            .toContain(code === 'legacy_memory' ? 'older compatibility mode' : 'not ready');
+        expect(walk(root, (element) => element.tagName === 'pre')?.textContent).toBe('Exact text');
+        expect(walkAll(root, (element) => element.tagName === 'input')).toHaveLength(4);
+        modal.onClose();
+    });
+
+    it('protects image-only and pending drafts from Pagelet and external prefills', async () => {
+        const { view } = createView();
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const handle = draft.beginImport('photo.jpg');
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({ status: 'draft-conflict' });
+        expect(view.prefillComposer('unrelated save suggestion')).toBe(false);
+        draft.completeImport(handle, { ref: { assetId: 'asset-1', contentHash: 'a'.repeat(64) }, label: 'photo.jpg', ordinal: 1 });
+        await expect(view.preparePageletHandoff(createPageletHandoffContext())).resolves.toEqual({ status: 'draft-conflict' });
+        await view.onClose();
+        expect(draft.hasDraft('')).toBe(false);
+    });
+
+    function attachDisclosureService(context: ReturnType<typeof createView>, store: MemoryChatHistoryStore) {
+        Object.assign(context.app.vault, { on: jest.fn(), offref: jest.fn() });
+        const service = new ImageAssetService(context.app as unknown as App, store, {
+            processor: { process: jest.fn(async () => { throw new Error('unused'); }), dispose: async () => undefined },
+        });
+        Object.assign(context.plugin, { imageAssetService: service });
+        const ref = { assetId: 'disclosure-image', contentHash: 'a'.repeat(64) };
+        jest.spyOn(service, 'resolveVariant').mockResolvedValue({ blob: new Blob(['preview']), mime: 'image/jpeg',
+            width: 1, height: 1, persistent: false, release: () => undefined });
+        return { service, ref };
+    }
+
+    it.each(['files', 'vault'] as const)('discloses before the first %s image and not on later imports or view/service reopen', async (firstEntry) => {
+        const store = new MemoryChatHistoryStore();
+        const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
+        const initial = notices.length;
+        const providerNotices = () => notices.slice(initial).filter((item) => String(item.message).includes('AI provider receives'));
+        const contexts: Array<ReturnType<typeof createView>> = [];
+        const services: ImageAssetService[] = [];
+        const originalOpen = jest.spyOn(VaultImagePickerModal.prototype, 'open').mockImplementation(function (this: VaultImagePickerModal) {
+            this.contentEl = new MockElement('div') as unknown as HTMLElement;
+            this.onOpen();
+            getButtonByText(this.contentEl as unknown as MockElement, 'synthetic-source.png').click();
+        });
+        try {
+            for (const [index, entry] of [firstEntry, firstEntry === 'files' ? 'vault' : 'files', 'files'].entries()) {
+                const reopening = index !== 1;
+                const context = reopening ? createView() : contexts.at(-1)!;
+                let service = services.at(-1)!;
+                if (reopening) {
+                    contexts.push(context);
+                    const attached = attachDisclosureService(context, store); service = attached.service; services.push(service);
+                    const asset = { acquisition: 'original_file' } as Awaited<ReturnType<ImageAssetService['importFile']>>['asset'];
+                    const assertDisclosed = () => {
+                        expect(providerNotices()).toHaveLength(1);
+                        expect(String(providerNotices()[0].message)).toContain('does not hide visible text');
+                        expect(String(providerNotices()[0].message)).toContain('Original files are kept unchanged');
+                    };
+                    jest.spyOn(service, 'importFile').mockImplementation(async () => { assertDisclosed(); return { ref: attached.ref, asset } as Awaited<ReturnType<ImageAssetService['importFile']>>; });
+                    jest.spyOn(service, 'addVaultReference').mockImplementation(async () => { assertDisclosed(); return { ref: attached.ref, asset }; });
+                    Object.assign(context.app.vault, { getFiles: () => [Object.assign(new TFile(), { path: 'synthetic-source.png', name: 'synthetic-source.png' })] });
+                    await context.view.onOpen();
+                }
+                if (entry === 'files') {
+                    const input = walkAll(context.containerEl, (element) => element.getAttribute('type') === 'file')[0];
+                    Object.assign(input, { files: [{ name: 'synthetic-source.png' }] });
+                    (input as unknown as { onchange: () => void }).onchange();
+                } else getButtonByText(context.containerEl, 'Add an image from this vault').click();
+                for (let i = 0; i < 5; i++) await flushPromises();
+                expect(providerNotices()).toHaveLength(1);
+                expect(mockStreamLLM).not.toHaveBeenCalled();
+                if (index === 1) { await context.view.onClose(); await service.dispose(); }
+            }
+        } finally {
+            originalOpen.mockRestore();
+            for (const context of contexts) await context.view.onClose();
+            for (const service of services) await service.dispose();
+        }
+    });
+
+    it('makes provider disclosure readable again even when the image registry fails', async () => {
+        const listAssets = jest.fn(async () => { throw new Error('storage unavailable'); });
+        const images = { listAssets } as unknown as ImageAssetService;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const root = new MockElement('div'), modal = new ImageManagementModal({} as App, images);
+            modal.contentEl = root as unknown as HTMLElement; modal.onOpen();
+            await flushPromises();
+            const help = walkAll(root, (element) => element.tagName === 'details')[0];
+            expect(walk(help, (element) => element.tagName === 'summary')?.textContent).toBe('Images and your AI provider');
+            const paragraphs = walkAll(help, (element) => element.tagName === 'p').map((element) => element.textContent).join('\n');
+            expect(paragraphs).toContain('AI provider receives');
+            expect(paragraphs).toContain('HEIC is saved as a JPEG');
+            expect(walk(root, (element) => element.getAttribute('role') === 'status')?.textContent).toBeTruthy();
+            modal.onClose();
+        }
+        expect(listAssets).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([false, true])('discloses before old-history image reuse, without late notices or sends after close: %s', async (closeBeforeRead) => {
+        const context = createView(), store = new MemoryChatHistoryStore();
+        const { service, ref } = attachDisclosureService(context, store);
+        const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
+        const initial = notices.length;
+        let finishRead!: (value: null) => void;
+        const read = new Promise<null>((resolve) => { finishRead = resolve; });
+        jest.spyOn(store, 'getImageSetting').mockImplementationOnce(() => read);
+        await context.view.onOpen();
+        context.view.chatHistory = [{ role: 'user', content: 'Earlier image', images: [{ ref, ordinal: 1, label: 'prior.png' }] },
+            { role: 'assistant', content: 'Earlier answer' }];
+        context.view.prefillComposer('Look at that image again');
+        getButtonByText(context.containerEl, 'Ask').click();
+        await flushPromises();
+        expect(mockStreamLLM).not.toHaveBeenCalled();
+        if (closeBeforeRead) await context.view.onClose();
+        finishRead(null);
+        for (let i = 0; i < 4; i++) await flushPromises();
+        const observed = notices.slice(initial).filter((item) => String(item.message).includes('AI provider receives'));
+        expect(observed).toHaveLength(closeBeforeRead ? 0 : 1);
+        if (closeBeforeRead) {
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+            expect(await store.getImageSetting('provider-notice:v1')).toBeNull();
+        } else {
+            expect(mockStreamLLM).toHaveBeenCalledTimes(1);
+            expect(streamCalls[0].chatHistory?.[0]).toMatchObject({ images: [{ ref }] });
+            expect(await store.getImageSetting('provider-notice:v1')).toBe(true);
+            streamCalls[0].resolve();
+            await flushPromises();
+            await context.view.onClose();
+        }
+        await service.dispose();
+    });
+
+    it('does not block an existing-image conversation text request when disclosure storage initialization fails', async () => {
+        const context = createView(), store = new MemoryChatHistoryStore();
+        const { service, ref } = attachDisclosureService(context, store);
+        const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
+        const initial = notices.length;
+        jest.spyOn(store, 'initialize').mockRejectedValue(new Error('storage unavailable'));
+        const persist = jest.spyOn(store, 'setImageSetting');
+        await context.view.onOpen();
+        context.view.chatHistory = [{ role: 'user', content: 'Prior image', images: [{ ref, ordinal: 1, label: 'prior.png' }] },
+            { role: 'assistant', content: 'Prior answer' }];
+        context.view.prefillComposer('Summarize the earlier answer in one sentence');
+        getButtonByText(context.containerEl, 'Ask').click();
+        for (let i = 0; i < 4; i++) await flushPromises();
+        expect(notices.slice(initial).filter((item) => String(item.message).includes('AI provider receives'))).toHaveLength(1);
+        expect(persist).not.toHaveBeenCalled();
+        expect(mockStreamLLM).toHaveBeenCalledTimes(1);
+        expect(streamCalls[0].prompt).toBe('Summarize the earlier answer in one sentence');
+        streamCalls[0].resolve(); await flushPromises();
+        await context.view.onClose(); await service.dispose();
+    });
+
+    it('records a Pagelet image anchor even when the first turn has no images', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'anchored-conversation' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        const handoff = createPageletHandoffContext();
+        expect((await view.preparePageletHandoff(handoff)).status).toBe('prepared');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        streamCalls[0].onChunk('Answer about this note');
+        streamCalls[0].resolve();
+        for (let i = 0; i < 6; i++) await flushPromises();
+        expect((await store.getConversation('anchored-conversation'))?.imageAnchor).toEqual({ path: handoff.anchor.path, kind: 'existing_note' });
+        view.prefillComposer('continue');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        streamCalls[1].onChunk('Another answer');
+        streamCalls[1].resolve();
+        for (let i = 0; i < 6; i++) await flushPromises();
+        expect((await store.getConversation('anchored-conversation'))?.imageAnchor).toEqual({ path: handoff.anchor.path, kind: 'existing_note' });
+    });
+
+    it.each([false, true])('offers direct original deletion only on Desktop: %s', async (desktop) => {
+        const descriptor = Object.getOwnPropertyDescriptor(Platform, 'isDesktopApp');
+        Object.defineProperty(Platform, 'isDesktopApp', { configurable: true, value: desktop });
+        try {
+            const clearCache = jest.fn(async () => undefined);
+            const cleanupSelected = jest.fn();
+            const images = { listAssets: async () => [{ source: 'imported', state: 'available', owners: [],
+                originalPath: 'attachments/pa-images/synthetic.png', importDirectory: 'attachments/pa-images', byteLength: 200, id: 'asset' }],
+                clearCache, cleanupSelected } as unknown as ImageAssetService;
+            const modal = new ImageManagementModal({} as never, images);
+            const root = new MockElement('div');
+            modal.contentEl = root as unknown as HTMLElement;
+            modal.onOpen();
+            await flushPromises();
+            expect(getButtonsByClass(root, 'mod-warning')).toHaveLength(desktop ? 1 : 0);
+            expect(walkAll(root, (element) => element.getAttribute('type') === 'checkbox')).toHaveLength(desktop ? 1 : 0);
+            walkAll(root, (element) => element.tagName === 'button')[1].click();
+            await flushPromises();
+            expect(clearCache).toHaveBeenCalledTimes(1);
+            expect(cleanupSelected).not.toHaveBeenCalled();
+            modal.onClose();
+        } finally {
+            if (descriptor) Object.defineProperty(Platform, 'isDesktopApp', descriptor);
+            else Reflect.deleteProperty(Platform, 'isDesktopApp');
+        }
+    });
+
+    it('does not clear a newly started image import when startup history finishes late', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'old-conversation' });
+        await manager.initialize();
+        await manager.startConversation('older conversation');
+        let finishRead!: (turns: Awaited<ReturnType<ChatHistoryManager['getTurns']>>) => void;
+        jest.spyOn(manager, 'getTurns').mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+        const { view } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        await flushPromises();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const handle = draft.beginImport('new-photo.jpg');
+        finishRead([]);
+        await flushPromises();
+        expect(draft.hasDraft('')).toBe(true);
+        expect(handle.signal.aborted).toBe(false);
+        await view.onClose();
+    });
+
+    it('consumes only its unchanged auto-restored draft when retrying a failed turn', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        const editor = getTextArea(containerEl);
+        // Native textarea.value assignment does not emit an input event. The
+        // legacy mock setter does, so use native semantics for ownership here.
+        Object.defineProperty(editor, 'value', { configurable: true, writable: true, value: '' });
+        view.prefillComposer('first prompt');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        streamCalls[0].reject(new Error('offline'));
+        await flushPromises();
+        expect(editor.value).toBe('first prompt');
+        getElementByClass(containerEl, 'retry-message-button').click();
+        await flushPromises();
+        expect(editor.value).toBe('');
+        expect(streamCalls[1].prompt).toBe('first prompt');
+        streamCalls[1].resolve();
+        await flushPromises();
+    });
+
+    it('sends image-only selections as references and keeps the next draft on failure', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        const draft = (view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+        const handle = draft.beginImport('photo.jpg');
+        const image = { ref: { assetId: 'asset-1', contentHash: 'a'.repeat(64) }, label: 'photo.jpg', ordinal: 1 };
+        draft.completeImport(handle, image);
+        // Input refresh uses the production canSend predicate, including image-only content.
+        getTextArea(containerEl).dispatchEvent('input');
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        expect(streamCalls[0].prompt).toBe('');
+        expect(streamCalls[0].options.images).toEqual([image]);
+        getTextArea(containerEl).value = 'next draft';
+        getTextArea(containerEl).dispatchEvent('input');
+        streamCalls[0].reject(new Error('offline'));
+        await flushPromises();
+        expect(getTextArea(containerEl).value).toBe('next draft');
+        expect(draft.snapshot('next draft').images).toEqual([]);
+        expect(getButtonsByClass(containerEl, 'retry-message-button')).toHaveLength(1);
+    });
+
     it('prepares a complete removable Pagelet attachment without sending and consumes it after one successful Ask', async () => {
         const { view, containerEl } = createView({ operationsEnabled: true });
         await view.onOpen();
@@ -1848,7 +2482,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         runAnimationFrames(true);
 
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'after cancel recovery prompt' },
             { role: 'assistant', content: 'PA_CANCEL_RECOVERY_OK' },
         ]);
@@ -1872,19 +2506,22 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         runAnimationFrames(true);
 
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'summarize this note' },
             { role: 'assistant', content: 'summary answer' },
         ]);
         expect(allText(containerEl)).toContain('summarize this note');
         expect(allText(containerEl)).toContain('summary answer');
+        expect(view.chatHistory[0].hostProvenance).toMatchObject({ version: 1, kind: 'ordinary_user_statement' });
+        expect(view.chatHistory[1].hostProvenance).toMatchObject({ version: 1, kind: 'ai_draft' });
+        expect(view.chatHistory[0].hostProvenance?.messageId).not.toBe(view.chatHistory[1].hostProvenance?.messageId);
 
         getTextArea(containerEl).value = 'follow up';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
 
         expect(streamCalls).toHaveLength(2);
-        expect(streamCalls[1].chatHistory).toEqual([
+        expect(streamCalls[1].chatHistory).toMatchObject([
             { role: 'user', content: 'summarize this note' },
             { role: 'assistant', content: 'summary answer' },
         ]);
@@ -2189,7 +2826,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'slow mobile answer' },
             { role: 'assistant', content: 'partial answer' },
         ]);
@@ -2280,7 +2917,7 @@ describe('LLMView turn lifecycle', () => {
         expect(modal.modalEl.getAttribute('aria-labelledby')).toMatch(/^pa-chat-mermaid-modal-title-/);
         expect(getElementByClass(modal.contentEl, 'pa-chat-mermaid-modal-viewport')).toBeTruthy();
         expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```mermaid');
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'draw a graph' },
             { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
         ]);
@@ -2336,7 +2973,7 @@ describe('LLMView turn lifecycle', () => {
             },
         ]);
         expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(1);
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'draw a graph' },
             { role: 'assistant', content },
         ]);
@@ -2445,7 +3082,7 @@ describe('LLMView turn lifecycle', () => {
             top: 1280,
             behavior: 'auto',
         });
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'draw a graph' },
             { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
         ]);
@@ -2508,7 +3145,7 @@ describe('LLMView turn lifecycle', () => {
         expect(openedModal).not.toBeNull();
         expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('B --> C');
         expect(renderedMarkdown[renderedMarkdown.length - 1]).not.toContain('A --> B');
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'draw two graphs' },
             { role: 'assistant', content: response },
         ]);
@@ -2556,7 +3193,7 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames();
         await flushPromises();
         expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(0);
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'draw two graphs' },
             { role: 'assistant', content: response },
         ]);
@@ -2587,7 +3224,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(renderedMarkdown).toHaveLength(renderCountAfterChunk);
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'plain answer prompt' },
             { role: 'assistant', content: 'plain answer' },
         ]);
@@ -2622,7 +3259,7 @@ describe('LLMView turn lifecycle', () => {
         expect(renderedMarkdown[renderedMarkdown.length - 1].markdown).toContain('```text');
         expect(renderedMarkdown[renderedMarkdown.length - 1].sourcePath).toBe('0.unsorted/Dog.md');
         expect(allText(containerEl)).toContain('Mermaid diagram could not be rendered; showing source.');
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'broken graph' },
             { role: 'assistant', content },
         ]);
@@ -2726,7 +3363,7 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementByClass(responseDiv, 'thinking-status-summary').textContent).toBe('Thinking complete');
         expect(allText(responseDiv)).toContain('Deciding what context to use...');
         expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'status prompt' },
             { role: 'assistant', content: 'status answer' },
         ]);
@@ -2763,7 +3400,7 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementByClass(responseDiv, 'thinking-status-summary').textContent).toBe('Thinking complete');
         expect(getElementByClass(responseDiv, 'thinking-status').getAttribute('aria-busy')).toBeNull();
         expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'reason about this' },
             { role: 'assistant', content: 'final answer only' },
         ]);
@@ -2796,7 +3433,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
@@ -3530,7 +4167,7 @@ describe('LLMView turn lifecycle', () => {
         expect(deleteButtons).toHaveLength(2);
         expect(deleteButtons.every((button) => button.disabled)).toBe(true);
         deleteButtons[0].click();
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
@@ -3584,7 +4221,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'second prompt' },
             { role: 'assistant', content: 'second answer' },
         ]);
@@ -3676,7 +4313,7 @@ describe('LLMView turn lifecycle', () => {
 
         expect(chatHistoryManager.deserializeTurn).toHaveBeenCalledTimes(2);
         expect(mockResetChatContext).toHaveBeenCalledTimes(1);
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             restoredUser,
             restoredAssistant,
             restoredIneligibleUser,
@@ -3741,7 +4378,7 @@ describe('LLMView turn lifecycle', () => {
 
             expect(randomUUID).toHaveBeenCalledTimes(3);
             expect(firstAssistantShape).not.toBe(secondAssistantShape);
-            expect(view.chatHistory).toEqual([
+            expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
                 { role: 'user', content: 'second prompt' },
                 { role: 'assistant', content: 'second answer' },
             ]);
@@ -3768,7 +4405,7 @@ describe('LLMView turn lifecycle', () => {
         getButtonsByClass(containerEl, 'delete-message-button')[0].click();
         await view.onClose();
         await flushPromises();
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
@@ -3776,7 +4413,7 @@ describe('LLMView turn lifecycle', () => {
         getButtonByText(containerEl, 'Clear Chat').click();
         await view.onClose();
         await flushPromises();
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
@@ -3856,7 +4493,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'later prompt' },
             { role: 'assistant', content: 'later answer' },
         ]);
@@ -4050,7 +4687,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(getElementByClass(containerEl, 'assistant')).toBe(assistantMessage);
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'async prompt' },
             { role: 'assistant', content: 'async answer' },
         ]);
@@ -5078,7 +5715,9 @@ describe('LLMView turn lifecycle', () => {
 
         expect(composerRow.children).toEqual([getTextArea(containerEl), actions]);
         expect(actions.parentElement).toBe(composerRow);
-        expect(actions.children).toEqual([askButton, memoryControl, cancelButton, moreControl]);
+        expect(actions.children.filter((child) => child.tagName !== 'input')).toEqual([
+            getButtonByClass(containerEl, 'pa-chat-add-images'), askButton, memoryControl, cancelButton, moreControl,
+        ]);
         expect(actions.children.indexOf(memoryControl)).toBe(actions.children.indexOf(askButton) + 1);
         expect(actions.children.indexOf(moreControl)).toBe(actions.children.length - 1);
         expect(getButtonsByText(actions, 'Add to Editor')).toHaveLength(0);
@@ -5849,7 +6488,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(view.chatHistory).toEqual([
+        expect(view.chatHistory.map(({ hostProvenance: _provenance, ...message }) => message)).toEqual([
             { role: 'user', content: 'late memory prompt' },
             { role: 'assistant', content: answer },
         ]);

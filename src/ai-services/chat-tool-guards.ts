@@ -159,6 +159,7 @@ export function isVaultTagsResult(content: unknown): content is VaultTagsOutput 
 
 export function isChatToolName(name: string): name is ChatToolName {
     return name === "search_memory"
+        || name === "resolve_chat_images"
         || name === "get_current_note_context"
         || name === "search_vault_metadata"
         || name === "list_recent_notes"

@@ -186,6 +186,8 @@ export type PaAgentTurnLeaseProvider = (
 export interface PaAgentLoopOptions {
     runId: string;
     userInput: string;
+    userImages?: import("../chat/image-types").MessageImage[];
+    writingRequest?: import("./chat-types").ChatWritingRequest;
     userMessageContent?: UserMessageContent;
     model: PaAgentModel;
     /** Request-local projection hook invoked before every logical model request. */
@@ -690,6 +692,7 @@ export class PaAgentLoop {
 
         const assistantMessage: PaAgentMessage = {
             role: "assistant",
+            ...(this.options.writingRequest ? { writingRequestId: this.options.writingRequest.requestId } : {}),
             id: this.createId("message_assistant"),
             content: [],
             timestamp: this.now(),
@@ -872,6 +875,10 @@ export class PaAgentLoop {
                 metrics.push(chunk.diagnostic);
                 continue;
             }
+            if (chunk.type === "provider_completion") {
+                assistantMessage.providerCompletion = chunk.completion;
+                continue;
+            }
             modelChunkCount += 1;
             if (firstModelChunkElapsedMs === undefined) {
                 firstModelChunkElapsedMs = elapsedSince(modelStartedAt, this.now());
@@ -970,6 +977,7 @@ export class PaAgentLoop {
         const toolCalls = toolCallBuffers.map((buffer) => assistantMessage.content[buffer.partIndex]).filter(isToolCallPart);
         const hasToolCall = toolCalls.length > 0;
         assistantMessage.stopReason = stopReason ?? (hasToolCall ? "tool_calls" : "stop");
+        assistantMessage.providerCompletion ??= "unknown";
         const modelElapsedMs = elapsedSince(modelStartedAt, this.now());
         this.events.messageEnd(turnId, assistantMessage, {
             timing: {
@@ -1134,6 +1142,7 @@ export class PaAgentLoop {
             role: "user",
             id: this.createId("message_user"),
             content: this.options.userMessageContent ?? this.options.userInput,
+            ...(this.options.userImages?.length ? { images: this.options.userImages.map((image) => ({ ...image, ref: { ...image.ref } })) } : {}),
             timestamp: this.now(),
         };
     }

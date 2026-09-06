@@ -25,6 +25,48 @@ const SNAPSHOT: UserProfileSnapshot = {
 };
 
 describe("IndexedDbExistingUserProfileReader", () => {
+    it("holds only a bounded existing readonly transaction across unrelated async work and releases it", async () => {
+        const factory = new FakeIndexedDbFactory({ snapshot: SNAPSHOT });
+        const lease = await createReader(factory).acquireReadLease();
+        expect(lease.result).toEqual({ state: 'ready', snapshot: SNAPSHOT });
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        expect(lease.isCurrent()).toBe(true);
+        expect(factory.db.lastTransaction?.pendingRequests).toBe(1);
+        expect(factory.db.lastTransaction?.countCalls).toBeGreaterThan(1);
+        expect(factory.db.lastTransaction?.completed).toBe(false);
+        lease.release(); lease.release();
+        expect(lease.isCurrent()).toBe(false);
+        expect(factory.db.lastTransaction?.aborted).toBe(true);
+        expect(factory.db.activeConnections).toBe(0);
+        expect(factory.db.closeCalls).toBe(1);
+    });
+
+    it.each(['abort', 'timeout', 'versionchange'] as const)("releases the existing source lock on %s", async (kind) => {
+        const factory = new FakeIndexedDbFactory({ snapshot: SNAPSHOT });
+        const controller = new AbortController();
+        const lease = await createReader(factory).acquireReadLease({ signal: controller.signal, timeoutMs: kind === 'timeout' ? 5 : 2500 });
+        if (kind === 'abort') controller.abort();
+        else if (kind === 'versionchange') factory.db.onversionchange?.({} as IDBVersionChangeEvent);
+        else await new Promise((resolve) => setTimeout(resolve, 15));
+        expect(lease.isCurrent()).toBe(false);
+        expect(factory.db.lastTransaction?.aborted).toBe(true);
+        expect(factory.db.activeConnections).toBe(0);
+        lease.release();
+    });
+
+    it("never creates storage to lock a confirmed absent Profile", async () => {
+        const factory = new FakeIndexedDbFactory({ databaseExists: false });
+        const lease = await createReader(factory).acquireReadLease();
+        expect(lease.result).toEqual({ state: 'not_present' });
+        expect(lease.isCurrent()).toBe(false); expect(factory.openCalls).toEqual([]);
+    });
+
+    it("closes an aborted initial lease read without returning a current lock", async () => {
+        const factory = new FakeIndexedDbFactory({ readOutcome: 'error' });
+        const lease = await createReader(factory).acquireReadLease();
+        expect(lease.isCurrent()).toBe(false); expect(factory.db.activeConnections).toBe(0);
+    });
+
     it("does not open or create a database when enumeration proves it is absent", async () => {
         const factory = new FakeIndexedDbFactory({ databaseExists: false });
         const reader = createReader(factory);
@@ -243,6 +285,8 @@ class FakeUpgradeTransaction {
 class FakeDatabase {
     activeConnections = 0;
     closeCalls = 0;
+    lastTransaction?: FakeReadTransaction;
+    onversionchange: ((event: IDBVersionChangeEvent) => void) | null = null;
     private readonly entry: { key: string; value: UserProfileSnapshot } | undefined;
 
     constructor(
@@ -264,7 +308,8 @@ class FakeDatabase {
         if (storeName !== "profile" || mode !== "readonly") {
             throw new Error(`Unexpected transaction: ${storeName}/${mode}`);
         }
-        return new FakeReadTransaction(this.readOutcome, this.entry) as unknown as IDBTransaction;
+        this.lastTransaction = new FakeReadTransaction(this.readOutcome, this.entry);
+        return this.lastTransaction as unknown as IDBTransaction;
     }
 
     close(): void {
@@ -278,15 +323,40 @@ class FakeReadTransaction {
     onerror: ((this: IDBTransaction, ev: Event) => unknown) | null = null;
     onabort: ((this: IDBTransaction, ev: Event) => unknown) | null = null;
     error: DOMException | null = null;
+    pendingRequests = 0;
+    countCalls = 0;
+    aborted = false;
+    completed = false;
+    private timer?: ReturnType<typeof setTimeout>;
 
     constructor(
         private readonly readOutcome: ReadOutcome,
         private readonly entry: { key: string; value: UserProfileSnapshot } | undefined,
     ) {}
 
+    abort(): void {
+        if (this.aborted || this.completed) return;
+        this.aborted = true;
+        if (this.timer) clearTimeout(this.timer);
+        this.onabort?.call(this as unknown as IDBTransaction, {} as Event);
+    }
+
     objectStore(name: string): IDBObjectStore {
         if (name !== "profile") throw new Error(`Unexpected store: ${name}`);
         return {
+            count: () => {
+                if (this.completed || this.aborted) throw new Error('Transaction inactive');
+                this.countCalls += 1;
+                this.pendingRequests += 1;
+                const request = new FakeReadRequest(1);
+                this.timer = setTimeout(() => {
+                    if (this.aborted) return;
+                    this.pendingRequests -= 1;
+                    request.onsuccess?.call(request as unknown as IDBRequest<number>, {} as Event);
+                    this.completeIfIdle();
+                }, 0);
+                return request;
+            },
             get: (key: IDBValidKey) => {
                 if (key !== "latest") throw new Error(`Unexpected key: ${String(key)}`);
                 const request = new FakeReadRequest(this.entry ? cloneValue(this.entry) : undefined);
@@ -303,12 +373,18 @@ class FakeReadTransaction {
                         this.error = new DOMException("profile read aborted");
                         this.onabort?.call(this as unknown as IDBTransaction, {} as Event);
                     } else {
-                        this.oncomplete?.call(this as unknown as IDBTransaction, {} as Event);
+                        this.completeIfIdle();
                     }
                 });
                 return request as unknown as IDBRequest;
             },
         } as unknown as IDBObjectStore;
+    }
+
+    private completeIfIdle(): void {
+        if (this.aborted || this.pendingRequests) return;
+        this.completed = true;
+        this.oncomplete?.call(this as unknown as IDBTransaction, {} as Event);
     }
 }
 

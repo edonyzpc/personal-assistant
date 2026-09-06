@@ -870,6 +870,24 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(onOpenMemorySettings).toHaveBeenNthCalledWith(5, record.id);
     });
 
+    it('shows the complete style sample and routes correction to the existing Memory settings editor', async () => {
+        const container = new FakeElement('div'); container.isConnected = true;
+        const onCorrect = jest.fn(async () => ({ ok: true, message: 'corrected' }));
+        const onOpenMemorySettings = jest.fn();
+        const record = { ...makeMemoryRecord(), effect: 'future_answers' as const, useStatus: 'active' as const,
+            actionPolicy: { correct: true, pause: true, resume: true, forget: true },
+            writingStyle: { exactText: '  完整样例\n不会被摘要替代。', writingVersionId: 'v1',
+                scene: { writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel' } } };
+        const tab = new TabView('en', { onCorrect, onOpenMemorySettings });
+        tab.mount(container as unknown as HTMLElement);
+        tab.open('Memory', [], { layoutType: 'review', extra: { memoryGovernance: { records: [record], totalCount: 1 } } });
+        expect(container.querySelector('textarea')?.value).toBe(record.writingStyle.exactText);
+        await container.querySelector('.pa-pagelet-tab-memory-correct')?.click();
+        expect(onOpenMemorySettings).toHaveBeenCalledWith(record.id); expect(onCorrect).not.toHaveBeenCalled();
+        expect(container.querySelector('.pa-pagelet-tab-memory-correction-save')).toBeNull();
+        tab.destroy();
+    });
+
     it("renders contextual governed Memory with only Correct and exact Settings routing", async () => {
         const container = new FakeElement("div");
         container.isConnected = true;

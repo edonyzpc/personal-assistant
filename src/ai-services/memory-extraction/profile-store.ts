@@ -6,6 +6,7 @@ import {
     setPlatformTimeout,
 } from "../../platform-dom";
 import type { UserProfileRecord, UserProfileSnapshot } from "./type-a-extractor";
+import { cloneChatMemoryCandidateEvidence } from "../../pa/chat-memory-admission";
 
 const USER_PROFILE_DB_VERSION = 1;
 const PROFILE_STORE = "profile";
@@ -38,6 +39,16 @@ export type UserProfileReadResult =
 
 export interface ExistingUserProfileReader {
     read(): Promise<UserProfileReadResult>;
+    acquireReadLease?(options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<ExistingUserProfileReadLease>;
+}
+
+/** A short read lock for an already existing Profile DB. It never creates or repairs storage. */
+export interface ExistingUserProfileReadLease {
+    result: UserProfileReadResult;
+    /** Aborts if the held source becomes unavailable before the guarded commit completes. */
+    signal?: AbortSignal;
+    isCurrent(): boolean;
+    release(): void;
 }
 
 export class MemoryUserProfileStore implements UserProfileStore {
@@ -155,6 +166,74 @@ type ExistingDatabaseOpenResult =
 
 export class IndexedDbExistingUserProfileReader implements ExistingUserProfileReader {
     constructor(private readonly dbName: string, private readonly indexedDb: IDBFactory) {}
+
+    async acquireReadLease(options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<ExistingUserProfileReadLease> {
+        const inactive = (result: UserProfileReadResult): ExistingUserProfileReadLease => ({
+            result, isCurrent: () => false, release: () => undefined,
+        });
+        if (options.signal?.aborted) return inactive({ state: "blocked" });
+        // Enumerate first: opening an absent database would itself create storage.
+        let infos: IDBDatabaseInfo[];
+        try {
+            if (typeof this.indexedDb.databases !== "function") return inactive({ state: "unavailable" });
+            infos = await withTimeout(this.indexedDb.databases(), IDB_TIMEOUT_MS, "database enumeration");
+        } catch { return inactive({ state: "unknown" }); }
+        if (!Array.isArray(infos)) return inactive({ state: "unknown" });
+        if (!infos.some((info) => info.name === this.dbName)) return inactive({ state: "not_present" });
+        const opened = await openExistingDatabase(this.indexedDb, this.dbName);
+        if (opened.state !== "opened") return inactive(opened);
+        const db = opened.db;
+        if (options.signal?.aborted || !db.objectStoreNames.contains(PROFILE_STORE)) {
+            db.close();
+            return inactive({ state: "blocked" });
+        }
+        return new Promise<ExistingUserProfileReadLease>((resolve) => {
+            const invalidated = new AbortController();
+            let active = true;
+            let settled = false;
+            let transaction: IDBTransaction;
+            let timer: ReturnType<typeof setPlatformTimeout> | undefined;
+            const release = (): void => {
+                if (!active) return;
+                active = false;
+                invalidated.abort();
+                if (timer !== undefined) clearPlatformTimeout(timer);
+                options.signal?.removeEventListener("abort", release);
+                try { transaction?.abort(); } catch { /* Already completed. */ }
+                db.close();
+                if (!settled) { settled = true; resolve(inactive({ state: "blocked" })); }
+            };
+            try {
+                transaction = db.transaction(PROFILE_STORE, "readonly");
+                const store = transaction.objectStore(PROFILE_STORE);
+                transaction.onabort = release;
+                transaction.onerror = release;
+                transaction.oncomplete = release;
+                db.onversionchange = release;
+                options.signal?.addEventListener("abort", release, { once: true });
+                timer = setPlatformTimeout(release, Math.min(2500, Math.max(1, options.timeoutMs ?? 2500)));
+                // A readonly IDB transaction otherwise auto-commits while awaiting a
+                // different database. Keep one content-free request pending, only
+                // for this bounded final commit window; queued old writers wait.
+                const keepAlive = (): void => {
+                    if (!active) return;
+                    try { store.count().onsuccess = keepAlive; } catch { release(); }
+                };
+                const request = store.get(PROFILE_KEY);
+                request.onsuccess = () => {
+                    if (!active) return;
+                    try {
+                        const entry = request.result as { value: UserProfileSnapshot } | undefined;
+                        const result: UserProfileReadResult = { state: "ready", snapshot: entry ? cloneSnapshot(entry.value) : null };
+                        keepAlive();
+                        settled = true;
+                        resolve({ result, signal: invalidated.signal, isCurrent: () => active && !options.signal?.aborted, release });
+                    } catch { release(); }
+                };
+                request.onerror = release;
+            } catch { release(); }
+        });
+    }
 
     async read(): Promise<UserProfileReadResult> {
         let databases: IDBFactory["databases"];
@@ -278,6 +357,7 @@ function cloneSnapshot(snapshot: UserProfileSnapshot): UserProfileSnapshot {
 function cloneRecord(record: UserProfileRecord): UserProfileRecord {
     return {
         ...record,
+        ...(record.chatEvidence ? { chatEvidence: cloneChatMemoryCandidateEvidence(record.chatEvidence) } : {}),
         conversationIds: [...record.conversationIds],
     };
 }

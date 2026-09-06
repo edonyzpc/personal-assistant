@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../chat-types";
+import { chatHistoryImageMetadata, chatImageIdentity } from "../chat-image-identity";
 import { TurnExecutionDeadline } from "../agent-runtime-primitives";
 import { createAbortError, throwIfAborted } from "../chat-utils";
 import { planHistoryContext } from "./PaAgentHistoryContextPlan";
@@ -120,7 +121,9 @@ export class PaAgentContextSummarizer {
         return this.runBounded(input.signal, this.options.historyTimeoutMs ?? 30_000, async (deadline, generation) => {
             const start = reusable?.summary.sourceMessages.length ?? 0;
             const sources = covered.slice(start).map((message, index): SourceMessage => ({
-                index: start + index + 1, role: message.role, content: message.content,
+                index: start + index + 1, role: message.role, content: message.images?.length
+                    ? JSON.stringify({ text: message.content, ...chatHistoryImageMetadata(message), imageAvailability: "reference_only_not_pixels" })
+                    : message.content,
             }));
             const structured = await summarizeSources(sources, reusable?.structured, maxChars, "chat_history", input.invoke, deadline);
             if (!structured || generation !== this.generation || !sameHistory(snapshot, input.history)) return undefined;
@@ -340,9 +343,10 @@ function emptySummary(): StructuredSummary {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
-function snapshotHistory(history: readonly ChatMessage[]): ChatMessage[] { return history.map(({ role, content }) => ({ role, content })); }
+function snapshotHistory(history: readonly ChatMessage[]): ChatMessage[] { return history.map((message) => ({ role: message.role, content: message.content, ...chatHistoryImageMetadata(message) })); }
 function isPrefix(prefix: readonly ChatMessage[], history: readonly ChatMessage[]): boolean {
-    return prefix.length <= history.length && prefix.every((message, index) => message.role === history[index].role && message.content === history[index].content);
+    return prefix.length <= history.length && prefix.every((message, index) => message.role === history[index].role && message.content === history[index].content
+        && chatImageIdentity(message.images) === chatImageIdentity(history[index].images));
 }
 function sameHistory(a: readonly ChatMessage[], b: readonly ChatMessage[]): boolean { return a.length === b.length && isPrefix(a, b); }
 function cloneHistorySummary(summary: PaAgentHistorySummary): PaAgentHistorySummary {

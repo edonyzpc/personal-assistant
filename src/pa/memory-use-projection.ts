@@ -9,6 +9,8 @@ import type {
     MemoryPendingOperation,
     MemorySuppressionMarker,
 } from "./memory-governance-persistence";
+import { isGovernableWritingStyle, renderWritingStyleContext, writingStyleSceneMatches,
+    WRITING_STYLE_MAX_CONTEXT_CHARS, type WritingStyleScene } from "./writing-style";
 
 export const MAX_GOVERNED_MEMORY_CONTEXT_CHARS = 6_000;
 
@@ -186,6 +188,16 @@ function selectClaim(
     revisions: ReadonlyMap<string, MemoryClaimRevision | null>,
     claimCounts: ReadonlyMap<string, number>,
 ): SelectedClaim | null {
+    const revision = selectEligibleRevision(claim, input, revisions, claimCounts);
+    if (!revision || revision.writingStyle || !scopeApplies(claim.applicability, input.currentScope)) return null;
+    const summary = sanitizeClaimSummary(revision.summary);
+    return summary ? { claim, revision, summary } : null;
+}
+
+function selectEligibleRevision(
+    claim: GovernedMemoryClaim, input: GovernedMemoryUseInput,
+    revisions: ReadonlyMap<string, MemoryClaimRevision | null>, claimCounts: ReadonlyMap<string, number>,
+): MemoryClaimRevision | null {
     if (!claim || typeof claim.id !== "string" || claimCounts.get(claim.id) !== 1) return null;
     if (claim.lifecycle !== "active") return null;
     if (!ALLOWED_MEMORY_TYPES.has(claim.memoryType)) return null;
@@ -196,15 +208,52 @@ function selectClaim(
     const revision = revisions.get(claim.activeRevisionId);
     if (!revision || revision.claimId !== claim.id || revision.provenance.length === 0) return null;
     if (!partitionAllowsUse(claim, revision, input.vaultScopeKey)) return null;
-    if (!scopeApplies(claim.applicability, input.currentScope)) return null;
     if (hasPendingOperation(claim.id, input.pendingOperations)) return null;
     const suppressionState = exactSuppressionState(claim, input);
     if (suppressionState !== "clear") return null;
     if (!isDataBoundaryAllowed(revision, input.dataBoundaryAllowed)) return null;
 
-    const summary = sanitizeClaimSummary(revision.summary);
-    if (!summary) return null;
-    return { claim, revision, summary };
+    return revision;
+}
+
+export interface GovernedWritingStyleSelection {
+    context: string;
+    revisionIds: string[];
+    skipped: Array<{ revisionId: string; reason: 'ineligible' | 'budget' | 'invalid_budget' }>;
+}
+
+/** A separate context-only sample area within the caller's remaining Memory budget. */
+export function selectGovernedWritingStyles(input: GovernedMemoryUseInput & {
+    scene?: WritingStyleScene;
+    currentInstructionConflicts?: boolean;
+    remainingMemoryChars: number;
+    remainingTextChars: number;
+    sourceAllowed: (revision: MemoryClaimRevision) => boolean;
+}): GovernedWritingStyleSelection {
+    const result: GovernedWritingStyleSelection = { context: '', revisionIds: [], skipped: [] };
+    const revisions = indexUniqueRevisions(input.revisions), counts = countClaimIds(input.claims);
+    const budgetsValid = [input.remainingMemoryChars, input.remainingTextChars].every((value) => Number.isFinite(value) && value >= 0);
+    const budget = Math.floor(Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, MAX_GOVERNED_MEMORY_CONTEXT_CHARS,
+        input.remainingMemoryChars, input.remainingTextChars));
+    const candidates = input.claims.filter((claim) => revisions.get(claim.activeRevisionId ?? '')?.writingStyle)
+        .sort((a, b) => (revisions.get(b.activeRevisionId!)!.createdAt.localeCompare(revisions.get(a.activeRevisionId!)!.createdAt)) || a.id.localeCompare(b.id));
+    for (const claim of candidates) {
+        const revisionId = claim.activeRevisionId!;
+        if (!budgetsValid) { result.skipped.push({ revisionId, reason: 'invalid_budget' }); continue; }
+        const revision = selectEligibleRevision(claim, input, revisions, counts);
+        let sourceAllowed = false;
+        try { sourceAllowed = Boolean(revision && input.sourceAllowed(revision)); } catch { /* Fail closed. */ }
+        if (!revision || !isGovernableWritingStyle(claim, revision, input.vaultScopeKey) || !sourceAllowed
+            || input.currentInstructionConflicts || !writingStyleSceneMatches(revision.writingStyle!.scene, input.scene)) {
+            result.skipped.push({ revisionId, reason: 'ineligible' }); continue;
+        }
+        const rendered = renderWritingStyleContext(revision), separator = result.context ? '\n' : '';
+        if (result.context.length + separator.length + rendered.length > budget) {
+            result.skipped.push({ revisionId, reason: 'budget' }); continue;
+        }
+        result.context += separator + rendered; result.revisionIds.push(revisionId);
+    }
+    return result;
 }
 
 function partitionAllowsUse(

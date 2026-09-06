@@ -814,6 +814,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             ok: true,
             message: 'Device-only Memory setup is complete.',
         })),
+        checkAndUpgradeMemoryGovernance: jest.fn(async () => ({ ok: false, message: 'Original sources are missing; nothing changed.' })),
         getMemoryFinalizationStatusMessage: jest.fn((reason?: string) => (
             reason === 'finalization_pending_operations'
                 ? 'PA is still finishing another Memory change.'
@@ -2559,6 +2560,27 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(target?.classes).toContain('pa-memory-control-center__item--targeted');
     });
 
+    it('edits complete typed style text and scene through the dedicated coordinator adapter', async () => {
+        const plugin = makePlugin();
+        const correctWritingStyleMemory = jest.fn(async (_claimId: string, _text: string, _scene: unknown) => ({ ok: false, message: 'Keep editing' }));
+        Object.assign(plugin, { correctWritingStyleMemory });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const article = new MockDomNode('article'), actions = new MockDomNode('div');
+        const scene = { writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel' };
+        const item = { id: 'style-1', claimId: 'style-1', label: 'Style summary', writingStyle: { exactText: '原来的完整样例', scene, writingVersionId: 'v1' } };
+        (tab as any).renderMemoryControlCenterCorrectionEditor(article, actions, item);
+        const textarea = article.findAll('textarea')[0], fields = article.findAll('input');
+        const save = article.findAll('button').find((button) => button.textContent === 'Save correction')!;
+        expect(textarea.textContent).toBe('原来的完整样例');
+        textarea.value = '  更正的完整文字\n'; textarea.dispatchEvent('input');
+        fields[3].value = '美食'; fields[3].dispatchEvent('input');
+        expect(save.disabled).toBe(false); save.dispatchEvent('click');
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        expect(correctWritingStyleMemory).toHaveBeenCalledWith('style-1', '  更正的完整文字\n', { ...scene, domain: 'food' });
+        expect(plugin.runMemoryControlCenterAction).not.toHaveBeenCalled();
+        textarea.value = '🙂'.repeat(2049); textarea.dispatchEvent('input'); expect(save.disabled).toBe(true);
+    });
+
     it('uses outcome language when saved understanding is unavailable', async () => {
         const plugin = makePlugin({ debug: false });
         plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
@@ -2727,6 +2749,33 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'item-display-id',
             expect.anything(),
         );
+    });
+
+    it('offers one explicit upgrade action only for legacy mode, preserves failure feedback, and ignores stale completion', async () => {
+        const plugin = makePlugin({ debug: false });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div'); tab.containerEl = container as never;
+        const base = await plugin.getMemoryControlCenterSnapshot();
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({ ...base, governanceMode: 'legacy_threshold' } as never);
+        tab.display(); for (let i = 0; i < 5; i++) await Promise.resolve();
+        const action = container.findAll('button').find((node) => node.textContent === 'Check and upgrade')!;
+        expect(action).toBeDefined();
+        let finish!: (value: { ok: boolean; message: string }) => void;
+        plugin.checkAndUpgradeMemoryGovernance.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        const modalCount = (globalThis as typeof globalThis & { __paModalInstances?: unknown[] }).__paModalInstances?.length ?? 0;
+        action.dispatchEvent('click'); action.dispatchEvent('click');
+        expect(plugin.checkAndUpgradeMemoryGovernance).toHaveBeenCalledTimes(1);
+        expect((globalThis as typeof globalThis & { __paModalInstances?: unknown[] }).__paModalInstances?.length ?? 0).toBe(modalCount);
+        finish({ ok: false, message: 'Original sources are missing; nothing changed.' });
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        expect(action.disabled).toBe(false);
+        expect(container.findAll('p').some((node) => node.attrs.role === 'status' && node.textContent.includes('Original sources are missing'))).toBe(true);
+        action.dispatchEvent('click');
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({ ...base, governanceMode: 'effect_based' } as never);
+        tab.display(); for (let i = 0; i < 5; i++) await Promise.resolve();
+        finish({ ok: true, message: 'Upgrade complete.' });
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        expect(container.findAll('button').some((node) => node.textContent === 'Check and upgrade')).toBe(false);
     });
 
     it('shows fresh recovery proof and a safe reason when finalization is blocked', async () => {

@@ -312,6 +312,10 @@ import { previewMemoryGovernanceFinalization } from '../src/pa/memory-governance
 import { buildLegacyMemoryRollbackProjection } from '../src/pa/memory-governance-rollback';
 import { MEMORY_EXTERNAL_OPERATION_TIMEOUT_MS } from '../src/pa/memory-external-operation-timeout';
 import type { UserProfileSnapshot } from '../src/ai-services/memory-extraction';
+import { collectChatMemorySources, createChatMemoryCandidateEvidence } from '../src/pa/chat-memory-admission';
+import { hashWritingStyleText } from '../src/pa/writing-style';
+import type { WritingStyleService } from '../src/chat/writing-style-service';
+import type { WritingVersion } from '../src/chat/writing-types';
 
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
@@ -906,6 +910,16 @@ describe('Memory governance plugin bootstrap', () => {
     const createdAt = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();
     const bootstrapPlugins = new Set<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
+    function ordinaryTypeAEvidence(text: string, conversationId: string, throughTurnIndex: number) {
+        const sources = collectChatMemorySources(conversationId, [{ conversationId, turnIndex: throughTurnIndex,
+            user: { role: 'user', content: text, hostProvenance: { version: 1,
+                messageId: `host-${conversationId}-${throughTurnIndex}`, kind: 'ordinary_user_statement' } },
+            assistant: { role: 'assistant', content: 'Understood.' } }]);
+        return { chatEvidence: createChatMemoryCandidateEvidence(text, sources),
+            evidence: { conversationId, throughTurnIndex,
+                chatMessages: sources.map(({ text: _text, ...source }) => ({ ...source })) } };
+    }
+
     afterEach(async () => {
         const plugins = [...bootstrapPlugins];
         bootstrapPlugins.clear();
@@ -1138,6 +1152,58 @@ describe('Memory governance plugin bootstrap', () => {
             setProcessError: (error: Error | null) => { processError = error; },
         };
     }
+
+    it('uses the explicit upgrade entry for an existing empty Profile without source writes, and refreshes the governed reader', async () => {
+        const h = createBootstrapHarness(); const { plugin, repository } = h;
+        await plugin.initializeMemoryGovernanceBootstrap();
+        const key = plugin.memoryGovernanceOpaqueVaultKey as string;
+        await repository.transact((draft) => {
+            draft.policyStates[key].mode = 'legacy_threshold'; draft.policyStates[key].contextProjectionMode = 'legacy';
+        });
+        plugin.getMemoryGraphTopologyEpoch = jest.fn(() => 'same-boundary');
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+        plugin.getMemoryUpgradeStatusMessage = (reason: string) => reason;
+        const release = jest.fn();
+        plugin.createExistingUserProfileReader = jest.fn(() => ({
+            read: async () => ({ state: 'ready', snapshot: null }),
+            acquireReadLease: async () => ({ result: { state: 'ready', snapshot: null }, isCurrent: () => true, release }),
+        }));
+        const original = h.readPersisted(); const writes = plugin.saveData.mock.calls.length;
+        const before = await repository.initialize();
+        const upgraded = await plugin.checkAndUpgradeMemoryGovernance();
+        if (!upgraded.ok) throw new Error(upgraded.message);
+        expect(upgraded.ok).toBe(true);
+        expect(plugin.getMemoryGovernanceUiMode()).toBe('effect_based');
+        expect((await repository.initialize()).migrationStates).toEqual(before.migrationStates);
+        expect(h.readPersisted()).toEqual(original); expect(plugin.saveData.mock.calls).toHaveLength(writes);
+        expect(plugin.createUserProfileStore).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps an unreadable Profile and a legacy source changed by another writer untouched during explicit upgrade', async () => {
+        const h = createBootstrapHarness(); const { plugin, repository } = h;
+        await plugin.initializeMemoryGovernanceBootstrap(); const key = plugin.memoryGovernanceOpaqueVaultKey as string;
+        await repository.transact((draft) => {
+            draft.policyStates[key].mode = 'legacy_threshold'; draft.policyStates[key].contextProjectionMode = 'legacy';
+        });
+        plugin.getMemoryGraphTopologyEpoch = jest.fn(() => 'same-boundary');
+        plugin.isDataBoundaryAllowedPath = jest.fn(() => true);
+        plugin.createExistingUserProfileReader = jest.fn(() => ({ read: async () => ({ state: 'unknown' }) }));
+        const before = await repository.initialize(); const original = h.readPersisted();
+        expect(await plugin.checkAndUpgradeMemoryGovernance()).toMatchObject({ ok: false });
+        expect(await repository.initialize()).toEqual(before); expect(h.readPersisted()).toEqual(original);
+        const changed = structuredClone(original); changed.memoryGovernance.records[0].summary = 'Newer source from another writer';
+        const release = jest.fn();
+        plugin.createExistingUserProfileReader = jest.fn(() => ({
+            read: async () => ({ state: 'ready', snapshot: null }),
+            acquireReadLease: async () => {
+                h.writePersisted(changed);
+                return { result: { state: 'ready', snapshot: null }, isCurrent: () => true, release };
+            },
+        }));
+        expect(await plugin.checkAndUpgradeMemoryGovernance()).toMatchObject({ ok: false });
+        expect(await repository.initialize()).toEqual(before); expect(h.readPersisted()).toEqual(changed);
+        expect(plugin.createUserProfileStore).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledTimes(1);
+    });
 
     function createPluginDataJsonHarness(initial: Record<string, unknown> | null) {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -2779,6 +2845,88 @@ describe('Memory governance plugin bootstrap', () => {
         expect(plugin.settings.confirmedMemoryCount).toBe(29);
     });
 
+    describe('explicit writing style plugin gates', () => {
+        const scene = { writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel' };
+        const budget = { remainingTextChars: 10_000, remainingMemoryChars: 6_000 };
+        async function setup() {
+            const harness = createBootstrapHarness();
+            const { plugin } = harness;
+            plugin.settings.memoryExtractionEnabled = false;
+            plugin.settings.memoryExtractionConsent = { state: 'unconfirmed', version: 1 };
+            plugin.createChatModel = jest.fn();
+            await plugin.initializeMemoryGovernanceBootstrap();
+            const text = '海风替我保存了这段旅行。';
+            const version: WritingVersion = { id: 'style-version', requestId: 'writing-request', messageId: 'writing-message',
+                text, textHash: hashWritingStyleText(text), explanation: '', origin: 'ai_generated', conversationId: 'style-conversation',
+                turnIndex: 0, createdAt: Date.now(), associatedImages: [], backgroundSourceRefs: [], styleRevisionIds: [], scene };
+            plugin.writingVersions = { get: jest.fn(async () => version), dispose: jest.fn(async () => undefined) };
+            const service = plugin.getWritingStyleService() as WritingStyleService;
+            return { ...harness, service, version };
+        }
+
+        it('uses only explicitly saved matching samples with extraction disabled and leaves automatic consent unchanged', async () => {
+            const { plugin, repository, service, version } = await setup();
+            expect(plugin.getMemoryGovernanceUiMode()).toBe('effect_based');
+            const before = await repository.initialize();
+            expect((await plugin.prepareWritingStyle('帮我写一段旅行朋友圈文案', undefined, budget)).context).toBe('');
+            expect((await repository.initialize()).revisions).toEqual(before.revisions);
+            const receipt = await service.remember(version.id, scene, 'explicit-style-action');
+            await plugin.refreshDeviceMemoryCaches();
+            const selected = await plugin.prepareWritingStyle('帮我写一段旅行朋友圈文案', undefined, budget);
+            expect(selected.revisionIds).toEqual([receipt.revisionId]); expect(selected.context).toContain(version.text);
+            expect((await plugin.prepareWritingStyle('帮我写工作邮件给同事', undefined, budget)).context).toBe('');
+            const state = await repository.initialize();
+            expect(state.revisions.filter((revision) => revision.writingStyle)).toHaveLength(1);
+            const entry = plugin.getGovernedMemoryViewSnapshot().records.find((item: { claimId: string }) => item.claimId === receipt.claimId);
+            expect(plugin.projectGovernedMemoryUiEntry(entry, state)).toMatchObject({ useStatus: 'active', actionPolicy: { pause: true, forget: true } });
+            // Ordinary extracted Memory retains its original opt-in gate.
+            expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
+            expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+            expect(plugin.settings.memoryExtractionConsent).toEqual({ state: 'unconfirmed', version: 1 });
+            expect(plugin.createChatModel).not.toHaveBeenCalled(); expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
+            expect(plugin.memoryExtractionScheduler).toBeUndefined();
+        });
+
+        it('stops style use at the master switch, Pause and Forget while preserving static management', async () => {
+            const { plugin, repository, service, version } = await setup();
+            const receipt = await service.remember(version.id, scene, 'explicit-style-lifecycle');
+            await plugin.refreshDeviceMemoryCaches();
+            const selected = await service.prepare(scene, budget);
+            plugin.settings.memoryEnabled = false;
+            expect(selected.isCurrent()).toBe(false); expect((await service.prepare(scene, budget)).context).toBe('');
+            const entry = plugin.getGovernedMemoryViewSnapshot().records.find((item: { claimId: string }) => item.claimId === receipt.claimId);
+            expect(plugin.projectGovernedMemoryUiEntry(entry, await repository.initialize())).toMatchObject({ useStatus: 'stored_not_in_use', actionPolicy: { pause: true, forget: true } });
+            await expect(plugin.memoryGovernanceCoordinator.pauseUse({ claimId: receipt.claimId })).resolves.toMatchObject({ ok: true });
+            await plugin.refreshDeviceMemoryCaches();
+            plugin.settings.memoryEnabled = true;
+            expect((await service.prepare(scene, budget)).context).toBe('');
+            await expect(plugin.memoryGovernanceCoordinator.resumeUse({ claimId: receipt.claimId, scopeAllowed: true, dataBoundaryAllowed: true })).resolves.toMatchObject({ ok: true });
+            await plugin.refreshDeviceMemoryCaches();
+            const resumed = await service.prepare(scene, budget); expect(resumed.revisionIds).toEqual([receipt.revisionId]);
+            await expect(plugin.memoryGovernanceCoordinator.forget({ claimId: receipt.claimId })).resolves.toMatchObject({ ok: true });
+            await plugin.refreshDeviceMemoryCaches();
+            expect(resumed.isCurrent()).toBe(false); expect((await service.prepare(scene, budget)).context).toBe('');
+            expect(JSON.stringify(await repository.initialize())).not.toContain(version.text);
+            expect(plugin.settings.memoryExtractionEnabled).toBe(false); expect(plugin.createChatModel).not.toHaveBeenCalled();
+        });
+
+        it('reports legacy compatibility explicitly without changing its policy or writing a style', async () => {
+            const { plugin, repository, version } = await setup();
+            const vaultKey = plugin.memoryGovernanceOpaqueVaultKey as string;
+            await repository.transact((draft) => {
+                draft.policyStates[vaultKey].mode = 'legacy_threshold';
+                draft.policyStates[vaultKey].contextProjectionMode = 'legacy';
+            });
+            await plugin.refreshDeviceMemoryCaches();
+            const before = await repository.initialize();
+            await expect(plugin.rememberWritingStyle(version.id, scene)).rejects.toMatchObject({
+                name: 'WritingStyleUnavailableError', code: 'legacy_memory',
+            });
+            expect((await plugin.prepareWritingStyle('帮我写一段旅行朋友圈文案', undefined, budget)).context).toBe('');
+            expect(await repository.initialize()).toEqual(before);
+        });
+    });
+
     it('keeps governed Memory Candidates manual while the Memory master setting is off', async () => {
         const persisted = rawSettings();
         persisted.memoryEnabled = false;
@@ -4209,6 +4357,7 @@ describe('Memory governance plugin bootstrap', () => {
         plugin.memoryAdmissionCoordinator = {
             admit: jest.fn(async () => ({ ok: false, reason: 'claim_operation_pending' })),
         };
+        const host = ordinaryTypeAEvidence('Please review changes with evidence first.', 'conversation-pending', 4);
         const proposed: UserProfileSnapshot = {
             updatedAt: createdAt,
             records: [{
@@ -4222,6 +4371,7 @@ describe('Memory governance plugin bootstrap', () => {
                 occurrences: 1,
                 conversationIds: ['conversation-pending'],
                 confirmed: true,
+                chatEvidence: host.chatEvidence,
             }],
             markdown: '# User Profile',
         };
@@ -4230,7 +4380,7 @@ describe('Memory governance plugin bootstrap', () => {
             current: null,
             proposed,
             baseline,
-            evidence: { conversationId: 'conversation-pending', throughTurnIndex: 4 },
+            evidence: host.evidence,
             candidates: [{
                 key: 'review-style',
                 text: 'Please review changes with evidence first.',
@@ -4238,13 +4388,42 @@ describe('Memory governance plugin bootstrap', () => {
                 confidence: 'high',
                 conversationId: 'conversation-pending',
                 observedAt: createdAt,
+                chatEvidence: host.chatEvidence,
             }],
         })).resolves.toEqual({ status: 'retry' });
+        expect(plugin.memoryAdmissionCoordinator.admit).toHaveBeenCalledTimes(1);
 
         const state = await repository.initialize();
         expect(state.policyStates[plugin.memoryGovernanceOpaqueVaultKey].typeAProcessedTurns)
             .toBeUndefined();
     });
+
+    it.each(['missing_receipt', 'missing_host', 'ai_draft', 'user_local_edit', 'writing_request'] as const)(
+        'does not admit a model-labelled explicit preference without eligible host evidence: %s', async (source) => {
+            const { plugin, repository } = createBootstrapHarness();
+            plugin.memoryLifecycleMutationTail = Promise.resolve();
+            plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
+            await plugin.initializeMemoryGovernanceBootstrap();
+            const baseline = await plugin.captureGovernedTypeAAdmissionBaseline();
+            const host = ordinaryTypeAEvidence('Please always answer with bullet points.', 'conversation-blocked', 1);
+            const priorClaims = (await repository.initialize()).claims;
+            const admit = jest.spyOn(plugin.memoryAdmissionCoordinator, 'admit');
+            const record = { profileRecordId: 'profile-dddddddddddddddddddddddddddddddd', key: 'answer-structure',
+                text: 'Please always answer with bullet points.', kind: 'user_explicit' as const, confidence: 'high' as const,
+                conversationId: 'conversation-blocked', observedAt: createdAt, occurrences: 1,
+                conversationIds: ['conversation-blocked'], confirmed: true,
+                ...(source === 'missing_receipt' ? {} : { chatEvidence: host.chatEvidence }) };
+            const chatMessages = source === 'missing_host' ? undefined : host.evidence.chatMessages.map((message) => ({
+                ...message, kind: source === 'missing_receipt' ? message.kind : source,
+            }));
+            await expect(plugin.admitGovernedTypeABatch({ current: null,
+                proposed: { updatedAt: createdAt, records: [record], markdown: '# User Profile' }, baseline,
+                evidence: { ...host.evidence, chatMessages }, candidates: [record],
+            })).resolves.toEqual({ status: 'processed' });
+            expect(admit).not.toHaveBeenCalled();
+            expect((await repository.initialize()).claims).toEqual(priorClaims);
+        },
+    );
 
     it('recreates a missing Profile row from durable conversation evidence during bootstrap recovery', async () => {
         const first = createBootstrapHarness();
@@ -4348,6 +4527,7 @@ describe('Memory governance plugin bootstrap', () => {
             }),
             getUserProfileSnapshot: jest.fn(() => profile ? JSON.parse(JSON.stringify(profile)) : null),
         };
+        const host = ordinaryTypeAEvidence('Please always answer with bullet points.', 'conversation-new', 1);
         const record = {
             profileRecordId: 'profile-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
             key: 'answer-structure',
@@ -4359,6 +4539,7 @@ describe('Memory governance plugin bootstrap', () => {
             occurrences: 1,
             conversationIds: ['conversation-new'],
             confirmed: true,
+            chatEvidence: host.chatEvidence,
         };
         const proposed: UserProfileSnapshot = {
             updatedAt: createdAt,
@@ -4366,12 +4547,13 @@ describe('Memory governance plugin bootstrap', () => {
             markdown: '# User Profile',
         };
         const baseline = await plugin.captureGovernedTypeAAdmissionBaseline();
+        const admit = jest.spyOn(plugin.memoryAdmissionCoordinator, 'admit');
 
         await expect(plugin.admitGovernedTypeABatch({
             current: null,
             proposed,
             baseline,
-            evidence: { conversationId: 'conversation-new', throughTurnIndex: 1 },
+            evidence: host.evidence,
             candidates: [{
                 key: record.key,
                 text: record.text,
@@ -4379,8 +4561,10 @@ describe('Memory governance plugin bootstrap', () => {
                 confidence: record.confidence,
                 conversationId: record.conversationId,
                 observedAt: record.observedAt,
+                chatEvidence: host.chatEvidence,
             }],
         })).resolves.toEqual({ status: 'processed' });
+        expect(admit).toHaveBeenCalledTimes(1);
         expect((profile as UserProfileSnapshot | null)?.records).toEqual([
             expect.objectContaining({
                 profileRecordId: record.profileRecordId,
@@ -4404,18 +4588,20 @@ describe('Memory governance plugin bootstrap', () => {
             governedRecord,
             'Always answer with a short conclusion first.',
         )).resolves.toMatchObject({ ok: true });
+        const staleHost = ordinaryTypeAEvidence('Old in-flight extraction must not win.', 'conversation-new', 2);
         const staleProposed: UserProfileSnapshot = {
             ...staleCurrent,
             records: [{
                 ...staleCurrent.records[0],
                 text: 'Old in-flight extraction must not win.',
+                chatEvidence: staleHost.chatEvidence,
             }],
         };
         await expect(plugin.admitGovernedTypeABatch({
             current: staleCurrent,
             proposed: staleProposed,
             baseline: staleBaseline,
-            evidence: { conversationId: 'conversation-new', throughTurnIndex: 2 },
+            evidence: staleHost.evidence,
             candidates: [{
                 key: record.key,
                 text: 'Old in-flight extraction must not win.',
@@ -4423,8 +4609,12 @@ describe('Memory governance plugin bootstrap', () => {
                 confidence: record.confidence,
                 conversationId: record.conversationId,
                 observedAt: record.observedAt,
+                chatEvidence: staleHost.chatEvidence,
             }],
         })).resolves.toEqual({ status: 'processed' });
+        // The stale batch reaches governance with valid host evidence. It must
+        // lose to the user's correction, rather than pass via a missing receipt.
+        expect(admit).toHaveBeenCalledTimes(2);
         const afterStale = await repository.initialize();
         const governedClaimId = afterStale.projectionLinks.find((link) => (
             link.target.kind === 'type_a_profile'

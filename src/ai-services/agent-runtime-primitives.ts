@@ -134,6 +134,14 @@ export class AgentEventEmitter {
         this.emit({ ...this.baseEvent(), kind: "answer-snapshot", snapshot });
     }
 
+    writingArtifact(payload: Omit<Extract<LegacyAgentEvent, { kind: "writing-artifact" }>, keyof import("./chat-types").LegacyAgentEventBase | "kind">): void {
+        this.emit({ ...this.baseEvent(), kind: "writing-artifact", ...payload });
+    }
+
+    writingRecovery(payload: Omit<Extract<LegacyAgentEvent, { kind: "writing-recovery" }>, keyof import("./chat-types").LegacyAgentEventBase | "kind">): void {
+        this.emit({ ...this.baseEvent(), kind: "writing-recovery", ...payload });
+    }
+
     reasoningChunk(chunk: string): void {
         this.emit({ ...this.baseEvent(), kind: "reasoning-chunk", chunk });
     }

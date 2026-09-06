@@ -1,4 +1,6 @@
 import type { PersistedSourceRef, ReviewQueueScope } from "./contracts";
+import { authorizeWritingStyle, isGovernableWritingStyle, parseWritingStyle,
+    type WritingStylePayload } from "./writing-style";
 import { cloneScope, cloneSourceRef, UNDO_RETENTION_MS } from "./helpers";
 import {
     createTypeATargetSuppressionFingerprint,
@@ -151,11 +153,65 @@ export class MemoryGovernanceCoordinator {
             ?? (() => `memory-lifecycle-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
     }
 
+    rememberWritingStyle(input: {
+        writingStyle: WritingStylePayload;
+        scopeAllowed: boolean;
+        dataBoundaryAllowed: boolean;
+        isCurrent?: () => boolean;
+    }): Promise<MemoryGovernanceCoordinatorResult<MemoryGovernanceActionReceipt & { revisionId: string }>> {
+        const payload = parseWritingStyle(input.writingStyle);
+        if (!payload) return Promise.resolve(failure("invalid_writing_style"));
+        if (!input.scopeAllowed) return Promise.resolve(failure("scope_not_allowed"));
+        if (!input.dataBoundaryAllowed) return Promise.resolve(failure("data_boundary_denied"));
+        return this.serialize(async () => this.runDomainMutation(() => this.repository.transact((draft) => {
+            const occurredAt = this.nowIso();
+            if (input.isCurrent && !input.isCurrent()) throw new CoordinatorError("writing_style_source_changed");
+            this.assertMutationEnvelope(draft, occurredAt);
+            const existing = draft.revisions.find((revision) => revision.writingStyle?.explicitActionId === payload.explicitActionId);
+            if (existing) {
+                const claim = draft.claims.find((value) => value.id === existing.claimId);
+                if (!claim || !isGovernableWritingStyle(claim, existing, this.opaqueVaultKey)
+                    || JSON.stringify(existing.writingStyle) !== JSON.stringify(payload)) throw new CoordinatorError("writing_style_action_conflict");
+                const event = draft.changeEvents.find((value) => value.claimId === claim.id && value.kind === "add");
+                if (!event) throw new CoordinatorError("writing_style_action_conflict");
+                return { ...receipt(claim.id, event), revisionId: existing.id };
+            }
+            const claimId = this.idFactory(), revisionId = this.idFactory(), eventId = this.idFactory(), snapshotId = this.idFactory();
+            if (draft.claims.some((claim) => claim.id === claimId) || draft.revisions.some((revision) => revision.id === revisionId)) {
+                throw new CoordinatorError("writing_style_identity_conflict");
+            }
+            const partition: MemoryPartitionKey = { kind: "vault", key: this.opaqueVaultKey };
+            const claim: GovernedMemoryClaim = { id: claimId, partition, memoryType: "preference", sensitivity: "low",
+                applicability: { kind: "custom", label: `Writing style: ${payload.scene.domain} / ${payload.scene.purpose}` },
+                activeRevisionId: revisionId, effect: "future_answers", lifecycle: "active", createdAt: occurredAt, updatedAt: occurredAt };
+            const revision: MemoryClaimRevision = { id: revisionId, claimId, summary: `Writing style: ${payload.scene.domain} / ${payload.scene.purpose}`,
+                provenance: [{ kind: "conversation", conversationIds: [payload.source.conversationId], observedAt: occurredAt },
+                    ...(payload.source.noteSourceRef ? [{ kind: "note" as const, sourceRef: cloneSourceRef(payload.source.noteSourceRef) }] : [])],
+                authority: "explicit_user", createdAt: occurredAt, writingStyle: payload,
+                writingStyleAuthorization: authorizeWritingStyle(payload, claimId, revisionId, this.opaqueVaultKey) };
+            const event: MemoryChangeEvent = { id: eventId, claimId, kind: "add", scopeKey: partitionScopeKey(partition),
+                effect: claim.effect, occurredAt, undoSnapshotId: snapshotId };
+            const link: MemoryProjectionLink = { id: this.idFactory(), claimId, target: { kind: "prompt_projection", projectionId: `style:${claimId}` },
+                relation: "origin", state: "active", sourceFingerprintId: `style:${payload.explicitActionId}`,
+                ruleFingerprint: "explicit-writing-style-v1", createdAt: occurredAt };
+            draft.claims.push(claim); draft.revisions.push(revision); draft.changeEvents.push(event);
+            draft.undoSnapshots.push({ id: snapshotId, claimId, eventId, partition, restoreMode: "remove_added_claim",
+                revisions: [], projectionLinks: [cloneProjectionLink(link)], createdAt: occurredAt,
+                expiresAt: new Date(Date.parse(occurredAt) + UNDO_RETENTION_MS).toISOString() });
+            draft.projectionLinks.push(link);
+            // Context-only samples never acquire Type A/legacy projection or rollback copies.
+            return { ...receipt(claimId, event), revisionId };
+        })));
+    }
+
     correct(input: {
         claimId: string;
         summary: string;
         scopeAllowed: boolean;
         dataBoundaryAllowed: boolean;
+        writingStyle?: WritingStylePayload;
+        expectedRevisionId?: string;
+        isCurrent?: () => boolean;
     }): Promise<MemoryGovernanceCoordinatorResult<MemoryGovernanceActionReceipt>> {
         return this.serialize(async () => {
             const revisionId = this.idFactory();
@@ -178,7 +234,11 @@ export class MemoryGovernanceCoordinator {
                     this.assertNoPendingOperation(draft, claim.id);
                     const previousRevision = this.requireActiveRevision(draft, claim);
                     this.assertGovernableClaim(claim, previousRevision);
-                    if (previousRevision.summary.trim() === summary) {
+                    if (input.expectedRevisionId && input.expectedRevisionId !== previousRevision.id) throw new CoordinatorError("writing_style_revision_changed");
+                    if (input.isCurrent && !input.isCurrent()) throw new CoordinatorError("writing_style_source_changed");
+                    const writingStyle = input.writingStyle ? parseWritingStyle(input.writingStyle) : undefined;
+                    if (Boolean(previousRevision.writingStyle) !== Boolean(writingStyle)) throw new CoordinatorError("writing_style_correction_required");
+                    if (previousRevision.summary.trim() === summary && JSON.stringify(previousRevision.writingStyle) === JSON.stringify(writingStyle)) {
                         throw new CoordinatorError("no_effect");
                     }
                     const event = this.createUndoableEvent(
@@ -213,6 +273,7 @@ export class MemoryGovernanceCoordinator {
                         authority: "user_correction",
                         supersedesRevisionId: previousRevision.id,
                         createdAt: occurredAt,
+                        ...(writingStyle ? { writingStyle, writingStyleAuthorization: authorizeWritingStyle(writingStyle, claim.id, revisionId, this.opaqueVaultKey) } : {}),
                     };
                     draft.revisions.push(revision);
                     claim.activeRevisionId = revision.id;
@@ -394,6 +455,7 @@ export class MemoryGovernanceCoordinator {
                     this.assertNoPendingOperation(draft, claim.id);
                     const previousRevision = this.requireActiveRevision(draft, claim);
                     this.assertGovernableClaim(claim, previousRevision);
+                    if (previousRevision.writingStyle) throw new CoordinatorError("writing_style_scope_is_typed");
                     const nextPartition = input.partition
                         ? clonePartition(input.partition)
                         : clonePartition(claim.partition);
@@ -1572,7 +1634,7 @@ export class MemoryGovernanceCoordinator {
         payloadEntryId: string,
         occurredAt: string,
     ): void {
-        if (!migration) return;
+        if (!migration || revision.writingStyle) return;
         const partition: MemoryPartitionKey = { kind: "vault", key: this.opaqueVaultKey };
         const rawValue: LegacyRollbackValue = {
             kind: "claim",
@@ -1742,7 +1804,7 @@ export class MemoryGovernanceCoordinator {
         if (claim.effect !== "future_answers" && claim.effect !== "collaboration_default") {
             throw new CoordinatorError("no_effect");
         }
-        if (claim.sensitivity !== "low" || !isUsableScope(claim.applicability)
+        if (claim.sensitivity !== "low" || (!isUsableScope(claim.applicability) && !isGovernableWritingStyle(claim, revision, this.opaqueVaultKey))
             || revision.provenance.length === 0) {
             throw new CoordinatorError("no_effect");
         }
@@ -1767,7 +1829,7 @@ export class MemoryGovernanceCoordinator {
         claim: GovernedMemoryClaim,
         revision: MemoryClaimRevision,
     ): void {
-        if (!isUsableScope(claim.applicability) || revision.provenance.length === 0) {
+        if ((!isUsableScope(claim.applicability) && !isGovernableWritingStyle(claim, revision, this.opaqueVaultKey)) || revision.provenance.length === 0) {
             throw new CoordinatorError("claim_not_governable");
         }
         if (claim.partition.kind === "vault" && claim.partition.key !== this.opaqueVaultKey) {
@@ -1880,6 +1942,8 @@ function cloneRevision(revision: MemoryClaimRevision): MemoryClaimRevision {
     return {
         ...revision,
         provenance: cloneProvenance(revision.provenance),
+        ...(revision.writingStyle ? { writingStyle: parseWritingStyle(revision.writingStyle)!,
+            writingStyleAuthorization: { ...revision.writingStyleAuthorization! } } : {}),
     };
 }
 
@@ -2048,6 +2112,7 @@ function scheduleProfileProjectionOperations(
     revision: MemoryClaimRevision,
     occurredAt: string,
 ): void {
+    if (revision.writingStyle) return;
     const profileLinks = draft.projectionLinks.filter((link) => (
         link.claimId === claim.id
         && link.state === "active"

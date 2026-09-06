@@ -10,6 +10,7 @@ import type {
 } from "./chat-types";
 import { PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION } from "./chat-types";
 import { cloneContextReductionReceipt, createContextPagerStateFromChatContextUsed } from "../pa";
+import { cloneMessageImages } from "../chat/image-types";
 
 export interface CreatePaAgentPersistedTurnInput {
     runId: string;
@@ -22,6 +23,7 @@ export interface CreatePaAgentPersistedTurnInput {
 }
 
 export function createPaAgentPersistedTurn(input: CreatePaAgentPersistedTurnInput): PaAgentPersistedTurn {
+    const finalWritingMessage = [...input.messages].reverse().find((message) => message.role === "assistant" && message.writingRequestId);
     return {
         schemaVersion: PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION,
         runId: input.runId,
@@ -34,7 +36,18 @@ export function createPaAgentPersistedTurn(input: CreatePaAgentPersistedTurnInpu
         ...(input.contextUsed && input.contextUsed.length > 0
             ? { contextUsed: input.contextUsed.map(cloneContextUsedItem) }
             : {}),
-        messages: input.messages.map(clonePaAgentMessage),
+        messages: input.messages.map((message) => {
+            const copy = clonePaAgentMessage(message);
+            if (copy.role === "assistant" && copy.writingRequestId) {
+                // Raw response belongs only to the explicit recovery field. No
+                // parsing or implicit version creation when persisting history.
+                copy.content = copy.content.filter((part) => part.type === "toolCall");
+                if (copy.id === finalWritingMessage?.id && input.committedFinalText && copy.content.length === 0) {
+                    copy.content = [{ type: "text", text: input.committedFinalText }];
+                }
+            }
+            return copy;
+        }),
     };
 }
 
@@ -224,8 +237,8 @@ function clonePaAgentMessage(message: PaAgentMessage): PaAgentMessage {
         };
     }
     return Array.isArray(message.content)
-        ? { ...message, content: message.content.map((part) => ({ ...part })) }
-        : { ...message };
+        ? { ...message, ...(message.images ? { images: cloneMessageImages(message.images) } : {}), content: message.content.map((part) => ({ ...part })) }
+        : { ...message, ...(message.images ? { images: cloneMessageImages(message.images) } : {}) };
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

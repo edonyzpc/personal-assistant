@@ -1,8 +1,16 @@
 import type { PersistedContextTrace } from "../pa/contracts";
+import type { MessageImage } from "../chat/image-types";
+import type { ChatHostProvenance } from "./chat-provenance";
+import type { PersistedSourceRef } from "../pa/contracts/source-ref";
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
+    images?: MessageImage[];
+    hostProvenance?: ChatHostProvenance;
+    /** Immutable host version reference; never accepted from a model response. */
+    writingVersionId?: string;
+    writingRecovery?: ChatWritingRecovery;
     /** Explicit false when a persisted assistant output did not complete safely. */
     shareCardEligible?: boolean;
     memoryMetadata?: ChatTurnMemoryMetadata;
@@ -328,6 +336,26 @@ export type AssistantMessagePart =
     | { type: "text"; text: string }
     | { type: "toolCall"; id?: string; name: string; input: unknown; index?: number };
 
+/** Provider evidence, independent of the loop's local EOF/cancellation state. */
+export type ProviderCompletion = "stop" | "length" | "content_filter" | "unknown";
+
+export interface ChatWritingRequest { requestId: string; }
+export interface ChatWritingContext { parentVersionId: string; text: string; textHash: string; associatedImages: MessageImage[]; }
+/** A failed writing task has material lineage without a validated parent body/version. Host-only. */
+export interface ChatWritingMaterialContext { requestId: string; associatedImages: MessageImage[]; }
+export interface ChatWritingStyleResult {
+    context: string; revisionIds: string[]; isCurrent: () => boolean;
+    skipped?: Array<{ revisionId: string; reason: "ineligible" | "budget" | "invalid_budget" }>;
+}
+export type ChatWritingStylePreparation = (input: { remainingTextChars: number; remainingMemoryChars: number; signal?: AbortSignal }) => Promise<ChatWritingStyleResult>;
+export type WritingRecoveryReason = "incomplete" | "provider_incomplete" | "invalid_output" | "source_changed";
+export interface ChatWritingRecovery {
+    requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason;
+    /** Optional lineage populated by the host, never from the model envelope. */
+    parentVersionId?: string;
+    backgroundSourceRefs?: PersistedSourceRef[];
+}
+
 export interface PaToolResultContent {
     promptText: string;
     previewText?: string;
@@ -344,6 +372,7 @@ export type PaAgentMessage =
         role: "user";
         id: string;
         content: UserMessageContent;
+        images?: MessageImage[];
         timestamp: number;
     }
     | {
@@ -351,6 +380,9 @@ export type PaAgentMessage =
         id: string;
         content: AssistantMessagePart[];
         stopReason?: "stop" | "tool_calls" | "error" | "aborted" | "idle_timeout" | "wall_clock_exceeded";
+        providerCompletion?: ProviderCompletion;
+        /** Host-only request marker, used to keep raw envelopes out of ordinary history. */
+        writingRequestId?: string;
         timestamp: number;
     }
     | {
@@ -555,6 +587,8 @@ export type LegacyAgentEvent =
     | LegacyAgentAnswerSnapshotEvent
     | LegacyAgentReasoningChunkEvent
     | LegacyAgentTurnMetadataEvent
+    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[] })
+    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; associatedImages?: MessageImage[] })
     | LegacyAgentTerminalEvent;
 
 export type VaultAdviceEvidenceKind =
@@ -584,6 +618,7 @@ export interface AgentTurnPlan {
 export type ChatAgentIntent = "content-seeking" | "agent-control";
 
 export type ChatToolName =
+    | "resolve_chat_images"
     | "search_memory"
     | "get_current_note_context"
     | "search_vault_metadata"

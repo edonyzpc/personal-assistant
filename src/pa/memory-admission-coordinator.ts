@@ -556,6 +556,7 @@ function upsertGovernedClaim(input: {
             revision.id === existingClaim.activeRevisionId && revision.claimId === existingClaim.id
         ))
         : undefined;
+    if (currentRevision?.writingStyle) throw new AdmissionError("explicit_style_authority_required");
     if ((currentRevision?.authority === "user_correction" || currentRevision?.authority === "explicit_user")
         && input.envelope.authority !== "user_correction"
         && input.envelope.authority !== "explicit_user") {

@@ -11,10 +11,39 @@ import {
 } from "../src/pa/memory-governance-persistence";
 
 describe("Memory governance V1 state", () => {
+    it('rejects invalidation between the repository callback and the in-memory backend commit', async () => {
+        const repository = new InMemoryMemoryGovernanceRepository();
+        const before = await repository.initialize(); const controller = new AbortController();
+        const guard = Object.assign(jest.fn(), { signal: controller.signal });
+        await expect(repository.transact((draft) => {
+            draft.policyStates.vault = createPolicyState(1);
+            // The second microtask runs after the repository callback resumes,
+            // but before the backend resumes its await and commits the state.
+            queueMicrotask(() => queueMicrotask(() => controller.abort()));
+        }, guard)).rejects.toMatchObject({ code: 'commit_conflict' });
+        expect(await repository.initialize()).toEqual(before); expect(guard).not.toHaveBeenCalled();
+        await repository.dispose();
+    });
+
+    it.each(['memory', 'indexeddb'])('checks the source guard at %s commit and preserves state if it fails', async (backend) => {
+        const repository = backend === 'memory' ? new InMemoryMemoryGovernanceRepository()
+            : createIndexedRepository(new FakeGovernanceIndexedDbFactory());
+        const before = await repository.initialize();
+        let mutationFinished = false;
+        const guard = jest.fn(() => { expect(mutationFinished).toBe(true); throw new Error('Source changed'); });
+        await expect(repository.transact(async (draft) => {
+            draft.policyStates.vault = createPolicyState(1);
+            await Promise.resolve(); mutationFinished = true;
+        }, guard)).rejects.toThrow('Source changed');
+        expect(guard).toHaveBeenCalledTimes(1);
+        expect(await repository.initialize()).toEqual(before);
+        await repository.dispose();
+    });
+
     it("creates a complete clone-safe empty schema", () => {
         const first = createEmptyDeviceMemoryGovernanceStateV1();
         expect(first).toEqual({
-            schemaVersion: 1,
+            schemaVersion: 2,
             commitSequence: 0,
             claims: [],
             revisions: [],
@@ -157,7 +186,7 @@ describe("InMemoryMemoryGovernanceRepository", () => {
             draft.policyStates.vault = createPolicyState(1);
         })).resolves.toBeUndefined();
         const first = await repository.initialize();
-        expect(first.schemaVersion).toBe(1);
+        expect(first.schemaVersion).toBe(2);
         expect(first.commitSequence).toBe(1);
         first.policyStates.vault.legacyBaseline!.confirmedCount = 99;
         expect((await repository.initialize()).policyStates.vault.legacyBaseline?.confirmedCount).toBe(1);
@@ -177,6 +206,31 @@ describe("InMemoryMemoryGovernanceRepository", () => {
 });
 
 describe("IndexedDbMemoryGovernanceRepository", () => {
+    it('upgrades a complete V1 transaction in place and prevents an old-version writer from reopening', async () => {
+        const factory = new FakeGovernanceIndexedDbFactory();
+        const original = createCompleteState(); seedLegacyFactory(factory, original);
+        const repository = createIndexedRepository(factory);
+        const upgraded = await repository.initialize();
+        expect(upgraded).toEqual({ ...normalizeDeviceMemoryGovernanceStateV1(original), schemaVersion: 2 });
+        expect(factory.backend.version).toBe(2);
+        const oldOpen = factory.open('old-writer', 1);
+        await expect(new Promise((resolve, reject) => { oldOpen.onsuccess = resolve; oldOpen.onerror = () => reject(oldOpen.error); }))
+            .rejects.toMatchObject({ name: 'VersionError' });
+        expect(await repository.initialize()).toEqual(upgraded); await repository.dispose();
+    });
+
+    it.each(['invalid-state', 'upgrade-commit-failed'])('aborts V1 upgrade without changing the original stores: %s', async (failure) => {
+        const factory = new FakeGovernanceIndexedDbFactory();
+        const original = createCompleteState();
+        if (failure === 'invalid-state') original.claims.push({ ...original.claims[0] });
+        seedLegacyFactory(factory, original);
+        if (failure === 'upgrade-commit-failed') factory.backend.failNextWriteCommit = true;
+        const before = cloneStores(factory.backend.stores);
+        const repository = createIndexedRepository(factory);
+        await expect(repository.initialize()).rejects.toMatchObject({ code: 'database_open_failed' });
+        expect(factory.backend.version).toBe(1); expect(factory.backend.stores).toEqual(before); await repository.dispose();
+    });
+
     it("creates the complete logical schema under one device-shared database name", async () => {
         const factory = new FakeGovernanceIndexedDbFactory();
         const repository = createIndexedRepository(factory);
@@ -185,7 +239,7 @@ describe("IndexedDbMemoryGovernanceRepository", () => {
 
         expect(factory.openCalls).toEqual([{
             name: getMemoryGovernanceDeviceDbName("personal-assistant"),
-            version: 1,
+            version: 2,
         }]);
         expect([...factory.backend.stores.keys()].sort()).toEqual([
             "meta",
@@ -261,7 +315,7 @@ describe("IndexedDbMemoryGovernanceRepository", () => {
         const repository = createIndexedRepository(factory);
 
         await expect(repository.initialize()).rejects.toMatchObject({ code: "database_open_blocked" });
-        await expect(repository.initialize()).resolves.toMatchObject({ schemaVersion: 1, commitSequence: 0 });
+        await expect(repository.initialize()).resolves.toMatchObject({ schemaVersion: 2, commitSequence: 0 });
         expect(factory.openCalls).toHaveLength(2);
         await repository.dispose();
     });
@@ -501,9 +555,24 @@ class FakeGovernanceIndexedDbFactory {
                 request.onblocked?.call(request, {} as IDBVersionChangeEvent);
                 return;
             }
+            if (version !== undefined && version < this.backend.version) {
+                Object.assign(request, { error: new DOMException('Old writer blocked', 'VersionError') });
+                request.onerror?.call(request, {} as Event); return;
+            }
+            if (this.backend.version === 1 && version === 2) {
+                const upgrade = new FakeGovernanceTransaction(this.backend, [...this.backend.stores.keys()], 'readwrite');
+                Object.assign(request, { transaction: upgrade });
+                upgrade.oncomplete = () => { this.backend.version = 2; request.onsuccess?.call(request, {} as Event); };
+                upgrade.onabort = () => {
+                    Object.assign(request, { error: upgrade.error }); request.onerror?.call(request, {} as Event);
+                };
+                request.onupgradeneeded?.call(request, { oldVersion: 1, newVersion: 2 } as IDBVersionChangeEvent);
+                this.backend.acquireWrite(upgrade); return;
+            }
             if (!this.backend.upgraded) {
-                request.onupgradeneeded?.call(request, {} as IDBVersionChangeEvent);
+                request.onupgradeneeded?.call(request, { oldVersion: 0, newVersion: version } as IDBVersionChangeEvent);
                 this.backend.upgraded = true;
+                this.backend.version = version ?? 1;
             }
             request.onsuccess?.call(request, {} as Event);
         });
@@ -514,6 +583,7 @@ class FakeGovernanceIndexedDbFactory {
 class FakeGovernanceIndexedDbBackend {
     stores = new Map<string, Map<string, unknown>>();
     upgraded = false;
+    version = 0;
     failNextWriteCommit = false;
     private writeTail: Promise<void> = Promise.resolve();
 
@@ -531,6 +601,18 @@ class FakeGovernanceIndexedDbBackend {
         const previous = this.writeTail;
         this.writeTail = previous.then(() => new Promise<void>((resolve) => { release = resolve; }));
         void previous.then(() => transaction.activate(() => release?.()));
+    }
+}
+
+// This transactional fake exercises production upgrade callbacks; host IndexedDB
+// durability/VersionError behavior still needs the real Obsidian acceptance run.
+function seedLegacyFactory(factory: FakeGovernanceIndexedDbFactory, state: DeviceMemoryGovernanceStateV1): void {
+    factory.backend.version = 1; factory.backend.upgraded = true;
+    factory.backend.getStore('meta').set('device-state-v1', { schemaVersion: 1, commitSequence: state.commitSequence });
+    for (const name of MEMORY_GOVERNANCE_LOGICAL_STORES) {
+        const store = factory.backend.getStore(name), value = state[name];
+        if (Array.isArray(value)) value.forEach((row, index) => store.set(String(index), cloneValue(row)));
+        else for (const [key, entry] of Object.entries(value)) store.set(key, { key, value: cloneValue(entry) });
     }
 }
 
