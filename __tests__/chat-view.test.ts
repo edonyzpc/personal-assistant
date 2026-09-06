@@ -10,7 +10,7 @@ import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { WritingVersionService } from '../src/chat/writing-versions';
-import { WritingRecoveryModal, WritingSaveModal, WritingStyleModal } from '../src/chat/writing-modal';
+import { WritingRecoveryModal, WritingSaveModal, WritingStyleModal, WritingVersionModal } from '../src/chat/writing-modal';
 import { WritingStyleUnavailableError } from '../src/chat/writing-style-service';
 import type { WritingVersion } from '../src/chat/writing-types';
 import type { WritingSaveAction, PreparedWritingSave } from '../src/chat/writing-save-action';
@@ -1351,6 +1351,52 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         expect(release).toHaveBeenCalledTimes(1);
         expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('shows exact reference samples separately, refreshes without losing edits, and cancels stale reads', async () => {
+        const first = { id: 'first', conversationId: 'chat', text: 'Exact body', explanation: 'Separate explanation',
+            requestId: 'request', messageId: 'message', textHash: 'a'.repeat(64), turnIndex: 0, createdAt: 0,
+            origin: 'ai_generated', referenceScope: 'request', associatedImages: [],
+            backgroundSourceRefs: [{ path: 'Travel.md', heading: 'Day one' }], styleRevisionIds: ['style-1'] } as WritingVersion;
+        const second = { ...first, id: 'second', text: 'Second body', styleRevisionIds: ['missing'] };
+        const references = [{ revisionId: 'style-1', exactText: '  Exact sample\nwith spacing  ',
+            scene: { writingTask: 'copywriting', purpose: 'social_share', audience: 'friends', domain: 'travel' }, isCurrent: () => true }];
+        const read = jest.fn(async (_ids: readonly string[], _signal?: AbortSignal) => references);
+        let changed: () => void = () => undefined;
+        const unsubscribe = jest.fn();
+        const root = new MockElement('div');
+        const modal = new WritingVersionModal({} as never, {
+            versions: { get: async (id: string) => id === 'first' ? first : second, list: async () => [first, second],
+                edit: jest.fn(async (_id, text) => ({ ...first, text })) } as unknown as WritingVersionService,
+            readStyleReferences: read, onReferencesChanged: (listener) => { changed = listener; return unsubscribe; },
+        }, first.id);
+        modal.contentEl = root as unknown as HTMLElement; modal.onOpen(); await flushPromises();
+        const material = walkAll(root, (el) => el.tagName === 'details')[0] as unknown as HTMLDetailsElement;
+        material.open = true; material.ontoggle?.({} as ToggleEvent); await flushPromises();
+        expect(walkAll(root, (el) => el.tagName === 'h3').map((el) => el.textContent))
+            .toEqual(['Associated images (0)', 'Background sources (1)', 'Style samples (1)']);
+        expect(walk(root, (el) => el.tagName === 'pre')?.textContent).toBe(references[0].exactText);
+        expect(walk(root, (el) => el.textContent === 'Travel.md › Day one')).not.toBeNull();
+        const editor = walk(root, (el) => el.tagName === 'textarea')!; editor.value = 'Unsaved edit';
+        walk(root, (el) => el.tagName === 'button' && el.textContent === 'Copy writing')!.click();
+        await flushPromises();
+        expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Unsaved edit');
+        let finish!: (value: typeof references) => void;
+        read.mockImplementationOnce(async () => new Promise((resolve) => { finish = resolve; }));
+        changed(); expect(walk(root, (el) => el.tagName === 'pre')).toBeNull();
+        expect(editor.value).toBe('Unsaved edit');
+        const picker = walk(root, (el) => el.tagName === 'select')! as unknown as HTMLSelectElement;
+        picker.value = 'second'; picker.onchange?.({} as Event); await flushPromises();
+        expect(read.mock.calls[1][1]?.aborted).toBe(true);
+        finish(references); await flushPromises();
+        expect(walk(root, (el) => el.tagName === 'pre')).toBeNull();
+        expect(walk(root, (el) => el.tagName === 'textarea')?.value).toBe('Second body');
+        const nextDetails = walkAll(root, (el) => el.tagName === 'details')[0] as unknown as HTMLDetailsElement;
+        nextDetails.open = true; nextDetails.ontoggle?.({} as ToggleEvent); await flushPromises();
+        expect(walk(root, (el) => el.textContent.includes('Reference unavailable'))).not.toBeNull();
+        expect(walk(root, (el) => el.tagName === 'pre')).toBeNull();
+        modal.onClose(); expect(unsubscribe).toHaveBeenCalledTimes(2);
+        expect(read.mock.calls[2][1]?.aborted).toBe(true);
     });
 
     it.each(['legacy_memory', 'governance_unavailable'] as const)('keeps the style choice and explains its Memory blocker: %s', async (code) => {

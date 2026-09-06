@@ -7745,6 +7745,18 @@ export class PluginManager extends Plugin {
             writingVersions: this.writingVersions,
             writingSave: this.writingSave,
             rememberWritingStyle: (versionId, scene) => this.rememberWritingStyle(versionId, scene),
+            readWritingStyleReferences: (revisionIds, signal) => this.getWritingStyleService()?.readReferences(revisionIds, signal) ?? Promise.resolve([]),
+            onWritingReferencesChanged: (listener) => {
+                let active = true;
+                const notify = () => { if (active) listener(); };
+                const settings = this.onSettingsChanged(notify);
+                const repository = this.deviceMemoryGovernanceRepository?.subscribe(() => {
+                    // Commit invalidates displayed samples before external Forget cleanup can fail.
+                    notify();
+                    void this.deviceMemoryCacheRefreshPromise?.then(notify, notify);
+                });
+                return () => { active = false; settings(); repository?.(); };
+            },
             prepareWritingStyle: (prompt, parentScene, budget) => this.prepareWritingStyle(prompt, parentScene, budget),
             onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>

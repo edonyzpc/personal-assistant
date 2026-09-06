@@ -17,6 +17,13 @@ export interface WritingStyleServiceOptions {
     verifyNoteSource: (ref: PersistedSourceRef, signal?: AbortSignal) => Promise<{ allowed: boolean; isCurrent: () => boolean }>;
 }
 
+export interface WritingStyleReference {
+    revisionId: string;
+    exactText: string;
+    scene: WritingStyleScene;
+    isCurrent: () => boolean;
+}
+
 export class WritingStyleUnavailableError extends Error {
     constructor(readonly code: 'legacy_memory' | 'governance_unavailable') {
         super('Writing style is unavailable');
@@ -116,6 +123,46 @@ export class WritingStyleService {
             scopeAllowed: this.options.canManage?.() ?? this.options.isRuntimeEnabled(), dataBoundaryAllowed: source.allowed && source.isCurrent(),
             isCurrent: () => !this.disposed && (this.options.canManage?.() ?? this.options.isRuntimeEnabled()) && source.isCurrent() });
         if (!result.ok) throw new Error(`Writing style: ${result.reason}`);
+    }
+
+    /** Read an exact, still-authorized sample for details; never substitute its replacement. */
+    async readReferences(revisionIds: readonly string[], signal?: AbortSignal): Promise<WritingStyleReference[]> {
+        this.assertActive(signal);
+        const snapshot = this.options.getStateSnapshot();
+        const canRead = () => !this.disposed && !signal?.aborted
+            && (this.options.canManage?.() ?? this.options.isRuntimeEnabled());
+        if (!snapshot || !canRead() || snapshot.state.policyStates[snapshot.vaultScopeKey]?.contextProjectionMode !== 'governed') return [];
+        const { state, vaultScopeKey } = snapshot;
+        const sequence = state.commitSequence;
+        const result: WritingStyleReference[] = [];
+        for (const id of new Set(revisionIds)) {
+            const revisions = state.revisions.filter((revision) => revision.id === id);
+            const revision = revisions.length === 1 ? revisions[0] : undefined;
+            const claims = state.claims.filter((claim) => claim.id === revision?.claimId);
+            const claim = claims.length === 1 ? claims[0] : undefined;
+            if (!revision || !claim || !['active', 'paused'].includes(claim.lifecycle)
+                || !isGovernableWritingStyle(claim, revision, vaultScopeKey)
+                || state.pendingOperations.some((operation) => operation.claimId === claim.id
+                    && (operation.kind === 'forget' || operation.state === 'pending'))) continue;
+            const links = state.projectionLinks.filter((link) => link.claimId === claim.id && link.state === 'active');
+            if (!links.length || links.some((link) => !link.sourceFingerprintId || !link.ruleFingerprint
+                || state.suppressionMarkers.some((marker) => marker.partition.kind === claim.partition.kind
+                    && marker.partition.key === claim.partition.key
+                    && marker.sourceFingerprintId === link.sourceFingerprintId && marker.ruleFingerprint === link.ruleFingerprint))) continue;
+            try {
+                const source = await this.verifyRevision(revision, signal);
+                const isCurrent = () => {
+                    const latest = this.options.getStateSnapshot();
+                    return Boolean(canRead() && latest && latest.vaultScopeKey === vaultScopeKey
+                        && latest.state.commitSequence === sequence
+                        && latest.state.policyStates[vaultScopeKey]?.contextProjectionMode === 'governed'
+                        && source.allowed && source.isCurrent());
+                };
+                if (isCurrent()) result.push({ revisionId: id, exactText: revision.writingStyle!.exactText,
+                    scene: { ...revision.writingStyle!.scene }, isCurrent });
+            } catch { /* Unavailable source must not prevent reading the version body. */ }
+        }
+        return result.filter((reference) => reference.isCurrent());
     }
 
     dispose(): void { this.disposed = true; }

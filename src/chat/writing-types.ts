@@ -26,6 +26,8 @@ export interface WritingVersion {
     associatedImages: MessageImage[];
     backgroundSourceRefs: PersistedSourceRef[];
     styleRevisionIds: string[];
+    /** Absent on older records whose references may include ancestor requests. */
+    referenceScope?: 'request';
     scene?: WritingScene;
 }
 
@@ -41,6 +43,7 @@ const versionSchema = z.object({
     conversationId: id, turnIndex: z.number().int().nonnegative(), createdAt: z.number().finite().nonnegative(),
     associatedImages: z.array(z.unknown()).max(2048), backgroundSourceRefs: z.array(z.unknown()).max(2048),
     styleRevisionIds: z.array(id).max(2048), scene: writingSceneSchema.optional(),
+    referenceScope: z.literal('request').optional(),
 }).strict();
 
 export function cloneWritingVersion(value: unknown): WritingVersion {

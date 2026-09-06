@@ -11,6 +11,7 @@ import type { ImageAssetService } from "./image-assets";
 import type { WritingVersionService } from "./writing-versions";
 import type { WritingSaveAction } from "./writing-save-action";
 import type { WritingScene } from "./writing-types";
+import type { WritingStyleReference } from './writing-style-service';
 import type { ChatWritingStylePreparation, ChatWritingStyleResult } from '../ai-services/chat-types';
 
 export type AISetupFailureCode =
@@ -53,6 +54,8 @@ export interface ChatHost {
     readonly writingVersions?: WritingVersionService;
     readonly writingSave?: WritingSaveAction;
     rememberWritingStyle?(versionId: string, scene: WritingScene): Promise<void>;
+    readWritingStyleReferences?(revisionIds: readonly string[], signal?: AbortSignal): Promise<WritingStyleReference[]>;
+    onWritingReferencesChanged?(listener: () => void): () => void;
     prepareWritingStyle?(prompt: string, parentScene: WritingScene | undefined,
         budget: Parameters<ChatWritingStylePreparation>[0]): Promise<ChatWritingStyleResult>;
     readonly memoryStatus: MemoryStatusPort;

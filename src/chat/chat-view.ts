@@ -2134,6 +2134,8 @@ export class LLMView extends ItemView {
             if (!versions) return undefined;
             return {
                 versions, save: this.host.writingSave,
+                readStyleReferences: this.host.readWritingStyleReferences?.bind(this.host),
+                onReferencesChanged: (listener) => this.host.onWritingReferencesChanged?.(listener) ?? this.host.onSettingsChanged(listener),
                 rememberStyle: this.host.rememberWritingStyle
                     ? (versionId, scene) => this.host.rememberWritingStyle!(versionId, scene) : undefined,
                 onSelect: (version) => {

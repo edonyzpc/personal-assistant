@@ -41,6 +41,7 @@ export class WritingVersionService {
         backgroundSourceRefs?: PersistedSourceRef[]; styleRevisionIds?: string[]; scene?: WritingScene;
         /** Only a host editing UI supplies this; a model envelope has no origin field. */
         origin?: WritingVersion['origin'];
+        referenceScope?: WritingVersion['referenceScope'];
     }): Promise<WritingVersion> {
         if (this.disposed) return Promise.reject(new Error('Writing versions closed'));
         // Snapshot before joining the queue: the composer may change while an
@@ -51,6 +52,7 @@ export class WritingVersionService {
             turnIndex: input.turnIndex, text: input.text, explanation: input.explanation ?? '',
             origin: input.origin ?? 'ai_generated', associatedImages: input.images,
             backgroundSourceRefs: input.backgroundSourceRefs ?? [], styleRevisionIds: input.styleRevisionIds ?? [],
+            referenceScope: input.origin === 'user_edited' ? input.referenceScope : 'request',
             ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
             ...(input.scene ? { scene: input.scene } : {}),
         });
@@ -59,7 +61,7 @@ export class WritingVersionService {
             const versionId = `writing_${(await hashWritingText(`${snapshot.requestId}\0${snapshot.messageId}`)).slice(0, 48)}`;
             const parent = snapshot.parentVersionId ? await this.get(snapshot.parentVersionId) : null;
             if (snapshot.parentVersionId && (!parent || parent.conversationId !== snapshot.conversationId)) throw new Error('Writing parent unavailable');
-            const sources = [...(parent?.backgroundSourceRefs ?? []), ...snapshot.backgroundSourceRefs];
+            const sources = snapshot.backgroundSourceRefs;
             const sourceIdentities = new Set<string>();
             const version = cloneWritingVersion({
                 ...snapshot, id: versionId, textHash, createdAt: this.now(),
@@ -69,7 +71,7 @@ export class WritingVersionService {
                     if (sourceIdentities.has(key)) return false;
                     sourceIdentities.add(key); return true;
                 }),
-                styleRevisionIds: [...new Set([...(parent?.styleRevisionIds ?? []), ...snapshot.styleRevisionIds])],
+                styleRevisionIds: [...new Set(snapshot.styleRevisionIds)],
                 ...(snapshot.scene ? { scene: snapshot.scene } : {}),
             });
             const existing = await this.get(versionId);
@@ -94,6 +96,7 @@ export class WritingVersionService {
             requestId: actionId, messageId: actionId, conversationId: parent.conversationId, turnIndex: parent.turnIndex,
             parentVersionId: parent.id, text, explanation: parent.explanation, images: [], origin: 'user_edited',
             backgroundSourceRefs: parent.backgroundSourceRefs, styleRevisionIds: parent.styleRevisionIds, scene: parent.scene,
+            referenceScope: parent.referenceScope,
         });
     }
 

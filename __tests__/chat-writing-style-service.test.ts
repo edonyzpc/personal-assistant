@@ -22,6 +22,33 @@ async function harness() {
 }
 
 describe('host writing-style service', () => {
+    it('reads the exact sample, permits paused inspection, and never substitutes a corrected revision', async () => {
+        const h = await harness(); const added = await h.service.remember('version-1', scene, 'read-action'); await h.refresh();
+        const [reference] = await h.service.readReferences([added.revisionId]);
+        expect(reference.exactText).toBe(text); expect(reference.isCurrent()).toBe(true);
+        await h.coordinator.pauseUse({ claimId: added.claimId }); await h.refresh();
+        expect(reference.isCurrent()).toBe(false);
+        expect((await h.service.readReferences([added.revisionId]))[0].exactText).toBe(text);
+        await h.service.correct(added.claimId, 'Replacement sample', scene, 'correction'); await h.refresh();
+        expect(await h.service.readReferences([added.revisionId])).toEqual([]);
+        const latestId = h.current().claims.find((claim) => claim.id === added.claimId)!.activeRevisionId!;
+        expect((await h.service.readReferences([latestId]))[0].exactText).toBe('Replacement sample');
+        await h.coordinator.forget({ claimId: added.claimId }); await h.refresh();
+        expect(await h.service.readReferences([latestId, added.revisionId])).toEqual([]);
+    });
+    it('fails closed for changed source, denied boundary, missing revision, cancellation and disabled access', async () => {
+        const h = await harness(); const added = await h.service.remember('version-1', scene, 'read-action', { path: 'saved.md', contentHash: 'hash' }); await h.refresh();
+        const [reference] = await h.service.readReferences([added.revisionId]);
+        h.setSourceCurrent(false); expect(reference.isCurrent()).toBe(false);
+        expect(await h.service.readReferences([added.revisionId])).toEqual([]);
+        h.setSourceCurrent(true); h.setAllowed(false);
+        expect(await h.service.readReferences([added.revisionId])).toEqual([]);
+        h.source.mockRejectedValue(new Error('IO failed'));
+        expect(await h.service.readReferences([added.revisionId, 'missing'])).toEqual([]);
+        h.setEnabled(false); expect(await h.service.readReferences([added.revisionId])).toEqual([]);
+        const abort = new AbortController(); abort.abort();
+        await expect(h.service.readReferences([added.revisionId], abort.signal)).rejects.toThrow('cancelled');
+    });
     it('binds exact verified writing version without saving a note or copying images', async () => {
         const h = await harness(); const result = await h.service.remember('version-1', scene, 'host-action'); await h.refresh();
         expect(result).toMatchObject({ claimId: expect.any(String), revisionId: expect.any(String) });

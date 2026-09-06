@@ -17,6 +17,19 @@ const input = () => ({ requestId: 'request1', messageId: 'message1', conversatio
     text: '  海边的风\n保留换行。🙂  ', explanation: '正文以外的说明', images: [photo('one')] });
 
 describe('immutable writing versions', () => {
+    test('records current request references without claiming parent samples were sent again', async () => {
+        const { service, records } = setup();
+        const first = await service.create({ ...input(), backgroundSourceRefs: [{ path: 'before.md' }], styleRevisionIds: ['old-style'] });
+        const next = await service.create({ ...input(), requestId: 'next', messageId: 'next', parentVersionId: first.id,
+            backgroundSourceRefs: [{ path: 'current.md' }], styleRevisionIds: [] });
+        expect(next.backgroundSourceRefs).toEqual([{ path: 'current.md' }]);
+        expect(next.styleRevisionIds).toEqual([]); expect(next.referenceScope).toBe('request');
+        const edit = await service.edit(first.id, 'Local edit', 'edit');
+        expect(edit.styleRevisionIds).toEqual(['old-style']); expect(edit.referenceScope).toBe('request');
+        delete records.get(first.id)!.referenceScope;
+        const legacyEdit = await service.edit(first.id, 'Legacy edit', 'legacy-edit');
+        expect(legacyEdit.referenceScope).toBeUndefined();
+    });
     test('keeps exact chosen text, separate explanation and full version material', async () => {
         const { service } = setup();
         const original = input();

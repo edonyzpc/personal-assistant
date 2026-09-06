@@ -21,6 +21,29 @@ import { createPluginHarness } from "./helpers/plugin-harness";
 
 describe("Plugin lifecycle integration", () => {
 
+    it('invalidates writing samples on a repository commit even when later Forget cleanup fails', async () => {
+        const { plugin } = createPluginHarness();
+        await plugin.loadSettings();
+        let commit: () => void = () => undefined;
+        let finishRefresh!: () => void;
+        const stop = jest.fn();
+        const state = plugin as unknown as {
+            deviceMemoryGovernanceRepository: unknown;
+            deviceMemoryCacheRefreshPromise: Promise<void>;
+            createChatHost(): import('../src/chat/ChatHost').ChatHost;
+        };
+        state.deviceMemoryGovernanceRepository = { subscribe: (listener: () => void) => { commit = listener; return stop; } };
+        state.deviceMemoryCacheRefreshPromise = new Promise((resolve) => { finishRefresh = resolve; });
+        const listener = jest.fn<() => void>();
+        const unsubscribe = state.createChatHost().onWritingReferencesChanged!(listener);
+        commit(); // First Forget commit; do not emit a successful settings notification.
+        expect(listener).toHaveBeenCalledTimes(1);
+        finishRefresh(); await Promise.resolve();
+        expect(listener).toHaveBeenCalledTimes(2);
+        unsubscribe(); commit(); await Promise.resolve();
+        expect(listener).toHaveBeenCalledTimes(2); expect(stop).toHaveBeenCalledTimes(1);
+    });
+
     describe("loadSettings with null data.json", () => {
         it("initializes missing data.json and produces valid settings", async () => {
             const { plugin, readPersisted } = createPluginHarness({ initialData: null });

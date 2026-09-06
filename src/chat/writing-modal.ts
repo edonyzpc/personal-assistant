@@ -6,7 +6,7 @@ import { writingSceneSchema, type WritingScene, type WritingVersion } from './wr
 import type { WritingSaveAction, PreparedWritingSave } from './writing-save-action';
 import type { SaveReceipt } from './save-receipt-types';
 import type { ChatWritingRecovery } from '../ai-services/chat-types';
-import { getWritingSceneDisplayValues, WritingStyleUnavailableError } from './writing-style-service';
+import { getWritingSceneDisplayValues, WritingStyleUnavailableError, type WritingStyleReference } from './writing-style-service';
 
 export function newWritingActionId(): string {
     const crypto = getPlatformCrypto();
@@ -19,6 +19,8 @@ export interface WritingModalHost {
     save?: WritingSaveAction;
     onSelect?: (version: WritingVersion) => void;
     rememberStyle?: (versionId: string, scene: WritingScene) => Promise<void>;
+    readStyleReferences?: (revisionIds: readonly string[], signal?: AbortSignal) => Promise<WritingStyleReference[]>;
+    onReferencesChanged?: (listener: () => void) => () => void;
 }
 
 export class WritingRecoveryModal extends Modal {
@@ -64,12 +66,14 @@ export class WritingRecoveryModal extends Modal {
 export class WritingVersionModal extends Modal {
     private closed = false;
     private renderEpoch = 0;
+    private releaseReferences?: () => void;
     constructor(app: App, private readonly host: WritingModalHost, private versionId: string) { super(app); }
     onOpen(): void { this.closed = false; void this.render(); }
-    onClose(): void { this.closed = true; this.renderEpoch++; this.contentEl.empty(); }
+    onClose(): void { this.closed = true; this.renderEpoch++; this.releaseReferences?.(); this.contentEl.empty(); }
 
     private async render(): Promise<void> {
         const epoch = ++this.renderEpoch;
+        this.releaseReferences?.(); this.releaseReferences = undefined;
         const t = makePluginTranslator(getPluginUiLanguage());
         this.contentEl.empty(); this.contentEl.addClass('pa-writing-modal');
         const status = this.contentEl.createEl('p', { attr: { role: 'status', 'aria-live': 'polite' } });
@@ -89,8 +93,57 @@ export class WritingVersionModal extends Modal {
             const editor = this.contentEl.createEl('textarea', { cls: 'pa-writing-modal__body', attr: { 'aria-label': t('plugin.chat.writing.body'), rows: '10' } });
             editor.value = current.text;
             const material = this.contentEl.createEl('details');
-            material.createEl('summary', { text: t('plugin.chat.writing.material', { count: current.associatedImages.length }) });
+            material.createEl('summary', { text: t('plugin.chat.writing.references') });
+            material.createEl('p', { text: t(!current.referenceScope ? 'plugin.chat.writing.legacyReferences'
+                : current.origin === 'user_edited' ? 'plugin.chat.writing.editedReferences' : 'plugin.chat.writing.referenceHint') });
+            material.createEl('h3', { text: t('plugin.chat.writing.material', { count: current.associatedImages.length }) });
             for (const image of current.associatedImages) material.createEl('p', { text: `${image.ordinal}. ${image.label}` });
+            material.createEl('h3', { text: t('plugin.chat.writing.backgroundReferences', { count: current.backgroundSourceRefs.length }) });
+            for (const source of current.backgroundSourceRefs) {
+                const label = `${source.path}${source.heading ? ` › ${source.heading}` : ''}${source.blockId ? ` › ${source.blockId}` : ''}`;
+                const link = material.createEl('button', { text: label, attr: { type: 'button' } });
+                link.onclick = async () => {
+                    if (!(this.app.vault.getAbstractFileByPath(source.path) instanceof TFile)) {
+                        status.setText(t('plugin.chat.writing.referenceUnavailable')); return;
+                    }
+                    const subpath = source.blockId ? `#^${source.blockId.replace(/^\^/, '')}` : source.heading ? `#${source.heading}` : '';
+                    try { await this.app.workspace.openLinkText(`${source.path}${subpath}`, '', true); }
+                    catch { if (!this.closed) status.setText(t('plugin.chat.writing.referenceUnavailable')); }
+                };
+            }
+            material.createEl('h3', { text: t('plugin.chat.writing.styleReferences', { count: current.styleRevisionIds.length }) });
+            const samples = material.createDiv();
+            let controller: AbortController | undefined;
+            const refresh = async () => {
+                controller?.abort();
+                const request = new AbortController(); controller = request;
+                samples.empty();
+                if (!material.open || !current.styleRevisionIds.length) return;
+                samples.createEl('p', { text: t('plugin.chat.writing.referencesLoading') });
+                let references: WritingStyleReference[] = [];
+                try { references = await this.host.readStyleReferences?.(current.styleRevisionIds, request.signal) ?? []; }
+                catch { /* Keep the body usable when references are unavailable. */ }
+                if (request.signal.aborted || this.closed || epoch !== this.renderEpoch) return;
+                samples.empty();
+                current.styleRevisionIds.forEach((id, index) => {
+                    const reference = references.find((item) => item.revisionId === id && item.isCurrent());
+                    samples.createEl('p', { text: `${index + 1}. ${reference
+                        ? Object.values(getWritingSceneDisplayValues(reference.scene, getPluginUiLanguage())).join(' · ')
+                        : t('plugin.chat.writing.referenceUnavailable')}` });
+                    if (reference) samples.createEl('pre', { cls: 'pa-writing-modal__body', text: reference.exactText });
+                });
+            };
+            material.ontoggle = () => { void refresh(); };
+            const unsubscribe = this.host.onReferencesChanged?.(() => { void refresh(); });
+            const vaultEvents = this.app.vault ? [
+                this.app.vault.on('modify', () => { void refresh(); }),
+                this.app.vault.on('delete', () => { void refresh(); }),
+                this.app.vault.on('rename', () => { void refresh(); }),
+            ] : [];
+            this.releaseReferences = () => {
+                controller?.abort(); unsubscribe?.(); material.ontoggle = null;
+                for (const event of vaultEvents) this.app.vault.offref(event);
+            };
             if (current.explanation) {
                 const explanation = this.contentEl.createEl('details');
                 explanation.createEl('summary', { text: t('plugin.chat.writing.explanation') });
