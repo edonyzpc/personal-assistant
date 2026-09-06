@@ -1,0 +1,37 @@
+{
+  "kind": "b129_cache_recovery_desktop_loaded",
+  "observedAt": "2026-09-06T14:41:28.480Z",
+  "vaultPath": "/Users/edonyzpc/code/personal-assistant/test",
+  "reload": {
+    "command": "obsidian vault=test plugin:reload id=personal-assistant",
+    "result": "Reloaded: personal-assistant"
+  },
+  "expectedMainSha256": "327f06e05c89e7997c826a70cc6b6d97876c993cc908f4312644bd9a35521d0b",
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "327f06e05c89e7997c826a70cc6b6d97876c993cc908f4312644bd9a35521d0b",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-06T14:41:10.958Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "configuration": {
+    "aiProvider": "qwen",
+    "chatModelName": "qwen3.8-max",
+    "policyModelName": "qwen3.8-max"
+  },
+  "checks": {
+    "loadedExpected": true,
+    "chatModelPreserved": true,
+    "policyModelPreserved": true
+  },
+  "scope": {
+    "modelRequestsSent": 0,
+    "settingsWrittenByProbe": false,
+    "iosTouched": false,
+    "cacheRecoveryValidated": false
+  }
+}

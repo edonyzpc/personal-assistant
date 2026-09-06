@@ -1,0 +1,342 @@
+{
+  "kind": "b129.p0.final-resource-3200.v1",
+  "runId": "ios-final-01",
+  "startedAt": "2026-09-06T08:30:09.844Z",
+  "environment": {
+    "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148  obsidian"
+  },
+  "status": "completed",
+  "stage": "finished",
+  "candidatePolicy": {
+    "maxOriginalBytes": 20971520,
+    "maxDecodedPixels": 48000000,
+    "maxImagesPerTurn": 8,
+    "maxVariantBytes": 4194304,
+    "maxRequestImageBytes": 25165824,
+    "processingTimeoutMs": 15000
+  },
+  "edge": 3200,
+  "quality": 0.9,
+  "cases": [
+    {
+      "name": "single-48mp-3200",
+      "startedAt": "2026-09-06T08:30:09.917Z",
+      "status": "passed",
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 162,
+      "index": 0,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "outputPath": "b129-p0-final-resources/ios-final-01/single-48mp-3200.jpg",
+      "outputHashVerified": true,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 5846705,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5846810,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5846868,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      },
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      }
+    },
+    {
+      "name": "serial-eight-48mp-3200",
+      "startedAt": "2026-09-06T08:30:10.085Z",
+      "status": "passed",
+      "reports": [
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 93,
+          "index": 0,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 93,
+          "index": 1,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 94,
+          "index": 2,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 94,
+          "index": 3,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 90,
+          "index": 4,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 93,
+          "index": 5,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 89,
+          "index": 6,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 1769870,
+          "mime": "image/jpeg",
+          "elapsedMs": 90,
+          "index": 7,
+          "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+        }
+      ],
+      "totalBytes": 14158960,
+      "count": 8,
+      "aggregateWithinBudget": true,
+      "allEightSources48MP": true,
+      "elapsedMs": 789,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 5846872,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5846973,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5847073,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5847173,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5847273,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5847373,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5847560,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 5847661,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      },
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      }
+    }
+  ],
+  "progress": [
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 93,
+      "index": 0,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 1,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 93,
+      "index": 1,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 2,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 94,
+      "index": 2,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 3,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 94,
+      "index": 3,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 4,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 90,
+      "index": 4,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 5,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 93,
+      "index": 5,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 6,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 89,
+      "index": 6,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 7,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 1769870,
+      "mime": "image/jpeg",
+      "elapsedMs": 90,
+      "index": 7,
+      "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+      "ordinal": 8,
+      "total": 8
+    }
+  ],
+  "errors": [],
+  "resources": {
+    "activeImages": 0,
+    "activeCanvases": 0,
+    "activeUrls": 0,
+    "maxActiveImages": 1,
+    "maxActiveCanvases": 1,
+    "maxActiveUrls": 1
+  },
+  "scope": "One 48MP image, then eight fresh serial decodes of the same synthetic 48MP source. Distinct per-image Blob/URL work; batch retains encoded variants. No actual provider, IDB, or production Chat.",
+  "evidenceLimits": [
+    "Repeated 48MP source tests peak decode geometry, not eight distinct photographs or maximum JPEG entropy.",
+    "Owned-reference counters are not native memory measurements; read sampler/Safari evidence separately.",
+    "Byte limits are enforced candidates, not a claim that every eight-image input fits."
+  ],
+  "original": {
+    "path": "b129-p0-fixtures/resource-48mp.jpg",
+    "sha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+    "bytes": 4188715,
+    "afterSha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+    "unchanged": true
+  },
+  "finishedAt": "2026-09-06T08:30:10.919Z",
+  "ownedResourcesReleased": true
+}

@@ -79,7 +79,8 @@ Work item: B-129
 这些选择不扩大既有文件排除、跨 vault、provider 或 Memory 权限。写入控制后续
 由 PA 能力演进承接，不把现有 Operations 开关固化为 B-129 的新增产品门禁。
 具体用户流程、REQ/AC 和兼容细化见 [Product Spec](../specs/pa-multimodal-chat-product-spec.md)。
-Product Spec 为整合设计草稿；本记录不把后续技术建议一并标为用户批准。
+Product Spec 保留当前产品契约；技术实现见 Architecture。本记录不把后续建议
+或验收范围之外的能力一并标为用户批准。
 
 ### 2026-09-06 评审处置
 
@@ -128,25 +129,14 @@ Product Spec 为整合设计草稿；本记录不把后续技术建议一并标�
 - 文案正文与参考材料分离；材料记录只证明向本次回答提供了哪些背景，不证明模型
   逐项采纳或逐句引用。复制和保存不得靠重新生成或事后正则剥离来保持正文版本。
 
-### 源码事实与技术建议
+### 当前技术承接
 
-以下是设计输入，不是已实现能力。技术细化需在实施前形成 source-verified SDD：
-
-| 已核对的事实 | 对实现的建议 |
-| --- | --- |
-| 当前 Chat/history 以文字为主；已安装的 LangChain 支持多模态 HumanMessage | 保留文字，旁挂有类型的图片引用；仅在实际请求边界物化图片，不把 Base64 存入历史、摘要或普通日志 |
-| B-128 在 master 的上下文投影、摘要与最终预算链路需要承接 | 实施前对齐 master；复用既有链路，为图片增加数量、像素/字节与可用性检查；图片身份需跨工具轮次及重试保留 |
-| Obsidian 有公开的附件目标路径、二进制写入与 Markdown 链接 API | 按目标笔记而非当前活动笔记解析正式附件；不模拟编辑器粘贴，也不复制私有配置推断逻辑 |
-| 当前“保存建议”会再调用 Agent，现有文本写入路径不含完整二进制附件事务 | 为选中的文案版本构造确定性保存计划，复用既有预览和结果面板；明确部分失败与重试，不宣称多文件原子保存 |
-| 当前画像抽取读取助手回复，尚无完整的 B-129 内容来源与风格授权语义 | 在抽取输入、候选准入与使用范围加入结构化区分；仅修改提示词不足以保证局部修改不变成长期偏好 |
-
-仓库证据：[Chat 类型](../../../src/ai-services/chat-types.ts)、
-[历史存储](../../../src/chat/chat-history-store.ts)、
-[Chat 保存与来源界面](../../../src/chat/chat-view.ts)、
-[画像抽取](../../../src/ai-services/memory-extraction/type-a-extractor.ts)、
-[Memory 使用投影](../../../src/pa/memory-use-projection.ts)、
-[Operations 写入](../../../src/ai-services/operations/operations-intent-controller.ts)。
-这里不复制其他 work item 的交付状态，也不因设计需要在本轮合并分支。
+设计时的文字 Chat 基线已由类型化图片引用、最终请求边界的副本读取及 B-128
+上下文接线承接。图文保存使用固定版本与持久 SaveReceipt，执行和重试不再次
+调用 Agent；聊天提取、候选准入和生成笔记均区分 host 来源，显式风格单独治理。
+稳定接口、存储生命周期与恢复规则见
+[Multimodal Chat Architecture](../../architecture/multimodal-chat-architecture.md)。
+这里不将实现存在等同于全部实机 UI 或任意 provider 效果通过。
 
 ### 兼容决定与工程验证边界
 
@@ -156,7 +146,7 @@ Product Spec 为整合设计草稿；本记录不把后续技术建议一并标�
 中断时保留可查看、标为未完成的笔记，重试先核对已写内容，不能覆盖用户编辑。
 此保存顺序调整不增加生成调用，也不改变默认保存全部关联图片；后续 HEIC
 正式 JPEG 的同步例外由上方独立保存决定承接。
-具体步骤见 [B-129 SDD](../../development/active/multimodal-chat/sdd.md#文案版本与固定保存)。
+具体步骤见 [固定保存与失败恢复](../../architecture/multimodal-chat-architecture.md#固定保存与失败恢复)。
 
 1. **格式与真实原图获取**：JPEG/PNG/WebP、HEIC/HEIF、GIF/APNG/WebP、SVG
    的原件保留、预览、模型发送是不同能力。动画与外部资源 SVG 按上述明确决定
@@ -168,17 +158,18 @@ Product Spec 为整合设计草稿；本记录不把后续技术建议一并标�
    原图和当前草稿，提示提供 JPEG；不承诺所有设备均能自动处理 HEIC，不上传
    远程转码、不自动安装解码器、不改发原图。此决定替代此前 libheif 接入选择，
    不改变其他格式的待验证边界，也不把新添加的 JPEG 冒充原 HEIC 的原件。
-   实测两端笔记均显示 HEIC 文件卡；iOS/macOS 本地转换可行，完整生产生命周期
-   尚须验证。正式笔记的 HEIC 原件/JPEG 附件关系由上方保存决定单独承接。
-   [Tracker D-14](../../development/active/multimodal-chat/tracker.md) 保留当前执行
-   状态和原 libheif 原型的历史证据；该依赖从未加入正式 package/lock。
-2. **同步**：iCloud 的 .nosync 命名或原生属性只是候选，不能预先定案。
-   自动排除、各设备设置、已上传/已跟踪内容与原图保留需要分别核实。
+   P0 当时两端笔记均显示 HEIC 文件卡；本地转换可行性和后续生产保存/重载证据
+   分别保留于 [限定验证](../../archive/2026/b129-multimodal-chat-validation.md)。
+   正式 HEIC/JPEG 关系沿上方决定；原 libheif 候选从未加入正式 package/lock，
+   早期研究由 Git 历史保留，不作为当前依赖或支持承诺。
+2. **同步**：当前不采用 iCloud .nosync 或原生属性作为可靠的插件级排除方案。
+   自动排除、各设备设置、已上传/已跟踪内容与原图保留分别核实，未知状态不冒充完成。
 3. **目录锚点**：附件规则可以相对笔记；无关联笔记的固定根层逻辑锚点、真实
-   TFile 的相对目录及设置变化后的引用/提示已由 SDD 定义，需按该设计集成验证。
+   TFile 的相对目录及设置变化后的引用/提示由当前 Architecture 承接；两端生产
+   验证与目录规则证据分别记录，不从目录解析推导同步排除。
 4. **资源与画质**：单图像素/字节、批量数量、照片质量、截图小字清晰度、请求预算
-   和缓存容量按 G-03 校准。已有单图阶梯不等于生产默认值已通过；不得把经验
-   数值写成已验证阈值，实测要求超出当前产品边界时再由用户决定。
+   和缓存容量经 P0 有界实验校准，当前数值以源码 IMAGE_POLICY 为准。单图阶梯
+   不等于所有输入和设备的保证；实测要求超出产品边界时再由用户决定。
 
 公开证据：
 
@@ -211,10 +202,10 @@ Product Spec 为整合设计草稿；本记录不把后续技术建议一并标�
 ## Traceability
 
 - 产品行为与验收：[B-129 Product Spec](../specs/pa-multimodal-chat-product-spec.md)。
-- 技术与执行入口：[Feature Home](../../development/active/multimodal-chat/README.md)、
-  [SDD](../../development/active/multimodal-chat/sdd.md)、
-  [Plan](../../development/active/multimodal-chat/plan.md)、
-  [Tracker](../../development/active/multimodal-chat/tracker.md)。
+- 当前技术与操作：[Architecture](../../architecture/multimodal-chat-architecture.md)、
+  [使用指南](../../guides/multimodal-chat-user-guide.md)。
+- 独有验证与兼容限制：[历史证据](../../archive/2026/b129-multimodal-chat-validation.md)。
+- 后续方向：[Backlog B-132/B-133/B-134](../../backlog.md#已延期的产品与工程工作)。
 - 既有约束：[Data Boundary](../specs/pa-data-boundary-product-spec.md)、
   [Memory Control Center](../specs/pa-memory-control-center-product-spec.md)、
   [DEC-028](./dec-028-silent-memory-auto-prepare.md)、

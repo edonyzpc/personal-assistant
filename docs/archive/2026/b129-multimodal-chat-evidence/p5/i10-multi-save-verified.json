@@ -1,0 +1,19 @@
+{
+  "sourceReceipt": "i10-multi-save.json",
+  "checkerCorrection": "Previous inline checker skipped 7 characters for a 6-character frontmatter delimiter; use the complete matched header length. No product or note change.",
+  "checkedAt": "2026-09-06T11:09:08.462Z",
+  "noteHash": "1a83db4cf30dbbd76728fd7b889dcde3ec65bd6afb27770959994104f6ee7a43",
+  "checks": {
+    "complete": true,
+    "twoVersionImages": true,
+    "twoSources": true,
+    "bodyStartsExact": true,
+    "originalHashesMatch": true,
+    "noFormalHeic": true,
+    "styleRevisionCount": 0,
+    "noteUnchangedSincePrior": true,
+    "receiptComplete": true,
+    "finalNoteHashMatch": true,
+    "formalHashMatch": true
+  }
+}

@@ -19,6 +19,9 @@ Updated: 2026-09-06
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
+| B-132 | 多模态媒体扩展：动画理解与外部资源 SVG | 承接 B-129/T-16、REQ-15 的明确延期范围；用户选择启动后先定义完整理解/渲染的验收、解码依赖、帧与资源预算及外部网络边界。现有静态图恢复继续有效，不因收尾自动抽帧或联网补齐；不预定二期优先级或工期 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [Product Spec](./product/specs/pa-multimodal-chat-product-spec.md), [历史媒体与资源证据](./archive/2026/b129-multimodal-chat-validation.md) |
+| B-133 | Chat 图片生成 | 承接 DEC-030 明确后续方向；用户选择为下一阶段后，先明确使用场景、provider/模型、费用、图片版本/来源与显式保存边界，再形成独立产品与技术方案。不从现有 Featured Image 或看图聊天能力推导已交付通用生图 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md) |
+| B-134 | 跨设备图片聊天续接 | 承接 DEC-030 后续方向；用户选择启动后先设计聊天历史、图片引用/原件可用性、冲突恢复及同步隐私边界。首期仍仅承诺同设备续聊；图片进入 vault 或正式附件同步不等于聊天同步，也不自动扩大到风格同步 | User request 2026-09-06 整合收尾；[DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md), [当前存储契约](./architecture/multimodal-chat-architecture.md) |
 | B-130 | Chat 严格回答格式遵循 | B-128 F-20 为非阻塞 P3：默认预算下请求纯 JSON 仍可能得到说明/围栏。出现明确依赖机器可解析输出的调用方，或真实用户工作流被格式阻断时重启；先保留同输入的语义/格式对照，不用猜测截取 JSON 掩盖错误，也不以更短输出牺牲关键细节 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [formatAtDefaultBudget 与撤回候选](./archive/2026/b-128-context-management-validation.md) |
 | B-131 | Context 摘要去重与字段归类 | B-128 F-23 为非阻塞 P3：当前同义重复无矛盾、无遗漏且在预算内。重复内容可复现地挤占必要事实、增加摘要批次或造成可感知延迟时重启；沿用原文/摘要/实际入模/续答证据，避免仅为字段整齐增加模型矩阵或 Memory 能力 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [targetedSemantic 原始摘要](./archive/2026/b-128-context-management-validation.md) |
 | B-102 | Obsidian Operations CLI adapter (v1B) | Desktop CLI reads 的用户价值足以覆盖 probe、allowlist、timeout、argv execution 与 vault confinement 成本时，重新开启 SPEC-05 | [Architecture plan](./architecture/obsidian-operations-agent-plan.md) |

@@ -1,15 +1,15 @@
 # PA Multimodal Chat Product Spec
 
-Document status: Approved
+Document status: Current
 Updated: 2026-09-06
 Work item: B-129
 Decision: [DEC-030](../decisions/dec-030-multimodal-chat-image-copywriting.md)
 Authority: B-129 用户已确认的图片理解、个性化文案、显式保存与风格参考产品契约。
 
-`Approved` 承接用户在本轮设计讨论中逐项确认、并由 DEC-030 记录的产品选择，
-包括 2026-09-06 对全部图片保留、同步提示和写入边界的评审处置。它不表示
-技术选型、平台支持或运行时验收已经通过，也不单独提供实施授权。具体工程
-方案由 SDD 和开发计划承接；待验证项不得扩大或缩窄用户确认的边界。
+本契约承接 DEC-030 中用户确认的产品选择，包括全部图片保留、同步提示、
+写入边界及有限格式兼容。当前技术实现见 [Architecture](../../architecture/multimodal-chat-architecture.md)，
+构建绑定的测试、生产服务与真实 UI 证据见 [限定验证](../../archive/2026/b129-multimodal-chat-validation.md)。
+验收证据的覆盖范围不能扩大为所有模型、设备和交互均已验证，也不自行授予发布权限。
 
 ## Problem And Product Outcome
 
@@ -196,7 +196,7 @@ HEIC 导出的正式 JPEG 与 provider 输入副本均清除源敏感元数据�
   长期信息的适用范围、使用和恢复。风格操作只增加明确样例授权，不提供普通
   保存、模型推断、全局范围或敏感画像的新准入路径。
 - [Write Action Framework](../../architecture/write-action-framework-sdd.md)
-  提供现有写入设计依据。图文保存需要定义相应动作的预览、目标和部分失败处理，
+  提供现有写入设计依据。图文保存通过固定版本预览、目标核对和部分失败恢复实现，
   不能将现有文本创建能力解释为已经具备多文件事务或二进制回滚能力。用户在
   2026-09-06 的评审处置中明确：现有写入权限控制后续将随 PA 能力调整取消，
   当前方案不构成权限绕过。因此不将 Operations 开关关闭/预览后关闭场景新增为
@@ -205,7 +205,8 @@ HEIC 导出的正式 JPEG 与 provider 输入副本均清除源敏感元数据�
 
 ## Acceptance Criteria
 
-以下为后续验收目标，尚未执行；每组与同号 REQ 对应。
+以下为稳定验收标准，每组与同号 REQ 对应；实际覆盖与限制见限定验证证据，
+不把服务回执等同于全部 UI 交互或真实 provider 效果。
 
 - **B-129/AC-01:** 桌面和移动端各能添加图片并发送图片独立消息；理解、文案
   修改和显式保存走现有 Chat，不强制新建独立写作流程。
@@ -256,17 +257,17 @@ HEIC 导出的正式 JPEG 与 provider 输入副本均清除源敏感元数据�
 
 ## Engineering Validation Boundary
 
-已确认的产品范围不重新提问。技术方案和验证出口见
-[SDD](../../development/active/multimodal-chat/sdd.md#engineering-verification-gates)。
+已确认的产品范围不重新提问。技术契约见
+[Architecture](../../architecture/multimodal-chat-architecture.md)。
 以下矩阵是平台证据边界；验证结果若需要改变原图、格式、存储或隐私要求，
 须回到产品决策，不能自行降低要求，也不能以计划任务代替支持证据。
 
 ### 格式与平台验收矩阵
 
-本表定义生产验收目标，不把原型可行性等同于已交付的支持承诺。原型证据和
-生产验收进度见 [Tracker](../../development/active/multimodal-chat/tracker.md)。
+本表定义持续保持的格式契约，不把原型可行性等同于任意输入的支持承诺。
+原型与生产集成证据分别记录于 [限定验证](../../archive/2026/b129-multimodal-chat-validation.md)。
 
-| 输入 | 桌面与移动端待验证内容 | 未解决时的边界 |
+| 输入 | 桌面与移动端验证维度 | 处理失败或未证实时的边界 |
 | --- | --- | --- |
 | JPEG | 原文件取得、EXIF 方向、元数据清除、照片压缩与小字质量 | 不覆盖原图，不把方向错误或元数据残留视为可发送 |
 | PNG | 透明度、截图小字、较大像素尺寸的内存、元数据清除 | 不以无提示降质掩盖无法辨认的内容 |
@@ -275,35 +276,25 @@ HEIC 导出的正式 JPEG 与 provider 输入副本均清除源敏感元数据�
 | GIF/APNG/动画 WebP | 静态/动画识别及原文件保留；动画恢复提示 | 动画按用户确认延期完整理解，提示提供静态 PNG/JPEG；静态 GIF 仍按静态解码验证，不能仅凭扩展名误判动画 |
 | SVG | 静态自包含识别、安全本地栅格化、原文件保留 | 依赖外部资源时保留并提示静态图，不联网补齐或宣称完整渲染；自包含也不得执行脚本或注入 DOM |
 
-### 技术设计承接
+## Current Implementation And Limits
 
-- **原图目录与同步：** SDD 定义固定会话锚点、公共附件 API 和三类独立状态；
-  无关联笔记的解析及平台能力由 G-02 验证。未知同步状态依既定通知方案继续。
-- **资源与格式：** G-01/G-03 定义入口/格式矩阵、质量和资源实验，以及不达标
-  时的恢复和决策路径。SDD 根据有界实测确定实施参数，不把所测设备外推为
-  所有设备或任意输入的支持保证；最终仍按生产路径验收。
-- **风格：** SDD 定义确切版本样例、结构化写作场景、取消与提取/准入防污染；
-  G-05 验证 schema、旧 reader、预算及生命周期，不降级为全局偏好。
-- **保存与引用：** SDD 定义素材集与请求用图分离、固定保存计划、正式附件、
-  部分结果核对和 retry；正式笔记、聊天和风格各自的生命周期不互相误删。
-
-## Delivery Handoff
-
-- Active Package: [Feature Home](../../development/active/multimodal-chat/README.md)、
-  [Tracker](../../development/active/multimodal-chat/tracker.md)、
-  [Plan](../../development/active/multimodal-chat/plan.md)、
-  [SDD](../../development/active/multimodal-chat/sdd.md)。执行状态与证据只写 Tracker。
-- Architecture contracts: 复用现有 Chat/LangChain、会话持久化、上下文管理、
-  Data Boundary、Memory 和写入边界；不另建视觉会话或长期记忆框架。
-- Technical direction: 保持文字与类型化图片引用分离；会话历史存引用，最终
-  provider 请求前读取经过检查的副本。文本摘要不能代替图片，图片字节不混入
-  文本摘要、普通日志或文本预算估算。正式保存采用 Obsidian 公共附件路径与
-  链接 API，而非模拟剪贴板粘贴或让模型决定二进制写入。
-- Compatibility: 后续实现须以已整合的 B-128 上下文链路为基线，覆盖最终请求
-  准入、工具续轮和重试，并保持纯文本历史兼容；SDD 区分已核实 master 接点
-  与本工作分支当前状态，实施前按整合后的源码重核。
-- Validation boundary: 后续验证以本 spec 的 REQ/AC 为依据，平台能力、实际
-  provider 输入、运行时保存与故障恢复需要对应证据；文档检查不替代这些验证。
-- Release / rollout boundary: 本 spec 不自行授予执行权限；已获授权的 P0
-  基线整合、合成原型及测试 vault 验证由 Tracker 承接，不能据此推导生产实施、
-  Git 提交/推送或发布权限。后续交付按实际授权和仓库生命周期规则推进。
+- 原图、用途不同的处理副本、历史引用和正式附件分别管理；固定会话锚点与
+  Obsidian 公共附件规则决定实际路径。清理聊天不删除原件或正式文件。
+- B-128 上下文链路承接图片身份、最终请求准入、工具续轮和重试；文本摘要不
+  代替图像，图片字节不进入历史文字、摘要或普通日志。
+- 文案通过严格完整终态协议形成固定版本，异常可人工恢复；保存与重试核对
+  确切正文、全部选定素材与已写 hash，不重新调用模型，不宣称跨文件原子事务。
+- 显式风格按确切版本、四维场景与可撤销治理使用，独立于自动提取开关；仍受
+  Memory 总开关、来源边界和共享预算约束。生成及保存不自动成为长期偏好。
+- 真实 Desktop/iOS 主路径与服务证据已经保留；自动 V1 使用本地 SDK，风格
+  remember/pause 为生产服务调用，不能据此声称全部治理 UI 或远程文案质量通过。
+- 旧兼容态安全升级的成功与拒绝分支有源码回归；实测两端旧库因证据不足安全
+  拒绝，资料与旧模式保留，未证明这些旧库成功升级。最低 1.11.4 为官方/源码
+  依据，未安装旧版实测；各输入手势与任意图片质量不作穷举保证。
+- 后续完整动画/外部资源 SVG、图片生成、跨设备续聊分别由
+  [B-132/B-133/B-134](../../backlog.md#已延期的产品与工程工作) 承接，未定优先级、
+  二期组合或工期。未来扩展须先明确产品、资源、数据与网络边界。
+- 运行时技术契约见 [Architecture](../../architecture/multimodal-chat-architecture.md)，
+  操作见 [使用指南](../../guides/multimodal-chat-user-guide.md)，原始回执和限定验收见
+  [历史验证](../../archive/2026/b129-multimodal-chat-validation.md)。是否已发布以发布
+  元数据为准，开发完成或本地整合均不等于 Shipped。

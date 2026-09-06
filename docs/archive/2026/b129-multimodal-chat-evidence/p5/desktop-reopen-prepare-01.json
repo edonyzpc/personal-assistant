@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "runner": "b129-production-reopen",
+  "runId": "desktop-reopen-01",
+  "phase": "prepare",
+  "state": "passed",
+  "startedAt": "2026-09-06T10:22:13.805Z",
+  "evidencePath": "b129-reopen/desktop-reopen-01/prepare.json",
+  "scope": {
+    "vault": "test",
+    "host": "Desktop",
+    "providerCalls": 0,
+    "productionServices": true,
+    "fileDeletion": false,
+    "rawAndFormalOutputsRetained": true,
+    "injectedFailures": [
+      "one available-state asset finalize write",
+      "abort after real partial-note creation"
+    ],
+    "noProcessCrashClaim": "Controlled failure plus a real plugin reload; no operating-system crash was induced."
+  },
+  "checks": [
+    {
+      "id": "01-real-raw-write-before-injected-finalize-failure",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:22:13.841Z",
+      "details": {
+        "injectionCount": 1,
+        "observedError": "preservation_incomplete",
+        "hashAtFinalize": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b",
+        "durableState": "preserving",
+        "rawHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b"
+      }
+    },
+    {
+      "id": "02-real-note-create-then-cancel-leaves-partial-save",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:22:13.846Z",
+      "details": {
+        "operationId": "save_6d575c2234274701bb8c62711c4f1e4f",
+        "noteCreates": 1,
+        "binaryCreates": 0,
+        "state": "partial",
+        "failureReason": "cancelled",
+        "exactPreviewPersisted": true
+      }
+    },
+    {
+      "id": "03-pre-reload-both-records-remain-recoverable",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:22:13.854Z",
+      "details": {
+        "pendingState": "preserving",
+        "partialState": "partial",
+        "originalHashesUnchanged": true
+      }
+    }
+  ],
+  "cleanup": {
+    "wrappers": [
+      {
+        "label": "one-own-asset-finalize-failure",
+        "restored": true
+      },
+      {
+        "label": "gitignore-write-guard",
+        "restored": true
+      },
+      {
+        "label": "save-copy-observer",
+        "restored": true
+      },
+      {
+        "label": "partial-note-cancel",
+        "restored": true
+      }
+    ],
+    "activeConversation": "restored"
+  },
+  "loadedIdentity": {
+    "sha256": "6e0e3727ed901655ccfbc0691e6d06b184992be8bf66bf41136434c4dfd3d5ca",
+    "capturedAtPluginLoad": "2026-09-06T10:15:27.426Z",
+    "pluginVersion": "2.9.2",
+    "identitySource": "plugin-onload-cached-main-js"
+  },
+  "artifacts": {
+    "anchorPath": "b129-reopen/desktop-reopen-01/anchor.md",
+    "sourcePath": "b129-reopen/desktop-reopen-01/source.png",
+    "sourceHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b",
+    "targetNotePath": "b129-reopen/desktop-reopen-01/partial.md",
+    "pending": {
+      "assetId": "img_7a84e37cbfa84785b9f15b7bcf911689",
+      "contentHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b",
+      "originalPath": "pa-images/img_7a84e37cbfa84785b9f15b7bcf911689.png",
+      "importDirectory": "pa-images",
+      "byteLength": 1936,
+      "durableState": "preserving",
+      "rawHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b"
+    },
+    "partial": {
+      "operationId": "save_6d575c2234274701bb8c62711c4f1e4f",
+      "writingVersionId": "writing_bcf9df7626f1481833fe7cbb00b583cd82e82cc0d6d1d37f",
+      "conversationId": "81445742-7fd3-44a4-b2c5-165a9e5315a1",
+      "sourceRef": {
+        "assetId": "img_7e6791d56cf042578e482a257c016b8b",
+        "contentHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b"
+      },
+      "textHash": "132fe7ebc8b3160f9894bbf329d4fed83b18ce5029b756650d617da8df4d661f",
+      "noteHash": "0637a4008ff0371e570302feaee8473176ea03a65d7894d21c41c56e31af07d5",
+      "state": "partial",
+      "attachmentCount": 1,
+      "formalAttachmentsWritten": 0
+    }
+  },
+  "nextAction": "Root: perform a real personal-assistant plugin reload, then call phase resume with the same runId.",
+  "finishedAt": "2026-09-06T10:22:13.855Z"
+}

@@ -1,7 +1,7 @@
 # Multimodal Chat Development Tracker
 
 Document status: Current
-Delivery status: Validated
+Delivery status: Blocked
 Updated: 2026-09-06
 Work item: B-129
 Authority: B-129 的唯一执行状态、任务、评审处置及验证证据。
@@ -12,12 +12,13 @@ P5 evidence: [生产原始回执与验收边界](./p5-evidence/evidence.md)
 
 ## Current Snapshot
 
-- Current phase: 首版 P1–P5 开发与限定验证完成，Delivery status 为 Validated。I-15 缓存恢复窄修后 main 为 `327f06e05c89e7997c826a70cc6b6d97876c993cc908f4312644bd9a35521d0b`，iOS 于 `14:40:44.977Z`、Desktop 于 `14:41:10.958Z` 实际加载；最终 iOS 重载于 `14:43:44.871Z`，同会话两图仍正常显示。I-15 suite 25 tests、TS/scoped lint、独立 review、build/双部署通过，复用 aa9cb 的 238 suites / 6202 tests 完整基线，不声称新 SHA 再次全量。I-14 布局实机通过，styles 保持 `a5998eba0c6fd0f027eb1e68f2d2d132f955a0daa6c9ad94d642fd7b863c50b2`；最终 Community 源码扫描 exit 1/no matches 为通过。
-- Next action: 无剩余首版开发或限定验收必做项。本轮不再新增模型请求、矩阵或辅助框架；未进行归档、提交、推送或发布。当前 test Chat/Policy 均保留用户指定的阿里云百炼 qwen3.8-max，探针 fetch/设置已恢复，独立 fixture 已卸载。
-- Convergence rule: 复用与窄修无关的已过验证，不因 SHA 小范围变化重测全部路径，不安装旧版本或穷举每种入口。以下明确边界不是新增执行任务。
-- Blocker / decision needed: 无。验证不承诺远程模型质量；自动 V1 是真实 Chat UI + 本地 SDK，风格 remember/pause 是生产服务调用，未冒充全部治理 UI 点击。旧兼容资料证据不足时两端均安全拒绝，未声称当前旧库已升级；最低 1.11.4 仍为官方/源码证据，未安装实测。自动提取保持关闭、consent paused。
-- Last verified behavior: iOS 真实 Chat→Writing versions 显示 AI draft/关联两图→默认全选→Preview→Save exact→打开新笔记 JPEG+PNG 可见。8 项核对通过：所选正文、原图、正式附件 hash 一致，移除草稿的合成 HEIC 原件仍在。最终重载后 `14:44:20.951Z` 回执证明 PNG 320×180、HEIC 640×480 均解码可见。此前 Desktop 保存/恢复、自动 V1 与最小风格服务闭环继续有效，见 [P5 证据](./p5-evidence/evidence.md)；P0 基线 master `42859863` 与[证据范围](./p0-evidence/technical-feasibility-20260906/README.md)不变。
-- Authority: 用户于 2026-09-06 明确要求“按照方案设计和sdd任务设计，完成b-129的特性开发所有任务”，授权现有首版范围 P1–P5 的实现、测试、review、修复及 Desktop/真实 iOS 测试 vault 验证；已延期 T-16 不重新扩大到首版。提交、推送、发布及功能归档仍单独处理。
+- Current phase: B-129 已快进整合到本地 master；代码为原已验证实现，文档吸收已作本地提交。收尾核对新增 I-16：文案详情未展示已持久化的背景来源和风格引用，AC-09 不能据旧限定验收宣称全部完成。Delivery status 改为 Blocked，等待此项补齐或明确延期的产品处置，暂不删除 Active Package 或标 Closed。
+- Next action: 用户决定 I-16 的补齐/延期方式后完成处置；再吸收最终边界、删除已完成过程包并关闭首期。原 T-16 与图片生成、跨设备续聊分别进入 [B-132/B-133/B-134](../../../backlog.md#已延期的产品与工程工作)，不启动新功能或扩大二期范围。
+- Blocker / decision needed: I-16 的产品处置待用户答复。2026-09-06 已明确提出“补齐并验证后关闭”或“明确延期后关闭”两个选项，尚无答复，不能将历史 Validated 或先前 Agent 总结视为延期批准。
+- Validation reused: 当前生产输入 hash 与 `327f06e05c89e7997c826a70cc6b6d97876c993cc908f4312644bd9a35521d0b` 构建的 provenance 一致；aa9cb 全量 238 suites / 6202 tests 与 I-09/I-15 窄修检查分别保留。Desktop/真实 iOS 双图保存、8 项 hash 核对及最终重载仍有效，见 [精简验证证据](../../../archive/2026/b129-multimodal-chat-validation.md)。本次仅文档变化，不重跑无关 Build/模型/设备矩阵。
+- Validation limits: 自动 V1 为真实 Chat UI + 本地 SDK；风格 remember/pause 为生产服务调用。两端旧兼容库安全拒绝而非升级成功，最低 1.11.4 未安装实测。原 test Chat/Policy 指定 qwen3.8-max、自动提取关闭、consent paused 的最后观测保持历史含义，本次未操作设置或设备。
+- Authority: 用户 2026-09-06 的“帮我整合收尾”及“继续”授权本地主线整合和文档收尾；未授权推送、打标签或发布。此前 P1–P5 实施与限定验证事实保留，但不提供 I-16 的事后延期批准。
+- Artifact disposition prepared: 当前 Product Spec、DEC-030、[Architecture](../../../architecture/multimodal-chat-architecture.md) 和使用指南承接稳定行为；54 份原始 JSON 逐字节复制并对照 Git `7c712924` 核对，精简验证入口已入链。旧 Feature Home/Plan/SDD/Tracker、重复 P0/P5 过程材料待 I-16 处置完成后 delete-after-absorption，Git 保留完整历史；目前尚未删除。
 
 ## Work
 
@@ -69,6 +70,7 @@ T-03～T-13 的完成指实现与服务验收；实际 UI 证据与明确范围�
 | I-13 | P2：从临时活动窗口取得的 IndexedDB factory 在 Settings 关闭后失效，阻塞治理存储初始化 | 已改用稳定 realm 的工厂，不清库、不重建用户资料；原 `onupgradeneeded` 空对象错误保留为历史失败 | aa9cb 构建完整 238 suites / 6202 tests 通过；test 于 `13:22:27.267Z`、独立 b129-style-test 于 `13:21:28.355Z` 实际加载，Settings 关闭后两库真实 initialize 成功。只证明该存储入口修复，不替代风格、升级或 iOS 完整验收；后续部署身份见 Snapshot |
 | I-14 | P2：移动图片草稿行被按钮挤压，带 hidden 的按钮仍参与布局 | 仅修 CSS 的草稿行布局与 hidden 显示规则；build/diff 与两目标部署通过，main 仍为 2f0f，styles 为 `a5998eba0c6fd0f027eb1e68f2d2d132f955a0daa6c9ad94d642fd7b863c50b2` | iOS `14:31:13.369Z` 实际修后 hidden 按钮 display=none/height=0；filename 为 277.1875×19、status 为 329.1875×32、remove 为 44×44，截图可操作，布局通过。另发现的 preview 问题由 I-15 修复；本 CSS 修改不涉及 JS |
 | I-15 | P2：iOS 持久缓存 Blob 元数据存在但 arrayBuffer 读取抛 NotFoundError，重载后预览破图 | 已修复并关闭：先核验缓存字节可读性，失败按 cache miss，从经来源校验的原图重建；不回写或替代原件 | 新增 2 项回归、该 suite 25 tests、TS/scoped lint/diff、独立 review/build/双部署通过；327f 实际恢复同会话 PNG+HEIC，最终 iOS 重载后两图自然尺寸正常。诊断、最终加载/保存/预览回执见 P5 证据，不重跑无关全量 |
+| I-16 | P2：AC-09 的按需详情未展示背景材料和风格样例 | 收尾源码核对新发现，待用户选择补齐或明确延期；既有来源持久化和风格服务证据不等于 UI 已交付。T-08/T-14/T-15 的原 Done 仅保留当时限定证据，不覆盖此项 | [WritingVersionModal](../../../../src/chat/writing-modal.ts) 的材料 details 仅遍历 associatedImages；backgroundSourceRefs/styleRevisionIds 已持久化但没有对应展示。Chat 的通用 governed Memory trace 与专用 writingStyleContext 分开，不能据通用 Context 面板替代本项完整验收 |
 
 首次统一 `make deploy` 已完成 lint/TypeScript/build，全量 Jest 为 233 suites
 通过、3 suites 失败，故未部署。失败涉及旧 Type-A 夹具缺少 host 来源及

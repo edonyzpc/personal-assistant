@@ -1,0 +1,164 @@
+{
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "cf6f686eccb01331c9c91dbf3dcfe18ca44bbc6e55c2700cf68639044ff984ed",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-06T11:02:16.417Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "conversationId": "6a5c0992-dde2-456f-9ab0-9f5228e1d35e",
+  "tail": {
+    "conversationId": "6a5c0992-dde2-456f-9ab0-9f5228e1d35e",
+    "turnIndex": 0,
+    "user": {
+      "role": "user",
+      "content": "根据这两张图片，给朋友写一段40字以内的旅行配文，用颜色和几何形状串起画面，不虚构地点或人物。",
+      "images": [
+        {
+          "ref": {
+            "assetId": "img_f5fe94470f1845759336460276b63e58",
+            "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+          },
+          "ordinal": 1,
+          "label": "chart-sips.heic"
+        },
+        {
+          "ref": {
+            "assetId": "img_db81e73effd64c9b873bff88cffaf6a6",
+            "contentHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b"
+          },
+          "ordinal": 2,
+          "label": "source.png"
+        }
+      ],
+      "hostProvenance": {
+        "version": 1,
+        "messageId": "chat-1-4-1788692721568",
+        "kind": "writing_request"
+      }
+    },
+    "assistant": {
+      "role": "assistant",
+      "content": "The writing did not finish in the expected format. Select the intended text from the original response to recover a version.",
+      "turnStatus": "completed",
+      "images": [
+        {
+          "ref": {
+            "assetId": "img_f5fe94470f1845759336460276b63e58",
+            "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+          },
+          "ordinal": 1,
+          "label": "chart-sips.heic"
+        },
+        {
+          "ref": {
+            "assetId": "img_db81e73effd64c9b873bff88cffaf6a6",
+            "contentHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b"
+          },
+          "ordinal": 2,
+          "label": "source.png"
+        }
+      ],
+      "hostProvenance": {
+        "version": 1,
+        "messageId": "chat-1-4-1788692721568-assistant",
+        "kind": "ai_draft"
+      },
+      "writingRecovery": {
+        "requestId": "writing_d5b0a341c506431090bed98d957d17cc",
+        "rawText": "```json\n{\n    \"kind\": \"pa.writing\",\n    \"version\": 1,\n    \"requestId\": \"writing_d5b0a341c506431090bed98d957d17cc\",\n    \"body\": \"红绿分界，蓝黄对望。方块与圆点串联色彩，定格这段鲜活纯粹的几何旅途。\",\n    \"explanation\": \"结合图一的红绿蓝黄四色分区与黑白圆点、矩形，以及图二的黄方块，用几何元素和色彩对比构建旅行意象，未虚构具体地点或人物，字数控制在40字以内。\"\n}\n```",
+        "reason": "invalid_output",
+        "backgroundSourceRefs": [],
+        "messageId": "message_assistant_3"
+      }
+    },
+    "memoryMetadata": {
+      "hasMemoryContent": false,
+      "allowedMemorySourcePaths": []
+    },
+    "activityDetails": [
+      "Starting assistant run...",
+      "Deciding what context to use...",
+      "Reading model progress..."
+    ],
+    "providerReasoningObserved": true
+  },
+  "wire": {
+    "installed": true,
+    "currentWrapper": true,
+    "delegatedFetches": 1,
+    "skippedBodies": 0,
+    "droppedRequests": 0,
+    "observedRequests": 1,
+    "pending": 0,
+    "requests": [
+      {
+        "index": 1,
+        "state": "complete",
+        "model": "qwen3.6-plus",
+        "messageCount": 2,
+        "messages": [
+          {
+            "role": "system",
+            "blocks": [
+              {
+                "type": "text",
+                "textChars": 5800
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "blocks": [
+              {
+                "type": "text",
+                "textChars": 3254
+              },
+              {
+                "type": "image_url",
+                "image": {
+                  "mime": "image/jpeg",
+                  "byteLength": 32157,
+                  "sha256": "a8981f334fce7c6fe48fdd7557d76311f269be81e87e24f85b9ad2c2fdc01454",
+                  "jpegMarkers": {
+                    "exif": false,
+                    "iptc": false,
+                    "xmp": false,
+                    "app13Photoshop": false
+                  }
+                }
+              },
+              {
+                "type": "image_url",
+                "image": {
+                  "mime": "image/jpeg",
+                  "byteLength": 2385,
+                  "sha256": "62a5b81f07ce77caa7020479948fd530348713f9ad157280fc48e00295737160",
+                  "jpegMarkers": {
+                    "exif": false,
+                    "iptc": false,
+                    "xmp": false,
+                    "app13Photoshop": false
+                  }
+                }
+              }
+            ],
+            "blockCount": 3
+          }
+        ]
+      }
+    ],
+    "evidence": "fetch_entry_observation",
+    "limits": {
+      "requests": 16,
+      "imageBytes": 4194304,
+      "messagesPerRequest": 512,
+      "blocksPerMessage": 128
+    },
+    "boundary": "Fetch-entry attempts, not response delivery or provider receipt. Earlier-captured fetch can bypass this observer. JPEG marker presence alone does not prove sensitive metadata."
+  }
+}

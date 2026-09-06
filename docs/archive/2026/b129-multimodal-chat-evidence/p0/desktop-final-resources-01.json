@@ -1,0 +1,466 @@
+{
+  "kind": "b129.p0.final-resource-3200.v1",
+  "runId": "desktop-final-01",
+  "startedAt": "2026-09-06T08:26:55.636Z",
+  "environment": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36"
+  },
+  "status": "completed",
+  "stage": "finished",
+  "candidatePolicy": {
+    "maxOriginalBytes": 20971520,
+    "maxDecodedPixels": 48000000,
+    "maxImagesPerTurn": 8,
+    "maxVariantBytes": 4194304,
+    "maxRequestImageBytes": 25165824,
+    "processingTimeoutMs": 15000
+  },
+  "edge": 3200,
+  "quality": 0.9,
+  "cases": [
+    {
+      "name": "single-48mp-3200",
+      "startedAt": "2026-09-06T08:26:55.660Z",
+      "status": "passed",
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 511,
+      "index": 0,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "outputPath": "b129-p0-final-resources/desktop-final-01/single-48mp-3200.jpg",
+      "outputHashVerified": true,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 98658656,
+            "jsHeapBytes": 1126358310,
+            "processKiB": {
+              "private": 2139971,
+              "shared": 21360
+            }
+          },
+          {
+            "atMs": 98658995,
+            "jsHeapBytes": 1125883058,
+            "processKiB": {
+              "private": 2073171,
+              "shared": 94496
+            }
+          },
+          {
+            "atMs": 98659057,
+            "jsHeapBytes": 1125885650,
+            "processKiB": {
+              "private": 2074547,
+              "shared": 94496
+            }
+          },
+          {
+            "atMs": 98659159,
+            "jsHeapBytes": 1122594134,
+            "processKiB": {
+              "private": 2031715,
+              "shared": 94496
+            }
+          },
+          {
+            "atMs": 98659167,
+            "jsHeapBytes": 1122594134,
+            "processKiB": {
+              "private": 2033619,
+              "shared": 94496
+            }
+          }
+        ],
+        "sampledMaxJSHeapBytes": 1126358310,
+        "sampledMaxProcessPrivateKiB": 2139971,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      },
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      }
+    },
+    {
+      "name": "serial-eight-48mp-3200",
+      "startedAt": "2026-09-06T08:26:56.176Z",
+      "status": "passed",
+      "reports": [
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 307,
+          "index": 0,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 282,
+          "index": 1,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 300,
+          "index": 2,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 283,
+          "index": 3,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 280,
+          "index": 4,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 272,
+          "index": 5,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 279,
+          "index": 6,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        },
+        {
+          "decodedWidth": 8000,
+          "decodedHeight": 6000,
+          "outputWidth": 3200,
+          "outputHeight": 2400,
+          "outputBytes": 955786,
+          "mime": "image/jpeg",
+          "elapsedMs": 274,
+          "index": 7,
+          "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+        }
+      ],
+      "totalBytes": 7646288,
+      "count": 8,
+      "aggregateWithinBudget": true,
+      "allEightSources48MP": true,
+      "elapsedMs": 2335,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 98659172,
+            "jsHeapBytes": 1122594134,
+            "processKiB": {
+              "private": 2035763,
+              "shared": 96544
+            }
+          },
+          {
+            "atMs": 98659423,
+            "jsHeapBytes": 1125651720,
+            "processKiB": {
+              "private": 2066595,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98659480,
+            "jsHeapBytes": 1125467545,
+            "processKiB": {
+              "private": 1971235,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98659718,
+            "jsHeapBytes": 1122647976,
+            "processKiB": {
+              "private": 2009187,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98659773,
+            "jsHeapBytes": 1122636150,
+            "processKiB": {
+              "private": 1982291,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98660021,
+            "jsHeapBytes": 1122682080,
+            "processKiB": {
+              "private": 2009523,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98660085,
+            "jsHeapBytes": 1122601207,
+            "processKiB": {
+              "private": 1975971,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98660320,
+            "jsHeapBytes": 1122647332,
+            "processKiB": {
+              "private": 2010803,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98660377,
+            "jsHeapBytes": 1122594583,
+            "processKiB": {
+              "private": 1984099,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98660609,
+            "jsHeapBytes": 1122648599,
+            "processKiB": {
+              "private": 2011395,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98660906,
+            "jsHeapBytes": 1122591087,
+            "processKiB": {
+              "private": 2013747,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98661167,
+            "jsHeapBytes": 1122655187,
+            "processKiB": {
+              "private": 1944403,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98661172,
+            "jsHeapBytes": 1122655187,
+            "processKiB": {
+              "private": 1944483,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98661450,
+            "jsHeapBytes": 1122679598,
+            "processKiB": {
+              "private": 1952675,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98661473,
+            "jsHeapBytes": 1122679598,
+            "processKiB": {
+              "private": 1959667,
+              "shared": 125216
+            }
+          },
+          {
+            "atMs": 98661508,
+            "jsHeapBytes": 1122681812,
+            "processKiB": {
+              "private": 1919171,
+              "shared": 125216
+            }
+          }
+        ],
+        "sampledMaxJSHeapBytes": 1125651720,
+        "sampledMaxProcessPrivateKiB": 2066595,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      },
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      }
+    }
+  ],
+  "progress": [
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 307,
+      "index": 0,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 1,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 282,
+      "index": 1,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 2,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 300,
+      "index": 2,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 3,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 283,
+      "index": 3,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 4,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 280,
+      "index": 4,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 5,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 272,
+      "index": 5,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 6,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 279,
+      "index": 6,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 7,
+      "total": 8
+    },
+    {
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3200,
+      "outputHeight": 2400,
+      "outputBytes": 955786,
+      "mime": "image/jpeg",
+      "elapsedMs": 274,
+      "index": 7,
+      "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+      "ordinal": 8,
+      "total": 8
+    }
+  ],
+  "errors": [],
+  "resources": {
+    "activeImages": 0,
+    "activeCanvases": 0,
+    "activeUrls": 0,
+    "maxActiveImages": 1,
+    "maxActiveCanvases": 1,
+    "maxActiveUrls": 1
+  },
+  "scope": "One 48MP image, then eight fresh serial decodes of the same synthetic 48MP source. Distinct per-image Blob/URL work; batch retains encoded variants. No actual provider, IDB, or production Chat.",
+  "evidenceLimits": [
+    "Repeated 48MP source tests peak decode geometry, not eight distinct photographs or maximum JPEG entropy.",
+    "Owned-reference counters are not native memory measurements; read sampler/Safari evidence separately.",
+    "Byte limits are enforced candidates, not a claim that every eight-image input fits."
+  ],
+  "original": {
+    "path": "b129-p0-fixtures/resource-48mp.jpg",
+    "sha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+    "bytes": 4188715,
+    "afterSha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+    "unchanged": true
+  },
+  "finishedAt": "2026-09-06T08:26:58.528Z",
+  "ownedResourcesReleased": true
+}

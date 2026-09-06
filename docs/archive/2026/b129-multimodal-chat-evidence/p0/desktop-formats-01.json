@@ -1,0 +1,921 @@
+{
+  "kind": "b129.p0.formats.v1",
+  "startedAt": "2026-09-06T08:08:33.085Z",
+  "runId": "desktop-formats-01",
+  "environment": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36"
+  },
+  "scope": "synthetic fixture byte classification and host local pixels; no picker/provider/production validation",
+  "cases": [
+    {
+      "path": "b129-p0-fixtures/chart-transparent.png",
+      "name": "b129-p0-fixtures/chart-transparent.png",
+      "startedAt": "2026-09-06T08:08:33.085Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "f2adcbf518fd6d8258c15ca443abffb508b460d16506ef43c0451bacbfee2153",
+      "originalBytes": 21333,
+      "classification": {
+        "format": "png",
+        "policy": "static",
+        "frames": 1,
+        "extension": "png",
+        "extensionMatches": true,
+        "mime": "image/png"
+      },
+      "urlsCreated": 2,
+      "decodedWidth": 640,
+      "decodedHeight": 480,
+      "outputWidth": 640,
+      "outputHeight": 480,
+      "corners": [
+        [
+          239,
+          107,
+          99,
+          255
+        ],
+        [
+          96,
+          199,
+          134,
+          255
+        ],
+        [
+          105,
+          170,
+          241,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "urlsReleased": 2,
+      "outputMime": "image/jpeg",
+      "outputBytes": 31820,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "canvasReleased": true,
+      "conversion": "native_pixels",
+      "outputSha256": "96958ba8be9bd7087d6952c88a05b300a7bf8b7f3a6ab0d08268432e1d0feff5",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1025,
+      "outputPath": "b129-format-runs/desktop-formats-01/0-png.jpg"
+    },
+    {
+      "path": "b129-p0-fixtures/chart-static.webp",
+      "name": "b129-p0-fixtures/chart-static.webp",
+      "startedAt": "2026-09-06T08:08:34.113Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "9873dfe42050a7b4503dcb86667774fabe1a35a751814e39948fcd87eced5b17",
+      "originalBytes": 9436,
+      "classification": {
+        "format": "webp",
+        "policy": "static",
+        "frames": 1,
+        "extension": "webp",
+        "extensionMatches": true,
+        "mime": "image/webp"
+      },
+      "urlsCreated": 2,
+      "decodedWidth": 640,
+      "decodedHeight": 480,
+      "outputWidth": 640,
+      "outputHeight": 480,
+      "corners": [
+        [
+          239,
+          107,
+          99,
+          255
+        ],
+        [
+          96,
+          199,
+          134,
+          255
+        ],
+        [
+          105,
+          170,
+          241,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "urlsReleased": 2,
+      "outputMime": "image/jpeg",
+      "outputBytes": 31820,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "canvasReleased": true,
+      "conversion": "native_pixels",
+      "outputSha256": "96958ba8be9bd7087d6952c88a05b300a7bf8b7f3a6ab0d08268432e1d0feff5",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1019,
+      "outputPath": "b129-format-runs/desktop-formats-01/1-webp.jpg"
+    },
+    {
+      "path": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+      "name": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+      "startedAt": "2026-09-06T08:08:35.135Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+      "originalBytes": 51252,
+      "classification": {
+        "format": "jpeg",
+        "policy": "static",
+        "frames": 1,
+        "extension": "jpg",
+        "extensionMatches": true,
+        "mime": "image/jpeg"
+      },
+      "urlsCreated": 2,
+      "decodedWidth": 480,
+      "decodedHeight": 640,
+      "outputWidth": 480,
+      "outputHeight": 640,
+      "corners": [
+        [
+          106,
+          170,
+          241,
+          255
+        ],
+        [
+          240,
+          107,
+          100,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ],
+        [
+          97,
+          199,
+          134,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "urlsReleased": 2,
+      "outputMime": "image/jpeg",
+      "outputBytes": 32715,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "canvasReleased": true,
+      "conversion": "native_pixels",
+      "outputSha256": "540d45cb33447f133fba4c3c69b59ae31b0e6a5c5705ece98ae78278533a199e",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1021,
+      "outputPath": "b129-format-runs/desktop-formats-01/2-jpeg.jpg"
+    },
+    {
+      "path": "b129-p0-fixtures/chart-animated.gif",
+      "name": "b129-p0-fixtures/chart-animated.gif",
+      "startedAt": "2026-09-06T08:08:36.161Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "58d87800e072370256818bd19abfd7316bd2fb8542360dc41654dcb1faced579",
+      "originalBytes": 31812,
+      "classification": {
+        "format": "gif",
+        "policy": "animated",
+        "frames": 2,
+        "extension": "gif",
+        "extensionMatches": true,
+        "mime": "image/gif"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 2
+    },
+    {
+      "path": "b129-p0-fixtures/chart-animated.apng",
+      "name": "b129-p0-fixtures/chart-animated.apng",
+      "startedAt": "2026-09-06T08:08:36.165Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "5d92dad22137a5bf15a393427cb335bf20e5052c4f777f394c7ff5a49bf590e4",
+      "originalBytes": 30970,
+      "classification": {
+        "format": "png",
+        "policy": "animated",
+        "frames": 2,
+        "extension": "apng",
+        "extensionMatches": true,
+        "mime": "image/png"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 3
+    },
+    {
+      "path": "b129-p0-fixtures/chart-animated.webp",
+      "name": "b129-p0-fixtures/chart-animated.webp",
+      "startedAt": "2026-09-06T08:08:36.169Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "aa9204273637633ea8582beaa545df5892e0c4261f2fc3f280c547640bd0d34a",
+      "originalBytes": 57444,
+      "classification": {
+        "format": "webp",
+        "policy": "animated",
+        "frames": 2,
+        "extension": "webp",
+        "extensionMatches": true,
+        "mime": "image/webp"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 2
+    },
+    {
+      "path": "b129-p0-fixtures/chart-self-contained.svg",
+      "name": "b129-p0-fixtures/chart-self-contained.svg",
+      "startedAt": "2026-09-06T08:08:36.171Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "74b4cecb1511dabe8bf8564b9f427e60b007a33d670a6710fc5f4db07238c441",
+      "originalBytes": 828,
+      "classification": {
+        "format": "svg",
+        "policy": "static",
+        "frames": 1,
+        "extension": "svg",
+        "extensionMatches": true,
+        "mime": "image/svg+xml"
+      },
+      "urlsCreated": 2,
+      "decodedWidth": 640,
+      "decodedHeight": 480,
+      "outputWidth": 640,
+      "outputHeight": 480,
+      "corners": [
+        [
+          161,
+          72,
+          67,
+          255
+        ],
+        [
+          96,
+          199,
+          134,
+          255
+        ],
+        [
+          105,
+          170,
+          241,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "urlsReleased": 2,
+      "outputMime": "image/jpeg",
+      "outputBytes": 23304,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "canvasReleased": true,
+      "conversion": "native_pixels",
+      "outputSha256": "bef5e93327443cee9c8f16cdd8c75e87f65388d4221f2e1ee6fae7870825ba67",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1031,
+      "outputPath": "b129-format-runs/desktop-formats-01/6-svg.jpg"
+    },
+    {
+      "path": "b129-p0-fixtures/chart-external-resource.svg",
+      "name": "b129-p0-fixtures/chart-external-resource.svg",
+      "startedAt": "2026-09-06T08:08:37.207Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "cb8d7877881cee460264bccc58773f3254e2a0560c5a5a2af3495beddf0295d3",
+      "originalBytes": 938,
+      "classification": {
+        "format": "svg",
+        "policy": "external_or_active_svg",
+        "frames": 1,
+        "extension": "svg",
+        "extensionMatches": true,
+        "mime": "image/svg+xml"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 3
+    },
+    {
+      "path": "b129-p0-fixtures/chart-sips.heic",
+      "name": "b129-p0-fixtures/chart-sips.heic",
+      "startedAt": "2026-09-06T08:08:37.211Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+      "originalBytes": 16893,
+      "classification": {
+        "format": "heic",
+        "policy": "static",
+        "frames": 1,
+        "extension": "heic",
+        "extensionMatches": true,
+        "mime": "image/heic",
+        "details": {
+          "sequence": false,
+          "brands": [
+            "heic",
+            "mif1",
+            "MiHE",
+            "MiPr",
+            "miaf",
+            "MiHB",
+            "heic"
+          ],
+          "imageCount": 1,
+          "primaryId": 1,
+          "items": [
+            {
+              "id": 1,
+              "type": "hvc1"
+            },
+            {
+              "id": 2,
+              "type": "hvc1"
+            }
+          ]
+        }
+      },
+      "urlsCreated": 3,
+      "urlsReleased": 3,
+      "canvasReleased": true,
+      "tempCreated": true,
+      "systemCommand": "/usr/bin/sips",
+      "shell": false,
+      "processExited": true,
+      "systemStderr": "",
+      "intermediateBytes": 71422,
+      "decodedWidth": 640,
+      "decodedHeight": 480,
+      "outputWidth": 640,
+      "outputHeight": 480,
+      "corners": [
+        [
+          211,
+          119,
+          116,
+          255
+        ],
+        [
+          97,
+          199,
+          134,
+          255
+        ],
+        [
+          106,
+          170,
+          240,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "outputMime": "image/jpeg",
+      "outputBytes": 32157,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "tempCleaned": true,
+      "conversion": "macos_system_then_pixels",
+      "outputSha256": "a8981f334fce7c6fe48fdd7557d76311f269be81e87e24f85b9ad2c2fdc01454",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1171,
+      "outputPath": "b129-format-runs/desktop-formats-01/8-heic.jpg"
+    },
+    {
+      "path": "b129-format-fixtures/active-animation.svg",
+      "name": "b129-format-fixtures/active-animation.svg",
+      "startedAt": "2026-09-06T08:08:38.386Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "cfaf33234be1614b30490b51105e529c4e16c6bb433676ff1dbe46ff3b4eb7ba",
+      "originalBytes": 887,
+      "classification": {
+        "format": "svg",
+        "policy": "external_or_active_svg",
+        "frames": 1,
+        "extension": "svg",
+        "extensionMatches": true,
+        "mime": "image/svg+xml"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 5
+    },
+    {
+      "path": "b129-format-fixtures/animated-disguised.jpg",
+      "name": "b129-format-fixtures/animated-disguised.jpg",
+      "startedAt": "2026-09-06T08:08:38.393Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "aa9204273637633ea8582beaa545df5892e0c4261f2fc3f280c547640bd0d34a",
+      "originalBytes": 57444,
+      "classification": {
+        "format": "webp",
+        "policy": "animated",
+        "frames": 2,
+        "extension": "jpg",
+        "extensionMatches": false,
+        "mime": "image/webp"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 2
+    },
+    {
+      "path": "b129-format-fixtures/chart-static.gif",
+      "name": "b129-format-fixtures/chart-static.gif",
+      "startedAt": "2026-09-06T08:08:38.396Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "b25c16416e4e12bc6a577b1b85478f0400feb146e8e9ed0d1eb3609be090b984",
+      "originalBytes": 17974,
+      "classification": {
+        "format": "gif",
+        "policy": "static",
+        "frames": 1,
+        "extension": "gif",
+        "extensionMatches": true,
+        "mime": "image/gif"
+      },
+      "urlsCreated": 2,
+      "decodedWidth": 640,
+      "decodedHeight": 480,
+      "outputWidth": 640,
+      "outputHeight": 480,
+      "corners": [
+        [
+          239,
+          107,
+          99,
+          255
+        ],
+        [
+          96,
+          199,
+          134,
+          255
+        ],
+        [
+          105,
+          170,
+          241,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "urlsReleased": 2,
+      "outputMime": "image/jpeg",
+      "outputBytes": 32253,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "canvasReleased": true,
+      "conversion": "native_pixels",
+      "outputSha256": "a4a0949e4e7b649acc577b0a7bed08df4e09a8a6d2ad7f838b5486765465073b",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1018,
+      "outputPath": "b129-format-runs/desktop-formats-01/11-gif.jpg"
+    },
+    {
+      "path": "b129-format-fixtures/external-css.svg",
+      "name": "b129-format-fixtures/external-css.svg",
+      "startedAt": "2026-09-06T08:08:39.418Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "c1f5eaf9e0e59265f3c0c80780d475924058097bbb172530c885bb0b5b274ffd",
+      "originalBytes": 909,
+      "classification": {
+        "format": "svg",
+        "policy": "external_or_active_svg",
+        "frames": 1,
+        "extension": "svg",
+        "extensionMatches": true,
+        "mime": "image/svg+xml"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 3
+    },
+    {
+      "path": "b129-format-fixtures/external-escaped.svg",
+      "name": "b129-format-fixtures/external-escaped.svg",
+      "startedAt": "2026-09-06T08:08:39.422Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "5cf904d366371b738a32b82b306c81b6560b1b8eca7b86eb34fa42df5c01376a",
+      "originalBytes": 898,
+      "classification": {
+        "format": "svg",
+        "policy": "external_or_active_svg",
+        "frames": 1,
+        "extension": "svg",
+        "extensionMatches": true,
+        "mime": "image/svg+xml"
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 3
+    },
+    {
+      "path": "b129-format-fixtures/invalid-image-content.heic",
+      "name": "b129-format-fixtures/invalid-image-content.heic",
+      "startedAt": "2026-09-06T08:08:39.426Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "73ec7b4593482b6029e1cd1bc1dde9d6d91e56b781c1b06f8bff198016177c09",
+      "originalBytes": 85,
+      "classification": {
+        "format": "heic",
+        "policy": "static",
+        "frames": 1,
+        "extension": "heic",
+        "extensionMatches": true,
+        "mime": "image/heic",
+        "details": {
+          "sequence": false,
+          "brands": [
+            "heic",
+            "mif1",
+            "heic"
+          ],
+          "imageCount": 1,
+          "primaryId": 1,
+          "items": [
+            {
+              "id": 1,
+              "type": "hvc1"
+            }
+          ]
+        }
+      },
+      "urlsCreated": 1,
+      "urlsReleased": 1,
+      "canvasReleased": true,
+      "tempCreated": true,
+      "systemCommand": "/usr/bin/sips",
+      "shell": false,
+      "processExited": true,
+      "systemStderr": "Error: Cannot extract image from file.\nError 13: an unknown error occurred\nTry 'sips --help' for help using this tool\n",
+      "tempCleaned": true,
+      "status": "needs_static_image",
+      "error": "system_conversion_failed:13",
+      "recovery": "原文件和草稿已保留，请提供 JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 22
+    },
+    {
+      "path": "b129-format-fixtures/png-disguised.heic",
+      "name": "b129-format-fixtures/png-disguised.heic",
+      "startedAt": "2026-09-06T08:08:39.449Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "f2adcbf518fd6d8258c15ca443abffb508b460d16506ef43c0451bacbfee2153",
+      "originalBytes": 21333,
+      "classification": {
+        "format": "png",
+        "policy": "static",
+        "frames": 1,
+        "extension": "heic",
+        "extensionMatches": false,
+        "mime": "image/png"
+      },
+      "urlsCreated": 2,
+      "decodedWidth": 640,
+      "decodedHeight": 480,
+      "outputWidth": 640,
+      "outputHeight": 480,
+      "corners": [
+        [
+          239,
+          107,
+          99,
+          255
+        ],
+        [
+          96,
+          199,
+          134,
+          255
+        ],
+        [
+          105,
+          170,
+          241,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "urlsReleased": 2,
+      "outputMime": "image/jpeg",
+      "outputBytes": 31820,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "canvasReleased": true,
+      "conversion": "native_pixels",
+      "outputSha256": "96958ba8be9bd7087d6952c88a05b300a7bf8b7f3a6ab0d08268432e1d0feff5",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1016,
+      "outputPath": "b129-format-runs/desktop-formats-01/15-png.jpg"
+    },
+    {
+      "path": "b129-format-fixtures/self-contained-embedded.svg",
+      "name": "b129-format-fixtures/self-contained-embedded.svg",
+      "startedAt": "2026-09-06T08:08:40.471Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "f74a9d1ad76e65ef853b26b7a3fd824589ed7cb27d2ad3bb477106b0338751da",
+      "originalBytes": 29349,
+      "classification": {
+        "format": "svg",
+        "policy": "static",
+        "frames": 1,
+        "extension": "svg",
+        "extensionMatches": true,
+        "mime": "image/svg+xml"
+      },
+      "urlsCreated": 2,
+      "decodedWidth": 640,
+      "decodedHeight": 480,
+      "outputWidth": 640,
+      "outputHeight": 480,
+      "corners": [
+        [
+          161,
+          72,
+          67,
+          255
+        ],
+        [
+          96,
+          199,
+          134,
+          255
+        ],
+        [
+          105,
+          170,
+          241,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "urlsReleased": 2,
+      "outputMime": "image/jpeg",
+      "outputBytes": 24752,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "canvasReleased": true,
+      "conversion": "native_pixels",
+      "outputSha256": "4f8531b66dc72d25e10fa38ea77dcec92c4b7dd20fdc43ada78eab71ccc0f2a3",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1030,
+      "outputPath": "b129-format-runs/desktop-formats-01/16-svg.jpg"
+    },
+    {
+      "path": "b129-format-fixtures/sequence.heic",
+      "name": "b129-format-fixtures/sequence.heic",
+      "startedAt": "2026-09-06T08:08:41.506Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "3c548911e6043e161f32afe73e27fd59fa1607f2d6ad8b27fb1b7f9bbf060dd5",
+      "originalBytes": 16893,
+      "classification": {
+        "format": "heic",
+        "policy": "multiple_images",
+        "frames": 1,
+        "extension": "heic",
+        "extensionMatches": true,
+        "mime": "image/heic",
+        "details": {
+          "sequence": true,
+          "brands": [
+            "hevc",
+            "mif1",
+            "MiHE",
+            "MiPr",
+            "miaf",
+            "MiHB",
+            "heic"
+          ]
+        }
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 2
+    },
+    {
+      "path": "b129-format-fixtures/truncated.heic",
+      "name": "b129-format-fixtures/truncated.heic",
+      "startedAt": "2026-09-06T08:08:41.509Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": false,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "f3b55e58fafb5e5a9ce62a31b4f7733a8da8d5eacfcd8483a27624b5c4e601c4",
+      "originalBytes": 100,
+      "classification": {
+        "format": "heic",
+        "policy": "malformed",
+        "frames": 1,
+        "extension": "heic",
+        "extensionMatches": true,
+        "mime": "image/heic",
+        "details": {
+          "error": "invalid_box_size"
+        }
+      },
+      "status": "needs_static_image",
+      "recovery": "原文件和草稿已保留，请提供静态 PNG/JPEG。",
+      "originalUnchanged": true,
+      "elapsedMs": 2
+    },
+    {
+      "path": "b129-heic-core-check/chart-synthetic-gps.heic",
+      "name": "b129-heic-core-check/chart-synthetic-gps.heic",
+      "startedAt": "2026-09-06T08:08:41.511Z",
+      "draftPreserved": true,
+      "originalRetained": true,
+      "decoderCalled": true,
+      "networkRequestsInitiated": 0,
+      "originalSha256": "2148dd7786d833605bfca3b545263072bb9c7cd35c759e454f8a18a10846a1c1",
+      "originalBytes": 24467,
+      "classification": {
+        "format": "heic",
+        "policy": "static",
+        "frames": 1,
+        "extension": "heic",
+        "extensionMatches": true,
+        "mime": "image/heic",
+        "details": {
+          "sequence": false,
+          "brands": [
+            "heic",
+            "mif1",
+            "MiPr",
+            "miaf",
+            "MiHB",
+            "heic"
+          ],
+          "imageCount": 1,
+          "primaryId": 1,
+          "items": [
+            {
+              "id": 1,
+              "type": "hvc1"
+            }
+          ]
+        }
+      },
+      "urlsCreated": 3,
+      "urlsReleased": 3,
+      "canvasReleased": true,
+      "tempCreated": true,
+      "systemCommand": "/usr/bin/sips",
+      "shell": false,
+      "processExited": true,
+      "systemStderr": "",
+      "intermediateBytes": 69438,
+      "decodedWidth": 480,
+      "decodedHeight": 640,
+      "outputWidth": 480,
+      "outputHeight": 640,
+      "corners": [
+        [
+          106,
+          170,
+          240,
+          255
+        ],
+        [
+          227,
+          113,
+          105,
+          255
+        ],
+        [
+          243,
+          216,
+          103,
+          255
+        ],
+        [
+          97,
+          199,
+          134,
+          255
+        ]
+      ],
+      "outputDecodeVerified": true,
+      "outputMime": "image/jpeg",
+      "outputBytes": 32777,
+      "metadataPolicy": "fresh_pixels_no_source_metadata_copy; inspect output EXIF separately",
+      "tempCleaned": true,
+      "conversion": "macos_system_then_pixels",
+      "outputSha256": "61e1832005407455c04cf0d0b6770033ca2da197f3dcdf152d9a7bedf82755e7",
+      "status": "converted",
+      "originalUnchanged": true,
+      "elapsedMs": 1136,
+      "outputPath": "b129-format-runs/desktop-formats-01/19-heic.jpg"
+    }
+  ],
+  "finishedAt": "2026-09-06T08:08:42.651Z"
+}

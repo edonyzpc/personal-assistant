@@ -1,0 +1,331 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "7c712924d7a2f8760ad92c83f879b2f887eea245",
+  "purpose": "Byte-identical historical evidence; no new execution or broader acceptance claim",
+  "files": [
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/desktop-acquisition-01.json",
+      "path": "p0/desktop-acquisition-01.json",
+      "byteLength": 3790,
+      "sha256": "246fa1cb9ef8865d8abc58a5c7885585382e7f319c4a6e97cf47624b11292876"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/desktop-anchors-01.json",
+      "path": "p0/desktop-anchors-01.json",
+      "byteLength": 3659,
+      "sha256": "52b3eb432f3e49c791df9fa7cc2ff585b969d4da84d980f9da26568e0dd21ccd"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/desktop-final-resources-01.json",
+      "path": "p0/desktop-final-resources-01.json",
+      "byteLength": 13479,
+      "sha256": "d31ef16e2c678cd580b8dc264ef5c7afd0ce532f76b014c18dd38f1ec93880a1"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/desktop-formats-01.json",
+      "path": "p0/desktop-formats-01.json",
+      "byteLength": 26381,
+      "sha256": "1271f035fe74a4073ba9c3efabf9bfb7adbe592bea34bc5638875b09f7e0f220"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/desktop-formats-02.json",
+      "path": "p0/desktop-formats-02.json",
+      "byteLength": 9177,
+      "sha256": "f71ce08c68635fa437b7ea9e2b7f4b35bf5ebe714ca140370e2e002391bf74b8"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/desktop-resources-01.json",
+      "path": "p0/desktop-resources-01.json",
+      "byteLength": 59231,
+      "sha256": "62b4adf859b574160a4991bd3a5a19afb8045fde386e456e2909a415d58368e1"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/desktop-resources-02.json",
+      "path": "p0/desktop-resources-02.json",
+      "byteLength": 18554,
+      "sha256": "cd90a8dcf8bb7d1754992b3fa40a65f376e4c4755b5bf25f54d9d0c19e591233"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/governance-budget-validation.json",
+      "path": "p0/governance-budget-validation.json",
+      "byteLength": 1610,
+      "sha256": "78ef1783179066604b6df53fde926f1608ea43bd3fe3389bff9fe1524b20adad"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/ios-acquisition-01.json",
+      "path": "p0/ios-acquisition-01.json",
+      "byteLength": 3695,
+      "sha256": "1637a727b3681616f09f24e3f1479b11df259b18d719ff0744376e75562219fd"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/ios-anchors-01.json",
+      "path": "p0/ios-anchors-01.json",
+      "byteLength": 3699,
+      "sha256": "1cf4bb7f23ec1a7f3f1dbd2c7df7c28232821cebb593a40c7e1e0cf06a18d504"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/ios-final-resources-01.json",
+      "path": "p0/ios-final-resources-01.json",
+      "byteLength": 10150,
+      "sha256": "3d29de14558f6e9d7df954ea2592169d16f84fedaeb550d47af020d1db615f0e"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/ios-final-timeline-numeric.json",
+      "path": "p0/ios-final-timeline-numeric.json",
+      "byteLength": 160801,
+      "sha256": "820e2a60beaab96d0c141bf199812ce8f6363bd4ab27750cfe050b5a420076a5"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/ios-formats-01.json",
+      "path": "p0/ios-formats-01.json",
+      "byteLength": 27878,
+      "sha256": "8b4da10319279b0384981f4a55b2580215985d93f88313d4816e656341351b62"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/ios-resources-01.json",
+      "path": "p0/ios-resources-01.json",
+      "byteLength": 48106,
+      "sha256": "89707ab09e14d748d3aaf5a695619a6183715731ee14b6482024d008b031c837"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/ios-timeline-numeric.json",
+      "path": "p0/ios-timeline-numeric.json",
+      "byteLength": 176800,
+      "sha256": "83d2899b089abafe5c86a8b79cbdee12bd74dd0ef4463edb0d5a82fb3701c868"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/minimum-api-receipt.json",
+      "path": "p0/minimum-api-receipt.json",
+      "byteLength": 3592,
+      "sha256": "ef18d6c8bffe07b59da9801b8a75ad4134685ce251fb01bcf925d9c68c68cad8"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/pixel-metadata-analysis.json",
+      "path": "p0/pixel-metadata-analysis.json",
+      "byteLength": 103902,
+      "sha256": "ccd946b0d3e550a2f91b962f474338429e900f7726cd3bf6090a90c4750b40b8"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p0-evidence/technical-feasibility-20260906/resource-host-analysis.json",
+      "path": "p0/resource-host-analysis.json",
+      "byteLength": 108477,
+      "sha256": "1df91c6047ecf1af24e50075c426cee74c2d05289e82b03bf200a91467445dc8"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/b129-ios-layout-after.json",
+      "path": "p5/b129-ios-layout-after.json",
+      "byteLength": 839,
+      "sha256": "6e6911f750c0c214b0a0fb9f9df030268b2bf7576b41754962f47bd03786c711"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/b129-ios-layout-before.json",
+      "path": "p5/b129-ios-layout-before.json",
+      "byteLength": 246,
+      "sha256": "a44c250d9b6900a9af5a1778ebff793180bd4f3038087df8303b77d00b1005f2"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/cache-recovery-desktop-loaded.json",
+      "path": "p5/cache-recovery-desktop-loaded.json",
+      "byteLength": 1263,
+      "sha256": "e8a6e9010e27a1cc42b864e90b1a6bb33c3dbfe01298fb6b1afba1c780e97201"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/cache-recovery-ios-preview-final.json",
+      "path": "p5/cache-recovery-ios-preview-final.json",
+      "byteLength": 1052,
+      "sha256": "0dc22c25a1c619b7bca8a9a8a493019f322f45077a412a3a29a2ce2a5d24241d"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/capability-offline-desktop-01.json",
+      "path": "p5/capability-offline-desktop-01.json",
+      "byteLength": 5496,
+      "sha256": "eed7533bb49e150ac575dcaed5e9d84bc62599be69952a06ea267a9529bc6c68"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/compat-upgrade-desktop-01.json",
+      "path": "p5/compat-upgrade-desktop-01.json",
+      "byteLength": 1388,
+      "sha256": "9be6dcbdf13a6f8121b30ff82d2cbab249963280a9a760aaff5e609756a7695d"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/compat-upgrade-desktop-02.json",
+      "path": "p5/compat-upgrade-desktop-02.json",
+      "byteLength": 7263,
+      "sha256": "9a835c630f23108f2a27ca8ce3ee016d1f91c4c105a3ad78931cb11b5ceb010e"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/compat-upgrade-desktop-03.json",
+      "path": "p5/compat-upgrade-desktop-03.json",
+      "byteLength": 7322,
+      "sha256": "d0010a933f940f3bd31476ca483bb40639f9eee9ddbf012e0de1181ea037d1c9"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/compat-upgrade-ios-01.json",
+      "path": "p5/compat-upgrade-ios-01.json",
+      "byteLength": 7479,
+      "sha256": "9b30ba7615d6eb719c42fb62e6acaa31823abd8da70a18d241430f78ca770b37"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/desktop-attachment-rules-01.json",
+      "path": "p5/desktop-attachment-rules-01.json",
+      "byteLength": 5818,
+      "sha256": "b55d115690c5783bfbfe10cffc736b8b184e4c636f3b8ade25572a42f56f7e7a"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/desktop-reopen-prepare-01.json",
+      "path": "p5/desktop-reopen-prepare-01.json",
+      "byteLength": 4094,
+      "sha256": "fce552dd4f719579cf4bb4ded9e01d9c8b8ef54609ca35f605cb3f6a8bc14975"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/desktop-reopen-resume-01.json",
+      "path": "p5/desktop-reopen-resume-01.json",
+      "byteLength": 4037,
+      "sha256": "b1bfd29957c1e2600517f27ddffb91e34776ea16fc581e9ea458318dc25a87cc"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/desktop-services-01.json",
+      "path": "p5/desktop-services-01.json",
+      "byteLength": 8732,
+      "sha256": "f409fd667b5aeec60a81df3737525a28f69ac8b3aa4656ca03463ff46e9ec74e"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/desktop-services-02.json",
+      "path": "p5/desktop-services-02.json",
+      "byteLength": 18479,
+      "sha256": "fe7ed4d5be4d532102e13d428ade077906e26b6011effbc96e1812bc531b0161"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/final-ui-animation-after-remove.json",
+      "path": "p5/final-ui-animation-after-remove.json",
+      "byteLength": 10726,
+      "sha256": "7635834593d976a771e81a96e233ba2c2cf380cdd53298c5fc5dd1aed8a8d64e"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/final-ui-animation-before-remove.json",
+      "path": "p5/final-ui-animation-before-remove.json",
+      "byteLength": 10667,
+      "sha256": "7394df2d6a727aa641a8cbf4a3f9cb6c687c04a2445a2e4370822372f9d64c15"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/final-ui-cache-cleared.json",
+      "path": "p5/final-ui-cache-cleared.json",
+      "byteLength": 10735,
+      "sha256": "19bd81662400f476bf5c110895967b399f3be07dc126aee961844e4651ee9dfb"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/final-ui-cache-rebuilt.json",
+      "path": "p5/final-ui-cache-rebuilt.json",
+      "byteLength": 11676,
+      "sha256": "6bc6b5b772a5a1a4fd7f8c862524a742ecf287cd436e8c4f0a7bdf1bbd802bd5"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/final-ui-cleanup-after.json",
+      "path": "p5/final-ui-cleanup-after.json",
+      "byteLength": 3713,
+      "sha256": "6bf0b859af7798af77dc1d6316e29c2a9a846b550b004f427adb6bf4a0bc73b3"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/final-ui-cleanup-before.json",
+      "path": "p5/final-ui-cleanup-before.json",
+      "byteLength": 11677,
+      "sha256": "a9a4815fda57ca49a1a95a82dc83c8522e16e8ced42e9b2ce014188784afc726"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/i10-loaded-identity.json",
+      "path": "p5/i10-loaded-identity.json",
+      "byteLength": 544,
+      "sha256": "6bfdf46b479710cdd594e72ca9f51546d22f0b4b9c2dde3e2b741e65073a9baa"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/i10-multi-recovery.json",
+      "path": "p5/i10-multi-recovery.json",
+      "byteLength": 5641,
+      "sha256": "c462fc2b10d8c8cfdf032c5d520c2e870d5397b046c7160f58baa23e98fd7533"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/i10-multi-reload.json",
+      "path": "p5/i10-multi-reload.json",
+      "byteLength": 2418,
+      "sha256": "91912bc75357df4a98482bd89cfc7ff96349ccd54310190eaeeb0a9e161d3da7"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/i10-multi-save-verified.json",
+      "path": "p5/i10-multi-save-verified.json",
+      "byteLength": 686,
+      "sha256": "1d2c094ecfa575ae144e14241a67ac53a3da7e0903823f7d85da0ff1cd0aa1ed"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/i10-multi-save.json",
+      "path": "p5/i10-multi-save.json",
+      "byteLength": 9061,
+      "sha256": "08c8de5b32abfe0db2edd92ca3af591f9edca946b7d1e73ee4f568e213faf266"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/i10-reresolve-recovery.json",
+      "path": "p5/i10-reresolve-recovery.json",
+      "byteLength": 5828,
+      "sha256": "c833a1c39c5cee986e552e7a592a5d2bb4daf8e194bd911c150b0d925fc807d5"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/ios-combined-result-01.json",
+      "path": "p5/ios-combined-result-01.json",
+      "byteLength": 1668,
+      "sha256": "9714d8a9b2133002adf716e18d73972e23b5f80cf1faa2aa41b157368e5ff2b2"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/ios-preview-diagnostic.json",
+      "path": "p5/ios-preview-diagnostic.json",
+      "byteLength": 1623,
+      "sha256": "096faaec269a84430f0a917eaacc2f8d0429ea072e7a881e8a83e171d0cf8b1d"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/ios-production-01.json",
+      "path": "p5/ios-production-01.json",
+      "byteLength": 5372,
+      "sha256": "325984b476227b5ce039e130b15ef095ab09633f98607f3529955ed662bd44cb"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/ios-relative-01.json",
+      "path": "p5/ios-relative-01.json",
+      "byteLength": 2916,
+      "sha256": "2ecae8a9ccb65e69217b1b489cfc01272fa271966878f56b7912a2883144b83d"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/ios-services-01.json",
+      "path": "p5/ios-services-01.json",
+      "byteLength": 18670,
+      "sha256": "0bcb6840091f21cdb2d889945843dbad65023fddc1e916526e65805393ea430a"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/ios-ui-save-final.json",
+      "path": "p5/ios-ui-save-final.json",
+      "byteLength": 3942,
+      "sha256": "2755304ef93bbb7ad6d122ddc683877bb3542fb531c78f1fa9b853195aaa6658"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/original-cleanup-ui.json",
+      "path": "p5/original-cleanup-ui.json",
+      "byteLength": 378,
+      "sha256": "32ca2999a6a347cf66c35c535992a24994dc312f6871eb1c1638d2009de5c79a"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/recovered-missing-materials.json",
+      "path": "p5/recovered-missing-materials.json",
+      "byteLength": 2964,
+      "sha256": "6ae48bf5766d38ebc2ecdb289b7d9df5ed4bca7d303f3752c00fcffa3d2050b6"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/style-final-loop.json",
+      "path": "p5/style-final-loop.json",
+      "byteLength": 6082,
+      "sha256": "c38981432d5cf6db74b43e3d5eea3a24f12efb96aa512eb96b911d05374bf563"
+    },
+    {
+      "originalPath": "docs/development/active/multimodal-chat/p5-evidence/style-ui-01-before.json",
+      "path": "p5/style-ui-01-before.json",
+      "byteLength": 4118,
+      "sha256": "682c98d4daaeab7ef9f0704adc23b34e402dd36d63b65480ac58a7e38341eebf"
+    }
+  ]
+}

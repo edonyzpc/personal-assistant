@@ -1,6 +1,6 @@
 # 图片聊天与图文保存
 
-适用于包含 B-129 的构建。交付及验证状态见 [B-129 Tracker](../development/active/multimodal-chat/tracker.md)，产品范围见 [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)。
+适用于包含 B-129 的构建；是否已发布以实际安装版本及发布记录为准。产品范围见 [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)，历史验证与实机边界见 [验证证据](../archive/2026/b129-multimodal-chat-validation.md)。
 
 ## 加入图片并继续聊天
 

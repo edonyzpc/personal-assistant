@@ -1,0 +1,90 @@
+{
+  "kind": "b129_ios_real_ui_save_with_synced_disk_verification",
+  "observedAt": "2026-09-06T14:44:15.175756+00:00",
+  "state": "passed",
+  "uiObservation": {
+    "observer": "root agent",
+    "platform": "real iOS Obsidian",
+    "reportedSequence": [
+      "Open existing two-image Chat",
+      "Writing versions shows AI draft with two associated images",
+      "Save as a note has both images selected by default",
+      "Preview",
+      "Save exact selection succeeds",
+      "Open new note and observe both images"
+    ],
+    "evidenceClass": "Separately reported real-device UI observation; not inferred from disk"
+  },
+  "diskObservation": {
+    "reader": "local read of iCloud-synced test vault",
+    "vaultPath": "/Users/edonyzpc/Library/Mobile Documents/iCloud~md~obsidian/Documents/test",
+    "notePath": "PA Writing 2026-09-06 efe07b23.md",
+    "noteByteLength": 1572,
+    "noteSha256": "a9ac8d4d2399b0417d93435b3461c1de7ad7dced62368697f7284a9ddd1d34e8",
+    "operationId": "save_33b2b95363ad48d1a69038ab444f277a",
+    "writingVersionId": "writing_fea834611bd613555a5156431f705b47ea5ed34fefe07b23",
+    "origin": "ai_generated",
+    "adoption": "ai_adopted",
+    "metadataState": "completed",
+    "bodySha256": "a08e48b82665c79e0b4cf513598bcc5f60bfd58b7ce247e993913658252bdead",
+    "bodyUtf8Bytes": 141,
+    "bodyText": "合成图文验证 ios-production-01-services\n\n  保留开头空格。\n第二行含 **Markdown** 与 emoji 🌱。\n\n末尾也精确保留。\n",
+    "sourceVersionReceipt": "b129-production-services/ios-production-01-services/receipt.json",
+    "attachments": [
+      {
+        "assetId": "img_81f5aa2bbe534a958bbb8b4bfbc3992b",
+        "originalPath": "pa-images/img_81f5aa2bbe534a958bbb8b4bfbc3992b.png",
+        "originalBytes": 5449,
+        "originalSha256": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "originalMatchesMetadata": true,
+        "originalMatchesInitialServiceReceipt": true,
+        "formalPath": "pa-a69038ab444f277a-1.png",
+        "attachmentKind": "original",
+        "mimeFromSignature": "image/png",
+        "formalBytes": 5449,
+        "formalSha256": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "formalMatchesMetadata": true,
+        "formalOutsidePaImages": true,
+        "heicUsesFormalJPEG": true
+      },
+      {
+        "assetId": "img_d63c8b4f9f704cb1855fdb6857585c50",
+        "originalPath": "pa-images/img_d63c8b4f9f704cb1855fdb6857585c50.heic",
+        "originalBytes": 16893,
+        "originalSha256": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+        "originalMatchesMetadata": true,
+        "originalMatchesInitialServiceReceipt": true,
+        "formalPath": "pa-a69038ab444f277a-2.jpg",
+        "attachmentKind": "heic_jpeg",
+        "mimeFromSignature": "image/jpeg",
+        "formalBytes": 47072,
+        "formalSha256": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+        "formalMatchesMetadata": true,
+        "formalOutsidePaImages": true,
+        "heicUsesFormalJPEG": true
+      }
+    ],
+    "removedDraftOriginal": {
+      "path": "pa-images/img_cebe26c218444e32bffb357bff6a302b.heic",
+      "bytes": 16893,
+      "sha256": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+    }
+  },
+  "checks": {
+    "metadataCompleted": true,
+    "sameExistingWritingVersion": true,
+    "bodyMatchesVersionHash": true,
+    "exactTwoDefaultImages": true,
+    "formalPNGAndJPEG": true,
+    "allSourceAndFormalHashesMatch": true,
+    "allFormalAttachmentsOutsidePaImages": true,
+    "droppedDraftOriginalPreserved": true
+  },
+  "scope": {
+    "newModelRequests": 0,
+    "newTestsRun": false,
+    "deviceOrPluginStateModifiedByThisCheck": false,
+    "receiptStateReadFrom": "persisted note pa_writing metadata; device IDB not queried",
+    "previewCacheReloadProof": "separate root observation; not established by this file check"
+  }
+}

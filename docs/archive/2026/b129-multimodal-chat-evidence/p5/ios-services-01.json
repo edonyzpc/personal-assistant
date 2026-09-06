@@ -1,0 +1,469 @@
+{
+  "schemaVersion": 1,
+  "runner": "b129-production-services-smoke",
+  "runId": "ios-production-01-services",
+  "startedAt": "2026-09-06T13:45:42.476Z",
+  "state": "passed",
+  "evidencePath": "b129-production-services/ios-production-01-services/receipt.json",
+  "scope": {
+    "productionServices": [
+      "imageAssetService",
+      "writingVersions",
+      "writingSave",
+      "chatHistoryManager"
+    ],
+    "modelCalled": false,
+    "missingOriginalTechnique": "injected-vault-lookup-missing; physical original retained",
+    "cancellationTechnique": "abort immediately after actual target Vault.create resolves",
+    "configWrites": "Vault.process(.gitignore) blocked only during this run",
+    "retainedOutputs": "this run conversation, version, receipt, originals, note and formal attachments",
+    "limitations": [
+      "No UI interaction, remote provider dispatch, physical deletion or restart validation.",
+      "Manifest identity is descriptive; build-byte provenance must be supplied by the deployment receipt.",
+      "Original imports and formal attachments follow current attachment settings and may be outside the run folder."
+    ]
+  },
+  "cases": [
+    {
+      "id": "01-production-services-and-test-vault",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.476Z",
+      "elapsedMs": 32,
+      "details": {
+        "servicesPresent": true,
+        "historyAvailable": true,
+        "runDirectory": "b129-production-services/ios-production-01-services",
+        "heicFixture": "b129-p0-fixtures/chart-sips.heic"
+      }
+    },
+    {
+      "id": "02-png-original-preservation",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.515Z",
+      "elapsedMs": 24,
+      "details": {
+        "ref": {
+          "assetId": "img_81f5aa2bbe534a958bbb8b4bfbc3992b",
+          "contentHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda"
+        },
+        "originalPath": "pa-images/img_81f5aa2bbe534a958bbb8b4bfbc3992b.png",
+        "inputHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "byteLength": 5449,
+        "sync": {
+          "directory": "pa-images",
+          "obsidianSync": "needs_user_setup",
+          "git": "needs_user_setup",
+          "iCloud": "unknown",
+          "gitignoreRule": "/pa-images/",
+          "gitTracked": "unknown",
+          "previouslyUploaded": "unknown",
+          "noticeDismissed": false,
+          "noticeRequired": true
+        }
+      }
+    },
+    {
+      "id": "03-png-preview-and-provider",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.541Z",
+      "elapsedMs": 34,
+      "details": {
+        "preview": {
+          "purpose": "preview",
+          "width": 320,
+          "height": 180,
+          "byteLength": 5937,
+          "hash": "b7af5b24d8f5d4ca6dcd3c14cb0f89609c6bba80eb2492878254d6785e591070",
+          "persistent": true,
+          "warning": null
+        },
+        "provider": {
+          "purpose": "provider",
+          "width": 320,
+          "height": 180,
+          "byteLength": 5937,
+          "hash": "b7af5b24d8f5d4ca6dcd3c14cb0f89609c6bba80eb2492878254d6785e591070",
+          "persistent": true,
+          "warning": null
+        }
+      }
+    },
+    {
+      "id": "04-heic-original-preservation",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.578Z",
+      "elapsedMs": 21,
+      "details": {
+        "ref": {
+          "assetId": "img_d63c8b4f9f704cb1855fdb6857585c50",
+          "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+        },
+        "originalPath": "pa-images/img_d63c8b4f9f704cb1855fdb6857585c50.heic",
+        "inputHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+        "byteLength": 16893,
+        "sync": {
+          "directory": "pa-images",
+          "obsidianSync": "needs_user_setup",
+          "git": "needs_user_setup",
+          "iCloud": "unknown",
+          "gitignoreRule": "/pa-images/",
+          "gitTracked": "unknown",
+          "previouslyUploaded": "unknown",
+          "noticeDismissed": false,
+          "noticeRequired": true
+        }
+      }
+    },
+    {
+      "id": "05-heic-preview-and-provider",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.601Z",
+      "elapsedMs": 66,
+      "details": {
+        "preview": {
+          "purpose": "preview",
+          "width": 640,
+          "height": 480,
+          "byteLength": 47072,
+          "hash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+          "persistent": true,
+          "warning": null
+        },
+        "provider": {
+          "purpose": "provider",
+          "width": 640,
+          "height": 480,
+          "byteLength": 47072,
+          "hash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+          "persistent": true,
+          "warning": null
+        }
+      }
+    },
+    {
+      "id": "06-writing-version-and-history-persistence",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.670Z",
+      "elapsedMs": 22,
+      "details": {
+        "conversationId": "4c5ff760-7133-4fe0-9a2f-2025319d368d",
+        "writingVersionId": "writing_fea834611bd613555a5156431f705b47ea5ed34fefe07b23",
+        "textHash": "a08e48b82665c79e0b4cf513598bcc5f60bfd58b7ce247e993913658252bdead",
+        "exactBodyLength": 85,
+        "associatedImages": 2,
+        "turnCount": 1
+      }
+    },
+    {
+      "id": "07-preview-freezes-export-before-note-create",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.698Z",
+      "elapsedMs": 25,
+      "details": {
+        "operationId": "save_85786dc7b33742cd8963ee801f3aa307",
+        "previewBodyExact": true,
+        "noteAbsent": true,
+        "exports": [
+          {
+            "attachmentKind": "original",
+            "mime": "image/png",
+            "byteLength": 5449,
+            "outputHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+            "filename": "pa-8963ee801f3aa307-1.png"
+          },
+          {
+            "attachmentKind": "heic_jpeg",
+            "mime": "image/jpeg",
+            "byteLength": 47072,
+            "outputHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+            "filename": "pa-8963ee801f3aa307-2.jpg"
+          }
+        ]
+      }
+    },
+    {
+      "id": "08-cancel-after-real-note-create",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.725Z",
+      "elapsedMs": 43,
+      "details": {
+        "injection": "after_real_note_create_resolves",
+        "targetCreates": 1,
+        "state": "partial",
+        "failureReason": "cancelled",
+        "noteState": "created",
+        "bodyExact": true,
+        "attachmentWrites": 0
+      }
+    },
+    {
+      "id": "09-retry-exact-body-and-formal-attachments",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.770Z",
+      "elapsedMs": 90,
+      "details": {
+        "state": "completed",
+        "notePath": "b129-production-services/ios-production-01-services/saved.md",
+        "exactBodyAndLinks": true,
+        "completedRetrySameFiles": true,
+        "noteHash": "22c4058a8e69bf6cab4951b4ff9feea703efe53d6d5eba51990d54ef665e4f99",
+        "retryVerification": {
+          "stateBefore": "completed",
+          "stateAfter": "completed",
+          "attachmentsEqual": true,
+          "noteExact": true,
+          "noteHashBefore": "22c4058a8e69bf6cab4951b4ff9feea703efe53d6d5eba51990d54ef665e4f99",
+          "noteHashAfter": "22c4058a8e69bf6cab4951b4ff9feea703efe53d6d5eba51990d54ef665e4f99",
+          "beforeAttachments": [
+            {
+              "assetId": "img_81f5aa2bbe534a958bbb8b4bfbc3992b",
+              "contentHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+              "sourcePath": "pa-images/img_81f5aa2bbe534a958bbb8b4bfbc3992b.png",
+              "sourceName": "Synthetic PNG ios-production-01-services",
+              "attachmentKind": "original",
+              "mime": "image/png",
+              "filename": "pa-8963ee801f3aa307-1.png",
+              "outputHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+              "exportPolicy": "original:v1",
+              "byteLength": 5449,
+              "plannedPath": "pa-8963ee801f3aa307-1.png",
+              "writtenHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+              "state": "written"
+            },
+            {
+              "assetId": "img_d63c8b4f9f704cb1855fdb6857585c50",
+              "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+              "sourcePath": "pa-images/img_d63c8b4f9f704cb1855fdb6857585c50.heic",
+              "sourceName": "Synthetic HEIC ios-production-01-services",
+              "attachmentKind": "heic_jpeg",
+              "mime": "image/jpeg",
+              "filename": "pa-8963ee801f3aa307-2.jpg",
+              "outputHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+              "exportPolicy": "v1:note:jpeg:native:q0.9:white:source-metadata-stripped",
+              "byteLength": 47072,
+              "plannedPath": "pa-8963ee801f3aa307-2.jpg",
+              "writtenHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+              "state": "written"
+            }
+          ],
+          "afterAttachments": [
+            {
+              "assetId": "img_81f5aa2bbe534a958bbb8b4bfbc3992b",
+              "contentHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+              "sourcePath": "pa-images/img_81f5aa2bbe534a958bbb8b4bfbc3992b.png",
+              "sourceName": "Synthetic PNG ios-production-01-services",
+              "attachmentKind": "original",
+              "mime": "image/png",
+              "filename": "pa-8963ee801f3aa307-1.png",
+              "outputHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+              "exportPolicy": "original:v1",
+              "byteLength": 5449,
+              "plannedPath": "pa-8963ee801f3aa307-1.png",
+              "writtenHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+              "state": "written"
+            },
+            {
+              "assetId": "img_d63c8b4f9f704cb1855fdb6857585c50",
+              "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+              "sourcePath": "pa-images/img_d63c8b4f9f704cb1855fdb6857585c50.heic",
+              "sourceName": "Synthetic HEIC ios-production-01-services",
+              "attachmentKind": "heic_jpeg",
+              "mime": "image/jpeg",
+              "filename": "pa-8963ee801f3aa307-2.jpg",
+              "outputHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+              "exportPolicy": "v1:note:jpeg:native:q0.9:white:source-metadata-stripped",
+              "byteLength": 47072,
+              "plannedPath": "pa-8963ee801f3aa307-2.jpg",
+              "writtenHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+              "state": "written"
+            }
+          ]
+        },
+        "attachments": [
+          {
+            "path": "pa-8963ee801f3aa307-1.png",
+            "attachmentKind": "original",
+            "byteLength": 5449,
+            "hash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda"
+          },
+          {
+            "path": "pa-8963ee801f3aa307-2.jpg",
+            "attachmentKind": "heic_jpeg",
+            "byteLength": 47072,
+            "hash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6"
+          }
+        ]
+      }
+    },
+    {
+      "id": "10-missing-original-cannot-revive-cached-derivative",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.866Z",
+      "elapsedMs": 7,
+      "details": {
+        "injection": "Vault lookup only; no physical file deletion",
+        "observedError": "source_missing",
+        "cachedDerivative": {
+          "byteLength": 5937,
+          "persistent": true
+        },
+        "sourceRecreateAttempts": 0,
+        "restoredOriginalHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda"
+      }
+    },
+    {
+      "id": "11-originals-and-fixture-unchanged",
+      "status": "passed",
+      "startedAt": "2026-09-06T13:45:42.875Z",
+      "elapsedMs": 6,
+      "details": {
+        "pngHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "heicHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+        "fixtureHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+        "originalFilesRetained": true
+      }
+    }
+  ],
+  "artifacts": {
+    "anchorPath": "b129-production-services/ios-production-01-services/anchor.md",
+    "png": {
+      "ref": {
+        "assetId": "img_81f5aa2bbe534a958bbb8b4bfbc3992b",
+        "contentHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda"
+      },
+      "originalPath": "pa-images/img_81f5aa2bbe534a958bbb8b4bfbc3992b.png",
+      "inputHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda"
+    },
+    "heic": {
+      "ref": {
+        "assetId": "img_d63c8b4f9f704cb1855fdb6857585c50",
+        "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+      },
+      "originalPath": "pa-images/img_d63c8b4f9f704cb1855fdb6857585c50.heic",
+      "inputHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+    },
+    "conversationId": "4c5ff760-7133-4fe0-9a2f-2025319d368d",
+    "writingVersionId": "writing_fea834611bd613555a5156431f705b47ea5ed34fefe07b23",
+    "operationId": "save_85786dc7b33742cd8963ee801f3aa307",
+    "savedNotePath": "b129-production-services/ios-production-01-services/saved.md",
+    "attachments": [
+      {
+        "path": "pa-8963ee801f3aa307-1.png",
+        "attachmentKind": "original",
+        "byteLength": 5449,
+        "hash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda"
+      },
+      {
+        "path": "pa-8963ee801f3aa307-2.jpg",
+        "attachmentKind": "heic_jpeg",
+        "byteLength": 47072,
+        "hash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6"
+      }
+    ]
+  },
+  "cleanup": {
+    "wrappers": [
+      {
+        "label": "deterministic-save-cancel",
+        "restored": true
+      },
+      {
+        "label": "injected-source-recreation-detector",
+        "restored": true
+      },
+      {
+        "label": "injected-original-lookup-missing",
+        "restored": true
+      },
+      {
+        "label": "configuration-write-guard",
+        "restored": true
+      }
+    ],
+    "leasesReleased": 5,
+    "activeConversation": "restored",
+    "noSharedServiceDisposed": true,
+    "noGlobalCacheClear": true
+  },
+  "host": {
+    "vault": "test",
+    "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148  obsidian",
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2"
+  },
+  "updatedAt": "2026-09-06T13:45:42.887Z",
+  "retryVerification": {
+    "stateBefore": "completed",
+    "stateAfter": "completed",
+    "attachmentsEqual": true,
+    "noteExact": true,
+    "noteHashBefore": "22c4058a8e69bf6cab4951b4ff9feea703efe53d6d5eba51990d54ef665e4f99",
+    "noteHashAfter": "22c4058a8e69bf6cab4951b4ff9feea703efe53d6d5eba51990d54ef665e4f99",
+    "beforeAttachments": [
+      {
+        "assetId": "img_81f5aa2bbe534a958bbb8b4bfbc3992b",
+        "contentHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "sourcePath": "pa-images/img_81f5aa2bbe534a958bbb8b4bfbc3992b.png",
+        "sourceName": "Synthetic PNG ios-production-01-services",
+        "attachmentKind": "original",
+        "mime": "image/png",
+        "filename": "pa-8963ee801f3aa307-1.png",
+        "outputHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "exportPolicy": "original:v1",
+        "byteLength": 5449,
+        "plannedPath": "pa-8963ee801f3aa307-1.png",
+        "writtenHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "state": "written"
+      },
+      {
+        "assetId": "img_d63c8b4f9f704cb1855fdb6857585c50",
+        "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+        "sourcePath": "pa-images/img_d63c8b4f9f704cb1855fdb6857585c50.heic",
+        "sourceName": "Synthetic HEIC ios-production-01-services",
+        "attachmentKind": "heic_jpeg",
+        "mime": "image/jpeg",
+        "filename": "pa-8963ee801f3aa307-2.jpg",
+        "outputHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+        "exportPolicy": "v1:note:jpeg:native:q0.9:white:source-metadata-stripped",
+        "byteLength": 47072,
+        "plannedPath": "pa-8963ee801f3aa307-2.jpg",
+        "writtenHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+        "state": "written"
+      }
+    ],
+    "afterAttachments": [
+      {
+        "assetId": "img_81f5aa2bbe534a958bbb8b4bfbc3992b",
+        "contentHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "sourcePath": "pa-images/img_81f5aa2bbe534a958bbb8b4bfbc3992b.png",
+        "sourceName": "Synthetic PNG ios-production-01-services",
+        "attachmentKind": "original",
+        "mime": "image/png",
+        "filename": "pa-8963ee801f3aa307-1.png",
+        "outputHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "exportPolicy": "original:v1",
+        "byteLength": 5449,
+        "plannedPath": "pa-8963ee801f3aa307-1.png",
+        "writtenHash": "5ab053518b8d702917cde54363e692affc0d2b1521edea6c453bcb00fcb55fda",
+        "state": "written"
+      },
+      {
+        "assetId": "img_d63c8b4f9f704cb1855fdb6857585c50",
+        "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+        "sourcePath": "pa-images/img_d63c8b4f9f704cb1855fdb6857585c50.heic",
+        "sourceName": "Synthetic HEIC ios-production-01-services",
+        "attachmentKind": "heic_jpeg",
+        "mime": "image/jpeg",
+        "filename": "pa-8963ee801f3aa307-2.jpg",
+        "outputHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+        "exportPolicy": "v1:note:jpeg:native:q0.9:white:source-metadata-stripped",
+        "byteLength": 47072,
+        "plannedPath": "pa-8963ee801f3aa307-2.jpg",
+        "writtenHash": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+        "state": "written"
+      }
+    ]
+  },
+  "finishedAt": "2026-09-06T13:45:42.887Z",
+  "passedCases": 11
+}
