@@ -1,0 +1,30 @@
+{
+  "fixture": "in-memory governance repository; production style reader and deployed Chat UI; no model calls or governance settings change",
+  "exactSample": "  [合成样例] 收集旅途中的光。\n慢一点，风景会自己走来。  ",
+  "firstBody": "[合成文案一] 今天的海风，刚好。",
+  "secondBody": "[合成文案二] 只保留本轮背景。",
+  "copyExact": true,
+  "sampleExact": true,
+  "headingLabels": [
+    "Associated images (0)",
+    "Background sources (1)",
+    "Style samples (1)"
+  ],
+  "viewport": {
+    "width": 1865,
+    "height": 1050
+  },
+  "horizontalOverflow": false,
+  "versionSwitch": true,
+  "missingSampleHidden": true,
+  "parentBackgroundAbsent": true,
+  "missingSourceFeedback": true,
+  "backgroundOpened": true,
+  "forgetRemovesVisibleSample": true,
+  "editSurvivesForget": true,
+  "capturedAt": "2026-09-06T15:52:57.792Z",
+  "loadedPluginArtifactSha256": "cbebae7ed30a00de000b00af0c59632ca8df55d418e8e3292d68d8dee5d35319",
+  "identityBlocker": null,
+  "reopenKeepsForgottenHidden": true,
+  "actionsReachableAfterScroll": true
+}

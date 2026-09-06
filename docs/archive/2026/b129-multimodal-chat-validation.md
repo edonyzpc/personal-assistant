@@ -20,7 +20,37 @@ Raw identity: [逐文件来源与 SHA-256](./b129-multimodal-chat-evidence/manif
 没有新增一次全量运行。探针源码继续保留在 `scripts/prototypes/`，不从归档回执
 推导新的执行、联网、模型调用、部署或发布权限。
 
-## 最终构建与检查
+## AC-09 补齐验证
+
+2026-09-06 用户明确要求“需要补齐AC-09的能力”，收尾发现 I-16 已按原验收要求
+修复：图片、背景来源与确切风格样例分开展示，复制仅正文；新请求不冒领父请求
+参考，本地改稿沿用原版，旧记录保留不确定性说明。独立 review 发现的 Forget
+首次提交后外部清理失败、已显示样例未清除问题已补 repository 通知及回归。
+
+- 本轮全量 **238 suites / 6210 tests** 通过；review 后新增通知修复与测试再跑
+  **4 suites / 302 tests**，复制隔离断言更新后 Chat **209 tests** 通过。
+  最终源码通过 lint、TypeScript、community DOM 扫描（无匹配）及 diff check。
+- `make deploy` 的全量测试已通过，因期间 review 修复改变源码，复制步骤正确拒绝
+  旧构建。随后重新 lint/build，**2 suites / 61 artifact tests** 通过，使用
+  `make deploy-current` 部署最终资产。没有将旧构建身份冒充最终构建的全量重跑。
+- 最终 Desktop 实际加载 `main.js` SHA-256：
+  `cbebae7ed30a00de000b00af0c59632ca8df55d418e8e3292d68d8dee5d35319`，identity blocker 为空。
+  [UI 回执](./b129-multimodal-chat-evidence/ac09/ui-receipt.json)；
+  [参考详情](./b129-multimodal-chat-evidence/ac09/details.png)；
+  [遗忘后编辑与底部操作](./b129-multimodal-chat-evidence/ac09/forgotten.png)。
+- 在 repo-local `test` vault 从真实 Chat 按钮打开详情，实际点击展开、复制、来源、
+  版本切换、滚动及关闭/重开。背景可定位，缺失来源明确反馈，完整样例的空格/换行
+  相等；复制与正文完全相等；遗忘后当前和重开界面均不恢复样例，未保存编辑保留；
+  无横向溢出，底部操作可达，`dev:errors` 无捕获错误。
+- 这是已部署 reader/UI + **内存治理仓库合成夹具**；仅替换 reader 的测试数据依赖，
+  未更改 test vault 的旧 Memory 模式或调用 AI。真实持久治理边界与部分 Forget
+  失败由源码回归覆盖，不能将该 UI 夹具表述为真实旧库已升级或生产遗忘流程全实测。
+  合成聊天和内存依赖已清理、原会话选择已恢复；本次未新增 iOS 实机证据。
+
+稳定结果已吸收到当前契约和回归测试。原过程包按用户收尾授权删除，原始独有证据
+保留；T-16/动画、图片生成及跨设备续聊分别归 B-132/B-133/B-134，未启动二期。
+
+## AC-09 补齐前的 P5 构建与检查
 
 - 最后生产 `main.js` SHA-256：
   `327f06e05c89e7997c826a70cc6b6d97876c993cc908f4312644bd9a35521d0b`。
@@ -70,7 +100,7 @@ Raw identity: [逐文件来源与 SHA-256](./b129-multimodal-chat-evidence/manif
 复用源码回归，没有穷举对应实机治理 UI。自动提取关闭、consent paused；不能将
 宿主没有新增风格记录误当开启自动提取的完整隔离实测。探针 fetch/设置已恢复，
 独立夹具卸载；当时用户指定的 Chat/Policy `qwen3.8-max` 保留。
-这些历史回执也不证明文案版本详情已经展示全部背景来源和风格样例。
+这些历史回执不证明 AC-09 的详情展示；其补齐验证独立记录在上节。
 
 ## 兼容升级与移动修复
 

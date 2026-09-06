@@ -10,6 +10,5 @@ Authority: 当前正在执行的 L2/L3 Product track 与 L2G engineering governa
 | --- | --- | --- | --- |
 | First-run AI setup and silent Memory preparation | B-126 | [Feature Home](./silent-first-use-memory-preparation/README.md) | [Tracker](./silent-first-use-memory-preparation/tracker.md) |
 | B-125 retrieval shipping-default continuation | B-125 | [Feature Home](./retrieval-optimization-shipping-default/README.md) | [Tracker](./retrieval-optimization-shipping-default/tracker.md) |
-| Multimodal Chat and image copywriting | B-129 | [Feature Home](./multimodal-chat/README.md) | [Tracker](./multimodal-chat/tracker.md) |
 
 完成或取消后，从本表删除。过程 artifact 在结论吸收后默认删除；只有独有证据才按需归档。
