@@ -17,6 +17,8 @@ import {
     type PersistedTurn,
 } from "../src/chat/chat-history-store";
 import type { HistoryTurnEntry } from "../src/chat/types";
+import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
+import { readChatHistoryTurnMetadata } from "../src/ai-services/pa-agent-history";
 
 function makeManager(options: {
     now?: () => Date;
@@ -101,6 +103,45 @@ function makeHistoryEntry(overrides: Partial<HistoryTurnEntry> = {}): HistoryTur
 }
 
 describe("ChatHistoryManager", () => {
+    it("preserves a zero-source reduction receipt through save and reload with whitelist copies", async () => {
+        const { manager, store } = makeManager();
+        await manager.initialize();
+        const trace = createContextPagerStateFromChatContextUsed("history-only", []).persistedTrace;
+        trace.reduction = {
+            historyCompressed: true,
+            toolContextReduced: false,
+            budgetLimited: true,
+            text: "private prompt body",
+        } as NonNullable<typeof trace.reduction>;
+        const entry = makeHistoryEntry({
+            assistant: { role: "assistant", content: "continued answer" },
+            contextUsedItems: [],
+            memoryMetadata: makeMemoryMetadata({
+                hasMemoryContent: false,
+                allowedMemorySourcePaths: [],
+                contextUsed: [],
+                sourceRecords: [],
+                contextTrace: trace,
+            }),
+        });
+        const serialized = manager.serializeTurn(entry, "conv-1", 0);
+        const expected = { historyCompressed: true, toolContextReduced: false, budgetLimited: true };
+        expect(serialized.memoryMetadata?.contextTrace?.reduction).toEqual(expected);
+        expect(JSON.stringify(serialized)).not.toContain("private prompt body");
+        trace.reduction.historyCompressed = false;
+        await store.appendTurn(serialized);
+        serialized.memoryMetadata!.contextTrace!.reduction!.budgetLimited = false;
+        const saved = (await store.getTurns("conv-1"))[0];
+        expect(saved.memoryMetadata?.contextTrace?.reduction).toEqual(expected);
+        const rehydrated = manager.deserializeTurn(saved);
+        const visible = readChatHistoryTurnMetadata(rehydrated.assistantMessage, rehydrated.historyEntry.memoryMetadata);
+        expect(visible?.contextTrace?.reduction).toEqual(expected);
+        expect(visible?.contextTrace).toMatchObject({ usedSourceCount: 0, usedMemoryCount: 0, skippedScopeCount: 0 });
+        expect(visible?.contextUsed).toBeUndefined();
+        visible!.contextTrace!.reduction!.toolContextReduced = true;
+        expect((await store.getTurns("conv-1"))[0].memoryMetadata?.contextTrace?.reduction).toEqual(expected);
+    });
+
     it("serializes a HistoryTurnEntry, stripping canonicalTurn.messages but keeping sourceRecords and status", async () => {
         const { manager } = makeManager();
         await manager.initialize();

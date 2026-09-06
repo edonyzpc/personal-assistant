@@ -11,6 +11,8 @@ import {
     parseNativeToolCallsFromModelResponse,
 } from '../src/ai-services/pa-agent-runtime';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
+import { PaAgentContextOverflowError } from '../src/ai-services/context';
+import { PaAgentContextSummarizer } from '../src/ai-services/context/PaAgentContextSummarizer';
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from '../src/ai-services/capability-types';
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
 import type { AgentRunCoordinatorPort } from '../src/ai-services/agent-run-coordinator';
@@ -59,6 +61,7 @@ jest.mock('../src/ai-services/ai-utils', () => ({
 }));
 
 jest.mock('@langchain/core/prompts', () => ({
+    renderTemplate: jest.requireActual<typeof import('@langchain/core/prompts')>('@langchain/core/prompts').renderTemplate,
     ChatPromptTemplate: {
         fromMessages: jest.fn(() => ({
             pipe: (model: unknown) => model,
@@ -725,6 +728,63 @@ describe('native tool call fixtures', () => {
 });
 
 describe('ChatService.streamLLM integration', () => {
+    it('shares one conversation summarizer across runtime turns and resets it for model identity changes', async () => {
+        const plugin = createPlugin();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const summarizer = (service as unknown as { contextSummarizer: PaAgentContextSummarizer }).contextSummarizer;
+        const reset = jest.spyOn(summarizer, 'reset');
+        const dispose = jest.spyOn(summarizer, 'dispose');
+        const owners: unknown[] = [];
+        const stream = jest.spyOn(PaAgentRuntime.prototype, 'streamTurn').mockImplementation(async function (this: PaAgentRuntime) {
+            owners.push((this as unknown as { options: { contextSummarizer: unknown } }).options.contextSummarizer);
+        });
+        try {
+            await service.streamLLM('first turn', jest.fn());
+            await service.streamLLM('same conversation', jest.fn());
+            expect(owners).toEqual([summarizer, summarizer]);
+            expect(reset).not.toHaveBeenCalled();
+            expect(dispose).not.toHaveBeenCalled();
+
+            plugin.settings.apiToken = 'different-token';
+            await service.streamLLM('same model', jest.fn());
+            expect(reset).not.toHaveBeenCalled();
+            plugin.settings.chatModelName = 'another-model';
+            await service.streamLLM('new model', jest.fn());
+            plugin.settings.baseURL = 'https://provider.example/v1';
+            await service.streamLLM('new endpoint', jest.fn());
+            plugin.settings.aiProvider = 'openai';
+            await service.streamLLM('new provider', jest.fn());
+            expect(reset).toHaveBeenCalledTimes(3);
+            expect(owners.every((owner) => owner === summarizer)).toBe(true);
+            service.resetContext();
+            expect(reset).toHaveBeenCalledTimes(4);
+            service.dispose();
+            expect(dispose).toHaveBeenCalledTimes(1);
+        } finally {
+            stream.mockRestore();
+            reset.mockRestore();
+            dispose.mockRestore();
+        }
+    });
+
+    it('rejects stale startup after a conversation reset and releases its pending lease', async () => {
+        let provideLease!: (lease: { release: () => void }) => void;
+        const lease = new Promise<{ release: () => void }>((resolve) => { provideLease = resolve; });
+        const release = jest.fn();
+        const plugin = createPlugin({ agentRunCoordinator: {
+            acquireChatLease: jest.fn(() => lease),
+            acquirePageletTurnLease: async () => ({ release: jest.fn() }),
+        } });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const run = service.streamLLM('old conversation waiting to start', jest.fn());
+        service.resetContext();
+        provideLease({ release });
+        await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+        expect(mockCreateChatModel).not.toHaveBeenCalled();
+        expect(release).toHaveBeenCalledTimes(1);
+        service.dispose();
+    });
+
     it('uses the matching regional WebSearch MCP endpoint for DashScope-compatible base URLs', () => {
         expect(getBailianWebSearchEndpointForBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1')).toBe(BAILIAN_WEB_SEARCH_MCP_ENDPOINT);
         expect(getBailianWebSearchEndpointForBaseURL('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/')).toBe(BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT);
@@ -1283,6 +1343,507 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
+    it('rejects an oversized user input before optional policy-model or answer requests', async () => {
+        const model = createStreamModel('should not be sent');
+        mockCreateChatModel.mockResolvedValue(model);
+        const runtime = createRuntime(createPlugin({ policyModelName: 'policy-model' }), false, { skillContextProvider: null });
+
+        await expect(runtime.streamTurn({
+            prompt: 'x'.repeat(120_000), memoryMode: 'auto', onEvent: jest.fn(),
+        })).rejects.toBeInstanceOf(PaAgentContextOverflowError);
+        expect(mockCreateChatModel).not.toHaveBeenCalled();
+        expect(model.stream).not.toHaveBeenCalled();
+    });
+
+    it.each(['mandatory-context', 'bound-schema'] as const)('rejects oversized %s at the final request guard without an answer request', async (kind) => {
+        const model = {
+            ...createStreamModel('should not be sent'),
+            invoke: jest.fn(async () => ({ content: 'should not be sent' })),
+        };
+        model.bindTools.mockImplementation(() => model);
+        mockCreateChatModel.mockResolvedValue(model);
+        const runtime = createRuntime(createPlugin({
+            ...(kind === 'mandatory-context' ? { memoryExtractionPromptContext: { vaultInsights: 'x'.repeat(130_000) } } : {}),
+        }), false, { skillContextProvider: null });
+        if (kind === 'bound-schema') {
+            const registry = (runtime as unknown as { toolRegistry: CapabilityRegistry }).toolRegistry;
+            const exportSchemas = registry.exportProviderSchemasSafe.bind(registry);
+            jest.spyOn(registry, 'exportProviderSchemasSafe').mockImplementation((filter) => {
+                const result = exportSchemas(filter);
+                if (!result.ok) return result;
+                return {
+                    ...result,
+                    schemas: result.schemas.map((schema, index) => index === 0 ? {
+                        ...schema,
+                        function: { ...schema.function, description: 'schema-size-only'.repeat(9_000) },
+                    } : schema),
+                };
+            });
+        }
+        const lifecycle: CanonicalAgentEvent[] = [];
+        await expect(runtime.streamTurn({
+            prompt: 'hello', memoryMode: 'auto', onEvent: jest.fn(),
+            onLifecycleEvent: (event) => lifecycle.push(event),
+        })).rejects.toThrow('context_local_overflow');
+        expect(model.stream).not.toHaveBeenCalled();
+        expect(model.invoke).not.toHaveBeenCalled();
+        expect(lifecycle.find((event) => event.type === 'turn_end')).toMatchObject({
+            status: 'error', metadata: { diagnostics: [expect.objectContaining({ type: 'context_local_overflow' })] },
+        });
+    });
+
+    it.each(['model-construction', 'invoke-fallback'] as const)('rechecks admission when final Memory revalidation grows after %s', async (growthPoint) => {
+        const memoryResult = (paths: string[]): MemorySearchResult => ({
+            usedMemory: true,
+            query: 'launch',
+            documents: paths.map((path) => ({ content: 'Current Memory evidence. '.repeat(20), score: 0.9, source: { path, chunkIndex: 0, score: 0.9 } })),
+            sources: paths.map((path) => ({ path, chunkIndex: 0, score: 0.9 })),
+            candidates: [],
+            hasAnswerableContent: true,
+            memoryEvidenceState: 'evidence',
+            rerankVerdict: 'relevant',
+            needsMoreEvidence: false,
+        });
+        const initial = memoryResult(['notes/a.md']);
+        const expanded = memoryResult(Array.from({ length: 4 }, (_, index) => `notes/${'source'.repeat(15)}-${index}.md`));
+        let expandedAtFinalBoundary = false;
+        const planningModel = createStreamChunksModel([{
+            tool_call_chunks: [{ index: 0, id: 'memory-before-growth', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+        }]);
+        const answerModel = {
+            bindTools: jest.fn(() => answerModel),
+            stream: jest.fn(async function* () {
+                expandedAtFinalBoundary = true;
+                throw new Error('stream rejected before output');
+                yield { content: 'unreachable' };
+            }),
+            invoke: jest.fn(async () => ({ content: 'must not invoke after overflow' })),
+        };
+        const summaryModel = createInvokeModel('{}');
+        mockCreateChatModel.mockResolvedValueOnce(planningModel).mockImplementation(async (temperature) => {
+            if (temperature === 0) return summaryModel;
+            if (growthPoint === 'model-construction') expandedAtFinalBoundary = true;
+            return answerModel;
+        });
+        const runtime = createRuntime(createPlugin(), false, {
+            skillContextProvider: null,
+            // A single-source marker fits; a fresh four-source marker plus its
+            // wrapper cannot fit. The guard must refuse rather than corrupt it.
+            answerStreamMaxObservationChars: 300,
+        });
+        const memoryTool = (runtime as unknown as {
+            memoryTool: {
+                search: (...args: unknown[]) => Promise<MemorySearchResult>;
+                revalidateForProvider: (result: MemorySearchResult) => Promise<MemorySearchResult>;
+            };
+        }).memoryTool;
+        memoryTool.search = jest.fn(async () => initial);
+        memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => expandedAtFinalBoundary ? expanded : result);
+        const lifecycle: CanonicalAgentEvent[] = [];
+        await expect(runtime.streamTurn({
+            prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn(),
+            onLifecycleEvent: (event) => lifecycle.push(event),
+        })).rejects.toThrow('context_local_overflow');
+
+        expect(planningModel.stream).toHaveBeenCalledTimes(1);
+        expect(answerModel.stream).toHaveBeenCalledTimes(growthPoint === 'invoke-fallback' ? 1 : 0);
+        expect(answerModel.invoke).not.toHaveBeenCalled();
+        expect(memoryTool.revalidateForProvider).toHaveBeenCalled();
+        expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
+            status: 'error', metadata: { diagnostics: [expect.objectContaining({ type: 'context_local_overflow' })] },
+        });
+    });
+
+    it('sends complete losslessly fitting history without a summary provider call', async () => {
+        const chatHistory: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
+            { role: 'user' as const, content: `${'Repeated background only. '.repeat(250)}Requirement ${index}: keep export offline. ${'Repeated background only. '.repeat(250)}` },
+            { role: 'assistant' as const, content: `Acknowledged requirement ${index}.` },
+        ]).flat();
+        const original = JSON.stringify(chatHistory);
+        const answerInputs: Array<Record<string, string>> = [];
+        const model = {
+            ...createStreamModel('The export remains offline.', (input) => answerInputs.push(input)),
+            invoke: jest.fn(async () => ({ content: '{}' })),
+        };
+        model.bindTools.mockImplementation(() => model);
+        mockCreateChatModel.mockResolvedValue(model);
+        const lifecycle: CanonicalAgentEvent[] = [];
+        const runtime = createRuntime(createPlugin(), false, { skillContextProvider: null });
+        await runtime.streamTurn({
+            prompt: 'Recall the export requirements. Do not use tools.', memoryMode: 'skip-memory', chatHistory,
+            onEvent: jest.fn(), onLifecycleEvent: (event) => lifecycle.push(event),
+        });
+        expect(model.stream).toHaveBeenCalledTimes(1);
+        expect(model.invoke).not.toHaveBeenCalled();
+        expect(mockCreateChatModel.mock.calls.some((call) => call[0] === 0)).toBe(false);
+        const projected = JSON.parse(answerInputs[0].input.match(/<chat_history[^>]*>\n([\s\S]*?)\n<\/chat_history>/)![1]) as Array<{
+            role: ChatMessage['role']; content: string | { segments: Array<{ text: string; count: number }> };
+        }>;
+        expect(projected.map((message) => ({ role: message.role, content: typeof message.content === 'string'
+            ? message.content : message.content.segments.map((segment) => segment.text.repeat(segment.count)).join('') }))).toEqual(chatHistory);
+        expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
+            metadata: { metrics: expect.arrayContaining([expect.objectContaining({ type: 'context_projection',
+                outcome: { admission: 'fit', historyCompressed: true, budgetLimited: false, toolResultsCompacted: 0, toolResultsHardTruncated: 0 },
+                historyCompaction: expect.objectContaining({ compactedCount: 0, omittedCount: 0, summaryChars: 0, semanticSummaryUsed: false }),
+            })]) },
+        });
+        expect(JSON.stringify(chatHistory)).toBe(original);
+        runtime.dispose();
+    });
+
+    it.each([
+        { requested: undefined, expected: 60_000 },
+        { requested: 100_000, expected: 60_000 },
+        { requested: Number.POSITIVE_INFINITY, expected: 60_000 },
+        { requested: Number.NaN, expected: 60_000 },
+        { requested: -1, expected: 0 },
+        { requested: 6000.9, expected: 6000 },
+    ])('normalizes a per-turn history allowance of $requested to $expected without increasing the cap', async ({ requested, expected }) => {
+        mockCreateChatModel.mockResolvedValue(createStreamModel('Ready.'));
+        const lifecycle: CanonicalAgentEvent[] = [];
+        const runtime = createRuntime(createPlugin(), false, { skillContextProvider: null });
+        try {
+            await runtime.streamTurn({
+                prompt: 'Reply briefly.', memoryMode: 'skip-memory', historyBudgetChars: requested,
+                onEvent: jest.fn(), onLifecycleEvent: (event) => lifecycle.push(event),
+            });
+            expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
+                metadata: { metrics: expect.arrayContaining([expect.objectContaining({
+                    type: 'context_projection', historyBudgetChars: expected,
+                })]) },
+            });
+        } finally {
+            runtime.dispose();
+        }
+    });
+
+    it.each([false, true])('applies a lower ChatService history budget to summary preparation and final/fallback requests=%s', async (fallback) => {
+        const history: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
+            { role: 'user' as const, content: `${'Repeated background only. '.repeat(250)}Requirement ${index}: keep export offline. ${'Repeated background only. '.repeat(250)}` },
+            { role: 'assistant' as const, content: `Acknowledged requirement ${index}.` },
+        ]).flat();
+        const original = JSON.stringify(history);
+        const summaryModel = createInvokeModel(JSON.stringify({
+            goals: [], constraints: [{ text: 'Keep export offline.', sourceMessages: [1] }],
+            decisions: [], completed: [], open_questions: [], facts: [],
+        }));
+        const inputs: Array<Record<string, string>> = [];
+        const answerModel = {
+            bindTools: jest.fn(() => answerModel),
+            stream: jest.fn(async function* (input: Record<string, string>) {
+                inputs.push(input);
+                if (fallback) throw new Error('stream rejected before output');
+                yield { content: 'The export remains offline.' };
+            }),
+            invoke: jest.fn(async (input: Record<string, string>) => {
+                inputs.push(input);
+                return { content: 'The export remains offline.' };
+            }),
+        };
+        mockCreateChatModel.mockImplementation(async (temperature) => temperature === 0 ? summaryModel : answerModel);
+        const service = new ChatService(createPlugin() as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const summarizer = (service as unknown as { contextSummarizer: PaAgentContextSummarizer }).contextSummarizer;
+        const prepare = jest.spyOn(summarizer, 'prepareHistory');
+        const lifecycle: CanonicalAgentEvent[] = [];
+        try {
+            await service.streamLLM('Recall the export requirement. Do not use tools.', jest.fn(), undefined, history, {
+                memoryMode: 'skip-memory', historyBudgetChars: 1000,
+                onLifecycleEvent: (event) => lifecycle.push(event),
+            });
+            expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ historyBudgetChars: 1000 }));
+            expect(summaryModel.invoke).toHaveBeenCalledTimes(1);
+            expect(inputs).toHaveLength(fallback ? 2 : 1);
+            expect(answerModel.invoke).toHaveBeenCalledTimes(fallback ? 1 : 0);
+            for (const input of inputs) {
+                expect(input.input).toContain('<conversation_summary');
+                expect(input.input).toContain('Keep export offline.');
+                expect(input.input).not.toContain('adjacent-repeats-v1');
+                expect(JSON.parse(input.__context_projection_diagnostic)).toMatchObject({
+                    historyBudgetChars: 1000,
+                    historyCompaction: { semanticSummaryUsed: true },
+                    outcome: { admission: 'fit' },
+                });
+            }
+            expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
+                metadata: { metrics: expect.arrayContaining([expect.objectContaining({
+                    type: 'context_summary_preparation', modelCalls: 1, historyReady: true,
+                })]) },
+            });
+            expect(JSON.stringify(history)).toBe(original);
+        } finally {
+            prepare.mockRestore();
+            service.dispose();
+        }
+    });
+
+    it.each([false, true])('sends semantic history to the answer request and reuses it on invoke fallback=%s', async (fallback) => {
+        const chatHistory: ChatMessage[] = Array.from({ length: 8 }, (_, index) => [
+            { role: 'user' as const, content: `${index === 0 ? 'Keep the export offline.' : 'Incidental progress.'} ${'padding '.repeat(1200)}` },
+            { role: 'assistant' as const, content: 'Acknowledged.' },
+        ]).flat();
+        const summaryModel = createInvokeModel('');
+        summaryModel.invoke.mockImplementation(async (input: unknown) => {
+            const material = JSON.stringify(input);
+            // Independent extraction batches must not claim a source that was
+            // absent from their input; ordered merges can carry its summary.
+            const hasOfflineRequirement = material.includes('Keep the export offline.')
+                || material.includes('The user requires an offline export.');
+            return { content: JSON.stringify({
+                goals: [], constraints: hasOfflineRequirement
+                    ? [{ text: 'The user requires an offline export.', sourceMessages: [1] }] : [],
+                decisions: [], completed: [], open_questions: [], facts: [],
+            }) };
+        });
+        const inputs: unknown[] = [];
+        const summaryCallsAtAnswerRequests: number[] = [];
+        const answerModel = {
+            bindTools: jest.fn(() => answerModel),
+            stream: jest.fn(async function* (input: unknown) {
+                inputs.push(input);
+                summaryCallsAtAnswerRequests.push(summaryModel.invoke.mock.calls.length);
+                if (fallback) throw new Error('stream rejected before output');
+                yield { content: 'The export stays offline.' };
+            }),
+            invoke: jest.fn(async (input: unknown) => {
+                inputs.push(input);
+                summaryCallsAtAnswerRequests.push(summaryModel.invoke.mock.calls.length);
+                return { content: 'The export stays offline.' };
+            }),
+        };
+        mockCreateChatModel.mockImplementation(async (temperature) => temperature === 0 ? summaryModel : answerModel);
+        const lifecycle: CanonicalAgentEvent[] = [];
+        const runtime = createRuntime(createPlugin(), false, { skillContextProvider: null });
+        await runtime.streamTurn({
+            prompt: 'Recall the original export requirement from this conversation. Do not use tools.',
+            memoryMode: 'skip-memory', chatHistory, onEvent: jest.fn(),
+            onLifecycleEvent: (event) => lifecycle.push(event),
+        });
+
+        const completedSummaryCalls = summaryCallsAtAnswerRequests[0];
+        expect(completedSummaryCalls).toBeGreaterThan(0);
+        expect(summaryCallsAtAnswerRequests).toEqual(Array(fallback ? 2 : 1).fill(completedSummaryCalls));
+        expect(summaryModel.invoke).toHaveBeenCalledTimes(completedSummaryCalls);
+        expect(answerModel.stream).toHaveBeenCalledTimes(1);
+        expect(answerModel.invoke).toHaveBeenCalledTimes(fallback ? 1 : 0);
+        expect(inputs).toHaveLength(fallback ? 2 : 1);
+        for (const input of inputs) {
+            expect(JSON.stringify(input)).toContain('conversation_summary');
+            expect(JSON.stringify(input)).toContain('The user requires an offline export.');
+            expect(JSON.stringify(input)).toContain('grants_write_authority');
+        }
+        expect(lifecycle.filter((event) => event.type === 'turn_end').at(-1)).toMatchObject({
+            metadata: { metrics: expect.arrayContaining([expect.objectContaining({
+                type: 'context_summary_preparation', modelCalls: completedSummaryCalls, historyReady: true,
+            })]) },
+        });
+    });
+
+    it('does not revive a Memory body through a summary completed after its source was revoked', async () => {
+        const stalePath = 'notes/revoked-during-summary.md';
+        const staleBody = 'REVOKED DURING SUMMARY';
+        const staleMemory: MemorySearchResult = {
+            usedMemory: true, query: 'launch',
+            documents: [{ content: staleBody.repeat(200), score: 0.9, source: { path: stalePath, chunkIndex: 0, score: 0.9 } }],
+            sources: [{ path: stalePath, chunkIndex: 0, score: 0.9 }], candidates: [],
+            hasAnswerableContent: true, memoryEvidenceState: 'evidence', rerankVerdict: 'relevant', needsMoreEvidence: false,
+        };
+        const unavailableMemory: MemorySearchResult = {
+            ...staleMemory, usedMemory: false, documents: [], sources: [],
+            hasAnswerableContent: false, memoryEvidenceState: 'unavailable',
+            retrievalGuidance: 'Memory evidence is currently unavailable.', operationalReason: 'final_source_changed',
+        };
+        const summarizer = new PaAgentContextSummarizer();
+        let sourceRevoked = false;
+        const prepareTool = jest.spyOn(summarizer, 'prepareTool').mockImplementation(async ({ source }) => {
+            sourceRevoked = true;
+            return {
+                source: JSON.parse(JSON.stringify(source)),
+                text: JSON.stringify({ goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+                    facts: [{ text: `STALE SEMANTIC RESULT: ${staleBody}`, sourceMessages: [1] }] }),
+            };
+        });
+        const planningModel = createStreamChunksModel([{
+            tool_call_chunks: [{ index: 0, id: 'memory-before-summary', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+        }]);
+        const answerInputs: unknown[] = [];
+        const answerModel = createStreamModel('Memory evidence is unavailable.', (input) => answerInputs.push(input));
+        mockCreateChatModel.mockResolvedValueOnce(planningModel).mockResolvedValue(answerModel);
+        const runtime = createRuntime(createPlugin(), false, {
+            skillContextProvider: null, contextSummarizer: summarizer, answerStreamMaxObservationChars: 700,
+        });
+        const memoryTool = (runtime as unknown as { memoryTool: {
+            search: (...args: unknown[]) => Promise<MemorySearchResult>;
+            revalidateForProvider: (result: MemorySearchResult) => Promise<MemorySearchResult>;
+        } }).memoryTool;
+        memoryTool.search = jest.fn(async () => staleMemory);
+        memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => sourceRevoked ? unavailableMemory : result);
+        await runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
+
+        expect(prepareTool).toHaveBeenCalledTimes(1);
+        expect(answerInputs.length).toBeGreaterThan(0);
+        const sent = JSON.stringify(answerInputs);
+        expect(sent).not.toContain(staleBody);
+        expect(sent).not.toContain(stalePath);
+        expect(sent).not.toContain('STALE SEMANTIC RESULT');
+        expect(sent).toContain('unavailable');
+        summarizer.dispose();
+    });
+
+    it('does not send a stale tool-summary payload when Memory is revoked during summary model construction', async () => {
+        const stalePath = 'notes/revoked-before-summary-dispatch.md';
+        const staleBody = 'PRIVATE EVIDENCE REVOKED BEFORE SUMMARY DISPATCH';
+        const staleMemory: MemorySearchResult = {
+            usedMemory: true, query: 'launch',
+            documents: [{ content: staleBody.repeat(100), score: 0.9, source: { path: stalePath, chunkIndex: 0, score: 0.9 } }],
+            sources: [{ path: stalePath, chunkIndex: 0, score: 0.9 }], candidates: [],
+            hasAnswerableContent: true, memoryEvidenceState: 'evidence', rerankVerdict: 'relevant', needsMoreEvidence: false,
+        };
+        const unavailableMemory: MemorySearchResult = {
+            ...staleMemory, usedMemory: false, documents: [], sources: [],
+            hasAnswerableContent: false, memoryEvidenceState: 'unavailable',
+            retrievalGuidance: 'Memory evidence is currently unavailable.', operationalReason: 'final_source_changed',
+        };
+        const planningModel = createStreamChunksModel([{
+            tool_call_chunks: [{ index: 0, id: 'memory-before-summary-dispatch', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+        }]);
+        const summaryModel = createInvokeModel(JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+            facts: [{ text: `STALE SUMMARY RESPONSE: ${staleBody}`, sourceMessages: [1] }],
+        }));
+        const answerInputs: unknown[] = [];
+        const answerModel = createStreamModel('Memory evidence is unavailable.', (input) => answerInputs.push(input));
+        let markSummaryRequested!: () => void;
+        const summaryRequested = new Promise<void>((resolve) => { markSummaryRequested = resolve; });
+        let resolveSummaryModel!: (model: unknown) => void;
+        const deferredSummaryModel = new Promise<unknown>((resolve) => { resolveSummaryModel = resolve; });
+        mockCreateChatModel.mockResolvedValueOnce(planningModel).mockImplementation(async (temperature) => {
+            if (temperature === 0) {
+                markSummaryRequested();
+                return deferredSummaryModel;
+            }
+            return answerModel;
+        });
+        const runtime = createRuntime(createPlugin(), false, {
+            skillContextProvider: null, answerStreamMaxObservationChars: 700,
+        });
+        let sourceRevoked = false;
+        const memoryTool = (runtime as unknown as { memoryTool: {
+            search: (...args: unknown[]) => Promise<MemorySearchResult>;
+            revalidateForProvider: (result: MemorySearchResult) => Promise<MemorySearchResult>;
+        } }).memoryTool;
+        memoryTool.search = jest.fn(async () => staleMemory);
+        memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult) => sourceRevoked ? unavailableMemory : result);
+
+        const run = runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
+        // Real prepareTool has serialized its old evidence into the summary
+        // request. The model factory yields before the last currentness check;
+        // registry revalidation then mutates its live tool-result object.
+        await summaryRequested;
+        sourceRevoked = true;
+        resolveSummaryModel(summaryModel);
+        await run;
+
+        expect(summaryModel.invoke).not.toHaveBeenCalled();
+        expect(answerInputs.length).toBeGreaterThan(0);
+        const sent = JSON.stringify(answerInputs);
+        expect(sent).not.toContain(staleBody);
+        expect(sent).not.toContain(stalePath);
+        expect(sent).not.toContain('STALE SUMMARY RESPONSE');
+        expect(sent).toContain('unavailable');
+        runtime.dispose();
+    });
+
+    it('isolates a timed-out summary currentness check and ignores its late result before answer fallback', async () => {
+        jest.useFakeTimers();
+        try {
+            const memoryResult = (body: string): MemorySearchResult => ({
+                usedMemory: true, query: 'launch',
+                documents: [{ content: body, score: 0.9, source: { path: 'notes/launch.md', chunkIndex: 0, score: 0.9 } }],
+                sources: [{ path: 'notes/launch.md', chunkIndex: 0, score: 0.9 }], candidates: [],
+                hasAnswerableContent: true, memoryEvidenceState: 'evidence', rerankVerdict: 'relevant', needsMoreEvidence: false,
+            });
+            const initial = memoryResult('Initial evidence requiring reduction. '.repeat(180));
+            const fresh = memoryResult('CURRENT AUTHORITATIVE MEMORY');
+            const late = memoryResult('LATE SUPERSEDED SUMMARY CURRENTNESS RESULT');
+            const planningModel = createStreamChunksModel([{
+                tool_call_chunks: [{ index: 0, id: 'memory-summary-deadline', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+            }]);
+            const summaryModel = createInvokeModel('{}');
+            let summaryConstructed = false;
+            let markPending!: () => void;
+            const pendingStarted = new Promise<void>((resolve) => { markPending = resolve; });
+            let resolvePending!: (result: MemorySearchResult) => void;
+            const pendingCurrentness = new Promise<MemorySearchResult>((resolve) => { resolvePending = resolve; });
+            let markAnswerStarted!: () => void;
+            const answerStarted = new Promise<void>((resolve) => { markAnswerStarted = resolve; });
+            let releaseAnswer!: () => void;
+            const answerRelease = new Promise<void>((resolve) => { releaseAnswer = resolve; });
+            const answerInputs: unknown[] = [];
+            const answerModel = {
+                bindTools: jest.fn(() => answerModel),
+                stream: jest.fn(async function* (input: unknown) {
+                    answerInputs.push(input);
+                    markAnswerStarted();
+                    await answerRelease;
+                    throw new Error('stream rejected before output');
+                    yield { content: 'unreachable' };
+                }),
+                invoke: jest.fn(async (input: unknown) => {
+                    answerInputs.push(input);
+                    return { content: 'The current Memory remains usable.' };
+                }),
+            };
+            mockCreateChatModel.mockResolvedValueOnce(planningModel).mockImplementation(async (temperature) => {
+                if (temperature === 0) { summaryConstructed = true; return summaryModel; }
+                return answerModel;
+            });
+            const runtime = createRuntime(createPlugin(), false, {
+                skillContextProvider: null, answerStreamMaxObservationChars: 1000,
+            });
+            const memoryTool = (runtime as unknown as { memoryTool: {
+                search: (...args: unknown[]) => Promise<MemorySearchResult>;
+                revalidateForProvider: (result: MemorySearchResult, signal?: AbortSignal) => Promise<MemorySearchResult>;
+            } }).memoryTool;
+            let summarySignal: AbortSignal | undefined;
+            let heldSummaryCurrentness = false;
+            let returnedFresh = false;
+            memoryTool.search = jest.fn(async () => initial);
+            memoryTool.revalidateForProvider = jest.fn(async (result: MemorySearchResult, signal?: AbortSignal) => {
+                if (summaryConstructed && !heldSummaryCurrentness) {
+                    heldSummaryCurrentness = true;
+                    summarySignal = signal;
+                    markPending();
+                    // Deliberately ignores AbortSignal to exercise late-result protection.
+                    return pendingCurrentness;
+                }
+                if (heldSummaryCurrentness && !returnedFresh) { returnedFresh = true; return fresh; }
+                return result;
+            });
+            const run = runtime.streamTurn({ prompt: 'Use Memory for launch.', memoryMode: 'auto', onEvent: jest.fn() });
+            await pendingStarted;
+            expect(summarySignal?.aborted).toBe(false);
+            await jest.advanceTimersByTimeAsync(12_000);
+            await answerStarted;
+            expect(summarySignal?.aborted).toBe(true);
+            expect(summaryModel.invoke).not.toHaveBeenCalled();
+            resolvePending(late);
+            await flushMicrotasks(12);
+            releaseAnswer();
+            await run;
+
+            expect(answerInputs).toHaveLength(2);
+            expect(answerModel.invoke).toHaveBeenCalledTimes(1);
+            for (const input of answerInputs) {
+                expect(JSON.stringify(input)).toContain('CURRENT AUTHORITATIVE MEMORY');
+                expect(JSON.stringify(input)).not.toContain('LATE SUPERSEDED');
+            }
+            runtime.dispose();
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it('revalidates Memory after deferred Chat model construction before the first stream', async () => {
         const stalePath = 'notes/revoked-during-model.md';
         const staleBody = 'REVOKED CHAT MEMORY BODY';
@@ -1428,13 +1989,16 @@ describe('ChatService.streamLLM integration', () => {
         expect(eventKinds).toContain('answer-complete');
         expect(canonicalEvents.find((event) => event.type === 'turn_end')).toMatchObject({
             metadata: {
-                metrics: [expect.objectContaining({
+                metrics: expect.arrayContaining([expect.objectContaining({
                     type: 'model_input_metrics',
                     inputChars: expect.any(Number),
                     exportedProviderSchemaCount: expect.any(Number),
                     boundProviderSchemaCount: expect.any(Number),
                     toolDefinitionsChars: expect.any(Number),
-                })],
+                }), expect.objectContaining({
+                    type: 'context_projection',
+                    outcome: expect.objectContaining({ admission: 'fit' }),
+                })]),
             },
         });
         expect(canonicalEvents.find((event) => event.type === 'turn_end')).not.toMatchObject({

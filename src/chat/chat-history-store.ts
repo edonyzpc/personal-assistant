@@ -1,6 +1,7 @@
 import type { Vault } from "obsidian";
 import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import { getPlatformIDBKeyRange, getPlatformIndexedDB } from "../platform-dom";
+import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import type {
     ChatContextUsedItem,
     ChatRuntimeWarning,
@@ -570,8 +571,11 @@ function cloneMemoryMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMe
 }
 
 function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {
+    const { reduction: rawReduction, ...rest } = trace;
+    const reduction = cloneContextReductionReceipt(rawReduction);
     return {
-        ...trace,
+        ...rest,
+        ...(reduction ? { reduction } : {}),
         usedSourceRefs: trace.usedSourceRefs.map((ref) => ({
             ...ref,
             whyShown: ref.whyShown ? [...ref.whyShown] : undefined,

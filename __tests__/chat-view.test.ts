@@ -7,6 +7,9 @@ import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBA
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
 import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
+import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
+import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import type {
@@ -55,6 +58,7 @@ const mockCancelOperationsIntent = jest.fn<(intentId: string) => OperationsInten
 const mockCancelPendingOperations = jest.fn<() => void>();
 const mockUndoOperations = jest.fn<(receiptIds: readonly string[]) => Promise<UndoResult[]>>();
 const mockDisposeChatService = jest.fn<() => void>();
+const mockResetChatContext = jest.fn<() => void>();
 jest.mock('../src/ai-services/chat-service', () => ({
     ChatService: jest.fn().mockImplementation(() => ({
         streamLLM: mockStreamLLM,
@@ -63,6 +67,7 @@ jest.mock('../src/ai-services/chat-service', () => ({
         cancelPendingOperations: mockCancelPendingOperations,
         undoOperations: mockUndoOperations,
         dispose: mockDisposeChatService,
+        resetContext: mockResetChatContext,
     })),
 }));
 
@@ -830,6 +835,7 @@ function createView(options: {
             cancelPendingOperations: mockCancelPendingOperations,
             undoOperations: mockUndoOperations,
             dispose: mockDisposeChatService,
+            resetContext: mockResetChatContext,
         })),
         openMemorySettings: jest.fn(),
         log: jest.fn(),
@@ -934,6 +940,7 @@ describe('LLMView turn lifecycle', () => {
         mockCancelPendingOperations.mockReset();
         mockUndoOperations.mockReset();
         mockDisposeChatService.mockReset();
+        mockResetChatContext.mockReset();
         mockShareCardModalConstructor.mockClear();
         mockShareCardModalOpen.mockClear();
         mockUndoOperations.mockResolvedValue([]);
@@ -996,6 +1003,7 @@ describe('LLMView turn lifecycle', () => {
         const context = createPageletHandoffContext();
 
         await expect(view.preparePageletHandoff(context)).resolves.toEqual({ status: 'prepared' });
+        expect(mockResetChatContext).toHaveBeenCalledTimes(1);
 
         const attachment = getElementByClass(containerEl, 'pa-chat-pagelet-attachment');
         expect(attachment.hidden).toBe(false);
@@ -1099,6 +1107,7 @@ describe('LLMView turn lifecycle', () => {
         expect(textArea.value).toBe('');
         expect(getElementByClass(containerEl, 'pa-chat-pagelet-attachment').hidden).toBe(true);
         expect(mockCancelPendingOperations).not.toHaveBeenCalled();
+        expect(mockResetChatContext).not.toHaveBeenCalled();
     });
 
     it('keeps the current conversation intact when recording its visible turn failed', async () => {
@@ -1299,6 +1308,25 @@ describe('LLMView turn lifecycle', () => {
         await expect(second).resolves.toEqual({ status: 'draft-conflict' });
         expect(chatHistoryManager.setActiveConversationId).toHaveBeenCalledTimes(1);
         expect(allText(getElementByClass(containerEl, 'pa-chat-pagelet-attachment'))).toContain(firstContext.body);
+    });
+
+    it('explains a typed early context overflow before any lifecycle event exists', async () => {
+        const chatHistoryManager = createWritableChatHistoryManager();
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'oversized current input';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].reject(new PaAgentContextOverflowError(120_001, 120_000));
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(containerEl)).toContain('The current context is too long to continue.');
+        expect(allText(containerEl)).not.toContain('PaAgentContextOverflowError');
+        expect(allText(containerEl)).not.toContain('exceeds the local context budget');
+        expect(view.chatHistory).toHaveLength(0);
+        expect(streamCalls).toHaveLength(1);
+        expect(chatHistoryManager.startConversation).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -1585,6 +1613,7 @@ describe('LLMView turn lifecycle', () => {
             await flushPromises();
             await flushPromises();
             expect(getElementsByClass(containerEl, 'pa-operations-intent-card')).toHaveLength(0);
+            expect(mockResetChatContext).toHaveBeenCalledTimes(1);
         },
     );
 
@@ -1662,6 +1691,8 @@ describe('LLMView turn lifecycle', () => {
 
         expect(streamCalls).toHaveLength(1);
         await view.onClose();
+        expect(mockResetChatContext).toHaveBeenCalledTimes(1);
+        expect(mockDisposeChatService).toHaveBeenCalledTimes(1);
 
         const call = streamCalls[0];
         expect(call.signal?.aborted).toBe(true);
@@ -3177,6 +3208,99 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('second answer body');
     });
 
+    it.each([false, true])('keeps one zero-source reduction row live, saved and reloaded (budget=%s)', async (budgetLimited) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'receipt-conversation' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'continue a long conversation';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end', status: 'tool_results_ready',
+            metadata: { metrics: [{ type: 'context_projection', outcome: { admission: 'fit', historyCompressed: true } }] },
+        }));
+        expect(allText(getElementByClass(containerEl, 'context-reduction'))).toBe('Context was shortened');
+        expect(getElementsByClass(containerEl, 'context-reduction')).toHaveLength(1);
+
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_2' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end', turnId: 'turn_2',
+            message: assistantMessage('answer', [{ type: 'text', text: 'Continuing our discussion.' }]),
+        }));
+        const metric = { type: 'context_projection', outcome: { admission: 'fit', toolResultsCompacted: 3, budgetLimited } };
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end', turnId: 'turn_2', status: 'completed',
+            metadata: { metrics: [metric, metric, { type: 'context_projection', outcome: { admission: 'local_overflow', budgetLimited: true } }] },
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'completed', metadata: { finalTurnId: 'turn_2' } }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const label = budgetLimited ? 'Context was limited to fit this request' : 'Context was shortened';
+        const receipt = { historyCompressed: true, toolContextReduced: true, budgetLimited };
+        expect(getElementsByClass(containerEl, 'context-reduction')).toHaveLength(1);
+        expect(allText(getElementByClass(containerEl, 'context-reduction'))).toBe(label);
+        expect(view.chatHistory[1].memoryMetadata).toMatchObject({
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            contextTrace: { usedSourceCount: 0, usedMemoryCount: 0, skippedScopeCount: 0, reduction: receipt },
+        });
+        expect(view.chatHistory[1].memoryMetadata?.contextUsed).toBeUndefined();
+        expect((await store.getTurns('receipt-conversation'))[0].memoryMetadata?.contextTrace?.reduction).toEqual(receipt);
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        await flushPromises();
+        await flushPromises();
+        expect(getElementsByClass(restored.containerEl, 'context-reduction')).toHaveLength(1);
+        expect(allText(getElementByClass(restored.containerEl, 'context-reduction'))).toBe(label);
+        expect(restored.view.chatHistory[1].memoryMetadata?.contextTrace?.reduction).toEqual(receipt);
+    });
+
+    it.each([
+        { locale: 'en', ask: 'Ask', title: 'Request is too long', detail: 'The current context is too long to continue.', earlierInvocation: false },
+        { locale: 'zh', ask: '提问', title: '请求过长', detail: '当前上下文过长，无法继续处理。', earlierInvocation: true },
+    ])('explains local overflow in $locale, including a rejected fallback after an earlier invocation', async ({ locale, ask, title, detail, earlierInvocation }) => {
+        (globalThis.window as typeof globalThis.window & { i18next?: { language?: string } }).i18next = { language: locale };
+        const chatHistoryManager = createWritableChatHistoryManager();
+        const { view, containerEl } = createView({ chatHistoryManager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'oversized current input';
+        void getButtonByText(containerEl, ask).click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        const diagnostics = [{ type: 'context_local_overflow', message: 'INTERNAL_OVERFLOW_DETAIL' }];
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end', status: 'error', metadata: {
+                diagnostics,
+                metrics: [
+                    ...(earlierInvocation ? [{ type: 'context_projection', outcome: { admission: 'fit', historyCompressed: true } }] : []),
+                    { type: 'context_projection', outcome: { admission: 'local_overflow', budgetLimited: true } },
+                ],
+            },
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'error', metadata: { diagnostics } }));
+        call.reject(new Error('PA Agent canonical runtime failed: INTERNAL_OVERFLOW_DETAIL'));
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementByClass(containerEl, 'thinking-status-summary').textContent).toBe(title);
+        expect(allText(containerEl)).toContain(detail);
+        expect(allText(containerEl)).not.toContain('INTERNAL_OVERFLOW_DETAIL');
+        expect(getElementsByClass(containerEl, 'thinking-status-warning-item')).toHaveLength(1);
+        expect(getElementsByClass(containerEl, 'context-reduction')).toHaveLength(earlierInvocation ? 1 : 0);
+        expect(view.chatHistory).toHaveLength(0);
+        expect(streamCalls).toHaveLength(1);
+        expect(chatHistoryManager.startConversation).not.toHaveBeenCalled();
+        expect(chatHistoryManager.recordTurn).not.toHaveBeenCalled();
+    });
+
     it('renders canonical incomplete diagnostics without writing them into the answer body', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -3432,6 +3556,7 @@ describe('LLMView turn lifecycle', () => {
         expect(view.chatHistory).toEqual([]);
         expect(allText(containerEl)).not.toContain('first prompt');
         expect(allText(containerEl)).not.toContain('first answer');
+        expect(mockResetChatContext).toHaveBeenCalledTimes(1);
     });
 
     it('does not apply enter animation when history messages are redrawn', async () => {
@@ -3550,6 +3675,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(chatHistoryManager.deserializeTurn).toHaveBeenCalledTimes(2);
+        expect(mockResetChatContext).toHaveBeenCalledTimes(1);
         expect(view.chatHistory).toEqual([
             restoredUser,
             restoredAssistant,

@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-08-30
+Updated: 2026-09-06
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -14,12 +14,13 @@ Updated: 2026-08-30
 | B-005 | Featured Image Wan 2.7 live provider smoke | 自动化、构建、部署与既有图片渲染通过；真实生成未调用 | 仅在用户明确同意发送测试笔记内容并接受 API 成本后执行 | [Historical tracker](./archive/featured-image-model-upgrade-spec-driven-development.md) |
 | B-006 | GitHub CI 首次远端验证 | 本地 workflow 命令已验证；`actionlint`、GitHub-hosted run 与 branch protection 未验证 | 在明确授权远端操作后验证首个 CI run，并决定 required checks | [Optimization final report](./archive/repo-wide-optimization-2026-07-10-final-report.md) |
 | B-126 | First-run experience and platform robustness | Owner 于 2026-08-11 批准 silent first-use Memory 与 marker unknown fail-closed；2026-08-23 选择保留 bounded Chat inline setup 与 first-Settings focus。Fresh Custom、wizard、Test Connection、progressive build、provider/model 性能、PA Cloud 与 release timing 未获批准 | 完成 PR #378 当前 build 的 runtime/tests/docs/CI 与适用 Obsidian smoke；更宽方向继续 Discovery，不从 DEC-028/DEC-029 外推 | [Discovery](./development/discovery/first-run-and-platform-robustness.md), [DEC-028](./product/decisions/dec-028-silent-memory-auto-prepare.md), [DEC-029](./product/decisions/dec-029-inline-ai-setup-and-settings-focus.md), [Product Spec](./product/specs/pa-silent-first-use-memory-preparation-product-spec.md), [Tracker](./development/active/silent-first-use-memory-preparation/tracker.md) |
-| B-128 | PA Agent 长会话 Context Management 演进 | GitHub 项目源码、官方文档与近期 arXiv 研究已形成 Discovery 报告；尚未批准改变当前 runtime、产品行为或 Memory 边界 | 评审 [Discovery report](./development/discovery/pa-agent-context-management-research.md)，再决定是否提升为产品 Decision / Spec 与 source-verified SDD | User request 2026-08-25 |
 
 ## 已延期的产品与工程工作
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
+| B-130 | Chat 严格回答格式遵循 | B-128 F-20 为非阻塞 P3：默认预算下请求纯 JSON 仍可能得到说明/围栏。出现明确依赖机器可解析输出的调用方，或真实用户工作流被格式阻断时重启；先保留同输入的语义/格式对照，不用猜测截取 JSON 掩盖错误，也不以更短输出牺牲关键细节 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [formatAtDefaultBudget 与撤回候选](./archive/2026/b-128-context-management-validation.md) |
+| B-131 | Context 摘要去重与字段归类 | B-128 F-23 为非阻塞 P3：当前同义重复无矛盾、无遗漏且在预算内。重复内容可复现地挤占必要事实、增加摘要批次或造成可感知延迟时重启；沿用原文/摘要/实际入模/续答证据，避免仅为字段整齐增加模型矩阵或 Memory 能力 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [targetedSemantic 原始摘要](./archive/2026/b-128-context-management-validation.md) |
 | B-102 | Obsidian Operations CLI adapter (v1B) | Desktop CLI reads 的用户价值足以覆盖 probe、allowlist、timeout、argv execution 与 vault confinement 成本时，重新开启 SPEC-05 | [Architecture plan](./architecture/obsidian-operations-agent-plan.md) |
 | B-103 | 用户自定义 Skills | 先确认产品价值、工具权限、Settings UX 与 vault-side discovery 边界，再写 SDD | [Historical tracker](./archive/v2-post-release-spec-driven-development.md) |
 | B-104 | PA Agent latency levers | 必须先有同口径 p50/p95 样本；再评估 read-only batch、compact final-answer 与 direct route | [Historical plan](./archive/pa-agent-latency-optimization-plan.md) |

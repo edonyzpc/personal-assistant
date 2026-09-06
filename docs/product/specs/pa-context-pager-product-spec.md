@@ -1,6 +1,6 @@
 # PA Context Pager Product Spec
 
-Updated: 2026-07-11
+Updated: 2026-09-05
 
 ## Status
 
@@ -17,6 +17,15 @@ Updated: 2026-07-11
 This spec defines Context Pager as PA's user-readable context transparency
 layer. The bounded M6 implementation is current; future expansion remains
 subject to the same transparency boundary.
+
+The [Context Management contract](./pa-context-management-product-spec.md)
+adds a bounded Chat reduction receipt. Actual admissible requests contribute
+`historyCompressed`, `toolContextReduced` and `budgetLimited`; the run combines
+them with OR and displays at most one status, with budget limitation taking
+priority. This works for zero-source answers and survives the existing Chat
+save/reload lifecycle. It does not change source/Memory counts or persist
+summary, prompt or tool bodies in the receipt. Local admission failure has its
+own error explanation and is not reported as a sent compressed request.
 
 The product definition:
 

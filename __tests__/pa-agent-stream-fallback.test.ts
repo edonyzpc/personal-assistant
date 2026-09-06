@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import type { PaAgentModelStreamChunk } from "../src/ai-services/pa-agent-loop";
+import { PaAgentContextOverflowError } from "../src/ai-services/context";
 
 type FallbackArgs = Parameters<typeof streamWithInvokeFallback>[0];
 type ChainStream = FallbackArgs["chain"]["stream"];
@@ -28,6 +29,54 @@ function makeChain(overrides: {
 }
 
 describe("streamWithInvokeFallback (P0-D)", () => {
+    it("records each attempted projection but never records or sends a rejected fallback projection", async () => {
+        const input = { revision: "stream-fit" };
+        const invoke = jest.fn<ChainInvoke>(async () => ({ content: "must not run" }));
+        const stream = jest.fn<ChainStream>(() => { throw new Error("stream unavailable"); });
+        const read = jest.fn((attempt: unknown) => [{ type: "context_projection", attempt }]);
+        const chunks: PaAgentModelStreamChunk[] = [];
+        const rejected = new PaAgentContextOverflowError(130000, 120000);
+        await expect((async () => {
+            for await (const chunk of streamWithInvokeFallback({
+                chain: makeChain({ stream, invoke }), input, requestDiagnostics: read,
+                prepareInvokeInput: async () => { throw rejected; },
+            })) chunks.push(chunk);
+        })()).rejects.toBe(rejected);
+        expect(stream).toHaveBeenCalledTimes(1);
+        expect(invoke).not.toHaveBeenCalled();
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(read).toHaveBeenCalledWith(input);
+        expect(chunks).toEqual([{ type: "diagnostic", diagnostic: { type: "context_projection", attempt: input } }]);
+    });
+
+    it("reports the revalidated fallback input, including when invoke itself fails", async () => {
+        const attempts: unknown[] = [];
+        const input = { revision: "stream" };
+        const refreshed = { revision: "invoke" };
+        const chain = makeChain({
+            stream: async function* () { throw new Error("failed before output"); },
+            invoke: async () => { throw new Error("invoke failed"); },
+        });
+        await expect(drain(streamWithInvokeFallback({
+            chain, input, prepareInvokeInput: async () => refreshed,
+            requestDiagnostics: (attempt) => { attempts.push(attempt); return []; },
+        }))).rejects.toThrow("invoke failed");
+        expect(attempts).toEqual([input, refreshed]);
+    });
+
+    it("never treats a typed local overflow as a transport fallback", async () => {
+        const invoke = jest.fn<ChainInvoke>(async () => ({}));
+        const rejected = new PaAgentContextOverflowError(130000, 120000);
+        for (const stream of [
+            () => { throw rejected; },
+            async function* () { throw rejected; },
+        ]) {
+            await expect(drain(streamWithInvokeFallback({ chain: makeChain({ stream, invoke }), input: {} })))
+                .rejects.toBe(rejected);
+        }
+        expect(invoke).not.toHaveBeenCalled();
+    });
+
     it("yields stream chunks unchanged when streaming succeeds and never calls invoke()", async () => {
         const invoke = jest.fn(async () => ({ content: "should not be called" }));
         const chain = makeChain({

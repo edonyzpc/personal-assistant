@@ -1,6 +1,8 @@
 import {
+    cloneContextReductionReceipt,
     toPersistedContextTrace,
     type ContextDropReason,
+    type ContextReductionReceipt,
     type ContextTrace,
     type PersistedContextTrace,
     type PersistedSourceRef,
@@ -34,6 +36,7 @@ export interface ContextPagerState {
     skippedSources: ContextPagerSourceItem[];
     usedMemories: ContextPagerMemoryItem[];
     droppedMemories: ContextPagerMemoryItem[];
+    reduction?: ContextReductionReceipt;
     persistedTrace: PersistedContextTrace;
 }
 
@@ -147,8 +150,34 @@ export function createContextPagerState(trace: ContextTrace): ContextPagerState 
             label: memory.id,
             reason: productContextDropReason(memory.reason),
         })),
+        ...(persistedTrace.reduction ? { reduction: cloneContextReductionReceipt(persistedTrace.reduction) } : {}),
         persistedTrace,
     };
+}
+
+/** Aggregate actual admitted requests, never counts from repeated projections. */
+export function mergeContextReductionFromMetrics(
+    current: ContextReductionReceipt | undefined,
+    metrics: unknown,
+): ContextReductionReceipt | undefined {
+    let reduction = cloneContextReductionReceipt(current);
+    if (!Array.isArray(metrics)) return reduction;
+    for (const metric of metrics) {
+        if (!metric || typeof metric !== "object" || metric.type !== "context_projection") continue;
+        const outcome: unknown = metric.outcome;
+        if (!outcome || typeof outcome !== "object") continue;
+        const record = outcome as Record<string, unknown>;
+        if (record.admission !== "fit") continue;
+        const reducedCount = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value > 0;
+        reduction = cloneContextReductionReceipt({
+            historyCompressed: reduction?.historyCompressed === true || record.historyCompressed === true,
+            toolContextReduced: reduction?.toolContextReduced === true
+                || reducedCount(record.toolResultsCompacted)
+                || reducedCount(record.toolResultsHardTruncated),
+            budgetLimited: reduction?.budgetLimited === true || record.budgetLimited === true,
+        });
+    }
+    return reduction;
 }
 
 export function contextPagerSummaryText(summary: ContextPagerState["summary"]): string {

@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-04
+Updated: 2026-09-06
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -208,16 +208,17 @@ and [Write Action Framework](./write-action-framework-sdd.md).
 
 `PaAgentContextManager` composes four delegates:
 
-- `PaAgentContextProjector`: origin labels, transcript projection, diffing, and controlled context injection.
+- `PaAgentContextProjector`: controlled context injection and history projection measured after JSON escaping and wrappers. Complete history is retained when it fits; otherwise recent complete turns take priority over older excerpts.
 - `PaAgentContextHygiene`: removes status-only noise and repairs orphaned tool/message shapes.
-- `PaAgentContextCompactor`: micro/full compaction under budget pressure while preserving recent turns.
-- `PaAgentContextBudget`: char/token estimates and budget snapshots.
+- `PaAgentContextCompactor`: deterministic tool reduction grouped by assistant/model cycle, protecting the latest two cycles from soft compaction. Bounded replacement markers identify the tool, call, original size, error status and sources; canonical evidence remains unchanged.
+- `PaAgentContextBudget`: local character admission, token estimates and provider usage snapshots. Estimates do not guarantee fit in a provider's token window.
 
 Current top-level constants:
 
 | Budget | Current value | Meaning |
 | --- | ---: | --- |
 | Chat history | 60,000 chars | Maximum history projection before compaction/truncation. |
+| Local answer request | 120,000 chars | Rendered system/human messages plus bound schema JSON estimate and a 2,048-character safety reserve. |
 | Read-only tool context | 24,000 chars | Bounded injected tool/context payload. |
 | Loop observation aggregate | 64,000 chars | Production loop cap across tool observations before host policy/finalization. |
 | Run wall clock | 180,000 ms | Hard run budget. |
@@ -230,6 +231,100 @@ absolute soft/hard deadline envelope and reconstructs the prompt from the result
 Timeout or unavailable currentness projects Memory as unavailable and preserves
 the final-answer reserve；it does not reuse an older serialized transcript
 payload.
+
+The final synchronous projection measures the same templates used by the chain.
+Under total-request pressure it reduces old tool evidence, then older history
+excerpts, then the oldest complete raw turns, and finally recent tool evidence.
+The separate observation limit includes formatted wrappers. Mandatory current
+input, runtime instructions, tool/write boundaries and existing Memory/Pagelet
+projections are not silently cut. An irreducible overflow stops that attempted
+request with a local Context explanation; a previous attempt in the same run
+may already have reached the provider. An early lower-bound check rejects an
+oversized current input before optional startup classification.
+
+Each attempted admissible projection contributes a three-boolean Context
+receipt (`historyCompressed`, `toolContextReduced`, `budgetLimited`), aggregated
+with OR across the run. It uses the existing Chat history lifecycle, including
+zero-source answers, without changing source/Memory counts or persisting new
+prompt bodies. Rejected projections use the separate local-overflow diagnostic.
+
+Before the final synchronous projection, `PaAgentContextSummarizer` prepares
+structured summaries with the configured Chat model when complete history cannot
+fit in either its original or reversible form, or when tool contents need
+reduction. A bounded history prefix is summarized
+with source-message references; recent complete turns remain verbatim. Tool
+summaries retain findings and errors inside the existing untrusted envelope.
+The original Chat history and canonical tool results remain unchanged.
+
+Multi-batch summaries carry previous state forward in original source order.
+Summary requests can represent adjacent identical sentence/line fragments as
+ordered text/count segments when that JSON is smaller than the original string.
+Concatenating each fragment the recorded number of times restores the exact
+source; message roles, indices and offsets retain their original meaning.
+Original histories, source snapshots, caches and raw tails remain unchanged.
+Encoding is computed once per source message. Oversize messages that still need
+splitting use raw text so the request-budget search remains monotonic.
+When the complete original history fits its budget, it retains the existing
+format. Otherwise, a complete reversible representation that fits after JSON
+serialization, boundary escaping and wrapping is sent directly, before any
+semantic summary is considered. Planner and Projector share this decision;
+budget reductions re-evaluate it. This path reports history compression without
+omissions or semantic-summary characters, and makes no history-summary model
+call. Answer instructions describe the encoding while preserving the data-only
+history boundary. Source closing-tag case is preserved by the encoded formatter.
+Internal callers may lower the per-turn history allocation through
+`historyBudgetChars`; it cannot exceed the default 60,000-character allocation
+or raise the overall request limit. Preview, summary preparation, final
+projection and invoke fallback share it, and diagnostics record the final
+allocation. This is not a new user setting.
+The model is asked to return minified JSON and retain each material item in its
+appropriate field once, removing repeated background and acknowledgements that
+add no state. Requirements, actual completion status, uncertainty and permission
+history remain explicit. The detailed semantic instructions, 16k-character
+request limit, source checks, cancellation and complete-result cache admission
+retain their existing boundaries.
+Summary source JSON is indented to expose individual source/segment boundaries;
+this whitespace counts toward the same complete request limit and can cause
+additional batches. A local statement that there is no new information does
+not erase facts in other passages or earlier history. The compact summary
+output remains distinct from this source presentation.
+
+ChatService owns the ephemeral summary cache. History edits, deletion, switching,
+closing and provider/model changes invalidate it; reload rebuilds from saved
+Chat messages. Summary requests are tool-free, cancellable and bounded by the
+run deadline. After preparation and before every answer attempt, source
+currentness is revalidated and the complete request passes local admission.
+Tool-summary payload snapshots and registry live references use independent
+clones. Optional summary checks use their own cancellation scope; late results
+cannot update caches or mutate the input used by answer fallback.
+Invalid or timed-out summaries fall back to deterministic reduction; a valid
+history summary remains an atomic block rather than a truncated JSON fragment.
+No summary is written to long-term Memory. Source indices verify association,
+not semantic correctness; real-model continuity evaluation is specified in the
+[Context Management spec](../product/specs/pa-context-management-product-spec.md).
+
+The summary contract uses six arrays: `goals`, `constraints`, `decisions`,
+`completed`, `open_questions` and `facts`. Each item contains grounded text and
+global source-message indices. It describes current working state: later user
+corrections replace earlier effective choices; failed or unstarted work is not
+completed; guesses retain their attribution; revoked permissions remain
+historical evidence without granting current authority. Cross-field deduplication
+is a model instruction, not a guaranteed schema property.
+
+History summaries reserve at most 8,000 characters within the actual history
+allocation; tool summaries default to at most 1,500 characters. One history
+preparation and the aggregate model-turn preparation each have a 30-second
+deadline; an individual tool preparation has 12 seconds, all subordinate to the
+run deadline. An empty intermediate batch may continue to later sources when
+there is no prior valid state. An update that erases valid prior state, a final
+empty result, invalid output, or timeout cannot replace the cache. Exact source
+snapshots determine reuse; counts or short hashes alone cannot validate it.
+
+Persisted Context receipts are additive, body-free booleans. Missing fields in
+older rows behave as false without a schema migration. Projection, admission
+and the UI receipt bridge can be reverted independently; disabling semantic
+preparation restores deterministic reduction without deleting source history
+or changing the Memory index.
 
 ## Source And Trust Boundaries
 

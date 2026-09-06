@@ -3,6 +3,7 @@ import { PaAgentContextBudget, type PaAgentContextBudgetSnapshot, type PaAgentPr
 import { PaAgentContextCompactor } from "./PaAgentContextCompactor";
 import { PaAgentContextHygiene } from "./PaAgentContextHygiene";
 import { PaAgentContextProjector, type PaAgentInjectedContext } from "./PaAgentContextProjector";
+import type { PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
 
 export interface PaAgentContextManagerInput {
     prompt: string;
@@ -12,21 +13,38 @@ export interface PaAgentContextManagerInput {
     hostContext?: string;
     runtimeInstruction?: string;
     injectedContext?: PaAgentInjectedContext;
+    summaries?: PaAgentContextSummaries;
     availableSkills: string;
     toolDefinitions: string;
     maxHistoryChars: number;
     maxPromptChars?: number;
     maxObservationChars: number;
     formatToolObservations: (transcript: readonly PaAgentMessage[], turnIndex: number) => string;
+    /** Runtime owns actual template/schema formatting; the reducer remains provider-free. */
+    measurePromptChars?: (parts: PaAgentContextParts) => number;
 }
 
-export interface PaAgentContextProjection {
+export interface PaAgentContextParts {
     input: string;
     availableSkills: string;
     toolDefinitions: string;
     toolObservations: string;
+}
+
+export interface PaAgentContextOutcome {
+    historyCompressed: boolean;
+    toolResultsCompacted: number;
+    toolResultsHardTruncated: number;
+    budgetLimited: boolean;
+    admission: "fit" | "local_overflow";
+}
+
+export interface PaAgentContextProjection extends PaAgentContextParts {
     diagnostics: Record<string, unknown>;
     budget: PaAgentContextBudgetSnapshot;
+    outcome: PaAgentContextOutcome;
+    historyBudgetChars: number;
+    reducedToolMessageIds: string[];
 }
 
 export class PaAgentContextManager {
@@ -53,68 +71,135 @@ export class PaAgentContextManager {
 
     forPrompt(input: PaAgentContextManagerInput): PaAgentContextProjection {
         const hygiene = this.hygiene.clean(input.transcript);
-        const micro = this.compactor.microCompact(hygiene.transcript, {
+        let micro = this.compactor.microCompact(hygiene.transcript, {
             maxObservationChars: input.maxObservationChars,
+            summaries: input.summaries,
+            canonicalTranscript: hygiene.transcript,
         });
-        const projected = this.projector.projectUserInput({
+        let historyBudget = input.maxHistoryChars;
+        let summaryBudget: number | undefined;
+        let rebuilds = 0;
+        const projectHistory = () => this.projector.projectUserInput({
             prompt: input.prompt,
             chatHistory: input.chatHistory,
             hostContext: input.hostContext,
             runtimeInstruction: input.runtimeInstruction,
             injectedContext: input.injectedContext,
-            maxHistoryChars: input.maxHistoryChars,
+            maxHistoryChars: historyBudget,
+            maxHistorySummaryChars: summaryBudget,
+            summaries: input.summaries,
         });
-        const toolObservations = input.formatToolObservations(micro.transcript, input.turnIndex);
-        let finalToolObservations = toolObservations;
-        let finalMicro = micro;
-        const firstBudget = this.budget.snapshot({
-            input: projected.input,
-            availableSkills: input.availableSkills,
-            toolDefinitions: input.toolDefinitions,
-            toolObservations,
-            maxPromptChars: input.maxPromptChars,
-            maxObservationChars: input.maxObservationChars,
-        });
-
-        if (firstBudget.nearObservationLimit) {
-            const aggressiveMicro = this.compactor.microCompact(hygiene.transcript, {
+        let projected = projectHistory();
+        let parts: PaAgentContextParts;
+        const measure = () => {
+            parts = {
+                input: projected.input,
+                availableSkills: input.availableSkills,
+                toolDefinitions: input.toolDefinitions,
+                toolObservations: input.formatToolObservations(micro.transcript, input.turnIndex),
+            };
+            return this.budget.snapshot({
+                ...parts,
+                maxPromptChars: input.maxPromptChars,
                 maxObservationChars: input.maxObservationChars,
-                targetRatio: 0.4,
+                localEnvelopeChars: input.measurePromptChars?.(parts),
             });
-            finalMicro = aggressiveMicro;
-            finalToolObservations = input.formatToolObservations(aggressiveMicro.transcript, input.turnIndex);
+        };
+        let budget = measure();
+        const firstPromptChars = budget.promptChars;
+        const observationChars = () => micro.transcript.reduce((sum, message) => (
+            sum + (message.role === "toolResult" && message.content.includeInNextPrompt
+                ? message.content.promptText.length : 0)
+        ), 0);
+        const reduceTools = (maxChars: number, allowRecentHardTruncation: boolean) => {
+            micro = this.compactor.microCompact(micro.transcript, {
+                maxObservationChars: maxChars,
+                triggerRatio: 0,
+                targetRatio: 0,
+                allowRecentHardTruncation,
+                summaries: input.summaries,
+                canonicalTranscript: hygiene.transcript,
+            });
+            rebuilds++;
+            budget = measure();
+        };
+        // The lane cap includes escaping and wrappers, not just raw observation text.
+        // Two passes are bounded; irreducible markers remain for final fail-closed admission.
+        for (let pass = 0; pass < 2 && budget.toolObservationChars > input.maxObservationChars; pass++) {
+            reduceTools(Math.max(0, observationChars() - (budget.toolObservationChars - input.maxObservationChars)), true);
         }
-
-        const budget = this.budget.snapshot({
-            input: projected.input,
-            availableSkills: input.availableSkills,
-            toolDefinitions: input.toolDefinitions,
-            toolObservations: finalToolObservations,
-            maxPromptChars: input.maxPromptChars,
-            maxObservationChars: input.maxObservationChars,
-        });
+        const excess = () => Math.max(0, budget.promptChars - budget.maxPromptChars);
+        if (excess() > 0) {
+            // One ordered stronger projection. Reuse clones, never rewrite the canonical inputs.
+            reduceTools(Math.max(input.maxObservationChars, observationChars()), false);
+            if (excess() > 0) reduceTools(Math.max(0, observationChars() - excess()), false);
+            if (excess() > 0 && projected.history.summaryChars > 0) {
+                summaryBudget = Math.max(0, projected.history.summaryChars - excess());
+                projected = projectHistory();
+                rebuilds++;
+                budget = measure();
+            }
+            if (excess() > 0 && projected.history.summaryChars > 0) {
+                summaryBudget = 0;
+                projected = projectHistory();
+                rebuilds++;
+                budget = measure();
+            }
+            if (excess() > 0 && projected.history.text.length > 0) {
+                summaryBudget = 0;
+                historyBudget = Math.max(0, projected.history.text.length - excess());
+                projected = projectHistory();
+                rebuilds++;
+                budget = measure();
+            }
+            if (excess() > 0) reduceTools(Math.max(0, observationChars() - excess()), true);
+        }
+        const finalToolResults = micro.transcript.filter((message) => message.role === "toolResult");
+        const toolResultsCompacted = finalToolResults.filter((message) => message.content.metadata?.compacted === true).length;
+        const toolResultsHardTruncated = finalToolResults.filter((message) => message.content.metadata?.contextBudgetTruncated === true).length;
+        const outcome: PaAgentContextOutcome = {
+            historyCompressed: projected.history.historyCompressed,
+            toolResultsCompacted,
+            toolResultsHardTruncated,
+            budgetLimited: toolResultsHardTruncated > 0 || projected.history.omittedCount > 0,
+            admission: budget.promptChars <= budget.maxPromptChars
+                && budget.toolObservationChars <= input.maxObservationChars ? "fit" : "local_overflow",
+        };
 
         return {
-            input: projected.input,
-            availableSkills: input.availableSkills,
-            toolDefinitions: input.toolDefinitions,
-            toolObservations: finalToolObservations,
+            ...parts!,
             budget,
+            outcome,
+            historyBudgetChars: historyBudget,
+            reducedToolMessageIds: finalToolResults.filter((message) =>
+                message.content.metadata?.compacted === true || message.content.metadata?.contextBudgetTruncated === true)
+                .map((message) => message.id),
             diagnostics: {
                 type: "context_projection",
-                origins: this.projector.annotateOrigins(input.transcript),
+                historyBudgetChars: historyBudget,
+                outcome,
                 hygiene: {
                     removedEmptyAssistantMessages: hygiene.removedEmptyAssistantMessages,
                     hiddenStatusOnlyToolResults: hygiene.hiddenStatusOnlyToolResults,
                     removedOrphanToolResults: hygiene.removedOrphanToolResults,
                 },
                 microCompaction: {
-                    compactedToolResults: finalMicro.compactedToolResults,
-                    originalObservationChars: finalMicro.originalObservationChars,
-                    compactedObservationChars: finalMicro.compactedObservationChars,
-                    budgetDrivenRecompaction: firstBudget.nearObservationLimit,
+                    compactedToolResults: toolResultsCompacted,
+                    hardTruncatedToolResults: toolResultsHardTruncated,
+                    semanticSummaryUsed: finalToolResults.some((message) => message.content.metadata?.contextSemanticSummaryUsed === true),
+                    semanticToolSummaries: finalToolResults.filter((message) => message.content.metadata?.contextSemanticSummaryUsed === true).length,
+                    compactedObservationChars: observationChars(),
+                    budgetDrivenRecompaction: rebuilds > 0 && budget.promptChars < firstPromptChars,
                 },
-                historyCompaction: projected.history,
+                historyCompaction: {
+                    compactedCount: projected.history.compactedCount,
+                    omittedCount: projected.history.omittedCount,
+                    summaryChars: projected.history.summaryChars,
+                    semanticSummaryChars: projected.history.semanticSummaryChars ?? 0,
+                    semanticSummaryUsed: (projected.history.semanticSummaryChars ?? 0) > 0,
+                    historyCompressed: projected.history.historyCompressed,
+                },
+                rebuilds,
                 budget,
             },
         };

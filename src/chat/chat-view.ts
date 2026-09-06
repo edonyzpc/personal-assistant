@@ -2,6 +2,7 @@ import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, type
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
+import { PaAgentContextOverflowError } from '../ai-services/context';
 import type {
     ChatRuntimeWarning,
     PaAgentMessage,
@@ -31,6 +32,8 @@ import {
 } from './role-identicons';
 import { MobileInputAdapter } from './MobileInputAdapter';
 import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
+import { createContextPagerStateFromChatContextUsed, mergeContextReductionFromMetrics } from '../pa/context-pager';
+import type { ContextReductionReceipt } from '../pa/contracts/context-trace';
 import {
     cancelPlatformAnimationFrame,
     clearPlatformTimeout,
@@ -2287,6 +2290,7 @@ export class LLMView extends ItemView {
             const currentPairStart = this.chatHistory.indexOf(expectedUser);
             if (currentPairStart < 0 || this.chatHistory[currentPairStart + 1] !== expectedAssistant) return;
             this.chatHistory.splice(currentPairStart, 2);
+            this.chatService.resetContext?.();
             const removedEntries: TimelineEntry[] = [];
             timelineEntries = timelineEntries.filter((entry) => {
                 const keep = entry.kind !== 'history' || entry.user !== expectedUser || entry.assistant !== expectedAssistant;
@@ -2330,6 +2334,7 @@ export class LLMView extends ItemView {
                     if (
                         entry.providerReasoningObserved
                         || contextUsedItems.length > 0
+                        || metadata?.contextTrace?.reduction
                         || (entry.activityDetails?.length ?? 0) > 0
                         || runtimeWarnings.length > 0
                     ) {
@@ -2338,7 +2343,7 @@ export class LLMView extends ItemView {
                         if (entry.providerReasoningObserved) {
                             renderProviderReasoningNotice(statusView);
                         }
-                        renderContextUsedItems(statusView, contextUsedItems);
+                        renderContextUsedItems(statusView, contextUsedItems, metadata?.contextTrace?.reduction);
                         renderRuntimeWarnings(statusView, runtimeWarnings);
                         completeThinkingStatus(
                             statusView,
@@ -2640,8 +2645,14 @@ export class LLMView extends ItemView {
         const renderContextUsedItems = (
             statusView: ThinkingStatusView,
             items: ChatContextUsedItem[],
+            reduction?: ContextReductionReceipt,
         ) => {
-            if (items.length === 0) {
+            const reductionLabel = reduction?.budgetLimited
+                ? t('plugin.chat.thinking.contextBudgetLimited')
+                : reduction?.historyCompressed || reduction?.toolContextReduced
+                    ? t('plugin.chat.thinking.contextCompressed')
+                    : undefined;
+            if (items.length === 0 && !reductionLabel) {
                 removeElement(statusView.contextUsedSectionEl);
                 statusView.contextUsedSectionEl = undefined;
                 statusView.contextUsedListEl = undefined;
@@ -2693,13 +2704,17 @@ export class LLMView extends ItemView {
                     row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.notMemoryReference") });
                 }
             });
+            if (reductionLabel) {
+                const row = listEl.createDiv({ cls: 'thinking-status-context-item context-reduction' });
+                row.createDiv({ cls: 'thinking-status-context-label', text: reductionLabel });
+            }
         };
 
         const addContextUsedItems = (turn: UiTurn, items: ChatContextUsedItem[]) => {
             if (items.length === 0) return;
             turn.contextUsedItems = mergeContextUsedItems(turn.contextUsedItems, items);
             turn.statusView ??= createThinkingStatusView(turn);
-            renderContextUsedItems(turn.statusView, turn.contextUsedItems);
+            renderContextUsedItems(turn.statusView, turn.contextUsedItems, turn.memoryMetadata?.contextTrace?.reduction);
         };
 
         const renderAgentStatus = (turn: UiTurn, status: ChatAgentStatus) => {
@@ -2795,6 +2810,25 @@ export class LLMView extends ItemView {
             }
         };
 
+        const addCanonicalContextReduction = (turn: UiTurn, metrics: unknown) => {
+            const reduction = mergeContextReductionFromMetrics(turn.memoryMetadata?.contextTrace?.reduction, metrics);
+            if (!reduction) return;
+            turn.memoryMetadata = {
+                hasMemoryContent: false,
+                allowedMemorySourcePaths: [],
+                ...turn.memoryMetadata,
+                contextTrace: {
+                    ...createContextPagerStateFromChatContextUsed(
+                        turn.canonicalLifecycle.runId ?? `chat-turn-${turn.id}`,
+                        turn.contextUsedItems,
+                    ).persistedTrace,
+                    reduction,
+                },
+            };
+            turn.statusView ??= createThinkingStatusView(turn);
+            renderContextUsedItems(turn.statusView, turn.contextUsedItems, reduction);
+        };
+
         const persistCanonicalTurnFromLifecycle = (turn: UiTurn, responseContent: string) => {
             const canonical = turn.canonicalLifecycle;
             if (!canonical.active || !canonical.runId) return undefined;
@@ -2829,7 +2863,7 @@ export class LLMView extends ItemView {
                 turn.assistantMessage.canonicalTurn = canonicalTurn;
             }
             if (turn.statusView) {
-                renderContextUsedItems(turn.statusView, turn.contextUsedItems);
+                renderContextUsedItems(turn.statusView, turn.contextUsedItems, metadata.contextTrace?.reduction);
             }
         };
 
@@ -2931,6 +2965,7 @@ export class LLMView extends ItemView {
                         upsertCanonicalMessage(turn, toolResult);
                         addContextUsedItems(turn, toolResult.content.contextUsed ?? []);
                     }
+                    addCanonicalContextReduction(turn, event.metadata?.metrics);
                     if (event.metadata?.diagnostics) {
                         addCanonicalRuntimeWarnings(turn, event.metadata.diagnostics);
                     }
@@ -3159,6 +3194,7 @@ export class LLMView extends ItemView {
                     && (
                         turn.providerReasoningObserved
                         || turn.contextUsedItems.length > 0
+                        || turn.memoryMetadata?.contextTrace?.reduction
                         || turn.activityDetails.length > 0
                         || turn.canonicalLifecycle.warnings.length > 0
                         || (
@@ -3384,7 +3420,17 @@ export class LLMView extends ItemView {
                     createTerminalEntry(turn, t("plugin.chat.notice.generationCancelled"), 'cancelled');
                     this.result = previousResult;
                 } else {
-                    createTerminalEntry(turn, t("plugin.chat.terminal.answerDidNotFinish"), 'error', String(error));
+                    const localOverflow = error instanceof PaAgentContextOverflowError || turn.canonicalLifecycle.warnings.some(
+                        (warning) => warning.type === 'context_local_overflow',
+                    );
+                    createTerminalEntry(
+                        turn,
+                        localOverflow
+                            ? t('plugin.chat.formatter.warningContextTooLongDetail')
+                            : t("plugin.chat.terminal.answerDidNotFinish"),
+                        'error',
+                        localOverflow ? undefined : String(error),
+                    );
                     this.result = previousResult;
                 }
             } finally {
@@ -4057,6 +4103,7 @@ export class LLMView extends ItemView {
         this.activeTurnCancelled = true;
         this.abortController?.abort();
         this.abortController = null;
+        this.chatService.resetContext?.();
     }
 
     private cancelScheduledScroll() {

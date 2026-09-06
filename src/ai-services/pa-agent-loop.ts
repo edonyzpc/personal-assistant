@@ -3,6 +3,7 @@ import {
 } from "./agent-runtime-primitives";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { errorMessage } from "./agent-utils";
+import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowError";
 import type { AgentRunLease } from "./agent-run-coordinator";
 import { createAbortError, isAbortError } from "./chat-utils";
 import {
@@ -1546,6 +1547,9 @@ export class PaAgentLoop {
 }
 
 function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
+    if (error instanceof PaAgentContextOverflowError) {
+        return { type: "context_local_overflow", promptChars: error.promptChars, maxPromptChars: error.maxPromptChars };
+    }
     return {
         type: "provider_error",
         message: errorMessage(error),

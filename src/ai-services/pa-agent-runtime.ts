@@ -21,6 +21,7 @@ import {
     formatCanonicalHostContext,
     formatSkillCatalog,
     formatToolObservations,
+    measurePaAgentRequestChars,
 } from "./pa-agent-prompts";
 import {
     type ChatToolProviderSchema,
@@ -45,7 +46,11 @@ import {
 } from "./chat-tools";
 import {
     AgentEventEmitter,
+    TurnExecutionDeadline,
 } from "./agent-runtime-primitives";
+import { PaAgentContextSummarizer, type PaAgentSummaryInvoke } from "./context/PaAgentContextSummarizer";
+import { cloneMessage } from "./context/clone-utils";
+import { isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 import { BUNDLED_SKILL_RESOURCES } from "./bundled-skills";
 import { CapabilityRegistry } from "./capability-registry";
@@ -113,6 +118,7 @@ import {
 } from "./pa-agent-loop";
 import {
     PaAgentContextManager,
+    PaAgentContextOverflowError,
     type PaAgentInjectedContext,
     type PaAgentProviderUsage,
 } from "./context";
@@ -155,12 +161,16 @@ export interface PaAgentRunOptions {
 }
 
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
+    /** Internal per-turn budget override. Never increases the normal history allowance. */
+    historyBudgetChars?: number;
     qwenRequestOptions?: QwenRequestOptions;
     onLifecycleEvent?: (event: AgentEvent) => void;
     onEvent?: (event: LegacyAgentEvent) => void;
 }
 
 export interface PaAgentRuntimeOptions {
+    /** Conversation-owned derived cache. A standalone runtime owns its own instance. */
+    contextSummarizer?: PaAgentContextSummarizer;
     nativeToolPlanningInternalGate?: boolean;
     nativeToolCallingValidatedModels?: readonly NativeToolCallingValidation[];
     maxModelTurns?: number;
@@ -222,6 +232,7 @@ interface PaAgentStartupTiming {
 const MAX_TURN_WALL_CLOCK_MS = 180_000;
 const DEFAULT_FINALIZATION_RESERVE_MS = 15_000;
 const MAX_CHAT_HISTORY_CHARS = 60_000;
+const MAX_PA_AGENT_PROMPT_CHARS = 120_000;
 export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 24000;
 const OPERATIONS_SUPPORT_TOOL_NAMES = [
     "search_vault_metadata",
@@ -258,7 +269,9 @@ export const canFallbackToNonStreaming = (
     receivedAnyVisibleOutput: boolean,
     signal?: AbortSignal,
 ): boolean => {
-    return !receivedAnyVisibleOutput && !isAbortError(error, signal);
+    return !receivedAnyVisibleOutput
+        && !(error instanceof PaAgentContextOverflowError)
+        && !isAbortError(error, signal);
 };
 
 type ModelContentPart = string | Record<string, unknown>;
@@ -667,6 +680,7 @@ export class PaAgentRuntime {
     private readonly planner: ChatPlanner;
     private readonly memoryTool: MemorySearchTool;
     private readonly contextManager: PaAgentContextManager;
+    private readonly contextSummarizer: PaAgentContextSummarizer;
     private readonly toolRegistry: CapabilityRegistry;
     private readonly operationsPolicyEngine: OperationsTurnPolicyEngine | null;
     private readonly skillContextProvider: SkillContextProvider | null;
@@ -689,6 +703,7 @@ export class PaAgentRuntime {
         this.planner = new ChatPlanner(aiUtils);
         this.memoryTool = new MemorySearchTool(host, aiUtils);
         this.contextManager = new PaAgentContextManager();
+        this.contextSummarizer = options.contextSummarizer ?? new PaAgentContextSummarizer();
         const runtimePlatform = this.options.runtimePlatform ?? "desktop";
         const operationsRuntimeAvailable = this.host.isOperationsAgentEnabled
             && Boolean(options.operationsIntentController);
@@ -771,6 +786,7 @@ export class PaAgentRuntime {
      * Write Action Framework. Safe to invoke multiple times.
      */
     dispose(): void {
+        if (!this.options.contextSummarizer) this.contextSummarizer.dispose();
         for (const coordinator of this.activeMemoryRecoveryCoordinators) coordinator.close();
         this.activeMemoryRecoveryCoordinators.clear();
         this.memoryTool.dispose();
@@ -782,6 +798,18 @@ export class PaAgentRuntime {
     }
 
     private async streamPaAgentCanonicalTurn(options: PaAgentStreamOptions): Promise<void> {
+        // Reject an irreducibly large current request before optional startup classifier calls.
+        // This lower bound does not replace the complete, revalidated per-attempt guard below.
+        const minimumRequestChars = measurePaAgentRequestChars({
+            input: options.prompt,
+            available_skills: "",
+            tool_definitions: "",
+            tool_observations: "",
+            operations_guidance: "",
+        }, []);
+        if (minimumRequestChars > MAX_PA_AGENT_PROMPT_CHARS) {
+            throw new PaAgentContextOverflowError(minimumRequestChars, MAX_PA_AGENT_PROMPT_CHARS);
+        }
         const runtimeStartedAt = Date.now();
         const startupTimings: PaAgentStartupTiming[] = [];
         const operationsActionsEligible = this.host.isOperationsAgentEnabled
@@ -966,9 +994,12 @@ export class PaAgentRuntime {
         const toolRegistry = this.toolRegistry;
         const planner = this.planner;
         const contextManager = this.contextManager;
+        const contextSummarizer = this.contextSummarizer;
+        let runSummaries: PaAgentContextSummaries = {};
         const buildCanonicalModelInput = (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
+            boundSchemas?: ChatToolProviderSchema[],
         ) =>
             this.buildPaAgentCanonicalModelInput(
                 options,
@@ -976,7 +1007,18 @@ export class PaAgentRuntime {
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
                 injectedContext,
+                boundSchemas,
+                runSummaries,
             );
+        const previewCanonicalModelInput = (
+            input: PaAgentModelInput,
+            toolDefinitions: ChatToolRegistryDefinition[],
+            boundSchemas: ChatToolProviderSchema[],
+        ) => this.projectPaAgentCanonicalModelInput(
+            options, input,
+            toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
+            toolDefinitions, injectedContext, boundSchemas,
+        ).projection;
         const model: PaAgentModel = {
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
                 if (!additionalProvidersLoaded) {
@@ -1001,17 +1043,6 @@ export class PaAgentRuntime {
                 const toolDefinitions = input.toolMode === "final_answer_only"
                     ? []
                     : toolRegistry.listDefinitions(exportFilter);
-                const metricsInput = buildCanonicalModelInput(input, toolDefinitions);
-                yield {
-                    type: "diagnostic",
-                    diagnostic: createPaAgentModelInputMetricsDiagnostic({
-                        canonicalInput: metricsInput,
-                        providerSchemaExportOk: schemaResult.ok,
-                        exportedProviderSchemaCount: schemaResult.ok ? schemaResult.schemas.length : 0,
-                        boundProviderSchemas: schemas,
-                        plannerToolDefinitions: toolDefinitions,
-                    }),
-                };
                 const llm = await planner.createFinalAnswerModel(0.8, {
                     transport: "native",
                     qwenRequestOptions: options.qwenRequestOptions,
@@ -1026,10 +1057,78 @@ export class PaAgentRuntime {
                 // ordinary preflight. Revalidate again only once the real
                 // chain is ready, then synchronously rebuild the canonical
                 // prompt immediately before the first provider request.
-                const providerInput = input.prepareForProviderRetry
+                let providerInput = input.prepareForProviderRetry
                     ? await input.prepareForProviderRetry()
                     : input;
-                const canonicalProviderInput = buildCanonicalModelInput(providerInput, toolDefinitions);
+                const preview = previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
+                if (input.toolMode !== "final_answer_only" && preview.outcome.admission === "fit"
+                    && (preview.outcome.historyCompressed || preview.reducedToolMessageIds.length > 0)) {
+                    const startedAt = Date.now();
+                    let modelCalls = 0;
+                    const preparation = new TurnExecutionDeadline(input.signal, 30_000, "context_summary_timeout");
+                    const tools = new Map(runSummaries.tools);
+                    // Summary models are tool-free and share the run's provider request scope.
+                    // Revalidate each tool source after model construction, immediately before dispatch.
+                    const invokeForSource = (source?: PaAgentToolSummarySource): PaAgentSummaryInvoke => async (payload, signal) => {
+                        const summaryModel = await planner.createFinalAnswerModel(0, {
+                            transport: "native", maxTokens: payload.maxOutputTokens,
+                            qwenRequestOptions: { enableThinking: false }, providerRequestScope,
+                        });
+                        throwIfAborted(signal);
+                        if (source) {
+                            // Optional summary work uses its own cancellation scope. Do not
+                            // mutate the Loop's retry input or fail-close the entire run on
+                            // a summary timeout. The registry rejects aborted/late projections.
+                            const refreshed = await memoryEvidenceRegistry.prepareTranscript([cloneMessage(source)], signal);
+                            const current = refreshed.find((message) => message.id === source.id);
+                            if (current?.role !== "toolResult" || !isCurrentToolSummary({ text: "", source }, current)) {
+                                throw new Error("Context summary source changed before dispatch");
+                            }
+                        }
+                        throwIfAborted(signal);
+                        if (JSON.stringify(payload.messages).length + 2048 > MAX_PA_AGENT_PROMPT_CHARS) {
+                            throw new Error("Context summary request exceeds local budget");
+                        }
+                        modelCalls++;
+                        const response = await summaryModel.invoke(payload.messages, { signal });
+                        return stringifyChunkContent(response);
+                    };
+                    try {
+                        const history = await contextSummarizer.prepareHistory({
+                            history: isOperationsStagedAcknowledgement(input.runtimeInstruction) ? [] : options.chatHistory ?? [],
+                            historyBudgetChars: preview.historyBudgetChars,
+                            invoke: invokeForSource(), signal: preparation.signal,
+                        });
+                        runSummaries = { history, tools };
+                        for (const id of preview.reducedToolMessageIds) {
+                            preparation.throwIfAborted();
+                            const current = providerInput.transcript.find((message) => message.id === id);
+                            if (current?.role !== "toolResult" || !current.content.includeInNextPrompt) continue;
+                            // Registry revalidation can mutate live transcript references.
+                            // Compare dispatch against the same independent snapshot that
+                            // supplies the summary payload, never a live comparison object.
+                            const source = cloneMessage(current) as PaAgentToolSummarySource;
+                            const summary = await contextSummarizer.prepareTool({
+                                source, invoke: invokeForSource(source), signal: preparation.signal,
+                            });
+                            if (summary) tools.set(id, summary);
+                        }
+                    } catch (error) {
+                        // Summary deadline/failure degrades to deterministic projection; user/run cancellation does not.
+                        if (input.signal?.aborted) throw error;
+                    } finally {
+                        preparation.dispose();
+                    }
+                    yield { type: "diagnostic", diagnostic: {
+                        type: "context_summary_preparation", modelCalls,
+                        elapsedMs: Math.max(0, Date.now() - startedAt),
+                        historyReady: Boolean(runSummaries.history), toolSummaries: tools.size,
+                    } };
+                    // No summary derived before this await may bypass final source validation.
+                    providerInput = input.prepareForProviderRetry
+                        ? await input.prepareForProviderRetry() : input;
+                }
+                const canonicalProviderInput = buildCanonicalModelInput(providerInput, toolDefinitions, schemas);
                 // P0-D: if streaming fails before any visible output (e.g., provider rejected stream
                 // outright or dropped the connection pre-flight), retry via chain.invoke() so the user
                 // still gets the answer instead of a hard runtime error.
@@ -1041,11 +1140,26 @@ export class PaAgentRuntime {
                     // alone would let a timed-out stream/invoke keep running.
                     signal: providerInput.signal,
                     streamedToolNames,
+                    requestDiagnostics: (requestInput) => {
+                        const canonicalInput = requestInput as Record<string, string>;
+                        const projection = parseOptionalDiagnostic(canonicalInput.__context_projection_diagnostic);
+                        return [
+                            ...(projection && typeof projection === "object"
+                                ? [projection as Record<string, unknown>] : []),
+                            createPaAgentModelInputMetricsDiagnostic({
+                                canonicalInput,
+                                providerSchemaExportOk: schemaResult.ok,
+                                exportedProviderSchemaCount: schemaResult.ok ? schemaResult.schemas.length : 0,
+                                boundProviderSchemas: schemas,
+                                plannerToolDefinitions: toolDefinitions,
+                            }),
+                        ];
+                    },
                     prepareInvokeInput: async () => {
                         const retryInput = input.prepareForProviderRetry
                             ? await input.prepareForProviderRetry()
                             : input;
-                        return buildCanonicalModelInput(retryInput, toolDefinitions);
+                        return buildCanonicalModelInput(retryInput, toolDefinitions, schemas);
                     },
                     onFallback: (reason, error) => {
                         legacyEvents.activity(
@@ -1468,7 +1582,34 @@ export class PaAgentRuntime {
         toolUseConstraints?: PaAgentToolUseConstraints,
         toolDefinitions?: ChatToolRegistryDefinition[],
         injectedContext?: PaAgentInjectedContext,
+        boundSchemas: ChatToolProviderSchema[] = [],
+        summaries?: PaAgentContextSummaries,
     ): Record<string, string> {
+        const { projection, operationsGuidance } = this.projectPaAgentCanonicalModelInput(
+            options, input, toolUseConstraints, toolDefinitions, injectedContext, boundSchemas, summaries,
+        );
+        if (projection.outcome.admission === "local_overflow") {
+            throw new PaAgentContextOverflowError(projection.budget.promptChars, projection.budget.maxPromptChars);
+        }
+        return {
+            input: projection.input,
+            available_skills: projection.availableSkills,
+            tool_definitions: projection.toolDefinitions,
+            tool_observations: projection.toolObservations,
+            operations_guidance: operationsGuidance,
+            __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
+        };
+    }
+
+    private projectPaAgentCanonicalModelInput(
+        options: PaAgentStreamOptions,
+        input: PaAgentModelInput,
+        toolUseConstraints?: PaAgentToolUseConstraints,
+        toolDefinitions?: ChatToolRegistryDefinition[],
+        injectedContext?: PaAgentInjectedContext,
+        boundSchemas: ChatToolProviderSchema[] = [],
+        summaries?: PaAgentContextSummaries,
+    ) {
         const availableSkills = formatSkillCatalog(input.hostContext);
         const hostContext = formatCanonicalHostContext(input.hostContext);
         const toolDefinitionsText = input.toolMode === "final_answer_only"
@@ -1477,6 +1618,7 @@ export class PaAgentRuntime {
                 this.toolRegistry.listDefinitions(),
                 toolUseConstraints,
             ));
+        const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
         const projection = this.contextManager.forPrompt({
             prompt: options.prompt,
             chatHistory: isOperationsStagedAcknowledgement(input.runtimeInstruction)
@@ -1487,22 +1629,24 @@ export class PaAgentRuntime {
             hostContext,
             runtimeInstruction: input.runtimeInstruction,
             injectedContext,
+            summaries,
             availableSkills,
             toolDefinitions: toolDefinitionsText,
-            maxHistoryChars: MAX_CHAT_HISTORY_CHARS,
-            maxPromptChars: 120_000,
+            maxHistoryChars: typeof options.historyBudgetChars === "number" && Number.isFinite(options.historyBudgetChars)
+                ? Math.min(MAX_CHAT_HISTORY_CHARS, Math.max(0, Math.floor(options.historyBudgetChars)))
+                : MAX_CHAT_HISTORY_CHARS,
+            maxPromptChars: MAX_PA_AGENT_PROMPT_CHARS,
             maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
             formatToolObservations,
+            measurePromptChars: (parts) => measurePaAgentRequestChars({
+                input: parts.input,
+                available_skills: parts.availableSkills,
+                tool_definitions: parts.toolDefinitions,
+                tool_observations: parts.toolObservations,
+                operations_guidance: operationsGuidance,
+            }, boundSchemas),
         });
-
-        return {
-            input: projection.input,
-            available_skills: projection.availableSkills,
-            tool_definitions: projection.toolDefinitions,
-            tool_observations: projection.toolObservations,
-            operations_guidance: createOperationsPromptGuidance(toolDefinitions ?? []),
-            __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
-        };
+        return { projection, operationsGuidance };
     }
 
     private readInjectedContext(
@@ -2224,6 +2368,8 @@ export async function* streamWithInvokeFallback(args: {
     streamedToolNames?: Map<string, string>;
     onFallback?: (reason: StreamWithInvokeFallbackReason, error: unknown) => void;
     prepareInvokeInput?: () => unknown | PromiseLike<unknown>;
+    /** Emitted for each attempted request, never for preliminary projections. */
+    requestDiagnostics?: (input: unknown) => Array<Record<string, unknown>>;
 }): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
     const { chain, input, signal, onFallback } = args;
     const streamedToolNames = args.streamedToolNames ?? new Map<string, string>();
@@ -2233,17 +2379,20 @@ export async function* streamWithInvokeFallback(args: {
     try {
         stream = await chain.stream(input, { signal });
     } catch (error) {
+        yield* requestDiagnosticChunks(args.requestDiagnostics, input);
         if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
             onFallback?.("stream_setup_failed", error);
             const invokeInput = args.prepareInvokeInput
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics);
             return;
         }
         throw error;
     }
+
+    yield* requestDiagnosticChunks(args.requestDiagnostics, input);
 
     try {
         for await (const chunk of stream) {
@@ -2274,7 +2423,7 @@ export async function* streamWithInvokeFallback(args: {
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics);
             return;
         }
         throw error;
@@ -2286,8 +2435,16 @@ async function* invokeAsModelChunks(
     input: unknown,
     signal: AbortSignal | undefined,
     streamedToolNames: Map<string, string>,
+    requestDiagnostics?: (input: unknown) => Array<Record<string, unknown>>,
 ): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
-    const response = await chain.invoke(input, signal ? { signal } : undefined);
+    let response: unknown;
+    try {
+        response = await chain.invoke(input, signal ? { signal } : undefined);
+    } catch (error) {
+        yield* requestDiagnosticChunks(requestDiagnostics, input);
+        throw error;
+    }
+    yield* requestDiagnosticChunks(requestDiagnostics, input);
     throwIfAborted(signal);
     const providerUsage = extractProviderUsage(response);
     if (providerUsage) {
@@ -2304,6 +2461,13 @@ async function* invokeAsModelChunks(
     for (const toolDelta of getCanonicalToolCallDeltas(response, streamedToolNames)) {
         yield toolDelta;
     }
+}
+
+function* requestDiagnosticChunks(
+    read: ((input: unknown) => Array<Record<string, unknown>>) | undefined,
+    input: unknown,
+): Generator<PaAgentModelStreamChunk> {
+    for (const diagnostic of read?.(input) ?? []) yield { type: "diagnostic", diagnostic };
 }
 
 function extractProviderUsage(value: unknown): PaAgentProviderUsage | undefined {
