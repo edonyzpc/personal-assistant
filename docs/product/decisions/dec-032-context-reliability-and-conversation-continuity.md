@@ -2,13 +2,13 @@
 
 Decision ID: DEC-032
 Status: Accepted
-Updated: 2026-09-05
+Updated: 2026-09-06
 Authority: Owner 于 2026-09-05 接受先解决 Context 管理和长会话连续稳定的路线，随后明确纠正“排除 LLM 调用并不是决策，需要按照 context management 的需求进行技术判断和选型，成本问题后面再优化”。技术选型由本任务依据需求和源码完成；此前 Agent 写下的排除项不是 Owner 的禁止或新增审批门。本记录保留该纠正，不追溯制造旧批准。
 Work item: B-128
 
 ## Context
 
-当前 Context 层已独立于 Memory，但按 user 数量保护工具结果与实际单 user / 多 model-cycle transcript 不匹配；历史固定十轮压缩；总字符预算只观测、不准入；Context UI 没有真实压缩回执。短暂 runtime 不能证明用户没有长会话连续性需求。
+决策前，Context 层已独立于 Memory，但按 user 数量保护工具结果与实际单 user / 多 model-cycle transcript 不匹配；历史固定十轮压缩；总字符预算只观测、不准入；Context UI 没有真实压缩回执。短暂 runtime 不能证明用户没有长会话连续性需求。上述问题的交付结果与验证边界由 Product Spec 承接。
 
 ## Options Considered
 
@@ -53,7 +53,7 @@ Work item: B-128
 
 ## Traceability
 
-- Discovery: [B-128 research](../../development/discovery/pa-agent-context-management-research.md)
+- Historical research: [B-128 research](../../archive/2026/b-128-context-management-research.md)
 - Product Spec: [Context reliability and continuity](../specs/pa-context-management-product-spec.md)
-- Architecture / SDD: [SDD](../../development/active/context-management/sdd.md)
+- Architecture: [Context Management](../../architecture/pa-agent-architecture-plan.md#context-management)
 - Supersedes / superseded by: 取代 Discovery 的 research-only 下一步建议；不取代现有 Memory 产品决定。

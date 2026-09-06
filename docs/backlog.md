@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-08-30
+Updated: 2026-09-06
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -8,7 +8,6 @@ Updated: 2026-08-30
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
-| B-128 | 长会话 Context 策略演进 | 当前投影与结构化摘要执行只见 Tracker；剩余研究关注真实失败与后续性能/成本优化 | 按连续性需求验证语义质量，长期 Memory 独立，不将历史排除项当作 LLM 调用禁止 | [Discovery](./development/discovery/pa-agent-context-management-research.md), [Tracker](./development/active/context-management/tracker.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
@@ -20,6 +19,8 @@ Updated: 2026-08-30
 
 | ID | 事项 | 重新启动条件 / 决策边界 | 依据 |
 | --- | --- | --- | --- |
+| B-130 | Chat 严格回答格式遵循 | B-128 F-20 为非阻塞 P3：默认预算下请求纯 JSON 仍可能得到说明/围栏。出现明确依赖机器可解析输出的调用方，或真实用户工作流被格式阻断时重启；先保留同输入的语义/格式对照，不用猜测截取 JSON 掩盖错误，也不以更短输出牺牲关键细节 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [formatAtDefaultBudget 与撤回候选](./archive/2026/b-128-context-management-validation.md) |
+| B-131 | Context 摘要去重与字段归类 | B-128 F-23 为非阻塞 P3：当前同义重复无矛盾、无遗漏且在预算内。重复内容可复现地挤占必要事实、增加摘要批次或造成可感知延迟时重启；沿用原文/摘要/实际入模/续答证据，避免仅为字段整齐增加模型矩阵或 Memory 能力 | User request 2026-09-06 closeout；[B-128 Spec](./product/specs/pa-context-management-product-spec.md#delivered-scope-and-limits), [targetedSemantic 原始摘要](./archive/2026/b-128-context-management-validation.md) |
 | B-102 | Obsidian Operations CLI adapter (v1B) | Desktop CLI reads 的用户价值足以覆盖 probe、allowlist、timeout、argv execution 与 vault confinement 成本时，重新开启 SPEC-05 | [Architecture plan](./architecture/obsidian-operations-agent-plan.md) |
 | B-103 | 用户自定义 Skills | 先确认产品价值、工具权限、Settings UX 与 vault-side discovery 边界，再写 SDD | [Historical tracker](./archive/v2-post-release-spec-driven-development.md) |
 | B-104 | PA Agent latency levers | 必须先有同口径 p50/p95 样本；再评估 read-only batch、compact final-answer 与 direct route | [Historical plan](./archive/pa-agent-latency-optimization-plan.md) |

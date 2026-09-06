@@ -1,10 +1,10 @@
 # PA Context Management Product Spec
 
-Document status: Approved
-Updated: 2026-09-05
+Document status: Current
+Updated: 2026-09-06
 Work item: B-128
 Decision: [DEC-032](../decisions/dec-032-context-reliability-and-conversation-continuity.md)
-Authority: Context 可靠性、会话连续性及其与长期 Memory 的边界；执行证据仅见 Tracker。
+Authority: 已交付的 Context 可靠性、会话连续性及其与长期 Memory 的边界；B-128 构建绑定的验证记录保留为历史证据。
 
 ## Problem And Product Outcome
 
@@ -59,11 +59,26 @@ Authority: Context 可靠性、会话连续性及其与长期 Memory 的边界�
 
 ## Open Decisions
 
-Owner 已澄清 LLM 调用由技术需求决定，不存在待批准的成本门槛。按 DEC-032 和 SDD 实施并验证；记录模型摘要固有的有损边界，不承诺无限保留。
+无待决定的 B-128 实施事项。Owner 已澄清 LLM 调用由技术需求决定，不存在待批准的成本门槛；语义摘要具有有损边界，不承诺无限保留。
 
-## Delivery Handoff
+## Delivered Scope And Limits
 
-- Active Package: [Context management](../../development/active/context-management/README.md)
-- Architecture contracts: [PA Agent](../../architecture/pa-agent-architecture-plan.md), [Context Pager](./pa-context-pager-product-spec.md)
-- Validation evidence: [Build-bound synthetic records](../../archive/2026/b-128-context-management-validation.md)
-- Release / rollout boundary: Owner 已接受定向语义验收、问题修复及模块化本地提交；master 集成、push、正式 closeout 和 release 分别处理。
+B-128 于 2026-09-06 按 Owner 明确的关闭授权完成收口。已交付完整原文/可逆历史优先、结构化会话和工具摘要、最终请求准入、本地超限说明及可持久化的无正文 Context 回执；原始会话、当前权限和长期 Memory 所有权保持独立。
+
+分支验收包含 218 suites / 5677 tests、lint/build/type-check、独立 review 与 Obsidian test-vault 验证。同一已配置模型的原 9 个合成场景通过源、摘要、实际入模与回答对照，连续三次摘要覆盖 28→48→68 条消息；默认预算回归保留零历史摘要调用。精确构建、失败候选和范围限制见 [验证证据](../../archive/2026/b-128-context-management-validation.md)。该证据不等同于后续 master 合并后的验证；集成结果以实际 Git 历史和该次验证为准，也不代表已发布。
+
+两项非阻塞 P3 独立延后：请求纯 JSON 时，模型仍可能附加说明或代码围栏（[B-130](../../backlog.md#已延期的产品与工程工作)）；部分摘要存在跨字段同义重复（[B-131](../../backlog.md#已延期的产品与工程工作)）。两者均保留原始失败/输出依据，按具体消费或容量问题重启，不继续扩大模型矩阵、真实用户数据或 Memory 范围。
+
+## Durable Traceability
+
+- Architecture contracts: [PA Agent](../../architecture/pa-agent-architecture-plan.md#context-management), [Context Pager](./pa-context-pager-product-spec.md)
+- Decision and historical rationale: [DEC-032](../decisions/dec-032-context-reliability-and-conversation-continuity.md), [Research provenance](../../archive/2026/b-128-context-management-research.md)
+
+| Requirement / AC | Regression contract |
+| --- | --- |
+| B-128/REQ-01 / B-128/AC-01; B-128/REQ-02 / B-128/AC-02 | [Context projection](../../../__tests__/pa-agent-context.test.ts), [Runtime history](../../../__tests__/pa-agent-runtime-chat-history.test.ts) |
+| B-128/REQ-03 / B-128/AC-03; B-128/REQ-04 / B-128/AC-04 | [Request admission](../../../__tests__/pa-agent-context-admission.test.ts), [Loop](../../../__tests__/pa-agent-loop.test.ts), [Fallback](../../../__tests__/pa-agent-stream-fallback.test.ts) |
+| B-128/REQ-05 / B-128/AC-05; B-128/REQ-06 / B-128/AC-06 | [Context Pager](../../../__tests__/context-pager.test.ts), [Chat view](../../../__tests__/chat-view.test.ts), [History store](../../../__tests__/chat-history-store.test.ts), [History manager](../../../__tests__/chat-history-manager.test.ts) |
+| B-128/REQ-07 / B-128/AC-07; B-128/REQ-08 / B-128/AC-08 | [Continuity and source preservation](../../../__tests__/pa-agent-context-continuity.test.ts), [Chat lifecycle](../../../__tests__/chat-service.test.ts) |
+| B-128/REQ-09 / B-128/AC-09; B-128/REQ-10 / B-128/AC-10; B-128/REQ-11 / B-128/AC-11 | [Summarizer](../../../__tests__/pa-agent-context-summarizer.test.ts), [Summary projection](../../../__tests__/pa-agent-context-summary-projection.test.ts), [Chat lifecycle](../../../__tests__/chat-service.test.ts) |
+| B-128/REQ-12 / B-128/AC-12 | [Actual model-input capture](../../../__tests__/context-continuity-smoke-runner-script.test.ts), [Build-bound semantic evidence](../../archive/2026/b-128-context-management-validation.md) |

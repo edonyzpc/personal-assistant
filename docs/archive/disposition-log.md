@@ -1,11 +1,13 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-08-30
+Updated: 2026-09-06
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-09-06 | `docs/development/active/context-management/**` | deleted-after-absorption | [B-128 Product Spec](../product/specs/pa-context-management-product-spec.md), [DEC-032](../product/decisions/dec-032-context-reliability-and-conversation-continuity.md), [Context architecture](../architecture/pa-agent-architecture-plan.md#context-management), [validation evidence](./2026/b-128-context-management-validation.md) | Owner 明确关闭 B-128；稳定行为、REQ/AC 与回归来源已吸收，构建绑定的原始验证保留。Feature Home、Tracker、SDD 及逐轮 finding 属于已完成过程，由 Git 历史恢复；F-20/F-23 分别转 [B-130/B-131](../backlog.md#已延期的产品与工程工作)，master 集成与发布不从 closeout 推定。 |
+| 2026-09-06 | `docs/development/discovery/pa-agent-context-management-research.md` | absorbed | [Historical research](./2026/b-128-context-management-research.md), [DEC-032](../product/decisions/dec-032-context-reliability-and-conversation-continuity.md) | 外部实现、学术引用与 PA 取舍依据保留为 current-linked historical provenance；已吸收的实现草案、批准门和执行过程删除，不保留 Exploring 状态或当前执行权威。 |
 | 2026-08-30 | `docs/development/active/retrieval-optimization/**` | deleted-after-absorption | [B-125 closeout evidence](./2026/b-125-retrieval-optimization-closeout.md) | DEC-027、Product Spec、current architecture、源码与 focused tests 已承担稳定行为；最终 local/Desktop/iPhone/Darwin/Linux 证据、owner per-flag rollout disposition、Win32 waiver 与 residual risk 压缩为一份 current-linked closeout。Feature Home、Plan、SDD、Tracker 与逐轮 finding/verification 日志属于已完成过程，Git 历史负责恢复。 |
 | 2026-08-07 | `docs/development/active/share-card/**` | deleted-after-absorption | [DEC-026](../product/decisions/dec-026-local-share-card.md), [B-124 Product Spec](../product/specs/pa-share-card-product-spec.md), [Share Card Architecture](../architecture/share-card-architecture.md), [smoke checklist](../development/validation/pagelet-smoke-checklist.md) | 用户选择当前 `master` 为最终行为；稳定产品、技术与验证边界已由 current authorities、focused tests 和 durable checklist 承接。Feature Home、Tracker、Plan、SDD 与 SnapDOM discussion 属于已完成过程，Git 历史负责恢复。 |
 | 2026-08-06 | `docs/release-process.md` | absorbed | [Release Process](../operations/release-process.md) | Release SOP 已迁入 Operations lane；当前发布规则继续由新路径维护，Git 历史保留旧路径的迁移依据。 |

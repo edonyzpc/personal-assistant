@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-04
+Updated: 2026-09-06
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -302,6 +302,29 @@ history summary remains an atomic block rather than a truncated JSON fragment.
 No summary is written to long-term Memory. Source indices verify association,
 not semantic correctness; real-model continuity evaluation is specified in the
 [Context Management spec](../product/specs/pa-context-management-product-spec.md).
+
+The summary contract uses six arrays: `goals`, `constraints`, `decisions`,
+`completed`, `open_questions` and `facts`. Each item contains grounded text and
+global source-message indices. It describes current working state: later user
+corrections replace earlier effective choices; failed or unstarted work is not
+completed; guesses retain their attribution; revoked permissions remain
+historical evidence without granting current authority. Cross-field deduplication
+is a model instruction, not a guaranteed schema property.
+
+History summaries reserve at most 8,000 characters within the actual history
+allocation; tool summaries default to at most 1,500 characters. One history
+preparation and the aggregate model-turn preparation each have a 30-second
+deadline; an individual tool preparation has 12 seconds, all subordinate to the
+run deadline. An empty intermediate batch may continue to later sources when
+there is no prior valid state. An update that erases valid prior state, a final
+empty result, invalid output, or timeout cannot replace the cache. Exact source
+snapshots determine reuse; counts or short hashes alone cannot validate it.
+
+Persisted Context receipts are additive, body-free booleans. Missing fields in
+older rows behave as false without a schema migration. Projection, admission
+and the UI receipt bridge can be reverted independently; disabling semantic
+preparation restores deterministic reduction without deleting source history
+or changing the Memory index.
 
 ## Source And Trust Boundaries
 
