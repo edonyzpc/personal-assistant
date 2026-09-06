@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.3](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.2...2.10.0-beta.3) (2026-09-06)
+
+### Features
+- context: preserve conversation continuity within request budgets
+- chat: persist and display context reduction receipts
+- context: merge B-128 continuity and closeout into master
+
+### Fix
+- chat: preserve IME confirmation before sending
+
+### Improvements
+- Merge branch 'master' into codex/context-management-research-b128
+
+### Docs
+- agent: align context proposal with PA runtime
+- context: reconcile B-128 contracts and validation evidence
+- context: close B-128 and preserve follow-up evidence
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
