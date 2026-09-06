@@ -1,0 +1,203 @@
+{
+  "kind": "b129_minimal_production_style_loop",
+  "startedAt": "2026-09-06T14:26:02.134Z",
+  "state": "passed",
+  "vaultPath": "/Users/edonyzpc/code/personal-assistant/test/.b129-style-host/b129-style-test",
+  "scope": {
+    "realChatService": true,
+    "localSyntheticTransportOnly": true,
+    "maximumNewWritingCalls": 2,
+    "uiClicksVerified": false,
+    "sourceReadersReplaced": false,
+    "directIDBWrites": false,
+    "newHistoryOrVersionsCreated": false,
+    "automaticExtractionEnabledByProbe": false,
+    "providerQualityClaim": false
+  },
+  "steps": [
+    {
+      "id": "remember-existing-ui-artifact",
+      "status": "passed",
+      "claimId": "memory-lifecycle-mtpwmrl8-javhjqz0",
+      "revisionId": "memory-lifecycle-mtpwmrl8-42igms07",
+      "actionId": "writing_style_40050f6eb9134915b2ca6b1dfefec772",
+      "textHash": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0"
+    },
+    {
+      "id": "same-scene-selected",
+      "status": "passed",
+      "details": {
+        "requestNumber": 2,
+        "requestId": "b129_final_selected",
+        "styleRevisionIds": [
+          "memory-lifecycle-mtpwmrl8-42igms07"
+        ],
+        "finishReason": "stop",
+        "automaticArtifact": true,
+        "bodySha256": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0"
+      }
+    },
+    {
+      "id": "pause-use",
+      "status": "passed",
+      "details": {
+        "ok": true,
+        "claimId": "memory-lifecycle-mtpwmrl8-javhjqz0",
+        "effect": "future_answers",
+        "lifecycle": "paused",
+        "activeRevisionId": "memory-lifecycle-mtpwmrl8-42igms07"
+      }
+    },
+    {
+      "id": "same-scene-after-pause",
+      "status": "passed",
+      "details": {
+        "requestNumber": 3,
+        "requestId": "b129_final_paused",
+        "styleRevisionIds": [],
+        "finishReason": "stop",
+        "automaticArtifact": true,
+        "bodySha256": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0"
+      }
+    }
+  ],
+  "wire": [
+    {
+      "label": "selected",
+      "number": 2,
+      "at": "2026-09-06T14:26:02.241Z",
+      "kind": "writing",
+      "stream": true,
+      "model": "b129-style-offline",
+      "messages": [
+        {
+          "role": "system",
+          "textChars": 3658,
+          "parts": [
+            "text"
+          ],
+          "images": []
+        },
+        {
+          "role": "user",
+          "textChars": 1401,
+          "parts": [
+            "text"
+          ],
+          "images": []
+        }
+      ],
+      "textSha256": "308e28e7c763d5da832cb6f4d02c424ccd346432742efe29a9d6a3a0eb674845",
+      "styleContext": [
+        {
+          "revisionId": "memory-lifecycle-mtpwmrl8-42igms07",
+          "writingVersionId": "writing_b73b45e7f4b1c53bac249772f87d8d983b8119e963a6d90f",
+          "textHash": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0",
+          "exactHashMatches": true,
+          "watched": [
+            "V1"
+          ]
+        }
+      ],
+      "watchedAnywhere": [
+        {
+          "name": "V1",
+          "present": true
+        }
+      ],
+      "response": {
+        "finishReason": "stop",
+        "textSha256": "0286b6cd6a188f7da0ddd470bfdea792b83cf57337f1a31bbdb6d539f212d62e",
+        "requestId": "b129_final_selected",
+        "bodySha256": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0"
+      }
+    },
+    {
+      "label": "paused",
+      "number": 3,
+      "at": "2026-09-06T14:26:02.285Z",
+      "kind": "writing",
+      "stream": true,
+      "model": "b129-style-offline",
+      "messages": [
+        {
+          "role": "system",
+          "textChars": 3658,
+          "parts": [
+            "text"
+          ],
+          "images": []
+        },
+        {
+          "role": "user",
+          "textChars": 752,
+          "parts": [
+            "text"
+          ],
+          "images": []
+        }
+      ],
+      "textSha256": "a55139ec3a87120156f2a145eab385c984b492956ed76714de5334251d7624ee",
+      "styleContext": [],
+      "watchedAnywhere": [
+        {
+          "name": "V1",
+          "present": false
+        }
+      ],
+      "response": {
+        "finishReason": "stop",
+        "textSha256": "dcb17dea55074d5e13d78d58f364526d7981ec7d12debc4fb2131376a6828fe6",
+        "requestId": "b129_final_paused",
+        "bodySha256": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0"
+      }
+    }
+  ],
+  "cleanup": {
+    "fixtureUninstalled": true,
+    "extractionEnabled": false,
+    "consentState": "paused",
+    "extractionRuntimeCanRun": false,
+    "routingLeftAsExistingLocalFixture": true
+  },
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "2f0f5ca48a938239fdb38ddabf4653368c0fbc4a2ff99283eae75a0016e1b68a",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-06T13:59:14.976Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "before": {
+    "fixtureRequestCount": 1,
+    "styleRevisionCount": 0,
+    "extractionEnabled": false,
+    "consentState": "paused"
+  },
+  "source": {
+    "versionId": "writing_b73b45e7f4b1c53bac249772f87d8d983b8119e963a6d90f",
+    "conversationId": "7447368d-1fa7-4a6e-8487-0d300eb3e2a9",
+    "messageId": "message_assistant_3",
+    "textHash": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0",
+    "origin": "ai_generated",
+    "styleRevisionIds": []
+  },
+  "scene": {
+    "writingTask": "copywriting",
+    "purpose": "social_share",
+    "audience": "friends",
+    "domain": "travel"
+  },
+  "style": {
+    "claimId": "memory-lifecycle-mtpwmrl8-javhjqz0",
+    "revisionId": "memory-lifecycle-mtpwmrl8-42igms07",
+    "actionId": "writing_style_40050f6eb9134915b2ca6b1dfefec772",
+    "textHash": "ce24d3a99aaa91ff381f44b2330a141efbeb5e042b93da20ec8028e6afa872b0"
+  },
+  "newWritingCalls": 2,
+  "newFixtureRequests": 2,
+  "finishedAt": "2026-09-06T14:26:02.292Z"
+}

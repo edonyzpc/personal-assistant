@@ -1,0 +1,185 @@
+{
+  "date": "2026-09-06",
+  "kind": "HEIC host recheck; synthetic fixtures only; no production dependency or code change",
+  "receipts": [
+    {
+      "file": "desktop-core.json",
+      "sha256": "b75e995889943ea898d3d91f280c39622a7d57e0928d9485753a5a434b7fabd7"
+    },
+    {
+      "file": "ios-core.json",
+      "sha256": "c3cc93894a2451c3181a3ebe93116ba199a2191d0a6ec1beffc0407aa1d77eb7"
+    },
+    {
+      "file": "finder-paste.json",
+      "sha256": "b271c479f6cba1eac09bfbd02ef97d8a8d7187bdac80a92ae584934bc4d83558"
+    },
+    {
+      "file": "macos-conversion.json",
+      "sha256": "949219f95170de1a0836f922b44e430b50a5e94adc85b36e771be70ec802b73f"
+    },
+    {
+      "file": "macos-gps-conversion.json",
+      "sha256": "e7ede346c5983e978c055f5e4a491bc6d4036c66de3614f380f84747be3f21e5"
+    },
+    {
+      "file": "quicklook.json",
+      "sha256": "7a62565d1c10b5463b3da93c84776fa0ee913f67f699d1ce4985f9d9dbe86a1f"
+    },
+    {
+      "file": "system-imageio.json",
+      "sha256": "18610d198582d3eb69571dff2c8e2778ad586d579784ade790139a0e5be21ab3"
+    },
+    {
+      "file": "core-probe.js.txt",
+      "sha256": "d72becb77a02de453cb21fa54019d8d56ca9d1848246d8333bf7b41ef42e7824",
+      "scope": "immutable experiment source, not production; macOS prototype only exercised success paths"
+    },
+    {
+      "file": "macos-prototype.js.txt",
+      "sha256": "ad7e91b9519e0bc322be355c6751bc4702b1ea89ebb7b809bafe7b468830d73d",
+      "scope": "immutable experiment source, not production; macOS prototype only exercised success paths"
+    }
+  ],
+  "pixels": [
+    {
+      "kind": "ios-canvas",
+      "bytes": 47072,
+      "sha256": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+      "format": "JPEG",
+      "dimensions": [
+        640,
+        480
+      ],
+      "topLevelExifTags": [
+        34665
+      ],
+      "gpsKeys": [],
+      "generatedMetadataKinds": [
+        "dpi",
+        "exif",
+        "jfif",
+        "jfif_density",
+        "jfif_unit",
+        "jfif_version",
+        "photoshop"
+      ]
+    },
+    {
+      "kind": "macos-canvas",
+      "bytes": 32157,
+      "sha256": "a8981f334fce7c6fe48fdd7557d76311f269be81e87e24f85b9ad2c2fdc01454",
+      "format": "JPEG",
+      "dimensions": [
+        640,
+        480
+      ],
+      "topLevelExifTags": [],
+      "gpsKeys": [],
+      "generatedMetadataKinds": [
+        "icc_profile",
+        "jfif",
+        "jfif_density",
+        "jfif_unit",
+        "jfif_version"
+      ]
+    },
+    {
+      "kind": "macos-gps-canvas",
+      "bytes": 32777,
+      "sha256": "61e1832005407455c04cf0d0b6770033ca2da197f3dcdf152d9a7bedf82755e7",
+      "format": "JPEG",
+      "dimensions": [
+        480,
+        640
+      ],
+      "topLevelExifTags": [],
+      "gpsKeys": [],
+      "generatedMetadataKinds": [
+        "icc_profile",
+        "jfif",
+        "jfif_density",
+        "jfif_unit",
+        "jfif_version"
+      ]
+    },
+    {
+      "kind": "raw-system-gps",
+      "bytes": 53321,
+      "sha256": "7a46755124b56fd0f69f639ab998314b0cffa4bb63fd069d5f869b42792d67ba",
+      "format": "JPEG",
+      "dimensions": [
+        640,
+        480
+      ],
+      "topLevelExifTags": [
+        34853,
+        296,
+        34665,
+        271,
+        272,
+        274,
+        306,
+        531,
+        282,
+        283
+      ],
+      "gpsKeys": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        7,
+        29
+      ],
+      "generatedMetadataKinds": [
+        "dpi",
+        "exif"
+      ]
+    }
+  ],
+  "limits": [
+    "iOS Photos/Files/share acquisition not tested by this recheck",
+    "Windows/Linux and older host versions not tested",
+    "No camera/HDR/wide-gamut/multi-primary/large HEIC guarantee",
+    "QuickLook nonempty result can be a generic file icon; not a decode-success proof",
+    "System-only sips conversion retains synthetic sensitive EXIF/GPS; pixel redraw required",
+    "iOS canvas re-encoding was tested on source without GPS; GPS stripping was verified on macOS synthetic fixture only",
+    "Current host plugins reused; no B129 integration/deployment/AI request",
+    "macOS execFile prototype is not a cross-platform public Obsidian API or production lifecycle proof"
+  ],
+  "desktopJpegEmbedCheck": {
+    "actualNote": "b129-heic-core-check/jpeg-cross-device.md",
+    "images": [
+      {
+        "source": "iOS generated JPEG",
+        "decoded": true,
+        "dimensions": [
+          640,
+          480
+        ]
+      },
+      {
+        "source": "macOS generated JPEG",
+        "decoded": true,
+        "dimensions": [
+          640,
+          480
+        ]
+      },
+      {
+        "source": "macOS synthetic GPS/orientation output",
+        "decoded": true,
+        "dimensions": [
+          480,
+          640
+        ]
+      }
+    ]
+  },
+  "uiObservation": {
+    "desktop": "HEIC wiki and Markdown image both generic file cards; JPEG visible. Finder paste inserted ![[synthetic-original.heic]]",
+    "ios": "Real iPhone Mirroring displayed both HEIC embeds as generic file cards and JPEG as visible picture"
+  }
+}

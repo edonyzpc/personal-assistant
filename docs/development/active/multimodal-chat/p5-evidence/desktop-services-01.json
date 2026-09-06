@@ -1,0 +1,255 @@
+{
+  "schemaVersion": 1,
+  "runner": "b129-production-services-smoke",
+  "runId": "desktop-01",
+  "startedAt": "2026-09-06T10:15:56.395Z",
+  "state": "failed",
+  "evidencePath": "b129-production-services/desktop-01/receipt.json",
+  "scope": {
+    "productionServices": [
+      "imageAssetService",
+      "writingVersions",
+      "writingSave",
+      "chatHistoryManager"
+    ],
+    "modelCalled": false,
+    "missingOriginalTechnique": "injected-vault-lookup-missing; physical original retained",
+    "cancellationTechnique": "abort immediately after actual target Vault.create resolves",
+    "configWrites": "Vault.process(.gitignore) blocked only during this run",
+    "retainedOutputs": "this run conversation, version, receipt, originals, note and formal attachments",
+    "limitations": [
+      "No UI interaction, remote provider dispatch, physical deletion or restart validation.",
+      "Manifest identity is descriptive; build-byte provenance must be supplied by the deployment receipt.",
+      "Original imports and formal attachments follow current attachment settings and may be outside the run folder."
+    ]
+  },
+  "cases": [
+    {
+      "id": "01-production-services-and-test-vault",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.395Z",
+      "elapsedMs": 7,
+      "details": {
+        "servicesPresent": true,
+        "historyAvailable": true,
+        "runDirectory": "b129-production-services/desktop-01",
+        "heicFixture": "b129-p0-fixtures/chart-sips.heic"
+      }
+    },
+    {
+      "id": "02-png-original-preservation",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.408Z",
+      "elapsedMs": 17,
+      "details": {
+        "ref": {
+          "assetId": "img_fd7b248f7a25498a996b45440edaf7e6",
+          "contentHash": "7fea26dc22b2bb367a186d77479d7e9f05334cd4c3bf9280cdb709f94866b4c7"
+        },
+        "originalPath": "pa-images/img_fd7b248f7a25498a996b45440edaf7e6.png",
+        "inputHash": "7fea26dc22b2bb367a186d77479d7e9f05334cd4c3bf9280cdb709f94866b4c7",
+        "byteLength": 4359,
+        "sync": {
+          "directory": "pa-images",
+          "obsidianSync": "needs_user_setup",
+          "git": "needs_user_setup",
+          "iCloud": "unknown",
+          "gitignoreRule": "/pa-images/",
+          "gitTracked": "unknown",
+          "previouslyUploaded": "unknown",
+          "noticeDismissed": false,
+          "noticeRequired": true
+        }
+      }
+    },
+    {
+      "id": "03-png-preview-and-provider",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.426Z",
+      "elapsedMs": 44,
+      "details": {
+        "preview": {
+          "purpose": "preview",
+          "width": 320,
+          "height": 180,
+          "byteLength": 2988,
+          "hash": "779eb4981b827fc7650fa25a36932d6253ba0d5dcbaf08296eb750b9a20753f0",
+          "persistent": true,
+          "warning": null
+        },
+        "provider": {
+          "purpose": "provider",
+          "width": 320,
+          "height": 180,
+          "byteLength": 2988,
+          "hash": "779eb4981b827fc7650fa25a36932d6253ba0d5dcbaf08296eb750b9a20753f0",
+          "persistent": true,
+          "warning": null
+        }
+      }
+    },
+    {
+      "id": "04-heic-original-preservation",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.470Z",
+      "elapsedMs": 3,
+      "details": {
+        "ref": {
+          "assetId": "img_091e5dfb46274ab4928b53a63069dc92",
+          "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+        },
+        "originalPath": "pa-images/img_091e5dfb46274ab4928b53a63069dc92.heic",
+        "inputHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+        "byteLength": 16893,
+        "sync": {
+          "directory": "pa-images",
+          "obsidianSync": "needs_user_setup",
+          "git": "needs_user_setup",
+          "iCloud": "unknown",
+          "gitignoreRule": "/pa-images/",
+          "gitTracked": "unknown",
+          "previouslyUploaded": "unknown",
+          "noticeDismissed": false,
+          "noticeRequired": true
+        }
+      }
+    },
+    {
+      "id": "05-heic-preview-and-provider",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.474Z",
+      "elapsedMs": 280,
+      "details": {
+        "preview": {
+          "purpose": "preview",
+          "width": 640,
+          "height": 480,
+          "byteLength": 32157,
+          "hash": "a8981f334fce7c6fe48fdd7557d76311f269be81e87e24f85b9ad2c2fdc01454",
+          "persistent": true,
+          "warning": null
+        },
+        "provider": {
+          "purpose": "provider",
+          "width": 640,
+          "height": 480,
+          "byteLength": 32157,
+          "hash": "a8981f334fce7c6fe48fdd7557d76311f269be81e87e24f85b9ad2c2fdc01454",
+          "persistent": true,
+          "warning": null
+        }
+      }
+    },
+    {
+      "id": "06-writing-version-and-history-persistence",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.754Z",
+      "elapsedMs": 3,
+      "details": {
+        "conversationId": "68a7f6b1-78eb-4a72-97e3-e14a25d6697a",
+        "writingVersionId": "writing_4a308dcfe6b7f8f9be65eb7be0247b3e043e18d84ed4f338",
+        "textHash": "e20cff419e2c689c35c63758f31b19e9af88dee3375c5271fab2b6e9403c6a51",
+        "exactBodyLength": 69,
+        "associatedImages": 2,
+        "turnCount": 1
+      }
+    },
+    {
+      "id": "07-preview-freezes-export-before-note-create",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.758Z",
+      "elapsedMs": 116,
+      "details": {
+        "operationId": "save_4dd613a03f5e44fbbee7c59ac4d1358d",
+        "previewBodyExact": true,
+        "noteAbsent": true,
+        "exports": [
+          {
+            "attachmentKind": "original",
+            "mime": "image/png",
+            "byteLength": 4359,
+            "outputHash": "7fea26dc22b2bb367a186d77479d7e9f05334cd4c3bf9280cdb709f94866b4c7",
+            "filename": "pa-bee7c59ac4d1358d-1.png"
+          },
+          {
+            "attachmentKind": "heic_jpeg",
+            "mime": "image/jpeg",
+            "byteLength": 32157,
+            "outputHash": "a8981f334fce7c6fe48fdd7557d76311f269be81e87e24f85b9ad2c2fdc01454",
+            "filename": "pa-bee7c59ac4d1358d-2.jpg"
+          }
+        ]
+      }
+    },
+    {
+      "id": "08-cancel-after-real-note-create",
+      "status": "passed",
+      "startedAt": "2026-09-06T10:15:56.874Z",
+      "elapsedMs": 5,
+      "details": {
+        "injection": "after_real_note_create_resolves",
+        "targetCreates": 1,
+        "state": "partial",
+        "failureReason": "cancelled",
+        "noteState": "created",
+        "bodyExact": true,
+        "attachmentWrites": 0
+      }
+    },
+    {
+      "id": "09-retry-exact-body-and-formal-attachments",
+      "status": "failed",
+      "startedAt": "2026-09-06T10:15:56.879Z",
+      "elapsedMs": 19,
+      "error": "b129_smoke:retry_not_idempotent"
+    }
+  ],
+  "artifacts": {
+    "anchorPath": "b129-production-services/desktop-01/anchor.md",
+    "png": {
+      "ref": {
+        "assetId": "img_fd7b248f7a25498a996b45440edaf7e6",
+        "contentHash": "7fea26dc22b2bb367a186d77479d7e9f05334cd4c3bf9280cdb709f94866b4c7"
+      },
+      "originalPath": "pa-images/img_fd7b248f7a25498a996b45440edaf7e6.png",
+      "inputHash": "7fea26dc22b2bb367a186d77479d7e9f05334cd4c3bf9280cdb709f94866b4c7"
+    },
+    "heic": {
+      "ref": {
+        "assetId": "img_091e5dfb46274ab4928b53a63069dc92",
+        "contentHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+      },
+      "originalPath": "pa-images/img_091e5dfb46274ab4928b53a63069dc92.heic",
+      "inputHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4"
+    },
+    "conversationId": "68a7f6b1-78eb-4a72-97e3-e14a25d6697a",
+    "writingVersionId": "writing_4a308dcfe6b7f8f9be65eb7be0247b3e043e18d84ed4f338",
+    "operationId": "save_4dd613a03f5e44fbbee7c59ac4d1358d"
+  },
+  "cleanup": {
+    "wrappers": [
+      {
+        "label": "deterministic-save-cancel",
+        "restored": true
+      },
+      {
+        "label": "configuration-write-guard",
+        "restored": true
+      }
+    ],
+    "leasesReleased": 4,
+    "activeConversation": "restored",
+    "noSharedServiceDisposed": true,
+    "noGlobalCacheClear": true
+  },
+  "host": {
+    "vault": "test",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2"
+  },
+  "updatedAt": "2026-09-06T10:15:56.898Z",
+  "error": "b129_smoke:retry_not_idempotent",
+  "finishedAt": "2026-09-06T10:15:56.898Z",
+  "passedCases": 8
+}

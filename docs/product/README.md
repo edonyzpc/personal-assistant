@@ -17,6 +17,7 @@
 - [Quiet Recall and Insight Timing](./specs/pa-quiet-recall-insight-timing-product-spec.md)
 - [Context Pager](./specs/pa-context-pager-product-spec.md)
 - [Context Management and Conversation Continuity](./specs/pa-context-management-product-spec.md)
+- [Multimodal Chat and Image Copywriting](./specs/pa-multimodal-chat-product-spec.md)
 - [Lightweight Graph Discovery](./specs/pa-lightweight-graph-discovery-product-spec.md)
 - [Scope Recap and Theme Summary](./specs/pa-scope-recap-theme-summary-product-spec.md)
 - [Retrieval Habit Profile](./specs/pa-retrieval-habit-profile-product-spec.md)

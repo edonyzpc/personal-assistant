@@ -1,0 +1,174 @@
+{
+  "kind": "b129-heic-core-check",
+  "runId": "desktop-02",
+  "createdAt": "2026-09-06T07:25:20.874Z",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+  "registry": {
+    "heic": {
+      "view": null,
+      "embed": false
+    },
+    "heif": {
+      "view": null,
+      "embed": false
+    },
+    "jpg": {
+      "view": "image",
+      "embed": true
+    },
+    "png": {
+      "view": "image",
+      "embed": true
+    }
+  },
+  "native": [
+    {
+      "path": "b129-p0-fixtures/chart-sips.heic",
+      "originalHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+      "sourceKind": "vault-resource",
+      "decoded": false,
+      "error": "image_error"
+    },
+    {
+      "path": "b129-p0-fixtures/chart-sips.heic",
+      "originalHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+      "sourceKind": "blob",
+      "decoded": false,
+      "error": "image_error"
+    },
+    {
+      "path": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+      "originalHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+      "sourceKind": "vault-resource",
+      "decoded": true,
+      "width": 480,
+      "height": 640
+    },
+    {
+      "path": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+      "originalHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+      "sourceKind": "blob",
+      "decoded": true,
+      "width": 480,
+      "height": 640
+    }
+  ],
+  "markdown": [
+    {
+      "text": "B-129 HEIC core comparisonHEIC wiki embed chart-sips.heicHEIC Markdown image chart-sips.heicJPEG controlzz",
+      "embeds": [
+        {
+          "src": "b129-p0-fixtures/chart-sips.heic",
+          "classes": "internal-embed file-embed mod-generic is-loaded",
+          "text": " chart-sips.heic"
+        },
+        {
+          "src": "b129-p0-fixtures/chart-sips.heic",
+          "classes": "internal-embed file-embed mod-generic is-loaded",
+          "text": " chart-sips.heic"
+        },
+        {
+          "src": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+          "classes": "internal-embed media-embed image-embed is-loaded no-hover-actions",
+          "text": ""
+        }
+      ],
+      "images": [
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": "app://005c7cf235470db64f919d8d5ec64bfc0deb/Users/edonyzpc/code/personal-assistant/test/b129-p0-fixtures/chart-exif-orientation-6.jpg?1788677715399",
+          "complete": true,
+          "width": 480,
+          "height": 640
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        }
+      ]
+    }
+  ],
+  "conversions": [],
+  "errors": [],
+  "notePath": "b129-heic-core-check/desktop-02/core-render.md",
+  "finishedAt": "2026-09-06T07:25:22.002Z"
+}

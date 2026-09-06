@@ -7,6 +7,7 @@
 | 目的 | 入口 | 权威范围 |
 | --- | --- | --- |
 | 理解 PA 要做什么 | [Product](./product/README.md) | 北极星、产品原则、当前 Product Spec 与已接受决策 |
+| 查多模态 Chat 与图文保存设计 | [B-129 Product Spec](./product/specs/pa-multimodal-chat-product-spec.md) / [DEC-030](./product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [Feature Home](./development/active/multimodal-chat/README.md) | 产品边界、技术设计与开发验证计划入口 |
 | 了解当前版本与方向 | [Development Roadmap](./development-roadmap.md) | 当前发布基线与候选主题 |
 | 查看尚未完成的事情 | [Backlog](./backlog.md) | 唯一未完成事项清单；已完成事项不留在这里 |
 | 记录/继续需求讨论 | [Discovery Registry](./development/discovery/README.md) | 跨会话需求、证据、选项与待决策项 |

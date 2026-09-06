@@ -1,0 +1,258 @@
+{
+  "kind": "b129-heic-core-check",
+  "runId": "ios-01",
+  "createdAt": "2026-09-06T07:28:06.470Z",
+  "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148  obsidian",
+  "registry": {
+    "heic": {
+      "view": null,
+      "embed": false
+    },
+    "heif": {
+      "view": null,
+      "embed": false
+    },
+    "jpg": {
+      "view": "image",
+      "embed": true
+    },
+    "png": {
+      "view": "image",
+      "embed": true
+    }
+  },
+  "native": [
+    {
+      "path": "b129-p0-fixtures/chart-sips.heic",
+      "originalHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+      "sourceKind": "vault-resource",
+      "decoded": true,
+      "width": 640,
+      "height": 480
+    },
+    {
+      "path": "b129-p0-fixtures/chart-sips.heic",
+      "originalHash": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+      "sourceKind": "blob",
+      "decoded": true,
+      "width": 640,
+      "height": 480
+    },
+    {
+      "path": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+      "originalHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+      "sourceKind": "vault-resource",
+      "decoded": true,
+      "width": 480,
+      "height": 640
+    },
+    {
+      "path": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+      "originalHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+      "sourceKind": "blob",
+      "decoded": true,
+      "width": 480,
+      "height": 640
+    }
+  ],
+  "markdown": [
+    {
+      "text": "B-129 HEIC core comparisonHEIC wiki embed chart-sips.heicHEIC Markdown image chart-sips.heicJPEG controlNative HEIC to JPEGcore-renderPropertiesAdd propertyB-129 HEIC core comparisonHEIC wiki embed chart-sips.heicHEIC Markdown image chart-sips.heicJPEG controlNative HEIC to JPEG",
+      "embeds": [
+        {
+          "src": "b129-p0-fixtures/chart-sips.heic",
+          "classes": "internal-embed file-embed mod-generic is-loaded",
+          "text": " chart-sips.heic"
+        },
+        {
+          "src": "b129-p0-fixtures/chart-sips.heic",
+          "classes": "internal-embed file-embed mod-generic is-loaded",
+          "text": " chart-sips.heic"
+        },
+        {
+          "src": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+          "classes": "internal-embed media-embed image-embed is-loaded no-hover-actions",
+          "text": ""
+        },
+        {
+          "src": "b129-heic-core-check/ios-01/converted-native.jpg",
+          "classes": "internal-embed media-embed image-embed is-loaded no-hover-actions",
+          "text": ""
+        },
+        {
+          "src": "b129-p0-fixtures/chart-sips.heic",
+          "classes": "internal-embed file-embed mod-generic is-loaded",
+          "text": " chart-sips.heic"
+        },
+        {
+          "src": "b129-p0-fixtures/chart-sips.heic",
+          "classes": "internal-embed file-embed mod-generic is-loaded",
+          "text": " chart-sips.heic"
+        },
+        {
+          "src": "b129-p0-fixtures/chart-exif-orientation-6.jpg",
+          "classes": "internal-embed media-embed image-embed is-loaded",
+          "text": ""
+        },
+        {
+          "src": "b129-heic-core-check/ios-01/converted-native.jpg",
+          "classes": "internal-embed media-embed image-embed is-loaded",
+          "text": ""
+        }
+      ],
+      "images": [
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": "capacitor://localhost/_capacitor_file_/private/var/mobile/Library/Mobile%20Documents/iCloud~md~obsidian/Documents/test/b129-p0-fixtures/chart-exif-orientation-6.jpg",
+          "complete": true,
+          "width": 480,
+          "height": 640
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": "capacitor://localhost/_capacitor_file_/private/var/mobile/Library/Mobile%20Documents/iCloud~md~obsidian/Documents/test/b129-heic-core-check/ios-01/converted-native.jpg",
+          "complete": true,
+          "width": 640,
+          "height": 480
+        },
+        {
+          "src": null,
+          "complete": true,
+          "width": 0,
+          "height": 0
+        },
+        {
+          "src": "capacitor://localhost/_capacitor_file_/private/var/mobile/Library/Mobile%20Documents/iCloud~md~obsidian/Documents/test/b129-p0-fixtures/chart-exif-orientation-6.jpg",
+          "complete": true,
+          "width": 480,
+          "height": 640
+        },
+        {
+          "src": "capacitor://localhost/_capacitor_file_/private/var/mobile/Library/Mobile%20Documents/iCloud~md~obsidian/Documents/test/b129-heic-core-check/ios-01/converted-native.jpg",
+          "complete": true,
+          "width": 640,
+          "height": 480
+        }
+      ]
+    }
+  ],
+  "conversions": [
+    {
+      "path": "b129-p0-fixtures/chart-sips.heic",
+      "output": "b129-heic-core-check/ios-01/converted-native.jpg",
+      "bytes": 47072,
+      "type": "image/jpeg",
+      "sha256": "bb50ec63b4d1ab3d9cb73b1264be6240bd0c40c9f33ad7dc1f86d9f3b01acbf6",
+      "originalUnchanged": true
+    }
+  ],
+  "errors": [],
+  "notePath": "b129-heic-core-check/ios-01/core-render.md",
+  "finishedAt": "2026-09-06T07:28:07.103Z"
+}

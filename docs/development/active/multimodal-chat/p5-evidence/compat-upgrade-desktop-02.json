@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "runner": "b129-governance-upgrade-smoke",
+  "runId": "desktop-upgrade-02",
+  "state": "safely_refused",
+  "startedAt": "2026-09-06T13:23:21.075Z",
+  "events": [
+    {
+      "kind": "preflight_complete",
+      "at": "2026-09-06T13:23:21.085Z",
+      "elapsedMs": 9.600000023841858
+    },
+    {
+      "kind": "public_upgrade_called",
+      "at": "2026-09-06T13:23:21.085Z",
+      "elapsedMs": 9.899999976158142,
+      "callCount": 1
+    },
+    {
+      "kind": "public_upgrade_resolved",
+      "at": "2026-09-06T13:23:21.093Z",
+      "elapsedMs": 18,
+      "ok": false
+    }
+  ],
+  "checks": {
+    "exactLoadedBuild": true,
+    "onePublicAction": true,
+    "fullRawProfileUnchanged": true,
+    "compatibilityFieldsUnchanged": true,
+    "leaseAcrossActualCommit": false,
+    "originalMigrationIdentityRetained": true,
+    "rollbackDeadlineNotExtended": true,
+    "refusalGovernanceUnchanged": true
+  },
+  "cleanup": [
+    {
+      "label": "reader.acquireReadLease",
+      "restored": true
+    },
+    {
+      "label": "reader.acquireReadLease",
+      "restored": true
+    },
+    {
+      "label": "plugin.getMemoryUpgradeStatusMessage",
+      "restored": true
+    },
+    {
+      "label": "repository.transact",
+      "restored": true
+    },
+    {
+      "label": "plugin.createExistingUserProfileReader",
+      "restored": true
+    }
+  ],
+  "scope": {
+    "publicEntry": "checkAndUpgradeMemoryGovernance",
+    "sourceContentStored": false,
+    "manufacturedRecords": false,
+    "providerInvokedByRunner": false,
+    "settingsModifiedByRunner": false,
+    "uiInteractionPerformedByRunner": false,
+    "transactionGuarantee": "governance mappings/reader atomic; other sources final-rechecked, not a cross-storage atomic transaction",
+    "absence": "confirmed missing Profile is not replaced by an invented empty database",
+    "timeout": "bounded readonly probes; an initiated public action is awaited to its actual terminal state"
+  },
+  "host": {
+    "vault": "test",
+    "mobileFlag": false,
+    "vaultPath": "/Users/edonyzpc/code/personal-assistant/test"
+  },
+  "identity": {
+    "loadedPluginArtifactSha256": "aa9cb8e11e01cb6d7a3243419003ce08f1ff14e7eaf084b0873c72f8da93cbdb",
+    "capturedAtPluginLoad": "2026-09-06T13:22:27.267Z",
+    "identitySource": "plugin-onload-cached-main-js"
+  },
+  "before": {
+    "profile": {
+      "state": "ready",
+      "scopeSha256": "defba475e727b297875508943f8af96e74701ed2444278574dc7950e0a46d502",
+      "entryPresent": true,
+      "fullRawEntrySha256": "74500e8c40c749cd2afbeda403fc5458a4c6e9ac3d7cba01f124e9f52fe24c9b",
+      "records": 16,
+      "conversationCount": 9,
+      "hashScope": "entire raw IndexedDB profile/latest entry; canonical keys, no filtering or sanitization"
+    },
+    "compatibilityFieldsSha256": "d58832ba98795e5a20fd94ae0503acff90abfe3d5269e0c04b13d7c1180b276c",
+    "governance": {
+      "commitSequence": 413,
+      "scopedStateSha256": "4be787e0f83df9f1fb02b1d19b479596ee83fea3cd5b75bb857dd36501d6b696",
+      "mode": "legacy_threshold",
+      "reader": "legacy",
+      "phase": "compatibility",
+      "migrationIdentitySha256": "1ee9d7d7cf0ae90dc129161c7b6fc8435c87681bee560092cbc2c38bbc1bad55",
+      "rollbackExpiresAt": "2026-07-18T08:37:41.608Z",
+      "policySha256": "28bdf2b2129005ebff4cfcf8b645d2b7039770437e7907f8c70df6638d271fa7",
+      "migrationSha256": "7f896d4bf36cf440383c86ae52e300eb475d37243d9945f37e21cb2c2f6a082f",
+      "claims": {
+        "sha256": "aa72700f0111145fb323f096614688cf9421e279cca957ae45ccb0389380dc23",
+        "count": 1
+      },
+      "revisions": {
+        "sha256": "7171d9f846cf9b4ce8ccca0fa99483e898b3a02c50aa72f627dc05e839a2cb20",
+        "count": 1
+      },
+      "links": {
+        "sha256": "fd829d20fe94e0933b7d0bcb5b0098e2a1dd00e985fa0e15263392544c5171cf",
+        "count": 1
+      },
+      "pending": {
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "suppression": {
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "rollback": {
+        "sha256": "227c1a26c996f15a74a3a53292212e3654a54d81826cb0502809f80ff454c0a8",
+        "count": 5
+      },
+      "deltas": {
+        "sha256": "4c94982c50b82c5900b4e109abd638d4a9c3a23d93f3a197ba8d8453c0b6fbf7",
+        "count": 4
+      }
+    },
+    "displayedMode": "legacy_threshold"
+  },
+  "trigger": "call",
+  "refusalReason": "legacy_projection_mismatch",
+  "publicResult": {
+    "ok": false,
+    "message": "Not upgraded. The complete old profile, its saved copies, or recovery evidence do not match. Existing data and mode are unchanged."
+  },
+  "callCount": 1,
+  "after": {
+    "profile": {
+      "state": "ready",
+      "scopeSha256": "defba475e727b297875508943f8af96e74701ed2444278574dc7950e0a46d502",
+      "entryPresent": true,
+      "fullRawEntrySha256": "74500e8c40c749cd2afbeda403fc5458a4c6e9ac3d7cba01f124e9f52fe24c9b",
+      "records": 16,
+      "conversationCount": 9,
+      "hashScope": "entire raw IndexedDB profile/latest entry; canonical keys, no filtering or sanitization"
+    },
+    "compatibilityFieldsSha256": "d58832ba98795e5a20fd94ae0503acff90abfe3d5269e0c04b13d7c1180b276c",
+    "governance": {
+      "commitSequence": 413,
+      "scopedStateSha256": "4be787e0f83df9f1fb02b1d19b479596ee83fea3cd5b75bb857dd36501d6b696",
+      "mode": "legacy_threshold",
+      "reader": "legacy",
+      "phase": "compatibility",
+      "migrationIdentitySha256": "1ee9d7d7cf0ae90dc129161c7b6fc8435c87681bee560092cbc2c38bbc1bad55",
+      "rollbackExpiresAt": "2026-07-18T08:37:41.608Z",
+      "policySha256": "28bdf2b2129005ebff4cfcf8b645d2b7039770437e7907f8c70df6638d271fa7",
+      "migrationSha256": "7f896d4bf36cf440383c86ae52e300eb475d37243d9945f37e21cb2c2f6a082f",
+      "claims": {
+        "sha256": "aa72700f0111145fb323f096614688cf9421e279cca957ae45ccb0389380dc23",
+        "count": 1
+      },
+      "revisions": {
+        "sha256": "7171d9f846cf9b4ce8ccca0fa99483e898b3a02c50aa72f627dc05e839a2cb20",
+        "count": 1
+      },
+      "links": {
+        "sha256": "fd829d20fe94e0933b7d0bcb5b0098e2a1dd00e985fa0e15263392544c5171cf",
+        "count": 1
+      },
+      "pending": {
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "suppression": {
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "rollback": {
+        "sha256": "227c1a26c996f15a74a3a53292212e3654a54d81826cb0502809f80ff454c0a8",
+        "count": 5
+      },
+      "deltas": {
+        "sha256": "4c94982c50b82c5900b4e109abd638d4a9c3a23d93f3a197ba8d8453c0b6fbf7",
+        "count": 4
+      }
+    },
+    "displayedMode": "legacy_threshold"
+  },
+  "finalIdentity": {
+    "loadedPluginArtifactSha256": "aa9cb8e11e01cb6d7a3243419003ce08f1ff14e7eaf084b0873c72f8da93cbdb",
+    "capturedAtPluginLoad": "2026-09-06T13:22:27.267Z",
+    "identitySource": "plugin-onload-cached-main-js"
+  },
+  "observedDrafts": [],
+  "leaseEvidence": "no_guarded_commit_observed",
+  "observersRestored": true,
+  "finishedAt": "2026-09-06T13:23:21.096Z",
+  "elapsedMs": 21,
+  "receiptPath": "b129-governance-upgrade/desktop-upgrade-02/receipt.json"
+}

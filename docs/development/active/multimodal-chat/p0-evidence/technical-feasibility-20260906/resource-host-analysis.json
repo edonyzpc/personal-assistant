@@ -1,0 +1,3432 @@
+{
+  "kind": "b129.p0.host-resource-analysis",
+  "schemaVersion": 2,
+  "scope": "P0 final resource/default calibration on the measured Desktop and iPhone; no production integration or universal safety claim",
+  "evidence": {
+    "desktopImages": {
+      "path": "desktop-test-vault/b129-p0-resources/desktop-resource-01/checkpoint.json",
+      "sha256": "62b4adf859b574160a4991bd3a5a19afb8045fde386e456e2909a415d58368e1",
+      "status": "completed",
+      "cases": 34,
+      "errors": [],
+      "startedAt": "2026-09-06T08:07:35.600Z",
+      "finishedAt": "2026-09-06T08:08:00.099Z",
+      "resources": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "originals": [
+        {
+          "name": "resource-12mp.jpg",
+          "beforeHash": "e7a22086975144b32cd3fe308608b57a99ee040e9d7a7e6cda9d460745c1bbca",
+          "afterHash": "e7a22086975144b32cd3fe308608b57a99ee040e9d7a7e6cda9d460745c1bbca",
+          "unchanged": true
+        },
+        {
+          "name": "resource-24mp.jpg",
+          "beforeHash": "46cd73a050a8e24fee4790ff6d5c028471bedd1840a57702b6cf118b6770532b",
+          "afterHash": "46cd73a050a8e24fee4790ff6d5c028471bedd1840a57702b6cf118b6770532b",
+          "unchanged": true
+        },
+        {
+          "name": "resource-48mp.jpg",
+          "beforeHash": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "afterHash": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "unchanged": true
+        },
+        {
+          "name": "chart-exif-orientation-6.jpg",
+          "beforeHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+          "afterHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+          "unchanged": true
+        }
+      ]
+    },
+    "desktopCacheLifecycle": {
+      "path": "desktop-test-vault/b129-p0-resources/desktop-resource-02/checkpoint.json",
+      "sha256": "cd90a8dcf8bb7d1754992b3fa40a65f376e4c4755b5bf25f54d9d0c19e591233",
+      "status": "completed",
+      "cases": 6,
+      "errors": [],
+      "startedAt": "2026-09-06T08:11:16.199Z",
+      "finishedAt": "2026-09-06T08:11:18.998Z",
+      "resources": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "originals": [
+        {
+          "name": "chart-exif-orientation-6.jpg",
+          "beforeHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+          "afterHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+          "unchanged": true
+        }
+      ]
+    },
+    "ios": {
+      "path": "ios-test-vault/b129-p0-resources/ios-full-01-resources/checkpoint.json",
+      "sha256": "89707ab09e14d748d3aaf5a695619a6183715731ee14b6482024d008b031c837",
+      "status": "completed",
+      "cases": 34,
+      "errors": [],
+      "startedAt": "2026-09-06T08:12:47.824Z",
+      "finishedAt": "2026-09-06T08:12:56.208Z",
+      "resources": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "originals": [
+        {
+          "name": "resource-12mp.jpg",
+          "beforeHash": "e7a22086975144b32cd3fe308608b57a99ee040e9d7a7e6cda9d460745c1bbca",
+          "afterHash": "e7a22086975144b32cd3fe308608b57a99ee040e9d7a7e6cda9d460745c1bbca",
+          "unchanged": true
+        },
+        {
+          "name": "resource-24mp.jpg",
+          "beforeHash": "46cd73a050a8e24fee4790ff6d5c028471bedd1840a57702b6cf118b6770532b",
+          "afterHash": "46cd73a050a8e24fee4790ff6d5c028471bedd1840a57702b6cf118b6770532b",
+          "unchanged": true
+        },
+        {
+          "name": "resource-48mp.jpg",
+          "beforeHash": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "afterHash": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "unchanged": true
+        },
+        {
+          "name": "chart-exif-orientation-6.jpg",
+          "beforeHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+          "afterHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+          "unchanged": true
+        }
+      ]
+    }
+  },
+  "desktop01SupersededClaims": [
+    "cache persisted LRU/hash now proven by Desktop02",
+    "timeout late callback observation now proven by Desktop02"
+  ],
+  "imageRows": [
+    {
+      "label": "image-12mp-1536-q0.8",
+      "mp": 12,
+      "edge": 1536,
+      "quality": 0.8,
+      "desktopOutputBytes": 205024,
+      "iosOutputBytes": 375719,
+      "desktopCaseMs": 1144,
+      "iosCaseMs": 96,
+      "iosDesktopByteRatio": 1.833
+    },
+    {
+      "label": "image-12mp-1536-q0.9",
+      "mp": 12,
+      "edge": 1536,
+      "quality": 0.9,
+      "desktopOutputBytes": 254622,
+      "iosOutputBytes": 432385,
+      "desktopCaseMs": 1125,
+      "iosCaseMs": 92,
+      "iosDesktopByteRatio": 1.698
+    },
+    {
+      "label": "image-12mp-2048-q0.8",
+      "mp": 12,
+      "edge": 2048,
+      "quality": 0.8,
+      "desktopOutputBytes": 289020,
+      "iosOutputBytes": 531289,
+      "desktopCaseMs": 1124,
+      "iosCaseMs": 107,
+      "iosDesktopByteRatio": 1.838
+    },
+    {
+      "label": "image-12mp-2048-q0.9",
+      "mp": 12,
+      "edge": 2048,
+      "quality": 0.9,
+      "desktopOutputBytes": 354234,
+      "iosOutputBytes": 611775,
+      "desktopCaseMs": 1079,
+      "iosCaseMs": 104,
+      "iosDesktopByteRatio": 1.727
+    },
+    {
+      "label": "image-12mp-3072-q0.8",
+      "mp": 12,
+      "edge": 3072,
+      "quality": 0.8,
+      "desktopOutputBytes": 474018,
+      "iosOutputBytes": 872819,
+      "desktopCaseMs": 1129,
+      "iosCaseMs": 126,
+      "iosDesktopByteRatio": 1.841
+    },
+    {
+      "label": "image-12mp-3072-q0.9",
+      "mp": 12,
+      "edge": 3072,
+      "quality": 0.9,
+      "desktopOutputBytes": 574666,
+      "iosOutputBytes": 995996,
+      "desktopCaseMs": 1112,
+      "iosCaseMs": 138,
+      "iosDesktopByteRatio": 1.733
+    },
+    {
+      "label": "image-24mp-1536-q0.8",
+      "mp": 24,
+      "edge": 1536,
+      "quality": 0.8,
+      "desktopOutputBytes": 246398,
+      "iosOutputBytes": 439589,
+      "desktopCaseMs": 1164,
+      "iosCaseMs": 103,
+      "iosDesktopByteRatio": 1.784
+    },
+    {
+      "label": "image-24mp-1536-q0.9",
+      "mp": 24,
+      "edge": 1536,
+      "quality": 0.9,
+      "desktopOutputBytes": 310583,
+      "iosOutputBytes": 507362,
+      "desktopCaseMs": 1167,
+      "iosCaseMs": 105,
+      "iosDesktopByteRatio": 1.634
+    },
+    {
+      "label": "image-24mp-2048-q0.8",
+      "mp": 24,
+      "edge": 2048,
+      "quality": 0.8,
+      "desktopOutputBytes": 351715,
+      "iosOutputBytes": 628268,
+      "desktopCaseMs": 1184,
+      "iosCaseMs": 120,
+      "iosDesktopByteRatio": 1.786
+    },
+    {
+      "label": "image-24mp-2048-q0.9",
+      "mp": 24,
+      "edge": 2048,
+      "quality": 0.9,
+      "desktopOutputBytes": 439220,
+      "iosOutputBytes": 729266,
+      "desktopCaseMs": 532,
+      "iosCaseMs": 114,
+      "iosDesktopByteRatio": 1.66
+    },
+    {
+      "label": "image-24mp-3072-q0.8",
+      "mp": 24,
+      "edge": 3072,
+      "quality": 0.8,
+      "desktopOutputBytes": 574043,
+      "iosOutputBytes": 1056223,
+      "desktopCaseMs": 341,
+      "iosCaseMs": 166,
+      "iosDesktopByteRatio": 1.84
+    },
+    {
+      "label": "image-24mp-3072-q0.9",
+      "mp": 24,
+      "edge": 3072,
+      "quality": 0.9,
+      "desktopOutputBytes": 704448,
+      "iosOutputBytes": 1214886,
+      "desktopCaseMs": 150,
+      "iosCaseMs": 157,
+      "iosDesktopByteRatio": 1.725
+    },
+    {
+      "label": "image-48mp-1536-q0.8",
+      "mp": 48,
+      "edge": 1536,
+      "quality": 0.8,
+      "desktopOutputBytes": 313062,
+      "iosOutputBytes": 587469,
+      "desktopCaseMs": 146,
+      "iosCaseMs": 154,
+      "iosDesktopByteRatio": 1.877
+    },
+    {
+      "label": "image-48mp-1536-q0.9",
+      "mp": 48,
+      "edge": 1536,
+      "quality": 0.9,
+      "desktopOutputBytes": 394609,
+      "iosOutputBytes": 681731,
+      "desktopCaseMs": 133,
+      "iosCaseMs": 149,
+      "iosDesktopByteRatio": 1.728
+    },
+    {
+      "label": "image-48mp-2048-q0.8",
+      "mp": 48,
+      "edge": 2048,
+      "quality": 0.8,
+      "desktopOutputBytes": 485281,
+      "iosOutputBytes": 873225,
+      "desktopCaseMs": 290,
+      "iosCaseMs": 165,
+      "iosDesktopByteRatio": 1.799
+    },
+    {
+      "label": "image-48mp-2048-q0.9",
+      "mp": 48,
+      "edge": 2048,
+      "quality": 0.9,
+      "desktopOutputBytes": 614505,
+      "iosOutputBytes": 1009649,
+      "desktopCaseMs": 259,
+      "iosCaseMs": 173,
+      "iosDesktopByteRatio": 1.643
+    },
+    {
+      "label": "image-48mp-3072-q0.8",
+      "mp": 48,
+      "edge": 3072,
+      "quality": 0.8,
+      "desktopOutputBytes": 790154,
+      "iosOutputBytes": 1434740,
+      "desktopCaseMs": 327,
+      "iosCaseMs": 207,
+      "iosDesktopByteRatio": 1.816
+    },
+    {
+      "label": "image-48mp-3072-q0.9",
+      "mp": 48,
+      "edge": 3072,
+      "quality": 0.9,
+      "desktopOutputBytes": 981423,
+      "iosOutputBytes": 1652128,
+      "desktopCaseMs": 308,
+      "iosCaseMs": 199,
+      "iosDesktopByteRatio": 1.683
+    }
+  ],
+  "batches": {
+    "desktop": [
+      {
+        "label": "serial-1-images",
+        "count": 1,
+        "totalBytes": 354234,
+        "elapsedMs": 51,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          }
+        ]
+      },
+      {
+        "label": "serial-2-images",
+        "count": 2,
+        "totalBytes": 708468,
+        "elapsedMs": 87,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 33
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 34
+          }
+        ]
+      },
+      {
+        "label": "serial-4-images",
+        "count": 4,
+        "totalBytes": 1416936,
+        "elapsedMs": 166,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 33
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 36
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 36
+          }
+        ]
+      },
+      {
+        "label": "serial-8-images",
+        "count": 8,
+        "totalBytes": 2833872,
+        "elapsedMs": 342,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 36
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 31
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 68
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 30
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 30
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 354234,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          }
+        ]
+      }
+    ],
+    "ios": [
+      {
+        "label": "serial-1-images",
+        "count": 1,
+        "totalBytes": 611775,
+        "elapsedMs": 49,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 37
+          }
+        ]
+      },
+      {
+        "label": "serial-2-images",
+        "count": 2,
+        "totalBytes": 1223550,
+        "elapsedMs": 141,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 37
+          }
+        ]
+      },
+      {
+        "label": "serial-4-images",
+        "count": 4,
+        "totalBytes": 2447100,
+        "elapsedMs": 322,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 36
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 36
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 37
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          }
+        ]
+      },
+      {
+        "label": "serial-8-images",
+        "count": 8,
+        "totalBytes": 4894200,
+        "elapsedMs": 679,
+        "reports": [
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 34
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 34
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 35
+          },
+          {
+            "decodedWidth": 4000,
+            "decodedHeight": 3000,
+            "outputWidth": 2048,
+            "outputHeight": 1536,
+            "outputBytes": 611775,
+            "mime": "image/jpeg",
+            "elapsedMs": 37
+          }
+        ]
+      }
+    ]
+  },
+  "encodedByteCases": {
+    "desktop": [
+      {
+        "label": "encoded-1mib",
+        "encodedBytes": 1048576,
+        "outputBytes": 32715,
+        "elapsedMs": 21,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      },
+      {
+        "label": "encoded-5mib",
+        "encodedBytes": 5242880,
+        "outputBytes": 32715,
+        "elapsedMs": 23,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      },
+      {
+        "label": "encoded-10mib",
+        "encodedBytes": 10485760,
+        "outputBytes": 32715,
+        "elapsedMs": 22,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      },
+      {
+        "label": "encoded-20mib",
+        "encodedBytes": 20971520,
+        "outputBytes": 32715,
+        "elapsedMs": 73,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      }
+    ],
+    "ios": [
+      {
+        "label": "encoded-1mib",
+        "encodedBytes": 1048576,
+        "outputBytes": 46759,
+        "elapsedMs": 8,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      },
+      {
+        "label": "encoded-5mib",
+        "encodedBytes": 5242880,
+        "outputBytes": 46759,
+        "elapsedMs": 9,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      },
+      {
+        "label": "encoded-10mib",
+        "encodedBytes": 10485760,
+        "outputBytes": 46759,
+        "elapsedMs": 13,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      },
+      {
+        "label": "encoded-20mib",
+        "encodedBytes": 20971520,
+        "outputBytes": 46759,
+        "elapsedMs": 22,
+        "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy"
+      }
+    ]
+  },
+  "cache": {
+    "desktop": [
+      {
+        "capacityMiB": 64,
+        "elapsedMs": 395,
+        "realQuotaExceeded": false,
+        "databaseDeleted": true,
+        "leaseSurvivedClear": true,
+        "persistedSnapshot": {
+          "ids": [
+            "variant-0",
+            "variant-10",
+            "variant-11",
+            "variant-12",
+            "variant-13",
+            "variant-14",
+            "variant-15",
+            "variant-16",
+            "variant-17",
+            "variant-3",
+            "variant-4",
+            "variant-5",
+            "variant-6",
+            "variant-7",
+            "variant-8",
+            "variant-9"
+          ],
+          "count": 16,
+          "blobBytes": 67108864,
+          "writeHash": "108ddb2fa78490dcf6cf06c8f3e1a7c5fd18a94aab85db945a460872016a4f58",
+          "reopenedHash": "108ddb2fa78490dcf6cf06c8f3e1a7c5fd18a94aab85db945a460872016a4f58",
+          "persistedKeysMatch": true,
+          "persistedCapacityMatch": true,
+          "persistedHashMatch": true
+        },
+        "estimateBefore": {
+          "quota": 55020094944,
+          "usage": 153130464,
+          "usageDetails": {
+            "fileSystem": 143030054,
+            "indexedDB": 10100410
+          }
+        },
+        "estimateAfter": {
+          "quota": 55020054492,
+          "usage": 220268508,
+          "usageDetails": {
+            "fileSystem": 143030054,
+            "indexedDB": 77238454
+          }
+        }
+      },
+      {
+        "capacityMiB": 128,
+        "elapsedMs": 700,
+        "realQuotaExceeded": false,
+        "databaseDeleted": true,
+        "leaseSurvivedClear": true,
+        "persistedSnapshot": {
+          "ids": [
+            "variant-0",
+            "variant-10",
+            "variant-11",
+            "variant-12",
+            "variant-13",
+            "variant-14",
+            "variant-15",
+            "variant-16",
+            "variant-17",
+            "variant-18",
+            "variant-19",
+            "variant-20",
+            "variant-21",
+            "variant-22",
+            "variant-23",
+            "variant-24",
+            "variant-25",
+            "variant-26",
+            "variant-27",
+            "variant-28",
+            "variant-29",
+            "variant-3",
+            "variant-30",
+            "variant-31",
+            "variant-32",
+            "variant-33",
+            "variant-4",
+            "variant-5",
+            "variant-6",
+            "variant-7",
+            "variant-8",
+            "variant-9"
+          ],
+          "count": 32,
+          "blobBytes": 134217728,
+          "writeHash": "912e94f10448c2adc9d5699d350d5f52cb51317483002eb51395ee8a92e30e1f",
+          "reopenedHash": "912e94f10448c2adc9d5699d350d5f52cb51317483002eb51395ee8a92e30e1f",
+          "persistedKeysMatch": true,
+          "persistedCapacityMatch": true,
+          "persistedHashMatch": true
+        },
+        "estimateBefore": {
+          "quota": 55020049446,
+          "usage": 220193830,
+          "usageDetails": {
+            "fileSystem": 143030054,
+            "indexedDB": 77163776
+          }
+        },
+        "estimateAfter": {
+          "quota": 55020046929,
+          "usage": 354466385,
+          "usageDetails": {
+            "fileSystem": 143030054,
+            "indexedDB": 211436331
+          }
+        }
+      },
+      {
+        "capacityMiB": 256,
+        "elapsedMs": 1243,
+        "realQuotaExceeded": false,
+        "databaseDeleted": true,
+        "leaseSurvivedClear": true,
+        "persistedSnapshot": {
+          "ids": [
+            "variant-0",
+            "variant-10",
+            "variant-11",
+            "variant-12",
+            "variant-13",
+            "variant-14",
+            "variant-15",
+            "variant-16",
+            "variant-17",
+            "variant-18",
+            "variant-19",
+            "variant-20",
+            "variant-21",
+            "variant-22",
+            "variant-23",
+            "variant-24",
+            "variant-25",
+            "variant-26",
+            "variant-27",
+            "variant-28",
+            "variant-29",
+            "variant-3",
+            "variant-30",
+            "variant-31",
+            "variant-32",
+            "variant-33",
+            "variant-34",
+            "variant-35",
+            "variant-36",
+            "variant-37",
+            "variant-38",
+            "variant-39",
+            "variant-4",
+            "variant-40",
+            "variant-41",
+            "variant-42",
+            "variant-43",
+            "variant-44",
+            "variant-45",
+            "variant-46",
+            "variant-47",
+            "variant-48",
+            "variant-49",
+            "variant-5",
+            "variant-50",
+            "variant-51",
+            "variant-52",
+            "variant-53",
+            "variant-54",
+            "variant-55",
+            "variant-56",
+            "variant-57",
+            "variant-58",
+            "variant-59",
+            "variant-6",
+            "variant-60",
+            "variant-61",
+            "variant-62",
+            "variant-63",
+            "variant-64",
+            "variant-65",
+            "variant-7",
+            "variant-8",
+            "variant-9"
+          ],
+          "count": 64,
+          "blobBytes": 268435456,
+          "writeHash": "a5067583752d593195d28add6c3b5318c96bddadba18cf12f7dc3084819a387b",
+          "reopenedHash": "a5067583752d593195d28add6c3b5318c96bddadba18cf12f7dc3084819a387b",
+          "persistedKeysMatch": true,
+          "persistedCapacityMatch": true,
+          "persistedHashMatch": true
+        },
+        "estimateBefore": {
+          "quota": 55020036755,
+          "usage": 354427539,
+          "usageDetails": {
+            "fileSystem": 143030054,
+            "indexedDB": 211397485
+          }
+        },
+        "estimateAfter": {
+          "quota": 55019994264,
+          "usage": 622967960,
+          "usageDetails": {
+            "fileSystem": 143030054,
+            "indexedDB": 479937906
+          }
+        }
+      }
+    ],
+    "ios": [
+      {
+        "capacityMiB": 64,
+        "elapsedMs": 333,
+        "realQuotaExceeded": false,
+        "databaseDeleted": true,
+        "leaseSurvivedClear": true,
+        "persistedSnapshot": {
+          "ids": [
+            "variant-0",
+            "variant-10",
+            "variant-11",
+            "variant-12",
+            "variant-13",
+            "variant-14",
+            "variant-15",
+            "variant-16",
+            "variant-17",
+            "variant-3",
+            "variant-4",
+            "variant-5",
+            "variant-6",
+            "variant-7",
+            "variant-8",
+            "variant-9"
+          ],
+          "count": 16,
+          "blobBytes": 67108864,
+          "writeHash": "9c6847bb0a3725dfa60f45771e2e2185acba2477eca1a36de76033e593cd587b",
+          "reopenedHash": "9c6847bb0a3725dfa60f45771e2e2185acba2477eca1a36de76033e593cd587b",
+          "persistedKeysMatch": true,
+          "persistedCapacityMatch": true,
+          "persistedHashMatch": true
+        },
+        "estimateBefore": {
+          "quota": 10307921511,
+          "usage": 90893503
+        },
+        "estimateAfter": {
+          "quota": 10307921511,
+          "usage": 90900987
+        }
+      },
+      {
+        "capacityMiB": 128,
+        "elapsedMs": 651,
+        "realQuotaExceeded": false,
+        "databaseDeleted": true,
+        "leaseSurvivedClear": true,
+        "persistedSnapshot": {
+          "ids": [
+            "variant-0",
+            "variant-10",
+            "variant-11",
+            "variant-12",
+            "variant-13",
+            "variant-14",
+            "variant-15",
+            "variant-16",
+            "variant-17",
+            "variant-18",
+            "variant-19",
+            "variant-20",
+            "variant-21",
+            "variant-22",
+            "variant-23",
+            "variant-24",
+            "variant-25",
+            "variant-26",
+            "variant-27",
+            "variant-28",
+            "variant-29",
+            "variant-3",
+            "variant-30",
+            "variant-31",
+            "variant-32",
+            "variant-33",
+            "variant-4",
+            "variant-5",
+            "variant-6",
+            "variant-7",
+            "variant-8",
+            "variant-9"
+          ],
+          "count": 32,
+          "blobBytes": 134217728,
+          "writeHash": "593aec5c0bf9e9878813c86e9b452532f891d6d416fb082f03bfc0a06cefe3ae",
+          "reopenedHash": "593aec5c0bf9e9878813c86e9b452532f891d6d416fb082f03bfc0a06cefe3ae",
+          "persistedKeysMatch": true,
+          "persistedCapacityMatch": true,
+          "persistedHashMatch": true
+        },
+        "estimateBefore": {
+          "quota": 10307921511,
+          "usage": 90901103
+        },
+        "estimateAfter": {
+          "quota": 10307921511,
+          "usage": 90915083
+        }
+      },
+      {
+        "capacityMiB": 256,
+        "elapsedMs": 1032,
+        "realQuotaExceeded": false,
+        "databaseDeleted": true,
+        "leaseSurvivedClear": true,
+        "persistedSnapshot": {
+          "ids": [
+            "variant-0",
+            "variant-10",
+            "variant-11",
+            "variant-12",
+            "variant-13",
+            "variant-14",
+            "variant-15",
+            "variant-16",
+            "variant-17",
+            "variant-18",
+            "variant-19",
+            "variant-20",
+            "variant-21",
+            "variant-22",
+            "variant-23",
+            "variant-24",
+            "variant-25",
+            "variant-26",
+            "variant-27",
+            "variant-28",
+            "variant-29",
+            "variant-3",
+            "variant-30",
+            "variant-31",
+            "variant-32",
+            "variant-33",
+            "variant-34",
+            "variant-35",
+            "variant-36",
+            "variant-37",
+            "variant-38",
+            "variant-39",
+            "variant-4",
+            "variant-40",
+            "variant-41",
+            "variant-42",
+            "variant-43",
+            "variant-44",
+            "variant-45",
+            "variant-46",
+            "variant-47",
+            "variant-48",
+            "variant-49",
+            "variant-5",
+            "variant-50",
+            "variant-51",
+            "variant-52",
+            "variant-53",
+            "variant-54",
+            "variant-55",
+            "variant-56",
+            "variant-57",
+            "variant-58",
+            "variant-59",
+            "variant-6",
+            "variant-60",
+            "variant-61",
+            "variant-62",
+            "variant-63",
+            "variant-64",
+            "variant-65",
+            "variant-7",
+            "variant-8",
+            "variant-9"
+          ],
+          "count": 64,
+          "blobBytes": 268435456,
+          "writeHash": "e9c19149475f7d1c66f52b42adc56d7d34295b8e60f2745a6a438bdd080c93ba",
+          "reopenedHash": "e9c19149475f7d1c66f52b42adc56d7d34295b8e60f2745a6a438bdd080c93ba",
+          "persistedKeysMatch": true,
+          "persistedCapacityMatch": true,
+          "persistedHashMatch": true
+        },
+        "estimateBefore": {
+          "quota": 10307921511,
+          "usage": 90915199
+        },
+        "estimateAfter": {
+          "quota": 10307921511,
+          "usage": 90942171
+        }
+      }
+    ]
+  },
+  "lifecycle": {
+    "desktop": [
+      {
+        "label": "cancel-and-late-encode",
+        "status": "passed",
+        "faultInjection": "held actual Canvas result and cancelled before delivery",
+        "outcome": "cancelled",
+        "lateIgnored": true,
+        "elapsedMs": 49
+      },
+      {
+        "label": "timeout-and-late-encode",
+        "status": "passed",
+        "faultInjection": "held actual Canvas result; forced deadline; actual held callback replayed after timeout",
+        "outcome": "processing_timeout",
+        "lateCallbackObserved": true,
+        "lateCallbackReplayed": true,
+        "lateIgnored": true,
+        "cleanupBefore": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        },
+        "cleanupAfter": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        },
+        "elapsedMs": 115
+      },
+      {
+        "label": "admission-and-quota-failures",
+        "status": "passed",
+        "failures": [
+          {
+            "label": "file",
+            "error": "original_byte_budget"
+          },
+          {
+            "label": "pixels",
+            "error": "decoded_pixel_budget"
+          },
+          {
+            "label": "output",
+            "error": "variant_byte_budget"
+          },
+          {
+            "label": "count",
+            "error": "image_count_budget"
+          },
+          {
+            "label": "aggregate",
+            "error": "request_image_byte_budget"
+          }
+        ],
+        "quotaFaultInjected": true,
+        "actualQuotaExhaustion": false,
+        "storageWarning": "cache_not_retained",
+        "retainedMemoryBytes": 32715,
+        "draftUnchanged": true,
+        "scope": "independent state transition feasibility; production Chat draft integration is P1/P2",
+        "elapsedMs": 34
+      }
+    ],
+    "ios": [
+      {
+        "label": "cancel-and-late-encode",
+        "status": "passed",
+        "faultInjection": "held actual Canvas result and cancelled before delivery",
+        "outcome": "cancelled",
+        "lateIgnored": true,
+        "elapsedMs": 47
+      },
+      {
+        "label": "timeout-and-late-encode",
+        "status": "passed",
+        "faultInjection": "held actual Canvas result; forced deadline; actual held callback replayed after timeout",
+        "outcome": "processing_timeout",
+        "lateCallbackObserved": true,
+        "lateCallbackReplayed": true,
+        "lateIgnored": true,
+        "cleanupBefore": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        },
+        "cleanupAfter": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        },
+        "elapsedMs": 114
+      },
+      {
+        "label": "admission-and-quota-failures",
+        "status": "passed",
+        "failures": [
+          {
+            "label": "file",
+            "error": "original_byte_budget"
+          },
+          {
+            "label": "pixels",
+            "error": "decoded_pixel_budget"
+          },
+          {
+            "label": "output",
+            "error": "variant_byte_budget"
+          },
+          {
+            "label": "count",
+            "error": "image_count_budget"
+          },
+          {
+            "label": "aggregate",
+            "error": "request_image_byte_budget"
+          }
+        ],
+        "quotaFaultInjected": true,
+        "actualQuotaExhaustion": false,
+        "storageWarning": "cache_not_retained",
+        "retainedMemoryBytes": 46759,
+        "draftUnchanged": true,
+        "scope": "independent state transition feasibility; production Chat draft integration is P1/P2",
+        "elapsedMs": 52
+      }
+    ]
+  },
+  "smallText": {
+    "desktop": {
+      "label": "small-text-comparison",
+      "status": "passed",
+      "originalPath": "b129-p0-resources/desktop-resource-01/small-text-original.png",
+      "outputs": [
+        {
+          "edge": 1536,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 1536,
+          "outputHeight": 864,
+          "outputBytes": 26820,
+          "mime": "image/jpeg",
+          "elapsedMs": 23,
+          "path": "b129-p0-resources/desktop-resource-01/small-text-1536.jpg",
+          "sha256": "37650516fd32a5ccdbb59fa02a24a7ae3bb93c8aedc17f969c978fee119d3f7f"
+        },
+        {
+          "edge": 2048,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 2048,
+          "outputHeight": 1152,
+          "outputBytes": 45265,
+          "mime": "image/jpeg",
+          "elapsedMs": 25,
+          "path": "b129-p0-resources/desktop-resource-01/small-text-2048.jpg",
+          "sha256": "11e77761c981f98c19a13f9cc2bbeceef270be84c2e3832da0b5f5545f22df1d"
+        },
+        {
+          "edge": 3072,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 3072,
+          "outputHeight": 1728,
+          "outputBytes": 80158,
+          "mime": "image/jpeg",
+          "elapsedMs": 37,
+          "path": "b129-p0-resources/desktop-resource-01/small-text-3072.jpg",
+          "sha256": "5d28d0e348d6765901f3c8062787ef83b8696d4cc250c663373b7cd6c0022dd3"
+        },
+        {
+          "edge": 3200,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 3200,
+          "outputHeight": 1800,
+          "outputBytes": 88829,
+          "mime": "image/jpeg",
+          "elapsedMs": 68,
+          "path": "b129-p0-resources/desktop-resource-01/small-text-3200.jpg",
+          "sha256": "f9e35c0000e6f8250e9b60d22f42cb8cfde33cac0d854b09376c392e7905302b"
+        }
+      ],
+      "readable": "requires visual inspection at 1:1; no automatic pass claim",
+      "elapsedMs": 254,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 97519733,
+            "jsHeapBytes": 1138182434,
+            "processKiB": {
+              "private": 1563331,
+              "shared": 287712
+            }
+          },
+          {
+            "atMs": 97519836,
+            "jsHeapBytes": 1117166535,
+            "processKiB": {
+              "private": 1502371,
+              "shared": 293360
+            }
+          },
+          {
+            "atMs": 97519933,
+            "jsHeapBytes": 1117596620,
+            "processKiB": {
+              "private": 1479315,
+              "shared": 315888
+            }
+          },
+          {
+            "atMs": 97519980,
+            "jsHeapBytes": 1117596620,
+            "processKiB": {
+              "private": 1457523,
+              "shared": 315888
+            }
+          }
+        ],
+        "sampledMaxJSHeapBytes": 1138182434,
+        "sampledMaxProcessPrivateKiB": 1563331,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    "ios": {
+      "label": "small-text-comparison",
+      "status": "passed",
+      "originalPath": "b129-p0-resources/ios-full-01-resources/small-text-original.png",
+      "outputs": [
+        {
+          "edge": 1536,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 1536,
+          "outputHeight": 864,
+          "outputBytes": 42476,
+          "mime": "image/jpeg",
+          "elapsedMs": 20,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-1536.jpg",
+          "sha256": "f499a424849eec4e11b9081d0961d12eaa6de914853926ec286ecf87f90783fd"
+        },
+        {
+          "edge": 2048,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 2048,
+          "outputHeight": 1152,
+          "outputBytes": 67617,
+          "mime": "image/jpeg",
+          "elapsedMs": 26,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-2048.jpg",
+          "sha256": "8b433445dc1f57c01956f699758ec96bcaa10167f95c478bd14d3abdc29f921a"
+        },
+        {
+          "edge": 3072,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 3072,
+          "outputHeight": 1728,
+          "outputBytes": 131462,
+          "mime": "image/jpeg",
+          "elapsedMs": 44,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-3072.jpg",
+          "sha256": "7de50273e65625dc58076a7a24d81a1de1fcc16f90629e453e33cbde3e834546"
+        },
+        {
+          "edge": 3200,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 3200,
+          "outputHeight": 1800,
+          "outputBytes": 150736,
+          "mime": "image/jpeg",
+          "elapsedMs": 56,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-3200.jpg",
+          "sha256": "342faf1d95785912bbc99ce27b1f804ed9285d93915d5044681b1d90f1c53e02"
+        }
+      ],
+      "readable": "requires visual inspection at 1:1; no automatic pass claim",
+      "elapsedMs": 450,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4809818,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809921,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810024,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810160,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810263,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810268,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    }
+  },
+  "recommendations": {
+    "maxOriginalBytes": {
+      "value": 20971520,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "1/5/10/20 MiB padded-input ladder passed on both hosts; bound encoded input bytes, not all high-entropy photos."
+    },
+    "maxDecodedPixels": {
+      "value": 48000000,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "48 MP (8000x6000) single and eight serial cases at final 3200/.9 passed on both hosts; final iPhone timeline observed about 963 MB total from about 757 MB baseline, with one active decoder/canvas. This is an engineering admission ceiling for the measured path, not a universal safety threshold."
+    },
+    "maxImagesPerTurn": {
+      "value": 8,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "Eight serial 48 MP inputs pass at the final edge/quality; actual per-output and aggregate byte admission still applies."
+    },
+    "maxVariantBytes": {
+      "value": 4194304,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "Final largest observed iOS output 1,769,870 B fits 4 MiB; output budget rejects, rather than silently reducing quality indefinitely."
+    },
+    "maxRequestImageBytes": {
+      "value": 25165824,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "Final eight-image total is 14,158,960 B on iOS and 7,646,288 B on Desktop; both fit 24 MiB. Not every eight-image input is promised to fit."
+    },
+    "processingTimeoutMs": {
+      "value": 15000,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "Final single/eight durations are 162/789 ms iOS and 511/2335 ms Desktop; 15 s is an enforced conservative timeout. Real callback withholding/late replay tests prove cleanup paths, not universal latency."
+    },
+    "cacheMaxBytes": {
+      "value": 67108864,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "64 MiB is the smallest of three successful real IDB capacities on both hosts, with persisted key/count/Blob bytes/hash, lease, eviction and reopen verification. No evidence justifies default 128/256 MiB."
+    },
+    "maxPreviewEdge": {
+      "value": 1536,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "1536 is the smallest tested preview edge; previews are never used to claim fine-text readability."
+    },
+    "maxProviderEdge": {
+      "value": 3200,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "3200 replaces the earlier 2048 candidate after visual small-text comparison and final one/eight 48 MP resource confirmation. Source content above 3200 with tiny text remains a known readability boundary."
+    },
+    "jpegQuality": {
+      "value": 0.9,
+      "status": "final_engineering_default_for_measured_static_path",
+      "reason": "Use .9 as the tested higher-quality starting point; enforce actual encoded Blob bytes because host JPEG outputs differ."
+    }
+  },
+  "boundaries": [
+    "No universal device safety guarantee. The final iPhone timeline sampled 962,676,736 B total and retained about 68 MB above its own prior baseline after final GC; host/allocator/GC capacity contributions are not isolated.",
+    "One actual critical MemoryPressureEvent is retained. It is 67 seconds after the resource run and 0.320 seconds after visibilitychange while moving Obsidian to background. Official WebKit proactively releases critical memory on suspension; origin remains an inference, not an OS OOM claim or a fabricated no-pressure pass.",
+    "The final 3200/.9 one/eight-image confirmation uses a repeated synthetic 48 MP JPEG. Eight distinct high-entropy photos, HDR and large HEIC-specific decoder peaks are not certified by it.",
+    "Source images wider than 3200 with tiny text may lose readability. 3200 is the default provider edge, not a promise of arbitrary screenshot transcription. Formal HEIC JPEG export remains a separate rendering policy.",
+    "Safari samples inspected WebContent memory, not exact whole-device or allocation peaks. The single 162 ms iOS case had no in-window 0.5 s Memory sample; the eight-image case did.",
+    "JavaScript memory classification includes allocated GC block capacity and tracked extra/external memory, not only surviving objects; nonzero post-GC footprint alone does not establish a leak.",
+    "Actual browser quota exhaustion was not attempted or observed; injected QuotaExceeded tests are separately labeled. Cache cursor/count/hash prove logical persistence rather than exact OS disk or resident allocation.",
+    "Cache cleanup leaves originals and formal attachments untouched; four named source hashes and final 48 MP source hash were verified unchanged.",
+    "Production Chat draft preservation, integrated migration, provider behavior and real output-quality policy remain later-phase integration work; P0 demonstrates independent feasibility."
+  ],
+  "safariTimeline": {
+    "kind": "b129.p0.safari-memory-numeric-evidence",
+    "schemaVersion": 1,
+    "scope": "Safari Web Inspector memory instrument observing the real iPhone WKWebView while a synthetic full runner executes; sampled inspected-page footprint, not exact whole-device peak or image-only allocation",
+    "rawArtifactLocalOnly": "temporary-original-evidence/b129-ios-full-01-timeline.json",
+    "rawSHA256": "4af123434c6d7ee81150f1f39fe3c5b0ed0667e9d0289bde4adef920365cbb11",
+    "privacy": "Screenshots, request/response payloads, paths, targets, script bodies, stack traces and picker listings omitted. Do not copy raw export to repository.",
+    "clockMapping": {
+      "source": "https://github.com/WebKit/WebKit/blob/main/Source/WebInspectorUI/UserInterface/Models/ResourceTimelineRecord.js",
+      "verifiedSourceLine": 51,
+      "expression": "archiveStartTime = requestSentWalltime - timelineStartTime",
+      "archiveEpochOriginSeconds": 1788677687.2902162,
+      "originSpreadSeconds": 9.298324584960938e-06,
+      "resourceStartTimelineSeconds": 4680.53378367424,
+      "resourceEndTimelineSeconds": 4688.917783737183,
+      "performanceToTimelineOffsetRangeSeconds": [
+        -124.08221632575987,
+        -123.95221626281727
+      ],
+      "phaseAlignmentUncertaintySeconds": 0.13000006294259947
+    },
+    "observations": {
+      "memorySampleCount": 394,
+      "cpuSampleCount": 394,
+      "medianSamplingIntervalSeconds": 0.5048787083360367,
+      "maximumSampleGapSeconds": 0.506920000014361,
+      "observedMemoryPressureEventCount": 0,
+      "wholeRecordingPeak": {
+        "timelineSeconds": 4720.967132333317,
+        "totalBytes": 828196864,
+        "categoriesBytes": {
+          "javascript": 272936174,
+          "jit": 8929280,
+          "images": 0,
+          "layers": 0,
+          "page": 302275346,
+          "other": 244056064
+        }
+      },
+      "wholeRecordingPeakSecondsAfterResourceEnd": 32.04934859613422,
+      "preRun10To1Seconds": {
+        "rangeTimelineSeconds": [
+          4670.53378367424,
+          4679.53378367424
+        ],
+        "sampleCount": 18,
+        "minimumBytes": 373999616,
+        "medianBytes": 374048768.0,
+        "peakBytes": 374048768,
+        "peakTimelineSeconds": 4671.059859791654,
+        "peakCategoriesBytes": {
+          "javascript": 49813442,
+          "jit": 5619712,
+          "images": 0,
+          "layers": 0,
+          "page": 243494974,
+          "other": 75120640
+        },
+        "firstCategoriesBytes": {
+          "javascript": 49813442,
+          "jit": 5619712,
+          "images": 0,
+          "layers": 0,
+          "page": 243445822,
+          "other": 75120640
+        },
+        "lastCategoriesBytes": {
+          "javascript": 49813442,
+          "jit": 5619712,
+          "images": 0,
+          "layers": 0,
+          "page": 243494974,
+          "other": 75120640
+        }
+      },
+      "resourceRun": {
+        "rangeTimelineSeconds": [
+          4680.53378367424,
+          4688.917783737183
+        ],
+        "sampleCount": 17,
+        "minimumBytes": 516360192,
+        "medianBytes": 718587904,
+        "peakBytes": 813254656,
+        "peakTimelineSeconds": 4688.680486375,
+        "peakCategoriesBytes": {
+          "javascript": 268000322,
+          "jit": 6406144,
+          "images": 0,
+          "layers": 0,
+          "page": 295463870,
+          "other": 243384320
+        },
+        "firstCategoriesBytes": {
+          "javascript": 65059933,
+          "jit": 5750784,
+          "images": 0,
+          "layers": 0,
+          "page": 283937699,
+          "other": 161611776
+        },
+        "lastCategoriesBytes": {
+          "javascript": 268000322,
+          "jit": 6406144,
+          "images": 0,
+          "layers": 0,
+          "page": 295463870,
+          "other": 243384320
+        }
+      },
+      "postRun0To5Seconds": {
+        "rangeTimelineSeconds": [
+          4688.917783737183,
+          4693.917783737183
+        ],
+        "sampleCount": 10,
+        "minimumBytes": 788154368,
+        "medianBytes": 789325824.0,
+        "peakBytes": 794953728,
+        "peakTimelineSeconds": 4689.18405349995,
+        "peakCategoriesBytes": {
+          "javascript": 269307237,
+          "jit": 6815744,
+          "images": 0,
+          "layers": 0,
+          "page": 274594459,
+          "other": 244236288
+        },
+        "firstCategoriesBytes": {
+          "javascript": 269307237,
+          "jit": 6815744,
+          "images": 0,
+          "layers": 0,
+          "page": 274594459,
+          "other": 244236288
+        },
+        "lastCategoriesBytes": {
+          "javascript": 270270431,
+          "jit": 7110656,
+          "images": 0,
+          "layers": 0,
+          "page": 268208161,
+          "other": 243712000
+        }
+      },
+      "postRun30To60Seconds": {
+        "rangeTimelineSeconds": [
+          4718.917783737183,
+          4748.917783737183
+        ],
+        "sampleCount": 60,
+        "minimumBytes": 763365376,
+        "medianBytes": 786401280.0,
+        "peakBytes": 828196864,
+        "peakTimelineSeconds": 4720.967132333317,
+        "peakCategoriesBytes": {
+          "javascript": 272936174,
+          "jit": 8929280,
+          "images": 0,
+          "layers": 0,
+          "page": 302275346,
+          "other": 244056064
+        },
+        "firstCategoriesBytes": {
+          "javascript": 264479231,
+          "jit": 8454144,
+          "images": 0,
+          "layers": 0,
+          "page": 272016897,
+          "other": 243613696
+        },
+        "lastCategoriesBytes": {
+          "javascript": 272451619,
+          "jit": 9125888,
+          "images": 0,
+          "layers": 0,
+          "page": 264683485,
+          "other": 217104384
+        }
+      },
+      "postRun120To160Seconds": {
+        "rangeTimelineSeconds": [
+          4808.917783737183,
+          4848.917783737183
+        ],
+        "sampleCount": 79,
+        "minimumBytes": 768313344,
+        "medianBytes": 772540416,
+        "peakBytes": 792774656,
+        "peakTimelineSeconds": 4819.8400408749585,
+        "peakCategoriesBytes": {
+          "javascript": 276494033,
+          "jit": 9781248,
+          "images": 0,
+          "layers": 0,
+          "page": 287838511,
+          "other": 218660864
+        },
+        "firstCategoriesBytes": {
+          "javascript": 271809104,
+          "jit": 9535488,
+          "images": 0,
+          "layers": 0,
+          "page": 269340080,
+          "other": 217825280
+        },
+        "lastCategoriesBytes": {
+          "javascript": 273717677,
+          "jit": 9797632,
+          "images": 0,
+          "layers": 0,
+          "page": 270724691,
+          "other": 218103808
+        }
+      },
+      "firstSample": {
+        "timelineSeconds": 4662.501166083326,
+        "totalBytes": 374867968,
+        "categoriesBytes": {
+          "javascript": 49813442,
+          "jit": 5816320,
+          "images": 0,
+          "layers": 0,
+          "page": 244084798,
+          "other": 75153408
+        }
+      },
+      "lastSample": {
+        "timelineSeconds": 4860.677930000005,
+        "totalBytes": 772540416,
+        "categoriesBytes": {
+          "javascript": 273717677,
+          "jit": 9797632,
+          "images": 0,
+          "layers": 0,
+          "page": 270921299,
+          "other": 218103808
+        }
+      }
+    },
+    "postResourcePageGC": [
+      {
+        "timelineSeconds": 4688.9253406666685,
+        "durationSeconds": 0.007447708281688392,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4689.190119458304,
+        "durationSeconds": 0.06209333334118128,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4689.717497833306,
+        "durationSeconds": 0.0039014583453536034,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4689.80590120831,
+        "durationSeconds": 0.0022342500160448253,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4689.808180249995,
+        "durationSeconds": 0.009075749956537038,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4691.152453083312,
+        "durationSeconds": 0.001380541652906686,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4691.962031583302,
+        "durationSeconds": 0.0010702083236537874,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4694.564601333288,
+        "durationSeconds": 0.0019671250483952463,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4695.064698291651,
+        "durationSeconds": 0.002033500000834465,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4696.884062833327,
+        "durationSeconds": 0.0011682916665449739,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4698.807717791642,
+        "durationSeconds": 0.0011369583080522716,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4698.9170756249805,
+        "durationSeconds": 0.0012674583122134209,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4702.581800541666,
+        "durationSeconds": 0.001061249990016222,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4702.734039791627,
+        "durationSeconds": 0.002126166713424027,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4710.60378020833,
+        "durationSeconds": 0.0012322499533183873,
+        "kind": "partial"
+      },
+      {
+        "timelineSeconds": 4710.657231666672,
+        "durationSeconds": 0.05807233328232542,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4721.392735874979,
+        "durationSeconds": 0.07295674999477342,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4772.248025833338,
+        "durationSeconds": 0.010870208323467523,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4781.799492374994,
+        "durationSeconds": 0.010353916673921049,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4805.040385083295,
+        "durationSeconds": 0.08361720835091546,
+        "kind": "full"
+      },
+      {
+        "timelineSeconds": 4820.374093499966,
+        "durationSeconds": 0.015402749995701015,
+        "kind": "full"
+      }
+    ],
+    "categorySemantics": {
+      "javascript": "GCHeap totalSize plus GCOwned totalSize; on Cocoa GCHeap uses allocated block capacity, while GCOwned includes tracked extra/external memory. This is not a count of surviving JavaScript objects.",
+      "sources": [
+        {
+          "url": "https://github.com/WebKit/WebKit/blob/main/Source/WebCore/inspector/agents/InspectorMemoryAgent.cpp",
+          "lines": [
+            127,
+            132
+          ]
+        },
+        {
+          "url": "https://github.com/WebKit/WebKit/blob/main/Source/WebCore/page/cocoa/ResourceUsageThreadCocoa.mm",
+          "lines": [
+            244,
+            251
+          ]
+        },
+        {
+          "url": "https://github.com/WebKit/WebKit/blob/main/Source/WebCore/page/ResourceUsageData.h",
+          "lines": [
+            68,
+            68
+          ]
+        }
+      ],
+      "versionBoundary": "Current official source verified to interpret category semantics, not a byte-for-byte audit of installed iOS WebKit."
+    },
+    "syntheticPhases": [
+      {
+        "syntheticPhase": "12mp-image-ladder",
+        "cases": [
+          "image-12mp-1536-q0.8",
+          "image-12mp-1536-q0.9",
+          "image-12mp-2048-q0.8",
+          "image-12mp-2048-q0.9",
+          "image-12mp-3072-q0.8",
+          "image-12mp-3072-q0.9"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4680.53378367424,
+            4681.545783737182
+          ],
+          "sampleCount": 2,
+          "minimumBytes": 516360192,
+          "medianBytes": 535357440.0,
+          "peakBytes": 554354688,
+          "peakTimelineSeconds": 4681.134560416627,
+          "peakCategoriesBytes": {
+            "javascript": 80227850,
+            "jit": 5783552,
+            "images": 2310144,
+            "layers": 0,
+            "page": 309189110,
+            "other": 156844032
+          },
+          "firstCategoriesBytes": {
+            "javascript": 65059933,
+            "jit": 5750784,
+            "images": 0,
+            "layers": 0,
+            "page": 283937699,
+            "other": 161611776
+          },
+          "lastCategoriesBytes": {
+            "javascript": 80227850,
+            "jit": 5783552,
+            "images": 2310144,
+            "layers": 0,
+            "page": 309189110,
+            "other": 156844032
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4680.663783737183,
+            4681.41578367424
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 554354688,
+          "medianBytes": 554354688,
+          "peakBytes": 554354688,
+          "peakTimelineSeconds": 4681.134560416627,
+          "peakCategoriesBytes": {
+            "javascript": 80227850,
+            "jit": 5783552,
+            "images": 2310144,
+            "layers": 0,
+            "page": 309189110,
+            "other": 156844032
+          },
+          "firstCategoriesBytes": {
+            "javascript": 80227850,
+            "jit": 5783552,
+            "images": 2310144,
+            "layers": 0,
+            "page": 309189110,
+            "other": 156844032
+          },
+          "lastCategoriesBytes": {
+            "javascript": 80227850,
+            "jit": 5783552,
+            "images": 2310144,
+            "layers": 0,
+            "page": 309189110,
+            "other": 156844032
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "24mp-image-ladder",
+        "cases": [
+          "image-24mp-1536-q0.8",
+          "image-24mp-1536-q0.9",
+          "image-24mp-2048-q0.8",
+          "image-24mp-2048-q0.9",
+          "image-24mp-3072-q0.8",
+          "image-24mp-3072-q0.9"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4681.46078367424,
+            4682.579783737183
+          ],
+          "sampleCount": 2,
+          "minimumBytes": 596379648,
+          "medianBytes": 598337536.0,
+          "peakBytes": 600295424,
+          "peakTimelineSeconds": 4682.139568374958,
+          "peakCategoriesBytes": {
+            "javascript": 117564354,
+            "jit": 5947392,
+            "images": 0,
+            "layers": 0,
+            "page": 308585534,
+            "other": 168198144
+          },
+          "firstCategoriesBytes": {
+            "javascript": 95231996,
+            "jit": 5783552,
+            "images": 0,
+            "layers": 0,
+            "page": 304670724,
+            "other": 190693376
+          },
+          "lastCategoriesBytes": {
+            "javascript": 117564354,
+            "jit": 5947392,
+            "images": 0,
+            "layers": 0,
+            "page": 308585534,
+            "other": 168198144
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4681.590783737182,
+            4682.44978367424
+          ],
+          "sampleCount": 2,
+          "minimumBytes": 596379648,
+          "medianBytes": 598337536.0,
+          "peakBytes": 600295424,
+          "peakTimelineSeconds": 4682.139568374958,
+          "peakCategoriesBytes": {
+            "javascript": 117564354,
+            "jit": 5947392,
+            "images": 0,
+            "layers": 0,
+            "page": 308585534,
+            "other": 168198144
+          },
+          "firstCategoriesBytes": {
+            "javascript": 95231996,
+            "jit": 5783552,
+            "images": 0,
+            "layers": 0,
+            "page": 304670724,
+            "other": 190693376
+          },
+          "lastCategoriesBytes": {
+            "javascript": 117564354,
+            "jit": 5947392,
+            "images": 0,
+            "layers": 0,
+            "page": 308585534,
+            "other": 168198144
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "48mp-image-ladder",
+        "cases": [
+          "image-48mp-1536-q0.8",
+          "image-48mp-1536-q0.9",
+          "image-48mp-2048-q0.8",
+          "image-48mp-2048-q0.9",
+          "image-48mp-3072-q0.8",
+          "image-48mp-3072-q0.9"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4682.49378367424,
+            4683.888783737183
+          ],
+          "sampleCount": 3,
+          "minimumBytes": 665143296,
+          "medianBytes": 689686528,
+          "peakBytes": 707954688,
+          "peakTimelineSeconds": 4683.146096749988,
+          "peakCategoriesBytes": {
+            "javascript": 156827748,
+            "jit": 5963776,
+            "images": 0,
+            "layers": 0,
+            "page": 321488796,
+            "other": 223674368
+          },
+          "firstCategoriesBytes": {
+            "javascript": 161150732,
+            "jit": 5947392,
+            "images": 1556480,
+            "layers": 0,
+            "page": 297177332,
+            "other": 199311360
+          },
+          "lastCategoriesBytes": {
+            "javascript": 157422464,
+            "jit": 5963776,
+            "images": 0,
+            "layers": 0,
+            "page": 314061952,
+            "other": 212238336
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4682.623783737183,
+            4683.7587836742405
+          ],
+          "sampleCount": 3,
+          "minimumBytes": 665143296,
+          "medianBytes": 689686528,
+          "peakBytes": 707954688,
+          "peakTimelineSeconds": 4683.146096749988,
+          "peakCategoriesBytes": {
+            "javascript": 156827748,
+            "jit": 5963776,
+            "images": 0,
+            "layers": 0,
+            "page": 321488796,
+            "other": 223674368
+          },
+          "firstCategoriesBytes": {
+            "javascript": 161150732,
+            "jit": 5947392,
+            "images": 1556480,
+            "layers": 0,
+            "page": 297177332,
+            "other": 199311360
+          },
+          "lastCategoriesBytes": {
+            "javascript": 157422464,
+            "jit": 5963776,
+            "images": 0,
+            "layers": 0,
+            "page": 314061952,
+            "other": 212238336
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "serial-1-2-4-8-images",
+        "cases": [
+          "serial-1-images",
+          "serial-2-images",
+          "serial-4-images",
+          "serial-8-images"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4683.80278367424,
+            4685.377783737183
+          ],
+          "sampleCount": 3,
+          "minimumBytes": 686491648,
+          "medianBytes": 718587904,
+          "peakBytes": 781092864,
+          "peakTimelineSeconds": 4685.155384249985,
+          "peakCategoriesBytes": {
+            "javascript": 233123832,
+            "jit": 6094848,
+            "images": 0,
+            "layers": 0,
+            "page": 292722696,
+            "other": 249151488
+          },
+          "firstCategoriesBytes": {
+            "javascript": 165947625,
+            "jit": 5996544,
+            "images": 0,
+            "layers": 0,
+            "page": 292691735,
+            "other": 221855744
+          },
+          "lastCategoriesBytes": {
+            "javascript": 233123832,
+            "jit": 6094848,
+            "images": 0,
+            "layers": 0,
+            "page": 292722696,
+            "other": 249151488
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4683.932783737183,
+            4685.24778367424
+          ],
+          "sampleCount": 3,
+          "minimumBytes": 686491648,
+          "medianBytes": 718587904,
+          "peakBytes": 781092864,
+          "peakTimelineSeconds": 4685.155384249985,
+          "peakCategoriesBytes": {
+            "javascript": 233123832,
+            "jit": 6094848,
+            "images": 0,
+            "layers": 0,
+            "page": 292722696,
+            "other": 249151488
+          },
+          "firstCategoriesBytes": {
+            "javascript": 165947625,
+            "jit": 5996544,
+            "images": 0,
+            "layers": 0,
+            "page": 292691735,
+            "other": 221855744
+          },
+          "lastCategoriesBytes": {
+            "javascript": 233123832,
+            "jit": 6094848,
+            "images": 0,
+            "layers": 0,
+            "page": 292722696,
+            "other": 249151488
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "encoded-1-5-10-20mib",
+        "cases": [
+          "encoded-1mib",
+          "encoded-5mib",
+          "encoded-10mib",
+          "encoded-20mib"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4685.33678367424,
+            4685.772783737183
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 748292096,
+          "medianBytes": 748292096,
+          "peakBytes": 748292096,
+          "peakTimelineSeconds": 4685.660392291669,
+          "peakCategoriesBytes": {
+            "javascript": 213434463,
+            "jit": 6094848,
+            "images": 0,
+            "layers": 0,
+            "page": 301795233,
+            "other": 226967552
+          },
+          "firstCategoriesBytes": {
+            "javascript": 213434463,
+            "jit": 6094848,
+            "images": 0,
+            "layers": 0,
+            "page": 301795233,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 213434463,
+            "jit": 6094848,
+            "images": 0,
+            "layers": 0,
+            "page": 301795233,
+            "other": 226967552
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4685.466783737183,
+            4685.6427836742405
+          ],
+          "sampleCount": 0,
+          "peakBytes": null
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "small-text-comparison",
+        "cases": [
+          "small-text-comparison"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4685.73578367424,
+            4686.315783737183
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 752568320,
+          "medianBytes": 752568320,
+          "peakBytes": 752568320,
+          "peakTimelineSeconds": 4686.165008458309,
+          "peakCategoriesBytes": {
+            "javascript": 251365147,
+            "jit": 6160384,
+            "images": 0,
+            "layers": 0,
+            "page": 268075237,
+            "other": 226967552
+          },
+          "firstCategoriesBytes": {
+            "javascript": 251365147,
+            "jit": 6160384,
+            "images": 0,
+            "layers": 0,
+            "page": 268075237,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 251365147,
+            "jit": 6160384,
+            "images": 0,
+            "layers": 0,
+            "page": 268075237,
+            "other": 226967552
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4685.865783737183,
+            4686.18578367424
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 752568320,
+          "medianBytes": 752568320,
+          "peakBytes": 752568320,
+          "peakTimelineSeconds": 4686.165008458309,
+          "peakCategoriesBytes": {
+            "javascript": 251365147,
+            "jit": 6160384,
+            "images": 0,
+            "layers": 0,
+            "page": 268075237,
+            "other": 226967552
+          },
+          "firstCategoriesBytes": {
+            "javascript": 251365147,
+            "jit": 6160384,
+            "images": 0,
+            "layers": 0,
+            "page": 268075237,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 251365147,
+            "jit": 6160384,
+            "images": 0,
+            "layers": 0,
+            "page": 268075237,
+            "other": 226967552
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "cache-64mib",
+        "cases": [
+          "cache-64mib"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4686.23078367424,
+            4686.6937837371825
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 749766656,
+          "medianBytes": 749766656,
+          "peakBytes": 749766656,
+          "peakTimelineSeconds": 4686.665354708326,
+          "peakCategoriesBytes": {
+            "javascript": 310201531,
+            "jit": 6176768,
+            "images": 0,
+            "layers": 0,
+            "page": 206420805,
+            "other": 226967552
+          },
+          "firstCategoriesBytes": {
+            "javascript": 310201531,
+            "jit": 6176768,
+            "images": 0,
+            "layers": 0,
+            "page": 206420805,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 310201531,
+            "jit": 6176768,
+            "images": 0,
+            "layers": 0,
+            "page": 206420805,
+            "other": 226967552
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4686.360783737183,
+            4686.56378367424
+          ],
+          "sampleCount": 0,
+          "peakBytes": null
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "cache-128mib",
+        "cases": [
+          "cache-128mib"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4686.61278367424,
+            4687.393783737182
+          ],
+          "sampleCount": 2,
+          "minimumBytes": 749766656,
+          "medianBytes": 751945728.0,
+          "peakBytes": 754124800,
+          "peakTimelineSeconds": 4687.169233875,
+          "peakCategoriesBytes": {
+            "javascript": 356547344,
+            "jit": 6242304,
+            "images": 0,
+            "layers": 0,
+            "page": 164367600,
+            "other": 226967552
+          },
+          "firstCategoriesBytes": {
+            "javascript": 310201531,
+            "jit": 6176768,
+            "images": 0,
+            "layers": 0,
+            "page": 206420805,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 356547344,
+            "jit": 6242304,
+            "images": 0,
+            "layers": 0,
+            "page": 164367600,
+            "other": 226967552
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4686.742783737182,
+            4687.26378367424
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 754124800,
+          "medianBytes": 754124800,
+          "peakBytes": 754124800,
+          "peakTimelineSeconds": 4687.169233875,
+          "peakCategoriesBytes": {
+            "javascript": 356547344,
+            "jit": 6242304,
+            "images": 0,
+            "layers": 0,
+            "page": 164367600,
+            "other": 226967552
+          },
+          "firstCategoriesBytes": {
+            "javascript": 356547344,
+            "jit": 6242304,
+            "images": 0,
+            "layers": 0,
+            "page": 164367600,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 356547344,
+            "jit": 6242304,
+            "images": 0,
+            "layers": 0,
+            "page": 164367600,
+            "other": 226967552
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "cache-256mib",
+        "cases": [
+          "cache-256mib"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4687.30878367424,
+            4688.4707837371825
+          ],
+          "sampleCount": 2,
+          "minimumBytes": 752338944,
+          "medianBytes": 754608128.0,
+          "peakBytes": 756877312,
+          "peakTimelineSeconds": 4688.175739083323,
+          "peakCategoriesBytes": {
+            "javascript": 256357861,
+            "jit": 6258688,
+            "images": 0,
+            "layers": 0,
+            "page": 261935643,
+            "other": 232325120
+          },
+          "firstCategoriesBytes": {
+            "javascript": 318815231,
+            "jit": 6258688,
+            "images": 0,
+            "layers": 0,
+            "page": 200297473,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 256357861,
+            "jit": 6258688,
+            "images": 0,
+            "layers": 0,
+            "page": 261935643,
+            "other": 232325120
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4687.438783737182,
+            4688.34078367424
+          ],
+          "sampleCount": 2,
+          "minimumBytes": 752338944,
+          "medianBytes": 754608128.0,
+          "peakBytes": 756877312,
+          "peakTimelineSeconds": 4688.175739083323,
+          "peakCategoriesBytes": {
+            "javascript": 256357861,
+            "jit": 6258688,
+            "images": 0,
+            "layers": 0,
+            "page": 261935643,
+            "other": 232325120
+          },
+          "firstCategoriesBytes": {
+            "javascript": 318815231,
+            "jit": 6258688,
+            "images": 0,
+            "layers": 0,
+            "page": 200297473,
+            "other": 226967552
+          },
+          "lastCategoriesBytes": {
+            "javascript": 256357861,
+            "jit": 6258688,
+            "images": 0,
+            "layers": 0,
+            "page": 261935643,
+            "other": 232325120
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "cancellation-timeout-budget",
+        "cases": [
+          "cancel-and-late-encode",
+          "timeout-and-late-encode",
+          "admission-and-quota-failures"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4688.38578367424,
+            4688.817783737183
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 813254656,
+          "medianBytes": 813254656,
+          "peakBytes": 813254656,
+          "peakTimelineSeconds": 4688.680486375,
+          "peakCategoriesBytes": {
+            "javascript": 268000322,
+            "jit": 6406144,
+            "images": 0,
+            "layers": 0,
+            "page": 295463870,
+            "other": 243384320
+          },
+          "firstCategoriesBytes": {
+            "javascript": 268000322,
+            "jit": 6406144,
+            "images": 0,
+            "layers": 0,
+            "page": 295463870,
+            "other": 243384320
+          },
+          "lastCategoriesBytes": {
+            "javascript": 268000322,
+            "jit": 6406144,
+            "images": 0,
+            "layers": 0,
+            "page": 295463870,
+            "other": 243384320
+          }
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4688.515783737183,
+            4688.687783674241
+          ],
+          "sampleCount": 1,
+          "minimumBytes": 813254656,
+          "medianBytes": 813254656,
+          "peakBytes": 813254656,
+          "peakTimelineSeconds": 4688.680486375,
+          "peakCategoriesBytes": {
+            "javascript": 268000322,
+            "jit": 6406144,
+            "images": 0,
+            "layers": 0,
+            "page": 295463870,
+            "other": 243384320
+          },
+          "firstCategoriesBytes": {
+            "javascript": 268000322,
+            "jit": 6406144,
+            "images": 0,
+            "layers": 0,
+            "page": 295463870,
+            "other": 243384320
+          },
+          "lastCategoriesBytes": {
+            "javascript": 268000322,
+            "jit": 6406144,
+            "images": 0,
+            "layers": 0,
+            "page": 295463870,
+            "other": 243384320
+          }
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      },
+      {
+        "syntheticPhase": "synthetic-idb-migration",
+        "cases": [
+          "idb-v1-v2-and-old-writer"
+        ],
+        "possibleWindow": {
+          "rangeTimelineSeconds": [
+            4688.77278367424,
+            4688.917783737183
+          ],
+          "sampleCount": 0,
+          "peakBytes": null
+        },
+        "certainWindow": {
+          "rangeTimelineSeconds": [
+            4688.902783737182,
+            4688.78778367424
+          ],
+          "sampleCount": 0,
+          "peakBytes": null
+        },
+        "mapping": "run start/end constrain a shared clock offset to 130 ms; no exact per-case Date mark"
+      }
+    ],
+    "interpretation": [
+      "UI 828.20 MB is 828,196,864 bytes total; it occurs about 32 seconds after resources finish, so it is not a 48 MP-only peak.",
+      "The 48 MP ladder has three unambiguously in-window samples; maximum is 707,954,688 bytes. About 0.5 s sampling can miss shorter native peaks.",
+      "Pre-run stable observed footprint is about 374 MB. The combined test does not return to this baseline during the exported recording.",
+      "High retained categories are JavaScript and Other. Images has a small nonzero observation during processing and is zero in the later baseline/peak samples; zero in that category cannot be read as no native image allocations.",
+      "The runner keeps only scalar reports/output paths globally. No global Blob/ArrayBuffer/base64 list is intentionally retained. Temporary 4 MiB buffers and Blob cache fill allocate heavily. Several page full-GC records appear after resources finish, while the category reports allocated capacity rather than only live objects; this is not by itself proof of a leak.",
+      "Screenshot/CPU/Memory/JS instruments were active, and many output files were created. Their memory effects are not isolated by this capture; neither instrumentation nor Obsidian can be assigned causal ownership without stronger evidence.",
+      "Cache 64/128/256 are sequential temporary databases. Cursor byte totals are logical persistence evidence, not resident memory. Whole recording later peak is not evidence that 256 MiB default is appropriate.",
+      "Historical observation now followed by the final no-screenshot recording and observed full GC; consult finalSafariTimeline for current residual-memory conclusions."
+    ],
+    "numericEvidencePath": "temporary-original-evidence/ios-timeline-numeric.json",
+    "historical": true,
+    "supersededScope": "First recording is historical mixed-instrument/multi-phase evidence; final targeted no-screenshot recording is authoritative for final 3200/8x48MP validation."
+  },
+  "finalConfirmation": {
+    "receipts": {
+      "desktop": {
+        "path": "desktop-final-resources-01.json",
+        "sha256": "d31ef16e2c678cd580b8dc264ef5c7afd0ce532f76b014c18dd38f1ec93880a1",
+        "status": "completed",
+        "errors": [],
+        "original": {
+          "path": "b129-p0-fixtures/resource-48mp.jpg",
+          "sha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "bytes": 4188715,
+          "afterSha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "unchanged": true
+        },
+        "resources": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        },
+        "ownedResourcesReleased": true
+      },
+      "ios": {
+        "path": "ios-final-resources-01.json",
+        "sha256": "3d29de14558f6e9d7df954ea2592169d16f84fedaeb550d47af020d1db615f0e",
+        "status": "completed",
+        "errors": [],
+        "original": {
+          "path": "b129-p0-fixtures/resource-48mp.jpg",
+          "sha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "bytes": 4188715,
+          "afterSha256": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+          "unchanged": true
+        },
+        "resources": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        },
+        "ownedResourcesReleased": true
+      }
+    },
+    "single48MP": {
+      "desktop": {
+        "name": "single-48mp-3200",
+        "startedAt": "2026-09-06T08:26:55.660Z",
+        "status": "passed",
+        "decodedWidth": 8000,
+        "decodedHeight": 6000,
+        "outputWidth": 3200,
+        "outputHeight": 2400,
+        "outputBytes": 955786,
+        "mime": "image/jpeg",
+        "elapsedMs": 511,
+        "index": 0,
+        "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08",
+        "outputPath": "b129-p0-final-resources/desktop-final-01/single-48mp-3200.jpg",
+        "outputHashVerified": true,
+        "resourcesAfter": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        }
+      },
+      "ios": {
+        "name": "single-48mp-3200",
+        "startedAt": "2026-09-06T08:30:09.917Z",
+        "status": "passed",
+        "decodedWidth": 8000,
+        "decodedHeight": 6000,
+        "outputWidth": 3200,
+        "outputHeight": 2400,
+        "outputBytes": 1769870,
+        "mime": "image/jpeg",
+        "elapsedMs": 162,
+        "index": 0,
+        "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e",
+        "outputPath": "b129-p0-final-resources/ios-final-01/single-48mp-3200.jpg",
+        "outputHashVerified": true,
+        "resourcesAfter": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        }
+      }
+    },
+    "eight48MP": {
+      "desktop": {
+        "name": "serial-eight-48mp-3200",
+        "startedAt": "2026-09-06T08:26:56.176Z",
+        "status": "passed",
+        "reports": [
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 307,
+            "index": 0,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 282,
+            "index": 1,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 300,
+            "index": 2,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 283,
+            "index": 3,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 280,
+            "index": 4,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 272,
+            "index": 5,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 279,
+            "index": 6,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 955786,
+            "mime": "image/jpeg",
+            "elapsedMs": 274,
+            "index": 7,
+            "outputSha256": "939c9cdb7d9767c73825124b2bffc936cd1d0bb6b279a07a7c37d69490443b08"
+          }
+        ],
+        "totalBytes": 7646288,
+        "count": 8,
+        "aggregateWithinBudget": true,
+        "allEightSources48MP": true,
+        "elapsedMs": 2335,
+        "resourcesAfter": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        }
+      },
+      "ios": {
+        "name": "serial-eight-48mp-3200",
+        "startedAt": "2026-09-06T08:30:10.085Z",
+        "status": "passed",
+        "reports": [
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 93,
+            "index": 0,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 93,
+            "index": 1,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 94,
+            "index": 2,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 94,
+            "index": 3,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 90,
+            "index": 4,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 93,
+            "index": 5,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 89,
+            "index": 6,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          },
+          {
+            "decodedWidth": 8000,
+            "decodedHeight": 6000,
+            "outputWidth": 3200,
+            "outputHeight": 2400,
+            "outputBytes": 1769870,
+            "mime": "image/jpeg",
+            "elapsedMs": 90,
+            "index": 7,
+            "outputSha256": "7d254f752a08471c6a1af6dd4df78ff88448d996e1926907c41fd682b91f344e"
+          }
+        ],
+        "totalBytes": 14158960,
+        "count": 8,
+        "aggregateWithinBudget": true,
+        "allEightSources48MP": true,
+        "elapsedMs": 789,
+        "resourcesAfter": {
+          "activeImages": 0,
+          "activeCanvases": 0,
+          "activeUrls": 0,
+          "maxActiveImages": 1,
+          "maxActiveCanvases": 1,
+          "maxActiveUrls": 1
+        }
+      }
+    },
+    "timelineEvidence": "ios-final-timeline-numeric.json",
+    "engineeringDecision": "Use final bounded defaults below; retain actual memory residual, background critical event and >3200 small-text limitation."
+  },
+  "finalEngineeringDefaults": {
+    "maxOriginalBytes": 20971520,
+    "maxDecodedPixels": 48000000,
+    "maxImagesPerTurn": 8,
+    "maxVariantBytes": 4194304,
+    "maxRequestImageBytes": 25165824,
+    "processingTimeoutMs": 15000,
+    "cacheMaxBytes": 67108864,
+    "maxPreviewEdge": 1536,
+    "maxProviderEdge": 3200,
+    "jpegQuality": 0.9
+  },
+  "supersededRecommendation": "The earlier generic provider edge 2048 and pending in-page iOS-memory conclusion are superseded by final 3200/.9 host confirmation and two actual Safari Memory recordings. Historical raw receipts remain unchanged.",
+  "finalSafariTimeline": {
+    "kind": "b129.p0.safari-final-memory-numeric",
+    "schemaVersion": 1,
+    "scope": "Real iPhone WKWebView, one and then eight serial synthetic 48 MP JPEGs at 3200/.9; inspected WebContent memory samples, not whole-device peak or universal limit",
+    "rawSourceBasename": "b129-ios-final-01-timeline.json",
+    "rawSHA256": "a93c2f7cad34e5061be56fc552c28f20a25f87d1bc35a150c26a197a5df5d3b1",
+    "rawRetainedOnlyLocally": true,
+    "privacy": "No screenshots, request/response payloads, target names, source, stack traces, picker listings or tool coordinates exported.",
+    "sourceReceipt": "ios-final-resources-01.json",
+    "screenshotsInstrumentEnabled": false,
+    "screenshotRecordCount": 0,
+    "clockMapping": {
+      "archiveEpochOriginSeconds": 1788677687.2902157,
+      "originSpreadSeconds": 2.1457672119140625e-06,
+      "formula": "timelineSeconds = UTC Unix seconds - archiveStartTime",
+      "officialSource": "https://github.com/WebKit/WebKit/blob/main/Source/WebInspectorUI/UserInterface/Models/ResourceTimelineRecord.js",
+      "resourceStartSeconds": 5722.553784370422,
+      "resourceEndSeconds": 5723.6287841796875,
+      "toolTimeBoundary": "CUA log timestamps show action ordering/nearby context, not exact native event timestamps; last logged GC differs from nearest actual full-GC event by about 2.1 seconds."
+    },
+    "observations": {
+      "memorySampleCount": 394,
+      "cpuSampleCount": 394,
+      "medianSampleIntervalSeconds": 0.5050295416731387,
+      "maximumSampleGapSeconds": 71.51049283333123,
+      "wholeRecordingPeak": {
+        "timelineSeconds": 5723.015747291618,
+        "categoriesBytes": {
+          "javascript": 180673694,
+          "jit": 5636096,
+          "images": 12009472,
+          "layers": 0,
+          "page": 508930914,
+          "other": 255426560
+        },
+        "totalBytes": 962676736,
+        "UTC": "2026-09-06T08:30:10.305Z"
+      },
+      "preRun10To1Seconds": {
+        "timelineRangeSeconds": [
+          5712.553784370422,
+          5721.553784370422
+        ],
+        "sampleCount": 18,
+        "minimumBytes": 749537280,
+        "medianBytes": 757434368.0,
+        "peakBytes": 773392384,
+        "peakTimelineSeconds": 5713.424958083313,
+        "peakUTC": "2026-09-06T08:30:00.715Z",
+        "peakCategoriesBytes": {
+          "javascript": 63442068,
+          "jit": 5586944,
+          "images": 0,
+          "layers": 0,
+          "page": 524499820,
+          "other": 179863552
+        },
+        "firstCategoriesBytes": {
+          "javascript": 63442068,
+          "jit": 5586944,
+          "images": 0,
+          "layers": 0,
+          "page": 500644716,
+          "other": 179863552
+        },
+        "lastCategoriesBytes": {
+          "javascript": 63443092,
+          "jit": 5586944,
+          "images": 0,
+          "layers": 0,
+          "page": 508606316,
+          "other": 179879936
+        }
+      },
+      "resourceRun": {
+        "timelineRangeSeconds": [
+          5722.553784370422,
+          5723.6287841796875
+        ],
+        "sampleCount": 2,
+        "minimumBytes": 929433600,
+        "medianBytes": 946055168.0,
+        "peakBytes": 962676736,
+        "peakTimelineSeconds": 5723.015747291618,
+        "peakUTC": "2026-09-06T08:30:10.305Z",
+        "peakCategoriesBytes": {
+          "javascript": 180673694,
+          "jit": 5636096,
+          "images": 12009472,
+          "layers": 0,
+          "page": 508930914,
+          "other": 255426560
+        },
+        "firstCategoriesBytes": {
+          "javascript": 180673694,
+          "jit": 5636096,
+          "images": 12009472,
+          "layers": 0,
+          "page": 508930914,
+          "other": 255426560
+        },
+        "lastCategoriesBytes": {
+          "javascript": 188433731,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 478331581,
+          "other": 257032192
+        }
+      },
+      "postRun0To5Seconds": {
+        "timelineRangeSeconds": [
+          5723.6287841796875,
+          5728.6287841796875
+        ],
+        "sampleCount": 10,
+        "minimumBytes": 929122304,
+        "medianBytes": 929122304.0,
+        "peakBytes": 929204224,
+        "peakTimelineSeconds": 5724.023619499989,
+        "peakUTC": "2026-09-06T08:30:11.313Z",
+        "peakCategoriesBytes": {
+          "javascript": 188433731,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 478102205,
+          "other": 257032192
+        },
+        "firstCategoriesBytes": {
+          "javascript": 188433731,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 478102205,
+          "other": 257032192
+        },
+        "lastCategoriesBytes": {
+          "javascript": 188433731,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 478020285,
+          "other": 257032192
+        }
+      },
+      "postRun30To60Seconds": {
+        "timelineRangeSeconds": [
+          5753.6287841796875,
+          5783.6287841796875
+        ],
+        "sampleCount": 60,
+        "minimumBytes": 902432768,
+        "medianBytes": 928352256.0,
+        "peakBytes": 944474112,
+        "peakTimelineSeconds": 5757.852494208317,
+        "peakUTC": "2026-09-06T08:30:45.142Z",
+        "peakCategoriesBytes": {
+          "javascript": 188456259,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 493644477,
+          "other": 256737280
+        },
+        "firstCategoriesBytes": {
+          "javascript": 188433731,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 469500605,
+          "other": 256655360
+        },
+        "lastCategoriesBytes": {
+          "javascript": 188486979,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 475591357,
+          "other": 232718336
+        }
+      },
+      "beforeBackgroundCritical5Seconds": {
+        "timelineRangeSeconds": [
+          5785.715618999966,
+          5790.215618999966
+        ],
+        "sampleCount": 9,
+        "minimumBytes": 894486528,
+        "medianBytes": 894486528,
+        "peakBytes": 919554048,
+        "peakTimelineSeconds": 5790.160753958335,
+        "peakUTC": "2026-09-06T08:31:17.450Z",
+        "peakCategoriesBytes": {
+          "javascript": 188486979,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 492745405,
+          "other": 232685568
+        },
+        "firstCategoriesBytes": {
+          "javascript": 188486979,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 467694269,
+          "other": 232669184
+        },
+        "lastCategoriesBytes": {
+          "javascript": 188486979,
+          "jit": 5636096,
+          "images": 0,
+          "layers": 0,
+          "page": 492745405,
+          "other": 232685568
+        }
+      },
+      "afterBackgroundCritical5Seconds": {
+        "timelineRangeSeconds": [
+          5791.215618999966,
+          5795.715618999966
+        ],
+        "sampleCount": 1,
+        "minimumBytes": 830113792,
+        "medianBytes": 830113792,
+        "peakBytes": 830113792,
+        "peakTimelineSeconds": 5791.673514249967,
+        "peakUTC": "2026-09-06T08:31:18.963Z",
+        "peakCategoriesBytes": {
+          "javascript": 97246842,
+          "jit": 5193728,
+          "images": 0,
+          "layers": 0,
+          "page": 532785542,
+          "other": 194887680
+        },
+        "firstCategoriesBytes": {
+          "javascript": 97246842,
+          "jit": 5193728,
+          "images": 0,
+          "layers": 0,
+          "page": 532785542,
+          "other": 194887680
+        },
+        "lastCategoriesBytes": {
+          "javascript": 97246842,
+          "jit": 5193728,
+          "images": 0,
+          "layers": 0,
+          "page": 532785542,
+          "other": 194887680
+        }
+      },
+      "postFinalObservedFullGC": {
+        "timelineRangeSeconds": [
+          5915.746929624991,
+          5956.049146416655
+        ],
+        "sampleCount": 80,
+        "minimumBytes": 825395200,
+        "medianBytes": 825395200.0,
+        "peakBytes": 833931264,
+        "peakTimelineSeconds": 5916.156885333301,
+        "peakUTC": "2026-09-06T08:33:23.447Z",
+        "peakCategoriesBytes": {
+          "javascript": 98862259,
+          "jit": 5488640,
+          "images": 0,
+          "layers": 0,
+          "page": 534561613,
+          "other": 195018752
+        },
+        "firstCategoriesBytes": {
+          "javascript": 98862259,
+          "jit": 5488640,
+          "images": 0,
+          "layers": 0,
+          "page": 534561613,
+          "other": 195018752
+        },
+        "lastCategoriesBytes": {
+          "javascript": 98862259,
+          "jit": 5488640,
+          "images": 0,
+          "layers": 0,
+          "page": 526173005,
+          "other": 194887680
+        }
+      },
+      "peakMinusPreRunMedianBytes": 205242368.0,
+      "postGCMedianMinusPreRunMedianBytes": 67960832.0
+    },
+    "syntheticPhases": [
+      {
+        "syntheticPhase": "single-48mp-3200",
+        "receiptStartedAt": "2026-09-06T08:30:09.917Z",
+        "elapsedMs": 162,
+        "memory": {
+          "timelineRangeSeconds": [
+            5722.626784324646,
+            5722.788784324646
+          ],
+          "sampleCount": 0,
+          "peakBytes": null
+        },
+        "scope": "UTC startedAt and measured duration align this case directly; 0.5 s sampling may entirely miss a short single-image case"
+      },
+      {
+        "syntheticPhase": "serial-eight-48mp-3200",
+        "receiptStartedAt": "2026-09-06T08:30:10.085Z",
+        "elapsedMs": 789,
+        "memory": {
+          "timelineRangeSeconds": [
+            5722.79478430748,
+            5723.58378430748
+          ],
+          "sampleCount": 2,
+          "minimumBytes": 929433600,
+          "medianBytes": 946055168.0,
+          "peakBytes": 962676736,
+          "peakTimelineSeconds": 5723.015747291618,
+          "peakUTC": "2026-09-06T08:30:10.305Z",
+          "peakCategoriesBytes": {
+            "javascript": 180673694,
+            "jit": 5636096,
+            "images": 12009472,
+            "layers": 0,
+            "page": 508930914,
+            "other": 255426560
+          },
+          "firstCategoriesBytes": {
+            "javascript": 180673694,
+            "jit": 5636096,
+            "images": 12009472,
+            "layers": 0,
+            "page": 508930914,
+            "other": 255426560
+          },
+          "lastCategoriesBytes": {
+            "javascript": 188433731,
+            "jit": 5636096,
+            "images": 0,
+            "layers": 0,
+            "page": 478331581,
+            "other": 257032192
+          }
+        },
+        "scope": "UTC startedAt and measured duration align this case directly; 0.5 s sampling may entirely miss a short single-image case"
+      }
+    ],
+    "memoryPressureEvents": [
+      {
+        "timelineSeconds": 5790.715618999966,
+        "UTC": "2026-09-06T08:31:18.005Z",
+        "severity": "critical"
+      }
+    ],
+    "pressureInterpretation": {
+      "fact": "One critical event occurs outside the resource run, after a blur/visibilitychange during transition from Obsidian to Files. No manual simulated pressure action was performed.",
+      "secondsAfterResourceEnd": 67.08683482027845,
+      "precedingVisibilityEvent": {
+        "timelineSeconds": 5790.395183958288,
+        "UTC": "2026-09-06T08:31:17.685Z",
+        "event": "visibilitychange"
+      },
+      "secondsAfterVisibilityChange": 0.3204350416781381,
+      "inference": "Consistent with proactive background suspension memory release. The event carries severity, not origin, so it does not establish OS low-memory/OOM or prove a unique cause.",
+      "knownNativePath": "WebProcess.prepareToSuspend -> releaseMemory(Critical::Yes, Synchronous::Yes) -> WebCore.releaseMemory -> InspectorInstrumentation.didHandleMemoryPressure -> InspectorMemoryAgent.memoryPressure",
+      "sources": [
+        {
+          "url": "https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/WebProcess.cpp",
+          "lines": [
+            1813,
+            1857
+          ]
+        },
+        {
+          "url": "https://github.com/WebKit/WebKit/blob/main/Source/WebCore/page/MemoryRelease.cpp",
+          "lines": [
+            186,
+            217
+          ]
+        },
+        {
+          "url": "https://github.com/WebKit/WebKit/blob/main/Source/WebCore/inspector/agents/InspectorMemoryAgent.cpp",
+          "lines": [
+            121,
+            124
+          ]
+        }
+      ],
+      "sourceVersionBoundary": "Current official WebKit source explains the possible path; installed iOS binary call provenance was not captured."
+    },
+    "manualActions": [
+      {
+        "loggedAt": "2026-09-06T08:29:23.851Z",
+        "action": "Collect garbage before second recording"
+      },
+      {
+        "loggedAt": "2026-09-06T08:31:09.664Z",
+        "action": "Open iPhone app switcher"
+      },
+      {
+        "loggedAt": "2026-09-06T08:31:19.413Z",
+        "action": "Select Files app card"
+      },
+      {
+        "loggedAt": "2026-09-06T08:33:24.652Z",
+        "action": "Collect garbage near end of recording"
+      }
+    ],
+    "actualFinalPageGC": {
+      "timelineSeconds": 5915.246929624991,
+      "UTC": "2026-09-06T08:33:22.537Z",
+      "durationSeconds": 0.02656808332540095,
+      "kind": "full"
+    },
+    "conclusions": [
+      "Both hosts complete single and eight serial 48 MP inputs at 3200/.9 within the enforced output and aggregate budgets; original hash is unchanged and owned image/canvas/URL references return to zero.",
+      "The second recording has no screenshot records. About 963 MB observed total includes about 757 MB already-open host baseline; observed increase is about 205 MB, not eight simultaneously decoded 48 MP buffers.",
+      "After final full GC the median remains about 825 MB, about 68 MB above this recording baseline. GC-owned capacity/native caches/host state are not isolated; this residual is retained as a limitation, not called fully released or a proven leak.",
+      "The one critical event is retained explicitly and occurs during background transition, not the resource case. It is consistent with proactive background cleanup and does not itself invalidate 48 MP/8-image processing evidence.",
+      "Engineering defaults are closed for the tested static-image path. They are not universal safety guarantees, and production lifecycle/recovery validation remains necessary."
+    ]
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "state": "inspect_response",
+  "reason": "CUA reported noWindowsAvailable for physical pointer actions; AX and keyboard attempts did not establish request submission. No unsupported-path pass claimed.",
+  "before": {
+    "installed": true,
+    "expired": false,
+    "state": "installed",
+    "expectedVault": "/Users/edonyzpc/code/personal-assistant/test",
+    "loadedBuild": "cf6f686eccb01331c9c91dbf3dcfe18ca44bbc6e55c2700cf68639044ff984ed",
+    "installedAt": "2026-09-06T12:29:29.173Z",
+    "expiresAt": "2026-09-06T12:31:29.173Z",
+    "originalModelKey": "[\"qwen\",\"https://dashscope.aliyuncs.com/compatible-mode/v1\",\"qwen3.8-max\"]",
+    "currentModelKey": "[\"qwen\",\"https://dashscope.aliyuncs.com/compatible-mode/v1\",\"qwen3.8-max\"]",
+    "capability": "unsupported",
+    "fetchAttempts": 1,
+    "matchingUnsupportedResponses": 1,
+    "otherBlockedResponses": 0,
+    "networkDelegations": 0,
+    "requestMetadata": [
+      {
+        "model": "qwen3.8-max",
+        "status": 400,
+        "imageCount": 1,
+        "messages": [
+          {
+            "role": "system",
+            "blockTypes": [
+              "text"
+            ],
+            "textChars": 5800
+          },
+          {
+            "role": "user",
+            "blockTypes": [
+              "text",
+              "image_url"
+            ],
+            "textChars": 2239
+          }
+        ]
+      }
+    ],
+    "baselineDraft": {
+      "available": true,
+      "textChars": 69,
+      "textHash": "ae01b8564d01b06e8aa066755420db53e145442e9f073dfeb4fb70a1f82045a7",
+      "images": [
+        {
+          "status": "ready",
+          "ref": {
+            "assetId": "img_5f8b5ec0de4e48e68156eebfb0e85286",
+            "contentHash": "f2adcbf518fd6d8258c15ca443abffb508b460d16506ef43c0451bacbfee2153"
+          },
+          "ordinal": 2
+        }
+      ]
+    },
+    "currentDraft": {
+      "available": true,
+      "textChars": 69,
+      "textHash": "ae01b8564d01b06e8aa066755420db53e145442e9f073dfeb4fb70a1f82045a7",
+      "images": [
+        {
+          "status": "ready",
+          "ref": {
+            "assetId": "img_5f8b5ec0de4e48e68156eebfb0e85286",
+            "contentHash": "f2adcbf518fd6d8258c15ca443abffb508b460d16506ef43c0451bacbfee2153"
+          },
+          "ordinal": 2
+        }
+      ]
+    },
+    "draftUnchanged": true,
+    "uninstall": {
+      "ready": true,
+      "installed": true,
+      "fetchIdentityMatches": true,
+      "inflight": 0,
+      "terminal": {
+        "known": true,
+        "samePlugin": true,
+        "streamingViews": 0,
+        "retainedViewBusy": false,
+        "coordinatorActive": false,
+        "queuedRuns": 0,
+        "terminal": true
+      }
+    },
+    "boundary": "Local HTTP fixture through real SDK and production capability cache; no real model capability claim. No fetch is forwarded while installed."
+  },
+  "after": {
+    "installed": false,
+    "expired": false,
+    "state": "manually_uninstalled",
+    "expectedVault": "/Users/edonyzpc/code/personal-assistant/test",
+    "loadedBuild": "cf6f686eccb01331c9c91dbf3dcfe18ca44bbc6e55c2700cf68639044ff984ed",
+    "installedAt": "2026-09-06T12:29:29.173Z",
+    "expiresAt": "2026-09-06T12:31:29.173Z",
+    "originalModelKey": "[\"qwen\",\"https://dashscope.aliyuncs.com/compatible-mode/v1\",\"qwen3.8-max\"]",
+    "currentModelKey": "[\"qwen\",\"https://dashscope.aliyuncs.com/compatible-mode/v1\",\"qwen3.8-max\"]",
+    "capability": "unsupported",
+    "fetchAttempts": 1,
+    "matchingUnsupportedResponses": 1,
+    "otherBlockedResponses": 0,
+    "networkDelegations": 0,
+    "requestMetadata": [
+      {
+        "model": "qwen3.8-max",
+        "status": 400,
+        "imageCount": 1,
+        "messages": [
+          {
+            "role": "system",
+            "blockTypes": [
+              "text"
+            ],
+            "textChars": 5800
+          },
+          {
+            "role": "user",
+            "blockTypes": [
+              "text",
+              "image_url"
+            ],
+            "textChars": 2239
+          }
+        ]
+      }
+    ],
+    "baselineDraft": {
+      "available": true,
+      "textChars": 69,
+      "textHash": "ae01b8564d01b06e8aa066755420db53e145442e9f073dfeb4fb70a1f82045a7",
+      "images": [
+        {
+          "status": "ready",
+          "ref": {
+            "assetId": "img_5f8b5ec0de4e48e68156eebfb0e85286",
+            "contentHash": "f2adcbf518fd6d8258c15ca443abffb508b460d16506ef43c0451bacbfee2153"
+          },
+          "ordinal": 2
+        }
+      ]
+    },
+    "currentDraft": {
+      "available": true,
+      "textChars": 69,
+      "textHash": "ae01b8564d01b06e8aa066755420db53e145442e9f073dfeb4fb70a1f82045a7",
+      "images": [
+        {
+          "status": "ready",
+          "ref": {
+            "assetId": "img_5f8b5ec0de4e48e68156eebfb0e85286",
+            "contentHash": "f2adcbf518fd6d8258c15ca443abffb508b460d16506ef43c0451bacbfee2153"
+          },
+          "ordinal": 2
+        }
+      ]
+    },
+    "draftUnchanged": true,
+    "uninstall": {
+      "ready": false,
+      "installed": false,
+      "fetchIdentityMatches": false,
+      "inflight": 0,
+      "terminal": {
+        "known": true,
+        "samePlugin": true,
+        "streamingViews": 0,
+        "retainedViewBusy": false,
+        "coordinatorActive": false,
+        "queuedRuns": 0,
+        "terminal": true
+      }
+    },
+    "boundary": "Local HTTP fixture through real SDK and production capability cache; no real model capability claim. No fetch is forwarded while installed."
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "kind": "b129-macos-heic-conversion",
+  "source": "b129-p0-fixtures/chart-sips.heic",
+  "sourceSha256": "88d2d594a6f6b1ffd23285c076928621033a7574a2be3270ae7543305186f5c4",
+  "output": "b129-heic-core-check/mac-native-converted.jpg",
+  "createdAt": "2026-09-06T07:29:27.728Z",
+  "stderr": "",
+  "intermediateBytes": 71422,
+  "intermediateSha256": "7e90b9a529a044ba107b3c26fe328b920654529bd638d7fad866e573b794e3af",
+  "width": 640,
+  "height": 480,
+  "corners": [
+    [
+      211,
+      119,
+      116,
+      255
+    ],
+    [
+      97,
+      199,
+      134,
+      255
+    ],
+    [
+      106,
+      170,
+      240,
+      255
+    ],
+    [
+      243,
+      216,
+      103,
+      255
+    ]
+  ],
+  "outputBytes": 32157,
+  "outputSha256": "a8981f334fce7c6fe48fdd7557d76311f269be81e87e24f85b9ad2c2fdc01454",
+  "outputMime": "image/jpeg",
+  "sourceUnchanged": true,
+  "elapsedMs": 139.80000007152557
+}

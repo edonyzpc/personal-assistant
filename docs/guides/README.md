@@ -1,5 +1,6 @@
 # User Guides
 
+- [图片聊天与图文保存](./multimodal-chat-user-guide.md) — B-129 构建的图片入口、版本保存、风格参考及同步设置。
 - [2.9.0-beta.6 用户试用指南](./v2.9.0-beta.6-user-trial-guide.md) — 当前 BRAT Beta 的安装、深度发现、Pagelet → Chat 与安全写入试用路线。
 - [Pagelet 使用指南](./pagelet-user-guide.md) — 当前 Pagelet 使用流程与行为边界。
 - [README 中文版](../../README-CN.md) / [README](../../README.md) — 安装、配置与产品总览。

@@ -1,0 +1,1668 @@
+{
+  "kind": "b129.resource-probe",
+  "version": 1,
+  "runId": "ios-full-01-resources",
+  "status": "completed",
+  "startedAt": "2026-09-06T08:12:47.824Z",
+  "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148  obsidian",
+  "scope": "synthetic host feasibility; independent cache; no production integration or provider",
+  "candidatePolicy": {
+    "maxOriginalBytes": 20971520,
+    "maxDecodedPixels": 48000000,
+    "maxImagesPerTurn": 8,
+    "maxVariantBytes": 4194304,
+    "maxRequestImageBytes": 25165824,
+    "processingTimeoutMs": 15000
+  },
+  "candidateValuesAreNotProductDefaults": true,
+  "stage": "finished",
+  "completed": [
+    {
+      "label": "image-12mp-1536-q0.8",
+      "status": "passed",
+      "megapixels": 12,
+      "edge": 1536,
+      "quality": 0.8,
+      "decodedWidth": 4000,
+      "decodedHeight": 3000,
+      "outputWidth": 1536,
+      "outputHeight": 1152,
+      "outputBytes": 375719,
+      "mime": "image/jpeg",
+      "elapsedMs": 96,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-12mp-1536-q0.8.jpg",
+      "sha256": "f9752bf9b93adcb088654d65acc57be3e11fe7d01c1291bbc47e425a0a7dacc9",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4804616,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4804712,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-12mp-1536-q0.9",
+      "status": "passed",
+      "megapixels": 12,
+      "edge": 1536,
+      "quality": 0.9,
+      "decodedWidth": 4000,
+      "decodedHeight": 3000,
+      "outputWidth": 1536,
+      "outputHeight": 1152,
+      "outputBytes": 432385,
+      "mime": "image/jpeg",
+      "elapsedMs": 92,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-12mp-1536-q0.9.jpg",
+      "sha256": "0d8d7bffc5471b2e36c2a1c99a9ef9b7e48d42a9fbe7ecb579f2492a82ca1ff0",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4804756,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4804848,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-12mp-2048-q0.8",
+      "status": "passed",
+      "megapixels": 12,
+      "edge": 2048,
+      "quality": 0.8,
+      "decodedWidth": 4000,
+      "decodedHeight": 3000,
+      "outputWidth": 2048,
+      "outputHeight": 1536,
+      "outputBytes": 531289,
+      "mime": "image/jpeg",
+      "elapsedMs": 107,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-12mp-2048-q0.8.jpg",
+      "sha256": "adfe61995df4e28f6a68128b267a8d2e55eee7c27ac2091e2a8890edc500ffaf",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4804892,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4804995,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4804999,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-12mp-2048-q0.9",
+      "status": "passed",
+      "megapixels": 12,
+      "edge": 2048,
+      "quality": 0.9,
+      "decodedWidth": 4000,
+      "decodedHeight": 3000,
+      "outputWidth": 2048,
+      "outputHeight": 1536,
+      "outputBytes": 611775,
+      "mime": "image/jpeg",
+      "elapsedMs": 104,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-12mp-2048-q0.9.jpg",
+      "sha256": "228cf0dcf70608c7d7e2cd01a66810dcb76e8bb56cc6dd7237b58a98f201735a",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4805043,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805143,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805147,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-12mp-3072-q0.8",
+      "status": "passed",
+      "megapixels": 12,
+      "edge": 3072,
+      "quality": 0.8,
+      "decodedWidth": 4000,
+      "decodedHeight": 3000,
+      "outputWidth": 3072,
+      "outputHeight": 2304,
+      "outputBytes": 872819,
+      "mime": "image/jpeg",
+      "elapsedMs": 126,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-12mp-3072-q0.8.jpg",
+      "sha256": "e0e0dfae8967da97d38aa866d1d0030b8a96ac4740ce814130c7ba260b991bf4",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4805191,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805304,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805317,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-12mp-3072-q0.9",
+      "status": "passed",
+      "megapixels": 12,
+      "edge": 3072,
+      "quality": 0.9,
+      "decodedWidth": 4000,
+      "decodedHeight": 3000,
+      "outputWidth": 3072,
+      "outputHeight": 2304,
+      "outputBytes": 995996,
+      "mime": "image/jpeg",
+      "elapsedMs": 138,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-12mp-3072-q0.9.jpg",
+      "sha256": "f715df0de6a8ec4700fdd88a2837b4a9fbfdb3cf010e2d594b37663598edc70f",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4805360,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805478,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805498,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-24mp-1536-q0.8",
+      "status": "passed",
+      "megapixels": 24,
+      "edge": 1536,
+      "quality": 0.8,
+      "decodedWidth": 6000,
+      "decodedHeight": 4000,
+      "outputWidth": 1536,
+      "outputHeight": 1024,
+      "outputBytes": 439589,
+      "mime": "image/jpeg",
+      "elapsedMs": 103,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-24mp-1536-q0.8.jpg",
+      "sha256": "de983aeca70d1459ed0190e7174938dd953cc60227db4b91389e02e726fb478a",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4805543,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805643,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805646,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-24mp-1536-q0.9",
+      "status": "passed",
+      "megapixels": 24,
+      "edge": 1536,
+      "quality": 0.9,
+      "decodedWidth": 6000,
+      "decodedHeight": 4000,
+      "outputWidth": 1536,
+      "outputHeight": 1024,
+      "outputBytes": 507362,
+      "mime": "image/jpeg",
+      "elapsedMs": 105,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-24mp-1536-q0.9.jpg",
+      "sha256": "3379091a97e7ac5352dead747123fb2e5b8498e0c46720f62553f2e3e4c7eec6",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4805689,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805790,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805794,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-24mp-2048-q0.8",
+      "status": "passed",
+      "megapixels": 24,
+      "edge": 2048,
+      "quality": 0.8,
+      "decodedWidth": 6000,
+      "decodedHeight": 4000,
+      "outputWidth": 2048,
+      "outputHeight": 1365,
+      "outputBytes": 628268,
+      "mime": "image/jpeg",
+      "elapsedMs": 120,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-24mp-2048-q0.8.jpg",
+      "sha256": "e8f1f8aa147d26388f7b1a40d60561ffe965f7cb4532b13872974a686fa4e095",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4805839,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805944,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4805959,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-24mp-2048-q0.9",
+      "status": "passed",
+      "megapixels": 24,
+      "edge": 2048,
+      "quality": 0.9,
+      "decodedWidth": 6000,
+      "decodedHeight": 4000,
+      "outputWidth": 2048,
+      "outputHeight": 1365,
+      "outputBytes": 729266,
+      "mime": "image/jpeg",
+      "elapsedMs": 114,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-24mp-2048-q0.9.jpg",
+      "sha256": "b69c3c934af7fc64b0bd3cf2fff6e29486f3bd2a7dcd477819f1f94c028ecd13",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4806003,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806105,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806117,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-24mp-3072-q0.8",
+      "status": "passed",
+      "megapixels": 24,
+      "edge": 3072,
+      "quality": 0.8,
+      "decodedWidth": 6000,
+      "decodedHeight": 4000,
+      "outputWidth": 3072,
+      "outputHeight": 2048,
+      "outputBytes": 1056223,
+      "mime": "image/jpeg",
+      "elapsedMs": 166,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-24mp-3072-q0.8.jpg",
+      "sha256": "328f78fc84645a79de3ee7dbc27f9ec9a78b5f45bd62411d096a973f643e5069",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4806165,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806271,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806331,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-24mp-3072-q0.9",
+      "status": "passed",
+      "megapixels": 24,
+      "edge": 3072,
+      "quality": 0.9,
+      "decodedWidth": 6000,
+      "decodedHeight": 4000,
+      "outputWidth": 3072,
+      "outputHeight": 2048,
+      "outputBytes": 1214886,
+      "mime": "image/jpeg",
+      "elapsedMs": 157,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-24mp-3072-q0.9.jpg",
+      "sha256": "7d40381868e978b400d2e70b143b1c374f21f6af35d8d152a5276958ee3a2fca",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4806375,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806515,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806532,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-48mp-1536-q0.8",
+      "status": "passed",
+      "megapixels": 48,
+      "edge": 1536,
+      "quality": 0.8,
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 1536,
+      "outputHeight": 1152,
+      "outputBytes": 587469,
+      "mime": "image/jpeg",
+      "elapsedMs": 154,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-48mp-1536-q0.8.jpg",
+      "sha256": "b33e84b94609c264d52a44141918c6b1e4b4ad66118318099be5e027f997ce28",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4806576,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806679,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806730,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-48mp-1536-q0.9",
+      "status": "passed",
+      "megapixels": 48,
+      "edge": 1536,
+      "quality": 0.9,
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 1536,
+      "outputHeight": 1152,
+      "outputBytes": 681731,
+      "mime": "image/jpeg",
+      "elapsedMs": 149,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-48mp-1536-q0.9.jpg",
+      "sha256": "cd154744739c7daff06c5c2d1e85e7a1b8e93c729f93806731cff49ceb60afdb",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4806774,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806911,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4806923,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-48mp-2048-q0.8",
+      "status": "passed",
+      "megapixels": 48,
+      "edge": 2048,
+      "quality": 0.8,
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 2048,
+      "outputHeight": 1536,
+      "outputBytes": 873225,
+      "mime": "image/jpeg",
+      "elapsedMs": 165,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-48mp-2048-q0.8.jpg",
+      "sha256": "be1d6718fe9918a203e1993d24e2e3bd59777165afb024860933a96f5cfafbd1",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4806966,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807078,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807131,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-48mp-2048-q0.9",
+      "status": "passed",
+      "megapixels": 48,
+      "edge": 2048,
+      "quality": 0.9,
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 2048,
+      "outputHeight": 1536,
+      "outputBytes": 1009649,
+      "mime": "image/jpeg",
+      "elapsedMs": 173,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-48mp-2048-q0.9.jpg",
+      "sha256": "383992d999dffda8fc6c00c1d29eb7d741676711d147a1ca1ddd1936e528eed7",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4807175,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807284,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807348,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-48mp-3072-q0.8",
+      "status": "passed",
+      "megapixels": 48,
+      "edge": 3072,
+      "quality": 0.8,
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3072,
+      "outputHeight": 2304,
+      "outputBytes": 1434740,
+      "mime": "image/jpeg",
+      "elapsedMs": 207,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-48mp-3072-q0.8.jpg",
+      "sha256": "45b67f03919252035dc347d21b5d27244a6986ca0d2b410bc739327e900a5328",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4807392,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807539,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807598,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "image-48mp-3072-q0.9",
+      "status": "passed",
+      "megapixels": 48,
+      "edge": 3072,
+      "quality": 0.9,
+      "decodedWidth": 8000,
+      "decodedHeight": 6000,
+      "outputWidth": 3072,
+      "outputHeight": 2304,
+      "outputBytes": 1652128,
+      "mime": "image/jpeg",
+      "elapsedMs": 199,
+      "path": "b129-p0-resources/ios-full-01-resources/resource-48mp-3072-q0.9.jpg",
+      "sha256": "a963311f10a96093f09abcb87cc5b9dbbd2389d5f373159b2a8a46f5addfd01a",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4807642,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807773,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807841,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "serial-1-images",
+      "status": "passed",
+      "reports": [
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 37
+        }
+      ],
+      "totalBytes": 611775,
+      "count": 1,
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "elapsedMs": 49,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4807885,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4807934,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "serial-2-images",
+      "status": "passed",
+      "reports": [
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 35
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 37
+        }
+      ],
+      "totalBytes": 1223550,
+      "count": 2,
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "elapsedMs": 141,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4808020,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4808123,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4808161,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "serial-4-images",
+      "status": "passed",
+      "reports": [
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 36
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 36
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 37
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 35
+        }
+      ],
+      "totalBytes": 2447100,
+      "count": 4,
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "elapsedMs": 322,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4808246,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4808346,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4808482,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4808568,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "serial-8-images",
+      "status": "passed",
+      "reports": [
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 34
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 35
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 35
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 34
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 35
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 35
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 35
+        },
+        {
+          "decodedWidth": 4000,
+          "decodedHeight": 3000,
+          "outputWidth": 2048,
+          "outputHeight": 1536,
+          "outputBytes": 611775,
+          "mime": "image/jpeg",
+          "elapsedMs": 37
+        }
+      ],
+      "totalBytes": 4894200,
+      "count": 8,
+      "resourcesAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "elapsedMs": 679,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4808651,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4808753,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4808877,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809003,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809113,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809238,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809330,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "encoded-1mib",
+      "status": "passed",
+      "decodedWidth": 480,
+      "decodedHeight": 640,
+      "outputWidth": 480,
+      "outputHeight": 640,
+      "outputBytes": 46759,
+      "mime": "image/jpeg",
+      "elapsedMs": 8,
+      "encodedBytes": 1048576,
+      "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4809419,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809427,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "encoded-5mib",
+      "status": "passed",
+      "decodedWidth": 480,
+      "decodedHeight": 640,
+      "outputWidth": 480,
+      "outputHeight": 640,
+      "outputBytes": 46759,
+      "mime": "image/jpeg",
+      "elapsedMs": 9,
+      "encodedBytes": 5242880,
+      "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4809510,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809519,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "encoded-10mib",
+      "status": "passed",
+      "decodedWidth": 480,
+      "decodedHeight": 640,
+      "outputWidth": 480,
+      "outputHeight": 640,
+      "outputBytes": 46759,
+      "mime": "image/jpeg",
+      "elapsedMs": 13,
+      "encodedBytes": 10485760,
+      "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4809604,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809617,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "encoded-20mib",
+      "status": "passed",
+      "decodedWidth": 480,
+      "decodedHeight": 640,
+      "outputWidth": 480,
+      "outputHeight": 640,
+      "outputBytes": 46759,
+      "mime": "image/jpeg",
+      "elapsedMs": 22,
+      "encodedBytes": 20971520,
+      "fixtureKind": "valid JPEG with synthetic trailing padding; isolates byte cost, not image entropy",
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4809704,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809725,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "small-text-comparison",
+      "status": "passed",
+      "originalPath": "b129-p0-resources/ios-full-01-resources/small-text-original.png",
+      "outputs": [
+        {
+          "edge": 1536,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 1536,
+          "outputHeight": 864,
+          "outputBytes": 42476,
+          "mime": "image/jpeg",
+          "elapsedMs": 20,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-1536.jpg",
+          "sha256": "f499a424849eec4e11b9081d0961d12eaa6de914853926ec286ecf87f90783fd"
+        },
+        {
+          "edge": 2048,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 2048,
+          "outputHeight": 1152,
+          "outputBytes": 67617,
+          "mime": "image/jpeg",
+          "elapsedMs": 26,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-2048.jpg",
+          "sha256": "8b433445dc1f57c01956f699758ec96bcaa10167f95c478bd14d3abdc29f921a"
+        },
+        {
+          "edge": 3072,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 3072,
+          "outputHeight": 1728,
+          "outputBytes": 131462,
+          "mime": "image/jpeg",
+          "elapsedMs": 44,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-3072.jpg",
+          "sha256": "7de50273e65625dc58076a7a24d81a1de1fcc16f90629e453e33cbde3e834546"
+        },
+        {
+          "edge": 3200,
+          "decodedWidth": 3200,
+          "decodedHeight": 1800,
+          "outputWidth": 3200,
+          "outputHeight": 1800,
+          "outputBytes": 150736,
+          "mime": "image/jpeg",
+          "elapsedMs": 56,
+          "path": "b129-p0-resources/ios-full-01-resources/small-text-3200.jpg",
+          "sha256": "342faf1d95785912bbc99ce27b1f804ed9285d93915d5044681b1d90f1c53e02"
+        }
+      ],
+      "readable": "requires visual inspection at 1:1; no automatic pass claim",
+      "elapsedMs": 450,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4809818,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4809921,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810024,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810160,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810263,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810268,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "cache-64mib",
+      "status": "passed",
+      "capacityMiB": 64,
+      "logicalCapacityReached": true,
+      "realQuotaExceeded": false,
+      "actualQuotaExhaustionAttempted": false,
+      "bytesWritten": 75497472,
+      "evicted": [
+        "variant-1",
+        "variant-2"
+      ],
+      "closeReopen": true,
+      "leaseSurvivedClear": true,
+      "persistedSnapshot": {
+        "ids": [
+          "variant-0",
+          "variant-10",
+          "variant-11",
+          "variant-12",
+          "variant-13",
+          "variant-14",
+          "variant-15",
+          "variant-16",
+          "variant-17",
+          "variant-3",
+          "variant-4",
+          "variant-5",
+          "variant-6",
+          "variant-7",
+          "variant-8",
+          "variant-9"
+        ],
+        "count": 16,
+        "blobBytes": 67108864,
+        "writeHash": "9c6847bb0a3725dfa60f45771e2e2185acba2477eca1a36de76033e593cd587b",
+        "reopenedHash": "9c6847bb0a3725dfa60f45771e2e2185acba2477eca1a36de76033e593cd587b",
+        "persistedKeysMatch": true,
+        "persistedCapacityMatch": true,
+        "persistedHashMatch": true
+      },
+      "estimateBefore": {
+        "quota": 10307921511,
+        "usage": 90893503
+      },
+      "estimateAfter": {
+        "quota": 10307921511,
+        "usage": 90900987
+      },
+      "scope": "real IDB Blob transactions; logical cache capacity tested, browser quota not exhausted",
+      "databaseDeleted": true,
+      "elapsedMs": 333,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4810313,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810414,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810514,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810615,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810646,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "cache-128mib",
+      "status": "passed",
+      "capacityMiB": 128,
+      "logicalCapacityReached": true,
+      "realQuotaExceeded": false,
+      "actualQuotaExhaustionAttempted": false,
+      "bytesWritten": 142606336,
+      "evicted": [
+        "variant-1",
+        "variant-2"
+      ],
+      "closeReopen": true,
+      "leaseSurvivedClear": true,
+      "persistedSnapshot": {
+        "ids": [
+          "variant-0",
+          "variant-10",
+          "variant-11",
+          "variant-12",
+          "variant-13",
+          "variant-14",
+          "variant-15",
+          "variant-16",
+          "variant-17",
+          "variant-18",
+          "variant-19",
+          "variant-20",
+          "variant-21",
+          "variant-22",
+          "variant-23",
+          "variant-24",
+          "variant-25",
+          "variant-26",
+          "variant-27",
+          "variant-28",
+          "variant-29",
+          "variant-3",
+          "variant-30",
+          "variant-31",
+          "variant-32",
+          "variant-33",
+          "variant-4",
+          "variant-5",
+          "variant-6",
+          "variant-7",
+          "variant-8",
+          "variant-9"
+        ],
+        "count": 32,
+        "blobBytes": 134217728,
+        "writeHash": "593aec5c0bf9e9878813c86e9b452532f891d6d416fb082f03bfc0a06cefe3ae",
+        "reopenedHash": "593aec5c0bf9e9878813c86e9b452532f891d6d416fb082f03bfc0a06cefe3ae",
+        "persistedKeysMatch": true,
+        "persistedCapacityMatch": true,
+        "persistedHashMatch": true
+      },
+      "estimateBefore": {
+        "quota": 10307921511,
+        "usage": 90901103
+      },
+      "estimateAfter": {
+        "quota": 10307921511,
+        "usage": 90915083
+      },
+      "scope": "real IDB Blob transactions; logical cache capacity tested, browser quota not exhausted",
+      "databaseDeleted": true,
+      "elapsedMs": 651,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4810695,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810795,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810896,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4810996,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811096,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811197,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811301,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811346,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "cache-256mib",
+      "status": "passed",
+      "capacityMiB": 256,
+      "logicalCapacityReached": true,
+      "realQuotaExceeded": false,
+      "actualQuotaExhaustionAttempted": false,
+      "bytesWritten": 276824064,
+      "evicted": [
+        "variant-1",
+        "variant-2"
+      ],
+      "closeReopen": true,
+      "leaseSurvivedClear": true,
+      "persistedSnapshot": {
+        "ids": [
+          "variant-0",
+          "variant-10",
+          "variant-11",
+          "variant-12",
+          "variant-13",
+          "variant-14",
+          "variant-15",
+          "variant-16",
+          "variant-17",
+          "variant-18",
+          "variant-19",
+          "variant-20",
+          "variant-21",
+          "variant-22",
+          "variant-23",
+          "variant-24",
+          "variant-25",
+          "variant-26",
+          "variant-27",
+          "variant-28",
+          "variant-29",
+          "variant-3",
+          "variant-30",
+          "variant-31",
+          "variant-32",
+          "variant-33",
+          "variant-34",
+          "variant-35",
+          "variant-36",
+          "variant-37",
+          "variant-38",
+          "variant-39",
+          "variant-4",
+          "variant-40",
+          "variant-41",
+          "variant-42",
+          "variant-43",
+          "variant-44",
+          "variant-45",
+          "variant-46",
+          "variant-47",
+          "variant-48",
+          "variant-49",
+          "variant-5",
+          "variant-50",
+          "variant-51",
+          "variant-52",
+          "variant-53",
+          "variant-54",
+          "variant-55",
+          "variant-56",
+          "variant-57",
+          "variant-58",
+          "variant-59",
+          "variant-6",
+          "variant-60",
+          "variant-61",
+          "variant-62",
+          "variant-63",
+          "variant-64",
+          "variant-65",
+          "variant-7",
+          "variant-8",
+          "variant-9"
+        ],
+        "count": 64,
+        "blobBytes": 268435456,
+        "writeHash": "e9c19149475f7d1c66f52b42adc56d7d34295b8e60f2745a6a438bdd080c93ba",
+        "reopenedHash": "e9c19149475f7d1c66f52b42adc56d7d34295b8e60f2745a6a438bdd080c93ba",
+        "persistedKeysMatch": true,
+        "persistedCapacityMatch": true,
+        "persistedHashMatch": true
+      },
+      "estimateBefore": {
+        "quota": 10307921511,
+        "usage": 90915199
+      },
+      "estimateAfter": {
+        "quota": 10307921511,
+        "usage": 90942171
+      },
+      "scope": "real IDB Blob transactions; logical cache capacity tested, browser quota not exhausted",
+      "databaseDeleted": true,
+      "elapsedMs": 1032,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4811391,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811491,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811592,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811695,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811795,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4811896,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812021,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812141,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812261,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812380,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812423,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "cancel-and-late-encode",
+      "status": "passed",
+      "faultInjection": "held actual Canvas result and cancelled before delivery",
+      "outcome": "cancelled",
+      "lateIgnored": true,
+      "elapsedMs": 47,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4812468,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812515,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "timeout-and-late-encode",
+      "status": "passed",
+      "faultInjection": "held actual Canvas result; forced deadline; actual held callback replayed after timeout",
+      "outcome": "processing_timeout",
+      "lateCallbackObserved": true,
+      "lateCallbackReplayed": true,
+      "lateIgnored": true,
+      "cleanupBefore": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "cleanupAfter": {
+        "activeImages": 0,
+        "activeCanvases": 0,
+        "activeUrls": 0,
+        "maxActiveImages": 1,
+        "maxActiveCanvases": 1,
+        "maxActiveUrls": 1
+      },
+      "elapsedMs": 114,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4812560,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812660,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812674,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "admission-and-quota-failures",
+      "status": "passed",
+      "failures": [
+        {
+          "label": "file",
+          "error": "original_byte_budget"
+        },
+        {
+          "label": "pixels",
+          "error": "decoded_pixel_budget"
+        },
+        {
+          "label": "output",
+          "error": "variant_byte_budget"
+        },
+        {
+          "label": "count",
+          "error": "image_count_budget"
+        },
+        {
+          "label": "aggregate",
+          "error": "request_image_byte_budget"
+        }
+      ],
+      "quotaFaultInjected": true,
+      "actualQuotaExhaustion": false,
+      "storageWarning": "cache_not_retained",
+      "retainedMemoryBytes": 46759,
+      "draftUnchanged": true,
+      "scope": "independent state transition feasibility; production Chat draft integration is P1/P2",
+      "elapsedMs": 52,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4812718,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812770,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    },
+    {
+      "label": "idb-v1-v2-and-old-writer",
+      "status": "passed",
+      "realBrowserIDB": true,
+      "versionChangeReceived": true,
+      "textUnchanged": true,
+      "oldVersionError": "VersionError",
+      "newStores": [
+        "assets",
+        "saveReceipts",
+        "turns",
+        "variants",
+        "writingVersions"
+      ],
+      "scope": "native browser upgrade feasibility only; production Chat schema upgrade and business recovery remain P1/P4",
+      "elapsedMs": 15,
+      "memory": {
+        "samples": [
+          {
+            "atMs": 4812855,
+            "jsHeapBytes": null
+          },
+          {
+            "atMs": 4812870,
+            "jsHeapBytes": null
+          }
+        ],
+        "sampledMaxJSHeapBytes": null,
+        "sampledMaxProcessPrivateKiB": null,
+        "method": "100 ms renderer sampling when exposed; unavailable on ordinary iOS WKWebView; sampled maximum is not certified whole-device peak"
+      }
+    }
+  ],
+  "errors": [],
+  "originals": [
+    {
+      "name": "resource-12mp.jpg",
+      "beforeHash": "e7a22086975144b32cd3fe308608b57a99ee040e9d7a7e6cda9d460745c1bbca",
+      "afterHash": "e7a22086975144b32cd3fe308608b57a99ee040e9d7a7e6cda9d460745c1bbca",
+      "unchanged": true
+    },
+    {
+      "name": "resource-24mp.jpg",
+      "beforeHash": "46cd73a050a8e24fee4790ff6d5c028471bedd1840a57702b6cf118b6770532b",
+      "afterHash": "46cd73a050a8e24fee4790ff6d5c028471bedd1840a57702b6cf118b6770532b",
+      "unchanged": true
+    },
+    {
+      "name": "resource-48mp.jpg",
+      "beforeHash": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+      "afterHash": "e124a40f4e9240a5c36311203652da41ec2003682a59611efb60ea71dbbb32bd",
+      "unchanged": true
+    },
+    {
+      "name": "chart-exif-orientation-6.jpg",
+      "beforeHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+      "afterHash": "36854b32bc2e7e1568f191e84ad14830776183d118811331600b047fb7d6f809",
+      "unchanged": true
+    }
+  ],
+  "resources": {
+    "activeImages": 0,
+    "activeCanvases": 0,
+    "activeUrls": 0,
+    "maxActiveImages": 1,
+    "maxActiveCanvases": 1,
+    "maxActiveUrls": 1
+  },
+  "cacheProgress": {
+    "capacityMiB": 256,
+    "entries": 64,
+    "logicalBytes": 268435456,
+    "totalBytesWritten": 276824064
+  },
+  "finishedAt": "2026-09-06T08:12:56.208Z"
+}

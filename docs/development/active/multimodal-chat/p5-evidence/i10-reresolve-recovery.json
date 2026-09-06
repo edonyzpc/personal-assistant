@@ -1,0 +1,186 @@
+{
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "cf6f686eccb01331c9c91dbf3dcfe18ca44bbc6e55c2700cf68639044ff984ed",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-06T11:02:16.417Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "conversationId": "be3ac865-10b5-4a60-9f60-66c0edd84974",
+  "tail": {
+    "conversationId": "be3ac865-10b5-4a60-9f60-66c0edd84974",
+    "turnIndex": 3,
+    "user": {
+      "role": "user",
+      "content": "继续刚才的文案任务：请重新查看第3张图片，再给朋友写一句旅行朋友圈文案，只描述图中颜色与形状，不虚构地点。请按系统要求输出完整对象，不要 Markdown 代码块。",
+      "hostProvenance": {
+        "version": 1,
+        "messageId": "chat-1-2-1788692577399",
+        "kind": "writing_request"
+      }
+    },
+    "assistant": {
+      "role": "assistant",
+      "content": "The writing did not finish in the expected format. Select the intended text from the original response to recover a version.",
+      "turnStatus": "completed",
+      "images": [
+        {
+          "ref": {
+            "assetId": "img_db81e73effd64c9b873bff88cffaf6a6",
+            "contentHash": "1ffa79201691aba2b0a97a3f3a173f3090960642edf7e247a7ee99a44f97830b"
+          },
+          "ordinal": 3,
+          "label": "source.png"
+        }
+      ],
+      "hostProvenance": {
+        "version": 1,
+        "messageId": "chat-1-2-1788692577399-assistant",
+        "kind": "ai_draft"
+      },
+      "writingRecovery": {
+        "requestId": "writing_23a9b4e70be540abb09da4466cc9d570",
+        "rawText": "```json\n{\n  \"kind\": \"pa.writing\",\n  \"version\": 1,\n  \"requestId\": \"writing_23a9b4e70be540abb09da4466cc9d570\",\n  \"body\": \"深绿底色，明黄方块，旅途中的极简几何与色彩。\",\n  \"explanation\": \"根据图片中的深绿色背景与黄色方块形状撰写。\"\n}\n```",
+        "reason": "invalid_output",
+        "parentVersionId": "writing_73c14a51ef1ba45194ec8aac58b6f2be7b450cda295eb5e6",
+        "backgroundSourceRefs": [],
+        "messageId": "message_assistant_6"
+      }
+    },
+    "memoryMetadata": {
+      "hasMemoryContent": false,
+      "allowedMemorySourcePaths": [],
+      "contextUsed": [
+        {
+          "category": "read-only-tool",
+          "label": "Read-only tool",
+          "detail": "resolve_chat_images output",
+          "sources": [],
+          "citationEligible": false
+        }
+      ],
+      "contextTrace": {
+        "runId": "run_mtppdls7_kmb3ggdq",
+        "usedSourceRefs": [],
+        "skippedSourceRefs": [],
+        "usedMemoryRefs": [],
+        "droppedMemoryRefs": [],
+        "skippedScopeCount": 0,
+        "usedSourceCount": 0,
+        "skippedSourceCount": 0,
+        "usedMemoryCount": 0,
+        "droppedMemoryCount": 0
+      }
+    },
+    "contextUsed": [
+      {
+        "category": "read-only-tool",
+        "label": "Read-only tool",
+        "detail": "resolve_chat_images output",
+        "citationEligible": false,
+        "statusOnly": false,
+        "sources": []
+      }
+    ],
+    "activityDetails": [
+      "Looking up resolve_chat_images...",
+      "Reading context...",
+      "Read-only tool complete",
+      "resolve_chat_images result received",
+      "Continuing with tool results...",
+      "Reading model progress..."
+    ],
+    "providerReasoningObserved": true
+  },
+  "wire": {
+    "installed": true,
+    "currentWrapper": true,
+    "delegatedFetches": 2,
+    "skippedBodies": 0,
+    "droppedRequests": 0,
+    "observedRequests": 2,
+    "pending": 0,
+    "requests": [
+      {
+        "index": 1,
+        "state": "complete",
+        "model": "qwen3.6-plus",
+        "messageCount": 2,
+        "messages": [
+          {
+            "role": "system",
+            "blocks": [
+              {
+                "type": "text",
+                "textChars": 5800
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "blocks": [
+              {
+                "type": "text",
+                "textChars": 5274
+              }
+            ],
+            "blockCount": 1
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "state": "complete",
+        "model": "qwen3.6-plus",
+        "messageCount": 2,
+        "messages": [
+          {
+            "role": "system",
+            "blocks": [
+              {
+                "type": "text",
+                "textChars": 6280
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "blocks": [
+              {
+                "type": "text",
+                "textChars": 5671
+              },
+              {
+                "type": "image_url",
+                "image": {
+                  "mime": "image/jpeg",
+                  "byteLength": 2385,
+                  "sha256": "62a5b81f07ce77caa7020479948fd530348713f9ad157280fc48e00295737160",
+                  "jpegMarkers": {
+                    "exif": false,
+                    "iptc": false,
+                    "xmp": false,
+                    "app13Photoshop": false
+                  }
+                }
+              }
+            ],
+            "blockCount": 2
+          }
+        ]
+      }
+    ],
+    "evidence": "fetch_entry_observation",
+    "limits": {
+      "requests": 16,
+      "imageBytes": 4194304,
+      "messagesPerRequest": 512,
+      "blocksPerMessage": 128
+    },
+    "boundary": "Fetch-entry attempts, not response delivery or provider receipt. Earlier-captured fetch can bypass this observer. JPEG marker presence alone does not prove sensitive metadata."
+  }
+}

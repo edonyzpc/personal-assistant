@@ -1,0 +1,142 @@
+{
+  "installed": true,
+  "currentWrapper": true,
+  "delegatedFetches": 3,
+  "skippedBodies": 0,
+  "droppedRequests": 0,
+  "observedRequests": 3,
+  "pending": 0,
+  "requests": [
+    {
+      "index": 1,
+      "state": "complete",
+      "model": "deepseek-v4-flash",
+      "messageCount": 2,
+      "messages": [
+        {
+          "role": "system",
+          "blocks": [
+            {
+              "type": "text",
+              "textChars": 5800
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "blocks": [
+            {
+              "type": "text",
+              "textChars": 4162
+            },
+            {
+              "type": "image_url",
+              "image": {
+                "mime": "image/jpeg",
+                "byteLength": 2385,
+                "sha256": "62a5b81f07ce77caa7020479948fd530348713f9ad157280fc48e00295737160",
+                "jpegMarkers": {
+                  "exif": false,
+                  "iptc": false,
+                  "xmp": false,
+                  "app13Photoshop": false
+                }
+              }
+            }
+          ],
+          "blockCount": 2
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "state": "complete",
+      "model": "deepseek-v4-flash",
+      "messageCount": 2,
+      "messages": [
+        {
+          "role": "system",
+          "blocks": [
+            {
+              "type": "text",
+              "textChars": 6280
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "blocks": [
+            {
+              "type": "text",
+              "textChars": 4372
+            },
+            {
+              "type": "image_url",
+              "image": {
+                "mime": "image/jpeg",
+                "byteLength": 2385,
+                "sha256": "62a5b81f07ce77caa7020479948fd530348713f9ad157280fc48e00295737160",
+                "jpegMarkers": {
+                  "exif": false,
+                  "iptc": false,
+                  "xmp": false,
+                  "app13Photoshop": false
+                }
+              }
+            }
+          ],
+          "blockCount": 2
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "state": "complete",
+      "model": "deepseek-v4-flash",
+      "messageCount": 2,
+      "messages": [
+        {
+          "role": "system",
+          "blocks": [
+            {
+              "type": "text",
+              "textChars": 4836
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "blocks": [
+            {
+              "type": "text",
+              "textChars": 4489
+            },
+            {
+              "type": "image_url",
+              "image": {
+                "mime": "image/jpeg",
+                "byteLength": 2385,
+                "sha256": "62a5b81f07ce77caa7020479948fd530348713f9ad157280fc48e00295737160",
+                "jpegMarkers": {
+                  "exif": false,
+                  "iptc": false,
+                  "xmp": false,
+                  "app13Photoshop": false
+                }
+              }
+            }
+          ],
+          "blockCount": 2
+        }
+      ]
+    }
+  ],
+  "evidence": "fetch_entry_observation",
+  "limits": {
+    "requests": 16,
+    "imageBytes": 4194304,
+    "messagesPerRequest": 512,
+    "blocksPerMessage": 128
+  },
+  "boundary": "Fetch-entry attempts, not response delivery or provider receipt. Earlier-captured fetch can bypass this observer. JPEG marker presence alone does not prove sensitive metadata."
+}
