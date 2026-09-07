@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-001
-Updated: 2026-09-05
+Updated: 2026-09-07
 Work item: B-115
 Authority: PA 仓库的 repo-only idea intake、docs authority、Agent 自动维护、工程授权与信息连续性规则；不定义 PA runtime 或用户产品行为。
 
@@ -51,6 +51,45 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 - NG-04: 不修改 PA runtime、数据/隐私边界或 Obsidian UI。
 - NG-05: 不用 Product Decision/Product Spec 承载纯 repo governance/tooling 约束。
 
+## Minimal Implementation And Task Entry
+
+在既有授权范围内，“最小修改”需要完整满足行为要求，以合理的影响范围、清晰
+职责和后续维护成本衡量；不以源码行数或 token 数最少为目标。简洁汇报不要求
+压缩源码。具体实现约束由 [AGENTS.md](../../../AGENTS.md#architecture-rules) 承接，
+复用现有能力、新增抽象必须有当前需求依据，不为假设需求提前建设框架。
+
+[任务启动模板](../templates/codex-task-prompt.md) 从明确任务范围或现有 Feature
+Home/Tracker 进入，沿当前 owning contract 判断需求与授权。Plan/SDD、部署和
+smoke 按复杂度与既有验证规则选择；模板不能自行声明所有选择已获批准，也不能
+让“最轻流程”取代必要阶段或发布门禁。验证规则仍由 AGENTS 与 GOV-002 承接。
+
+## Validation Evidence And Diagnosis
+
+每个行为切片在已有 Tracker 简记需求/风险、变化、最低充分证据、通过条件与
+扩测触发；窄修无需为此新建文档。证据复用必须能核实相关输入与实际结果，
+测试失败先区分产品、工具、环境与构建身份问题，无新增信息时调整诊断路径。
+具体规则统一在 [AGENTS.md](../../../AGENTS.md#validation-planning-and-reuse)
+及其 [异常诊断规则](../../../AGENTS.md#test-failure-diagnosis)，供 SDD、重构与
+smoke 流程引用；不以放宽断言、缺失自然退出或未观察设备行为换取 PASS。
+
+测试分组、构建前置、部署复用与独立 CI/发布门仍由
+[GOV-002](./gov-002-master-first-branch-and-beta-packaging.md#proportional-validation-and-deployment)
+约束。本轮只统一 Agent 如何选择和复用证据，不改变命令行为、测试系统或门禁。
+
+## Independent Review And Validation Coordination
+
+独立 review 先核对需求、当前契约、diff 与必要依赖，再与实现者结论对照。
+新模块/复杂状态用一个合理后续修改检查入口、状态归属与不变量；测试工具按
+实际断言核查正常/反例证据，避免把 checker 误报变成产品修复。具体规则由
+[review](../../../.agents/skills/personal-assistant-review/SKILL.md) 和
+[followup](../../../.agents/skills/personal-assistant-review-followup/SKILL.md) 承接，
+保持既有严重度与只读/修复授权边界，不为角色凑 finding 或实现假想未来功能。
+
+并行编辑保持不重叠的文件归属；主 agent 统一调度昂贵验证并归并证据。
+最终 gate 冻结相关输入，新增修复由主 agent 协调结束/失效当前验证后应用。
+规则见 [AGENTS.md](../../../AGENTS.md#multi-agent-validation-coordination)，
+不新增协调平台，也不免除阶段、设备、CI 或发布门禁。
+
 ## Acceptance Criteria
 
 - B-115/AC-01: 前向 contract test 同时证明 REQ-01 与 REQ-02：casual idea 零 repo 写入；明确记录或 promotion 场景只创建/复用最小 repo Backlog ID；项目内不存在 Linear Skill 路由。
@@ -87,6 +126,15 @@ Repo docs 是唯一持久 authority。既有外部链接只保留为历史 prove
 ## Authority And Change Boundary
 
 - 2026-09-05 用户要求结合 [Astra 官方建议](https://developers.openai.com/api/docs/guides/latest-model) 审查并优化项目 AGENTS/skills。本次原位澄清已有授权的复用、完整请求的模式选择、只读与执行分流、按范围验证；不变更 PA 产品、Git/release 或数据权限。常规细节自主完成；新增权限、实质偏差和发布当前 turn 要求仍有效。
+- 2026-09-07 用户在步骤 1 完成后要求“继续”，对应同会话分步任务的步骤 2：
+  澄清最小修改并修正任务入口。本节吸收该范围内的工程准则；后续测试收敛、
+  review 协作与模型试点仍须按后续步骤授权，不由本次修订自动实施。
+- 2026-09-07 用户在步骤 2 完成后再次要求“继续”，授权步骤 3 的验证选择、
+  证据复用和异常诊断规则及关联指引校准，停在步骤 4 之前；不涉及 runtime、
+  模型配置、测试/部署命令变更或必要门禁减免。
+- 2026-09-07 用户在步骤 3 完成后要求“继续”，授权步骤 4 的 review/followup
+  与多 agent 验证调度规则、必要指引同步和既有 diff 的只读走查，停在步骤 5
+  之前；不授权启动真实 feature 试点、调整模型或修改示例中的产品/工具代码。
 - Current governance authority: 本文件与 [Documentation Workflow](../documentation-workflow.md)。两者冲突时先修复 drift，不由 Product Decision Register 接管。
 - Delivery authority: 本 contract、Documentation Workflow、当前 Skills、checker 与 focused contract tests；已吸收的 B-115 过程包不再作为 authority 保留。
 - Product escalation: 任何实现若改变 PA runtime、用户行为、数据/隐私边界或 Obsidian UI，必须停止 governance-only lane，并进入 Accepted Product Decision + Approved Product Spec。

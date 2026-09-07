@@ -96,24 +96,31 @@ Only fix P2/P1/P0 findings immediately. Move low-risk polish into `docs/backlog.
 
 After fixes, re-review the changed area or at least re-check the specific finding against the live diff.
 
+Use the current [review skill](../../../.agents/skills/personal-assistant-review/SKILL.md) for independent maintainability and probe checks. Follow [Multi-Agent Validation Coordination](../../../AGENTS.md#multi-agent-validation-coordination): assign disjoint edit ownership, return focused evidence, and let the main agent schedule expensive gates against frozen inputs. Review lanes do not each repeat full validation or edit the candidate while its final gate runs.
+
 ## Test Strategy
 
-Use the smallest meaningful checks first:
+Select focused suites from the phase's requirements, changed behavior, and concrete risks before running them. These are alternative entry points, not a sequence of required commands:
+
+| Changed surface | Focused entry point |
+| --- | --- |
+| Source behavior | `npm test -- --runInBand <suites>`; no `dist/` prerequisite |
+| Tooling or fixtures | `npm run test:tooling -- --runInBand <suites>` |
+| Build-bound receipts or probes | `npm run test:artifacts -- --runInBand <suites>`; build first if the production assets are absent or stale |
+| Docs or skill instructions only | `npm run docs:check`, affected existing contract suites, and `git diff --check`; no plugin build or smoke unless executable or runtime assets change |
+
+Follow [AGENTS.md — Validation Planning And Reuse](../../../AGENTS.md#validation-planning-and-reuse) for scope, evidence, and rerun decisions, the [Local Validation Gate](../../../AGENTS.md#local-validation-gate) for code/DOM checks, and [Test Failure Diagnosis](../../../AGENTS.md#test-failure-diagnosis) when a check fails. Do not add tests for low-impact wording or mechanically mirror the implementation.
+
+For broad behavior, shared runtime, release, packaging, or rollout changes, the standalone gate is:
 
 ```bash
-npm test -- __tests__/chat-service.test.ts --runInBand
-npm test -- __tests__/ai-utils.test.ts __tests__/chat-service.test.ts --runInBand
-npx tsc -noEmit -skipLibCheck
 npm run lint
+npm run build
+npm run test:all -- --runInBand
 git diff --check
 ```
 
-For broad behavior, shared runtime, release, packaging, or rollout changes, run:
-
-```bash
-npm run build
-npm run test:all -- --runInBand
-```
+If `make deploy` will run this gate for the same inputs, use its lint/build/full-Jest results instead of running them separately again; still record the diff check and required behavior-specific evidence. A production build already includes TypeScript checking. Source, test, or configuration changes invalidate the evidence they affect; resolve that impact before reusing results. Required phase acceptance, device smoke, CI, and release gates remain in force under [GOV-002](../governance/gov-002-master-first-branch-and-beta-packaging.md#proportional-validation-and-deployment).
 
 For dependency or lockfile changes, add:
 
@@ -125,12 +132,14 @@ npm ci --dry-run
 
 Run Obsidian smoke when runtime/UI behavior changes.
 
-Preferred path:
+Default setup runs platform guards, lint, a production build, and full Jest once before copying assets:
 
 ```bash
 make deploy
 obsidian "obsidian://open?vault=test&file=<encoded-path>"
 ```
+
+When the required checks already passed for the current changes and the production build is current, use `make deploy-current` for the copy step instead. It verifies build identity and asset content, not test success; apply the [Local Deployment](../../../AGENTS.md#local-deployment) reuse conditions. This does not replace the actual app interaction or any required device smoke.
 
 Then reload the test vault or plugin and verify the exact behavior in Obsidian.
 
@@ -246,6 +255,6 @@ Use this prompt to start the next refactor:
 - 每个 phase 按 dev -> test -> review -> fix -> Obsidian smoke test -> fix 循环推进。
 - 使用 subagents 做 phase review。
 - 只在 Tracker 更新执行状态；实现后同步受影响的 Product Spec/Architecture、按需 Plan/SDD、风险与验证记录。
-- Runtime/UI 变化必须 make deploy 后在 test vault smoke。
+- Runtime/UI 变化必须部署后在 test vault smoke；默认 make deploy，当前改动所需检查已通过且 production build 有效时按 AGENTS.md 复用 make deploy-current。
 - Closeout 把稳定结论吸收到 current authority/tests，未完成项进入 Backlog，过程文档默认删除；提交时拆分 docs、runtime/test、Backlog/future milestone、release commit。
 ```

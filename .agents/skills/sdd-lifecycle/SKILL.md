@@ -77,14 +77,19 @@ For each behavior slice:
 implement -> focused validation -> review -> fix -> verify
 ```
 
-Keep the Tracker current, use existing module boundaries, and add regression
-tests with the changed behavior. Run the Local Validation Gate from `AGENTS.md`
-at the scope justified by the change. Use PA review/follow-up skills for
-implementation review.
+Keep the Tracker current and use existing module boundaries. Before a slice,
+map its REQ/AC or risk to the change, minimum sufficient evidence, pass
+condition, and rerun/expansion trigger. Follow **Validation Planning And Reuse**
+and **Test Failure Diagnosis** in `AGENTS.md`; add tests for uncovered behavior
+or regression risk, and select the correct source/tooling/artifact group.
+Satisfy the Local Validation Gate at the justified scope, reusing covered
+checks only with verified inputs/results. Use PA review/follow-up skills for
+implementation review; fix-driven verification covers the affected risk.
 
-Use `make deploy` and observed Obsidian smoke only when runtime/UI/shared
-infrastructure confidence is required. Do not claim app or iOS validation
-without observed evidence.
+Retain required broad and app/device gates at each phase exit. For app proof,
+use `make deploy` or the eligible current-build reuse target under `AGENTS.md`
+Local Deployment, then observe the affected behavior. Do not claim app or iOS
+validation without observed evidence; docs/skills-only work uses the docs gate.
 
 ## Closeout
 

@@ -1,96 +1,58 @@
 # Codex 任务启动 Prompt 模板
 
-> 使用方式：复制下方模板，替换 `{{...}}` 占位符后发送给 Codex。
+选用一个模板，替换 `{{...}}` 即可。任务入口可以是已有 Feature Home，也可以是
+明确的目标与范围；无需先替 Agent 选择 lane、文档目录或测试命令。
 
----
+## 启动任务
 
-## 模板
+```text
+请完成 {{TASK_OR_FEATURE_HOME}}，并完成本次授权范围内的必要验证。
 
-```
-我是这个项目的独立开发者和唯一决策者。你的角色是 implementation advisor — 负责设计 SDD、实现代码、通过 make deploy 验证、在真实 vault 上 dogfood。
+按 AGENTS.md 和 docs/development/documentation-workflow.md 解析任务范围与授权。
+已有 Feature Home 时先读它和 Tracker，再按需读取 owning contract、相关代码和测试；
+没有入口时从我说明的目标与范围开始，使用当前生命周期要求的最轻 lane。
+窄修复沿用既有契约；完整 feature 先明确当前产品契约或 Governance Contract，
+跨会话执行建立最小 Feature Home + Tracker，Plan/SDD 只在当前复杂度需要时补齐。
 
-请先按顺序阅读以下文档：
-1. {{HANDOFF_DOC}} — 你的任务定义和完成标准
-2. {{DECISION_DOC}} — 权威决策记录（所有设计选择已确定，不需要重新讨论）
-3. {{PROPOSAL_DOCS}} — 方向文档
+最小修改应完整满足已确认需求并控制影响范围，保留清晰命名、控制流和必要的中间步骤。
+按 AGENTS.md 及当前 owning contract 选择验证，复用其允许的现有证据；
+需要部署、设备或阶段收口验证时完成对应门禁，不把所有任务套进全量流程。
+有 Tracker 时简记需求/风险、最低充分证据、通过与扩测条件；按 AGENTS.md 处理
+证据失效和测试异常，无新信息时调整诊断，不靠重复全量或放宽断言取得通过。
+把未定产品取舍和实质偏差交给我决定；常规细节与仍适用的已授权工作连续完成。
 
-读完后从 {{START_STEP}} 开始，先写 SDD 再实现。
-
-约束：
-- 方向已确认，不需要评判该不该做
-- 不需要添加治理流程，过程是 SDD → 实现 → make deploy → dogfood
-- 设计选择有疑问时参考决策记录中的已决策列表
-- 技术问题需要澄清可以提，方向问题 escalate 给我
-```
-
----
-
-## 占位符说明
-
-| 占位符 | 含义 | 示例 |
-|--------|------|------|
-| `{{HANDOFF_DOC}}` | 任务交接文档路径 | `docs/development/proposals/implementation-handoff.md` |
-| `{{DECISION_DOC}}` | 决策记录文档路径 | `docs/development/proposals/proposal-review-response-2026-07-28.md` |
-| `{{PROPOSAL_DOCS}}` | 相关方向文档（可多个） | 见下方示例 |
-| `{{START_STEP}}` | 从哪个 Step 开始 | `Step 1（Pagelet Agent Deep Discover）` |
-
----
-
-## 当前任务的完整示例
-
-```
-我是这个项目的独立开发者和唯一决策者。你的角色是 implementation advisor — 负责设计 SDD、实现代码、通过 make deploy 验证、在真实 vault 上 dogfood。
-
-请先按顺序阅读以下文档：
-1. `docs/development/proposals/implementation-handoff.md` — 你的任务定义和完成标准
-2. `docs/development/proposals/proposal-review-response-2026-07-28.md` — 权威决策记录（所有设计选择已确定，不需要重新讨论）
-3. `docs/development/proposals/pagelet-agent/pagelet-agent-proposal.md` — Pagelet Agent 方向
-4. `docs/development/proposals/operations-agent/agent-operations-capability.md` — Operations 方向
-
-读完后从 Step 1（Pagelet Agent Deep Discover）开始，先写 SDD 再实现。
-
-约束：
-- 方向已确认，不需要评判该不该做
-- 不需要添加治理流程，过程是 SDD → 实现 → make deploy → dogfood
-- 设计选择有疑问时参考 review-response §6 的已决策列表
-- 技术问题需要澄清可以提，方向问题 escalate 给我
+结束时报告改动、验证结果与缺口；有 Tracker 时只在那里更新执行状态。
+本任务不自动授权 closeout、commit、push、merge、tag、publish 或 release。
 ```
 
----
+## 只执行指定步骤
 
-## 变体：只做某个 Step
-
-```
-我是这个项目的独立开发者和唯一决策者。你的角色是 implementation advisor。
-
-请阅读 `docs/development/proposals/implementation-handoff.md`，然后只做 {{TARGET_STEP}}。
-完成标准和技术要求在 handoff 文档中已列明。
-
-约束：
-- 方向已确认，不评判
-- 过程：SDD → 实现 → make deploy → dogfood
-- 不扩展 scope，只做指定 Step
+```text
+请从 {{FEATURE_HOME_OR_TASK_SCOPE}} 开始，只执行 {{TARGET_STEP}}。
+已有 track 时先读 Feature Home + Tracker；按 AGENTS.md、当前文档生命周期与
+owning contract 完成本步骤的修改、必要验证和状态更新，随后停在下一步骤之前。
+沿用适用的已授权决定；未定产品取舍或实质偏差仍需明确批准。
+不提前实施后续步骤，不因步骤名称而自动新增 SDD、全量部署或独立交接文档。
+closeout、Git 和发布操作继续遵守各自授权边界。
 ```
 
----
+## 续做已有任务
 
-## 变体：续做（上次中断后继续）
-
-```
-上次你在做 {{LAST_STEP}}，进度到了 {{PROGRESS}}。请继续。
-
-参考文档不变：
-- `docs/development/proposals/implementation-handoff.md`
-- `docs/development/proposals/proposal-review-response-2026-07-28.md`
-
-从 {{RESUME_POINT}} 继续，不需要重新读全部文档。
+```text
+请继续 {{FEATURE_HOME_OR_TASK_SCOPE}} 中尚未完成且已获授权的工作。
+已有 track 时从 Feature Home + Tracker 的 Current Snapshot 恢复；没有 track 时
+沿用本会话的目标、范围和停止点。先核实当前工作树与相关输入是否变化，
+按需补读 owning contract 或变更，不重新遍历全部历史。
+按 AGENTS.md 与当前文档生命周期判断已有验证能否复用，完成剩余必要验证。
+保持原授权终点；若原任务只授权一个步骤，完成该步骤后停止，不自动进入下一步。
+常规细节自主处理；产品取舍、实质偏差、closeout、Git 与发布遵守各自授权边界。
 ```
 
----
+## 使用边界
 
-## 使用原则
-
-1. **每次新任务都给完整模板** — Codex 可能没有上次的记忆
-2. **不给开放式指令** — "分析一下"会让它进入审批模式
-3. **明确起点和边界** — 告诉它从哪开始、做到哪停
-4. **方向问题 escalate** — 技术问题它自己解决，产品方向回来问你
+- 当前规则见 [AGENTS.md](../../../AGENTS.md) 和
+  [Documentation Workflow](../documentation-workflow.md)；模板不另设验证门禁。
+- 仅分析、仅 review 或显式只读时零写入；按完整请求与已有授权选择模式，模板不升级权限。
+- 模板、历史 Proposal 或 Agent 写出的 Approved/Accepted 状态不能证明用户批准；
+  明确的技术选型与产品、数据、媒体边界仍按当前 authority 执行。
+- 发布仍需要当前 turn 的明确授权。不要把“完成任务”解释为自动发布。

@@ -17,6 +17,10 @@ Use this file as the project README for coding agents. Keep changes aligned with
   analysis-only/read-only/no-file-changes requests mean zero writes. For an
   implementation or optimization request, complete the scoped work and its
   relevant validation; do not stop at a plan or an offer to continue.
+- A minimal change fully satisfies the authorized behavior within the smallest
+  justified change surface. Optimize for clear responsibilities and ease of
+  maintenance, not fewer lines or tokens. Concise replies do not require
+  compressed source code.
 - Reuse clear, still-applicable authorization from the conversation for the
   same operation, target, and scope. Resolve routine implementation details
   autonomously. Preserve the separate Git/release permissions below, including
@@ -145,7 +149,9 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   before modifying the destination. Test/config changes still need their checks.
 - `make deploy deploy-icloud` runs shared full validation once when both targets
   are authorized together. Default individual deploy targets retain full checks.
-- When validating behavior in the already-open Obsidian test vault, run `make deploy`, then reload or re-enable the plugin in Obsidian as needed.
+- When validating behavior in the already-open Obsidian test vault, use
+  `make deploy` or the eligible current-build target above, then reload or
+  re-enable the plugin in Obsidian as needed.
 - To speed up Obsidian smoke setup, first check `command -v obsidian`. When available, use the Obsidian CLI with `obsidian://open` deep links to jump the test vault to the target note or asset before using Computer Use for visual/chat verification. Example: `obsidian "obsidian://open?vault=test&file=0.unsorted%2FDog.md"`. URL-encode vault file paths when needed.
 - Standard plugin packaging should work with `main.js`, `manifest.json`, and `styles.css`. If a change adds worker/WASM runtime assets, audit build, deploy, release, install, and docs together.
 
@@ -162,7 +168,9 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   - `npm run test:all -- --runInBand`
   - `git diff --check`
 - For dependency or lockfile changes, also run `npm ci --dry-run` when practical.
-- For Obsidian UI smoke tests, prefer the fast path: `make deploy`, reload/re-enable the plugin, use the Obsidian CLI/deep link to open the exact test vault target, then use Computer Use only for the interaction that must be observed in the app.
+- For Obsidian UI smoke tests, select the Local Deployment path above,
+  reload/re-enable the plugin, open the exact test vault target with the
+  Obsidian CLI/deep link, and observe the required interaction in the app.
 - If a command cannot be run, state that clearly and explain the residual risk.
 - Do not claim behavior was validated in Obsidian unless it was actually deployed/tested in the app.
 - Add tests when they protect a meaningful behavior or regression; do not add
@@ -170,6 +178,68 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   required checks pass for the current state, repeat or broaden them only for
   a new change, failure, or concrete unresolved risk. Reuse checks already run
   by an enclosing gate such as `make deploy` when their inputs are unchanged.
+
+### Validation Planning And Reuse
+
+- Before each slice, record a compact mapping in the existing Tracker:
+  `REQ/AC or risk -> change -> minimum sufficient evidence/command -> pass
+  condition -> rerun/expansion trigger`. A narrow fix without a Tracker can
+  keep this in the task response; do not create a separate test plan. Add a
+  test or probe only to answer an uncovered behavior or regression question.
+- Select source, tooling, or artifact suites using the command groups above.
+  Verify the intended suites actually ran; a wrong group or missing build is
+  not a reason to run everything. Collect coverage only when the gate requires
+  it. Preserve required integration tests and broad/real-device phase exits;
+  do not defer a phase's gate to the end of the whole feature.
+- Record reusable evidence with command/scope, result and natural exit,
+  relevant source/tests/fixtures/config/dependencies, and required environment
+  or build identity. Verify those inputs before reuse; HEAD alone is not
+  enough with uncommitted changes. Invalidate affected evidence when inputs
+  change; shared behavior/config/dependencies may require a broad rerun.
+  Docs-only edits do not invalidate runtime proof unless they change its
+  requirements or validation rules. Unknown input identity means no reuse.
+- Count checks already covered by an enclosing command: a production build
+  includes type-checking; `make deploy` includes lint/build/full Jest. Use
+  `deploy-current` only under Local Deployment conditions; build identity
+  does not prove tests passed. Supplement uncovered checks such as the DOM
+  source scan. Focused PASS is not full-suite PASS; independent CI and release
+  gates still run against their required final inputs.
+
+### Test Failure Diagnosis
+
+- Start from the exact failing command, assertion, inputs, and logs. Separate
+  product defects, fixture/runner defects, unavailable environment/device,
+  and stale build/deployment identity before selecting a targeted diagnostic.
+- Retry with a new hypothesis or changed input. A second same-cause failure
+  with no new information, or about 15 minutes of diagnosis without progress,
+  prompts a reassessment: reduce the reproduction, inspect the checker, and
+  change the diagnostic approach while continuing independent work. This is
+  not a timeout for healthy long-running tests or permission to skip a gate.
+- Do not weaken assertions, alter production behavior to satisfy a faulty
+  checker, blindly increase mocks/timeouts, or use `--forceExit` to hide open
+  handles. Diagnose suspected leaks in the affected suite. Stop expanding once
+  required current evidence is sufficient and no concrete risk remains;
+  record blocked evidence honestly and ask only for a needed decision,
+  permission, or external prerequisite.
+
+### Multi-Agent Validation Coordination
+
+- The main agent assigns independent risk questions and disjoint file ownership
+  for parallel edits. Reviewers may read shared dependencies; no two agents
+  write the same file concurrently. Review-only work remains zero-write.
+- Contributors return findings and relevant focused-check evidence, including
+  commands, inputs, results, and gaps. They do not each run the full gate.
+  The main agent consolidates evidence under Validation Planning And Reuse and
+  schedules expensive full-suite, build, and deployment work once per required
+  input state, either directly or through one designated executor.
+- Before a final build/full-test/deploy gate, coordinate a freeze of its source,
+  tests, fixtures, config, dependencies, and generated inputs. Read-only review
+  can continue; route required fixes to the main agent instead of editing those
+  inputs mid-run. Finish the run or explicitly stop it as superseded before
+  applying the fix, then reassess invalidated checks. An unexpected concurrent
+  change invalidates affected evidence; do not label a mixed-state run PASS.
+- Shared scheduling does not remove required phase, device, CI, or release
+  gates. Do not add a lock service, cache, or receipt system for coordination.
 
 ### Local Validation Gate
 
@@ -196,7 +266,14 @@ under the Local Deployment conditions when those checks already passed.
 
 ## Architecture Rules
 
-- Prefer existing module boundaries and helper APIs over new parallel abstractions.
+- Prefer existing module boundaries, platform APIs, and project helpers over new
+  parallel abstractions. Add foundational utilities, dependencies, or abstractions for
+  a current verified need, and explain why existing capabilities do not fit.
+  Do not build generalized frameworks for speculative future requirements.
+- Keep naming, control flow, state ownership, side effects, error recovery, and
+  lifecycle understandable without the implementation conversation. Use clear
+  intermediate steps and local helpers when they make changes easier to follow;
+  comments should explain non-obvious constraints and choices.
 - Keep user-facing Memory behavior in `MemoryManager`.
 - Keep low-level vector/index operations behind `VSS` and `VectorIndex`.
 - `VSS` is the internal facade for `searchSimilarity`, refresh, rebuild, reset, reconcile, and local index maintenance.

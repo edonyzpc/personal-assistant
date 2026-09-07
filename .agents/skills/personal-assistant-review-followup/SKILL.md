@@ -23,7 +23,9 @@ is not evidence of a user decision.
 
 ## Workflow
 
-1. Restate the findings in plain engineering terms.
+1. Verify each finding against its exact trigger, affected code, and current
+   contract before restating it. Separate verified defects from hypotheses;
+   reviewer confidence or severity is not evidence.
 2. Classify each finding:
    - **must-fix**: correctness, data safety, privacy, user-visible breakage,
      product-contract violation, release blocker, or a direct failure of the
@@ -33,11 +35,13 @@ is not evidence of a user decision.
    - **defer**: polish, theoretical failure path, localized copy cleanup
      without product-contract or safety impact, refactor preference, or risk
      without a concrete trigger.
-3. Calibrate severity again. Do not preserve the original P-level if the
-   conversation shows it was too high or too low.
+3. Calibrate severity again against that evidence. A readability concern should
+   identify a concrete change entry, responsibility, or invariant that is hard
+   to follow. Style preferences or speculative risks alone do not justify a
+   refactor, broader scope, or a full validation gate.
 4. Identify decision points before coding.
-5. If the user only asked for analysis, stop after the classification and
-   decision options.
+5. If the user only asked for analysis or explicitly required read-only work,
+   make no writes; stop after the classification and decision options.
 6. Ask for an unresolved product decision when viable fixes materially differ
    in behavior or user effort. Reuse applicable user decisions and current
    accepted contracts; do not infer a decision from reviewer severity.
@@ -110,6 +114,22 @@ to the affected suites. For plugin command, worker, DOM/CSS, or shared runtime
 changes, also include `npm run lint`. For documentation-only fixes, use the
 relevant documentation checks and `git diff --check`; do not run runtime gates
 without a runtime change.
+
+Use **Validation Planning And Reuse**, **Test Failure Diagnosis**, and
+**Multi-Agent Validation Coordination** in [AGENTS.md](../../../AGENTS.md) for
+evidence reuse, diagnosis, and shared validation ownership. Required phase,
+device, CI, and release gates still apply; do not assign each subagent a
+duplicate full gate.
+
+When a finding relies on a probe or checker, confirm the relevant comparison
+semantics and evidence boundary before treating its output as a product defect.
+Inspect text matching/normalization, asynchronous completion and cleanup, or
+repeat-run behavior only where the reported trigger makes them relevant. Reuse
+existing proof or add the smallest normal/failing examples needed to close a
+reliability gap before adopting the result; do not require an unrelated matrix.
+A checker that misclassifies valid behavior needs correction, not a product
+change to satisfy it or weakened assertions. Record an unresolved checker gap
+as unverified evidence, not a confirmed product finding or a PASS.
 
 For Obsidian runtime smoke, use `obsidian-test-vault-smoke` and prefer a
 provider-free probe unless the accepted fix specifically requires live provider

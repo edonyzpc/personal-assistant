@@ -98,12 +98,15 @@ git diff --stat
 git diff --name-only
 ```
 
-2. Reuse a fresh same-turn local prerequisite for the identical runtime source
-   state. Otherwise run the complete **Local Validation Gate** from `AGENTS.md`,
-   including the runtime `<style>` / `innerHTML` / `outerHTML` source scan.
-   Treat `rg` exit code `1` with no output as PASS and inspect every match. For
-   broad UI/runtime changes, close local validation with `make deploy` and
-   local app smoke.
+2. Reuse automated local checks with verified inputs/results under `AGENTS.md`
+   **Validation Planning And Reuse**. Complete missing or invalidated **Local
+   Validation Gate** checks, counting checks covered by the selected enclosing
+   command and supplementing the runtime `<style>` / `innerHTML` / `outerHTML`
+   source scan. Treat `rg` exit code `1` with no output as PASS and inspect every
+   match. Reuse observed local app smoke only within the same turn while its
+   target/runtime state is unchanged; otherwise renew the affected local app
+   proof. For broad UI/runtime changes, retain `make deploy` (or its eligible
+   current-build target) and local app smoke before device validation.
 
 3. Sync only the changed artifact after the user requested real-device smoke:
 

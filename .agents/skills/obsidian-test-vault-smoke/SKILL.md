@@ -25,10 +25,12 @@ Before an expensive gate or app interaction:
 3. Map changed surfaces to the minimum evidence. Mark unaffected surfaces
    `SKIP`; do not run full Pagelet, provider, or cross-surface flows for a
    geometry-only change.
-4. Reuse fresh same-turn evidence only while runtime source, generated assets,
-   target vault, and deployed build remain unchanged. Docs/evidence-only edits
-   do not invalidate runtime smoke; TypeScript, CSS, build, or fixture changes
-   do.
+4. Reuse automated checks under `AGENTS.md` **Validation Planning And Reuse**,
+   verifying relevant source/tests/fixtures/config and build inputs/results.
+   Reuse observed app smoke only within the same turn while its runtime/assets,
+   target vault state, and loaded build remain unchanged. Docs/evidence-only
+   edits do not invalidate runtime smoke unless they change its acceptance
+   rules. Input changes invalidate the affected evidence.
 5. Freeze runtime files before `make deploy`. If they change afterward, rerun
    only the affected validation gate and app proof.
 
@@ -38,11 +40,13 @@ solely to strengthen an already sufficient proof.
 
 ## Validation Gate
 
-Run the complete **Local Validation Gate** from repo-root `AGENTS.md` once per
-distinct code, DOM, or CSS state before app smoke. Run all commands currently
-listed there, including the runtime `<style>` / `innerHTML` / `outerHTML`
-source scan. Reuse a fresh same-turn PASS for an identical runtime state; do
-not rerun it after docs/evidence-only edits.
+Satisfy the complete **Local Validation Gate** from repo-root `AGENTS.md`
+before app smoke. Reuse checks covered by the selected enclosing gate with
+verified inputs/results: the production build covers type-checking and full
+Jest covers the focused suites it includes. Supplement remaining checks,
+including the runtime `<style>` / `innerHTML` / `outerHTML` source scan.
+For failures, follow `AGENTS.md` **Test Failure Diagnosis**; an unavailable
+app/device remains a validation gap, never a PASS.
 
 Treat the source-scan `rg` exit code `1` with no output as PASS. Inspect every match manually. `make deploy` and the hosted community scan do not replace this local source scan.
 
@@ -65,9 +69,11 @@ build identity alone does not prove tests passed.
 
 1. Inspect `git status --short`, relevant diffs, and affected surfaces.
 2. Freeze the observable target and classify the runtime delta.
-3. Run or reuse the complete Local Validation Gate from `AGENTS.md`.
+3. Select the deployment path below and complete or reuse its checks together
+   with the remaining Local Validation Gate checks from `AGENTS.md`.
 4. Select the smoke tier.
-5. For app smoke, deploy and reload:
+5. For app smoke, deploy with `make deploy` below, or replace only that command
+   with `make deploy-current` when the reuse conditions above hold, then reload:
 
 ```bash
 make deploy

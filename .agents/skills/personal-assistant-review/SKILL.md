@@ -22,7 +22,9 @@ closure. Do not invent findings to satisfy a role or lane.
    - `git status --short --branch`
    - `git diff --stat`
    - `git diff --name-only`
-3. Read targeted diffs and nearby code before judging.
+3. Read the requirements/current contract, targeted diffs, and necessary
+   dependencies before the implementer's conclusions. Form an independent
+   view, then reconcile their explanation and validation evidence.
 4. Lead the final answer with findings ordered by severity.
 5. State validation run and validation not run.
 
@@ -60,6 +62,12 @@ below are not mandatory read sets. Use independent subagent lanes when requested
 or when parallel work saves time or improves coverage. Keep a narrow review
 local when splitting adds no value; if tools are unavailable, cover the relevant
 risks locally. Docs/skills-only reviews need no unrelated Pagelet/runtime lane.
+
+Assign bounded risk questions without requiring a finding from each lane.
+Follow `AGENTS.md` **Multi-Agent Validation Coordination**: the main agent
+merges evidence and schedules expensive gates; reviewers report findings and
+focused evidence without each running full tests/build/deploy. Review-only
+lanes do not edit files, including while a final gate is running.
 
 ### Gate Mode Lanes
 
@@ -118,6 +126,25 @@ Use the gate lanes, then add perspectives only where relevant:
 
 Do not let these labels create coverage pressure. If a lane has no actionable
 issue, say so.
+
+## Maintainability And Probe Reliability
+
+- For a new module or complex state change, walk through one plausible change
+  adjacent to the current requirement. Locate the entry point, state owner,
+  and invariants a future maintainer must preserve without the implementation
+  conversation. Use the exercise to expose concrete coupling or misleading
+  APIs; do not implement the hypothetical feature or require speculative
+  abstractions. Apply the existing severity rules to any resulting finding.
+- For changed tests/checkers/probes, select the risks they actually exercise:
+  semantic comparison rather than incidental object-key order, text/frontmatter
+  boundaries, async cleanup, repeatability, and expectations derived from the
+  contract rather than copied implementation assumptions. Do not turn this
+  list into a mandatory test matrix for every feature.
+- Before relying on a new or materially changed probe's verdict, inspect the
+  smallest normal and counterexample evidence for its relevant assertion.
+  It must accept valid behavior and reject the failure it claims to detect.
+  Missing evidence is a validation gap; review-only work reports it without
+  writing fixtures or changing production code to satisfy the checker.
 
 ## Second-Layer Risk Lens
 
@@ -206,6 +233,10 @@ compatibility, or release impact.
 For code/DOM changes, run the **Local Validation Gate** from AGENTS.md, scoped to
 the changed surface. Use its docs/skills-only checks for instruction changes.
 For broad Pagelet or shared-runtime diffs, also include `npm run lint`.
+
+Apply `AGENTS.md` **Validation Planning And Reuse** and **Test Failure Diagnosis**;
+reuse checks with verified inputs/results and request only missing evidence
+for a concrete risk. The main agent coordinates expensive gates as above.
 
 Per AGENTS.md Testing Instructions, do not claim Obsidian validation without
 deployed evidence. If `make deploy` and real test-vault smoke were not run, state it.
