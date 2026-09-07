@@ -1,11 +1,11 @@
 # Multimodal Chat Architecture
 
 Document status: Current
-Updated: 2026-09-06
+Updated: 2026-09-07
 Work item: B-129
 Authority: 当前图片聊天、文案版本、图文保存及显式风格参考的技术契约。
 Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)
-Validation evidence: [限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md)
+Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md)
 
 ## 模块与数据流
 
@@ -85,6 +85,11 @@ flowchart LR
 模型能力区分 supported/unknown/unsupported；网络错误不固化为模型不支持，
 失败恢复不覆盖用户后续草稿。切换 provider/model 配置使旧能力证据失效。
 
+未发送图片使用 composer 内的紧凑缩略图 renderer，历史消息保留原有附件 renderer。
+草稿 renderer 与按需详情窗口分别持有预览 lease/object URL；移除、关闭或迟到结果
+均释放各自资源。详情展示不改变草稿 processing/ready/error 状态，不把重新定位
+成功直接当作失败导入已恢复。可追溯原图操作仍复用附件视图和服务。
+
 历史持久化引用，图片字节只在最终请求前物化到 `HumanMessage` 图片块。
 B-128 投影、压缩、工具续轮、重试及 reserved final 共用来源和预算检查；文字摘要
 不能代替图片。重看旧图必须重新解析原 hash；必需图片缺失或准备后失效时停止，
@@ -128,6 +133,8 @@ Settings/来源事件只刷新参考区，不重建编辑器；换版、折叠�
 ## 固定保存与失败恢复
 
 1. 预览固定版本、目标 `.md`、选定图片和顺序。默认选择该版本全部关联图片；
+   UI 将标题与可更改的文件夹拼成目标路径，交给既有路径校验；不记忆新默认目录，
+   不用路径归一化吞掉 `..` 等非法输入。返回修改会释放旧准备结果，再次预览。
    HEIC 先准备正式 JPEG、冻结输出 hash 并持有 lease，失败不开始写笔记。
 2. 首次写入前持久化 `SaveReceipt`。相同操作串行执行，不能只依赖 UI disabled。
 3. 先创建选定正文及 `pa_writing` 来源元数据，再用实际目标 TFile 解析附件目录。

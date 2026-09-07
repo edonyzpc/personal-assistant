@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-09-06
+Updated: 2026-09-07
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -49,6 +49,8 @@ Updated: 2026-09-06
 | T-001 | React → Preact | 新组件依赖 React-only 能力，或第三方库与 `preact/compat` 不兼容 | [Historical evaluation SDD](./archive/sdd-react-preact-evaluation.md) |
 | T-002 | SQLite/WASM inline strategy | Mobile cold start ≥ 5s、三次独立 OOM，或 passive load P95 ≥ 5s | [Historical decisions](./archive/v2.1.2-decisions.md) |
 | T-003 | Write-action production audit | 出现不明写入、需要可见 write history，或合规要求 durable audit | [Write Action Framework](./architecture/write-action-framework-sdd.md) |
+| T-004 | Active Package 局部后续任务的 ID 映射成本 | 在后续真实任务反复出现全契约映射负担，并有可定位的新增成本时再评估；先排除完整 namespace 漏写。当前不改 checker、不减追溯/验证门禁；若设计显式局部 scope，必须保持默认全量检查及未知/跨契约 ID 拒绝 | [GOV-001](./development/governance/gov-001-agent-managed-project-lifecycle.md), [Astra 试点结论](./archive/2026/astra-feature-workflow-optimization-validation.md) |
+| T-005 | 图片系统选择器的入口诊断 | 正常受支持图片也稳定复现无法提交，或用户明确要求排查该入口时重启；先区分系统选择器、夹具和 PA 导入链路。当前只观察到故意损坏 PNG 的 Open 禁用，原因未知，不作为已确认 PA 缺陷 | [图片体验验证与限制](./archive/2026/chat-image-experience-validation.md#limits-and-disposition) |
 
 ## 维护规则
 

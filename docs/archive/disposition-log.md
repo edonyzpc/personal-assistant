@@ -1,11 +1,13 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-09-06
+Updated: 2026-09-07
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-09-07 | `docs/development/active/astra-feature-workflow-optimization/**` | deleted-after-absorption | [Current GOV-001](../development/governance/gov-001-agent-managed-project-lifecycle.md), [Astra 历史对照与试点证据](./2026/astra-feature-workflow-optimization-validation.md), [T-004](../backlog.md#触发型评估) | 用户明确授权 closeout；T-01–T-06 完成，稳定规则已吸收至 AGENTS、Workflow、模板和 skills。仅保留独有历史出处、试点结论、验证与成本限制，删除重复过程入口；未扩大 checker 或调整模型。 |
+| 2026-09-07 | `docs/development/active/chat-image-experience/**` | deleted-after-absorption | [B-129 Product Spec](../product/specs/pa-multimodal-chat-product-spec.md), [Architecture](../architecture/multimodal-chat-architecture.md), [使用指南](../guides/multimodal-chat-user-guide.md), [图片体验验证](./2026/chat-image-experience-validation.md), [T-005](../backlog.md#触发型评估) | 用户明确授权 closeout；两个兼容 UI 切片及六项 P2 修复已验证，用户确认手动粘贴。当前契约与测试吸收最终行为，紧凑历史证据保留构建/实载/真实 UI 和范围限制；删除本轮未提交的过程包，不声称 Git 保存了这份过程包的完整历史。 |
 | 2026-09-06 | `docs/development/active/multimodal-chat/**` | deleted-after-absorption | [B-129 Product Spec](../product/specs/pa-multimodal-chat-product-spec.md), [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md), [Architecture](../architecture/multimodal-chat-architecture.md), [validation evidence](./2026/b129-multimodal-chat-validation.md), [B-132/B-133/B-134](../backlog.md#已延期的产品与工程工作) | Owner 授权整合收尾，并明确补齐 AC-09；I-16 已修复和验证。稳定 REQ/AC、技术契约、使用说明及必要证据已吸收；后续范围独立保留，删除重复过程包，Git 保留完整历史。 |
 | 2026-09-06 | `docs/development/active/context-management/**` | deleted-after-absorption | [B-128 Product Spec](../product/specs/pa-context-management-product-spec.md), [DEC-032](../product/decisions/dec-032-context-reliability-and-conversation-continuity.md), [Context architecture](../architecture/pa-agent-architecture-plan.md#context-management), [validation evidence](./2026/b-128-context-management-validation.md) | Owner 明确关闭 B-128；稳定行为、REQ/AC 与回归来源已吸收，构建绑定的原始验证保留。Feature Home、Tracker、SDD 及逐轮 finding 属于已完成过程，由 Git 历史恢复；F-20/F-23 分别转 [B-130/B-131](../backlog.md#已延期的产品与工程工作)，master 集成与发布不从 closeout 推定。 |
 | 2026-09-06 | `docs/development/discovery/pa-agent-context-management-research.md` | absorbed | [Historical research](./2026/b-128-context-management-research.md), [DEC-032](../product/decisions/dec-032-context-reliability-and-conversation-continuity.md) | 外部实现、学术引用与 PA 取舍依据保留为 current-linked historical provenance；已吸收的实现草案、批准门和执行过程删除，不保留 Exploring 状态或当前执行权威。 |
