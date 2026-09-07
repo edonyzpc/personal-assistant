@@ -110,3 +110,26 @@ WritingSaveModal 复用原路径校验与 action/receipt；关闭或迟到结果
   未决诊断与治理候选仅按 [Backlog](../../backlog.md#触发型评估) 的条件重启。
 - closeout 关闭本次交付；Git push、master 集成及远端 CI 结果以实际执行为准，
   不产生 tag 或 release。
+
+## Master Integration Follow-up
+
+2026-09-07，三个带 Signed-off-by 且 GPG 验签通过的提交经 feature 分支推送，
+随后快进至 master；两端均核实为 `fffc80fff6d15687a5931d4e13cd137fd51546f2`。
+[该提交的远端 CI](https://github.com/edonyzpc/personal-assistant/actions/runs/34133619147)
+通过平台、Lint、Build 和文档检查，但完整覆盖率测试为 238 suites PASS / 1 FAIL，
+6232 tests PASS / 1 FAIL，Jest 569.62 s；bundle 审计未执行。该失败不能用先前本地 PASS 覆盖。
+
+唯一失败在 `chat-image-processor-macos.test.ts` 的固定 100 次 `setImmediate`
+轮询：真实文件/摘要准备尚未完成，mock `execFile` 回调仍不可用，等待断言先失败。
+该测试、转换器及测试配置在原 master `9d0f12ae…` 到 `fffc80ff…` 之间未修改。
+后续修复仅将此套件的进程启动和目录创建等待改为明确事件协调，保留安全、取消、
+清理与生命周期断言及原超时门禁；不据此修改转换器或重新开展历史格式/设备矩阵。
+
+该测试修复的本地验证：focused 命令
+`npm test -- --runInBand __tests__/chat-image-processor-macos.test.ts`
+18 PASS、Jest 0.24 s；同命令增加 `--coverage --collectCoverageFrom=src/chat/image-macos-converter.ts`
+18 PASS、Jest 0.5 s，均自然 exit 0。后者只采集 converter：语句/行 98.42%、
+分支 81.13%、函数 100%，不冒充全仓覆盖率。TypeScript、diff 检查通过，独立
+只读复核无新增 P1/P2。最终测试 SHA-256 为
+`4bf6d0bf9b6bca983a8ac7c733b88bbf39889e7dc5a226226ac04641bdfba0d5`。
+修复后的完整远端门禁以该修复提交在 master 上的 CI 为准；旧失败记录保留。
