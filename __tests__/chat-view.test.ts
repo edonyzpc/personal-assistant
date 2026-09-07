@@ -15,6 +15,7 @@ import { WritingStyleUnavailableError } from '../src/chat/writing-style-service'
 import type { WritingVersion } from '../src/chat/writing-types';
 import type { WritingSaveAction, PreparedWritingSave } from '../src/chat/writing-save-action';
 import { ImageManagementModal, VaultImagePickerModal } from '../src/chat/image-management-modal';
+import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
@@ -1444,6 +1445,332 @@ describe('LLMView turn lifecycle', () => {
             width: 1, height: 1, persistent: false, release: () => undefined });
         return { service, ref };
     }
+
+    it('renders pasted images once inside the composer and opens local details before original access', async () => {
+        const context = createView();
+        const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        const importFile = jest.spyOn(service, 'importFile').mockImplementation(async (file) => ({
+            ref: { ...ref, assetId: file.name }, asset: { acquisition: 'unverified_import' },
+        }) as Awaited<ReturnType<ImageAssetService['importFile']>>);
+        const readOriginal = jest.spyOn(service, 'readOriginal');
+        const detailRoot = new MockElement('div');
+        let detail: ImageAttachmentDetailModal | undefined;
+        const open = jest.spyOn(ImageAttachmentDetailModal.prototype, 'open').mockImplementation(function (this: ImageAttachmentDetailModal) {
+            detail = this;
+            this.contentEl = detailRoot as unknown as HTMLElement;
+            this.onOpen();
+        });
+        const close = jest.spyOn(ImageAttachmentDetailModal.prototype, 'close').mockImplementation(function (this: ImageAttachmentDetailModal) { this.onClose(); });
+        try {
+            await context.view.onOpen();
+            const editor = getTextArea(context.containerEl);
+            const preventDefault = jest.fn();
+            editor.dispatchEvent('paste', { clipboardData: { files: [
+                new File(['a'], 'first.png', { type: 'image/png' }),
+                new File(['b'], 'second.png', { type: 'image/png' }),
+            ] }, preventDefault });
+            expect(preventDefault).toHaveBeenCalledTimes(1);
+            const draftEl = getElementByClass(context.containerEl, 'pa-chat-image-draft');
+            expect(draftEl.parentElement).toBe(getElementByClass(context.containerEl, 'pa-chat-composer-row'));
+            expect(draftEl.parentElement?.children[0]).toBe(draftEl);
+            expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(true);
+            for (let i = 0; i < 6; i++) await flushPromises();
+            const entries = walkAll(draftEl, (element) => element.classList.contains('pa-chat-image-draft__item'));
+            expect(entries).toHaveLength(2);
+            expect(entries.map((entry) => entry.getAttribute('data-status'))).toEqual(['ready', 'ready']);
+            expect(walkAll(draftEl, (element) => element.tagName === 'img')).toHaveLength(2);
+            expect(walkAll(draftEl, (element) => element.tagName === 'button')).toHaveLength(4);
+            expect(walk(draftEl, (element) => element.classList.contains('pa-chat-images'))).toBeNull();
+            expect(allText(draftEl)).not.toContain('original format');
+            expect(getButtonsByText(context.containerEl, 'Add original from Files')).toHaveLength(1);
+            expect(importFile.mock.calls.map((call) => call[1]?.acquisition)).toEqual(['unverified_import', 'unverified_import']);
+            expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(false);
+            getElementByClass(entries[0], 'pa-chat-image-draft__preview').click();
+            await flushPromises();
+            expect(open).toHaveBeenCalledTimes(1);
+            expect(detail).toBeDefined();
+            expect(readOriginal).not.toHaveBeenCalled();
+            expect(allText(detailRoot)).toContain('first.png');
+            expect(allText(detailRoot)).toContain('original format is unverified');
+            editor.value = 'Continue editing';
+            const documentWithFocus = { activeElement: null as MockElement | null };
+            Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
+            const remove = getElementByClass(entries[0], 'pa-chat-image-draft__remove');
+            remove.focus();
+            remove.click();
+            expect(documentWithFocus.activeElement).toBe(editor);
+            expect(editor.value).toBe('Continue editing');
+            expect(close).toHaveBeenCalledTimes(1);
+            expect(walkAll(draftEl, (element) => element.classList.contains('pa-chat-image-draft__item'))).toHaveLength(1);
+        } finally {
+            await context.view.onClose();
+            await service.dispose();
+            open.mockRestore(); close.mockRestore(); readOriginal.mockRestore(); importFile.mockRestore();
+        }
+    });
+
+    it.each(['success', 'source_missing', 'open_failed'] as const)(
+        'closes image details only after its original opens and preserves recovery on failure: %s', async (outcome) => {
+            const root = new MockElement('div');
+            const image = { ref: { assetId: 'detail-image', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'source.png' };
+            const release = jest.fn();
+            const readOriginal = jest.fn(async (..._args: Parameters<ImageAssetService['readOriginal']>) => {
+                if (outcome === 'source_missing') throw new Error('source_missing');
+                return { asset: { originalPath: 'originals/source.png' } };
+            });
+            const service = {
+                resolveVariant: jest.fn(async () => ({ blob: new Blob(['preview']), width: 1, height: 1, release })),
+                readOriginal,
+            } as unknown as ImageAssetService;
+            let finishOpen!: () => void;
+            const openLinkText = jest.fn(async (..._args: Parameters<App['workspace']['openLinkText']>) => {
+                if (outcome === 'open_failed') throw new Error('workspace unavailable');
+                return new Promise<void>((resolve) => { finishOpen = resolve; });
+            });
+            const modal = new ImageAttachmentDetailModal({ workspace: { openLinkText } } as unknown as App, image, service, false);
+            modal.contentEl = root as unknown as HTMLElement;
+            const close = jest.spyOn(modal, 'close').mockImplementation(() => modal.onClose());
+            const revokeUrl = jest.spyOn(URL, 'revokeObjectURL');
+            try {
+                modal.onOpen();
+                await flushPromises();
+                const preview = getElementByClass(root, 'pa-chat-image__preview');
+                preview.click();
+                await flushPromises();
+                expect(readOriginal).toHaveBeenCalledWith(image.ref, 'preview');
+                expect(close).not.toHaveBeenCalled();
+                expect(release).not.toHaveBeenCalled();
+                if (outcome === 'success') {
+                    expect(openLinkText).toHaveBeenCalledWith('originals/source.png', '', false);
+                    finishOpen();
+                    await flushPromises();
+                    expect(close).toHaveBeenCalledTimes(1);
+                    expect(root.children).toHaveLength(0);
+                    expect(release).toHaveBeenCalledTimes(1);
+                    expect(revokeUrl).toHaveBeenCalledTimes(1);
+                } else {
+                    expect(openLinkText).toHaveBeenCalledTimes(outcome === 'source_missing' ? 0 : 1);
+                    expect(getElementByClass(root, 'pa-chat-image__status').textContent).toContain('Original unavailable');
+                    expect(getButtonByText(root, 'Locate the original').hidden).toBe(false);
+                    expect(root.children.length).toBeGreaterThan(0);
+                }
+                modal.onClose();
+                expect(release).toHaveBeenCalledTimes(1);
+                expect(revokeUrl).toHaveBeenCalledTimes(1);
+            } finally {
+                modal.onClose();
+                close.mockRestore(); revokeUrl.mockRestore();
+            }
+        },
+    );
+
+    it('keeps a failed pasted image visible and removable while blocking send', async () => {
+        const context = createView();
+        const { service } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        const importFile = jest.spyOn(service, 'importFile').mockRejectedValue(new Error('cannot preserve image'));
+        try {
+            await context.view.onOpen();
+            const editor = getTextArea(context.containerEl);
+            editor.value = 'Keep this text';
+            editor.dispatchEvent('paste', { clipboardData: { files: [new File(['a'], 'broken.png', { type: 'image/png' })] }, preventDefault: jest.fn() });
+            let entry = getElementByClass(context.containerEl, 'pa-chat-image-draft__item');
+            expect(entry.getAttribute('data-status')).toBe('processing');
+            expect(getElementByClass(entry, 'pa-chat-image-draft__status').textContent).toBeTruthy();
+            expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(true);
+            for (let i = 0; i < 4; i++) await flushPromises();
+            entry = getElementByClass(context.containerEl, 'pa-chat-image-draft__item');
+            expect(entry.getAttribute('data-status')).toBe('error');
+            const status = getElementByClass(entry, 'pa-chat-image-draft__status');
+            expect(status.getAttribute('role')).toBe('status');
+            expect(status.textContent).toContain('add it again');
+            expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(true);
+            expect(getElementByClass(entry, 'pa-chat-image-draft__preview').disabled).toBe(true);
+            getElementByClass(entry, 'pa-chat-image-draft__remove').click();
+            expect(getElementByClass(context.containerEl, 'pa-chat-image-draft').hidden).toBe(true);
+            expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(false);
+            expect(editor.value).toBe('Keep this text');
+            expect(mockStreamLLM).not.toHaveBeenCalled();
+        } finally {
+            await context.view.onClose();
+            await service.dispose();
+            importFile.mockRestore();
+        }
+    });
+
+    it.each(['ready', 'error'] as const)(
+        'reveals new image imports and failures while preserving ordinary draft scrolling: %s', async (outcome) => {
+            const context = createView();
+            const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+            type Imported = Awaited<ReturnType<ImageAssetService['importFile']>>;
+            const imported = { ref, asset: { acquisition: 'original_file' } } as Imported;
+            let finishImport!: (value: Imported) => void;
+            let failImport!: (reason: Error) => void;
+            const importFile = jest.spyOn(service, 'importFile').mockImplementation(async (file) => {
+                if (file.name === 'eighth.png') {
+                    return new Promise<Imported>((resolve, reject) => { finishImport = resolve; failImport = reject; });
+                }
+                return imported;
+            });
+            const originalBounds = MockElement.prototype.getBoundingClientRect;
+            const bounds = jest.spyOn(MockElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: MockElement) {
+                if (this.classList.contains('pa-chat-image-draft__item') && this.parentElement) {
+                    const index = this.parentElement.children.indexOf(this);
+                    const width = this.getAttribute('data-status') === 'error' ? 248 : 84;
+                    const left = index * 92 - this.parentElement.scrollLeft;
+                    return { left, right: left + width, top: 0, bottom: 84, width, height: 84 };
+                }
+                return originalBounds.call(this);
+            });
+            try {
+                await context.view.onOpen();
+                const editor = getTextArea(context.containerEl);
+                const draftEl = getElementByClass(context.containerEl, 'pa-chat-image-draft');
+                draftEl.clientWidth = 300;
+                const originalEmpty = draftEl.empty.bind(draftEl);
+                jest.spyOn(draftEl, 'empty').mockImplementation(() => {
+                    originalEmpty();
+                    // Browsers clamp scrollLeft when the entire strip is temporarily emptied.
+                    draftEl.scrollLeft = 0;
+                });
+                editor.dispatchEvent('paste', { clipboardData: { files: Array.from({ length: 7 }, (_, index) =>
+                    new File(['image'], `${index}.png`, { type: 'image/png' })) }, preventDefault: jest.fn() });
+                for (let i = 0; i < 6; i++) await flushPromises();
+                expect(draftEl.children).toHaveLength(7);
+                draftEl.scrollLeft = 190;
+                draftEl.scrollTop = 37;
+                const documentWithFocus = { activeElement: editor as MockElement | null };
+                Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
+                const picker = walkAll(context.containerEl, (element) => element.getAttribute('type') === 'file')[0];
+                Object.assign(picker, { files: [new File(['invalid'], 'eighth.png', { type: 'image/png' })] });
+                (picker as unknown as { onchange: () => void }).onchange();
+                await flushPromises();
+                expect(draftEl.children).toHaveLength(8);
+                expect(draftEl.children[7].getBoundingClientRect().right).toBeLessThanOrEqual(300);
+                expect(draftEl.children[7].getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
+                // The user may browse older images while this import is pending.
+                draftEl.scrollLeft = 200;
+                if (outcome === 'error') failImport(new Error('invalid PNG'));
+                else finishImport(imported);
+                for (let i = 0; i < 4; i++) await flushPromises();
+                expect(draftEl.children[7].getAttribute('data-status')).toBe(outcome);
+                if (outcome === 'error') {
+                    expect(draftEl.children[7].getBoundingClientRect().right).toBeLessThanOrEqual(300);
+                    expect(draftEl.children[7].getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
+                    expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(true);
+                } else expect(draftEl.scrollLeft).toBe(200);
+                expect(draftEl.scrollTop).toBe(37);
+                expect(documentWithFocus.activeElement).toBe(editor);
+            } finally {
+                await context.view.onClose();
+                await service.dispose();
+                bounds.mockRestore(); importFile.mockRestore();
+            }
+        },
+    );
+
+    it.each(['keep', 'remove', 'close'] as const)(
+        'reveals a remaining early batch failure after later imports finish, excluding removed or closed drafts: %s', async (disposition) => {
+            const context = createView();
+            const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+            type Imported = Awaited<ReturnType<ImageAssetService['importFile']>>;
+            const imported = { ref, asset: { acquisition: 'original_file' } } as Imported;
+            let finishLastImport!: (value: Imported) => void;
+            const importFile = jest.spyOn(service, 'importFile').mockImplementation(async (file) => {
+                if (file.name === '0.png') throw new Error('invalid PNG');
+                if (file.name === '7.png') return new Promise<Imported>((resolve) => { finishLastImport = resolve; });
+                return imported;
+            });
+            const originalBounds = MockElement.prototype.getBoundingClientRect;
+            const bounds = jest.spyOn(MockElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: MockElement) {
+                if (this.classList.contains('pa-chat-image-draft__item') && this.parentElement) {
+                    const index = this.parentElement.children.indexOf(this);
+                    const widthOf = (item: MockElement) => item.getAttribute('data-status') === 'error' ? 248 : 84;
+                    const offset = this.parentElement.children.slice(0, index).reduce((left, item) => left + widthOf(item) + 8, 0);
+                    const left = offset - this.parentElement.scrollLeft;
+                    const width = widthOf(this);
+                    return { left, right: left + width, top: 0, bottom: 84, width, height: 84 };
+                }
+                return originalBounds.call(this);
+            });
+            try {
+                await context.view.onOpen();
+                const editor = getTextArea(context.containerEl);
+                const draftEl = getElementByClass(context.containerEl, 'pa-chat-image-draft');
+                draftEl.clientWidth = 300;
+                const documentWithFocus = { activeElement: editor as MockElement | null };
+                Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
+                editor.dispatchEvent('paste', { clipboardData: { files: Array.from({ length: 8 }, (_, index) =>
+                    new File(['image'], `${index}.png`, { type: 'image/png' })) }, preventDefault: jest.fn() });
+                for (let i = 0; i < 6; i++) await flushPromises();
+                expect(draftEl.children).toHaveLength(8);
+                expect(draftEl.children[0].getAttribute('data-status')).toBe('error');
+                expect(draftEl.children[7].getAttribute('data-status')).toBe('processing');
+                expect(draftEl.children[0].getBoundingClientRect().right).toBeLessThan(0);
+                const draft = (context.view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft;
+                if (disposition === 'remove') getElementByClass(draftEl.children[0], 'pa-chat-image-draft__remove').click();
+                if (disposition === 'close') await context.view.onClose();
+                draftEl.scrollLeft = 200;
+                finishLastImport(imported);
+                for (let i = 0; i < 4; i++) await flushPromises();
+                if (disposition === 'keep') {
+                    expect(draftEl.children[0].getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
+                    expect(draftEl.children[0].getBoundingClientRect().right).toBeLessThanOrEqual(300);
+                    expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(true);
+                    expect(draftEl.children.slice(1).every((entry) => entry.getAttribute('data-status') === 'ready')).toBe(true);
+                } else {
+                    expect(draftEl.scrollLeft).toBe(200);
+                    expect(draft.snapshot('').images.some((entry) => entry.status === 'error')).toBe(false);
+                }
+                if (disposition !== 'close') expect(documentWithFocus.activeElement).toBe(editor);
+            } finally {
+                await context.view.onClose();
+                await service.dispose();
+                bounds.mockRestore(); importFile.mockRestore();
+            }
+        },
+    );
+
+    it('releases a pasted thumbnail lease that arrives after its item is removed', async () => {
+        const context = createView();
+        const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        const importFile = jest.spyOn(service, 'importFile').mockResolvedValue({
+            ref, asset: { acquisition: 'original_file' },
+        } as Awaited<ReturnType<ImageAssetService['importFile']>>);
+        type Lease = Awaited<ReturnType<ImageAssetService['resolveVariant']>>;
+        let finishPreview!: (lease: Lease) => void;
+        let previewSignal: AbortSignal | undefined;
+        const preparationRelease = jest.fn();
+        const thumbnailRelease = jest.fn();
+        const lease = { blob: new Blob(['preview']), mime: 'image/jpeg', width: 1, height: 1, persistent: false, release: preparationRelease };
+        jest.spyOn(service, 'resolveVariant').mockReset()
+            .mockResolvedValueOnce(lease)
+            .mockImplementationOnce((_ref, _purpose, options) => {
+                previewSignal = options?.signal;
+                return new Promise<Lease>((resolve) => { finishPreview = resolve; });
+            });
+        const createUrl = jest.spyOn(URL, 'createObjectURL');
+        try {
+            await context.view.onOpen();
+            getTextArea(context.containerEl).dispatchEvent('paste', {
+                clipboardData: { files: [new File(['a'], 'late.png', { type: 'image/png' })] }, preventDefault: jest.fn(),
+            });
+            for (let i = 0; i < 4; i++) await flushPromises();
+            expect(preparationRelease).toHaveBeenCalledTimes(1);
+            getElementByClass(context.containerEl, 'pa-chat-image-draft__remove').click();
+            expect(previewSignal?.aborted).toBe(true);
+            finishPreview({ ...lease, release: thumbnailRelease });
+            await flushPromises();
+            expect(thumbnailRelease).toHaveBeenCalledTimes(1);
+            expect(createUrl).not.toHaveBeenCalled();
+            expect(getElementByClass(context.containerEl, 'pa-chat-image-draft').children).toHaveLength(0);
+            await context.view.onClose();
+            expect(thumbnailRelease).toHaveBeenCalledTimes(1);
+        } finally {
+            await context.view.onClose();
+            await service.dispose();
+            createUrl.mockRestore(); importFile.mockRestore();
+        }
+    });
 
     it.each(['files', 'vault'] as const)('discloses before the first %s image and not on later imports or view/service reopen', async (firstEntry) => {
         const store = new MemoryChatHistoryStore();
@@ -5759,7 +6086,9 @@ describe('LLMView turn lifecycle', () => {
         const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
         const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
 
-        expect(composerRow.children).toEqual([getTextArea(containerEl), actions]);
+        expect(composerRow.children).toEqual([
+            getElementByClass(containerEl, 'pa-chat-image-draft'), getTextArea(containerEl), actions,
+        ]);
         expect(actions.parentElement).toBe(composerRow);
         expect(actions.children.filter((child) => child.tagName !== 'input')).toEqual([
             getButtonByClass(containerEl, 'pa-chat-add-images'), askButton, memoryControl, cancelButton, moreControl,

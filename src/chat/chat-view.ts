@@ -63,7 +63,7 @@ import { formatOperationsPreview } from '../ai-services/operations/operations-pr
 import { ShareCardModal } from '../share-card/share-card-modal';
 import { ComposerDraft, type SentComposerDraft, type ComposerSnapshot } from './composer-draft';
 import { cloneMessageImages, type ImageAcquisition, type MessageImage } from './image-types';
-import { renderImageAttachments } from './image-attachment-view';
+import { ImageAttachmentDetailModal, renderComposerImageAttachments, renderImageAttachments } from './image-attachment-view';
 import { ImageManagementModal, VaultImagePickerModal } from './image-management-modal';
 import { classifyChatUserProvenanceKind } from '../pa/chat-memory-admission';
 import { mergeChatImageMaterials } from '../ai-services/chat-image-identity';
@@ -470,11 +470,11 @@ export class LLMView extends ItemView {
         this.renderPageletHandoffForOpenView = renderPageletHandoff;
         renderPageletHandoff();
         const composerRow = inputDiv.createDiv({ cls: 'pa-chat-composer-row' });
+        const imageDraftEl = composerRow.createDiv({ cls: 'pa-chat-image-draft' });
+        imageDraftEl.hidden = true;
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: t("plugin.chat.placeholder.askAboutNotes") }
         });
-        const imageDraftEl = inputDiv.createDiv({ cls: 'pa-chat-image-draft' });
-        imageDraftEl.hidden = true;
         const skillTypeahead = inputDiv.createDiv({
             cls: 'pa-chat-skill-typeahead',
             attr: {
@@ -964,38 +964,53 @@ export class LLMView extends ItemView {
             }
         };
         let draftPreviewCleanup: (() => void) | undefined;
+        let imageDetail: { entryId: number; modal: ImageAttachmentDetailModal } | undefined;
         const unverifiedImageIds = new Set<number>();
-        const renderImageDraft = () => {
+        const revealImageDraftEntry = (entryId: number) => {
+            const entries = composerDraft.snapshot('').images;
+            const revealIndex = entries.findIndex((entry) => entry.id === entryId);
+            const revealItem = imageDraftEl.children[revealIndex] as HTMLElement | undefined;
+            if (!revealItem) return;
+            const visible = imageDraftEl.getBoundingClientRect();
+            const item = revealItem.getBoundingClientRect();
+            // Only move the image strip; page position and text focus belong to the user.
+            if (item.left < visible.left || item.width > visible.width) {
+                imageDraftEl.scrollLeft += item.left - visible.left;
+            } else if (item.right > visible.right) {
+                imageDraftEl.scrollLeft += item.right - visible.right;
+            }
+        };
+        const renderImageDraft = (revealEntryId?: number) => {
+            const scrollLeft = imageDraftEl.scrollLeft;
             draftPreviewCleanup?.();
             imageDraftEl.empty();
             const entries = composerDraft.snapshot(textArea.value).images;
             imageDraftEl.hidden = entries.length === 0;
-            const ready = entries.filter((entry) => entry.status === 'ready' && entry.value)
-                .map((entry) => entry.value!);
-            if (ready.length && this.host.imageAssetService) {
-                draftPreviewCleanup = renderImageAttachments(imageDraftEl, ready, this.host.imageAssetService, this.app);
+            if (imageDetail && !entries.some((entry) => entry.id === imageDetail?.entryId)) {
+                imageDetail.modal.close();
+                imageDetail = undefined;
             }
-            for (const entry of entries) {
-                const row = imageDraftEl.createDiv({ cls: 'pa-chat-image-draft__item' });
-                row.createSpan({ text: entry.label });
-                if (entry.status !== 'ready') row.createSpan({
-                    cls: 'pa-chat-image__status',
-                    text: entry.status === 'processing' ? t('plugin.chat.images.loading') : entry.error ?? t('plugin.chat.images.failed'),
-                });
-                if (unverifiedImageIds.has(entry.id)) row.createSpan({ cls: 'pa-chat-image__status', text: t('plugin.chat.images.unverified') });
-                const remove = row.createEl('button', {
-                    attr: { type: 'button', 'aria-label': `${t('plugin.chat.images.remove')}: ${entry.label}` },
-                });
-                setIcon(remove, 'x');
-                remove.onclick = () => { composerDraft.removeImage(entry.id); unverifiedImageIds.delete(entry.id); renderImageDraft(); };
-            }
-            if (entries.length) {
-                const original = imageDraftEl.createEl('button', { text: t('plugin.chat.images.addOriginal'), attr: { type: 'button' } });
-                original.onclick = () => originalPicker.click();
-            }
+            draftPreviewCleanup = renderComposerImageAttachments(imageDraftEl, entries, this.host.imageAssetService, {
+                onPreview: (entry) => {
+                    if (!entry.value || !this.host.imageAssetService) return;
+                    imageDetail?.modal.close();
+                    const modal = new ImageAttachmentDetailModal(this.app, entry.value, this.host.imageAssetService,
+                        unverifiedImageIds.has(entry.id));
+                    imageDetail = { entryId: entry.id, modal };
+                    modal.open();
+                },
+                onRemove: (id) => {
+                    composerDraft.removeImage(id);
+                    unverifiedImageIds.delete(id);
+                    renderImageDraft();
+                    this.focusComposerTextArea(textArea);
+                },
+            });
+            imageDraftEl.scrollLeft = scrollLeft;
+            if (revealEntryId !== undefined) revealImageDraftEntry(revealEntryId);
             syncComposerControls();
         };
-        this.registerViewTeardown(() => draftPreviewCleanup?.());
+        this.registerViewTeardown(() => { draftPreviewCleanup?.(); imageDetail?.modal.close(); });
         const showImageProviderNotice = (isCurrent: () => boolean) =>
             this.host.imageAssetService?.showProviderNoticeIfNeeded(() => {
                 if (!isCurrent()) return false;
@@ -1007,13 +1022,15 @@ export class LLMView extends ItemView {
             const service = this.host.imageAssetService;
             if (!service) { new Notice(t('plugin.chat.images.unavailable')); return; }
             const importDraftId = composerDraft.snapshot('').draftId;
+            const failedEntryIds = new Set<number>();
             for (const file of files) {
                 if (!isCurrentSession() || composerDraft.snapshot('').draftId !== importDraftId) return;
                 let handle;
                 try { handle = composerDraft.beginImport(file.name); }
                 catch { new Notice(t('plugin.chat.images.limit')); break; }
-                renderImageDraft();
+                renderImageDraft(handle.entryId);
                 let messageImage: MessageImage | undefined;
+                let failedEntryId: number | undefined;
                 try {
                     const isCurrentImport = () => isCurrentSession() && !handle.signal.aborted
                         && composerDraft.snapshot('').draftId === importDraftId;
@@ -1036,10 +1053,18 @@ export class LLMView extends ItemView {
                         if (imported.asset.acquisition === 'unverified_import') unverifiedImageIds.add(handle.entryId);
                     }
                 } catch {
-                    composerDraft.failImport(handle, t('plugin.chat.images.failed'), messageImage);
+                    if (composerDraft.failImport(handle, t('plugin.chat.images.failed'), messageImage)) {
+                        failedEntryId = handle.entryId;
+                        failedEntryIds.add(handle.entryId);
+                    }
                 } finally {
-                    if (isCurrentSession()) renderImageDraft();
+                    if (isCurrentSession()) renderImageDraft(failedEntryId);
                 }
+            }
+            const currentDraft = composerDraft.snapshot('');
+            if (isCurrentSession() && currentDraft.draftId === importDraftId) {
+                const remainingFailure = currentDraft.images.find((entry) => entry.status === 'error' && failedEntryIds.has(entry.id));
+                if (remainingFailure) revealImageDraftEntry(remainingFailure.id);
             }
         };
         addVaultImageButton.onclick = () => {
@@ -1052,9 +1077,10 @@ export class LLMView extends ItemView {
                 let handle;
                 try { handle = composerDraft.beginImport(file.name); }
                 catch { new Notice(t('plugin.chat.images.limit')); return; }
-                renderImageDraft();
+                renderImageDraft(handle.entryId);
                 void (async () => {
                     let selectedImage: MessageImage | undefined;
+                    let failedEntryId: number | undefined;
                     try {
                         const isCurrentImport = () => isCurrentSession() && !handle.signal.aborted
                             && composerDraft.snapshot('').draftId === selectedDraftId;
@@ -1067,8 +1093,10 @@ export class LLMView extends ItemView {
                         const preview = await service.resolveVariant(selected.ref, 'preview', { signal: handle.signal });
                         preview.release();
                         composerDraft.completeImport(handle, selectedImage);
-                    } catch { composerDraft.failImport(handle, t('plugin.chat.images.failed'), selectedImage); }
-                    if (isCurrentSession()) renderImageDraft();
+                    } catch {
+                        if (composerDraft.failImport(handle, t('plugin.chat.images.failed'), selectedImage)) failedEntryId = handle.entryId;
+                    }
+                    if (isCurrentSession()) renderImageDraft(failedEntryId);
                 })();
             }).open();
         };

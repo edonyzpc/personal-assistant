@@ -172,7 +172,9 @@ export class WritingVersionModal extends Modal {
             });
             action(t('plugin.chat.writing.keepEdit'), async () => { await this.render(); });
             if (this.host.onSelect) action(t('plugin.chat.writing.continue'), (chosen) => { this.host.onSelect?.(chosen); this.close(); });
-            if (this.host.save) action(t('plugin.chat.writing.save'), (chosen) => { new WritingSaveModal(this.app, this.host.save!, chosen).open(); });
+            if (this.host.save) action(t('plugin.chat.writing.save'), (chosen) => {
+                new WritingSaveModal(this.app, this.host.save!, chosen, () => this.close()).open();
+            });
             if (this.host.rememberStyle) action(t('plugin.chat.writing.rememberStyle'), (chosen) => {
                 new WritingStyleModal(this.app, chosen, this.host.rememberStyle!).open();
             });
@@ -186,17 +188,39 @@ export class WritingSaveModal extends Modal {
     private prepared?: PreparedWritingSave;
     private controller?: AbortController;
     private prepareController?: AbortController;
-    constructor(app: App, private readonly save: WritingSaveAction, private readonly version: WritingVersion) { super(app); }
+    constructor(app: App, private readonly save: WritingSaveAction, private readonly version: WritingVersion,
+        private readonly onNoteOpened?: () => void) { super(app); }
     onOpen(): void {
         this.closed = false;
         const t = makePluginTranslator(getPluginUiLanguage());
         const root = this.contentEl;
         root.addClass('pa-writing-modal');
         root.createEl('h2', { text: t('plugin.chat.writing.save') });
-        const path = root.createEl('input', { attr: { type: 'text', 'aria-label': t('plugin.chat.writing.notePath') } });
-        path.value = `PA Writing ${new Date().toISOString().slice(0, 10)} ${this.version.id.slice(-8)}.md`;
+        const form = root.createEl('fieldset', { cls: 'pa-writing-save__form' });
+        const titleLabel = form.createEl('label', { cls: 'pa-writing-save__field', text: t('plugin.chat.writing.noteTitle') });
+        const title = titleLabel.createEl('input', { attr: { type: 'text' } });
+        title.value = `PA Writing ${new Date().toISOString().slice(0, 10)} ${this.version.id.slice(-8)}`;
+        const location = form.createEl('details', { cls: 'pa-writing-save__location' });
+        const locationSummary = location.createEl('summary', { cls: 'pa-writing-save__location-summary' });
+        const destination = locationSummary.createSpan();
+        locationSummary.createSpan({ text: t('plugin.chat.writing.changeLocation') });
+        const folderLabel = location.createEl('label', { cls: 'pa-writing-save__field', text: t('plugin.chat.writing.folder') });
+        const folder = folderLabel.createEl('input', { attr: { type: 'text' } });
+        location.createEl('p', { text: t('plugin.chat.writing.folderHint') });
+        const updateLocation = () => destination.setText(t('plugin.chat.writing.saveLocation', {
+            folder: folder.value.trim() || t('plugin.chat.writing.vaultRoot'),
+        }));
+        folder.oninput = updateLocation;
+        updateLocation();
         const ordered = this.version.associatedImages.map((image) => ({ image, selected: true }));
-        const images = root.createDiv({ cls: 'pa-writing-modal__images' });
+        const imageSummary = form.createEl('p', { cls: 'pa-writing-save__image-summary' });
+        const updateImageSummary = () => imageSummary.setText(t('plugin.chat.writing.imageSummary', {
+            count: ordered.filter((entry) => entry.selected).length,
+        }));
+        const imageOptions = form.createEl('details', { cls: 'pa-writing-save__image-options' });
+        imageOptions.hidden = !ordered.length;
+        imageOptions.createEl('summary', { text: t('plugin.chat.writing.imageSelection') });
+        const images = imageOptions.createDiv({ cls: 'pa-writing-modal__images' });
         const renderImages = () => {
             images.empty();
             ordered.forEach((entry, index) => {
@@ -204,7 +228,7 @@ export class WritingSaveModal extends Modal {
                 const label = row.createEl('label');
                 const checkbox = label.createEl('input', { attr: { type: 'checkbox' } });
                 checkbox.checked = entry.selected;
-                checkbox.onchange = () => { entry.selected = checkbox.checked; };
+                checkbox.onchange = () => { entry.selected = checkbox.checked; updateImageSummary(); };
                 label.createSpan({ text: entry.image.label });
                 const move = row.createEl('button', { text: '↑', attr: { type: 'button', 'aria-label': t('plugin.chat.writing.moveUp') } });
                 move.disabled = index === 0;
@@ -212,78 +236,138 @@ export class WritingSaveModal extends Modal {
             });
         };
         renderImages();
-        root.createEl('p', { text: t('plugin.chat.writing.saveRules') });
-        const result = root.createDiv({ attr: { role: 'status', 'aria-live': 'polite' } });
-        const preview = root.createEl('button', { text: t('plugin.chat.writing.preview'), attr: { type: 'button' } });
+        updateImageSummary();
+        if (ordered.length) form.createEl('p', { text: t('plugin.chat.writing.attachmentRules') });
+        const preview = form.createEl('button', { text: t('plugin.chat.writing.preview'), cls: 'mod-cta', attr: { type: 'button' } });
+        const result = root.createDiv({ cls: 'pa-writing-save__result', attr: { role: 'status', 'aria-live': 'polite' } });
         preview.onclick = async () => {
-            if (this.controller || this.preparing) return;
-            this.preparing = true; preview.disabled = true; path.disabled = true; images.hidden = true;
+            if (this.closed || this.controller || this.preparing) return;
+            const noteTitle = title.value.trim().replace(/\.md$/i, '');
+            if (!noteTitle || /[/\\]/.test(noteTitle)) {
+                result.setText(t('plugin.chat.writing.titleInvalid')); title.focus(); return;
+            }
+            // Preserve traversal and invalid separators for the existing save-path validator.
+            const folderPath = folder.value.trim();
+            const targetNotePath = `${folderPath ? `${folderPath}/` : ''}${noteTitle}.md`;
+            this.preparing = true; form.disabled = true;
             const prepareController = new AbortController(); this.prepareController = prepareController;
-            this.prepared?.release(); this.prepared = undefined;
+            this.releasePrepared();
             result.empty();
             try {
-                const prepared = await this.save.prepare({ writingVersionId: this.version.id, targetNotePath: path.value,
+                const prepared = await this.save.prepare({ writingVersionId: this.version.id, targetNotePath,
                     images: ordered.filter((entry) => entry.selected).map((entry) => entry.image), signal: prepareController.signal });
-                if (this.closed) { prepared.release(); return; }
+                if (this.closed || prepareController.signal.aborted) { prepared.release(); return; }
                 this.prepared = prepared;
-                path.disabled = true; images.hidden = true; preview.hidden = true;
-                result.createEl('p', { text: prepared.receipt.targetNotePath });
+                form.hidden = true;
+                this.renderDestination(result, prepared.receipt.targetNotePath);
                 const body = result.createEl('pre', { cls: 'pa-writing-modal__body', text: this.version.text });
                 body.setAttribute('aria-label', t('plugin.chat.writing.body'));
-                for (const attachment of prepared.receipt.attachments) result.createEl('p', {
-                    text: `${attachment.sourceName} → ${attachment.filename}${attachment.attachmentKind === 'heic_jpeg' ? ` · ${t('plugin.chat.writing.heicJpeg')}` : ''}`,
-                });
-                const details = result.createEl('details');
-                details.createEl('summary', { text: t('plugin.chat.writing.fullNote') });
-                details.createEl('pre', { text: prepared.previewMarkdown });
-                const confirm = result.createEl('button', { text: t('plugin.chat.writing.confirmSave'), cls: 'mod-cta', attr: { type: 'button' } });
-                confirm.onclick = () => { confirm.disabled = true; void this.run(prepared.operationId, false, result); };
-            } catch { if (!this.closed) { result.setText(t('plugin.chat.writing.previewFailed')); path.disabled = false; images.hidden = false; } }
-            finally { this.preparing = false; this.prepareController = undefined; preview.disabled = false; }
+                this.renderSaveDetails(result, prepared.receipt, prepared.previewMarkdown);
+                const actions = result.createDiv({ cls: 'pa-writing-save__actions' });
+                const edit = actions.createEl('button', { text: t('plugin.chat.writing.editSave'), attr: { type: 'button' } });
+                edit.onclick = () => { this.releasePrepared(); result.empty(); form.hidden = false; title.focus(); };
+                const confirm = actions.createEl('button', { text: t('plugin.chat.writing.confirmSave'), cls: 'mod-cta', attr: { type: 'button' } });
+                confirm.onclick = () => { confirm.disabled = true; void this.run(prepared.receipt, false, result); };
+            } catch { if (!this.closed) result.setText(t('plugin.chat.writing.previewFailed')); }
+            finally { this.preparing = false; this.prepareController = undefined; form.disabled = false; }
         };
+        const recoveries = root.createDiv();
         void this.save.listReceipts(this.version.id).then((receipts) => {
             if (this.closed) return;
             for (const receipt of receipts.filter((item) => item.state !== 'completed')) {
-                const recovery = root.createEl('button', { text: `${t('plugin.chat.writing.retrySave')} · ${receipt.targetNotePath}`, attr: { type: 'button' } });
-                recovery.onclick = () => { if (!this.controller && !this.preparing) this.showReceipt(receipt, result); };
+                const recovery = recoveries.createEl('button', { text: `${t('plugin.chat.writing.retrySave')} · ${receipt.targetNotePath}`, attr: { type: 'button' } });
+                recovery.onclick = () => {
+                    if (this.closed || this.controller || this.preparing) return;
+                    this.releasePrepared(); form.hidden = true; this.showReceipt(receipt, result);
+                };
             }
-        }).catch(() => { if (!this.closed) result.setText(t('plugin.chat.writing.unavailable')); });
+        }).catch(() => { if (!this.closed) recoveries.setText(t('plugin.chat.writing.unavailable')); });
     }
 
     onClose(): void {
-        this.closed = true; this.prepareController?.abort(); this.controller?.abort(); this.prepared?.release(); this.contentEl.empty();
+        this.closed = true; this.prepareController?.abort(); this.controller?.abort(); this.releasePrepared(); this.contentEl.empty();
     }
 
-    private async run(id: string, retry: boolean, result: HTMLElement): Promise<void> {
+    private releasePrepared(): void {
+        this.prepared?.release(); this.prepared = undefined;
+    }
+
+    private renderDestination(result: HTMLElement, path: string): void {
+        const t = makePluginTranslator(getPluginUiLanguage());
+        const separator = path.lastIndexOf('/');
+        const destination = result.createDiv({ cls: 'pa-writing-save__destination' });
+        destination.createEl('h3', { cls: 'pa-writing-save__title', text: path.slice(separator + 1).replace(/\.md$/i, '') });
+        destination.createEl('p', { text: t('plugin.chat.writing.saveLocation', {
+            folder: separator < 0 ? t('plugin.chat.writing.vaultRoot') : path.slice(0, separator),
+        }) });
+    }
+
+    private renderSaveDetails(result: HTMLElement, receipt: SaveReceipt, markdown?: string): void {
+        const t = makePluginTranslator(getPluginUiLanguage());
+        result.createEl('p', { cls: 'pa-writing-save__image-summary', text: t('plugin.chat.writing.imageSummary', { count: receipt.attachments.length }) });
+        if (receipt.attachments.length) result.createEl('p', { text: t('plugin.chat.writing.attachmentRules') });
+        const details = result.createEl('details', { cls: 'pa-writing-save__details' });
+        details.createEl('summary', { text: t('plugin.chat.writing.saveDetails') });
+        details.createEl('p', { text: t('plugin.chat.writing.saveRules') });
+        details.createEl('p', { text: receipt.targetNotePath });
+        for (const attachment of receipt.attachments) details.createEl('p', {
+            text: `${attachment.state === 'written' ? '✓ ' : ''}${attachment.sourceName} → ${attachment.plannedPath ?? attachment.filename}${attachment.attachmentKind === 'heic_jpeg' ? ` · ${t('plugin.chat.writing.heicJpeg')}` : ''}`,
+        });
+        if (markdown !== undefined) {
+            details.createEl('h3', { text: t('plugin.chat.writing.fullNote') });
+            details.createEl('pre', { cls: 'pa-writing-modal__body', text: markdown });
+        }
+    }
+
+    private async run(plan: SaveReceipt, retry: boolean, result: HTMLElement): Promise<void> {
         if (this.closed || this.controller) return;
         const t = makePluginTranslator(getPluginUiLanguage());
         const controller = new AbortController(); this.controller = controller;
         result.empty(); result.createEl('p', { text: t('plugin.chat.writing.saving') });
+        this.renderDestination(result, plan.targetNotePath);
         const cancel = result.createEl('button', { text: t('plugin.chat.action.cancel'), attr: { type: 'button' } });
         cancel.onclick = () => controller.abort();
         try {
-            const receipt = retry ? await this.save.retry(id, { signal: controller.signal }) : await this.save.execute(id, { signal: controller.signal });
+            const receipt = retry ? await this.save.retry(plan.operationId, { signal: controller.signal }) : await this.save.execute(plan.operationId, { signal: controller.signal });
+            this.releasePrepared();
             if (!this.closed) this.showReceipt(receipt, result);
-        } catch { if (!this.closed) result.setText(t('plugin.chat.writing.saveFailed')); }
+        } catch {
+            if (!this.closed) this.showReceipt({ ...plan, state: 'failed' }, result, retry);
+        }
         finally { this.controller = undefined; }
     }
 
-    private showReceipt(receipt: SaveReceipt, result: HTMLElement): void {
+    private showReceipt(receipt: SaveReceipt, result: HTMLElement, retryExisting = true): void {
         const t = makePluginTranslator(getPluginUiLanguage());
         result.empty();
-        result.createEl('p', { text: t(receipt.state === 'completed' ? 'plugin.chat.writing.saved' : 'plugin.chat.writing.partial') });
-        result.createEl('p', { text: receipt.targetNotePath });
-        result.createEl('pre', { cls: 'pa-writing-modal__body', text: this.version.text });
-        for (const attachment of receipt.attachments) result.createEl('p', {
-            text: `${attachment.state === 'written' ? '✓ ' : ''}${attachment.plannedPath ?? attachment.filename}${attachment.attachmentKind === 'heic_jpeg' ? ` · ${t('plugin.chat.writing.heicJpeg')}` : ''}`,
-        });
+        result.createEl('p', { text: t(receipt.state === 'completed' ? 'plugin.chat.writing.saved'
+            : receipt.state === 'failed' ? 'plugin.chat.writing.saveFailed' : 'plugin.chat.writing.partial') });
+        this.renderDestination(result, receipt.targetNotePath);
+        if (receipt.state !== 'completed') {
+            const body = result.createEl('pre', { cls: 'pa-writing-modal__body', text: this.version.text });
+            body.setAttribute('aria-label', t('plugin.chat.writing.body'));
+        }
+        this.renderSaveDetails(result, receipt);
         if (this.app.vault.getAbstractFileByPath(receipt.targetNotePath) instanceof TFile) {
-            const open = result.createEl('button', { text: receipt.targetNotePath, attr: { type: 'button' } });
-            open.onclick = () => { void this.app.workspace.openLinkText(receipt.targetNotePath, '', true); };
+            const open = result.createEl('button', { text: t('plugin.chat.writing.openNote'), attr: { type: 'button' } });
+            open.onclick = async () => {
+                if (this.closed || open.disabled) return;
+                open.disabled = true;
+                try { await this.app.workspace.openLinkText(receipt.targetNotePath, '', true); }
+                catch {
+                    if (!this.closed) {
+                        new Notice(t('plugin.chat.notice.openNoteFailed', { note: receipt.targetNotePath }));
+                        open.disabled = false;
+                    }
+                    return;
+                }
+                if (this.closed) return;
+                this.close(); this.onNoteOpened?.();
+            };
         }
         if (receipt.state !== 'completed') {
             const retry = result.createEl('button', { text: t('plugin.chat.writing.retrySave'), attr: { type: 'button' } });
-            retry.onclick = () => { retry.disabled = true; void this.run(receipt.operationId, true, result); };
+            retry.onclick = () => { retry.disabled = true; void this.run(receipt, retryExisting, result); };
         }
     }
 }
@@ -308,7 +392,7 @@ export class WritingSaveRecoveryListModal extends Modal {
                     try {
                         const version = await this.versions.get(receipt.writingVersionId);
                         if (!version) throw new Error('missing');
-                        if (!this.closed) new WritingSaveModal(this.app, this.save, version).open();
+                        if (!this.closed) new WritingSaveModal(this.app, this.save, version, () => this.close()).open();
                     } catch { if (!this.closed) new Notice(t('plugin.chat.writing.unavailable')); }
                     finally { button.disabled = false; }
                 };
