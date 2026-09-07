@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.4](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.3...2.10.0-beta.4) (2026-09-07)
+
+### Features
+- multimodal-chat: add runtime multimodal image and writing paths
+
+### Fix
+- multimodal-chat: complete version reference details
+
+### Docs
+- multimodal-chat: add B129 evidence and product specs
+- multimodal-chat: preserve current contracts and validation evidence
+- multimodal-chat: close B129 after AC09 validation
+
+### Tests
+- multimodal-chat: add b129 prototype and runtime probe suites
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
