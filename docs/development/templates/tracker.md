@@ -22,6 +22,10 @@ SDD: <optional link; delete when no sdd.md>
 
 ## Work
 
+使用 owning contract 中完整的 `B-xxx/REQ-xx`、`B-xxx/AC-xx`，不要省略 namespace。
+当前 checker 要求 Tracker（以及存在的 SDD）出现全部 owning contract ID；兼容
+后续切片可用短表区分本次变化与继承边界，映射不代表重新实施或重跑全部验收。
+
 | ID | Requirement / AC | Slice | Status | Evidence |
 | --- | --- | --- | --- | --- |
 | T-01 | B-xxx/REQ-01 / B-xxx/AC-01 | <slice> | [ ] | |

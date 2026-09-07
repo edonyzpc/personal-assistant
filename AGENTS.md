@@ -186,6 +186,12 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   condition -> rerun/expansion trigger`. A narrow fix without a Tracker can
   keep this in the task response; do not create a separate test plan. Add a
   test or probe only to answer an uncovered behavior or regression question.
+- Separate required outcomes/gates from reference or diagnostic methods. An
+  unavailable optional method is a recorded limit, not an extra delivery gate.
+  Use other relevant evidence only for the outcome it actually proves; user
+  feedback on one interaction does not validate another. Explicitly required
+  comparisons, named technical choices, unresolved ACs, and app/device gates
+  remain binding.
 - Select source, tooling, or artifact suites using the command groups above.
   Verify the intended suites actually ran; a wrong group or missing build is
   not a reason to run everything. Collect coverage only when the gate requires
@@ -204,6 +210,12 @@ Keep numeric limits in source rather than mirroring them in agent instructions.
   does not prove tests passed. Supplement uncovered checks such as the DOM
   source scan. Focused PASS is not full-suite PASS; independent CI and release
   gates still run against their required final inputs.
+- For an explicitly requested workflow/cost study, reuse recorded tool timings
+  and actual model settings; leave missing fields unknown. Keep detailed
+  execution evidence in its owning Tracker and link it from the study with
+  conclusions and limits. Do not sum parallel work into elapsed time or infer
+  speed/model causality from different tasks. Routine work needs no new timing
+  system or duplicate measurement log.
 
 ### Test Failure Diagnosis
 

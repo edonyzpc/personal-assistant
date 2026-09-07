@@ -76,6 +76,17 @@ smoke 流程引用；不以放宽断言、缺失自然退出或未观察设备�
 [GOV-002](./gov-002-master-first-branch-and-beta-packaging.md#proportional-validation-and-deployment)
 约束。本轮只统一 Agent 如何选择和复用证据，不改变命令行为、测试系统或门禁。
 
+流程试点复用上述规则：先核实规则确实作用于目标工作树，再区分历史对照与新样本。
+需求结果和必要 gate 与参考/诊断方法分开；可选方法不可用时记录限制，以实际取得
+的证据判断对应结果，用户单项反馈不得扩大为其他路径通过。明确指定的比较、技术
+选择及未满足的 AC/设备门仍有效，具体执行由 AGENTS 的验证规划承接。
+
+成本仅用已有原始记录，缺失字段保持未知，不从不同任务或并行耗时推算提速/模型
+因果。详细命令/计时保留在执行方 Tracker，研究方链接后记结论与限制，遵守
+[Documentation Workflow](../documentation-workflow.md#目标) 的单一事实来源；
+常规 feature 不因此承担额外计时平台或双份日志。仅有一次已解决适配时，先用现有
+能力和准确说明消除误用；没有重复或可定位的持续成本，不为提速扩大 checker/测试系统。
+
 ## Independent Review And Validation Coordination
 
 独立 review 先核对需求、当前契约、diff 与必要依赖，再与实现者结论对照。
@@ -123,6 +134,14 @@ smoke 流程引用；不以放宽断言、缺失自然退出或未观察设备�
 | Engineering bootstrap / B-115/AC-05 | [Documentation Workflow](../documentation-workflow.md) | Current Governance index + focused contract tests |
 | B-115/REQ-06 / B-115/AC-06 | [Documentation Workflow — authorization](../documentation-workflow.md#自然语言入口与授权) | [`pa-docs-lifecycle-skills.test.ts`](../../../__tests__/pa-docs-lifecycle-skills.test.ts) |
 
+## Historical Validation
+
+2026-09-07 的 Astra T-01–T-06 已验证，用户随后明确授权 closeout。有效规则由
+本 contract 与 AGENTS/skills/Workflow 承接；独有来源、历史与新试点区别、成本
+限制及最终治理验证保留于 [Astra workflow evidence](../../archive/2026/astra-feature-workflow-optimization-validation.md)。
+原治理 Active Package 吸收后删除，本 GOV 保持 Current；历史证据不代替当前
+执行授权，也不证明后续 Git 交付、量化提速、模型效果或发布。
+
 ## Authority And Change Boundary
 
 - 2026-09-05 用户要求结合 [Astra 官方建议](https://developers.openai.com/api/docs/guides/latest-model) 审查并优化项目 AGENTS/skills。本次原位澄清已有授权的复用、完整请求的模式选择、只读与执行分流、按范围验证；不变更 PA 产品、Git/release 或数据权限。常规细节自主完成；新增权限、实质偏差和发布当前 turn 要求仍有效。
@@ -135,6 +154,10 @@ smoke 流程引用；不以放宽断言、缺失自然退出或未观察设备�
 - 2026-09-07 用户在步骤 3 完成后要求“继续”，授权步骤 4 的 review/followup
   与多 agent 验证调度规则、必要指引同步和既有 diff 的只读走查，停在步骤 5
   之前；不授权启动真实 feature 试点、调整模型或修改示例中的产品/工具代码。
+- 2026-09-07 用户完成 T-05 真实图片体验试点并确认手动粘贴符合预期后，明确
+  要求“继续完成 T-06”；吸收目标/方法区分、有边界的成本采样与跨 track 证据去重。
+  既有输入失效、自然退出、实机/独立 review 与统一冻结 gate 保留；不据此宣布
+  量化提速、调整模型、改变测试/部署命令或授权 Git/release/正式 closeout。
 - Current governance authority: 本文件与 [Documentation Workflow](../documentation-workflow.md)。两者冲突时先修复 drift，不由 Product Decision Register 接管。
 - Delivery authority: 本 contract、Documentation Workflow、当前 Skills、checker 与 focused contract tests；已吸收的 B-115 过程包不再作为 authority 保留。
 - Product escalation: 任何实现若改变 PA runtime、用户行为、数据/隐私边界或 Obsidian UI，必须停止 governance-only lane，并进入 Accepted Product Decision + Approved Product Spec。
