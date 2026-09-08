@@ -191,7 +191,6 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
         pluginId: 'personal-assistant',
         settings: {
             memoryEnabled: true,
-            memoryAutoCheckBeforeChat: true,
             memoryApprovalPolicy: 'always',
             vssCacheExcludePath: [],
             debug: false,
@@ -923,14 +922,34 @@ describe('MemoryManager chat decisions', () => {
         }
     });
 
-    it('does not check readiness when pre-chat memory checks are disabled', async () => {
-        const plugin = createPlugin(createPlan(), { memoryAutoCheckBeforeChat: false });
+    it('checks real readiness even when the retired pre-chat setting is false', async () => {
+        const plugin = createPlugin(createPlan({
+            reason: 'unavailable',
+            action: 'none',
+            requiresApproval: false,
+        }), { memoryAutoCheckBeforeChat: false });
         const manager = createManager(plugin);
 
         const decision = await manager.ensureReadyForChat('question');
 
-        expect(decision).toEqual({ decision: 'use-memory' });
-        expect(plugin.vss.getMemoryReadiness).not.toHaveBeenCalled();
+        expect(decision.decision).toBe('answer-now');
+        expect(plugin.vss.getMemoryReadiness).toHaveBeenCalledTimes(1);
+        expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+    });
+
+    it('still requires approval for costly recovery when the retired pre-chat setting is false', async () => {
+        const plan = createPlan({ reason: 'local-memory-missing', action: 'rebuild', requiresApproval: true });
+        const plugin = createPlugin(plan, { memoryAutoCheckBeforeChat: false });
+        const manager = createManager(plugin);
+        const requestApproval = jest.fn(async (_plan: MemoryMaintenancePlan) => 'answer-now');
+        (manager as any).requestApproval = requestApproval; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const decision = await manager.ensureReadyForChat('question');
+
+        expect(decision.decision).toBe('answer-now');
+        expect(plugin.vss.getMemoryReadiness).toHaveBeenCalled();
+        expect(requestApproval).toHaveBeenCalledWith(plan);
+        expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
     });
 
     it('does not block chat on changed notes after memory has been approved once', async () => {

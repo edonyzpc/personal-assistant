@@ -202,8 +202,14 @@
     assert("Pagelet settings namespace exists", Boolean(plugin?.settings?.pagelet));
     assert("Pagelet is enabled", plugin?.settings?.pagelet?.enabled === true);
     assert("Pagelet background preparation setting is readable",
-      typeof plugin?.settings?.pagelet?.preloadEnabled === "boolean",
-      `preloadEnabled=${plugin?.settings?.pagelet?.preloadEnabled}`);
+      typeof plugin?.settings?.pagelet?.backgroundDiscoveryEnabled === "boolean",
+      `backgroundDiscoveryEnabled=${plugin?.settings?.pagelet?.backgroundDiscoveryEnabled}`);
+    for (const key of ["preloadEnabled", "deepDiscoverEnabled"]) {
+      assert(`Retired Pagelet setting absent: ${key}`, !Object.hasOwn(plugin?.settings?.pagelet || {}, key));
+    }
+    for (const key of ["memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds"]) {
+      assert(`Retired setting absent: ${key}`, !Object.hasOwn(plugin?.settings || {}, key));
+    }
 
     for (const id of COMMAND_IDS) {
       assert(`Command registered: ${id}`, Boolean(app.commands.commands[`${PLUGIN_ID}:${id}`]));

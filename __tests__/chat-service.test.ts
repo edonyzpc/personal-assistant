@@ -249,8 +249,8 @@ function createPlugin(overrides: {
             operationsAuditIncludeContent: false,
             operationsAuditRetentionDays: 30,
             statisticsVaultId: 'test-vault',
-            skillContextEnabled: overrides.skillContextEnabled ?? false,
-            enabledSkillIds: overrides.enabledSkillIds ?? [],
+            ...(overrides.skillContextEnabled === undefined ? {} : { skillContextEnabled: overrides.skillContextEnabled }),
+            ...(overrides.enabledSkillIds === undefined ? {} : { enabledSkillIds: overrides.enabledSkillIds }),
             shareAnonymousCapabilityUsage: false,
         },
         app: {
@@ -315,7 +315,7 @@ function createRuntime(
             createChatModel: mockCreateChatModel,
             getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
         } as never,
-        { nativeToolPlanningInternalGate, ...extraOptions },
+        { nativeToolPlanningInternalGate, skillContextProvider: null, ...extraOptions },
     );
 }
 
@@ -2009,7 +2009,7 @@ describe('ChatService.streamLLM integration', () => {
         const boundToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(boundToolNames).toEqual(['get_current_note_context', 'search_memory']);
+        expect(boundToolNames).toEqual(['get_current_note_context', 'load_skill', 'search_memory']);
     });
 
     it('injects complete Pagelet evidence as context-only while keeping Operations eligibility on the user prompt', async () => {
@@ -2167,7 +2167,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['search_memory']);
+        expect(exportedToolNames).toEqual(['load_skill', 'search_memory']);
     });
 
     it('keeps Operations actions absent from ordinary turns even after user opt-in', async () => {
@@ -2246,6 +2246,7 @@ describe('ChatService.streamLLM integration', () => {
         expect(exportedToolNames).toEqual([
             'frontmatter_update',
             'get_current_note_context',
+            'load_skill',
             'vault_append',
             'vault_create',
             'vault_process',
@@ -2455,7 +2456,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['get_current_note_context', 'search_memory']);
+        expect(exportedToolNames).toEqual(['get_current_note_context', 'load_skill', 'search_memory']);
         expect(modelInputs[0]?.tool_definitions).not.toContain('webSearch');
         expect(modelInputs[0]?.input).toContain('Recent chat history');
         expect(modelInputs[0]?.input).toContain('我目前只有 webSearch');
@@ -2492,7 +2493,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['webSearch']);
+        expect(exportedToolNames).toEqual(['load_skill', 'webSearch']);
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(modelInputs[0]?.input).not.toContain('不要联网');
         expect(modelInputs[0]?.input).not.toContain('杭州今天的天气。');
@@ -2523,19 +2524,23 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['get_current_note_context', 'search_memory']);
+        expect(exportedToolNames).toEqual(['get_current_note_context', 'load_skill', 'search_memory']);
         expect(modelInputs[0]?.tool_definitions).not.toContain('webSearch');
         expect(modelInputs[0]?.input).toContain('explicitly forbids web or internet access');
         expect(modelInputs[0]?.input).toContain('I usually prefer web search for weather checks.');
     });
 
-    it('keeps load_skill bound when a skill catalog is rendered in narrowed source-scoped turns', async () => {
-        const model = createStreamChunksModel([{ content: 'weather answer' }]);
+    it.each([
+        {},
+        { skillContextEnabled: false, enabledSkillIds: [] },
+        { skillContextEnabled: true, enabledSkillIds: ['obsidian-markdown'] },
+    ])('keeps all bundled guides available despite retired settings %j', async (legacySettings) => {
+        const inputs: Record<string, string>[] = [];
+        const model = createStreamChunksModel([{ content: 'weather answer' }], (input) => inputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({
             webSearchEnabled: true,
-            skillContextEnabled: true,
-            enabledSkillIds: ['obsidian-markdown'],
+            ...legacySettings,
         });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
@@ -2545,5 +2550,8 @@ describe('ChatService.streamLLM integration', () => {
             .map((tool) => tool.function?.name)
             .sort();
         expect(exportedToolNames).toEqual(['load_skill', 'webSearch']);
+        expect(inputs[0].available_skills).toContain('obsidian-markdown');
+        expect(inputs[0].available_skills).toContain('obsidian-bases');
+        expect(inputs[0].available_skills).toContain('json-canvas');
     });
 });

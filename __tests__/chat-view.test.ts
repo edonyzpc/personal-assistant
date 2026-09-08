@@ -760,16 +760,6 @@ function createView(options: {
             debug: false,
             memoryEnabled: true,
             memoryApprovalPolicy: 'always',
-            skillContextEnabled: true,
-            enabledSkillIds: [
-                'obsidian-markdown',
-                'obsidian-bases',
-                'json-canvas',
-                'pa-frontmatter-audit',
-                'pa-callout-cleanup',
-                'pa-vault-link-health',
-                'pa-plugin-config-review',
-            ],
             aiProvider: 'openai',
             baseURL: '',
             chatModelName: 'gpt-test',
@@ -6106,7 +6096,7 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
     });
 
-    it('shows enabled skill typeahead candidates from the composer trigger', async () => {
+    it('shows bundled guide typeahead candidates from the composer trigger', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
         await flushPromises();
@@ -6120,14 +6110,14 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(typeahead)).toContain('#pa-vault-link-health');
     });
 
-    it('filters skill typeahead candidates by per-skill settings and inserts the selected skill token', async () => {
+    it('filters bundled guide candidates by the typed query and inserts the selected skill token', async () => {
         const { view, containerEl, plugin } = createView();
-        plugin.settings.enabledSkillIds = ['pa-vault-link-health'];
+        Object.assign(plugin.settings, { enabledSkillIds: ['json-canvas'] });
         await view.onOpen();
         await flushPromises();
 
         const textArea = getTextArea(containerEl);
-        textArea.value = 'Use #pa-';
+        textArea.value = 'Use #pa-vault-';
         const typeahead = getElementByClass(containerEl, 'pa-chat-skill-typeahead');
 
         expect(getElementsByClass(typeahead, 'pa-chat-skill-typeahead-item')).toHaveLength(1);
@@ -6137,15 +6127,19 @@ describe('LLMView turn lifecycle', () => {
         expect(typeahead.hidden).toBe(true);
     });
 
-    it('hides skill typeahead when skill guides are globally disabled', async () => {
+    it('shows bundled guides despite retired global and per-guide disable settings', async () => {
         const { view, containerEl, plugin } = createView();
-        plugin.settings.skillContextEnabled = false;
+        Object.assign(plugin.settings, { skillContextEnabled: false, enabledSkillIds: [] });
         await view.onOpen();
         await flushPromises();
 
         getTextArea(containerEl).value = '#';
 
-        expect(getElementByClass(containerEl, 'pa-chat-skill-typeahead').hidden).toBe(true);
+        const typeahead = getElementByClass(containerEl, 'pa-chat-skill-typeahead');
+        expect(typeahead.hidden).toBe(false);
+        expect(getElementsByClass(typeahead, 'pa-chat-skill-typeahead-item')).toHaveLength(7);
+        getTextArea(containerEl).value = '#obsidian-templater';
+        expect(allText(typeahead)).toContain('#obsidian-templater');
     });
 
     it('reserves bottom clearance when the Obsidian status bar overlaps the chat view', async () => {

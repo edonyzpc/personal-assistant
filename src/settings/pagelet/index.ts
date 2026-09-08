@@ -110,10 +110,8 @@ export interface PageletSettings {
     proactiveHintsCooldown: number;
 
     // ── Background review preparation ──────────────────────────────
-    /** Enable the unified read-only Pagelet Deep Discover agent. */
-    deepDiscoverEnabled: boolean;
-    /** Enable background review preparation (stored under the historical preload key). */
-    preloadEnabled: boolean;
+    /** Allow bounded automatic discovery; explicit requests remain available. */
+    backgroundDiscoveryEnabled: boolean;
     /** Background preparation polling interval in minutes. */
     preloadInterval: number;
     /** Background preparation per-hour cap. */
@@ -201,11 +199,9 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     petCorner: "bottom-right",
     proactiveHints: false,
     proactiveHintsCooldown: 30,
-    // Unified Pagelet agent. Existing installs inherit the historical
-    // background-provider opt-out in mergePageletSettings().
-    deepDiscoverEnabled: true,
+    // New and existing installs share the same bounded automatic default.
+    backgroundDiscoveryEnabled: true,
     // Legacy background review preparation settings (read compatibility only).
-    preloadEnabled: false,
     preloadInterval: 30,
     preloadPerHourCap: 2,
     preloadPerDayCap: 20,
@@ -406,13 +402,10 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         proactiveHintsCooldown: normalizeBoundedInt(raw.proactiveHintsCooldown, PAGELET_DEFAULTS.proactiveHintsCooldown, PAGELET_BOUNDS.proactiveHintsCooldown.min, PAGELET_BOUNDS.proactiveHintsCooldown.max),
         // Unified Pagelet Agent. When the key is absent, preserve an existing
         // user's historical background-provider choice; fresh installs default on.
-        deepDiscoverEnabled: typeof raw.deepDiscoverEnabled === "boolean"
-            ? raw.deepDiscoverEnabled
-            : typeof raw.preloadEnabled === "boolean"
-                ? raw.preloadEnabled
-                : PAGELET_DEFAULTS.deepDiscoverEnabled,
+        backgroundDiscoveryEnabled: typeof raw.backgroundDiscoveryEnabled === "boolean"
+            ? raw.backgroundDiscoveryEnabled
+            : PAGELET_DEFAULTS.backgroundDiscoveryEnabled,
         // Legacy background review preparation (read compatibility only).
-        preloadEnabled: typeof raw.preloadEnabled === "boolean" ? raw.preloadEnabled : PAGELET_DEFAULTS.preloadEnabled,
         preloadInterval: normalizeBoundedInt(raw.preloadInterval, PAGELET_DEFAULTS.preloadInterval, PAGELET_BOUNDS.preloadInterval.min, PAGELET_BOUNDS.preloadInterval.max),
         preloadPerHourCap: normalizeBoundedInt(raw.preloadPerHourCap, PAGELET_DEFAULTS.preloadPerHourCap, PAGELET_BOUNDS.preloadPerHourCap.min, PAGELET_BOUNDS.preloadPerHourCap.max),
         preloadPerDayCap: normalizeBoundedInt(raw.preloadPerDayCap, PAGELET_DEFAULTS.preloadPerDayCap, PAGELET_BOUNDS.preloadPerDayCap.min, PAGELET_BOUNDS.preloadPerDayCap.max),
@@ -1049,6 +1042,7 @@ export interface PageletSettingsHost {
         chatModelName?: string;
     };
     saveSettings(): Promise<void> | void;
+    setBackgroundDiscoveryEnabled(enabled: boolean): Promise<void>;
     /** Content-free per-vault Deep Discover usage for the current local day. */
     getDeepDiscoverUsage?(): Promise<{
         runs: number;
@@ -1088,6 +1082,7 @@ export interface PageletSettingBuilder {
 
 export interface PageletToggleHandle {
     setValue(value: boolean): PageletToggleHandle;
+    setDisabled?(disabled: boolean): PageletToggleHandle;
     onChange(cb: (value: boolean) => void | Promise<void>): PageletToggleHandle;
 }
 
@@ -1325,16 +1320,34 @@ export function renderPageletSection(
     // ── Deep Discover ──────────────────────────────────────────────────
     parentEl.createEl("h3", { text: t("pagelet.settings.deepDiscover.heading") });
 
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.deepDiscoverEnabled.name"))
-        .setDesc(t("pagelet.settings.deepDiscoverEnabled.desc", {
-            model: host.settings.chatModelName?.trim()
-                || t("pagelet.settings.deepDiscover.modelConfigured"),
-        }))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.deepDiscoverEnabled)
-                .onChange((value) => saveOnChange(() => { settings.deepDiscoverEnabled = value; })));
+    const backgroundDescription = t("pagelet.settings.backgroundDiscovery.desc");
+    const backgroundRow = factory.create(parentEl)
+        .setName(t("pagelet.settings.backgroundDiscovery.name"))
+        .setDesc(backgroundDescription);
+    backgroundRow.addToggle((toggle) => {
+        let saving = false;
+        toggle.setValue(settings.backgroundDiscoveryEnabled).onChange(async (value) => {
+            if (saving) return;
+            saving = true;
+            toggle.setValue(host.settings.pagelet.backgroundDiscoveryEnabled);
+            toggle.setDisabled?.(true);
+            try {
+                await host.setBackgroundDiscoveryEnabled(value);
+                if (parentEl.isConnected !== false) backgroundRow.setDesc(backgroundDescription);
+            } catch (error) {
+                host.log?.("Background discovery preference was not saved", error);
+                if (parentEl.isConnected !== false) {
+                    backgroundRow.setDesc(t("pagelet.settings.backgroundDiscovery.saveError"));
+                }
+            } finally {
+                saving = false;
+                if (parentEl.isConnected !== false) {
+                    toggle.setValue(host.settings.pagelet.backgroundDiscoveryEnabled);
+                    toggle.setDisabled?.(false);
+                }
+            }
+        });
+    });
 
     const usageRow = factory.create(parentEl)
         .setName(t("pagelet.settings.deepDiscover.usage.name"))
@@ -1349,24 +1362,8 @@ export function renderPageletSection(
             });
     }
 
-    // Scope Recap is intentionally separate from generic review preparation:
-    // its first provider-backed background read has its own disclosure and
-    // its opt-out must survive reloads/upgrades.
+    // The retained hint preference does not control provider preparation.
     parentEl.createEl("h3", { text: t("pagelet.settings.scopeRecap.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.scopeRecapPreparation.name"))
-        .setDesc(t("pagelet.settings.scopeRecapPreparation.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.scopeRecapPreparationEnabled)
-                .onChange((value) => saveOnChange(() => {
-                    settings.scopeRecapPreparationEnabled = value;
-                    if (value && settings.scopeRecapBackgroundAuthorization === "declined-v1") {
-                        settings.scopeRecapBackgroundAuthorization = "pending";
-                        settings.scopeRecapAuthorizationContextId = null;
-                    }
-                })));
 
     factory.create(parentEl)
         .setName(t("pagelet.settings.scopeRecapHints.name"))

@@ -221,6 +221,8 @@ export class PageletOrchestrator {
     private lastQuietRecallDiagnostics: QuietRecallEvaluationDiagnostics | null = null;
     private lastQuietRecallAcceptedCount = 0;
     private foregroundRouteToken = 0;
+    private backgroundDiscoveryEnabled: boolean;
+    private backgroundDiscoveryEpoch = 0;
     private readonly activeForegroundTimers = new Set<ReturnType<typeof setTimeout>>();
     private destroyed = false;
 
@@ -245,6 +247,7 @@ export class PageletOrchestrator {
 
     constructor(private readonly host: PageletHost) {
         const s = host.settings.pagelet;
+        this.backgroundDiscoveryEnabled = s.backgroundDiscoveryEnabled;
         this.attentionStore = new AttentionAwareDeliveryStore({
             storage: host.createPageletAttentionStorage?.(),
             onDiagnostic: (diagnostic) => {
@@ -370,7 +373,7 @@ export class PageletOrchestrator {
         };
         this.handleQuietRecallShortcut = (e: KeyboardEvent) => {
             if (e.key !== "Control" || e.repeat || e.metaKey || e.altKey || e.shiftKey) return;
-            if (this.host.settings.focusMode || !this.host.settings.pagelet.deepDiscoverEnabled) return;
+            if (this.host.settings.focusMode || !this.host.settings.pagelet.enabled) return;
             const now = Date.now();
             if (now - this.lastQuietRecallCtrlKeydownAt <= PageletOrchestrator.QUIET_RECALL_DOUBLE_CTRL_MS) {
                 this.lastQuietRecallCtrlKeydownAt = 0;
@@ -563,6 +566,10 @@ export class PageletOrchestrator {
     syncSettings(): void {
         if (this.destroyed) return;
         const s = this.host.settings.pagelet;
+        if (this.backgroundDiscoveryEnabled !== s.backgroundDiscoveryEnabled) {
+            this.backgroundDiscoveryEnabled = s.backgroundDiscoveryEnabled;
+            this.backgroundDiscoveryEpoch += 1;
+        }
         const currentAuthorizationContextId = this.host.getScopeRecapAuthorizationContextId();
         if (
             s.scopeRecapBackgroundAuthorization === "authorized-v1"
@@ -622,7 +629,7 @@ export class PageletOrchestrator {
         }
         this.clearRecapPreparationTimer();
         this.invalidateQuietRecallBubbleNudge();
-        if (!s.deepDiscoverEnabled) {
+        if (!s.enabled) {
             this.host.cancelDeepDiscover?.();
             this.clearAgentInsight({ closePanel: true });
         } else {
@@ -2001,14 +2008,24 @@ export class PageletOrchestrator {
     ): Promise<void> {
         if (
             this.destroyed
-            || !this.host.settings.pagelet.deepDiscoverEnabled
+            || !this.host.settings.pagelet.enabled
+            || !this.host.settings.pagelet.backgroundDiscoveryEnabled
             || !this.host.runDeepDiscover
             || !path.endsWith(".md")
             || !this.host.isPathAllowedForPagelet(path)
         ) return;
+        const automaticEpoch = this.backgroundDiscoveryEpoch;
         try {
             const result = await this.host.runDeepDiscover({ path, triggerReason });
-            if (this.destroyed) return;
+            if (
+                this.destroyed
+                || !this.host.settings.pagelet.enabled
+                || !this.host.settings.pagelet.backgroundDiscoveryEnabled
+                || automaticEpoch !== this.backgroundDiscoveryEpoch
+            ) {
+                this.host.discardDeepDiscoverResult?.(result);
+                return;
+            }
             this.acceptDeepDiscoverResult(result, { path, proactive: true });
         } catch (error) {
             this.host.log("Pagelet Deep Discover background run failed", {
@@ -2021,7 +2038,7 @@ export class PageletOrchestrator {
     private async runExplicitDeepDiscover(): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
-        if (!this.host.settings.pagelet.deepDiscoverEnabled || !this.host.runDeepDiscover) {
+        if (!this.host.settings.pagelet.enabled || !this.host.runDeepDiscover) {
             new Notice(this.t("pagelet.deepDiscover.unavailable"), 5000);
             return;
         }

@@ -144,7 +144,8 @@
   function isolatedService(arm) {
     const service = plugin.createChatService();
     services.add(service);
-    if (!service.contextSummarizer || !service.aiUtils?.createChatModel || !service.host) {
+    if (!service.contextSummarizer || !service.aiUtils?.createChatModel || !service.host
+      || typeof service.createAgentRuntime !== "function") {
       throw new Error("Deploy the current B-128 build before evaluating.");
     }
     const deny = () => { throw new Error("Synthetic evaluation blocks vault access and writes."); };
@@ -153,7 +154,7 @@
       || original.settings.chatModelName !== configuredModel.model) throw new Error("Configured model changed during evaluation.");
     const isolated = {
       ...original,
-      settings: { ...original.settings, memoryEnabled: false, skillContextEnabled: false, enabledSkillIds: [],
+      settings: { ...original.settings, memoryEnabled: false,
         policyModelName: "", webSearchEnabled: false, operationsAgentEnabled: false,
         operationsProactiveSaveSuggestionsEnabled: false, shareAnonymousCapabilityUsage: false, debug: false },
       app: {
@@ -174,6 +175,10 @@
     };
     service.host = isolated;
     service.aiUtils.host = isolated;
+    // Keep catalog metadata out of the synthetic model input as well as denying
+    // tool execution. This applies only to the service owned by this evaluation.
+    const createRuntime = service.createAgentRuntime.bind(service);
+    service.createAgentRuntime = (options) => createRuntime({ ...options, skillContextProvider: null });
     const createModel = service.aiUtils.createChatModel.bind(service.aiUtils);
     service.aiUtils.createChatModel = async (...args) => {
       if (runController?.signal.aborted) throw new Error("Evaluation aborted.");

@@ -833,15 +833,6 @@ export class LLMView extends ItemView {
             skillTypeahead.empty();
             skillTypeahead.hidden = true;
         };
-        const getEnabledSkillTypeaheadEntries = () => {
-            if (this.host.settings?.skillContextEnabled === false) return [];
-            const enabledSkillIds = new Set(
-                Array.isArray(this.host.settings?.enabledSkillIds)
-                    ? this.host.settings.enabledSkillIds
-                    : BUNDLED_SKILL_CATALOG.map((skill) => skill.id),
-            );
-            return BUNDLED_SKILL_CATALOG.filter((skill) => enabledSkillIds.has(skill.id));
-        };
         const getSkillTriggerMatch = () => {
             const value = textArea.value;
             return /(?:^|\s)#([a-z0-9-]*)$/i.exec(value);
@@ -853,7 +844,7 @@ export class LLMView extends ItemView {
                 return;
             }
             const query = match[1].toLowerCase();
-            const entries = getEnabledSkillTypeaheadEntries()
+            const entries = BUNDLED_SKILL_CATALOG
                 .filter((skill) =>
                     skill.id.includes(query)
                     || skill.label.toLowerCase().includes(query)

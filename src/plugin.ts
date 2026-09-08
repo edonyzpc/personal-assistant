@@ -49,7 +49,7 @@ import {
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION, PROVIDER_PRESETS } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, hasDeprecatedSimpleSettingsFields, omitDeprecatedSimpleSettingsFields, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION, PROVIDER_PRESETS } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, icons } from './utils';
@@ -1378,6 +1378,9 @@ export class PluginManager extends Plugin {
         error: PageletReviewsFolderError;
     } | null = null;
     private pendingMemoryExtractionConsentMigration = false;
+    private pendingSimpleSettingsCanonicalization = false;
+    private backgroundDiscoveryEpoch = 0;
+    private backgroundDiscoveryPersistenceUncertain = false;
     private loadedPluginBuildIdentityPromise: Promise<{
         schemaVersion: 1;
         pluginId: string;
@@ -7847,6 +7850,12 @@ export class PluginManager extends Plugin {
     private async runPageletDeepDiscover(
         input: PageletDeepDiscoverControllerRequest,
     ): Promise<PageletDeepDiscoverControllerResult> {
+        const automaticEpoch = this.backgroundDiscoveryEpoch ?? 0;
+        const isAutomaticRequestCurrent = () => input.triggerReason === "explicit" || (
+            this.isBackgroundDiscoveryEnabled()
+            && automaticEpoch === (this.backgroundDiscoveryEpoch ?? 0)
+            && input.isAutomaticRequestCurrent?.() !== false
+        );
         // Only a new forced foreground attempt invalidates older smoke
         // evidence. Automatic runs are product work, not smoke candidates.
         if (input.triggerReason === "explicit" && input.force === true) {
@@ -7856,7 +7865,7 @@ export class PluginManager extends Plugin {
         if (
             this.unloading
             || !this.settings.pagelet?.enabled
-            || !this.settings.pagelet.deepDiscoverEnabled
+            || !isAutomaticRequestCurrent()
         ) {
             return { status: "limit", reason: "unavailable" };
         }
@@ -7890,15 +7899,18 @@ export class PluginManager extends Plugin {
             return { status: "stale", reason: "anchor-snapshot-unavailable" };
         }
         if (input.signal?.aborted) return { status: "quiet", reason: "aborted" };
+        if (!isAutomaticRequestCurrent()) return { status: "quiet", reason: "aborted" };
         const scheduler = await this.getOrCreatePageletDeepDiscoverScheduler();
         if (!scheduler) return { status: "limit", reason: "unavailable" };
+        if (!isAutomaticRequestCurrent()) return { status: "quiet", reason: "aborted" };
 
         const request: PageletDeepDiscoverControllerRequest = {
             ...input,
             path,
             anchorSnapshot,
+            ...(input.triggerReason !== "explicit" ? { isAutomaticRequestCurrent } : {}),
         };
-        if (input.force === true || input.triggerReason === "explicit") {
+        if (input.triggerReason === "explicit") {
             return scheduler.runNow({
                 ...request,
                 force: true,
@@ -7910,7 +7922,6 @@ export class PluginManager extends Plugin {
     private syncPageletDeepDiscoverControllerIdentity(): void {
         if (
             !this.settings.pagelet?.enabled
-            || !this.settings.pagelet.deepDiscoverEnabled
         ) {
             if (
                 this.deepDiscoverScheduler
@@ -7933,6 +7944,7 @@ export class PluginManager extends Plugin {
         ) {
             this.resetDeepDiscoverController();
         }
+        this.deepDiscoverScheduler?.setAutomaticEnabled(this.isBackgroundDiscoveryEnabled());
     }
 
     private resetDeepDiscoverController(): void {
@@ -7952,6 +7964,7 @@ export class PluginManager extends Plugin {
             this.deepDiscoverScheduler
             && this.deepDiscoverControllerPolicyIdentitySnapshot === identity
         ) {
+            this.deepDiscoverScheduler.setAutomaticEnabled(this.isBackgroundDiscoveryEnabled());
             return this.deepDiscoverScheduler;
         }
         if (
@@ -7987,13 +8000,13 @@ export class PluginManager extends Plugin {
                 epoch !== this.deepDiscoverControllerEpoch
                 || this.unloading
                 || !this.settings.pagelet?.enabled
-                || !this.settings.pagelet.deepDiscoverEnabled
                 || identity !== this.pageletDeepDiscoverPolicyIdentityKey()
             ) {
                 scheduler.dispose();
                 return null;
             }
             this.deepDiscoverScheduler = scheduler;
+            scheduler.setAutomaticEnabled(this.isBackgroundDiscoveryEnabled());
             this.deepDiscoverControllerPolicyIdentitySnapshot = identity;
             return scheduler;
         } finally {
@@ -8354,7 +8367,6 @@ export class PluginManager extends Plugin {
         if (
             this.unloading
             || !this.settings.pagelet?.enabled
-            || !this.settings.pagelet.deepDiscoverEnabled
             || !this.deepDiscoverScheduler
             || this.deepDiscoverControllerPolicyIdentitySnapshot === null
         ) return false;
@@ -8375,6 +8387,8 @@ export class PluginManager extends Plugin {
             path: string;
             signal?: AbortSignal;
             force?: boolean;
+            triggerReason?: PageletDeepDiscoverControllerRequest["triggerReason"];
+            isAutomaticRequestCurrent?: () => boolean;
         },
     ): Promise<{ ok: true } | { ok: false; reason: "limit" | "unavailable" }> {
         if (input.signal?.aborted) throw createPageletProviderAbortError();
@@ -8433,13 +8447,16 @@ export class PluginManager extends Plugin {
         input: {
             path: string;
             signal?: AbortSignal;
+            triggerReason?: PageletDeepDiscoverControllerRequest["triggerReason"];
+            isAutomaticRequestCurrent?: () => boolean;
         },
     ): boolean {
         if (
             input.signal?.aborted
             || this.unloading
             || !this.settings.pagelet?.enabled
-            || !this.settings.pagelet.deepDiscoverEnabled
+            || input.isAutomaticRequestCurrent?.() === false
+            || (input.triggerReason !== "explicit" && !this.isBackgroundDiscoveryEnabled())
             || this.getAISetupIssue() !== null
             || expectedPolicyIdentity !== this.pageletDeepDiscoverPolicyIdentityKey()
             || !this.isPageletProviderPathAllowed(input.path)
@@ -8869,50 +8886,13 @@ export class PluginManager extends Plugin {
     }
 
     private isStandardBackgroundPreloadRequest(
-        config: PreloadConfig,
-        callContext: AnalyzeCallContext | undefined,
-        sources?: readonly { path: string; mtime: number; size: number }[],
+        _config: PreloadConfig,
+        _callContext: AnalyzeCallContext | undefined,
+        _sources?: readonly { path: string; mtime: number; size: number }[],
     ): boolean {
-        const envelope = callContext?.backgroundEnvelope;
-        const settings = this.settings.pagelet;
-        const requestIsStandard = settings.preloadEnabled === true
-            && settings.preloadPerHourCap > 0
-            && settings.preloadPerHourCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.hourly
-            && settings.preloadPerDayCap > 0
-            && settings.preloadPerDayCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.daily
-            && settings.preloadTokenBudget.input > 0
-            && settings.preloadTokenBudget.input <= PAGELET_BACKGROUND_STANDARD_LIMITS.inputTokens
-            && settings.preloadTokenBudget.output > 0
-            && settings.preloadTokenBudget.output <= PAGELET_BACKGROUND_STANDARD_LIMITS.outputTokens
-            && config.enabled === true
-            && (config.range === undefined || config.range === "last7")
-            && config.perHourCap > 0
-            && config.perHourCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.hourly
-            && config.perDayCap > 0
-            && config.perDayCap <= PAGELET_BACKGROUND_STANDARD_LIMITS.daily
-            && config.tokenBudget.input > 0
-            && config.tokenBudget.input <= PAGELET_BACKGROUND_STANDARD_LIMITS.inputTokens
-            && config.tokenBudget.output > 0
-            && config.tokenBudget.output <= PAGELET_BACKGROUND_STANDARD_LIMITS.outputTokens
-            && envelope?.kind === "generic-changed-only"
-            && envelope.rangeDays === 7
-            && envelope.allowWrite === false
-            && envelope.wholeVault === false
-            && envelope.excludedScopeOverride === false;
-        if (!requestIsStandard || sources === undefined) return requestIsStandard;
-        if (sources.length === 0) return false;
-
-        const now = Date.now();
-        const cutoff = now - PAGELET_BACKGROUND_STANDARD_LIMITS.rangeMs;
-        return sources.every((source) => {
-            if (source.mtime < cutoff || source.mtime > now) return false;
-            const file = this.app.vault.getAbstractFileByPath(normalizePath(source.path));
-            return file instanceof TFile
-                && file.extension === "md"
-                && file.stat.mtime === source.mtime
-                && file.stat.size === source.size
-                && this.isPageletProviderSourceAllowedFile(file);
-        });
+        // This rollback-only pipeline is retired. The new background preference
+        // admits automatic Deep Discover only; it never revives legacy preload.
+        return false;
     }
 
     private async readPageletNoteContents(
@@ -10913,8 +10893,13 @@ export class PluginManager extends Plugin {
         const rawMemoryExtractionEnabled = (typeof loaded === "object" && loaded !== null)
             ? (loaded as Record<string, unknown>).memoryExtractionEnabled
             : undefined;
+        const hasPersistedExtractionConsent = typeof loaded === "object" && loaded !== null
+            && Object.prototype.hasOwnProperty.call(loaded, "memoryExtractionConsent");
+        this.pendingSimpleSettingsCanonicalization = hasDeprecatedSimpleSettingsFields(loaded);
         this.settings = mergeLoadedSettings(loaded);
-        if (rawMemoryExtractionEnabled === true && !this.settings.memoryExtractionEnabled) {
+        this.backgroundDiscoveryPersistenceUncertain = false;
+        this.backgroundDiscoveryEpoch = (this.backgroundDiscoveryEpoch ?? 0) + 1;
+        if (rawMemoryExtractionEnabled === true && !hasPersistedExtractionConsent) {
             this.settings.memoryExtractionConsent = {
                 state: "confirmed",
                 version: MEMORY_EXTRACTION_CONSENT_VERSION,
@@ -10995,6 +10980,39 @@ export class PluginManager extends Plugin {
         );
     }
 
+    /** Publish only a committed preference; pending saves cannot open provider admission. */
+    async setBackgroundDiscoveryEnabled(enabled: boolean): Promise<void> {
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error("Plugin is unloading");
+            const snapshot = {
+                ...this.settings,
+                pagelet: { ...this.settings.pagelet, backgroundDiscoveryEnabled: enabled },
+            };
+            try {
+                await this.saveSettingsData(snapshot);
+            } catch (error) {
+                // A rejected write may already have reached disk. Until a retry
+                // or reload resolves it, do not admit more automatic work.
+                this.backgroundDiscoveryPersistenceUncertain = true;
+                this.backgroundDiscoveryEpoch = (this.backgroundDiscoveryEpoch ?? 0) + 1;
+                this.deepDiscoverScheduler?.setAutomaticEnabled(false);
+                throw error;
+            }
+            const changed = this.settings.pagelet.backgroundDiscoveryEnabled !== enabled
+                || this.backgroundDiscoveryPersistenceUncertain;
+            this.settings.pagelet.backgroundDiscoveryEnabled = enabled;
+            this.backgroundDiscoveryPersistenceUncertain = false;
+            if (changed) this.backgroundDiscoveryEpoch = (this.backgroundDiscoveryEpoch ?? 0) + 1;
+            this.deepDiscoverScheduler?.setAutomaticEnabled(enabled);
+        });
+        await this.notifySettingsChanged();
+    }
+
+    private isBackgroundDiscoveryEnabled(): boolean {
+        return this.settings.pagelet.backgroundDiscoveryEnabled
+            && !this.backgroundDiscoveryPersistenceUncertain;
+    }
+
     private async persistPaSettingsSlice<T>(
         read: () => T,
         write: (value: T) => void,
@@ -11016,13 +11034,16 @@ export class PluginManager extends Plugin {
     }
 
     private async saveSettingsData(settingsSnapshot: PluginManagerSettings = this.settings): Promise<void> {
+        const canonical = omitDeprecatedSimpleSettingsFields(settingsSnapshot);
         const barrier = this.legacyMemoryCompatibilityBarrier;
         if (!barrier) {
-            await this.saveData(settingsSnapshot);
+            await this.saveData(canonical);
+            this.pendingSimpleSettingsCanonicalization = false;
             return;
         }
         if (!barrier.isActive() && !barrier.isFinalizing()) {
-            await this.saveData(settingsSnapshot);
+            await this.saveData(canonical);
+            this.pendingSimpleSettingsCanonicalization = false;
             return;
         }
         const migrationBaseline = this.settingsMigrationBaselineFingerprint ?? null;
@@ -11031,12 +11052,12 @@ export class PluginManager extends Plugin {
                 && fingerprintPluginData(persisted) !== migrationBaseline) {
                 throw new PluginDataJsonMigrationConflictError();
             }
-            const composed = barrier.composeForSave(settingsSnapshot, persisted);
+            const composed = barrier.composeForSave(canonical, persisted);
             if (!composed.ok) {
                 this.memoryGovernanceBootstrapErrorCode = composed.errorCode;
                 throw new MemoryGovernanceBootstrapError("legacy_save_collision");
             }
-            return composed.payload;
+            return omitDeprecatedSimpleSettingsFields(composed.payload);
         });
         if (migrationBaseline !== null
             && fingerprintPluginData(processed.written) !== fingerprintPluginData(processed.readback)) {
@@ -11047,6 +11068,7 @@ export class PluginManager extends Plugin {
         }
         this.legacyMemoryPayload = barrier.snapshot();
         await this.synchronizeNonMemoryQueueFromPersisted(processed.readback);
+        this.pendingSimpleSettingsCanonicalization = false;
     }
 
     private async synchronizeNonMemoryQueueFromPersisted(raw: unknown): Promise<void> {
@@ -12507,7 +12529,7 @@ export class PluginManager extends Plugin {
 
     private async migrateSettingsOnce(): Promise<void> {
         try {
-            let changed = false;
+            let changed = this.pendingSimpleSettingsCanonicalization;
             const settingsWithLegacyModel = this.settings as PluginManagerSettings & { modelName?: unknown };
             const legacyModelName = typeof settingsWithLegacyModel.modelName === "string"
                 ? settingsWithLegacyModel.modelName.trim()
@@ -12549,10 +12571,6 @@ export class PluginManager extends Plugin {
             }
             if (typeof this.settings.memoryEnabled !== "boolean") {
                 this.settings.memoryEnabled = true;
-                changed = true;
-            }
-            if (typeof this.settings.memoryAutoCheckBeforeChat !== "boolean") {
-                this.settings.memoryAutoCheckBeforeChat = true;
                 changed = true;
             }
             if (!["always", "auto-refresh-after-prepare"].includes(this.settings.memoryApprovalPolicy)) {
@@ -12607,15 +12625,6 @@ export class PluginManager extends Plugin {
             }
             if (typeof this.settings.shareAnonymousCapabilityUsage !== "boolean") {
                 this.settings.shareAnonymousCapabilityUsage = false;
-                changed = true;
-            }
-            if (typeof this.settings.skillContextEnabled !== "boolean") {
-                this.settings.skillContextEnabled = true;
-                changed = true;
-            }
-            const normalizedEnabledSkillIds = normalizeEnabledSkillIds(this.settings.enabledSkillIds);
-            if (!Array.isArray(this.settings.enabledSkillIds) || !arraysEqual(this.settings.enabledSkillIds, normalizedEnabledSkillIds)) {
-                this.settings.enabledSkillIds = normalizedEnabledSkillIds;
                 changed = true;
             }
             if (!this.settings.statisticsVaultId) {

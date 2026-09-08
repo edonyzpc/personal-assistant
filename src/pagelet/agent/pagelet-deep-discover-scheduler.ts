@@ -9,6 +9,7 @@ import type {
 
 interface ScheduledRequest {
     request: PageletDeepDiscoverControllerRequest;
+    automaticEpoch: number;
     timer?: ReturnType<typeof setTimeout>;
     ready: boolean;
     waiters: Array<{
@@ -52,6 +53,8 @@ export class PageletDeepDiscoverScheduler {
     private readonly explicitQueue: ExplicitRequest[] = [];
     private activeRun?: ActiveScheduledRun;
     private disposed = false;
+    private automaticEnabled = true;
+    private automaticEpoch = 0;
 
     constructor(private readonly options: PageletDeepDiscoverSchedulerOptions) {
         this.delayMs = Math.max(0, options.delayMs ?? 5_000);
@@ -62,7 +65,8 @@ export class PageletDeepDiscoverScheduler {
     schedule(
         request: PageletDeepDiscoverControllerRequest,
     ): Promise<PageletDeepDiscoverControllerResult> {
-        if (this.disposed) {
+        if (request.triggerReason === "explicit") return this.runNow(request);
+        if (this.disposed || !this.automaticEnabled || request.signal?.aborted) {
             return Promise.resolve({ status: "quiet", reason: "aborted" });
         }
         const existing = this.pending.get(request.path);
@@ -73,12 +77,16 @@ export class PageletDeepDiscoverScheduler {
             waiters.push({ resolve });
             const pending: ScheduledRequest = {
                 request,
+                automaticEpoch: this.automaticEpoch,
                 waiters,
                 ready: existing?.ready ?? false,
             };
             if (!pending.ready) {
                 pending.timer = this.setTimer(() => {
-                    this.markReady(request.path);
+                    if (
+                        pending.automaticEpoch === this.automaticEpoch
+                        && this.pending.get(request.path) === pending
+                    ) this.markReady(request.path);
                 }, this.delayMs);
             }
             this.pending.set(request.path, pending);
@@ -88,6 +96,9 @@ export class PageletDeepDiscoverScheduler {
     async runNow(
         request: PageletDeepDiscoverControllerRequest,
     ): Promise<PageletDeepDiscoverControllerResult> {
+        // The trusted trigger identifies user intent. Cache bypass alone never
+        // promotes background work into the explicit lane.
+        if (request.triggerReason !== "explicit") return this.schedule(request);
         if (this.disposed || request.signal?.aborted) {
             return { status: "quiet", reason: "aborted" };
         }
@@ -144,6 +155,20 @@ export class PageletDeepDiscoverScheduler {
         for (const waiter of pending.waiters) waiter.resolve(result);
     }
 
+    /** Pause only future/background work, preserving explicit work and cache. */
+    setAutomaticEnabled(enabled: boolean): void {
+        if (this.disposed || this.automaticEnabled === enabled) return;
+        this.automaticEnabled = enabled;
+        this.automaticEpoch += 1;
+        if (enabled) return;
+        for (const path of [...this.pending.keys()]) this.cancelPending(path);
+        this.readyPaths.length = 0;
+        if (this.activeRun?.kind === "automatic") {
+            this.options.controller.cancel();
+            this.activeRun.settle(abortedResult());
+        }
+    }
+
     /** Provider-free exact-source validation for delivered Pagelet actions. */
     async validateInsight(
         identity: PageletAgentValidationIdentity,
@@ -166,6 +191,7 @@ export class PageletDeepDiscoverScheduler {
     }
 
     private markReady(path: string): void {
+        if (!this.automaticEnabled || this.disposed) return;
         const pending = this.pending.get(path);
         if (!pending) return;
         pending.timer = undefined;
@@ -184,6 +210,8 @@ export class PageletDeepDiscoverScheduler {
             this.startExplicit(explicit);
             return;
         }
+
+        if (!this.automaticEnabled) return;
 
         while (this.readyPaths.length > 0) {
             const path = this.readyPaths.shift();
@@ -220,12 +248,19 @@ export class PageletDeepDiscoverScheduler {
 
     private startAutomatic(pending: ScheduledRequest): void {
         let settled = false;
-        const active = this.startControllerRun("automatic", pending.request, (result) => {
+        const isCurrent = () => (
+            !this.disposed
+            && this.automaticEnabled
+            && pending.automaticEpoch === this.automaticEpoch
+            && (pending.request.isAutomaticRequestCurrent?.() ?? true)
+        );
+        const request = { ...pending.request, isAutomaticRequestCurrent: isCurrent };
+        const active = this.startControllerRun("automatic", request, (result) => {
             if (settled) return;
             settled = true;
             if (
                 active.preemptedByExplicit
-                && !this.disposed
+                && isCurrent()
                 && result.status === "quiet"
                 && result.reason === "aborted"
                 && !this.hasQueuedExplicitForPath(pending.request.path)
@@ -233,7 +268,7 @@ export class PageletDeepDiscoverScheduler {
                 this.requeueAutomatic(pending);
                 return;
             }
-            for (const waiter of pending.waiters) waiter.resolve(result);
+            for (const waiter of pending.waiters) waiter.resolve(isCurrent() ? result : abortedResult());
         });
     }
 
@@ -290,6 +325,7 @@ export class PageletDeepDiscoverScheduler {
         if (!newer) {
             this.pending.set(path, {
                 request: interrupted.request,
+                automaticEpoch: interrupted.automaticEpoch,
                 waiters: interrupted.waiters,
                 ready: true,
             });

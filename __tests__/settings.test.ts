@@ -415,7 +415,8 @@ import {
     mergeLoadedSettings,
     mergeMaintenanceReviewSettings,
     mergeMemoryGovernanceSettings,
-    normalizeEnabledSkillIds,
+    hasDeprecatedSimpleSettingsFields,
+    omitDeprecatedSimpleSettingsFields,
     normalizeFeaturedImageCount,
     normalizeFeaturedImageModel,
     mergeSavedInsightSettings,
@@ -424,7 +425,6 @@ import {
 } from '../src/settings';
 import { confirmUserAction } from '../src/confirm';
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
-import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
 import { buildMemoryControlCenterSnapshot } from '../src/pa/memory-control-center';
 
 function mockStringifyText(value: unknown): string {
@@ -1086,7 +1086,6 @@ describe('settings row-layout styling hooks', () => {
         for (const name of [
             'rebuildProviderConfig',
             'rebuildQwenOptions',
-            'rebuildSkillToggles',
             'rebuildGraphColors',
             'rebuildMetadataList',
             'rebuildMemorySubSettings',
@@ -1148,99 +1147,53 @@ describe('PA Agent builtin WebSearch settings', () => {
     });
 });
 
-describe('PA Agent skill settings', () => {
-    it('enables bundled skill guides by default', () => {
-        expect(DEFAULT_SETTINGS.skillContextEnabled).toBe(true);
-        expect(DEFAULT_SETTINGS.enabledSkillIds).toEqual([
-            'obsidian-markdown',
-            'obsidian-bases',
-            'json-canvas',
-            'pa-frontmatter-audit',
-            'pa-callout-cleanup',
-            'pa-vault-link-health',
-            'pa-plugin-config-review',
-            'obsidian-dataview',
-            'obsidian-templater',
-        ]);
+describe('simple settings canonicalization', () => {
+    it.each([true, false, undefined, 'invalid'])('ignores retired switches with value %p', (value) => {
+        const loaded = {
+            memoryAutoCheckBeforeChat: value, skillContextEnabled: value, enabledSkillIds: [],
+            pagelet: { preloadEnabled: value, deepDiscoverEnabled: value },
+        };
+        const merged = mergeLoadedSettings(loaded);
+        expect(merged).toEqual(mergeLoadedSettings({}));
+        expect(hasDeprecatedSimpleSettingsFields(merged)).toBe(false);
+        expect(merged.pagelet.backgroundDiscoveryEnabled).toBe(true);
     });
 
-    it('normalizes enabled skill ids to known bundled skills', () => {
-        expect(normalizeEnabledSkillIds(['obsidian-markdown', 'unknown', 'obsidian-markdown'])).toEqual([
-            'obsidian-markdown',
-        ]);
-        expect(normalizeEnabledSkillIds(['json-canvas', 'obsidian-markdown', 'json-canvas'])).toEqual([
-            'obsidian-markdown',
-            'json-canvas',
-        ]);
-        expect(normalizeEnabledSkillIds(undefined)).toEqual(DEFAULT_SETTINGS.enabledSkillIds);
+    it('strips only exact retired keys without mutating or normalizing unrelated state', () => {
+        const raw = {
+            memoryAutoCheckBeforeChat: false, skillContextEnabled: false, enabledSkillIds: [],
+            pagelet: { preloadEnabled: false, deepDiscoverEnabled: false,
+                backgroundDiscoveryEnabled: false, proactiveHints: false, preloadInterval: 42 },
+            memoryExtractionConsent: { state: 'paused', version: 1 },
+            memoryExtractionEnabled: false, memoryAutoAcceptPaused: true,
+            dataBoundary: { excludedFolders: ['private'] }, customFutureField: 'keep',
+        };
+        const expected = {
+            pagelet: { backgroundDiscoveryEnabled: false, proactiveHints: false, preloadInterval: 42 },
+            memoryExtractionConsent: raw.memoryExtractionConsent,
+            memoryExtractionEnabled: false, memoryAutoAcceptPaused: true,
+            dataBoundary: raw.dataBoundary, customFutureField: 'keep',
+        };
+        const canonical = omitDeprecatedSimpleSettingsFields(raw);
+        expect(canonical).toEqual(expected);
+        expect(omitDeprecatedSimpleSettingsFields(canonical)).toEqual(expected);
+        expect(raw.pagelet.preloadEnabled).toBe(false);
+        expect(hasDeprecatedSimpleSettingsFields(raw)).toBe(true);
+        expect(hasDeprecatedSimpleSettingsFields(canonical)).toBe(false);
+        expect(mergeLoadedSettings(raw).pagelet.backgroundDiscoveryEnabled).toBe(false);
     });
 
-    it('renders bundled skill guides as a compact checkbox picker in settings', () => {
+    it('does not expose switches for necessary guides or Memory readiness', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        tab.containerEl = containerEl as never;
-
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
         tab.display();
-
-        const records = getMockSettingRecords();
-        const pickerRecord = records.find((record) => record.name === 'Enabled skill guides');
-        expect(pickerRecord?.desc).toBe('Choose which guides the assistant may use. Current: All guides enabled.');
-        expect(records.some((record) => BUNDLED_SKILL_CATALOG.some((skill) => skill.label === record.name))).toBe(false);
-
-        const summary = containerEl.findAll('.pa-settings-skill-picker__summary-text')[0];
-        expect(summary?.textContent).toBe('All guides enabled');
-
-        const checkboxes = containerEl.findAll('input');
-        expect(checkboxes).toHaveLength(BUNDLED_SKILL_CATALOG.length + 1);
-        expect(checkboxes[0]).toMatchObject({ type: 'checkbox', checked: true, disabled: false });
-        expect(checkboxes.slice(1)).toEqual(
-            BUNDLED_SKILL_CATALOG.map(() => expect.objectContaining({ checked: true, disabled: false })),
-        );
-    });
-
-    it('updates skill guide settings from the checkbox picker', async () => {
-        const firstSkill = BUNDLED_SKILL_CATALOG[0];
-        const plugin = makePlugin({ skillContextEnabled: false });
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        const containerEl = new MockContainerEl('div');
-        tab.containerEl = containerEl as never;
-
-        tab.display();
-
-        let checkboxes = containerEl.findAll('input');
-        let details = containerEl.findAll('details')[0];
-        expect(containerEl.findAll('.pa-settings-skill-picker__summary-text')[0]?.textContent).toBe('Off');
-        expect(checkboxes[0]).toMatchObject({ checked: false, disabled: false });
-        expect(checkboxes.slice(1)).toEqual(
-            BUNDLED_SKILL_CATALOG.map(() => expect.objectContaining({ checked: true, disabled: true })),
-        );
-
-        details.open = true;
-        checkboxes[0].checked = true;
-        checkboxes[0].dispatchEvent({ type: 'change' });
-        await Promise.resolve();
-
-        expect(plugin.settings.skillContextEnabled).toBe(true);
-        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
-        expect(containerEl.findAll('.pa-settings-skill-picker__summary-text')[0]?.textContent).toBe('All guides enabled');
-        expect(containerEl.findAll('details')[0]?.open).toBe(true);
-        expect(containerEl.findAll('input')[0]?.focus).toHaveBeenCalled();
-
-        checkboxes = containerEl.findAll('input');
-        details = containerEl.findAll('details')[0];
-        details.open = true;
-        checkboxes[1].checked = false;
-        checkboxes[1].dispatchEvent({ type: 'change' });
-        await Promise.resolve();
-
-        expect(plugin.settings.enabledSkillIds).not.toContain(firstSkill.id);
-        expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
-        expect(containerEl.findAll('.pa-settings-skill-picker__summary-text')[0]?.textContent).toBe(
-            `${BUNDLED_SKILL_CATALOG.length - 1} of ${BUNDLED_SKILL_CATALOG.length} enabled`,
-        );
-        expect(containerEl.findAll('details')[0]?.open).toBe(true);
-        expect(containerEl.findAll('input')[1]?.focus).toHaveBeenCalled();
+        expect(container.findAll('.pa-settings-skill-picker')).toHaveLength(0);
+        expect(getMockSettingRecords().some((record) => record.name === 'Enabled skill guides')).toBe(false);
+        expect(DEFAULT_SETTINGS).not.toHaveProperty('memoryAutoCheckBeforeChat');
+        expect(DEFAULT_SETTINGS).not.toHaveProperty('skillContextEnabled');
+        expect(DEFAULT_SETTINGS).not.toHaveProperty('enabledSkillIds');
     });
 });
 
@@ -1251,7 +1204,6 @@ describe('Phase 1 refactor invariants', () => {
         graphColorsContainer: unknown;
         metadataContainer: unknown;
         providerConfigContainer: unknown;
-        skillTogglesContainer: unknown;
         featuredImageContainer: unknown;
         memoryAdvancedContainer: unknown;
     };
@@ -1327,7 +1279,6 @@ describe('Phase 1 refactor invariants', () => {
             graph: internals.graphColorsContainer,
             metadata: internals.metadataContainer,
             provider: internals.providerConfigContainer,
-            skills: internals.skillTogglesContainer,
             featured: internals.featuredImageContainer,
         };
 
@@ -1348,7 +1299,6 @@ describe('Phase 1 refactor invariants', () => {
         expect(internals.graphColorsContainer).toBe(before.graph);
         expect(internals.metadataContainer).toBe(before.metadata);
         expect(internals.providerConfigContainer).toBe(before.provider);
-        expect(internals.skillTogglesContainer).toBe(before.skills);
         expect(internals.featuredImageContainer).toBe(before.featured);
     });
 });
@@ -3218,7 +3168,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h1:Settings for Obsidian Assistant',
             'h2:AI Assistant',
             'h3:Qwen response options',
-            'h3:Skill guides',
             'h2:Memory and personalization',
             'h2:Memory',
             'h2:Data & Privacy Boundaries',
@@ -4994,7 +4943,7 @@ describe('Phase 4 P1 UX', () => {
 
             const names = getMockSettingRecords().map((r) => r.name);
             expect(names).toContain('Use memory from my notes');
-            expect(names).toContain('Check before preparing Memory again');
+            expect(names).not.toContain('Check before preparing Memory again');
             expect(names).toContain('Advanced memory controls');
         });
 
@@ -5203,7 +5152,7 @@ describe('Phase 4 P1 UX', () => {
             expect(rebuildSpy).toHaveBeenCalledTimes(1);
             // Sub-settings now appear in the records.
             const namesAfter = getMockSettingRecords().map((r) => r.name);
-            expect(namesAfter).toContain('Check before preparing Memory again');
+            expect(namesAfter).not.toContain('Check before preparing Memory again');
             expect(namesAfter).toContain('Advanced memory controls');
         });
 
@@ -5377,16 +5326,15 @@ describe('Phase 4 P1 UX', () => {
                 .find((r) => r.name === 'Check before preparing Memory again');
             const enabled = getMockSettingRecords()
                 .find((r) => r.name === 'Use memory from my notes');
-            expect(record).toBeDefined();
-            expect(record?.desc).toContain('First-use preparation runs quietly');
-            expect(record?.desc).toContain('manual rebuild still requires confirmation');
-            expect(record?.desc).toContain('API calls');
+            expect(record).toBeUndefined();
+            expect(enabled?.desc).toContain('prepares Memory quietly in the background');
+            expect(enabled?.desc).toContain('PA asks before preparing again');
             expect(enabled?.desc).toContain('configured AI provider');
             expect(enabled?.desc).toContain('API credits or calls');
             expect(enabled?.desc).toContain('notes are not modified or deleted');
             expect(enabled?.desc).toContain('Turn this off');
             // Avoid leaking VSS / RAG / embedding internals into normal copy.
-            expect(record?.desc).not.toMatch(/vss|rag|embedding|vector|chunk/i);
+            expect(enabled?.desc).not.toMatch(/vss|rag|embedding|vector|chunk/i);
         });
     });
 

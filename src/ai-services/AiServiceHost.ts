@@ -42,8 +42,6 @@ export interface AiServiceHost {
         policyModelName: string;
         embeddingModelName: string;
         shareAnonymousCapabilityUsage: boolean;
-        skillContextEnabled: boolean;
-        enabledSkillIds: string[];
         qwenThinkingEnabled: boolean;
         webSearchEnabled: boolean;
         licenseTier: AgentCapabilityTier;

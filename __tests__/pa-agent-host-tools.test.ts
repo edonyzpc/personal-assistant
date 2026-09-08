@@ -2356,7 +2356,7 @@ describe("formatSkillCatalog", () => {
     });
 });
 
-describe("load_skill host preflight (A3 progressive disclosure)", () => {
+describe("load_skill host execution", () => {
     function fakePlugin(settings: Record<string, unknown>) {
         return {
             settings,
@@ -2370,16 +2370,20 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
         await registry.registerProvider(provider, {
             turnId: "turn-load-skill-preflight",
             platform: "desktop",
-            settings: { skillContextEnabled: true },
+            settings: {},
         });
         return registry;
     }
 
-    it("preflight returns policy_rejected when skillContextEnabled is false", async () => {
+    it.each([
+        { skillContextEnabled: false },
+        { enabledSkillIds: [] },
+        { skillContextEnabled: true, enabledSkillIds: ["json-canvas"] },
+    ])("loads a bundled guide regardless of retired settings %j", async (settings) => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            host: fakePlugin({ skillContextEnabled: false }),
+            host: fakePlugin(settings),
             platform: "desktop",
         });
 
@@ -2392,15 +2396,18 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
             signal: new AbortController().signal,
         });
 
-        expect(result.outcome).toBe("policy_rejected");
-        expect(result.metadata?.reason).toBe("skill_context_disabled");
+        expect(result.outcome).toBe("success");
+        expect(result.promptText).toContain("obsidian-markdown");
+        expect(result.sourceRecords).toEqual([
+            expect.objectContaining({ kind: "skill-guide", title: "obsidian-markdown" }),
+        ]);
     });
 
-    it("preflight returns policy_rejected when enabledSkillIds is empty", async () => {
+    it("continues to reject unknown guide IDs", async () => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            host: fakePlugin({ enabledSkillIds: [] }),
+            host: fakePlugin({}),
             platform: "desktop",
         });
 
@@ -2409,20 +2416,22 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
             turnId: "turn-1",
             turnIndex: 0,
             userInput: "Help me",
-            toolCall: { type: "toolCall" as const, id: "call-1", index: 0, name: "load_skill", input: { name: "obsidian-markdown" } },
+            toolCall: { type: "toolCall" as const, id: "call-1", index: 0, name: "load_skill", input: { name: "unknown-guide" } },
             signal: new AbortController().signal,
         });
 
-        expect(result.outcome).toBe("policy_rejected");
-        expect(result.metadata?.reason).toBe("no_enabled_skills");
+        expect(result.outcome).toBe("recoverable_error");
+        expect(result.promptText).toContain("not registered");
+        expect(result.sourceRecords).toEqual([]);
     });
 
-    it("preflight returns policy_rejected when skill is not in enabledSkillIds", async () => {
+    it("preserves explicit tool scope restrictions for bundled guides", async () => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            host: fakePlugin({ enabledSkillIds: ["json-canvas"] }),
+            host: fakePlugin({}),
             platform: "desktop",
+            blockedToolNames: new Set(["load_skill"]),
         });
 
         const result = await executor.execute({
@@ -2435,16 +2444,15 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
         });
 
         expect(result.outcome).toBe("policy_rejected");
-        expect(result.metadata?.reason).toBe("skill_disabled");
-        expect(result.metadata?.requestedSkill).toBe("obsidian-markdown");
-        expect(result.promptText).toContain("json-canvas");
+        expect(result.metadata?.reason).toBe("tool_outside_user_requested_scope");
+        expect(result.sourceRecords).toBeUndefined();
     });
 
-    it("preflight passes through when skill is enabled, then registry executes load_skill", async () => {
+    it("loads guide bodies on demand with bounded source evidence", async () => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            host: fakePlugin({ enabledSkillIds: ["obsidian-markdown"] }),
+            host: fakePlugin({}),
             platform: "desktop",
         });
 

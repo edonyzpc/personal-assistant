@@ -15,7 +15,6 @@ export interface MemoryHost {
     readonly pluginId: string;
     readonly settings: {
         memoryEnabled: boolean;
-        memoryAutoCheckBeforeChat: boolean;
         memoryApprovalPolicy: string;
         vssCacheExcludePath: string[];
         dataBoundary?: {

@@ -106,8 +106,7 @@ export interface PageletHost {
                 start: string;
                 end: string;
             };
-            deepDiscoverEnabled: boolean;
-            preloadEnabled: boolean;
+            backgroundDiscoveryEnabled: boolean;
             preloadInterval: number;
             preloadPerHourCap: number;
             preloadPerDayCap: number;

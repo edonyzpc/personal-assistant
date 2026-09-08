@@ -18,6 +18,207 @@ jest.mock("../src/plugin-manifest", () => ({ PluginsUpdater: class {} }));
 jest.mock("../src/theme-manifest", () => ({ ThemeUpdater: class {} }));
 
 import { createPluginHarness } from "./helpers/plugin-harness";
+import { hasDeprecatedSimpleSettingsFields } from "../src/settings";
+
+describe("B-106 settings lifecycle", () => {
+    type Internals = {
+        migrateSettings(): Promise<void>;
+        saveSettingsData(snapshot?: unknown): Promise<void>;
+        pendingSimpleSettingsCanonicalization: boolean;
+        deepDiscoverScheduler: { setAutomaticEnabled: jest.Mock };
+        notifySettingsChanged(): Promise<void>;
+        isBackgroundDiscoveryEnabled(): boolean;
+    };
+
+    it("removes old keys through migration and stale saves without changing protected data", async () => {
+        const raw = {
+            aiProvider: "openai", baseURL: "https://custom.example/v1", statisticsVaultId: "settings-test",
+            memoryAutoCheckBeforeChat: false, skillContextEnabled: false, enabledSkillIds: [],
+            pagelet: { preloadEnabled: false, deepDiscoverEnabled: false, proactiveHints: false },
+            confirmedMemoryCount: 37, memoryAutoAcceptPaused: true,
+            memoryGovernance: { records: [], futureField: "keep" },
+            reviewQueue: { items: [], futureField: "keep" },
+            dataBoundary: { excludedFolders: ["private"] },
+            operationsAgentEnabled: false, webSearchEnabled: false,
+        };
+        const { plugin, readPersisted, secretStorage } = createPluginHarness({ initialData: raw });
+        const state = plugin as unknown as Internals;
+        await plugin.loadSettings();
+        expect(state.pendingSimpleSettingsCanonicalization).toBe(true);
+        expect(hasDeprecatedSimpleSettingsFields(plugin.settings)).toBe(false);
+        expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(true);
+        await state.migrateSettings();
+        expect(state.pendingSimpleSettingsCanonicalization).toBe(false);
+        expect(hasDeprecatedSimpleSettingsFields(readPersisted())).toBe(false);
+        for (const key of ["memoryGovernance", "reviewQueue", "confirmedMemoryCount", "memoryAutoAcceptPaused"] as const) {
+            expect(readPersisted()?.[key]).toEqual(raw[key]);
+        }
+        await state.saveSettingsData({ ...plugin.settings, skillContextEnabled: false,
+            pagelet: { ...plugin.settings.pagelet, deepDiscoverEnabled: false } });
+        expect(hasDeprecatedSimpleSettingsFields(readPersisted())).toBe(false);
+        expect(readPersisted()).toMatchObject({ baseURL: raw.baseURL, dataBoundary: raw.dataBoundary,
+            operationsAgentEnabled: false, webSearchEnabled: false });
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+    });
+
+    it("keeps canonicalization pending after a failed write and retries", async () => {
+        const { plugin, adapter, readPersisted } = createPluginHarness({ initialData: {
+            aiProvider: "openai", statisticsVaultId: "settings-test", skillContextEnabled: false,
+        } });
+        const state = plugin as unknown as Internals;
+        await plugin.loadSettings();
+        adapter.process.mockRejectedValueOnce(new Error("disk unavailable"));
+        await expect(state.migrateSettings()).rejects.toThrow("disk unavailable");
+        expect(state.pendingSimpleSettingsCanonicalization).toBe(true);
+        await state.migrateSettings();
+        expect(state.pendingSimpleSettingsCanonicalization).toBe(false);
+        expect(hasDeprecatedSimpleSettingsFields(readPersisted())).toBe(false);
+    });
+
+    it.each(["paused", "unconfirmed", "invalid"])("does not reactivate explicit %s extraction consent", async (state) => {
+        const { plugin, readPersisted } = createPluginHarness({ initialData: {
+            aiProvider: "openai", memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state, version: 1 },
+        } });
+        await plugin.loadSettings();
+        expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+        await plugin.saveSettings();
+        const reloaded = createPluginHarness({ initialData: readPersisted() });
+        await reloaded.plugin.loadSettings();
+        expect(reloaded.plugin.settings.memoryExtractionEnabled).toBe(false);
+        expect(reloaded.plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+    });
+
+    it("preserves a valid pre-consent extraction opt-in without enabling habit learning", async () => {
+        const { plugin } = createPluginHarness({ initialData: { memoryExtractionEnabled: true } });
+        await plugin.loadSettings();
+        expect(plugin.settings.memoryExtractionEnabled).toBe(true);
+        expect(plugin.settings.memoryExtractionConsent.state).toBe("confirmed");
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+    });
+
+    it("publishes background changes only after persistence and preserves concurrent live edits", async () => {
+        const { plugin, adapter, readPersisted } = createPluginHarness({ initialData: {
+            pagelet: { backgroundDiscoveryEnabled: false },
+        } });
+        await plugin.loadSettings();
+        const state = plugin as unknown as Internals;
+        state.notifySettingsChanged = jest.fn(async () => undefined);
+        const setAutomaticEnabled = jest.fn();
+        state.deepDiscoverScheduler = { setAutomaticEnabled };
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementationOnce(async (...args: unknown[]) => {
+            await gate;
+            return process(...args);
+        });
+        const save = plugin.setBackgroundDiscoveryEnabled(true);
+        await Promise.resolve();
+        expect(state.isBackgroundDiscoveryEnabled()).toBe(false);
+        expect(setAutomaticEnabled).not.toHaveBeenCalled();
+        plugin.settings.author = "concurrent draft";
+        release();
+        await save;
+        expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(true);
+        expect(plugin.settings.author).toBe("concurrent draft");
+        expect(readPersisted()).toMatchObject({ pagelet: { backgroundDiscoveryEnabled: true } });
+        expect(setAutomaticEnabled).toHaveBeenCalledWith(true);
+    });
+
+    it("fails automatic work closed after uncertain persistence and resumes only after retry", async () => {
+        const { plugin, adapter } = createPluginHarness({ initialData: {
+            pagelet: { backgroundDiscoveryEnabled: false },
+        } });
+        await plugin.loadSettings();
+        const state = plugin as unknown as Internals;
+        state.notifySettingsChanged = jest.fn(async () => undefined);
+        state.deepDiscoverScheduler = { setAutomaticEnabled: jest.fn() };
+        adapter.process.mockRejectedValueOnce(new Error("disk unavailable"));
+        await expect(plugin.setBackgroundDiscoveryEnabled(true)).rejects.toThrow("disk unavailable");
+        expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(false);
+        expect(state.isBackgroundDiscoveryEnabled()).toBe(false);
+        expect(state.deepDiscoverScheduler.setAutomaticEnabled).not.toHaveBeenCalledWith(true);
+        await plugin.setBackgroundDiscoveryEnabled(true);
+        expect(state.isBackgroundDiscoveryEnabled()).toBe(true);
+    });
+
+    it("does not admit an automatic snapshot across a background pause and resume", async () => {
+        const { plugin } = createPluginHarness({ initialData: { aiProvider: "openai" } });
+        await plugin.loadSettings();
+        const state = plugin as unknown as Internals & {
+            createAiServiceHost(): unknown;
+            isPageletProviderPathAllowed(path: string): boolean;
+            capturePageletDeepDiscoverAnchorSnapshot(): Promise<unknown>;
+            getOrCreatePageletDeepDiscoverScheduler(): Promise<unknown>;
+            runPageletDeepDiscover(input: { path: string; triggerReason: "leave-note"; force: boolean }): Promise<unknown>;
+        };
+        await state.migrateSettings();
+        state.notifySettingsChanged = jest.fn(async () => undefined);
+        plugin.getAISetupIssue = jest.fn(() => null);
+        state.createAiServiceHost = jest.fn(() => ({}));
+        state.isPageletProviderPathAllowed = jest.fn(() => true);
+        let finish!: (snapshot: unknown) => void;
+        state.capturePageletDeepDiscoverAnchorSnapshot = jest.fn(() => new Promise((resolve) => { finish = resolve; }));
+        state.getOrCreatePageletDeepDiscoverScheduler = jest.fn(async () => null);
+        const run = state.runPageletDeepDiscover({ path: "synthetic.md", triggerReason: "leave-note", force: true });
+        await plugin.setBackgroundDiscoveryEnabled(false);
+        await plugin.setBackgroundDiscoveryEnabled(true);
+        finish({ path: "synthetic.md" });
+        await expect(run).resolves.toMatchObject({ status: "quiet", reason: "aborted" });
+        expect(state.getOrCreatePageletDeepDiscoverScheduler).not.toHaveBeenCalled();
+        await plugin.setBackgroundDiscoveryEnabled(false);
+        await expect(state.runPageletDeepDiscover({
+            path: "synthetic.md", triggerReason: "leave-note", force: true,
+        })).resolves.toMatchObject({ status: "limit", reason: "unavailable" });
+        expect(state.capturePageletDeepDiscoverAnchorSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps admission closed when a write reaches disk but readback fails", async () => {
+        const { plugin, adapter, readPersisted } = createPluginHarness({ initialData: {
+            aiProvider: "openai", pagelet: { backgroundDiscoveryEnabled: false },
+        } });
+        await plugin.loadSettings();
+        const state = plugin as unknown as Internals;
+        await state.migrateSettings();
+        state.notifySettingsChanged = jest.fn(async () => undefined);
+        state.deepDiscoverScheduler = { setAutomaticEnabled: jest.fn() };
+        adapter.read.mockRejectedValueOnce(new Error("readback unavailable"));
+        await expect(plugin.setBackgroundDiscoveryEnabled(true)).rejects.toThrow("readback unavailable");
+        expect(readPersisted()).toMatchObject({ pagelet: { backgroundDiscoveryEnabled: true } });
+        expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(false);
+        expect(state.isBackgroundDiscoveryEnabled()).toBe(false);
+        expect(state.deepDiscoverScheduler.setAutomaticEnabled).not.toHaveBeenCalledWith(true);
+        await plugin.setBackgroundDiscoveryEnabled(true);
+        expect(state.isBackgroundDiscoveryEnabled()).toBe(true);
+    });
+
+    it("serializes consecutive background choices in durable order", async () => {
+        const { plugin, adapter, readPersisted } = createPluginHarness({ initialData: {
+            aiProvider: "openai", pagelet: { backgroundDiscoveryEnabled: false },
+        } });
+        await plugin.loadSettings();
+        const state = plugin as unknown as Internals;
+        await state.migrateSettings();
+        state.notifySettingsChanged = jest.fn(async () => undefined);
+        state.deepDiscoverScheduler = { setAutomaticEnabled: jest.fn() };
+        const persistedChoices: boolean[] = [];
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementation(async (...args: unknown[]) => {
+            const result = await process(...args);
+            persistedChoices.push((readPersisted()?.pagelet as { backgroundDiscoveryEnabled: boolean }).backgroundDiscoveryEnabled);
+            return result;
+        });
+        await Promise.all([
+            plugin.setBackgroundDiscoveryEnabled(true),
+            plugin.setBackgroundDiscoveryEnabled(false),
+            plugin.setBackgroundDiscoveryEnabled(true),
+        ]);
+        expect(persistedChoices).toEqual([true, false, true]);
+        expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(true);
+        expect(state.deepDiscoverScheduler.setAutomaticEnabled.mock.calls).toEqual([[true], [false], [true]]);
+    });
+});
 
 describe("Plugin lifecycle integration", () => {
 
@@ -508,7 +709,7 @@ describe("AI readiness gate", () => {
         });
         await plugin.loadSettings();
         plugin.settings.pagelet.enabled = true;
-        plugin.settings.pagelet.deepDiscoverEnabled = true;
+        plugin.settings.pagelet.backgroundDiscoveryEnabled = false;
         const captureAnchor = jest.fn(async () => ({ path: "notes/current.md" }));
         const runNow = jest.fn(async () => ({ status: "quiet", reason: "no-insight" }));
         const getScheduler = jest.fn(async () => {
@@ -561,7 +762,7 @@ describe("AI readiness gate", () => {
         });
         await plugin.loadSettings();
         plugin.settings.pagelet.enabled = true;
-        plugin.settings.pagelet.deepDiscoverEnabled = true;
+        plugin.settings.pagelet.backgroundDiscoveryEnabled = false;
         if (throws) {
             secretStorage.getSecret.mockImplementationOnce(() => {
                 throw new Error("SecretStorage unavailable");
@@ -608,7 +809,7 @@ describe("AI readiness gate", () => {
             });
             await harness.plugin.loadSettings();
             harness.plugin.settings.pagelet.enabled = true;
-            harness.plugin.settings.pagelet.deepDiscoverEnabled = true;
+            harness.plugin.settings.pagelet.backgroundDiscoveryEnabled = false;
             const captureAnchor = jest.fn(async () => ({ path: "notes/current.md" }));
             const runtime = harness.plugin as unknown as {
                 aiProviderCredentialTransitionCount: number;

@@ -2774,8 +2774,8 @@ describe("B-125 retrieval app-smoke fixture", () => {
         ["Pagelet temperature", (settings: Record<string, unknown>) => {
             (settings.pagelet as Record<string, unknown>).temperature = 0.4;
         }],
-        ["Pagelet enablement", (settings: Record<string, unknown>) => {
-            (settings.pagelet as Record<string, unknown>).deepDiscoverEnabled = false;
+        ["Pagelet background discovery", (settings: Record<string, unknown>) => {
+            (settings.pagelet as Record<string, unknown>).backgroundDiscoveryEnabled = false;
         }],
         ["Pagelet source exclusions", (settings: Record<string, unknown>) => {
             (settings.pagelet as Record<string, unknown>).excludedFolders = ["private"];
@@ -2808,6 +2808,31 @@ describe("B-125 retrieval app-smoke fixture", () => {
                 workloadBinding: { status: "INVALID", violationCount: 1 },
             },
         });
+    });
+
+    it("ignores only retired Settings controls when binding execution inputs", async () => {
+        const { context, runner, settingsControl } = createRunnerContext(resolve(__dirname, ".."), {
+            profile: "compact-proxy",
+            preflightReady: true,
+        });
+        await runInNewContext(runner, context);
+        const recorder = context.paRetrievalSmoke as SmokeRecorder;
+        const plugin = (context.app as {
+            plugins: { plugins: Record<string, { settings: Record<string, unknown> }> };
+        }).plugins.plugins["personal-assistant"];
+        Object.assign(plugin.settings, {
+            memoryAutoCheckBeforeChat: false,
+            skillContextEnabled: false,
+            enabledSkillIds: [],
+        });
+        Object.assign(plugin.settings.pagelet as Record<string, unknown>, {
+            preloadEnabled: false,
+            deepDiscoverEnabled: false,
+        });
+        await settingsControl.notifySettingsChanged();
+        await expect(recorder.startCompactProxy()).resolves.toBeDefined();
+        const receipt = await recorder.finalize();
+        expect(receipt.compactProxy).not.toMatchObject({ status: "INVALID" });
     });
 
     it("binds the Chat model even when a policy model is selected", async () => {
@@ -11805,15 +11830,12 @@ function createRunnerContext(
             embeddingModelName: "test-embedding",
             statisticsVaultId: "test-vault",
             memoryEnabled: true,
-            memoryAutoCheckBeforeChat: true,
             memoryApprovalPolicy: "always",
             memoryExtractionEnabled: false,
             memoryExtractionIncludeVaultInsights: false,
             memoryExtractionConsent: { state: "unconfirmed", version: 1 },
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
-            skillContextEnabled: true,
-            enabledSkillIds: [],
             licenseTier: "free",
             focusMode: false,
             quietRecall: { enabled: true, quietRecallMode: "off" },
@@ -11827,7 +11849,7 @@ function createRunnerContext(
                 temperature: 0.2,
                 maxInputTokens: 8_000,
                 maxOutputTokens: 2_000,
-                deepDiscoverEnabled: true,
+                backgroundDiscoveryEnabled: true,
                 excludedFolders: [],
                 excludedTags: [],
                 excludedPatterns: [],

@@ -31,7 +31,6 @@ import {
 } from "./pa-agent-tool-dispatcher";
 import { truncate } from "./chat-tool-execution-helpers";
 import { dedupeSources } from "./pa-agent-history";
-import { LOAD_SKILL_TOOL_NAME } from "./skill-context-provider";
 import { createSourceDedupKey } from "./source-store";
 import { cloneTranscript } from "./context/clone-utils";
 import { createAbortError } from "./chat-utils";
@@ -498,10 +497,6 @@ export function createPaAgentCapabilityToolExecutor(
                     },
                 };
             }
-            if (toolCall.name === LOAD_SKILL_TOOL_NAME) {
-                const disabledRejection = preflightLoadSkill(toolCall, options.host);
-                if (disabledRejection) return disabledRejection;
-            }
             const preparedResult = options.registry.prepareAndValidate(
                 toolCall.name,
                 toolCall.input,
@@ -684,62 +679,6 @@ export function isAllowedHostToolCall(
     if (allowedToolNames && !allowedToolNames.has(toolName)) return false;
     if (blockedToolNames?.has(toolName)) return false;
     return true;
-}
-
-function preflightLoadSkill(
-    toolCall: PaAgentToolCall,
-    host: AiServiceHost,
-): PaAgentToolExecutionResult | null {
-    const settings = host.settings as unknown as Record<string, unknown>;
-    const skillContextEnabled = settings.skillContextEnabled !== false;
-    const enabledSkillIds = Array.isArray(settings.enabledSkillIds)
-        ? (settings.enabledSkillIds as readonly string[])
-        : undefined;
-
-    if (!skillContextEnabled) {
-        return {
-            outcome: "policy_rejected",
-            promptText: "load_skill is unavailable because skill guides are disabled in user settings.",
-            previewText: "Skipped load_skill; skill guides disabled in settings.",
-            metadata: {
-                outcome: "policy_rejected",
-                reason: "skill_context_disabled",
-            },
-        };
-    }
-
-    if (enabledSkillIds && enabledSkillIds.length === 0) {
-        return {
-            outcome: "policy_rejected",
-            promptText: "load_skill is unavailable because no skills are enabled in user settings.",
-            previewText: "Skipped load_skill; no skills enabled.",
-            metadata: {
-                outcome: "policy_rejected",
-                reason: "no_enabled_skills",
-            },
-        };
-    }
-
-    const inputRecord = (toolCall.input && typeof toolCall.input === "object")
-        ? (toolCall.input as Record<string, unknown>)
-        : {};
-    const requestedName = typeof inputRecord.name === "string" ? inputRecord.name.trim() : "";
-
-    if (requestedName && enabledSkillIds && !enabledSkillIds.includes(requestedName)) {
-        const enabledList = enabledSkillIds.join(", ");
-        return {
-            outcome: "policy_rejected",
-            promptText: `Skill "${requestedName}" is disabled in user settings. Enabled skills: ${enabledList || "(none)"}.`,
-            previewText: `Skipped load_skill("${requestedName}"); not in enabled skill list.`,
-            metadata: {
-                outcome: "policy_rejected",
-                reason: "skill_disabled",
-                requestedSkill: requestedName,
-            },
-        };
-    }
-
-    return null;
 }
 
 export function chatToolResultToPaAgentToolExecutionResult(

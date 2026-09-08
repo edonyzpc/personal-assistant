@@ -2,10 +2,13 @@ import { createHash, webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { CallbackManager } from '@langchain/core/callbacks/manager';
 import { ChatOpenAI } from '@langchain/openai';
+import { ChatService } from '../src/ai-services/chat-service';
+
+jest.mock('obsidian');
 
 const runnerSource = readFileSync(resolve(__dirname, '../scripts/context-continuity-smoke-runner.js'), 'utf8');
 const summaryText = JSON.stringify({
@@ -18,7 +21,8 @@ const syntheticTool = { type: 'function' as const, function: {
     name: 'synthetic_tool', description: 'Synthetic test only.', parameters: { type: 'object', properties: {} },
 } };
 
-function offlineModel(response: string, callbacks?: any, recordRequest?: (body: any) => void, failStream = false) {
+function offlineModel(response: string, callbacks?: any, recordRequest?: (body: any) => void, failStream = false,
+    requestTool = false) {
     // Exercise the installed ChatOpenAI, including its real bindTools/withConfig
     // clone and transform paths. The injected fetch never opens a network socket.
     return new ChatOpenAI({
@@ -30,12 +34,17 @@ function offlineModel(response: string, callbacks?: any, recordRequest?: (body: 
                 message: 'Synthetic stream failure before output.', type: 'synthetic_error',
             } }), { status: 400, headers: { 'content-type': 'application/json' } });
             const common = { id: 'synthetic-completion', created: 0, model: 'synthetic-model' };
+            const message = requestTool ? { role: 'assistant', content: '', tool_calls: [{
+                index: 0, id: 'unexpected-tool', type: 'function', function: {
+                    name: 'search_vault_metadata', arguments: JSON.stringify({ query: 'synthetic' }),
+                },
+            }] } : { role: 'assistant', content: response };
             const data = body.stream
                 ? `data: ${JSON.stringify({ ...common, object: 'chat.completion.chunk', choices: [{
-                    index: 0, delta: { role: 'assistant', content: response }, finish_reason: 'stop',
+                    index: 0, delta: message, finish_reason: requestTool ? 'tool_calls' : 'stop',
                 }] })}\n\ndata: [DONE]\n\n`
                 : JSON.stringify({ ...common, object: 'chat.completion', choices: [{
-                    index: 0, message: { role: 'assistant', content: response }, finish_reason: 'stop',
+                    index: 0, message, finish_reason: requestTool ? 'tool_calls' : 'stop',
                 }] });
             return new Response(data, { headers: { 'content-type': body.stream ? 'text/event-stream' : 'application/json' } });
         } },
@@ -51,7 +60,7 @@ function harness(mode: 'lossless' | 'semantic' | 'unused-summary' | 'error' = 'l
     const settings = {
         aiProvider: 'synthetic-provider', chatModelName: 'synthetic-model',
         baseURL: 'https://private-endpoint.invalid/v1', apiKey: 'sk-private-secret',
-        memoryEnabled: true, skillContextEnabled: true,
+        memoryEnabled: true,
     };
     const plugin = {
         settings,
@@ -83,11 +92,12 @@ function harness(mode: 'lossless' | 'semantic' | 'unused-summary' | 'error' = 'l
                         return { text: response.content, source: input.source };
                     },
                 },
+                createAgentRuntime(options: any) { return options; },
                 async streamLLM(_prompt: string, onChunk: (text: string) => void, signal: AbortSignal, history: any[], turnOptions: any) {
                     streamOptions.push(turnOptions);
                     histories.push(JSON.parse(JSON.stringify(history)));
                     expect(service.host.settings.memoryEnabled).toBe(false);
-                    expect(service.host.settings.skillContextEnabled).toBe(false);
+                    expect(service.createAgentRuntime({}).skillContextProvider).toBeNull();
                     expect(service.host.app.vault.getMarkdownFiles()).toEqual([]);
                     expect(() => service.host.app.vault.read()).toThrow('Synthetic evaluation blocks vault access and writes.');
                     if (mode === 'error') throw new Error(`Provider ${settings.baseURL} rejected Bearer ${settings.apiKey}`);
@@ -165,7 +175,6 @@ describe('context continuity synthetic runner', () => {
         expect(app.modelInvocations()).toBe(report.modelCalls);
         expect(app.providerRequests.filter((body) => body.stream).every((body) => body.tools[0].function.name === 'synthetic_tool')).toBe(true);
         expect(app.settings.memoryEnabled).toBe(true);
-        expect(app.settings.skillContextEnabled).toBe(true);
         expect(JSON.stringify(report)).not.toContain('private-endpoint');
         expect(JSON.stringify(report)).not.toContain('sk-private-secret');
     });
@@ -257,5 +266,85 @@ describe('context continuity synthetic runner', () => {
         expect(report.results[0].error).toContain('[redacted-url]');
         expect(JSON.stringify(report)).not.toContain('private-endpoint');
         expect(JSON.stringify(report)).not.toContain('sk-private-secret');
+    });
+
+    it.each([false, true])('isolates the real runtime model input and denies unexpected tools=%s', async (requestTool) => {
+        const providerRequests: any[] = [];
+        const services: ChatService[] = [];
+        const vaultRead = jest.fn(() => { throw new Error('Original vault must stay untouched.'); });
+        const memorySearch = jest.fn(async () => []);
+        const settings = {
+            aiProvider: 'custom', chatModelName: 'synthetic-model', baseURL: 'https://private-endpoint.invalid/v1',
+            policyModelName: '',
+            memoryEnabled: true, webSearchEnabled: false, operationsAgentEnabled: true,
+            operationsAuditRetentionDays: 30, licenseTier: 'paid', shareAnonymousCapabilityUsage: false,
+        };
+        const host: any = {
+            settings, log: () => undefined, isOperationsAgentEnabled: true,
+            getMemoryExtractionPromptContext: () => undefined,
+            app: {
+                workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
+                vault: { getMarkdownFiles: () => [], getAbstractFileByPath: () => null, read: vaultRead, cachedRead: vaultRead },
+                metadataCache: { getFileCache: () => null, resolvedLinks: {}, unresolvedLinks: {} },
+                fileManager: { trashFile: vaultRead },
+            },
+            memorySearch: { ensureReadyForChat: async () => ({ decision: 'use-memory' }), searchHybrid: memorySearch },
+        };
+        const plugin = {
+            settings,
+            createChatService() {
+                const service = new ChatService(host);
+                const internals = service as any;
+                internals.aiUtils.createChatModel = async () => offlineModel('Synthetic answer.', undefined,
+                    (body) => providerRequests.push(body), false, requestTool);
+                internals.aiUtils.resolveChatTransport = () => ({ responseDelivery: 'incremental' });
+                internals.aiUtils.getNativeToolCallingCapability = () => ({ supported: true, status: 'supported' });
+                services.push(service);
+                return service;
+            },
+        };
+        const sandbox: any = {
+            app: { vault: { getName: () => 'test' }, plugins: { plugins: { 'personal-assistant': plugin } } },
+            crypto: webcrypto, TextEncoder, AbortController, setTimeout, clearTimeout,
+        };
+        runInNewContext(runnerSource, sandbox);
+        const evaluation = sandbox.__b128ContextEval;
+        try {
+            expect(providerRequests).toEqual([]);
+            const report = await evaluation.start({ cases: ['early-constraints'], arms: ['candidate'],
+                incremental: false, toolSummary: false });
+            expect(providerRequests).toHaveLength(1);
+            const request = providerRequests[0];
+            expect(JSON.stringify(request.messages)).not.toContain('<available_skills>');
+            expect(JSON.stringify(request.messages)).not.toContain('obsidian-markdown');
+            expect(request.tools.map((tool: any) => tool.function.name)).not.toContain('load_skill');
+            expect(request.tools.map((tool: any) => tool.function.name)).not.toContain('webSearch');
+            expect(request.tools.map((tool: any) => tool.function.name)).not.toContain('create_note');
+            const isolated = (services[0] as any).host;
+            expect(isolated.isDataBoundaryAllowedPath('Private.md')).toBe(false);
+            expect(() => isolated.app.vault.read({ path: 'Private.md' })).toThrow('blocks vault access and writes');
+            expect(() => isolated.app.vault.modify({ path: 'Private.md' }, 'content')).toThrow('blocks vault access and writes');
+            expect(vaultRead).not.toHaveBeenCalled();
+            expect(memorySearch).not.toHaveBeenCalled();
+            expect(settings.memoryEnabled).toBe(true);
+            expect(settings.operationsAgentEnabled).toBe(true);
+            if (requestTool) {
+                expect(report.results[0].status).not.toBe('recorded_for_review');
+                expect(report.results[0].error).toContain('Unexpected tool request');
+            } else {
+                expect(report.status).toBe('recorded_for_review');
+                expect(report.results[0].actual).toBe('Synthetic answer.');
+                // Another service from the same plugin retains the production
+                // catalog. The runner never patches ChatService.prototype.
+                const ordinary = plugin.createChatService();
+                await ordinary.streamLLM('Explain Markdown.', () => undefined, undefined, undefined, { memoryMode: 'skip-memory' });
+                const ordinaryRequest = providerRequests.at(-1);
+                expect(JSON.stringify(ordinaryRequest.messages)).toContain('obsidian-markdown');
+                expect(ordinaryRequest.tools.map((tool: any) => tool.function.name)).toContain('load_skill');
+            }
+        } finally {
+            evaluation.cleanup();
+            for (const service of services) service.dispose();
+        }
     });
 });

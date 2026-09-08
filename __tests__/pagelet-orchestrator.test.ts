@@ -134,8 +134,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 proactiveHints: false,
                 proactiveHintsCooldown: 30,
                 proactiveHintsQuietHours: { enabled: false, start: "22:00", end: "08:00" },
-                deepDiscoverEnabled: true,
-                preloadEnabled: true,
+                backgroundDiscoveryEnabled: true,
                 preloadInterval: 30,
                 preloadPerHourCap: 2,
                 preloadPerDayCap: 20,
@@ -914,6 +913,58 @@ describe("PageletOrchestrator Deep Discover migration", () => {
         expect(acknowledgeDeepDiscoverResult).not.toHaveBeenCalled();
         expect(discardDeepDiscoverResult).not.toHaveBeenCalled();
         expect(Notice).not.toHaveBeenCalled();
+    });
+
+    it("keeps manual discovery available while automatic discovery is paused", async () => {
+        const runDeepDiscover = jest.fn<NonNullable<PageletHost["runDeepDiscover"]>>(async () => ({
+            status: "quiet",
+            reason: "no-insight",
+        }));
+        const cancelDeepDiscover = jest.fn();
+        const host = makeHost({ runDeepDiscover, cancelDeepDiscover });
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            runAutomaticDeepDiscover(path: string, reason: "edit-idle"): Promise<void>;
+            runExplicitDeepDiscover(): Promise<void>;
+        };
+        host.settings.pagelet.backgroundDiscoveryEnabled = false;
+        orchestrator.syncSettings();
+        await internals.runAutomaticDeepDiscover("notes/current.md", "edit-idle");
+        await internals.runExplicitDeepDiscover();
+        expect(cancelDeepDiscover).not.toHaveBeenCalled();
+        expect(runDeepDiscover).toHaveBeenCalledTimes(1);
+        expect(runDeepDiscover).toHaveBeenCalledWith({
+            path: "notes/current.md",
+            triggerReason: "explicit",
+            force: true,
+        });
+        expect(Notice).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("discards a late automatic result after pause, resumed=%s", async (resume) => {
+        const result = makeVerifiedDeepDiscoverResult("edit-idle");
+        let finish: ((value: PageletDeepDiscoverControllerResult) => void) | undefined;
+        const discardDeepDiscoverResult = jest.fn();
+        const host = makeHost({
+            runDeepDiscover: () => new Promise((resolve) => { finish = resolve; }),
+            discardDeepDiscoverResult,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const internals = orchestrator as unknown as {
+            runAutomaticDeepDiscover(path: string, reason: "edit-idle"): Promise<void>;
+            agentInsightCandidate: unknown;
+        };
+        const pending = internals.runAutomaticDeepDiscover("notes/current.md", "edit-idle");
+        host.settings.pagelet.backgroundDiscoveryEnabled = false;
+        orchestrator.syncSettings();
+        if (resume) {
+            host.settings.pagelet.backgroundDiscoveryEnabled = true;
+            orchestrator.syncSettings();
+        }
+        finish?.(result);
+        await pending;
+        expect(discardDeepDiscoverResult).toHaveBeenCalledWith(result);
+        expect(internals.agentInsightCandidate).toBeNull();
     });
 
     it("keeps two collection insights on independent candidate and seen state", () => {
@@ -3021,7 +3072,7 @@ describe("PageletOrchestrator detail expansion", () => {
             runScopeRecap: providerRun,
             clearScopeRecapDetailSessionCache,
         });
-        host.settings.pagelet.preloadEnabled = false;
+        host.settings.pagelet.backgroundDiscoveryEnabled = false;
         host.settings.pagelet.scopeRecapAuthorizationContextId = "scope-recap-auth-old";
         const updatePageletSetting = persistPageletSettingUpdates(host);
         const orchestrator = new PageletOrchestrator(host);

@@ -48,6 +48,8 @@ export interface PageletDeepDiscoverControllerRequest {
     anchorSnapshot?: PageletAnchorSnapshot;
     force?: boolean;
     signal?: AbortSignal;
+    /** Host-owned automatic epoch fence; never a model-facing authority flag. */
+    isAutomaticRequestCurrent?: () => boolean;
 }
 
 export interface PageletDeepDiscoverControllerRunIdentity {
@@ -83,6 +85,7 @@ export interface PageletDeepDiscoverControllerDependencies {
         triggerReason: PageletDeepDiscoverTriggerReason;
         force: boolean;
         signal?: AbortSignal;
+        isAutomaticRequestCurrent?: () => boolean;
     }): Promise<{ ok: true } | { ok: false; reason: "limit" | "unavailable" }>;
     getAnchorRelations?(anchorPath: string): {
         explicitLinks?: readonly string[];
@@ -201,6 +204,17 @@ export class PageletDeepDiscoverController {
                 return { status: "error", reason: "deep-discover-failed" };
             })
             .then((result) => {
+                if (!automaticRequestIsCurrent(normalizedRequest)) {
+                    const metrics = result.status === "verified"
+                        ? result.insight.metrics
+                        : result.status === "quiet" ? result.metrics : undefined;
+                    result = {
+                        status: "quiet",
+                        reason: "aborted",
+                        ...(metrics ? { metrics } : {}),
+                        ...("runtimeCompletion" in result ? { runtimeCompletion: result.runtimeCompletion } : {}),
+                    };
+                }
                 const completion: PageletDeepDiscoverControllerRunCompletion = Object.freeze({
                     ...runIdentity,
                     resultId: `${runId}:result`,
@@ -322,7 +336,7 @@ export class PageletDeepDiscoverController {
         signal: AbortSignal,
         runId: string,
     ): Promise<PageletDeepDiscoverControllerResult> {
-        throwIfAborted(signal);
+        throwIfRequestAborted(request, signal);
         if (!safeAllowed(this.dependencies.isPathAllowed, request.path)) {
             return { status: "denied", reason: "data-boundary" };
         }
@@ -330,7 +344,7 @@ export class PageletDeepDiscoverController {
             ? request.anchorSnapshot
             : await this.dependencies.captureSnapshot(request.path, signal);
         if (!anchor) return { status: "stale", reason: "anchor-snapshot-unavailable" };
-        throwIfAborted(signal);
+        throwIfRequestAborted(request, signal);
         const policyIdentity = this.dependencies.getPolicyIdentity();
         if (!request.force) {
             const cached = await this.readCacheAtStableCommit(
@@ -338,7 +352,7 @@ export class PageletDeepDiscoverController {
                 policyIdentity,
                 signal,
             );
-            throwIfAborted(signal);
+            throwIfRequestAborted(request, signal);
             if (cached.status === "stale") {
                 return { status: "stale", reason: cached.reason };
             }
@@ -352,6 +366,7 @@ export class PageletDeepDiscoverController {
                 if (sealed.status === "stale") {
                     return { status: "stale", reason: sealed.reason };
                 }
+                throwIfRequestAborted(request, signal);
                 const collection = this.cache.commitPreparedCollection(cached.prepared);
                 if (collection) {
                     return {
@@ -365,14 +380,16 @@ export class PageletDeepDiscoverController {
             }
         }
 
+        throwIfRequestAborted(request, signal);
         const admission = await this.dependencies.admitRun?.({
             path: anchor.path,
             triggerReason: request.triggerReason,
             force: request.force,
             signal,
+            isAutomaticRequestCurrent: request.isAutomaticRequestCurrent,
         }) ?? { ok: true as const };
         if (!admission.ok) return { status: "limit", reason: admission.reason };
-        throwIfAborted(signal);
+        throwIfRequestAborted(request, signal);
 
         const run = await this.dependencies.runtime.run({
             anchor,
@@ -381,7 +398,7 @@ export class PageletDeepDiscoverController {
             signal,
         });
         try {
-            throwIfAborted(signal);
+            throwIfRequestAborted(request, signal);
             if (run.loopResult.status === "aborted") {
                 return {
                     status: "quiet",
@@ -418,7 +435,7 @@ export class PageletDeepDiscoverController {
                 return { status: "stale", reason: "policy-identity-changed" };
             }
 
-            const proactiveDelivery = request.triggerReason !== "explicit" && !request.force;
+            const proactiveDelivery = request.triggerReason !== "explicit";
             const acceptedQualities: Array<Extract<
                 Awaited<ReturnType<typeof evaluatePageletAgentQuality>>,
                 { accepted: true }
@@ -501,7 +518,7 @@ export class PageletDeepDiscoverController {
                 policyIdentity,
                 signal,
             );
-            throwIfAborted(signal);
+            throwIfRequestAborted(request, signal);
             if (commit.status === "stale") {
                 return { status: "stale", reason: commit.reason };
             }
@@ -585,6 +602,7 @@ export class PageletDeepDiscoverController {
                 insights,
                 preparedAt,
             };
+            throwIfRequestAborted(request, signal);
             this.cache.putCollection(collection);
             return {
                 status: "verified",
@@ -866,6 +884,26 @@ function combineAbortSignals(
 function throwIfAborted(signal: AbortSignal | undefined): void {
     if (!signal?.aborted) return;
     const error = new Error("Aborted");
+    error.name = "AbortError";
+    throw error;
+}
+
+function automaticRequestIsCurrent(request: PageletDeepDiscoverControllerRequest): boolean {
+    if (request.triggerReason === "explicit" || !request.isAutomaticRequestCurrent) return true;
+    try {
+        return request.isAutomaticRequestCurrent() === true;
+    } catch {
+        return false;
+    }
+}
+
+function throwIfRequestAborted(
+    request: PageletDeepDiscoverControllerRequest,
+    signal: AbortSignal,
+): void {
+    throwIfAborted(signal);
+    if (automaticRequestIsCurrent(request)) return;
+    const error = new Error("Automatic request is no longer current");
     error.name = "AbortError";
     throw error;
 }

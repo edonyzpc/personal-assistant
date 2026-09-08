@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { BUNDLED_SKILL_RESOURCES } from "../src/ai-services/bundled-skills";
+import { BUNDLED_SKILL_IDS } from "../src/ai-services/bundled-skill-catalog";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { SkillContextProvider } from "../src/ai-services/skill-context-provider";
@@ -70,7 +71,7 @@ describe("SkillContextProvider", () => {
         expect(result.selectedReferences).toEqual(["references/base-schema.md"]);
     });
 
-    it("registers load_skill capability when at least one skill is enabled (A3 progressive disclosure)", async () => {
+    it("registers read-only load_skill capability when a bundled guide is available", async () => {
         const provider = new SkillContextProvider([{
             path: "skills/obsidian-markdown/SKILL.md",
             content: createSkillMarkdown({
@@ -83,7 +84,7 @@ describe("SkillContextProvider", () => {
         const result = await registry.registerProvider(provider, {
             turnId: "turn-1",
             platform: "desktop",
-            settings: { skillContextEnabled: true },
+            settings: {},
         });
 
         expect(result.status).toBe("available");
@@ -98,48 +99,38 @@ describe("SkillContextProvider", () => {
         expect(schemas[0]?.function.name).toBe("load_skill");
     });
 
-    it("does NOT register load_skill capability when skillContextEnabled is false", async () => {
-        const provider = new SkillContextProvider([{
-            path: "skills/obsidian-markdown/SKILL.md",
-            content: createSkillMarkdown({
-                name: "obsidian-markdown",
-                description: "Use when explaining wikilinks.",
-            }),
-        }]);
+    it.each([
+        {},
+        { skillContextEnabled: false, enabledSkillIds: [] },
+        { skillContextEnabled: true, enabledSkillIds: ["json-canvas"] },
+        { skillContextEnabled: "invalid", enabledSkillIds: ["unknown-guide"] },
+    ])("makes every bundled guide available regardless of retired settings %j", async (settings) => {
+        const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
         const registry = createPaidCapabilityRegistry();
-
         const result = await registry.registerProvider(provider, {
             turnId: "turn-1",
             platform: "desktop",
-            settings: { skillContextEnabled: false },
+            settings,
         });
 
         expect(result.status).toBe("available");
-        expect(result.capabilities).toEqual([]);
-        expect(registry.exportProviderSchemas()).toEqual([]);
+        expect(registry.exportProviderSchemas().map((schema) => schema.function.name)).toEqual(["load_skill"]);
+        const catalog = provider.getCatalog();
+        expect(catalog.entries.map((entry) => entry.name).sort()).toEqual([...BUNDLED_SKILL_IDS].sort());
+        for (const entry of catalog.entries) {
+            const loaded = await registry.execute("load_skill", { name: entry.name }, {
+                host: { log: () => undefined } as never,
+                turnId: "turn-1",
+                platform: "desktop",
+            });
+            expect(loaded.ok).toBe(true);
+            expect(loaded.sourceRecords).toEqual([
+                expect.objectContaining({ kind: "skill-guide", title: entry.name }),
+            ]);
+        }
     });
 
-    it("does NOT register load_skill capability when enabledSkillIds is empty", async () => {
-        const provider = new SkillContextProvider([{
-            path: "skills/obsidian-markdown/SKILL.md",
-            content: createSkillMarkdown({
-                name: "obsidian-markdown",
-                description: "Use when explaining wikilinks.",
-            }),
-        }]);
-        const registry = createPaidCapabilityRegistry();
-
-        const result = await registry.registerProvider(provider, {
-            turnId: "turn-1",
-            platform: "desktop",
-            settings: { enabledSkillIds: [] },
-        });
-
-        expect(result.status).toBe("available");
-        expect(result.capabilities).toEqual([]);
-    });
-
-    it("getCatalog returns L1 metadata only for all enabled bundled skills", async () => {
+    it("getCatalog returns L1 metadata only for all bundled skills", async () => {
         const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
         await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
 
@@ -155,28 +146,6 @@ describe("SkillContextProvider", () => {
             expect(entry as unknown as Record<string, unknown>).not.toHaveProperty("body");
             expect(entry as unknown as Record<string, unknown>).not.toHaveProperty("context");
         }
-    });
-
-    it("getCatalog respects enabledSkillIds filter", async () => {
-        const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
-        await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
-
-        const catalog = provider.getCatalog({
-            enabledSkillIds: ["obsidian-markdown", "json-canvas"],
-        });
-
-        expect(catalog.entries).toHaveLength(2);
-        const names = catalog.entries.map((e) => e.name).sort();
-        expect(names).toEqual(["json-canvas", "obsidian-markdown"]);
-    });
-
-    it("getCatalog returns empty entries when enabledSkillIds is empty array", async () => {
-        const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
-        await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
-
-        const catalog = provider.getCatalog({ enabledSkillIds: [] });
-
-        expect(catalog.entries).toEqual([]);
     });
 
     it("loadSkillBody returns full body and source records for valid skill name", async () => {

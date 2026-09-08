@@ -2004,7 +2004,7 @@ describe('Pagelet agent cache and controller', () => {
         );
     });
 
-    it.each(['request-abort', 'controller-cancel', 'controller-dispose'] as const)(
+    it.each(['request-abort', 'controller-cancel', 'controller-dispose', 'automatic-epoch'] as const)(
         'does not commit or publish a fresh result after %s enters the final source-read window',
         async (mode) => {
             const body = [
@@ -2019,6 +2019,7 @@ describe('Pagelet agent cache and controller', () => {
                 () => currentMaterials,
             );
             const requestAbort = new AbortController();
+            let automaticCurrent = true;
             const cache = new PageletAgentCache();
             const onResult = jest.fn();
             const onRunComplete = jest.fn();
@@ -2037,14 +2038,16 @@ describe('Pagelet agent cache and controller', () => {
 
             const pending = controller.run({
                 path: anchor.path,
-                triggerReason: 'explicit',
+                triggerReason: mode === 'automatic-epoch' ? 'edit-idle' : 'explicit',
                 force: true,
+                isAutomaticRequestCurrent: () => automaticCurrent,
                 ...(mode === 'request-abort' ? { signal: requestAbort.signal } : {}),
             });
             await sourceRead.blocked;
             if (mode === 'request-abort') requestAbort.abort();
             if (mode === 'controller-cancel') controller.cancel();
             if (mode === 'controller-dispose') controller.dispose();
+            if (mode === 'automatic-epoch') automaticCurrent = false;
             sourceRead.release();
 
             await expect(pending).resolves.toMatchObject({
@@ -2902,8 +2905,208 @@ describe('Pagelet agent cache and controller', () => {
         expect(run).toHaveBeenCalledWith({
             path: anchor.path,
             triggerReason: 'open-changed-note',
+            isAutomaticRequestCurrent: expect.any(Function),
         });
         expect(firstResult).toEqual(secondResult);
+    });
+
+    it('drops paused timers and force requests while preserving active and queued explicit work', async () => {
+        const timers: Array<() => void> = [];
+        const releases: Array<(result: PageletDeepDiscoverControllerResult) => void> = [];
+        const run = jest.fn((_request: unknown) => new Promise<PageletDeepDiscoverControllerResult>((resolve) => {
+            releases.push(resolve);
+        }));
+        const cancel = jest.fn();
+        const dispose = jest.fn();
+        const scheduler = new PageletDeepDiscoverScheduler({
+            controller: { run, cancel, dispose } as unknown as PageletDeepDiscoverController,
+            setTimer: (callback) => {
+                timers.push(callback);
+                return timers.length as unknown as ReturnType<typeof setTimeout>;
+            },
+            clearTimer: jest.fn(),
+        });
+        const automatic = scheduler.schedule({ path: anchor.path, triggerReason: 'edit-idle' });
+        const firstExplicit = scheduler.runNow({ path: 'notes/manual-1.md', triggerReason: 'explicit' });
+        const queuedExplicit = scheduler.runNow({ path: 'notes/manual-2.md', triggerReason: 'explicit' });
+
+        scheduler.setAutomaticEnabled(false);
+        await expect(automatic).resolves.toEqual({ status: 'quiet', reason: 'aborted' });
+        await expect(scheduler.runNow({
+            path: anchor.path,
+            triggerReason: 'edit-idle',
+            force: true,
+        })).resolves.toEqual({ status: 'quiet', reason: 'aborted' });
+        timers[0]?.();
+        expect(cancel).not.toHaveBeenCalled();
+        expect(dispose).not.toHaveBeenCalled();
+        expect(run).toHaveBeenCalledTimes(1);
+
+        releases[0]?.({ status: 'quiet', reason: 'no-insight' });
+        await firstExplicit;
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(run).toHaveBeenCalledTimes(2);
+        releases[1]?.({ status: 'quiet', reason: 'no-insight' });
+        await expect(queuedExplicit).resolves.toEqual({ status: 'quiet', reason: 'no-insight' });
+        scheduler.dispose();
+    });
+
+    it('cancels automatic work across off/on without requeueing it after explicit preemption', async () => {
+        const timers: Array<() => void> = [];
+        const releases: Array<(result: PageletDeepDiscoverControllerResult) => void> = [];
+        const run = jest.fn((request: { isAutomaticRequestCurrent?: () => boolean }) => {
+            expect(request.isAutomaticRequestCurrent?.() ?? true).toBe(true);
+            return new Promise<PageletDeepDiscoverControllerResult>((resolve) => releases.push(resolve));
+        });
+        const cancel = jest.fn();
+        const scheduler = new PageletDeepDiscoverScheduler({
+            controller: { run, cancel, dispose: jest.fn() } as unknown as PageletDeepDiscoverController,
+            setTimer: (callback) => {
+                timers.push(callback);
+                return timers.length as unknown as ReturnType<typeof setTimeout>;
+            },
+            clearTimer: jest.fn(),
+        });
+        const automatic = scheduler.schedule({ path: anchor.path, triggerReason: 'edit-idle' });
+        timers[0]?.();
+        const oldGuard = run.mock.calls[0]?.[0].isAutomaticRequestCurrent;
+        const explicit = scheduler.runNow({ path: 'notes/manual.md', triggerReason: 'explicit' });
+        scheduler.setAutomaticEnabled(false);
+        scheduler.setAutomaticEnabled(true);
+        expect(oldGuard?.()).toBe(false);
+        await expect(automatic).resolves.toEqual({ status: 'quiet', reason: 'aborted' });
+        releases[0]?.({ status: 'quiet', reason: 'aborted' });
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        releases[1]?.({ status: 'quiet', reason: 'no-insight' });
+        await explicit;
+        await Promise.resolve();
+        expect(run).toHaveBeenCalledTimes(2);
+
+        const fresh = scheduler.schedule({ path: anchor.path, triggerReason: 'edit-idle' });
+        timers[0]?.();
+        expect(run).toHaveBeenCalledTimes(2);
+        timers[1]?.();
+        expect(run).toHaveBeenCalledTimes(3);
+        releases[2]?.({ status: 'quiet', reason: 'no-insight' });
+        await fresh;
+        scheduler.dispose();
+    });
+
+    it.each(['snapshot', 'admission'] as const)('checks the automatic epoch after awaiting %s', async (phase) => {
+        let current = true;
+        const run = jest.fn(async () => makeRun('NO_INSIGHT'));
+        const admitRun = jest.fn(async () => {
+            if (phase === 'admission') current = false;
+            return { ok: true as const };
+        });
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run },
+            captureSnapshot: async () => {
+                if (phase === 'snapshot') current = false;
+                return anchor;
+            },
+            captureSourceMaterial: async (path) => materials().get(path) ?? null,
+            getPolicyIdentity: () => policyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: () => true,
+            admitRun,
+        });
+        await expect(controller.run({
+            path: anchor.path,
+            triggerReason: 'edit-idle',
+            force: true,
+            isAutomaticRequestCurrent: () => current,
+        })).resolves.toEqual({ status: 'quiet', reason: 'aborted' });
+        expect(run).not.toHaveBeenCalled();
+        expect(admitRun).toHaveBeenCalledTimes(phase === 'snapshot' ? 0 : 1);
+    });
+
+    it('fences an automatic cache read and preserves that cache for manual work while paused', async () => {
+        const body = [
+            '## 发布策略存在风险缺口',
+            '`notes/anchor.md` 要求验证反馈后再发布；',
+            '`notes/related.md` 的直接发布会放大风险，因此发布假设发生冲突。',
+        ].join('\n');
+        let current = true;
+        let invalidateDuringRead = false;
+        const run = jest.fn(async () => makeRun(body));
+        const cache = new PageletAgentCache();
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async (path) => {
+                if (invalidateDuringRead) current = false;
+                return materials().get(path) ?? null;
+            },
+            getPolicyIdentity: () => policyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: () => true,
+            cache,
+        });
+        expect((await controller.run({
+            path: anchor.path, triggerReason: 'explicit', force: true,
+        })).status).toBe('verified');
+        const priorCache = cache.getMutationSnapshot();
+        invalidateDuringRead = true;
+        await expect(controller.run({
+            path: anchor.path,
+            triggerReason: 'edit-idle',
+            isAutomaticRequestCurrent: () => current,
+        })).resolves.toEqual({ status: 'quiet', reason: 'aborted' });
+        expect(cache.getMutationSnapshot()).toEqual(priorCache);
+
+        const scheduler = new PageletDeepDiscoverScheduler({ controller });
+        scheduler.setAutomaticEnabled(false);
+        expect(cache.getMutationSnapshot()).toEqual(priorCache);
+        expect((await scheduler.runNow({ path: anchor.path, triggerReason: 'explicit' })).status).toBe('cache-hit');
+        expect(run).toHaveBeenCalledTimes(1);
+        scheduler.dispose();
+    });
+
+    it('retains incurred metrics when the automatic epoch changes between cache commit and publication', async () => {
+        const body = [
+            '## 发布策略存在风险缺口',
+            '`notes/anchor.md` 要求验证反馈后再发布；',
+            '`notes/related.md` 的直接发布会放大风险，因此发布假设发生冲突。',
+        ].join('\n');
+        let current = true;
+        const cache = new PageletAgentCache();
+        const putCollection = cache.putCollection.bind(cache);
+        jest.spyOn(cache, 'putCollection').mockImplementation((collection) => {
+            putCollection(collection);
+            current = false;
+        });
+        const onResult = jest.fn();
+        const controller = new PageletDeepDiscoverController({
+            runtime: { run: async () => makeRun(body) },
+            captureSnapshot: async () => anchor,
+            captureSourceMaterial: async (path) => materials().get(path) ?? null,
+            getPolicyIdentity: () => policyIdentity,
+            getEvidenceEpoch: () => 'evidence-1',
+            controllerEpoch: 1,
+            isPathAllowed: () => true,
+            cache,
+            onResult,
+        });
+        const result = await controller.run({
+            path: anchor.path,
+            triggerReason: 'edit-idle',
+            force: true,
+            isAutomaticRequestCurrent: () => current,
+        });
+        expect(result).toMatchObject({
+            status: 'quiet',
+            reason: 'aborted',
+            metrics: { modelTurns: 2, toolCalls: 2, wallTimeMs: 100 },
+            runtimeCompletion: { loopStatus: 'completed' },
+        });
+        expect(onResult).toHaveBeenCalledWith(result, expect.any(Object));
+        expect(cache.getMutationSnapshot()).toEqual({ version: 1, entryCount: 1 });
     });
 
     it('serializes automatic triggers for different paths without dropping either run', async () => {
@@ -3123,7 +3326,7 @@ describe('Pagelet agent cache and controller', () => {
         controlledRuns[0].finish({ status: 'quiet', reason: 'aborted' });
         await explicitStarted;
         expect(controlledRuns.map(({ request }) => request)).toEqual([
-            { path: 'notes/automatic.md', triggerReason: 'leave-note' },
+            { path: 'notes/automatic.md', triggerReason: 'leave-note', isAutomaticRequestCurrent: expect.any(Function) },
             { path: 'notes/explicit.md', triggerReason: 'explicit', force: true },
         ]);
 
@@ -3133,6 +3336,7 @@ describe('Pagelet agent cache and controller', () => {
         expect(controlledRuns[2].request).toEqual({
             path: 'notes/automatic.md',
             triggerReason: 'edit-idle',
+            isAutomaticRequestCurrent: expect.any(Function),
         });
 
         const resumedResult = { status: 'quiet', reason: 'no-insight' } as const;

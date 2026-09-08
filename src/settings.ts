@@ -6,7 +6,6 @@ import type { AIProviderConfigurationPatch, PluginManager } from "./plugin"
 import type { AISetupResult } from "./chat/ChatHost";
 import { getWritingSceneDisplayValues, normalizeWritingScene } from './chat/writing-style-service';
 import type { WritingStyleScene } from './pa/writing-style';
-import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
 import { DEFAULT_NOTE_TEMPLATE } from "./note-template";
 import { isRecord } from "./pa/helpers";
 import { getDashScopeImageGenerationEndpoint, isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
@@ -286,15 +285,12 @@ export interface PluginManagerSettings {
     confirmedMemoryCount: number;
     /** User-controlled pause for Level 2 automatic Memory; trust count remains monotonic. */
     memoryAutoAcceptPaused: boolean;
-    memoryAutoCheckBeforeChat: boolean;
     memoryApprovalPolicy: "always" | "auto-refresh-after-prepare";
     showAdvancedMemoryControls: boolean;
     qwenThinkingEnabled: boolean;
     webSearchEnabled: boolean;
     licenseTier: AgentCapabilityTier;
     shareAnonymousCapabilityUsage: boolean;
-    skillContextEnabled: boolean;
-    enabledSkillIds: string[];
     featuredImagePath: string;
     featuredImageModel: FeaturedImageModel;
     numFeaturedImages: number;
@@ -410,15 +406,12 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     memoryEnabled: true,
     confirmedMemoryCount: 0,
     memoryAutoAcceptPaused: false,
-    memoryAutoCheckBeforeChat: true,
     memoryApprovalPolicy: "always",
     showAdvancedMemoryControls: false,
     qwenThinkingEnabled: false,
     webSearchEnabled: false,
     licenseTier: MOCK_LICENSE_TIER,
     shareAnonymousCapabilityUsage: false,
-    skillContextEnabled: true,
-    enabledSkillIds: [...BUNDLED_SKILL_IDS],
     featuredImagePath: "",
     featuredImageModel: "wan2.7-image",
     numFeaturedImages: 1,
@@ -541,6 +534,30 @@ export function normalizeConfirmedMemoryCount(value: unknown): number {
         : DEFAULT_SETTINGS.confirmedMemoryCount;
 }
 
+const DEPRECATED_SIMPLE_SETTINGS_KEYS = [
+    "memoryAutoCheckBeforeChat", "skillContextEnabled", "enabledSkillIds",
+] as const;
+const DEPRECATED_PAGELET_SETTINGS_KEYS = ["preloadEnabled", "deepDiscoverEnabled"] as const;
+
+export function hasDeprecatedSimpleSettingsFields(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+    return DEPRECATED_SIMPLE_SETTINGS_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key))
+        || (isRecord(value.pagelet)
+            && DEPRECATED_PAGELET_SETTINGS_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value.pagelet, key)));
+}
+
+/** Exact, idempotent save projection. Never normalize consent or unrelated data here. */
+export function omitDeprecatedSimpleSettingsFields<T extends object>(settings: T): T {
+    const canonical = { ...settings } as T & Record<string, unknown>;
+    for (const key of DEPRECATED_SIMPLE_SETTINGS_KEYS) delete canonical[key];
+    if (isRecord(canonical.pagelet)) {
+        const pagelet = { ...canonical.pagelet };
+        for (const key of DEPRECATED_PAGELET_SETTINGS_KEYS) delete pagelet[key];
+        Object.assign(canonical, { pagelet });
+    }
+    return canonical;
+}
+
 /**
  * Merge data.json contents with DEFAULT_SETTINGS, preserving default values
  * for nested object fields whose siblings the user never customized.
@@ -551,7 +568,7 @@ export function normalizeConfirmedMemoryCount(value: unknown): number {
  * shallow-normalized so malformed data.json values cannot crash settings render.
  */
 export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
-    const loadedObject = isRecord(loaded) ? loaded : {};
+    const loadedObject = omitDeprecatedSimpleSettingsFields(isRecord(loaded) ? loaded : {});
     const loadedPagelet = isRecord(loadedObject.pagelet) ? loadedObject.pagelet : {};
     const merged = Object.assign({}, DEFAULT_SETTINGS, loadedObject) as PluginManagerSettings;
     const loadedLocalGraph = isRecord(loadedObject.localGraph)
@@ -592,7 +609,6 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
         : undefined;
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
-    merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
     merged.confirmedMemoryCount = normalizeConfirmedMemoryCount(loadedObject.confirmedMemoryCount);
     merged.memoryAutoAcceptPaused = typeof loadedObject.memoryAutoAcceptPaused === "boolean"
         ? loadedObject.memoryAutoAcceptPaused
@@ -760,16 +776,6 @@ export function isLegacyV1Install(loaded: unknown): boolean {
     if (Object.keys(obj).length === 0) return false;
     return obj.aiProvider === undefined;
 }
-
-export function normalizeEnabledSkillIds(value: unknown): string[] {
-    const knownSkillIds = new Set(BUNDLED_SKILL_IDS);
-    if (!Array.isArray(value)) return [...BUNDLED_SKILL_IDS];
-    const normalized = new Set(value
-        .filter((entry): entry is string => typeof entry === "string")
-        .filter((entry) => knownSkillIds.has(entry)));
-    return BUNDLED_SKILL_IDS.filter((id) => normalized.has(id));
-}
-
 
 function normalizeTrimmedStringArray(value: unknown, fallback: string[]): string[] {
     if (!Array.isArray(value)) return [...fallback];
@@ -1005,7 +1011,6 @@ export class SettingTab extends PluginSettingTab {
     // Sub-containers for incremental rebuilds (avoids full display() re-render).
     private providerConfigContainer: HTMLDivElement | null = null;
     private qwenOptionsContainer: HTMLDivElement | null = null;
-    private skillTogglesContainer: HTMLDivElement | null = null;
     private memorySubContainer: HTMLDivElement | null = null;
     private memoryAdvancedContainer: HTMLDivElement | null = null;
     private graphColorsContainer: HTMLDivElement | null = null;
@@ -1121,7 +1126,6 @@ export class SettingTab extends PluginSettingTab {
         // Sub-container refs were children of containerEl; empty() detached them.
         this.providerConfigContainer = null;
         this.qwenOptionsContainer = null;
-        this.skillTogglesContainer = null;
         this.memorySubContainer = null;
         this.memoryAdvancedContainer = null;
         this.graphColorsContainer = null;
@@ -1137,7 +1141,6 @@ export class SettingTab extends PluginSettingTab {
         const groups: Array<{ id: string; labelKey: string; sections: Array<(parent: HTMLElement) => void> }> = [
             { id: "ai-provider", labelKey: "plugin.settings.group.aiProvider", sections: [
                 (p) => this.renderAISection(p),
-                (p) => this.renderSkillsSection(p),
             ] },
             { id: "memory-personalization", labelKey: "plugin.settings.group.memoryPersonalization", sections: [
                 (p) => this.renderMemoryControlCenterOverview(p),
@@ -2904,135 +2907,6 @@ export class SettingTab extends PluginSettingTab {
         );
     }
 
-    private renderSkillsSection(parentEl: HTMLElement): void {
-        parentEl.createEl('h3', { text: this.t("plugin.settings.skills.title") });
-        parentEl.createEl("p", {
-            text: this.t("plugin.settings.skills.desc"),
-            cls: "pa-settings-section-desc-sm",
-        });
-
-        this.skillTogglesContainer = parentEl.createDiv({ cls: "pa-settings-skill-picker-host" });
-        this.rebuildSkillToggles();
-    }
-
-    private rebuildSkillToggles(options: {
-        open?: boolean;
-        focusSkillId?: string;
-        focusMaster?: boolean;
-    } = {}): void {
-        if (!this.skillTogglesContainer) return;
-        this.skillTogglesContainer.empty();
-        const plugin = this.plugin;
-        const container = this.skillTogglesContainer;
-        const enabledSkillIds = new Set(plugin.settings.enabledSkillIds);
-        const enabledCount = BUNDLED_SKILL_CATALOG.filter((skill) => enabledSkillIds.has(skill.id)).length;
-        const summary = this.formatSkillSelectionSummary(plugin.settings.skillContextEnabled, enabledCount);
-
-        const pickerSetting = new Setting(container)
-            .setName(this.t("plugin.settings.skills.selector.name"))
-            .setDesc(this.t("plugin.settings.skills.selector.desc", { summary }));
-        const componentEl = pickerSetting.controlEl.createDiv({ cls: "pa-settings-skill-picker" });
-        const details = componentEl.createEl("details", {
-            cls: "pa-settings-skill-picker__details",
-        });
-        details.open = options.open ?? false;
-        const summaryEl = details.createEl("summary", {
-            cls: "pa-settings-skill-picker__summary",
-        });
-        summaryEl.createSpan({
-            cls: "pa-settings-skill-picker__summary-text",
-            text: summary,
-        });
-
-        const panel = details.createDiv({ cls: "pa-settings-skill-picker__panel" });
-        const masterLabel = panel.createEl("label", {
-            cls: [
-                "pa-settings-skill-picker__option",
-                "pa-settings-skill-picker__option--master",
-            ],
-        });
-        const masterInput = masterLabel.createEl("input", {
-            attr: {
-                type: "checkbox",
-            },
-        }) as HTMLInputElement;
-        let focusTarget: HTMLInputElement | null = options.focusMaster ? masterInput : null;
-        masterInput.dataset.paSkillToggle = "master";
-        masterInput.checked = plugin.settings.skillContextEnabled;
-        masterInput.addEventListener("change", async () => {
-            const wasOpen = details.open;
-            plugin.settings.skillContextEnabled = masterInput.checked;
-            await plugin.saveSettings();
-            this.rebuildSkillToggles({ open: wasOpen, focusMaster: true });
-        });
-        masterLabel.createSpan({
-            cls: "pa-settings-skill-picker__option-text",
-            text: this.t("plugin.settings.skills.enabled.name"),
-        });
-
-        const list = panel.createDiv({ cls: "pa-settings-skill-picker__list" });
-        for (const skill of BUNDLED_SKILL_CATALOG) {
-            const label = list.createEl("label", {
-                cls: "pa-settings-skill-picker__option",
-            });
-            if (!plugin.settings.skillContextEnabled) {
-                label.addClass("is-disabled");
-            }
-            const input = label.createEl("input", {
-                attr: {
-                    type: "checkbox",
-                },
-            }) as HTMLInputElement;
-            input.dataset.paSkillToggle = skill.id;
-            if (options.focusSkillId === skill.id) {
-                focusTarget = input;
-            }
-            input.checked = enabledSkillIds.has(skill.id);
-            input.disabled = !plugin.settings.skillContextEnabled;
-            input.addEventListener("change", async () => {
-                const wasOpen = details.open;
-                const nextEnabledSkillIds = new Set(plugin.settings.enabledSkillIds);
-                if (input.checked) {
-                    nextEnabledSkillIds.add(skill.id);
-                } else {
-                    nextEnabledSkillIds.delete(skill.id);
-                }
-                plugin.settings.enabledSkillIds = normalizeEnabledSkillIds([...nextEnabledSkillIds]);
-                await plugin.saveSettings();
-                this.rebuildSkillToggles({ open: wasOpen, focusSkillId: skill.id });
-            });
-
-            const text = label.createSpan({ cls: "pa-settings-skill-picker__option-body" });
-            text.createSpan({
-                cls: "pa-settings-skill-picker__option-title",
-                text: skill.label,
-            });
-            text.createSpan({
-                cls: "pa-settings-skill-picker__option-desc",
-                text: skill.description,
-            });
-        }
-        this.markFormControlSettings(container);
-        focusTarget?.focus();
-    }
-
-    private formatSkillSelectionSummary(enabled: boolean, enabledCount: number): string {
-        const total = BUNDLED_SKILL_CATALOG.length;
-        if (!enabled) {
-            return this.t("plugin.settings.skills.summary.off");
-        }
-        if (enabledCount === total) {
-            return this.t("plugin.settings.skills.summary.all");
-        }
-        if (enabledCount === 0) {
-            return this.t("plugin.settings.skills.summary.none");
-        }
-        return this.t("plugin.settings.skills.summary.some", {
-            count: enabledCount,
-            total,
-        });
-    }
-
     private renderMemorySection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
         parentEl.createEl('h2', { text: this.t("plugin.settings.memory.title") });
@@ -3934,17 +3808,6 @@ export class SettingTab extends PluginSettingTab {
 
         const container = this.memorySubContainer;
 
-        new Setting(container)
-            .setName(this.t("plugin.settings.memory.askCredits.name"))
-            .setDesc(this.t("plugin.settings.memory.askCredits.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.memoryAutoCheckBeforeChat)
-                    .onChange(async (value) => {
-                        plugin.settings.memoryAutoCheckBeforeChat = value;
-                        await plugin.saveSettings();
-                    });
-            });
 
         if ((plugin.getMemoryGovernanceUiMode?.() ?? "legacy_threshold") === "legacy_threshold"
             && getMemoryTrustLevel(normalizeConfirmedMemoryCount(plugin.settings.confirmedMemoryCount)) >= 2) {

@@ -84,22 +84,9 @@ export class BackgroundPreparationCoordinator {
         this.engine = null;
     }
 
-    /**
-     * Synchronize the engine configuration with the latest settings.
-     * If the engine is not running yet, starts it when preloadEnabled is true.
-     */
+    /** Keep the retired engine disabled; Deep Discover owns automatic work. */
     syncConfig(): void {
-        const s = this.host.settings.pagelet;
-
-        if (!s.preloadEnabled) {
-            this.engine?.updateConfig(this.buildConfig());
-            return;
-        }
-        if (!this.engine) {
-            this.start();
-            return;
-        }
-        this.engine.updateConfig(this.buildConfig());
+        this.engine?.updateConfig(this.buildConfig());
     }
 
     /** Forward note-activity events to the engine. */
@@ -119,7 +106,9 @@ export class BackgroundPreparationCoordinator {
     private buildConfig(): PreloadConfig {
         const s = this.host.settings.pagelet;
         return {
-            enabled: s.preloadEnabled,
+            // Retained only for legacy diagnostics/tests. The new background
+            // preference must never revive this retired provider pipeline.
+            enabled: false,
             intervalMinutes: s.preloadInterval,
             perHourCap: s.preloadPerHourCap,
             perDayCap: s.preloadPerDayCap,

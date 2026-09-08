@@ -27,7 +27,6 @@ export function createMemoryHost(
     const { settings: settingsOverrides, ...hostOverrides } = overrides;
     const settings: MemoryHost["settings"] = {
         memoryEnabled: true,
-        memoryAutoCheckBeforeChat: true,
         memoryApprovalPolicy: "always",
         vssCacheExcludePath: [],
         debug: false,
@@ -74,8 +73,6 @@ export function createAiServiceHost(
         policyModelName: "",
         embeddingModelName: "text-embedding-3-small",
         shareAnonymousCapabilityUsage: false,
-        skillContextEnabled: true,
-        enabledSkillIds: [],
         qwenThinkingEnabled: false,
         webSearchEnabled: false,
         licenseTier: MOCK_LICENSE_TIER,
@@ -128,8 +125,6 @@ export function createChatHost(
     } = overrides;
     const settings: ChatHost["settings"] = {
         debug: false,
-        skillContextEnabled: true,
-        enabledSkillIds: [],
         memoryEnabled: true,
         aiProvider: "openai",
         baseURL: "https://api.openai.com/v1",

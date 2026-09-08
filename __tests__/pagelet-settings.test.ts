@@ -165,6 +165,10 @@ function makeHost(
             quietRecall: { quietRecallMode },
         },
         saveSettings: save,
+        setBackgroundDiscoveryEnabled: async (enabled) => {
+            await save();
+            settings.backgroundDiscoveryEnabled = enabled;
+        },
     };
     return { host, save };
 }
@@ -184,8 +188,9 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS.temperature).toBe(0.2);          // SDD §2.2
         expect(PAGELET_DEFAULTS.maxInputTokens).toBe(8000);      // D018
         expect(PAGELET_DEFAULTS.maxOutputTokens).toBe(2000);     // D018
-        expect(PAGELET_DEFAULTS.deepDiscoverEnabled).toBe(true);
-        expect(PAGELET_DEFAULTS.preloadEnabled).toBe(false);     // background prep is explicit opt-in
+        expect(PAGELET_DEFAULTS.backgroundDiscoveryEnabled).toBe(true);
+        expect(PAGELET_DEFAULTS).not.toHaveProperty("preloadEnabled");
+        expect(PAGELET_DEFAULTS).not.toHaveProperty("deepDiscoverEnabled");
         expect(PAGELET_DEFAULTS.pageletProviderFirstUseNotified).toBe(false);
         expect(PAGELET_DEFAULTS.scopeRecapPreparationEnabled).toBe(true);
         expect(PAGELET_DEFAULTS.scopeRecapBackgroundAuthorization).toBe("pending");
@@ -259,8 +264,7 @@ describe("mergePageletSettings", () => {
             petCorner: "bottom-right",
             proactiveHints: false,
             proactiveHintsCooldown: 30,
-            deepDiscoverEnabled: true,
-            preloadEnabled: true,
+            backgroundDiscoveryEnabled: true,
             scopeRecapPreparationEnabled: true,
             scopeRecapBackgroundAuthorization: "authorized-v1",
             scopeRecapAuthorizationContextId: "scope-recap-auth-test",
@@ -1152,7 +1156,7 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        expect(rows).toHaveLength(23);
+        expect(rows).toHaveLength(22);
         expect(rows.map((r) => r.name)).toEqual([
             "Enable Pagelet",
             "Reviews folder",
@@ -1166,10 +1170,9 @@ describe("renderPageletSection", () => {
             "Proactive hints",
             "Hint cooldown (minutes)",
             // Unified Pagelet Agent
-            "Deep Discover",
+            "Discover connections in the background",
             "Today's Deep Discover usage",
             // Scope Recap preparation (independent from generic preload)
-            "Prepare Scope Recap in the background",
             "High-value Recap hints",
             // Exclusions
             "Excluded folders",
@@ -1305,7 +1308,7 @@ describe("renderPageletSection", () => {
         expect(save).toHaveBeenCalledTimes(1);
     });
 
-    it("clears a migrated Recap decline only when the user actively enables preparation", async () => {
+    it("keeps legacy Recap data internal without affecting valid hint choices", async () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host, save } = makeHost({
@@ -1316,12 +1319,14 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
         const recapPreparation = rows.find((row) => row.name === "Prepare Scope Recap in the background");
-        await recapPreparation?.toggleOnChange?.(true);
+        expect(recapPreparation).toBeUndefined();
+        await rows.find((row) => row.name === "High-value Recap hints")?.toggleOnChange?.(false);
 
         expect(host.settings.pagelet).toMatchObject({
-            scopeRecapPreparationEnabled: true,
-            scopeRecapBackgroundAuthorization: "pending",
+            scopeRecapPreparationEnabled: false,
+            scopeRecapBackgroundAuthorization: "declined-v1",
             scopeRecapAuthorizationContextId: null,
+            scopeRecapHighValueHints: false,
         });
         expect(save).toHaveBeenCalledTimes(1);
     });
@@ -1439,7 +1444,7 @@ describe("renderPageletSection", () => {
         expect(host.settings.pagelet.maxOutputTokens).toBe(PAGELET_BOUNDS.maxOutputTokens.min);
     });
 
-    it("renders Deep Discover as one switch and keeps legacy preload controls hidden", async () => {
+    it("controls only background discovery and keeps legacy preload controls hidden", async () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost();
@@ -1447,18 +1452,43 @@ describe("renderPageletSection", () => {
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
         expect(rows.map((row) => row.name)).not.toContain("Prepare reviews in the background");
-        expect(rows[10].name).toBe("Deep Discover");
+        expect(rows[10].name).toBe("Discover connections in the background");
         await rows[10].toggleOnChange!(false);
-        expect(host.settings.pagelet.deepDiscoverEnabled).toBe(false);
+        expect(host.settings.pagelet.backgroundDiscoveryEnabled).toBe(false);
     });
 
-    it("migrates the old background-provider choice only when the new key is absent", () => {
-        expect(mergePageletSettings({ preloadEnabled: true }).deepDiscoverEnabled).toBe(true);
-        expect(mergePageletSettings({ preloadEnabled: false }).deepDiscoverEnabled).toBe(false);
+    it("ignores both old switches and preserves only the new background choice", () => {
+        expect(mergePageletSettings({ preloadEnabled: true }).backgroundDiscoveryEnabled).toBe(true);
+        expect(mergePageletSettings({ preloadEnabled: false }).backgroundDiscoveryEnabled).toBe(true);
         expect(mergePageletSettings({
             preloadEnabled: false,
-            deepDiscoverEnabled: true,
-        }).deepDiscoverEnabled).toBe(true);
-        expect(mergePageletSettings({}).deepDiscoverEnabled).toBe(true);
+            deepDiscoverEnabled: false,
+        }).backgroundDiscoveryEnabled).toBe(true);
+        expect(mergePageletSettings({ backgroundDiscoveryEnabled: false }).backgroundDiscoveryEnabled).toBe(false);
+        expect(mergePageletSettings({ backgroundDiscoveryEnabled: "invalid" }).backgroundDiscoveryEnabled).toBe(true);
+    });
+
+    it("keeps the committed background choice while saving and allows retry after failure", async () => {
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host } = makeHost({ backgroundDiscoveryEnabled: false });
+        let reject!: (error: Error) => void;
+        host.setBackgroundDiscoveryEnabled = jest.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        const row = rows.find((entry) => entry.name === "Discover connections in the background")!;
+        const saving = row.toggleOnChange!(true);
+        expect(row.toggleValue).toBe(false);
+        await row.toggleOnChange!(true);
+        expect(host.setBackgroundDiscoveryEnabled).toHaveBeenCalledTimes(1);
+        reject(new Error("disk unavailable"));
+        await saving;
+        expect(row.toggleValue).toBe(false);
+        expect(row.desc).toContain("could not be saved");
+        host.setBackgroundDiscoveryEnabled = jest.fn(async (enabled: boolean) => {
+            host.settings.pagelet.backgroundDiscoveryEnabled = enabled;
+        });
+        await row.toggleOnChange!(true);
+        expect(row.toggleValue).toBe(true);
+        expect(row.desc).not.toContain("could not be saved");
     });
 });

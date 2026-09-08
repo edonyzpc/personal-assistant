@@ -19,7 +19,7 @@ function makeCoordinator() {
     const internals = coordinator as unknown as {
         handleEvent(event: PreloadEvent): void;
     };
-    return { callbacks, internals };
+    return { callbacks, internals, coordinator };
 }
 
 function preloadResult(findings: PreloadResult["findings"]): PreloadResult {
@@ -32,6 +32,15 @@ function preloadResult(findings: PreloadResult["findings"]): PreloadResult {
 }
 
 describe("BackgroundPreparationCoordinator", () => {
+    it("does not revive legacy preparation when current settings synchronize", () => {
+        const { coordinator } = makeCoordinator();
+        const start = jest.spyOn(coordinator, "start");
+        coordinator.syncConfig();
+        coordinator.noteActivity();
+        expect(start).not.toHaveBeenCalled();
+        expect(coordinator.status()).toBeUndefined();
+    });
+
     it("does not enter nudge when a completed background cycle has no findings", () => {
         const { callbacks, internals } = makeCoordinator();
 

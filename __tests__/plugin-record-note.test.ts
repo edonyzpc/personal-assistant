@@ -90,6 +90,7 @@ jest.mock('obsidian', () => {
 
     return {
         Plugin: MockPlugin,
+        PluginSettingTab: class { },
         TFile: MockTFile,
         Notice: class {
             constructor(message?: unknown) {
@@ -208,45 +209,52 @@ jest.mock('../src/memory-manager', () => ({
 }));
 jest.mock('../src/modal', () => ({ PluginControlModal: class { } }));
 jest.mock('../src/batch-modal', () => ({ BatchPluginControlModal: class { } }));
-jest.mock('../src/settings', () => ({
-    SettingTab: class { },
-    DEFAULT_SETTINGS: {
-        chatModelName: 'qwen3.6-plus',
-        featuredImageModel: 'wan2.7-image',
-        enabledSkillIds: mockBundledSkillIds,
-    },
-    normalizeEnabledSkillIds: (value: unknown) => {
-        if (!Array.isArray(value)) return [...mockBundledSkillIds];
-        return [...new Set(value.filter((entry): entry is string => (
-            typeof entry === 'string' && mockBundledSkillIds.includes(entry)
-        )))];
-    },
-    normalizeFeaturedImageModel: (value: unknown) => (
-        value === 'wan2.7-image' || value === 'wan2.7-image-pro' ? value : 'wan2.7-image'
-    ),
-    normalizeFeaturedImageCount: (value: unknown) => {
-        const numericValue = typeof value === 'number'
-            ? value
-            : typeof value === 'string' && value.trim() !== ''
-                ? Number(value)
-                : Number.NaN;
-        if (!Number.isFinite(numericValue)) return 1;
-        return Math.min(Math.max(Math.floor(numericValue), 1), 4);
-    },
-    normalizeConfirmedMemoryCount: (value: unknown) => (
-        typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
-    ),
-    mergeLoadedSettings: (value: unknown) => JSON.parse(JSON.stringify(value ?? {})),
-    isFreshInstall: (value: unknown) => value === undefined || value === null,
-    isLegacyV1Install: () => false,
-    MEMORY_EXTRACTION_CONSENT_VERSION: 1,
-    isMemoryExtractionConsentConfirmed: (consent: unknown) => (
-        typeof consent === 'object'
-        && consent !== null
-        && (consent as { state?: unknown }).state === 'confirmed'
-        && (consent as { version?: unknown }).version === 1
-    ),
-}));
+jest.mock('../src/settings', () => {
+    const actual = jest.requireActual<typeof import('../src/settings')>('../src/settings');
+    return {
+        // Use the real pure projection so save/barrier tests exercise the current
+        // retired-field contract without substituting a no-op persistence path.
+        hasDeprecatedSimpleSettingsFields: actual.hasDeprecatedSimpleSettingsFields,
+        omitDeprecatedSimpleSettingsFields: actual.omitDeprecatedSimpleSettingsFields,
+        SettingTab: class { },
+        DEFAULT_SETTINGS: {
+            chatModelName: 'qwen3.6-plus',
+            featuredImageModel: 'wan2.7-image',
+            enabledSkillIds: mockBundledSkillIds,
+        },
+        normalizeEnabledSkillIds: (value: unknown) => {
+            if (!Array.isArray(value)) return [...mockBundledSkillIds];
+            return [...new Set(value.filter((entry): entry is string => (
+                typeof entry === 'string' && mockBundledSkillIds.includes(entry)
+            )))];
+        },
+        normalizeFeaturedImageModel: (value: unknown) => (
+            value === 'wan2.7-image' || value === 'wan2.7-image-pro' ? value : 'wan2.7-image'
+        ),
+        normalizeFeaturedImageCount: (value: unknown) => {
+            const numericValue = typeof value === 'number'
+                ? value
+                : typeof value === 'string' && value.trim() !== ''
+                    ? Number(value)
+                    : Number.NaN;
+            if (!Number.isFinite(numericValue)) return 1;
+            return Math.min(Math.max(Math.floor(numericValue), 1), 4);
+        },
+        normalizeConfirmedMemoryCount: (value: unknown) => (
+            typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
+        ),
+        mergeLoadedSettings: (value: unknown) => JSON.parse(JSON.stringify(value ?? {})),
+        isFreshInstall: (value: unknown) => value === undefined || value === null,
+        isLegacyV1Install: () => false,
+        MEMORY_EXTRACTION_CONSENT_VERSION: 1,
+        isMemoryExtractionConsentConfirmed: (consent: unknown) => (
+            typeof consent === 'object'
+            && consent !== null
+            && (consent as { state?: unknown }).state === 'confirmed'
+            && (consent as { version?: unknown }).version === 1
+        ),
+    };
+});
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
     KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
@@ -6145,7 +6153,7 @@ describe('Pagelet Discover provider first-use admission', () => {
     });
 });
 
-describe('Pagelet Review and preload provider first-use admission', () => {
+describe('Pagelet Review first-use and retired preload admission', () => {
     function createAnalyzeHarness() {
         const currentFile = createTFileWithStat('notes/current.md', { mtime: Date.now(), size: 100 }) as TFile & {
             basename: string;
@@ -6193,6 +6201,8 @@ describe('Pagelet Review and preload provider first-use admission', () => {
             confirmedMemoryCount: 0,
             pagelet: {
                 enabled: true,
+                backgroundDiscoveryEnabled: true,
+                // A retained legacy key cannot revive the retired pipeline.
                 preloadEnabled: true,
                 preloadPerHourCap: 2,
                 preloadPerDayCap: 20,
@@ -6638,9 +6648,10 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
     });
 
-    it('preserves one background slot for generation when preload capacity is one', async () => {
+    it.each([true, false])('keeps retired preload at zero calls when background discovery is %s', async (enabled) => {
         mockNoticeMessages.length = 0;
         const harness = createAnalyzeHarness();
+        harness.plugin.settings.pagelet.backgroundDiscoveryEnabled = enabled;
         const reserveProviderCall = jest.fn(() => true);
         const host = harness.plugin.createPageletHost();
 
@@ -6651,9 +6662,10 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         });
 
         expect(harness.findPageletRelatedNotes).not.toHaveBeenCalled();
-        expect(reserveProviderCall).toHaveBeenCalledTimes(1);
-        expect(harness.invoke).toHaveBeenCalledTimes(1);
-        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
+        expect(reserveProviderCall).not.toHaveBeenCalled();
+        expect(harness.plugin.createChatModel).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
     });
 
     it.each([
@@ -6692,7 +6704,7 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
     });
 
-    it('rolls back background quota when the source drifts after provisional reservation', async () => {
+    it('rejects retired preload before quota reservation or source revalidation can begin', async () => {
         mockNoticeMessages.length = 0;
         const harness = createAnalyzeHarness();
         let usedSlots = 0;
@@ -6712,7 +6724,8 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
 
         expect(usedSlots).toBe(0);
-        expect(rollback).toHaveBeenCalledTimes(1);
+        expect(reserveProviderCall).not.toHaveBeenCalled();
+        expect(rollback).not.toHaveBeenCalled();
         expect(commit).not.toHaveBeenCalled();
         expect(harness.invoke).not.toHaveBeenCalled();
         expect(mockNoticeMessages).toEqual([]);
@@ -6744,7 +6757,7 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         );
     });
 
-    it('drops preload findings that cite a source outside the actual allowed input', async () => {
+    it('publishes no retired preload findings, including provider output with excluded sources', async () => {
         const harness = createAnalyzeHarness();
         harness.invoke.mockResolvedValueOnce({
             content: JSON.stringify({
@@ -6771,11 +6784,9 @@ describe('Pagelet Review and preload provider first-use admission', () => {
             },
         );
 
-        expect(result.findings).toEqual([{
-            text: 'Supported by the current note.',
-            sourceFile: harness.currentFile.path,
-            sourceTitle: 'Current',
-        }]);
+        expect(result).toMatchObject({ findings: [], analyzedFiles: [] });
+        expect(harness.plugin.createChatModel).not.toHaveBeenCalled();
+        expect(harness.invoke).not.toHaveBeenCalled();
     });
 
     it('keeps preload capability-off during setup at zero notice and zero provider call', async () => {
@@ -6839,7 +6850,7 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         expect(harness.invoke).not.toHaveBeenCalled();
     });
 
-    it('shares one notice across foreground Review and later preload generation', async () => {
+    it('retains the foreground first-use notice while a later retired preload attempt does nothing', async () => {
         mockNoticeMessages.length = 0;
         const harness = createAnalyzeHarness();
         const host = harness.plugin.createPageletHost();
@@ -6852,7 +6863,7 @@ describe('Pagelet Review and preload provider first-use admission', () => {
         });
 
         expect(harness.structuredInvoke).toHaveBeenCalledTimes(1);
-        expect(harness.invoke).toHaveBeenCalledTimes(1);
+        expect(harness.invoke).not.toHaveBeenCalled();
         expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
         expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
     });
@@ -7079,7 +7090,7 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
         plugin.settings = {
             pagelet: {
                 enabled: true,
-                deepDiscoverEnabled: true,
+                backgroundDiscoveryEnabled: true,
                 excludedFolders: [],
                 excludedTags: [],
                 excludedPatterns: [],
@@ -7109,7 +7120,7 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
 
         const defaultIdentity = plugin.pageletDeepDiscoverPolicyIdentityKey();
         const disposeDefault = jest.fn();
-        const defaultScheduler = { dispose: disposeDefault };
+        const defaultScheduler = { dispose: disposeDefault, setAutomaticEnabled: jest.fn() };
         plugin.deepDiscoverScheduler = defaultScheduler;
         plugin.deepDiscoverControllerPolicyIdentitySnapshot = defaultIdentity;
 
@@ -7123,6 +7134,7 @@ describe('Pagelet Deep Discover scheduler identity lifecycle', () => {
         plugin.syncPageletDeepDiscoverControllerIdentity();
         expect(enabledIdentity).toBe(defaultIdentity);
         expect(disposeDefault).not.toHaveBeenCalled();
+        expect(defaultScheduler.setAutomaticEnabled).toHaveBeenCalledWith(true);
         expect(plugin.deepDiscoverScheduler).toBe(defaultScheduler);
         expect(plugin.deepDiscoverControllerEpoch).toBe(10);
 
@@ -10603,15 +10615,15 @@ describe('settings migration', () => {
         await plugin.migrateSettings();
 
         expect(plugin.settings.memoryEnabled).toBe(true);
-        expect(plugin.settings.memoryAutoCheckBeforeChat).toBe(true);
+        expect(plugin.settings).not.toHaveProperty('memoryAutoCheckBeforeChat');
         expect(plugin.settings.memoryApprovalPolicy).toBe('always');
         expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
         expect(plugin.settings.qwenThinkingEnabled).toBe(false);
         expect(plugin.settings.webSearchEnabled).toBe(false);
         expect(plugin.settings.policyModelName).toBe('');
         expect(plugin.settings.shareAnonymousCapabilityUsage).toBe(false);
-        expect(plugin.settings.skillContextEnabled).toBe(true);
-        expect(plugin.settings.enabledSkillIds).toEqual(mockBundledSkillIds);
+        expect(plugin.settings).not.toHaveProperty('skillContextEnabled');
+        expect(plugin.settings).not.toHaveProperty('enabledSkillIds');
         expect(plugin.settings.statisticsVaultId).toEqual(expect.any(String));
         expect(plugin.settings.statisticsVaultId.length).toBeGreaterThan(0);
         expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');

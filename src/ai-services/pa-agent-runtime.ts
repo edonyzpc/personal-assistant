@@ -1623,11 +1623,6 @@ export class PaAgentRuntime {
         signal?: AbortSignal,
     ): Promise<Record<string, unknown> | undefined> {
         if (!this.skillContextProvider) return undefined;
-        if (this.host.settings.skillContextEnabled === false) return undefined;
-        const enabledSkillIds = Array.isArray(this.host.settings.enabledSkillIds)
-            ? this.host.settings.enabledSkillIds
-            : undefined;
-        if (enabledSkillIds && enabledSkillIds.length === 0) return undefined;
 
         if (!this.skillContextProviderRegistered) {
             const loadResult = await this.toolRegistry.registerProvider(this.skillContextProvider, {
@@ -1645,7 +1640,7 @@ export class PaAgentRuntime {
             this.skillContextProviderRegistered = true;
         }
 
-        const catalog = this.skillContextProvider.getCatalog({ enabledSkillIds });
+        const catalog = this.skillContextProvider.getCatalog();
         if (catalog.entries.length === 0) return undefined;
 
         return {

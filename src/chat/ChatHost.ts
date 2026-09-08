@@ -34,8 +34,6 @@ export interface ChatHost {
     readonly app: App;
     readonly settings: {
         debug: boolean;
-        skillContextEnabled: boolean;
-        enabledSkillIds: string[];
         memoryEnabled: boolean;
         aiProvider: string;
         baseURL: string;

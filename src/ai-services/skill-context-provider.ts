@@ -58,7 +58,7 @@ export class SkillContextProvider implements CapabilityProvider {
         this.resources = resources;
     }
 
-    async load(context: ProviderLoadContext): Promise<ProviderLoadResult> {
+    async load(_context: ProviderLoadContext): Promise<ProviderLoadResult> {
         const loadedSkills: LoadedSkillResource[] = [];
         const errors: string[] = [];
         for (const resource of this.resources) {
@@ -81,7 +81,7 @@ export class SkillContextProvider implements CapabilityProvider {
             };
         }
 
-        const capabilities = this.buildLoadSkillCapabilities(context);
+        const capabilities = this.buildLoadSkillCapabilities();
         return {
             status: "available",
             capabilities,
@@ -92,15 +92,8 @@ export class SkillContextProvider implements CapabilityProvider {
         };
     }
 
-    private buildLoadSkillCapabilities(context: ProviderLoadContext): AgentCapability[] {
+    private buildLoadSkillCapabilities(): AgentCapability[] {
         if (this.loadedSkills.length === 0) return [];
-        const skillContextEnabled = context.settings.skillContextEnabled !== false;
-        if (!skillContextEnabled) return [];
-        const enabledSkillIds = Array.isArray(context.settings.enabledSkillIds)
-            ? (context.settings.enabledSkillIds as readonly string[])
-            : undefined;
-        if (enabledSkillIds && enabledSkillIds.length === 0) return [];
-
         return [new LoadSkillCapability(this)];
     }
 
@@ -154,10 +147,8 @@ export class SkillContextProvider implements CapabilityProvider {
         return this.loadedSkills.map((entry) => entry.skill);
     }
 
-    getCatalog(options: { enabledSkillIds?: readonly string[] } = {}): SkillCatalog {
-        const enabledSkillIds = options.enabledSkillIds ? new Set(options.enabledSkillIds) : null;
+    getCatalog(): SkillCatalog {
         const entries: SkillCatalogEntry[] = this.loadedSkills
-            .filter((entry) => !enabledSkillIds || enabledSkillIds.has(entry.skill.metadata.name))
             .map((entry) => ({
                 name: entry.skill.metadata.name,
                 description: entry.skill.metadata.description,

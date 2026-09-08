@@ -12,6 +12,7 @@ import type { PageletChatHandoffContext } from './pagelet-handoff';
 import {
     PaAgentRuntime,
     canFallbackToNonStreaming,
+    type PaAgentRuntimeOptions,
 } from './pa-agent-runtime';
 import {
     BuiltinWebSearchProvider,
@@ -171,6 +172,9 @@ export class ChatService {
         return getBailianWebSearchEndpointForBaseURL(this.host.settings.baseURL);
     }
 
+    private createAgentRuntime(options: PaAgentRuntimeOptions): PaAgentRuntime {
+        return new PaAgentRuntime(this.host, this.aiUtils, options);
+    }
 
     /**
      * 流式LLM调用
@@ -212,22 +216,18 @@ export class ChatService {
             const providerResponseDelivery = this.aiUtils
                 .resolveChatTransport("native")
                 .responseDelivery;
-            runtime = new PaAgentRuntime(
-                this.host,
-                this.aiUtils,
-                {
-                    ...nativeToolPlanningOptions,
-                    contextSummarizer: this.contextSummarizer,
-                    runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
-                    providerResponseDelivery,
-                    additionalCapabilityProviders,
-                    policyOptions: {
-                        licenseTier: this.host.settings.licenseTier,
-                    },
-                    operationsIntentController: this.operationsSession,
-                    operationsToolProvider: this.operationsSession.provider,
+            runtime = this.createAgentRuntime({
+                ...nativeToolPlanningOptions,
+                contextSummarizer: this.contextSummarizer,
+                runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
+                providerResponseDelivery,
+                additionalCapabilityProviders,
+                policyOptions: {
+                    licenseTier: this.host.settings.licenseTier,
                 },
-            );
+                operationsIntentController: this.operationsSession,
+                operationsToolProvider: this.operationsSession.provider,
+            });
             await runtime.streamTurn({
                 prompt,
                 chatHistory,

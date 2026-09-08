@@ -469,10 +469,6 @@ export class MemoryManager {
             return { decision: "answer-now" };
         }
 
-        if (!this.host.settings.memoryAutoCheckBeforeChat) {
-            return { decision: "use-memory" };
-        }
-
         const initialPlan = await awaitChatOperation(this.getMaintenancePlan(), signal);
         if (initialPlan.aborted) {
             return { decision: "cancel" };

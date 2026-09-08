@@ -959,7 +959,7 @@ export class BubbleCoordinator {
         if (this.host.settings.pagelet.petVisible === false) return false;
         switch (ticket.owner) {
             case NudgeOwner.AgentInsight:
-                return this.host.settings.pagelet.deepDiscoverEnabled !== false;
+                return true;
             case NudgeOwner.PreparedRecap:
                 return this.host.settings.pagelet.scopeRecapHighValueHints !== false;
             case NudgeOwner.QuietRecall:
