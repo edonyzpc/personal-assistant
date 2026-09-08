@@ -392,6 +392,9 @@ jest.mock('../src/confirm', () => {
 });
 
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
+jest.mock('../src/chat/image-management-modal', () => ({
+    ImageManagementModal: jest.fn().mockImplementation(() => ({ open: jest.fn() })),
+}));
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 jest.mock('../src/utils', () => ({
     KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
@@ -423,6 +426,8 @@ import {
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
 import { confirmUserAction } from '../src/confirm';
+import { ImageManagementModal } from '../src/chat/image-management-modal';
+import { pluginT } from '../src/locales/plugin';
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
 import { buildMemoryControlCenterSnapshot } from '../src/pa/memory-control-center';
@@ -968,6 +973,67 @@ describe('PA settings refresh', () => {
         expect(tab.refreshPageletSettingsIfVisible()).toBe(true);
         expect(display).toHaveBeenCalledTimes(1);
         expect(openGroup).toHaveBeenCalledWith('features');
+    });
+});
+
+describe('Chat image management settings', () => {
+    it.each([false, true])('opens the existing image manager from Features (mobile: %s)', (mobile) => {
+        const { Platform } = jest.requireMock('obsidian') as {
+            Platform: { isDesktop: boolean; isMobile: boolean };
+        };
+        const previousPlatform = { ...Platform };
+        Object.assign(Platform, { isDesktop: !mobile, isMobile: mobile });
+        const imageManager = jest.mocked(ImageManagementModal);
+        imageManager.mockClear();
+        try {
+            const images = { listAssets: jest.fn() };
+            const plugin = Object.assign(makePlugin(), { imageAssetService: images });
+            const app = makeMockApp();
+            const tab = new SettingTab(app as never, plugin as never);
+            const container = new MockContainerEl('div');
+            tab.containerEl = container as never;
+            tab.display();
+
+            const features = container.querySelector('#pa-settings-group-features');
+            expect(features?.findAll('h2').map(heading => heading.textContent))
+                .toContain(pluginT('plugin.settings.chat.images.name'));
+
+            const setting = getMockSettingRecords().find(row =>
+                row.buttons.some(button => button.text === 'Manage saved originals'));
+            expect(setting).toBeDefined();
+            setting?.buttons[0].onClick?.();
+
+            expect(imageManager.mock.calls[0][0]).toBe(app);
+            expect(imageManager.mock.calls[0][1]).toBe(images);
+            const modal = imageManager.mock.results[0]?.value as { open: jest.Mock };
+            expect(modal.open).toHaveBeenCalledTimes(1);
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
+        } finally {
+            Object.assign(Platform, previousPlatform);
+        }
+    });
+
+    it('reports unavailable image storage when it is missing at click time', () => {
+        const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
+        Notice.mockClear();
+        const imageManager = jest.mocked(ImageManagementModal);
+        imageManager.mockClear();
+        const plugin = Object.assign(makePlugin(), {
+            imageAssetService: { listAssets: jest.fn() } as object | undefined,
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const setting = getMockSettingRecords().find(row =>
+            row.buttons.some(button => button.text === 'Manage saved originals'));
+        expect(setting).toBeDefined();
+        plugin.imageAssetService = undefined;
+
+        setting?.buttons[0].onClick?.();
+
+        expect(imageManager).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith(pluginT('plugin.chat.images.operationFailed'));
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
     });
 });
 
@@ -3224,6 +3290,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h2:Data & Privacy Boundaries',
             'h3:Local recall preferences',
             'h3:Local data cleanup',
+            `h2:${pluginT('plugin.settings.chat.images.name')}`,
             // Pagelet section ships between Memory and Statistics (B3). Its
             // sub-headings are also top-level
             // children of containerEl because `renderPageletSection` writes

@@ -6,6 +6,33 @@ import type { ImageAsset } from './image-types';
 
 const imageExtension = /\.(?:jpe?g|png|webp|gif|apng|heic|heif|svg|avif|bmp|tiff?)$/i;
 
+export type ImageSourceChoice = 'photos' | 'files' | 'vault';
+
+/** One image entry point, with device-appropriate sources and an original-file path. */
+export class ImageSourcePickerModal extends Modal {
+    private closed = false;
+    constructor(app: App, private readonly onChoose: (source: ImageSourceChoice) => void) { super(app); }
+    onOpen(): void {
+        this.closed = false;
+        const t = makePluginTranslator(getPluginUiLanguage());
+        this.contentEl.addClass('pa-chat-image-picker');
+        this.contentEl.createEl('h2', { text: t('plugin.chat.images.add') });
+        const list = this.contentEl.createDiv({ cls: 'pa-chat-image-picker__list' });
+        const sources: ImageSourceChoice[] = Platform.isMobileApp ? ['photos', 'files', 'vault'] : ['files', 'vault'];
+        for (const source of sources) {
+            const button = list.createEl('button', {
+                text: t(`plugin.chat.images.source.${source}`), attr: { type: 'button' },
+            });
+            button.onclick = () => {
+                if (this.closed) return;
+                this.close();
+                this.onChoose(source);
+            };
+        }
+    }
+    onClose(): void { this.closed = true; this.contentEl.empty(); }
+}
+
 /** Adds existing vault originals without making another source copy. */
 export class VaultImagePickerModal extends Modal {
     constructor(app: App, private readonly onChoose: (file: TFile) => void) { super(app); }

@@ -1012,9 +1012,6 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 		--pa-chat-message-menu-arrow-left: 116px;
 	}
 
-	.pa-chat-message-menu {
-		min-width: 144px;
-	}
 }
 
 .llm-view .message-role {
@@ -2107,11 +2104,15 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 }
 
 .pa-chat-menu {
+	--pa-chat-menu-min-width: 244px;
+	--pa-chat-menu-max-width: min(300px, var(--pa-chat-menu-available-width, calc(100vw - 24px)));
+	box-sizing: border-box;
 	position: absolute;
 	right: 0;
 	bottom: calc(100% + 10px);
-	min-width: 244px;
-	max-width: min(300px, calc(100vw - 24px));
+	width: max-content;
+	min-width: min(var(--pa-chat-menu-min-width), var(--pa-chat-menu-max-width));
+	max-width: var(--pa-chat-menu-max-width);
 	padding: 7px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 14px;
@@ -2137,11 +2138,10 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 }
 
 .pa-chat-message-menu {
+	--pa-chat-menu-min-width: 96px;
 	top: auto;
 	bottom: calc(100% + 8px);
 	right: 0;
-	min-width: 96px;
-	max-width: min(132px, calc(100vw - 24px));
 	padding: 3px;
 	border-radius: 9px;
 	box-shadow:
@@ -2165,6 +2165,17 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
+.llm-view .llm-message.assistant .pa-chat-message-menu::after,
+.llm-view .llm-message.system .pa-chat-message-menu::after {
+	left: min(var(--pa-chat-message-menu-arrow-left), calc(100% - 20px));
+}
+
+@media (hover: none) {
+	.pa-chat-message-menu {
+		--pa-chat-menu-min-width: 144px;
+	}
+}
+
 .pa-chat-message-menu.pa-chat-message-menu-below {
 	top: calc(100% + 8px);
 	bottom: auto;
@@ -2179,9 +2190,9 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 }
 
 .pa-chat-memory-menu {
+	--pa-chat-menu-min-width: 260px;
 	right: 0;
 	left: auto;
-	min-width: 260px;
 }
 
 .pa-chat-menu-label {
@@ -2215,6 +2226,9 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 .pa-chat-menu-item-text {
 	min-width: 0;
 	text-align: left;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .pa-chat-menu-label-icon svg,
@@ -2235,6 +2249,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 	display: grid;
 	grid-template-columns: 18px minmax(0, 1fr);
 	min-height: 38px;
+	height: auto;
 	width: 100%;
 	align-items: center;
 	gap: 0 10px;
@@ -2254,9 +2269,13 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
 }
 
 .pa-chat-message-menu .pa-chat-menu-item {
-	grid-template-columns: 18px max-content;
+	grid-template-columns: 18px minmax(0, max-content);
 	justify-content: center;
 	padding: 0 8px;
+}
+
+.pa-chat-menu .pa-chat-menu-item[hidden] {
+	display: none;
 }
 
 .pa-chat-menu .pa-chat-menu-item:hover:not(:disabled),
@@ -8598,6 +8617,21 @@ body.is-mobile .pa-share-card-actions button {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+.pa-settings-tab .pa-chat-images-settings .setting-item {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+}
+.pa-settings-tab .pa-chat-images-settings .setting-item .setting-item-control {
+    justify-content: flex-start;
+    width: 100%;
+}
+.pa-settings-tab .pa-chat-images-settings button {
+    max-width: 100%;
+    min-height: 44px;
+    height: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 .pa-chat-image-picker__list > button {
     min-height: 44px;

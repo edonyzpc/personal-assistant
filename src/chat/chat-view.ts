@@ -23,7 +23,7 @@ import type { ChatHistoryManager } from './chat-history-manager';
 import type { PersistedConversation, PersistedTurn } from './chat-history-store';
 import { ConversationPersistence } from './ConversationPersistence';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
-import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel } from './menu-helpers';
+import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel, updateChatMenuAvailableWidth } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
 import {
     createChatRoleIdenticonSessionSeed,
@@ -64,7 +64,7 @@ import { ShareCardModal } from '../share-card/share-card-modal';
 import { ComposerDraft, type SentComposerDraft, type ComposerSnapshot } from './composer-draft';
 import { cloneMessageImages, type ImageAcquisition, type MessageImage } from './image-types';
 import { ImageAttachmentDetailModal, renderComposerImageAttachments, renderImageAttachments } from './image-attachment-view';
-import { ImageManagementModal, VaultImagePickerModal } from './image-management-modal';
+import { ImageSourcePickerModal, VaultImagePickerModal } from './image-management-modal';
 import { classifyChatUserProvenanceKind } from '../pa/chat-memory-admission';
 import { mergeChatImageMaterials } from '../ai-services/chat-image-identity';
 import { isNewWritingTopicPrompt, isWritingContinuationPrompt, isWritingRequestPrompt } from '../ai-services/writing-output';
@@ -532,9 +532,26 @@ export class LLMView extends ItemView {
         imagePicker.hidden = true;
         const originalPicker = buttonDiv.createEl('input', { attr: { type: 'file', multiple: '' } });
         originalPicker.hidden = true;
+        const pendingImageSelections = new Map<HTMLInputElement, number>();
+        const openImageFilePicker = (picker: HTMLInputElement) => {
+            pendingImageSelections.set(picker, composerDraft.snapshot('').draftId);
+            picker.click();
+        };
+        const cancelImageSelection = (event: Event) => { pendingImageSelections.delete(event.currentTarget as HTMLInputElement); };
+        for (const picker of [imagePicker, originalPicker]) picker.addEventListener('cancel', cancelImageSelection);
+        this.registerViewTeardown(() => {
+            pendingImageSelections.clear();
+            for (const picker of [imagePicker, originalPicker]) picker.removeEventListener('cancel', cancelImageSelection);
+        });
         addImageButton.onclick = () => {
             if (this.chatService.getImageCapability?.() === 'unsupported') { new Notice(t('plugin.chat.writing.unsupportedImages')); return; }
-            imagePicker.click();
+            const selectedDraftId = composerDraft.snapshot('').draftId;
+            new ImageSourcePickerModal(this.app, (source) => {
+                if (!isCurrentSession() || composerDraft.snapshot('').draftId !== selectedDraftId) return;
+                if (source === 'photos') openImageFilePicker(imagePicker);
+                else if (source === 'files') openImageFilePicker(originalPicker);
+                else openVaultImagePicker();
+            }).open();
         };
         const sendButton = buttonDiv.createEl('button', {
             text: t("plugin.chat.action.ask"),
@@ -601,17 +618,11 @@ export class LLMView extends ItemView {
             text: t("plugin.chat.action.copyConversation"),
             icon: 'copy',
         });
-        const addOriginalImageButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.images.addOriginal'), icon: 'file-image' });
-        addOriginalImageButton.onclick = () => originalPicker.click();
-        const addVaultImageButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.images.fromVault'), icon: 'folder-open' });
-        const manageImagesButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.images.manage'), icon: 'images' });
-        manageImagesButton.onclick = () => {
-            const service = this.host.imageAssetService;
-            if (service) new ImageManagementModal(this.app, service).open();
-            else new Notice(t('plugin.chat.images.unavailable'));
-        };
         const pendingSavesButton = createChatMenuItem(composerMenu, { text: t('plugin.chat.writing.pendingSaves'), icon: 'file-clock' });
+        pendingSavesButton.hidden = true;
+        let pendingSavesRequestId = 0;
         pendingSavesButton.onclick = () => {
+            composerMenuAutoClose.close();
             if (this.host.writingSave && this.host.writingVersions) new WritingSaveRecoveryListModal(this.app, this.host.writingSave, this.host.writingVersions).open();
             else new Notice(t('plugin.chat.writing.unavailable'));
         };
@@ -1067,7 +1078,7 @@ export class LLMView extends ItemView {
                 if (remainingFailure) revealImageDraftEntry(remainingFailure.id);
             }
         };
-        addVaultImageButton.onclick = () => {
+        const openVaultImagePicker = () => {
             if (this.chatService.getImageCapability?.() === 'unsupported') { new Notice(t('plugin.chat.writing.unsupportedImages')); return; }
             const service = this.host.imageAssetService;
             if (!service) { new Notice(t('plugin.chat.images.unavailable')); return; }
@@ -1100,16 +1111,16 @@ export class LLMView extends ItemView {
                 })();
             }).open();
         };
-        imagePicker.onchange = () => {
-            const files = Array.from(imagePicker.files ?? []);
-            imagePicker.value = '';
-            void addImageFiles(files, Platform.isMobileApp ? 'unverified_import' : 'original_file');
+        const consumeImageSelection = (picker: HTMLInputElement, acquisition: ImageAcquisition) => {
+            const draftId = pendingImageSelections.get(picker);
+            pendingImageSelections.delete(picker);
+            const files = Array.from(picker.files ?? []);
+            picker.value = '';
+            if (!isCurrentSession() || draftId !== composerDraft.snapshot('').draftId) return;
+            void addImageFiles(files, acquisition);
         };
-        originalPicker.onchange = () => {
-            const files = Array.from(originalPicker.files ?? []);
-            originalPicker.value = '';
-            void addImageFiles(files, 'original_file');
-        };
+        imagePicker.onchange = () => consumeImageSelection(imagePicker, Platform.isMobileApp ? 'unverified_import' : 'original_file');
+        originalPicker.onchange = () => consumeImageSelection(originalPicker, 'original_file');
         const onImagePaste = (event: ClipboardEvent) => {
             const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
                 file.type.startsWith('image/') || /\.(?:heic|heif|png|jpe?g|gif|webp|svg)$/i.test(file.name));
@@ -2290,6 +2301,7 @@ export class LLMView extends ItemView {
             menuButton.onclick = () => {
                 if (rendered.actionMenu.hidden) {
                     rendered.actionMenu.hidden = false;
+                    updateChatMenuAvailableWidth(rendered.actionMenu);
                     positionMessageActionMenu(actionDiv, rendered.actionMenu);
                     menuButton.setAttribute('aria-expanded', 'true');
                     actionMenuAutoClose.schedule();
@@ -3975,6 +3987,7 @@ export class LLMView extends ItemView {
         };
 
         const composerMenuAutoClose = createIdleMenuAutoClose(composerMenu, moreButton, () => {
+            pendingSavesRequestId += 1;
             composerMenu.hidden = true;
             moreButton.setAttribute('aria-expanded', 'false');
         });
@@ -4217,9 +4230,20 @@ export class LLMView extends ItemView {
             const willOpen = composerMenu.hidden;
             if (willOpen) {
                 memoryMenuAutoClose.close();
+                pendingSavesButton.hidden = true;
                 composerMenu.hidden = false;
+                updateChatMenuAvailableWidth(composerMenu);
                 moreButton.setAttribute('aria-expanded', 'true');
                 composerMenuAutoClose.schedule();
+                const requestId = ++pendingSavesRequestId;
+                const save = this.host.writingSave;
+                if (save && this.host.writingVersions) {
+                    void save.listReceipts().then((receipts) => {
+                        if (!isCurrentSession() || composerMenu.hidden || requestId !== pendingSavesRequestId) return;
+                        pendingSavesButton.hidden = !receipts.some((receipt) => receipt.state !== 'completed');
+                        updateChatMenuAvailableWidth(composerMenu);
+                    }).catch((error) => { this.host.log?.('Failed to read unfinished note saves', error); });
+                }
             } else {
                 composerMenuAutoClose.close();
             }
@@ -4249,6 +4273,7 @@ export class LLMView extends ItemView {
             void renderMemoryMenu().then(() => {
                 if (!isCurrentSession() || requestId !== memoryMenuRequestId) return;
                 memoryMenu.hidden = false;
+                updateChatMenuAvailableWidth(memoryMenu);
                 memoryChip.setAttribute('aria-expanded', 'true');
                 memoryMenuAutoClose.schedule();
             });
@@ -4362,6 +4387,7 @@ export class LLMView extends ItemView {
             } else {
                 containerEl.classList.add('is-normal');
             }
+            containerEl.querySelectorAll<HTMLElement>('.pa-chat-menu').forEach(updateChatMenuAvailableWidth);
         };
 
         updateDensity();
