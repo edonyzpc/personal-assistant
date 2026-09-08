@@ -13,9 +13,9 @@ Authority: B-129 用户已确认的图片理解、个性化文案、显式保存
 验收证据的覆盖范围不能扩大为所有模型、设备和交互均已验证，也不自行授予发布权限。
 
 2026-09-08 图片管理修订以本页 REQ/AC 为目标契约；“Current”不表示新规则已实现。
-旧原件来源提示、HEIC 转换和保存时复制附件仍属现有实现，差异见
+本次源码的输入、迁出和兼容边界见
 [Architecture](../../architecture/multimodal-chat-architecture.md#图片管理修订与当前实现差异)。
-待启动事项见 [Backlog B-129](../../backlog.md#下一步可执行)；历史验证不覆盖本次迁移规则。
+执行与验证见 [Tracker](../../development/active/chat-image-management/tracker.md)；历史验证不覆盖本次迁移规则。
 
 ## Problem And Product Outcome
 
@@ -353,8 +353,8 @@ PA 收到的文件可能保留拍摄位置等元数据，迁出成为正式附�
 ## Implementation Preparation
 
 产品定义已确认，不再重复询问输入来源定义、HEIC 新输入支持或自动引用监听范围。
-本轮仅授权文档落盘。后续从 [Backlog B-129](../../backlog.md#下一步可执行) 启动，
-按 Documentation Workflow 创建 Feature Home + Tracker，并在实现前完成 source-verified SDD；
+用户已进一步授权开发，实施由 [Feature Home](../../development/active/chat-image-management/README.md)
+及其 Tracker、source-verified SDD 承接；
 涉及数据迁移与共享附件，不能作为纯文案替换直接删掉旧逻辑。遵守 `1 Now + 1 Next`，
 本页不预占执行优先级，也不代替 Tracker 记录实现状态。
 

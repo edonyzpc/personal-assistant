@@ -8,7 +8,6 @@ Updated: 2026-09-08
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
-| B-129 | Chat 图片管理简化后续落地 | 已确认实际交付文件定义、统一输入语义、HEIC 先转 JPEG、仅 PA 保存时迁出 `pa-images` 并复用普通附件；本轮只授权文档，旧运行时与新契约仍有差异 | 用户启动开发后，按 `1 Now + 1 Next` 建 Feature Home + Tracker，完成来源代码核对及 SDD，先解决旧 HEIC/冻结保存记录、共享引用、移动恢复和迁出清理归属；按修订 REQ/AC 验证，不直接删除旧兼容逻辑 | User request 2026-09-08；[DEC-030 修订](./product/decisions/dec-030-multimodal-chat-image-copywriting.md#2026-09-08-图片管理简化修订)、[Product Spec 与实施准备](./product/specs/pa-multimodal-chat-product-spec.md#implementation-preparation)、[当前实现差异](./architecture/multimodal-chat-architecture.md#图片管理修订与当前实现差异) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
