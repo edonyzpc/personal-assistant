@@ -46,13 +46,25 @@ It should not answer:
 
 > Which AI feature button should the user click next?
 
-## Current Capability Inventory
+## Capability Inventory And Scoped Successors
+
+The table records the preparation-consolidation iteration. B-123 subsequently
+replaced generic preparation with the Pagelet Agent path; the
+[DEC-033 / B-106 Settings contract](./pa-simple-settings-product-spec.md) now
+uses `pagelet.backgroundDiscoveryEnabled` for automatic discovery only. Its
+default is true, valid new false is retained, and retired preload/deep-discover
+enable values are not inherited. Pausing automatic discovery does not disable
+explicit discovery. The historical generic opt-in and raw prepared-cache route
+below must not be used to recreate a current Settings toggle or delivery lane.
+Scope Recap and every effective source/disclosure/write boundary remain
+distinct. B-106 delivery evidence belongs to its
+[Tracker](../../development/active/simple-settings/tracker.md).
 
 | Capability | Current runtime shape | Product value | Problem | Consolidation direction |
 | --- | --- | --- | --- | --- |
 | Historical Periodic Summary | The standalone Bubble/command identity is retired from the current contract. | Its intentional time-range review intent remains useful. | Reintroducing it would duplicate Recap and revive Weekly Review burden. | Any future value belongs to a separately authorized Recap time-range mode, not an independent current capability. |
 | Scope Recap | Source-backed derived recap plus bounded prepared-Recap scheduling; a valid artifact opens immediately in Pagelet detail. | Best fit for "review/recap" because it is source-backed, scoped, stale-aware, derived, and can be ready before click. | B-108 resolved the prior disclosure, budget, delivery, failure-state, physical-gesture and downstream-routing ambiguity; the correctly prepared user-owned 3-Second Value Test passed. | Preserve the implemented DEC-017/018/019 behavior and its distinct user control. |
-| Background Preparation / Preload | Separate generic background engine, gated by `preloadEnabled`, caches raw `PreloadFinding[]` for the explicit `Open prepared review` command → Prepared Panel route. | Makes bounded background observations available on demand without another provider call. | Raw findings lack the stable identity、why-now、currentness、quality gate and route/action required by Bubble; treating cache readiness as a nudge creates a visible signal with no valid owner. | Keep generic preload opt-in and Panel-only. The explicit command is the only current delivery entry and reuses cache with zero provider call; this Prepared Panel is read-only, cannot save or expand to Tab, and does not become current analysis. Empty cache reports unavailable before changing an existing Bubble、Panel、layout or pending state. A future Bubble adapter needs separate product approval and must preserve the distinct Scope Recap contract. |
+| Historical Background Preparation / Preload | The previous generic engine used `preloadEnabled` and raw `PreloadFinding[]` for an explicit Prepared Panel route. This enable key and lane no longer govern current discovery. | Established bounded, on-demand preparation without another provider call. | Raw findings lacked the stable identity, why-now, currentness, quality gate and route/action required by Bubble. | Preserve this as historical rationale. Current preparation and delivery follow the Pagelet Agent and B-106 successor contracts above; do not revive the generic opt-in or raw-cache route. |
 
 ## Product Decisions Already Confirmed
 

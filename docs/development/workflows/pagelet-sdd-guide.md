@@ -697,6 +697,11 @@ DEC-018 的高价值 Recap 提示通过 Settings 中的独立开关控制；当�
 
 ## 12. Settings Schema
 
+This is a partial schema reference. Read `src/settings/pagelet/index.ts` for the
+complete current schema and defaults. Under DEC-033/B-106, retired enable keys
+are stripped; retained legacy numeric values remain internal rather than user
+controls.
+
 ```typescript
 interface PageletSettings {
   // General
@@ -714,8 +719,9 @@ interface PageletSettings {
     end: string;                       // HH:mm
   };
 
-  // Background preparation (stored under preload* keys for migration compatibility)
-  preloadEnabled: boolean;             // default: false
+  // Automatic discovery only; explicit discovery remains available when false.
+  backgroundDiscoveryEnabled: boolean; // default: true; no inheritance from retired keys
+  // Legacy numeric preparation values retained internally.
   preloadInterval: 5 | 15 | 30 | 60 | 120 | 240; // minutes, default: 30
   preloadPerHourCap: number;           // default: 2
   preloadPerDayCap: number;            // default: 20
@@ -723,8 +729,7 @@ interface PageletSettings {
   // Storage
   reviewsFolder: string;               // default: '.pagelet'
 
-  // Reviews
-  periodicSummaryScope: '3d' | '7d' | '14d'; // default: '7d'
+  // Sources
   excludedFolders: string[];
   excludedTags: string[];
   excludedPatterns: string[];
@@ -739,7 +744,7 @@ interface PageletSettings {
   foregroundPerDayCap: number;         // default: 100
 
   // Cost — Background preparation (stored under preload* keys for migration compatibility)
-  preloadTokenBudget: { input: number; output: number }; // default/max: {4000, 1000}; user may lower only
+  preloadTokenBudget: { input: number; output: number }; // internal legacy default/max: {4000, 1000}
 }
 ```
 

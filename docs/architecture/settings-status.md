@@ -8,13 +8,13 @@ Updated: 2026-09-08
 | --- | --- |
 | Document type | Current status / navigation entry |
 | Scope | Settings UI, settings persistence, SecretStorage migration follow-ups |
-| Current source of truth | Current code plus the status table in [Settings UI Review](../archive/settings-ui-review.md) |
+| Current source of truth | Current code and linked product contracts; B-106 delivery evidence is owned only by its Tracker |
 | Historical design target | [Settings SDD](../archive/settings-ui-sdd.md) |
 
 This document is the current entry point for Settings work. The original
 [Settings UI Review](../archive/settings-ui-review.md) is retained as evidence and
-contains detailed finding-level status, but its original P0/P1 sections are
-historical.
+contains historical finding evidence. It does not own current implementation
+or delivery status.
 
 ## Current Summary
 
@@ -39,16 +39,26 @@ Highest-risk Settings issues are no longer open:
 - Memory settings copy and visibility have been aligned with current product
   language.
 
-Remaining Settings work is product/architecture polish, not an active release
-blocker:
+The current Settings implementation uses four groups: AI connection,
+Preferences, Notes & privacy, and Advanced & maintenance. Native details keep
+specialized choices behind their related product area. Old Memory and
+Appearance deep links resolve to the corresponding detail; exact recovery
+targets open the maintenance group.
 
-| Area | Status | Next action |
-| --- | --- | --- |
-| Broader Settings IA | Partially open | Group the long settings surface into clearer current product areas. |
-| Componentization | Partially open | Continue replacing full `display()` rebuild paths with scoped rebuilds. |
-| Statistics hidden fields | Open | Decide whether `displaySectionCounts` and `countComments` need UI controls or should remain internal. |
-| Text input save churn | Partially open | Finish end-to-end audit for debounced or explicit saves. |
-| Narrow-screen Metadata UX | Open | Validate layout on narrow desktop/mobile-style widths before claiming complete. |
+Pagelet preferences and Memory management refresh their own regions. Provider
+tuple drafts remain separate from the effective connection, and passive
+Settings navigation reads only the token cache state. Permission changes use
+queued snapshots and become effective after persistence; source-exclusion text
+has an explicit Save scope action and retains an unsaved draft on failure.
+
+Graph and featured-image options use the same modal from Settings and their
+contextual entry. Statistics view selection remains in its existing tabs;
+`displaySectionCounts` and `countComments` already have Settings controls.
+Ordinary field saves and statistics choices expose failure/retry feedback.
+
+The [B-106 Tracker](../development/active/simple-settings/tracker.md) owns all
+remaining review, Desktop, real-device, and acceptance evidence. Source-level
+implementation here does not imply those gates passed.
 
 ## Navigation Rule
 

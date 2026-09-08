@@ -24,7 +24,7 @@ flowchart LR
   D["P0 源码设计与任务核查"] --> M["P1 五个旧字段失效与必要能力"]
   M --> G1["P1 自动化与真实 App 验证"]
   G1 --> U["P2 四入口、治理详情与现场选项"]
-  U --> G2["P2 自动化、Desktop 与 iOS 验证"]
+  U --> G2["P2 自动化、Desktop 与 mobile simulator 验证"]
   G2 --> A["P3 证据核对与契约同步"]
 ```
 
@@ -34,7 +34,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | P0 | 可执行、无未决产品选择的源码设计 | 字段闭集、接口、生命周期、任务与风险核查 | 独立设计复核、docs check、diff check；无未处置 P0/P1/P2 设计问题 | 设计请求在此结束；已授权实施继续 P1 |
 | P1 | 新旧用户同一运行规则，必要机制完整 | T-01..T-06；现有六组 UI 同步移除废弃控件并提供新后台控制，避免中间状态不可操作 | focused source/tooling、Local Validation Gate；冻结后 `make deploy`，真实 test vault 验证手动/后台与 Memory；独立 review/fix 闭环 | App 验证通过后才能进入 P2 |
-| P2 | 四入口和完整可达的专业/治理操作 | T-07..T-12；先有现场替代入口再移除旧行；EN/ZH、局部保存、窄屏 | focused source、Local Validation Gate；最终输入冻结后 `make deploy`、Desktop 和 targeted real-iOS smoke；独立 review/fix 闭环 | 全部适用 AC 通过，真实设备缺口不得标 PASS |
+| P2 | 四入口和完整可达的专业/治理操作 | T-07..T-12；先有现场替代入口再移除旧行；EN/ZH、局部保存、窄屏 | focused source、Local Validation Gate；最终输入冻结后 `make deploy`、Desktop 和 Obsidian CLI mobile simulator；独立 review/fix 闭环 | 全部适用 AC 通过；模拟器与真机证据分别标注 |
 | P3 | 可审阅的完整交付与准确证据 | T-13；源码/契约/任务核对，吸收当前行为说明 | 复用最终 P2 相同输入/产物的证据，补齐未覆盖项，docs/diff check | 实施模式只到 Validated；closeout、commit、release 分别授权 |
 
 P1/P2 每个任务先跑最接近的测试，阶段冻结时只安排一个执行者跑昂贵 gate。
@@ -81,10 +81,12 @@ P3 不因阶段名称另跑同一套 build/full tests。P2 后若修复代码或
   所有 build-bound receipt 都须在当前 build 后执行，不能先跑 artifact suite。
 - 阶段 App smoke 只用隔离 `test/` vault 与合成材料；需要调用 AI 才能证明的路径
   使用既有模型和最少结论性案例。保存/迁移零调用与正常自动触发分开取证。
-- 最终 iOS 只覆盖本次 Settings、显式 token 与持久化/触控边界；不重跑 B-125
-  性能矩阵、模型矩阵、无关图片格式认证。Desktop 窄屏不能代替 real-iOS。
-- iCloud 部署仅在实施阶段适用设备 scope 下进行；当前产物与必要检查通过后可
-  使用 `make deploy-icloud-current`。设备不可用如实记录，保持相应验收未完成。
+- 按 Owner 2026-09-08 的补充决定，本次默认使用 Obsidian CLI
+  `dev:mobile on` 验证移动布局、折叠、文本输入和深链焦点；通用保存、重开、
+  管理与取消路径复用 Desktop 证据，不重复执行整组功能测试。
+- 仅当实际改动涉及 iOS 特有能力、移动端特有交互或模拟器无法回答的具体风险时，
+  才增加相应真机案例。本次未改变 iOS Keychain、原生软键盘或 WKWebView 实现，
+  不新增 iCloud 部署与真机 gate；模拟器结果不宣称这些设备行为已验证。
 - 不自动跑 Hosted Community 或发布 gate；它们属于后续 release 范围。
 
 ## Approval
@@ -92,3 +94,4 @@ P3 不因阶段名称另跑同一套 build/full tests。P2 后若修复代码或
 - Plan authority: DEC-033 与 Owner 2026-09-08“按照项目的开发规范（sdd）设计开发任务”。
 - Approved on: 2026-09-08；Owner 明确要求按 SDD 方案设计与任务规划完成全部 Settings 优化。
 - Authorized implementation scope: Owner 后续“按照sdd对应的方案设计与任务规划，帮我完成所有的setting优化”授权本计划全部实施与对应测试库/设备验证；不含新增 Git 提交、整合或发布。
+- Validation amendment: Owner 2026-09-08 明确要求优先 Obsidian CLI mobile simulator，复用跨平台通用功能证据，仅对 iOS 本身强相关部分安排真机测试；取代本计划原先统一要求的 targeted real-iOS gate。

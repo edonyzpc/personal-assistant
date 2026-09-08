@@ -330,9 +330,12 @@ timing，不记录 path 或正文。
 ## 10. T5 — Cost and Settings
 
 2026-09-08 scoped successor：[DEC-033](../../../product/decisions/dec-033-simple-settings-and-unified-defaults.md)
-确定在 B-106 实施时撤销原 Deep Discover 总开关语义及旧 `preloadEnabled` 继承，
-新旧用户统一按新规则运行。下述设置迁移描述保留为 B-123 已交付行为的来源，
-不再约束 B-106；内部预算与来源/权限边界继续有效，本文不宣称新策略已经实现。
+由 B-106 实现新 `pagelet.backgroundDiscoveryEnabled` 偏好：缺失时默认开启，
+合法新值 false 保留，五个废弃键的旧值不再继承。关闭只暂停自动发现；显式发现
+仍按当前能力、来源、预算与生命周期规则运行。普通用量只显示发现次数/每日上限，
+model turns/tool calls 留在诊断。下述设置与旧值继承描述保留为 B-123 历史来源，
+不再约束当前实现；B-106 验证状态只见
+[Tracker](../../active/simple-settings/tracker.md)。
 
 - `36/day` 定义为“通过 cache/currentness/admission 后实际启动的 Deep Discover
   run”；cache hit、stale、boundary deny、provider unavailable 与 quiet local skip

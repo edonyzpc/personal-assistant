@@ -166,10 +166,15 @@ provider 草稿和确认中的其他控件。目标删除后焦点回到管理�
 未 flush 草稿；预设覆盖走原确认。Passive render/input/Memory inspection 不读
 unknown token；显式 token 编辑沿用 PA Modal 及关闭/失败隔离。
 
-普通 `debouncedSave()` 当前失败只 log 并留 pending，不能当作 AC-07 已完成。
-为受影响字段使用局部草稿/错误/重试状态，失败保留编辑内容并明确“未保存”；
-权限/后台开关则由窄事务控制有效值，失败回退。复用 existing save queue，避免
-另建通用表单状态系统。关闭 Settings 后迟到回调不能重建已卸载 DOM。
+普通 `debouncedSave()` 使用局部错误/重试状态，失败保留编辑内容并明确“未保存”。
+权限/后台开关及审计保留期由窄事务控制有效值，成功持久化后才发布；同一字段的
+pending 状态以稳定 key 由 Settings 实例持有，重开期间禁用且提交后同步当前控件。
+全局两个排除数组、Memory 排除、Pagelet 三个排除数组与 Metadata 自动写入排除
+共用 `source-scope-setting.ts` 的调用者持有草稿：逐字编辑不改变范围，明确
+“保存范围”后通过 `saveSettingsPermissions()` 的 queued snapshot 持久化，成功
+后窄发布。失败保留原有效范围与最新草稿，重试不覆盖保存等待期间的新输入。
+复用 existing save queue，不另建通用表单状态系统。关闭 Settings 后迟到回调
+不能重建已卸载 DOM 或清除重开后的表单；治理升级/回滚只刷新对应管理与偏好区域。
 
 ### Feature-local surfaces (Proposed)
 
@@ -261,7 +266,7 @@ skip-memory、联网/写入关闭与异常工具中止。只屏蔽工具执行�
 | B-106/REQ-06 / B-106/AC-02 / B-106/AC-05 | `pagelet-agent-quality-cache.test.ts`、`pagelet-agent-runtime.test.ts`、`pagelet-orchestrator.test.ts`、`plugin-lifecycle.test.ts` | 自动暂停后手动仍工作 | pending/active/late result、force、关开、显式抢占、provider失效 | T-02/T-06 |
 | B-106/REQ-07 / B-106/AC-04 / B-106/AC-05 | `data-boundary.test.ts`、`memory-governance-compatibility.test.ts`、Settings/provider/operations 相关现有 suites | 排除/写权限/联网/共享选择保留 | 缺授权零调用/零写入；治理 barrier 并发不覆盖 | T-01/T-04/T-08 |
 | B-106/REQ-08 / B-106/AC-06 | `memory-control-center.test.ts`、`memory-manager.test.ts`、`settings.test.ts` | inspection、精确记忆深链、正确恢复入口 | token unknown 被动读为零；加载失败/目标遗忘/高风险 cancel | T-08/T-12 |
-| B-106/AC-07 | Settings、Chat、locales 和新 Modal 交互测试 | Desktop 与 real-iOS 的输入/折叠/深链/重开 | 异步保存失败、关闭后回调、非当前窗口 document、焦点与触控 | T-07/T-12 |
+| B-106/AC-07 | Settings、Chat、locales 和新 Modal 交互测试 | Desktop 输入/重开与 CLI mobile simulator 布局/折叠/文本/深链；通用行为复用 Desktop | 异步保存失败、关闭后回调、非当前窗口 document、焦点；仅出现 iOS 特有改动/风险才追加真机案例 | T-07/T-12 |
 
 ## Open Design Findings
 

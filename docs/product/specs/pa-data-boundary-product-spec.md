@@ -46,12 +46,21 @@ controls.
 | DB-D6 | Provider disclosure is first-use plus actual-input-based high-risk disclosure. | Small scopes stay low-friction; foreground Review uses filtered actual source count, while consequential runs show scope/provider/cost before continuing. |
 | DB-D7 | Data Boundary needs its own spec. | Privacy and local-first behavior must be consistent across all PA surfaces. |
 | DB-D8 | Quiet Recall cold semantic query embedding is a real bounded provider call. | It uses DEC-023 disclosure and the existing 10/hour、50/day Quiet Recall total budget; an empty retrieval makes no downstream evaluator/generation call. |
-| DB-D9 | Narrow generic background preload is standard bounded; any envelope breach fails closed silently. | Explicit opt-in、changed-only、recent 7 days、4K input/1K output、2/rolling-hour、20/local-day、read-only and actual-source shared-boundary allow can prepare quietly; all other background preload runs skip without a blocking prompt. |
+| DB-D9 (historical generic lane) | Narrow generic background preload was standard bounded; any envelope breach failed closed silently. | Its explicit opt-in and numeric envelope describe the superseded generic implementation, not the current background discovery preference; see the scoped successor below. |
 | DB-D10 | Generic preload sensitivity comes from explicit shared Data Boundary rules, not content inference. | Every actual source must pass the configured folder/tag/generated-source policy with no override; unmarked allowed notes are treated as ordinary, and a caller-provided `sensitive=false` is not evidence. |
 | DB-D11 | Provider-bound sources are rechecked from the exact latest Markdown body. | Explicit body tags/frontmatter and path policy are enforced at the provider seam; MetadataCache lag or malformed leading frontmatter fails closed, and model findings must cite an exact actual-input path. |
 | DB-D12 | Derived Pagelet text inherits every live source boundary. | All Pagelet provider inputs combine shared and Pagelet-local source rules; a cold embedding validates its primary latest body first, and a Saved Insight reaches an evaluator only when every sourceRef is live-readable, unchanged, and allowed. |
 | DB-D13 | DEC-028 authorizes one narrow silent Memory admission path. | A first-use Chat may schedule one whole eligible vault Memory rebuild without a blocking Modal; reset/provider work requires hydrated known absence or durable marker invalidation, this authority does not derive from Pagelet provider trust, and recovery/manual/costly Memory runs still block. |
 | DB-D14 | PPR may locally traverse at most one excluded Markdown node as an opaque bridge. | The bridge contributes only transient link topology; it never becomes a seed/candidate/result/source or exposes body、excerpt、title、path、metadata. Generated notes、attachments and excluded chains cannot bridge. |
+
+Scoped successor: B-123 replaced the generic preload lane with Pagelet Agent
+discovery. [DEC-033 / B-106](./pa-simple-settings-product-spec.md) uses
+`pagelet.backgroundDiscoveryEnabled` for automatic discovery, defaults missing
+values to true, preserves valid new false, and never inherits retired enable
+keys. Generic preload opt-in and its old envelope references in this document
+are historical; they must not recreate a removed switch or override the
+current Agent admission and budget. Explicit discovery and all effective
+source, disclosure, write, and lifecycle boundaries remain enforced.
 
 ## 1. Product Decision
 
@@ -104,7 +113,7 @@ when scope, sensitivity, cost, or future-state impact makes disclosure relevant.
 
 ## 3. User-visible Settings
 
-Add a lightweight settings area:
+Use the lightweight detail under Settings -> Notes & privacy:
 
 > Data & Privacy Boundaries
 
@@ -114,12 +123,22 @@ It should include:
 - excluded tags
 - generated notes inclusion policy
 - provider disclosure defaults
-- local data cleanup
-- exact deep link to Memory and personalization for Forget, future export, and
+- a precise route to local data cleanup under Advanced & maintenance
+- exact deep links to Notes & privacy -> Memory and personalization for Forget
+  and future export, and Advanced & maintenance -> Data and recovery for
   Memory-specific repair/recovery controls
 - optional advanced diagnostics
 
 Do not make a heavy privacy dashboard in v1.
+
+Under [B-106](./pa-simple-settings-product-spec.md), editing global,
+Memory-specific, Pagelet-specific, or automatic-property-update exclusions
+changes only a local text draft. Save scope persists a narrow snapshot before
+publishing the new effective scope; waiting or failure must not broaden reads
+or automatic writes. Failed saves retain the draft and previous effective
+scope with a retry action. Reopening Settings preserves a pending transaction
+and its latest draft. Generated-note policy, write-audit retention, and
+permission toggles follow the same persist-before-effective rule.
 
 ## 4. Excluded Scopes
 
@@ -403,8 +422,8 @@ which groups it clears.
 | VSS/local marker state | IndexedDB/local app state | device-local runtime state |
 | review/maintenance queue | local store | machine state, not vault content |
 | graph/discovery edges | local derived state | AI-inferred unless user confirms |
-| Governed Memory | versioned device-local store + Memory and personalization | user-visible, current-vault by default; not vault-polluting or cross-device by default |
-| memory suppression markers | versioned device-local store | text-free prevention state; cleared from Memory and personalization |
+| Governed Memory | versioned device-local store + Notes & privacy -> Memory and personalization | user-visible, current-vault by default; not vault-polluting or cross-device by default |
+| memory suppression markers | versioned device-local store | text-free prevention state; cleared from Advanced & maintenance -> Data and recovery |
 | vault artifacts | Markdown notes after user action | searchable/syncable user-owned output |
 | replay traces | local store by default | explainability/eval metadata; no private note text by default |
 
@@ -493,10 +512,11 @@ Quality gates:
 - foreground Review requested as `last7` but reduced to one actual allowed source
   remains standard bounded; more than one actual source reserves no quota/cost
   before affirmative per-run confirmation
-- generic background preload runs only inside the complete opt-in、changed-only、
+- the historical generic background preload ran only inside the complete opt-in、changed-only、
   recent-7-day、4K input/1K output、2/rolling-hour、20/local-day、read-only、
   actual-source shared-boundary-allow envelope; any single
-  breach silently produces zero prompt/call/reservation/flag mutation
+  breach silently produced zero prompt/call/reservation/flag mutation; this is
+  retained historical evidence, not a current discovery gate
 - an admitted cold Quiet Recall embedding counts as the real call even when
   retrieval is empty; all pre-embedding deny/stale paths remain zero-call, and
   post-call stale results are never used
@@ -547,7 +567,7 @@ Status: this document.
 
 ## 13. Open Questions
 
-- Should the settings section be top-level or under existing Memory/Pagelet settings?
+- Settings placement is resolved by B-106: Notes & privacy, with cleanup/recovery under Advanced & maintenance.
 - Which generated-note policy should be default for user-saved Pagelet reviews?
 - How long should replay traces be retained?
 - Should per-run excluded-scope override require a second confirmation for Memory/Maintenance workflows?

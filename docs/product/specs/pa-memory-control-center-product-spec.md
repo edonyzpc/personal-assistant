@@ -1,15 +1,15 @@
 # PA Memory Control Center Product Spec
 
-Updated: 2026-07-11
+Updated: 2026-09-08
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Active product spec |
-| Status | Product contract implemented and validation gates complete |
+| Status | Original Memory control-center contract implemented; its historical validation does not cover later Settings layout changes |
 | Canonical scope | Memory control center, user understanding, lifecycle governance |
-| Product entry | Settings -> Memory and personalization |
+| Product entry | Settings -> Notes & privacy -> Memory and personalization; recovery under Advanced & maintenance |
 | Contextual surfaces | Chat, Pagelet, Recall, AI Insights |
 | Intake source | [Memory control-center intake](../../archive/pa-memory-control-center-optimization-plan.md) |
 | Runtime status | Canonical Settings surface, governed persistence/use, lifecycle actions, and contextual routing implemented |
@@ -97,15 +97,17 @@ exact contextual routing now exist. Actual Forget/finalization, independent
 Device A/B, and real-device iOS evidence are recorded in the tracker.
 
 ```text
-Settings -> Memory and personalization
+Settings -> Notes & privacy -> Memory and personalization
 ├── Overview
 ├── PA's understanding of you
 ├── Collaboration style
 ├── Current vault agreements
 ├── Long-term memory
 ├── Recent context
-├── Recent changes
-└── Data and recovery (advanced)
+└── Recent changes
+
+Settings -> Advanced & maintenance
+└── Data and recovery
 ```
 
 The product may implement these as sections, a Settings-internal detail view,
@@ -117,6 +119,12 @@ repair, and future Memory portability. PA-wide exclusions, provider disclosure,
 and unified cleanup remain owned by `Data & Privacy Boundaries`; the two
 surfaces use precise deep links instead of duplicating controls or presenting
 two canonical owners.
+
+[B-106](./pa-simple-settings-product-spec.md) places management and recovery in
+these two groups while keeping one snapshot owner. Legacy
+`memory-personalization` deep links remain valid, including exact recovery and
+record targets. A local governance refresh must preserve unrelated Settings
+drafts and update any controls whose effective governance mode changed.
 
 ### 3.2 Chat, Pagelet, Recall, And AI Insights
 
@@ -321,7 +329,8 @@ Implemented and covered by source/tests:
 6. Settings is the canonical governance destination; contextual surfaces route
    to exact details rather than duplicating it.
 
-The final verification gates are complete:
+The original Memory control-center iteration completed these verification
+gates; this is historical evidence for that iteration's inputs:
 
 - independent-profile Device A/B non-inheritance and legacy no-auto-cleanup;
 - actual desktop confirmation of Forget and compatibility finalization;
@@ -329,6 +338,10 @@ The final verification gates are complete:
 - real-device iOS reload/resume, `legacy_threshold` compatibility, layout,
   safety, and Inspector evidence;
 - a final multi-lane review/fix/re-review after the full 155-suite / 2877-test gate.
+
+These results do not validate B-106's later group layout, input handling, or
+local refresh changes. Their Desktop and real-device evidence remains owned
+by the [B-106 Tracker](../../development/active/simple-settings/tracker.md).
 
 Migration and first cutover preserve actual effects rather than labels. A
 currently used, vault-scoped Type-A profile remains used through a governed
@@ -340,7 +353,7 @@ never creates a mandatory review queue.
 ## 11. Delivered Runtime Shape
 
 The iteration began with a read-only hybrid Overview. That milestone is now
-historical: `Memory and personalization` is present in ordinary Settings and is
+historical: `Memory and personalization` is present under Notes & privacy and is
 the canonical control center. The read-only guarantees of its summary path
 remain part of the product contract even though lifecycle and recovery actions
 now appear where supported.
