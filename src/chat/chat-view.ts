@@ -1,4 +1,4 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, Platform, TFile, type EventRef } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, TFile, type EventRef } from 'obsidian';
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
@@ -62,7 +62,7 @@ import type {
 import { formatOperationsPreview } from '../ai-services/operations/operations-presentation';
 import { ShareCardModal } from '../share-card/share-card-modal';
 import { ComposerDraft, type SentComposerDraft, type ComposerSnapshot } from './composer-draft';
-import { cloneMessageImages, type ImageAcquisition, type MessageImage } from './image-types';
+import { cloneMessageImages, type MessageImage } from './image-types';
 import { ImageAttachmentDetailModal, renderComposerImageAttachments, renderImageAttachments } from './image-attachment-view';
 import { ImageSourcePickerModal, VaultImagePickerModal } from './image-management-modal';
 import { classifyChatUserProvenanceKind } from '../pa/chat-memory-admission';
@@ -976,7 +976,6 @@ export class LLMView extends ItemView {
         };
         let draftPreviewCleanup: (() => void) | undefined;
         let imageDetail: { entryId: number; modal: ImageAttachmentDetailModal } | undefined;
-        const unverifiedImageIds = new Set<number>();
         const revealImageDraftEntry = (entryId: number) => {
             const entries = composerDraft.snapshot('').images;
             const revealIndex = entries.findIndex((entry) => entry.id === entryId);
@@ -1005,14 +1004,12 @@ export class LLMView extends ItemView {
                 onPreview: (entry) => {
                     if (!entry.value || !this.host.imageAssetService) return;
                     imageDetail?.modal.close();
-                    const modal = new ImageAttachmentDetailModal(this.app, entry.value, this.host.imageAssetService,
-                        unverifiedImageIds.has(entry.id));
+                    const modal = new ImageAttachmentDetailModal(this.app, entry.value, this.host.imageAssetService);
                     imageDetail = { entryId: entry.id, modal };
                     modal.open();
                 },
                 onRemove: (id) => {
                     composerDraft.removeImage(id);
-                    unverifiedImageIds.delete(id);
                     renderImageDraft();
                     this.focusComposerTextArea(textArea);
                 },
@@ -1028,7 +1025,9 @@ export class LLMView extends ItemView {
                 new Notice(`${t('plugin.chat.images.providerNotice')}\n\n${t('plugin.chat.images.metadataNotice')}\n\n${t('plugin.chat.images.providerHelpLocation')}`, 18000);
                 return true;
             });
-        const addImageFiles = async (files: readonly File[], acquisition: ImageAcquisition) => {
+        const imageImportError = (error: unknown) => t(/heic[-_]unsupported/.test(String(error))
+            ? 'plugin.chat.images.heicUnsupported' : 'plugin.chat.images.failed');
+        const addImageFiles = async (files: readonly File[]) => {
             if (this.chatService.getImageCapability?.() === 'unsupported') { new Notice(t('plugin.chat.writing.unsupportedImages')); return; }
             const service = this.host.imageAssetService;
             if (!service) { new Notice(t('plugin.chat.images.unavailable')); return; }
@@ -1049,7 +1048,7 @@ export class LLMView extends ItemView {
                     if (!isCurrentImport()) return;
                     const anchor = readConversationImageAnchor();
                     const imported = await service.importFile(file, {
-                        anchorPath: anchor.path, anchorKind: anchor.kind, acquisition, signal: handle.signal,
+                        anchorPath: anchor.path, anchorKind: anchor.kind, acquisition: 'original_file', signal: handle.signal,
                         onSyncNotice: (receipt) => {
                             if (isCurrentSession() && !handle.signal.aborted) {
                                 new Notice(t('plugin.chat.images.sync', { directory: receipt.directory }), 12000);
@@ -1060,11 +1059,9 @@ export class LLMView extends ItemView {
                     if (handle.signal.aborted) continue;
                     const preview = await service.resolveVariant(imported.ref, 'preview', { signal: handle.signal });
                     preview.release();
-                    if (composerDraft.completeImport(handle, messageImage)) {
-                        if (imported.asset.acquisition === 'unverified_import') unverifiedImageIds.add(handle.entryId);
-                    }
-                } catch {
-                    if (composerDraft.failImport(handle, t('plugin.chat.images.failed'), messageImage)) {
+                    composerDraft.completeImport(handle, messageImage);
+                } catch (error) {
+                    if (composerDraft.failImport(handle, imageImportError(error), messageImage)) {
                         failedEntryId = handle.entryId;
                         failedEntryIds.add(handle.entryId);
                     }
@@ -1104,37 +1101,36 @@ export class LLMView extends ItemView {
                         const preview = await service.resolveVariant(selected.ref, 'preview', { signal: handle.signal });
                         preview.release();
                         composerDraft.completeImport(handle, selectedImage);
-                    } catch {
-                        if (composerDraft.failImport(handle, t('plugin.chat.images.failed'), selectedImage)) failedEntryId = handle.entryId;
+                    } catch (error) {
+                        if (composerDraft.failImport(handle, imageImportError(error), selectedImage)) failedEntryId = handle.entryId;
                     }
                     if (isCurrentSession()) renderImageDraft(failedEntryId);
                 })();
             }).open();
         };
-        const consumeImageSelection = (picker: HTMLInputElement, acquisition: ImageAcquisition) => {
+        const consumeImageSelection = (picker: HTMLInputElement) => {
             const draftId = pendingImageSelections.get(picker);
             pendingImageSelections.delete(picker);
             const files = Array.from(picker.files ?? []);
             picker.value = '';
             if (!isCurrentSession() || draftId !== composerDraft.snapshot('').draftId) return;
-            void addImageFiles(files, acquisition);
+            void addImageFiles(files);
         };
-        imagePicker.onchange = () => consumeImageSelection(imagePicker, Platform.isMobileApp ? 'unverified_import' : 'original_file');
-        originalPicker.onchange = () => consumeImageSelection(originalPicker, 'original_file');
+        imagePicker.onchange = () => consumeImageSelection(imagePicker);
+        originalPicker.onchange = () => consumeImageSelection(originalPicker);
         const onImagePaste = (event: ClipboardEvent) => {
             const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
                 file.type.startsWith('image/') || /\.(?:heic|heif|png|jpe?g|gif|webp|svg)$/i.test(file.name));
             if (!files.length) return;
             event.preventDefault();
-            // Clipboard encoders may change camera bytes before delivering a File.
-            void addImageFiles(files, 'unverified_import');
+            void addImageFiles(files);
         };
         const onImageDrop = (event: DragEvent) => {
             const files = Array.from(event.dataTransfer?.files ?? []).filter((file) =>
                 file.type.startsWith('image/') || /\.(?:heic|heif|png|jpe?g|gif|webp|svg)$/i.test(file.name));
             if (!files.length) return;
             event.preventDefault();
-            void addImageFiles(files, 'original_file');
+            void addImageFiles(files);
         };
         const onImageDragOver = (event: DragEvent) => {
             if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
@@ -3936,7 +3932,6 @@ export class LLMView extends ItemView {
             composerDraft.clear();
             selectedWritingVersion = undefined;
             selectedWritingParentExplicit = false;
-            unverifiedImageIds.clear();
             renderImageDraft();
             this.result = '';
             hideComposerHint();
@@ -4003,7 +3998,6 @@ export class LLMView extends ItemView {
             composerDraft.clear();
             selectedWritingVersion = undefined;
             selectedWritingParentExplicit = false;
-            unverifiedImageIds.clear();
             renderImageDraft();
             this.clearPendingPageletHandoff();
             this.invalidateActiveTurn();
@@ -4110,7 +4104,6 @@ export class LLMView extends ItemView {
             composerDraft.clear();
             selectedWritingVersion = undefined;
             selectedWritingParentExplicit = false;
-            unverifiedImageIds.clear();
             renderImageDraft();
             this.result = '';
             hideComposerHint();

@@ -24,6 +24,14 @@ export interface ImageAsset {
     recoveryReason?: "input_required" | "path_conflict" | "finalize_failed";
 }
 
+/** Location determines chat-only ownership; provenance alone never grants deletion. */
+export function isChatImageAsset(asset: ImageAsset): boolean {
+    const parent = asset.originalPath.split('/').slice(0, -1);
+    if (!parent.includes('pa-images')) return false;
+    return asset.source === 'vault_reference' || !asset.importDirectory
+        || asset.originalPath.startsWith(asset.importDirectory + '/');
+}
+
 export interface ImageVariantRecord {
     id: string;
     assetId: string;

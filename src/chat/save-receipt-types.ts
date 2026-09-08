@@ -6,6 +6,8 @@ export interface SaveAttachment {
     sourcePath: string;
     sourceName: string;
     attachmentKind: 'original' | 'heic_jpeg';
+    /** Absent on immutable legacy copy plans. Move may reuse an earlier PA promotion. */
+    transfer?: 'move' | 'reference';
     mime: string;
     filename: string;
     outputHash: string;
@@ -36,6 +38,7 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const attachmentSchema = z.object({
     ref: z.unknown(), sourcePath: z.string(), sourceName: z.string().min(1).max(512),
     attachmentKind: z.enum(['original', 'heic_jpeg']), mime: z.string().regex(/^image\/[a-z0-9.+-]+$/),
+    transfer: z.enum(['move', 'reference']).optional(),
     filename: z.string().min(1).max(255).refine((name) => !name.includes('/') && !name.includes('\\')
         && !Array.from(name).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)),
     outputHash: hash, exportPolicy: z.string().min(1).max(256), byteLength: z.number().int().nonnegative(),
@@ -55,6 +58,8 @@ export function cloneSaveReceipt(value: unknown): SaveReceipt {
         const attachment = { ...item, ref: cloneImageRef(item.ref), sourcePath: validateImagePath(item.sourcePath),
             ...(item.plannedPath ? { plannedPath: validateImagePath(item.plannedPath) } : {}) };
         if (item.state === 'written' && (!item.plannedPath || item.writtenHash !== item.outputHash)) throw new Error('Incomplete attachment receipt');
+        if (item.transfer && (item.attachmentKind !== 'original' || item.outputHash !== attachment.ref.contentHash)) throw new Error('Invalid original transfer plan');
+        if (item.transfer === 'reference' && item.plannedPath && item.plannedPath !== item.sourcePath) throw new Error('Reference path changed');
         return attachment;
     });
     if (new Set(attachments.flatMap((a) => a.plannedPath ? [a.plannedPath] : [])).size !== attachments.filter((a) => a.plannedPath).length) {

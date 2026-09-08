@@ -2,13 +2,13 @@ import { Modal, TFile, Platform, type App } from 'obsidian';
 import { imageDirectoryIgnoreRule, type ImageAssetService } from './image-assets';
 import { confirmChatAction } from './modals';
 import { getPluginUiLanguage, makePluginTranslator } from '../locales/plugin';
-import type { ImageAsset } from './image-types';
+import { isChatImageAsset, type ImageAsset } from './image-types';
 
 const imageExtension = /\.(?:jpe?g|png|webp|gif|apng|heic|heif|svg|avif|bmp|tiff?)$/i;
 
 export type ImageSourceChoice = 'photos' | 'files' | 'vault';
 
-/** One image entry point, with device-appropriate sources and an original-file path. */
+/** One image entry point with device-appropriate sources. */
 export class ImageSourcePickerModal extends Modal {
     private closed = false;
     constructor(app: App, private readonly onChoose: (source: ImageSourceChoice) => void) { super(app); }
@@ -80,7 +80,7 @@ export class ImageManagementModal extends Modal {
         providerHelp.createEl('p', { text: t('plugin.chat.images.metadataNotice') });
         const status = contentEl.createEl('p', { attr: { role: 'status', 'aria-live': 'polite' } });
         try {
-            const assets = (await this.images.listAssets()).filter((asset) => asset.source === 'imported');
+            const assets = (await this.images.listAssets()).filter((asset) => asset.source === 'imported' && isChatImageAsset(asset));
             if (this.closed) return;
             const help = contentEl.createEl('details');
             help.createEl('summary', { text: t('plugin.chat.images.syncHelp') });
@@ -89,9 +89,6 @@ export class ImageManagementModal extends Modal {
                 .map((asset) => asset.importDirectory).filter((path): path is string => !!path))) {
                 help.createEl('p', { text: directory });
                 help.createEl('pre', { text: imageDirectoryIgnoreRule(directory) });
-            }
-            for (const asset of assets.filter((asset) => !asset.originalPath.startsWith(`${asset.importDirectory}/`))) {
-                help.createEl('p', { text: t('plugin.chat.images.syncMoved', { path: asset.originalPath, directory: asset.importDirectory ?? '' }) });
             }
             help.createEl('p', { text: t('plugin.chat.images.syncObsidianHelp') });
             help.createEl('p', { text: t('plugin.chat.images.syncGitHelp') });

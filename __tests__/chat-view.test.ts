@@ -1465,6 +1465,26 @@ describe('LLMView turn lifecycle', () => {
         return { service, ref };
     }
 
+    it.each(['heic-unsupported', 'image_assets:heic_unsupported'])(
+        'explains unsupported HEIC import and retains the text draft: %s', async (code) => {
+            const context = createView();
+            const { service } = attachDisclosureService(context, new MemoryChatHistoryStore());
+            const importFile = jest.spyOn(service, 'importFile').mockRejectedValue(new Error(code));
+            try {
+                await context.view.onOpen();
+                const editor = getTextArea(context.containerEl);
+                editor.value = 'Keep my caption';
+                editor.dispatchEvent('paste', { clipboardData: { files: [
+                    new File(['heic'], 'photo.heic', { type: 'image/heic' }),
+                ] }, preventDefault: jest.fn() });
+                for (let i = 0; i < 5; i++) await flushPromises();
+                expect(importFile).toHaveBeenCalledWith(expect.any(File), expect.objectContaining({ acquisition: 'original_file' }));
+                expect(editor.value).toBe('Keep my caption');
+                expect(allText(getElementByClass(context.containerEl, 'pa-chat-image-draft'))).toContain('Convert the image to JPEG');
+                expect(service.resolveVariant).not.toHaveBeenCalled();
+            } finally { await context.view.onClose(); await service.dispose(); }
+        });
+
     it('renders pasted images once inside the composer and opens local details before original access', async () => {
         const context = createView();
         const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
@@ -1502,7 +1522,7 @@ describe('LLMView turn lifecycle', () => {
             expect(walk(draftEl, (element) => element.classList.contains('pa-chat-images'))).toBeNull();
             expect(allText(draftEl)).not.toContain('original format');
             expect(getButtonsByText(context.containerEl, 'Add original from Files')).toHaveLength(0);
-            expect(importFile.mock.calls.map((call) => call[1]?.acquisition)).toEqual(['unverified_import', 'unverified_import']);
+            expect(importFile.mock.calls.map((call) => call[1]?.acquisition)).toEqual(['original_file', 'original_file']);
             expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(false);
             getElementByClass(entries[0], 'pa-chat-image-draft__preview').click();
             await flushPromises();
@@ -1510,7 +1530,7 @@ describe('LLMView turn lifecycle', () => {
             expect(detail).toBeDefined();
             expect(readOriginal).not.toHaveBeenCalled();
             expect(allText(detailRoot)).toContain('first.png');
-            expect(allText(detailRoot)).toContain('original format is unverified');
+            expect(allText(detailRoot)).not.toContain('original format is unverified');
             editor.value = 'Continue editing';
             const documentWithFocus = { activeElement: null as MockElement | null };
             Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
@@ -1526,6 +1546,22 @@ describe('LLMView turn lifecycle', () => {
             await service.dispose();
             open.mockRestore(); close.mockRestore(); readOriginal.mockRestore(); importFile.mockRestore();
         }
+    });
+
+    it('explains an unavailable historical HEIC preview while retaining original access', async () => {
+        const context = createView();
+        const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        jest.mocked(service.resolveVariant).mockRejectedValue(new Error('heic-unsupported'));
+        const root = new MockElement('div');
+        const modal = new ImageAttachmentDetailModal(context.app as unknown as App,
+            { ref, ordinal: 1, label: 'historical.heic' }, service);
+        modal.contentEl = root as unknown as HTMLElement;
+        try {
+            modal.onOpen(); await flushPromises();
+            expect(allText(root)).toContain('Convert the image to JPEG');
+            expect(getElementByClass(root, 'pa-chat-image__preview').disabled).toBe(false);
+            expect(allText(root)).not.toContain('original format is unverified');
+        } finally { modal.onClose(); await service.dispose(); }
     });
 
     it.each(['success', 'source_missing', 'open_failed'] as const)(
@@ -1546,7 +1582,7 @@ describe('LLMView turn lifecycle', () => {
                 if (outcome === 'open_failed') throw new Error('workspace unavailable');
                 return new Promise<void>((resolve) => { finishOpen = resolve; });
             });
-            const modal = new ImageAttachmentDetailModal({ workspace: { openLinkText } } as unknown as App, image, service, false);
+            const modal = new ImageAttachmentDetailModal({ workspace: { openLinkText } } as unknown as App, image, service);
             modal.contentEl = root as unknown as HTMLElement;
             const close = jest.spyOn(modal, 'close').mockImplementation(() => modal.onClose());
             const revokeUrl = jest.spyOn(URL, 'revokeObjectURL');
@@ -1939,12 +1975,39 @@ describe('LLMView turn lifecycle', () => {
             choose(); deliver();
             for (let i = 0; i < 5; i++) await flushPromises();
             expect(importFile).toHaveBeenCalledTimes(1);
-            expect(importFile.mock.calls[0][1]?.acquisition).toBe(source === 'Choose photos' ? 'unverified_import' : 'original_file');
+            expect(importFile.mock.calls[0][1]?.acquisition).toBe('original_file');
             expect(getButtonsByText(context.containerEl, 'Add original from Files')).toHaveLength(0);
         } finally {
             sourceOpen.mockRestore(); Object.assign(Platform, { isMobileApp: wasMobile });
             await context.view.onClose(); await service.dispose();
         }
+    });
+
+    it('limits image management to imported files still in chat directories', async () => {
+        const context = createView();
+        const { service } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        const asset = { id: 'chat', originalPath: 'assets/pa-images/chat.jpg', importDirectory: 'assets/pa-images',
+            source: 'imported', byteLength: 3, state: 'available', owners: [],
+            originalHash: 'a'.repeat(64), detectedMime: 'image/jpeg', acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', createdAt: 1 };
+        jest.spyOn(service, 'listAssets').mockResolvedValue([
+            asset,
+            { ...asset, id: 'promoted', source: 'vault_reference', originalPath: 'assets/promoted.jpg' },
+            { ...asset, id: 'external-move', originalPath: 'assets/relocated.jpg' },
+            { ...asset, id: 'vault-reference', source: 'vault_reference', originalPath: 'assets/pa-images/referenced.jpg' },
+        ] as Awaited<ReturnType<ImageAssetService['listAssets']>>);
+        const modal = new ImageManagementModal(context.app as unknown as App, service);
+        const root = new MockElement('div');
+        modal.contentEl = root as unknown as HTMLElement;
+        try {
+            modal.onOpen(); await flushPromises();
+            const rows = walkAll(root, (element) => element.classList.contains('pa-chat-image-management__item'));
+            expect(rows).toHaveLength(1);
+            expect(allText(rows[0])).toContain('assets/pa-images/chat.jpg');
+            expect(allText(root)).not.toContain('assets/promoted.jpg');
+            expect(allText(root)).not.toContain('assets/relocated.jpg');
+            expect(allText(root)).not.toContain('assets/pa-images/referenced.jpg');
+        } finally { modal.onClose(); await service.dispose(); }
     });
 
     it('makes provider disclosure readable again even when the image registry fails', async () => {
@@ -1958,7 +2021,7 @@ describe('LLMView turn lifecycle', () => {
             expect(walk(help, (element) => element.tagName === 'summary')?.textContent).toBe('Images and your AI provider');
             const paragraphs = walkAll(help, (element) => element.tagName === 'p').map((element) => element.textContent).join('\n');
             expect(paragraphs).toContain('AI provider receives');
-            expect(paragraphs).toContain('HEIC is saved as a JPEG');
+            expect(paragraphs).toContain('Convert HEIC to JPEG before adding it to PA');
             expect(walk(root, (element) => element.getAttribute('role') === 'status')?.textContent).toBeTruthy();
             modal.onClose();
         }
