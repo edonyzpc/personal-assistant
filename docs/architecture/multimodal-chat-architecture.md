@@ -1,11 +1,31 @@
 # Multimodal Chat Architecture
 
 Document status: Current
-Updated: 2026-09-07
+Updated: 2026-09-08
 Work item: B-129
 Authority: 当前图片聊天、文案版本、图文保存及显式风格参考的技术契约。
 Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)
 Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md)
+
+## 图片管理修订与当前实现差异
+
+2026-09-08 用户已确认 [DEC-030 图片管理简化修订](../product/decisions/dec-030-multimodal-chat-image-copywriting.md#2026-09-08-图片管理简化修订)。
+目标行为及验收见 [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)，
+待启动入口见 [Backlog B-129](../backlog.md#下一步可执行)。本页其余章节继续描述当前
+代码，不将目标规则冒充已实现；旧验证不证明新增移动生命周期已通过。
+
+| 责任 | 当前代码事实 | 新契约要求与设计入口 |
+| --- | --- | --- |
+| 输入与原图定义 | `chat-view.ts` 按来源区分 `unverified_import`，在图片详情保留未验证提示；图片来源选择保留 Files，`image-assets.ts` 完整保存收到的字节 | 统一实际交付文件语义，去掉仅因来源产生的补救任务；保留内容身份与异步草稿保护 |
+| HEIC | `image-processor.ts` / `image-macos-converter.ts` 本地解码/转换；导入可能先保留文件再处理 | 所有新输入在资产登记/写文件前拒绝 HEIC，提示先转 JPEG；已收到 JPEG 直接接受；格式检测不能只信后缀/MIME |
+| 保存附件 | `writing-save-action.ts` 为 vault 引用也创建正式副本，HEIC 导出 `note` JPEG | PA 确认保存时迁出聊天专用文件；普通 vault 图片与已经迁出图片直接引用，更新所有受影响定位 |
+| 路径与归属 | `ImageRef` 使用 asset ID/hash；rename 更新 `ImageAsset.originalPath`，但不改变 `source: imported` | 保留内容身份，单独设计迁出后的归属；管理器与删除接口不能继续把正式附件当聊天专用原图 |
+| 兼容与中断恢复 | `SaveReceipt` 冻结 `sourcePath`、`attachmentKind`、`exportPolicy`，已有 `heic_jpeg` 记录；旧恢复面向复制流程 | 在 SDD 设计旧 schema/旧 HEIC 兼容和移动恢复，不能改写旧记录或直接删枚举；源已移动、登记/链接未完成也须可核对恢复 |
+
+本次仅建立产品目标与后续设计入口，不修改运行时代码或迁移存量文件。实施时需
+按真实目标笔记解析附件路径，验证共享引用、并发/冲突、清理范围及普通同步边界；
+不新增手动引用监听或批量旧数据清理。设计待办与验证映射要求集中见
+[Implementation Preparation](../product/specs/pa-multimodal-chat-product-spec.md#implementation-preparation)。
 
 ## 模块与数据流
 
@@ -33,6 +53,10 @@ flowchart LR
 | 来源隔离与风格 | [chat admission](../../src/pa/chat-memory-admission.ts)、[note provenance](../../src/chat/writing-note-provenance.ts)、[style service](../../src/chat/writing-style-service.ts)、[projection](../../src/pa/memory-use-projection.ts) |
 
 ## 原件与处理副本
+
+- Chat 图片按钮通过 `ImageSourcePickerModal` 统一选择来源；移动端保留照片与
+  Files 两条采集路径，桌面保留 Files，另可选择已有 vault 图片。原图管理入口
+  位于设置的“功能 → 聊天图片”，不再占用 Chat 更多菜单。
 
 - 外部文件先持久化 `preserving` 登记，再通过 `Vault.createBinary` 写原字节，
   核对 hash 后标为 `available`。已有 vault 图片登记引用，不重复导入。
