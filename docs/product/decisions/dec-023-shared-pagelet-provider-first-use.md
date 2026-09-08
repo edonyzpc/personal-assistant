@@ -70,6 +70,11 @@ runtime：用户请求 `last7` 不代表实际会发送多份来源，而一个�
 
 ## Decision
 
+2026-09-08 scoped successor：[DEC-033](./dec-033-simple-settings-and-unified-defaults.md)
+仅对其明确撤销的旧设置取代本节的历史 opt-out 保留要求；B-106 实施后按新规则
+运行，不保留旧关闭值分支。仍有效的功能控制、provider 透明说明、Data Boundary
+和高风险确认继续适用；此说明不是运行时已完成的声明。
+
 选择 Option A，并规定：
 
 1. 当 Pagelet 与 AI provider 已配置、对应 capability 开启、来源通过 Data Boundary 且运行

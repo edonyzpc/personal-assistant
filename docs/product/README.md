@@ -43,6 +43,7 @@
 
 ## Shared Product Infrastructure
 
+- [Simple Settings](./specs/pa-simple-settings-product-spec.md)
 - [Active Vault Indexer](./specs/pa-active-vault-indexer-product-spec.md)
 - [Data Boundary](./specs/pa-data-boundary-product-spec.md)
 - [Eval Harness](./specs/pa-eval-harness-product-spec.md)

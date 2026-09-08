@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-08-09
+Updated: 2026-09-08
 
 ## Status
 
@@ -17,6 +17,13 @@ contains detailed finding-level status, but its original P0/P1 sections are
 historical.
 
 ## Current Summary
+
+Settings 简化的产品目标和旧选项失效规则见
+[DEC-033](../product/decisions/dec-033-simple-settings-and-unified-defaults.md) 与
+[B-106 Product Spec](../product/specs/pa-simple-settings-product-spec.md)。这是已确定的
+产品契约，运行时仍以当前源码为准；实施入口为
+[B-106 Feature Home](../development/active/simple-settings/README.md)，执行状态只看
+[Tracker](../development/active/simple-settings/tracker.md)。
 
 Highest-risk Settings issues are no longer open:
 

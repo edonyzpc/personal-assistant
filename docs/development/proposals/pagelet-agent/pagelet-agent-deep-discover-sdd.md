@@ -329,6 +329,11 @@ timing，不记录 path 或正文。
 
 ## 10. T5 — Cost and Settings
 
+2026-09-08 scoped successor：[DEC-033](../../../product/decisions/dec-033-simple-settings-and-unified-defaults.md)
+确定在 B-106 实施时撤销原 Deep Discover 总开关语义及旧 `preloadEnabled` 继承，
+新旧用户统一按新规则运行。下述设置迁移描述保留为 B-123 已交付行为的来源，
+不再约束 B-106；内部预算与来源/权限边界继续有效，本文不宣称新策略已经实现。
+
 - `36/day` 定义为“通过 cache/currentness/admission 后实际启动的 Deep Discover
   run”；cache hit、stale、boundary deny、provider unavailable 与 quiet local skip
   不计数。

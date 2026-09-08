@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-06
+Updated: 2026-09-08
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-033 | Simple settings and unified defaults | Accepted | B-106 必要机制内置；长期提取与习惯学习独立主动开启；撤销的旧开关无效，新旧用户按同一规则运行 | [Record](./dec-033-simple-settings-and-unified-defaults.md) |
 | DEC-001 | PA Agent builtin MCP-style WebSearch adapter | Accepted | PA Agent network-read capability | [Record](./pa-agent-mcp-adapter-decision.md) |
 | DEC-003 | Preserve the dual product line | Accepted | Product boundary and investment direction | [Record](./dec-003-dual-product-line.md) |
 | DEC-005 | Transparent and reversible Memory governance | Accepted | Memory trust and permission model | [Record](./dec-005-memory-governance.md) |

@@ -2,7 +2,7 @@
 
 Decision ID: DEC-005
 Status: Accepted
-Updated: 2026-07-12
+Updated: 2026-09-08
 Authority: Memory 自动提取、使用与用户控制的产品信任模型。
 Work item: Historical Memory governance
 
@@ -20,7 +20,11 @@ Work item: Historical Memory governance
 
 ## Decision
 
-Memory 默认自动提取；用可见、可纠正、可撤销、source-backed 和 effect/risk 分级补偿信任。冲突、敏感推断、跨 vault/global effect、vault mutation 与外部 action 继续要求与后果相匹配的披露或授权。
+用户主动开启长期记忆提取后，Memory 按既有 effect/risk 契约自动处理；用可见、可纠正、可撤销、source-backed 和 effect/risk 分级补偿信任。冲突、敏感推断、跨 vault/global effect、vault mutation 与外部 action 继续要求与后果相匹配的披露或授权。
+
+2026-09-08 scoped amendment：[DEC-033](./dec-033-simple-settings-and-unified-defaults.md)
+明确长期提取默认关闭、独立主动开启的前提，取代此前笼统的“默认自动提取”措辞；
+不增加逐条确认，不改变 DEC-028 的笔记 Memory 首次准备路径或已有记录治理能力。
 
 ## Consequences
 
