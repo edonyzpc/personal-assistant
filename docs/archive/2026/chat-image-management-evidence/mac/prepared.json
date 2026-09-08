@@ -1,0 +1,115 @@
+{
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "8c22f1ba514870fd74c0e8286e415cd6ab323b5a411c73f0f25bc31af4670039",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-08T15:05:28.825Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "original": {
+    "activeConversation": "58ca9f39-808e-4a8c-aba7-4b0c6213d034",
+    "activeNote": "pagelet-smoke-golden.md",
+    "attachmentFolderPath": "/",
+    "fontSize": 16,
+    "language": null
+  },
+  "conversationId": "b129_mac_20260908",
+  "versionId": "writing_2d3f6a6cc3066a8067cd055c92ad7e1628ec2f061e479bd9",
+  "imports": [
+    {
+      "asset": {
+        "id": "img_db0465ca09824c80a0195571633e24fa",
+        "source": "imported",
+        "originalPath": "attachments/pa-images/img_db0465ca09824c80a0195571633e24fa.jpg",
+        "originalHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+        "byteLength": 1809,
+        "detectedMime": "image/jpeg",
+        "acquisition": "original_file",
+        "state": "available",
+        "anchorPath": "PA Chat.md",
+        "anchorKind": "logical_root",
+        "createdAt": 1788879949005,
+        "owners": [],
+        "importDirectory": "attachments/pa-images"
+      },
+      "ref": {
+        "assetId": "img_db0465ca09824c80a0195571633e24fa",
+        "contentHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37"
+      },
+      "sync": {
+        "directory": "attachments/pa-images",
+        "obsidianSync": "needs_user_setup",
+        "git": "needs_user_setup",
+        "iCloud": "unknown",
+        "gitignoreRule": "/attachments/pa-images/",
+        "gitTracked": "unknown",
+        "previouslyUploaded": "unknown",
+        "noticeDismissed": false,
+        "noticeRequired": true
+      }
+    },
+    {
+      "asset": {
+        "id": "img_ec954f3460e24c4db677daa5f920b074",
+        "source": "imported",
+        "originalPath": "attachments/pa-images/img_ec954f3460e24c4db677daa5f920b074.png",
+        "originalHash": "514f99d3f78b70de614342034d6f4a5b2031d550b120db026f2dbca2027cd17e",
+        "byteLength": 608,
+        "detectedMime": "image/png",
+        "acquisition": "original_file",
+        "state": "available",
+        "anchorPath": "PA Chat.md",
+        "anchorKind": "logical_root",
+        "createdAt": 1788879949012,
+        "owners": [],
+        "importDirectory": "attachments/pa-images"
+      },
+      "ref": {
+        "assetId": "img_ec954f3460e24c4db677daa5f920b074",
+        "contentHash": "514f99d3f78b70de614342034d6f4a5b2031d550b120db026f2dbca2027cd17e"
+      },
+      "sync": {
+        "directory": "attachments/pa-images",
+        "obsidianSync": "needs_user_setup",
+        "git": "needs_user_setup",
+        "iCloud": "unknown",
+        "gitignoreRule": "/attachments/pa-images/",
+        "gitTracked": "unknown",
+        "previouslyUploaded": "unknown",
+        "noticeDismissed": true,
+        "noticeRequired": false
+      }
+    }
+  ],
+  "images": [
+    {
+      "ref": {
+        "assetId": "img_db0465ca09824c80a0195571633e24fa",
+        "contentHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37"
+      },
+      "ordinal": 1,
+      "label": "selected.jpg"
+    },
+    {
+      "ref": {
+        "assetId": "img_ec954f3460e24c4db677daa5f920b074",
+        "contentHash": "514f99d3f78b70de614342034d6f4a5b2031d550b120db026f2dbca2027cd17e"
+      },
+      "ordinal": 2,
+      "label": "unselected.png"
+    }
+  ],
+  "heic": {
+    "error": "ImageProcessingError: image_processing:heic-unsupported",
+    "noAsset": true,
+    "noFile": true
+  },
+  "preview": {
+    "unmoved": true,
+    "noNote": true
+  }
+}

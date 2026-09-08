@@ -4,9 +4,9 @@ import type { ChatHistoryStore } from './chat-history-store';
 import { ImageProcessor, IMAGE_POLICY, imagePolicyFingerprint, PROCESSOR_VERSION,
     type ProcessedImage, type ProcessImageOptions } from './image-processor';
 import { imageSourceHash, checkImageOperation } from './image-policy';
-import { inspectImage } from './image-format';
+import { assertNewChatImageSupported, inspectImage } from './image-format';
 import { assertImageDeletionPath } from './image-file-safety';
-import { cloneImageRef, cloneImageVariant, validateImagePath, type ImageAcquisition, type ImageAsset, type ImagePurpose,
+import { cloneImageRef, cloneImageVariant, isChatImageAsset, validateImagePath, type ImageAcquisition, type ImageAsset, type ImagePurpose,
     type ImageRef, type ImageSyncReceipt, type ImageVariantLease, type ImageVariantRecord } from './image-types';
 
 export type { ImageAsset, ImageRef, ImageVariantLease } from './image-types';
@@ -29,6 +29,14 @@ export interface ImportImageOptions {
 }
 export interface ImportedImage { asset: ImageAsset; ref: ImageRef; sync: ImageSyncReceipt; }
 export interface OriginalImage { asset: ImageAsset; bytes: ArrayBuffer; }
+interface ImagePromotion {
+    operationId: string;
+    sourcePath: string;
+    targetPath: string;
+    contentHash: string;
+    byteLength: number;
+    state: 'started' | 'completed';
+}
 export class ImageAssetError extends Error {
     constructor(public readonly code: string, public readonly asset?: ImageAsset) {
         super(`image_assets:${code}`); this.name = 'ImageAssetError';
@@ -72,11 +80,12 @@ export class ImageAssetService {
             // separate, so an acquired unsupported original remains recoverable.
             const bytes = await file.arrayBuffer();
             if (bytes.byteLength > IMAGE_POLICY.maxOriginalBytes) throw new ImageAssetError('original_byte_limit');
+            assertNewChatImageSupported(bytes);
             checkImageOperation(options.signal);
             const hash = await imageSourceHash(bytes);
             let asset: ImageAsset | undefined;
             for (const candidate of await this.store.listImageAssets()) {
-                if (candidate.source !== 'imported' || candidate.originalHash !== hash
+                if ((candidate.source !== 'imported' && !candidate.importDirectory) || candidate.originalHash !== hash
                     || candidate.anchorPath !== anchorPath || candidate.anchorKind !== anchorKind) continue;
                 try {
                     const current = this.file(candidate.originalPath);
@@ -99,7 +108,7 @@ export class ImageAssetService {
                 let detectedMime = 'application/octet-stream';
                 try { detectedMime = inspectImage(bytes).mime; } catch { /* Preserve unsupported originals before processing. */ }
                 asset = { id, source: 'imported', originalPath, originalHash: hash, byteLength: bytes.byteLength,
-                    detectedMime, acquisition: options.acquisition, state: 'preserving', anchorPath, anchorKind,
+                    detectedMime, acquisition: 'original_file', state: 'preserving', anchorPath, anchorKind,
                     createdAt: Date.now(), owners: [], importDirectory: directory };
                 // Failure here must never create an unregistered source file.
                 await this.store.putImageAsset(asset);
@@ -153,7 +162,9 @@ export class ImageAssetService {
             const anchorFile = this.checkAnchor(anchorPath, anchorKind);
             const file = this.file(path);
             if (!file) throw new ImageAssetError('source_missing');
-            const bytes = await this.readFileBytes(file), hash = await imageSourceHash(bytes);
+            const bytes = await this.readFileBytes(file);
+            assertNewChatImageSupported(bytes);
+            const hash = await imageSourceHash(bytes);
             checkImageOperation(options.signal);
             this.checkAnchor(anchorPath, anchorKind, anchorFile);
             let asset = (await this.store.listImageAssets()).find((a) => a.originalPath === path && a.originalHash === hash
@@ -191,6 +202,13 @@ export class ImageAssetService {
             // match an earlier PA import. Relocation never grants trash rights.
             const asset: ImageAsset = { ...existing, originalPath: path, source: 'vault_reference', state: 'available', recoveryReason: undefined };
             await this.store.putImageAsset(asset); await this.store.clearImageVariants(asset.id);
+            const promotion = await this.promotion(ref);
+            if (promotion) {
+                // Explicit relocation is a new user choice, not proof that an
+                // earlier PA move completed. Keep its evidence off the read path.
+                await this.store.setImageSetting(`promotion-history:${asset.id}:${promotion.operationId}`, promotion);
+                await this.store.setImageSetting(this.promotionKey(ref), null);
+            }
             this.fileRevision++;
             return { asset, ref };
         });
@@ -199,6 +217,7 @@ export class ImageAssetService {
     verify(ref: ImageRef, purpose: ImagePurpose = 'provider'): Promise<{ asset: ImageAsset; isCurrent: () => boolean }> {
         ref = cloneImageRef(ref);
         return this.enqueue(async () => {
+            await this.recoverPromotion(ref);
             const revision = this.fileRevision;
             const { asset } = await this.readVerified(ref, purpose);
             const file = this.file(asset.originalPath), mtime = file?.stat.mtime, size = file?.stat.size;
@@ -208,6 +227,112 @@ export class ImageAssetService {
                 try { this.assertAllowed(asset.originalPath, purpose); return true; } catch { return false; }
             } };
         });
+    }
+
+    /** A durable intent owns recovery across the vault rename and local registry. */
+    promoteToNote(input: ImageRef, options: { sourcePath: string; targetPath: string | (() => Promise<string>); operationId: string; signal?: AbortSignal }): Promise<{ path: string }> {
+        const ref = cloneImageRef(input);
+        options = { ...options };
+        return this.enqueue(async () => {
+            checkImageOperation(options.signal);
+            validateImagePath(options.sourcePath);
+            if (!/^[A-Za-z0-9_-]{1,160}$/.test(options.operationId)) throw new ImageAssetError('promotion_identity_invalid');
+            await this.recoverPromotion(ref);
+            let promotion = await this.promotion(ref);
+            if (promotion?.state === 'completed') {
+                if (promotion.sourcePath !== options.sourcePath) throw new ImageAssetError('source_changed');
+                const current = await this.readVerified(ref, 'note');
+                if (current.asset.originalPath !== promotion.targetPath) throw new ImageAssetError('source_changed');
+                return { path: promotion.targetPath };
+            }
+            if (promotion && (promotion.operationId !== options.operationId || promotion.sourcePath !== options.sourcePath)) {
+                throw new ImageAssetError('promotion_incomplete');
+            }
+            const original = await this.readVerified(ref, 'note');
+            if (original.asset.originalPath !== options.sourcePath || !isChatImageAsset(original.asset)) throw new ImageAssetError('source_changed');
+            assertNewChatImageSupported(original.bytes);
+            if (!promotion) {
+                const targetPath = validateImagePath(typeof options.targetPath === 'function' ? await options.targetPath() : options.targetPath);
+                if (targetPath.split('/').slice(0, -1).includes('pa-images')) throw new ImageAssetError('path_conflict');
+                this.assertAllowed(targetPath, 'note');
+                if (this.app.vault.getAbstractFileByPath(targetPath)) throw new ImageAssetError('path_conflict');
+                promotion = { operationId: options.operationId, sourcePath: options.sourcePath, targetPath,
+                    contentHash: ref.contentHash, byteLength: original.bytes.byteLength, state: 'started' };
+            }
+            // Every alias gets recovery evidence before any source can disappear.
+            for (const asset of await this.store.listImageAssets()) {
+                if (asset.originalPath === promotion.sourcePath && asset.originalHash === ref.contentHash) {
+                    await this.store.setImageSetting(this.promotionKey(this.ref(asset)), promotion);
+                }
+            }
+            checkImageOperation(options.signal);
+            this.assertAllowed(promotion.sourcePath, 'note'); this.assertAllowed(promotion.targetPath, 'note');
+            const parent = promotion.targetPath.split('/').slice(0, -1).join('/');
+            if (parent) await this.ensureDirectory(parent);
+            const source = this.file(promotion.sourcePath);
+            const revision = this.fileRevision, mtime = source?.stat.mtime, size = source?.stat.size;
+            if (!source || await imageSourceHash(await this.readFileBytes(source)) !== promotion.contentHash) throw new ImageAssetError('source_changed');
+            checkImageOperation(options.signal);
+            this.assertAllowed(promotion.sourcePath, 'note'); this.assertAllowed(promotion.targetPath, 'note');
+            if (this.fileRevision !== revision || source.stat.mtime !== mtime || source.stat.size !== size
+                || source.path !== promotion.sourcePath || this.file(promotion.sourcePath) !== source
+                || this.app.vault.getAbstractFileByPath(promotion.targetPath)) throw new ImageAssetError('path_conflict');
+            await this.app.fileManager.renameFile(source, promotion.targetPath);
+            // Finish registry admission even if cancellation arrived during rename.
+            await this.recoverPromotion(ref);
+            const completed = await this.promotion(ref);
+            if (completed?.state !== 'completed') throw new ImageAssetError('promotion_incomplete');
+            return { path: completed.targetPath };
+        });
+    }
+
+    private promotionKey(ref: ImageRef): string { return `promotion:v1:${ref.assetId}`; }
+
+    private async promotion(ref: ImageRef): Promise<ImagePromotion | null> {
+        const value = await this.store.getImageSetting<ImagePromotion>(this.promotionKey(ref));
+        if (!value) return null;
+        if (!['started', 'completed'].includes(value.state) || value.contentHash !== ref.contentHash
+            || !Number.isSafeInteger(value.byteLength) || value.byteLength < 0
+            || typeof value.operationId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(value.operationId)) {
+            throw new ImageAssetError('promotion_invalid');
+        }
+        validateImagePath(value.sourcePath); validateImagePath(value.targetPath);
+        if (value.sourcePath === value.targetPath || value.targetPath.split('/').slice(0, -1).includes('pa-images')) throw new ImageAssetError('promotion_invalid');
+        return value;
+    }
+
+    private async recoverPromotion(ref: ImageRef): Promise<void> {
+        const promotion = await this.promotion(ref);
+        if (!promotion || promotion.state === 'completed') return;
+        this.assertAllowed(promotion.targetPath, 'note');
+        const source = this.app.vault.getAbstractFileByPath(promotion.sourcePath);
+        const target = this.app.vault.getAbstractFileByPath(promotion.targetPath);
+        if (source) {
+            this.assertAllowed(promotion.sourcePath, 'note');
+            if (target) throw new ImageAssetError('path_conflict');
+            return; // Reading does not start a pending user-authorized move.
+        }
+        if (!(target instanceof TFile)) throw new ImageAssetError('source_missing');
+        const revision = this.fileRevision, mtime = target.stat.mtime, size = target.stat.size;
+        const bytes = await this.readFileBytes(target);
+        if (bytes.byteLength !== promotion.byteLength || await imageSourceHash(bytes) !== promotion.contentHash
+            || this.fileRevision !== revision || target.stat.mtime !== mtime || target.stat.size !== size
+            || target.path !== promotion.targetPath || this.file(promotion.targetPath) !== target) throw new ImageAssetError('source_changed');
+        this.assertAllowed(promotion.targetPath, 'note');
+        const aliases = (await this.store.listImageAssets()).filter((asset) => asset.originalHash === promotion.contentHash
+            && [promotion.sourcePath, promotion.targetPath].includes(asset.originalPath));
+        for (const asset of aliases) {
+            await this.store.putImageAsset({ ...asset, originalPath: promotion.targetPath, source: 'vault_reference',
+                state: 'available', recoveryReason: undefined });
+        }
+        // Mark complete only after all shared references have been repaired.
+        for (const asset of aliases) {
+            const previous = await this.promotion(this.ref(asset));
+            if (previous?.operationId === promotion.operationId) {
+                await this.store.setImageSetting(this.promotionKey(this.ref(asset)), { ...promotion, state: 'completed' });
+            }
+        }
+        this.fileRevision++;
     }
 
     resolveVariant(input: ImageRef, purpose: ImagePurpose, options: { signal?: AbortSignal } = {}): Promise<ImageVariantLease> {
@@ -243,6 +368,7 @@ export class ImageAssetService {
                 options.signal?.addEventListener('abort', abort, { once: true });
                 if (options.signal?.aborted) abort();
                 try {
+                    assertNewChatImageSupported(original.bytes);
                     const processed = await this.processor.process(original.bytes, { purpose, signal: controller.signal,
                         originalPath: original.asset.originalPath, isCurrent: () => !this.disposed });
                     checkImageOperation(controller.signal);
@@ -265,7 +391,15 @@ export class ImageAssetService {
         });
     }
 
-    listAssets(): Promise<ImageAsset[]> { return this.enqueue(() => this.store.listImageAssets()); }
+    listAssets(): Promise<ImageAsset[]> {
+        return this.enqueue(async () => {
+            for (const asset of await this.store.listImageAssets()) {
+                try { await this.recoverPromotion(this.ref(asset)); }
+                catch { /* A single unavailable source must not hide other registered images. */ }
+            }
+            return this.store.listImageAssets();
+        });
+    }
     recoverPending(): Promise<ImageAsset[]> {
         return this.enqueue(async () => {
             const recovered: ImageAsset[] = [];
@@ -325,7 +459,8 @@ export class ImageAssetService {
             const removed: string[] = [];
             for (const selected of selections) {
                 const { asset } = await this.readVerified(selected.ref, 'note');
-                if (asset.source !== 'imported' || selected.path !== asset.originalPath) throw new ImageAssetError('cleanup_selection_changed');
+                if (asset.source !== 'imported' || !isChatImageAsset(asset) || selected.path !== asset.originalPath) throw new ImageAssetError('cleanup_selection_changed');
+                if ((await this.promotion(selected.ref))?.state === 'started') throw new ImageAssetError('promotion_incomplete');
                 await assertImageDeletionPath(this.app, asset.originalPath);
                 // Recheck immediately before trash; never infer absence of
                 // external Markdown references from our internal owner list.
@@ -361,7 +496,9 @@ export class ImageAssetService {
         return run;
     }
     private async readVerified(input: ImageRef, purpose: ImagePurpose): Promise<OriginalImage> {
-        const ref = cloneImageRef(input), asset = await this.store.getImageAsset(ref.assetId);
+        const ref = cloneImageRef(input);
+        await this.recoverPromotion(ref);
+        const asset = await this.store.getImageAsset(ref.assetId);
         if (!asset || asset.originalHash !== ref.contentHash || asset.state === 'preserving') throw new ImageAssetError('source_unavailable', asset ?? undefined);
         this.assertAllowed(asset.originalPath, purpose);
         const file = this.file(asset.originalPath);
@@ -468,7 +605,11 @@ export class ImageAssetService {
             if (kind === 'rename' && oldPath) {
                 const move = (value: string): string => value === oldPath ? path : value.startsWith(oldPath + '/') ? path + value.slice(oldPath.length) : value;
                 const originalPath = move(asset.originalPath), anchorPath = asset.anchorKind === 'existing_note' ? move(asset.anchorPath) : asset.anchorPath;
-                if (originalPath !== asset.originalPath || anchorPath !== asset.anchorPath) await this.store.putImageAsset({ ...asset, originalPath, anchorPath });
+                if (originalPath !== asset.originalPath || anchorPath !== asset.anchorPath) {
+                    const next = { ...asset, originalPath, anchorPath };
+                    if (!isChatImageAsset(next)) next.source = 'vault_reference';
+                    await this.store.putImageAsset(next);
+                }
             } else if ((asset.originalPath === path || asset.originalPath.startsWith(path + '/')) && asset.state !== 'preserving') {
                 await this.store.putImageAsset({ ...asset, state: kind === 'delete' ? 'missing' : 'changed' });
             }

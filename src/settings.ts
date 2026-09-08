@@ -6,6 +6,7 @@ import { createSourceScopeSettingState, renderSourceScopeSetting } from "./setti
 
 import type { AIProviderConfigurationPatch, PluginManager } from "./plugin"
 import type { AISetupResult } from "./chat/ChatHost";
+import { ImageManagementModal } from "./chat/image-management-modal";
 import { getWritingSceneDisplayValues, normalizeWritingScene } from './chat/writing-style-service';
 import type { WritingStyleScene } from './pa/writing-style';
 import { DEFAULT_NOTE_TEMPLATE } from "./note-template";
@@ -1215,6 +1216,7 @@ export class SettingTab extends PluginSettingTab {
                 (p) => this.renderAISection(p),
             ] },
             { id: "features", labelKey: "plugin.settings.group.features", sections: [
+                (p) => this.renderChatImagesSection(p),
                 (p) => {
                     this.pageletPreferencesContainer = p.createDiv();
                     this.renderPageletSection(this.pageletPreferencesContainer);
@@ -2182,6 +2184,23 @@ export class SettingTab extends PluginSettingTab {
                         this.debouncedSave();
                     })
             });
+    }
+
+    private renderChatImagesSection(parentEl: HTMLElement): void {
+        parentEl.createEl("h2", { text: this.t("plugin.settings.chat.images.name") });
+        const section = parentEl.createDiv({ cls: "pa-chat-images-settings" });
+        new Setting(section)
+            .setDesc(this.t("plugin.settings.chat.images.description"))
+            .addButton(button => button
+                .setButtonText(this.t("plugin.chat.images.manage"))
+                .onClick(() => {
+                    const images = this.plugin.imageAssetService;
+                    if (!images) {
+                        new Notice(this.t("plugin.chat.images.operationFailed"));
+                        return;
+                    }
+                    new ImageManagementModal(this.app, images).open();
+                }));
     }
 
     private renderQuickCaptureSection(parentEl: HTMLElement): void {

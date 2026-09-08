@@ -1,0 +1,155 @@
+{
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "8c22f1ba514870fd74c0e8286e415cd6ab323b5a411c73f0f25bc31af4670039",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-08T15:05:49.240Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "uiReceipt": {
+    "id": "save_188dbb18218e44718d6dde5bc5921724",
+    "operationId": "save_188dbb18218e44718d6dde5bc5921724",
+    "writingVersionId": "writing_2d3f6a6cc3066a8067cd055c92ad7e1628ec2f061e479bd9",
+    "textHash": "da156afd5a9d70d489329ebab37880c91f4be8a4b5284159f45c592c31215d9a",
+    "targetNotePath": "B129 Mac 20260908/B129 Mac saved 20260908.md",
+    "origin": "user_edited",
+    "createdAt": 1788879995525,
+    "attachments": [
+      {
+        "ref": {
+          "assetId": "img_db0465ca09824c80a0195571633e24fa",
+          "contentHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37"
+        },
+        "sourcePath": "attachments/pa-images/img_db0465ca09824c80a0195571633e24fa.jpg",
+        "sourceName": "selected.jpg",
+        "attachmentKind": "original",
+        "mime": "image/jpeg",
+        "transfer": "move",
+        "filename": "pa-8d6dde5bc5921724-1.jpg",
+        "outputHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+        "exportPolicy": "original:v1",
+        "byteLength": 1809,
+        "plannedPath": "attachments/pa-8d6dde5bc5921724-1.jpg",
+        "writtenHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+        "state": "written"
+      }
+    ],
+    "initialNoteHash": "0f078394b5f47e90567cb10e99460710a277a8c349c87e9f98bfde5d5491ce4b",
+    "noteContentHash": "27c95fbb96649039124c2289a5faa2efb35dd7c85ac949e9af35e1f527aca8a1",
+    "finalNoteHash": "27c95fbb96649039124c2289a5faa2efb35dd7c85ac949e9af35e1f527aca8a1",
+    "noteState": "completed",
+    "state": "completed"
+  },
+  "secondReceipt": {
+    "id": "save_be56d7c97e144485b49f5dfac641f296",
+    "operationId": "save_be56d7c97e144485b49f5dfac641f296",
+    "writingVersionId": "writing_2d3f6a6cc3066a8067cd055c92ad7e1628ec2f061e479bd9",
+    "textHash": "da156afd5a9d70d489329ebab37880c91f4be8a4b5284159f45c592c31215d9a",
+    "targetNotePath": "B129 Mac 20260908/Reused.md",
+    "origin": "user_edited",
+    "createdAt": 1788880063796,
+    "attachments": [
+      {
+        "ref": {
+          "assetId": "img_db0465ca09824c80a0195571633e24fa",
+          "contentHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37"
+        },
+        "sourcePath": "attachments/pa-8d6dde5bc5921724-1.jpg",
+        "sourceName": "selected.jpg",
+        "attachmentKind": "original",
+        "mime": "image/jpeg",
+        "transfer": "reference",
+        "filename": "pa-b49f5dfac641f296-1.jpg",
+        "outputHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+        "exportPolicy": "original:v1",
+        "byteLength": 1809,
+        "state": "written",
+        "plannedPath": "attachments/pa-8d6dde5bc5921724-1.jpg",
+        "writtenHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37"
+      }
+    ],
+    "initialNoteHash": "e6edeb2c7ce8584246ff037fe6d4c7c9b3edec566da7d3e8a152907b79d0cbae",
+    "noteContentHash": "f163dbc7f1d73e9d253cdfcd1ce47474da1267342b908ea61cb780a3f8779ad4",
+    "noteState": "completed",
+    "state": "completed",
+    "finalNoteHash": "f163dbc7f1d73e9d253cdfcd1ce47474da1267342b908ea61cb780a3f8779ad4"
+  },
+  "chosen": {
+    "id": "img_db0465ca09824c80a0195571633e24fa",
+    "originalHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+    "source": "vault_reference",
+    "originalPath": "attachments/pa-8d6dde5bc5921724-1.jpg",
+    "byteLength": 1809,
+    "detectedMime": "image/jpeg",
+    "acquisition": "original_file",
+    "state": "available",
+    "anchorPath": "PA Chat.md",
+    "anchorKind": "logical_root",
+    "createdAt": 1788879949005,
+    "owners": [
+      {
+        "kind": "writing",
+        "id": "writing_2d3f6a6cc3066a8067cd055c92ad7e1628ec2f061e479bd9"
+      },
+      {
+        "kind": "turn",
+        "id": "[\"b129_mac_20260908\",0]"
+      },
+      {
+        "kind": "save",
+        "id": "save_188dbb18218e44718d6dde5bc5921724"
+      }
+    ],
+    "importDirectory": "attachments/pa-images"
+  },
+  "other": {
+    "id": "img_ec954f3460e24c4db677daa5f920b074",
+    "originalHash": "514f99d3f78b70de614342034d6f4a5b2031d550b120db026f2dbca2027cd17e",
+    "source": "imported",
+    "originalPath": "attachments/pa-images/img_ec954f3460e24c4db677daa5f920b074.png",
+    "byteLength": 608,
+    "detectedMime": "image/png",
+    "acquisition": "original_file",
+    "state": "available",
+    "anchorPath": "PA Chat.md",
+    "anchorKind": "logical_root",
+    "createdAt": 1788879949012,
+    "owners": [
+      {
+        "kind": "writing",
+        "id": "writing_2d3f6a6cc3066a8067cd055c92ad7e1628ec2f061e479bd9"
+      },
+      {
+        "kind": "turn",
+        "id": "[\"b129_mac_20260908\",0]"
+      }
+    ],
+    "importDirectory": "attachments/pa-images"
+  },
+  "selectedMoved": true,
+  "unselectedUnmoved": true,
+  "bytesUnchanged": true,
+  "reused": true,
+  "cleanup": {
+    "error": "ImageAssetError: image_assets:cleanup_selection_changed",
+    "stillPresent": true
+  },
+  "renderedImages": [
+    {
+      "alt": "selected.jpg",
+      "complete": true,
+      "width": 320,
+      "height": 180
+    },
+    {
+      "alt": "unselected.png",
+      "complete": true,
+      "width": 320,
+      "height": 180
+    }
+  ]
+}

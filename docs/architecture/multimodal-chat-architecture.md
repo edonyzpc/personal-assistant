@@ -1,11 +1,42 @@
 # Multimodal Chat Architecture
 
 Document status: Current
-Updated: 2026-09-07
+Updated: 2026-09-09
 Work item: B-129
 Authority: 当前图片聊天、文案版本、图文保存及显式风格参考的技术契约。
 Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)
-Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md)
+Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md) / [图片管理修订验证](../archive/2026/chat-image-management-validation.md)
+
+## 图片管理与保存恢复
+
+2026-09-08 用户已确认 [DEC-030 图片管理简化修订](../product/decisions/dec-030-multimodal-chat-image-copywriting.md#2026-09-08-图片管理简化修订)。
+产品行为及验收见 [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)。
+以下是当前源码的技术契约；同构建 Mac 与 iPhone 输入证据、未验证范围见
+[图片管理修订验证](../archive/2026/chat-image-management-validation.md)。
+
+| 责任 | 当前代码事实 | 保护边界 |
+| --- | --- | --- |
+| 输入与原图定义 | 所有入口使用实际交付文件语义，旧 acquisition 枚举可读但不触发警告 | 内容身份及异步草稿保护不变 |
+| HEIC | 导入和库内新引用在登记前按容器字节拒绝，处理器无 HEIC 转换调用 | 旧可读缓存保留；缺缓存提示 JPEG，不转换 |
+| 保存附件 | 新 receipt 的 transfer 区分 move/reference，缺省为旧 copy | PA 保存迁出聊天图片，普通附件直接复用 |
+| 路径与归属 | 迁出更新同源资产并转为 vault_reference，保留导入来源证据 | 管理和删除同时核验来源与当前聊天目录 |
+| 兼容与中断恢复 | 图片服务持久意图先于 rename，保存记录冻结返回的实际路径 | 旧 HEIC 已写 JPEG 可恢复；缺输出保留记录并拒绝转换 |
+
+图片服务在自身队列内串行迁出；保存服务负责冻结文字、所选图片和结果记录。
+`promoteToNote` 先持久化 source/target/hash/operation 意图，再核对源 hash/size、
+目标不存在及双方 Data Boundary，最后移动文件。保存 receipt 冻结返回的实际路径；
+失败重试使用同一 operationId。源和目标同时存在就是冲突，即使内容 hash 相同也不覆盖。
+源已消失而目标内容正确时，仅凭已有移动意图认领，不把任意同 hash 外部文件视为成功。
+
+同路径资产一起更新为 `vault_reference`，保留 importDirectory 作为来源证据。
+目标解析延迟到首次迁出；多个预览通过 PA 迁出记录复用实际位置，后续附件设置改变
+不再搬动普通附件。读取与核验先恢复相关意图；单项失败不隐藏管理列表其他资产，
+pending 意图阻止清理。显式重新定位保留旧意图为历史并退出当前恢复路径，不能伪造旧操作完成。
+
+旧 receipt 缺省 transfer 继续按旧 copy 解释，冻结字段不得改写。旧 HEIC 已有正式 JPEG
+时按冻结 hash 恢复；缺输出则保留原件、文字和记录，拒绝再转换。旧可读缓存可以继续使用，
+缺缓存不产生新转换。回退保留已迁出的普通附件；旧版本不能理解新 receipt 时安全拒绝恢复。
+不批量改写存量数据，不监听手动笔记引用，不自动搬回文件；文件与本地登记不是原子事务。
 
 ## 模块与数据流
 
@@ -27,12 +58,16 @@ flowchart LR
 | --- | --- |
 | 草稿、历史与 UI 接线 | [ChatView](../../src/chat/chat-view.ts)、[composer](../../src/chat/composer-draft.ts)、[history store](../../src/chat/chat-history-store.ts) |
 | 原件、引用、同步说明与缓存 | [ImageAssetService](../../src/chat/image-assets.ts)、[image types](../../src/chat/image-types.ts) |
-| 格式、转换与资源限制 | [processor](../../src/chat/image-processor.ts)、[format](../../src/chat/image-format.ts)、[policy](../../src/chat/image-policy.ts)、[macOS converter](../../src/chat/image-macos-converter.ts) |
+| 格式与资源限制 | [processor](../../src/chat/image-processor.ts)、[format](../../src/chat/image-format.ts)、[policy](../../src/chat/image-policy.ts)；旧 macOS converter 无生产调用 |
 | 模型能力及最终图片请求 | [capability](../../src/ai-services/image-capability.ts)、[image request](../../src/ai-services/image-request.ts)、[runtime](../../src/ai-services/pa-agent-runtime.ts) |
 | 文案协议、版本与保存 | [output](../../src/ai-services/writing-output.ts)、[bridge](../../src/ai-services/pa-agent-stream-bridge.ts)、[versions](../../src/chat/writing-versions.ts)、[save action](../../src/chat/writing-save-action.ts) |
 | 来源隔离与风格 | [chat admission](../../src/pa/chat-memory-admission.ts)、[note provenance](../../src/chat/writing-note-provenance.ts)、[style service](../../src/chat/writing-style-service.ts)、[projection](../../src/pa/memory-use-projection.ts) |
 
 ## 原件与处理副本
+
+- Chat 图片按钮通过 `ImageSourcePickerModal` 统一选择来源；移动端保留照片与
+  Files 两条采集路径，桌面保留 Files，另可选择已有 vault 图片。原图管理入口
+  位于设置的“功能 → 聊天图片”，不再占用 Chat 更多菜单。
 
 - 外部文件先持久化 `preserving` 登记，再通过 `Vault.createBinary` 写原字节，
   核对 hash 后标为 `available`。已有 vault 图片登记引用，不重复导入。
@@ -43,12 +78,12 @@ flowchart LR
   内容不符保留冲突，不覆盖。恢复不扫描全部附件，不调用模型，不恢复未发送文字。
 - `ImageRef` 使用 asset ID 与原内容 hash，`MessageImage` 另存顺序与显示标签。
   文件 rename 更新定位；modify/delete 使旧内容身份失效。缓存不能替代缺失原件。
-- Photos/粘贴可能只交付系统转换结果；`unverified_import` 不等于取得拍摄原件。
-  保留实际收到的字节并提供 Files 恢复入口，不靠扩展名补造原件证明。
+- Files、Photos、拖入、粘贴统一保留实际交付字节，不要求证明拍摄格式；
+  旧 `unverified_import` 仅兼容读取，不形成补原图任务。
 - `preview`、`provider`、`note` 三类副本按用途和处理策略区分。provider 只接收
   经像素重建、敏感源元数据检查的 JPEG，不在处理失败时改发原图。
-- HEIC 使用设备本地解码，macOS 必要时使用固定系统转换器；不加载远程转换服务，
-  不自动安装解码器。正式 HEIC 附件为独立 note-purpose JPEG，原 HEIC 留存。
+- 新 HEIC/HEIF 在资产登记、文件写入和处理器解码前拒绝，包含伪装后缀/MIME。
+  旧原件不删，既有可读处理缓存保留；缓存缺失不再转换，提示先提供 JPEG。
 - 静态、自包含 SVG 可安全本地栅格化；不执行脚本或注入 DOM。完整动画及外部
   资源 SVG 保留原件并提示静态输入，不偷偷取首帧或联网补齐。
 
@@ -135,16 +170,20 @@ Settings/来源事件只刷新参考区，不重建编辑器；换版、折叠�
 1. 预览固定版本、目标 `.md`、选定图片和顺序。默认选择该版本全部关联图片；
    UI 将标题与可更改的文件夹拼成目标路径，交给既有路径校验；不记忆新默认目录，
    不用路径归一化吞掉 `..` 等非法输入。返回修改会释放旧准备结果，再次预览。
-   HEIC 先准备正式 JPEG、冻结输出 hash 并持有 lease，失败不开始写笔记。
+   新 HEIC 预览直接拒绝，不转换；普通受支持原件冻结 hash。
 2. 首次写入前持久化 `SaveReceipt`。相同操作串行执行，不能只依赖 UI disabled。
 3. 先创建选定正文及 `pa_writing` 来源元数据，再用实际目标 TFile 解析附件目录。
    Obsidian 相对附件规则不能由尚不存在的笔记路径准确替代。
-4. 每项先记录计划路径与 expected hash，再写附件。一般格式使用原字节，HEIC
-   使用冻结的 JPEG，不额外复制正式 HEIC。附件不依赖可清理缓存或原图排除目录。
+4. 新 transfer=move 调用图片队列的 promoteToNote。只有首次迁出才解析目标；
+   先为所有同源资产记录源/目标/hash/operation，再用公共 renameFile 移动并修复定位。
+   源与目标同时存在即冲突；源消失且目标匹配时，持久意图才授权恢复。登记失败
+   在下一次读取/重试恢复。已迁出文件凭记录复用，不因附件设置改变产生新文件。
+   transfer=reference 直接引用普通附件。返回实际路径后冻结保存记录 plannedPath。
 5. 用公共 `generateMarkdownLink` 生成图片嵌入，通过 `Vault.process` 核对本操作
    已写快照后补齐笔记；任何用户编辑、来源变化或附件冲突都会停止覆盖。
-6. 中断后按持久计划/hash 恢复，已写结果一致才认领复用。HEIC 重建也须符合
-   原冻结输出 hash；否则保留部分结果，重新预览，不篡改旧 receipt。
+6. 旧 receipt 无 transfer 标记仍按复制语义恢复；旧 HEIC 已写 JPEG 可核验恢复，
+   缺输出明确拒绝，不篡改旧计划或重新转换。重新定位是用户的新选择，旧迁出意图
+   保留为历史证据并退出当前读取路径，不冒充 PA 迁出成功。
 
 保存与重试不再请求模型。仅当笔记和所有选中附件核对完成时标 completed；
 取消、关闭窗口及卸载保留已写文件与恢复入口。这不是多文件原子事务。

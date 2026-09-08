@@ -14,7 +14,7 @@ export const IMAGE_POLICY = Object.freeze({
 
 export const PROCESSOR_VERSION = 1;
 export type ImagePurpose = 'preview' | 'provider' | 'note';
-export type ImageProcessingErrorCode = 'unsupported' | 'animated' | 'multiple-images' | 'unsafe-svg' | 'malformed'
+export type ImageProcessingErrorCode = 'unsupported' | 'heic-unsupported' | 'animated' | 'multiple-images' | 'unsafe-svg' | 'malformed'
     | 'original-byte-limit' | 'pixel-limit' | 'output-byte-limit' | 'decode-failed' | 'encode-failed'
     | 'metadata-invalid' | 'conversion-unavailable' | 'conversion-failed' | 'source-changed'
     | 'cancelled' | 'timeout' | 'disposed' | 'stale' | 'cleanup-failed' | 'queue-full';

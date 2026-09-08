@@ -1,0 +1,33 @@
+{
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "8c22f1ba514870fd74c0e8286e415cd6ab323b5a411c73f0f25bc31af4670039",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-08T15:19:19.398Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "imagePath": "attachments/pa-8d6dde5bc5921724-1.jpg",
+  "preview": {
+    "width": 320,
+    "height": 180
+  },
+  "mobile": false,
+  "images": [
+    {
+      "alt": "pa-8d6dde5bc5921724-1.jpg",
+      "complete": true,
+      "width": 320,
+      "height": 180
+    },
+    {
+      "alt": "selected.jpg",
+      "complete": true,
+      "width": 320,
+      "height": 180
+    }
+  ]
+}

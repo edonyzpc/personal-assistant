@@ -8,6 +8,7 @@ Updated: 2026-09-08
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
+| B-135 | 主 Agent 统一语义决策与可靠作品交付 | 用户认可模型判断/统一Agent；原run已确认硬期限结束及JSON未闭合。方案同时覆盖来源边界、预算/结束证据、版本和风格治理，新机制仍为候选 | 先承接故障取证与结束/预算对照，再冻结方案契约并完成P0兼容验证 | User request 2026-09-08；[Solution Brief](./development/discovery/pa-agent-unified-task-execution.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |
@@ -50,6 +51,7 @@ Updated: 2026-09-08
 | T-003 | Write-action production audit | 出现不明写入、需要可见 write history，或合规要求 durable audit | [Write Action Framework](./architecture/write-action-framework-sdd.md) |
 | T-004 | Active Package 局部后续任务的 ID 映射成本 | 在后续真实任务反复出现全契约映射负担，并有可定位的新增成本时再评估；先排除完整 namespace 漏写。当前不改 checker、不减追溯/验证门禁；若设计显式局部 scope，必须保持默认全量检查及未知/跨契约 ID 拒绝 | [GOV-001](./development/governance/gov-001-agent-managed-project-lifecycle.md), [Astra 试点结论](./archive/2026/astra-feature-workflow-optimization-validation.md) |
 | T-005 | 图片系统选择器的入口诊断 | 正常受支持图片也稳定复现无法提交，或用户明确要求排查该入口时重启；先区分系统选择器、夹具和 PA 导入链路。当前只观察到故意损坏 PNG 的 Open 禁用，原因未知，不作为已确认 PA 缺陷 | [图片体验验证与限制](./archive/2026/chat-image-experience-validation.md#limits-and-disposition) |
+| T-006 | 图片管理修订的旧应用状态兼容验证 | 2026-09-09 closeout 保留 NOT TESTED：旧 HEIC registry/cache、旧已写 JPEG/缺输出 receipt、未完成迁出在真实应用中未建立独立夹具；相关源码回归已通过。用户要求补齐、兼容/恢复代码改变或拿到独立旧状态时重启；只用合成旧状态，不改真实用户历史，不重复相册/Files/粘贴与共享布局矩阵 | [图片管理修订验证](./archive/2026/chat-image-management-validation.md), [当前恢复契约](./architecture/multimodal-chat-architecture.md#图片管理与保存恢复) |
 
 ## 维护规则
 

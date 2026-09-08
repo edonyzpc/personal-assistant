@@ -50,7 +50,7 @@ const button = (root: DomStubNode, label: string) => {
 };
 const text = (root: DomStubNode): string => [root.textContent, ...root.children.map(text)].join('\n');
 
-async function setup() {
+async function setup(chatOnly = false) {
     const store = new MemoryChatHistoryStore();
     const files = new Map<string, TFile | TFolder>();
     const notes = new Map<string, string>();
@@ -63,8 +63,9 @@ async function setup() {
         ordinal, label: `Photo ${ordinal}`, ref: { assetId: `asset_${ordinal}`, contentHash: hash },
     }));
     for (const image of associatedImages) {
-        const asset: ImageAsset = { id: image.ref.assetId, originalHash: hash, source: 'vault_reference',
-            originalPath: `photos/${image.ordinal}.jpg`, detectedMime: 'image/jpeg', byteLength: source.byteLength,
+        const asset: ImageAsset = { id: image.ref.assetId, originalHash: hash, source: chatOnly ? 'imported' : 'vault_reference',
+            originalPath: chatOnly ? `assets/pa-images/${image.ordinal}.jpg` : `photos/${image.ordinal}.jpg`,
+            importDirectory: chatOnly ? 'assets/pa-images' : undefined, detectedMime: 'image/jpeg', byteLength: source.byteLength,
             acquisition: 'original_file', anchorPath: 'PA Chat.md', anchorKind: 'logical_root',
             state: 'available', createdAt: 1, owners: [] };
         assets.set(asset.id, asset);
@@ -98,6 +99,16 @@ async function setup() {
     const images = {
         readOriginal: jest.fn(async (ref: ImageRef) => ({ asset: assets.get(ref.assetId)!, bytes: source })),
         verify: jest.fn(async (ref: ImageRef) => ({ asset: assets.get(ref.assetId)!, isCurrent: () => true })),
+        promoteToNote: jest.fn(async (ref: ImageRef, options: Parameters<ImageAssetService['promoteToNote']>[1]) => {
+            const targetPath = typeof options.targetPath === 'function' ? await options.targetPath() : options.targetPath;
+            const asset = assets.get(ref.assetId)!;
+            const original = files.get(asset.originalPath)!;
+            binary.delete(asset.originalPath); files.delete(asset.originalPath);
+            asset.originalPath = targetPath; asset.source = 'vault_reference';
+            original.path = targetPath;
+            files.set(targetPath, original); binary.set(targetPath, source);
+            return { path: targetPath };
+        }),
     };
     const openLinkText = jest.fn(async (): Promise<void> => undefined);
     const app = { vault, workspace: { openLinkText }, fileManager: {
@@ -164,6 +175,7 @@ describe('writing save modal title, location and explicit confirmation', () => {
         const details = byClass(result, 'pa-writing-save__details');
         expect(details.open).toBe(false);
         expect(text(details)).toContain('pa_writing:');
+        expect(text(details)).toContain('Photo 1 → photos/1.jpg');
         expect(nodes(result, 'pre')[0].textContent).toBe(h.version.text);
         h.title.value = 'Changed after preview';
         h.folder.value = 'Different';
@@ -172,11 +184,37 @@ describe('writing save modal title, location and explicit confirmation', () => {
         await settleSave(h);
         expect(h.execute).toHaveBeenCalledTimes(1);
         expect(h.vault.create).toHaveBeenCalledTimes(1);
-        expect(h.vault.createBinary).toHaveBeenCalledTimes(3);
+        expect(h.vault.createBinary).not.toHaveBeenCalled();
         expect(h.notes.get('A quiet day.md')).toContain(h.version.text);
         expect(h.notes.has('Different/Changed after preview.md')).toBe(false);
         button(h.root, 'openNote').click();
         expect(h.openLinkText).toHaveBeenCalledWith('A quiet day.md', '', true);
+        h.modal.onClose(); await h.save.dispose();
+    });
+
+    it('explains HEIC rejection without creating a note or discarding the form', async () => {
+        const h = await setup();
+        h.title.value = 'Keep this title';
+        h.prepare.mockRejectedValueOnce(new Error('writing_save:heic_unsupported'));
+        await button(h.root, 'preview').click();
+        expect(text(byClass(h.root, 'pa-writing-save__result'))).toContain('Convert the image to JPEG');
+        expect(h.title.value).toBe('Keep this title');
+        expect(byClass(h.root, 'pa-writing-save__form').hidden).toBe(false);
+        expect(byClass(h.root, 'pa-writing-save__form').disabled).toBe(false);
+        expect(h.vault.create).not.toHaveBeenCalled();
+        expect(h.images.promoteToNote).not.toHaveBeenCalled();
+        h.modal.onClose(); await h.save.dispose();
+    });
+
+    it('explains HEIC failure returned in a durable receipt while keeping recovery available', async () => {
+        const h = await setup();
+        await button(h.root, 'preview').click();
+        const prepared = await h.prepare.mock.results[0].value;
+        h.execute.mockResolvedValueOnce({ ...prepared.receipt, state: 'partial', failureReason: 'heic_unsupported' });
+        button(h.root, 'confirmSave').click();
+        await settleSave(h);
+        expect(text(byClass(h.root, 'pa-writing-save__result'))).toContain('Convert the image to JPEG');
+        expect(button(h.root, 'retrySave').disabled).toBe(false);
         h.modal.onClose(); await h.save.dispose();
     });
 
@@ -251,9 +289,9 @@ describe('writing save modal title, location and explicit confirmation', () => {
     });
 
     it('keeps the actual partial destination and retries the durable receipt without another note creation', async () => {
-        const h = await setup();
+        const h = await setup(true);
         h.title.value = 'Trip'; h.folder.value = 'Journal';
-        h.vault.createBinary.mockRejectedValueOnce(new Error('temporary write failure'));
+        h.images.promoteToNote.mockRejectedValueOnce(new Error('temporary move failure'));
         await button(h.root, 'preview').click();
         button(h.root, 'confirmSave').click();
         await settleSave(h);
@@ -303,9 +341,9 @@ describe('writing save modal title, location and explicit confirmation', () => {
     });
 
     it('retains both modals and partial recovery when opening fails, and allows opening again', async () => {
-        const h = await setup();
+        const h = await setup(true);
         const stacked = await openSaveFromVersion(h);
-        h.vault.createBinary.mockRejectedValueOnce(new Error('temporary write failure'));
+        h.images.promoteToNote.mockRejectedValueOnce(new Error('temporary move failure'));
         await button(stacked.childRoot, 'preview').click();
         button(stacked.childRoot, 'confirmSave').click();
         await settleSave(h);
@@ -330,9 +368,9 @@ describe('writing save modal title, location and explicit confirmation', () => {
     });
 
     it('also dismisses the recovery-list parent after opening an existing partial note', async () => {
-        const h = await setup();
+        const h = await setup(true);
         h.title.value = 'Recover this note';
-        h.vault.createBinary.mockRejectedValueOnce(new Error('temporary write failure'));
+        h.images.promoteToNote.mockRejectedValueOnce(new Error('temporary move failure'));
         await button(h.root, 'preview').click();
         button(h.root, 'confirmSave').click();
         await settleSave(h); h.modal.onClose();

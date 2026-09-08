@@ -123,6 +123,38 @@ function inspectWebp(bytes: Uint8Array): ImageInspection {
 }
 
 interface Box { type: string; start: number; end: number }
+/** Reject HEIF delivery before metadata parsing can fail or an original is written.
+ * Full inspection remains available for reading historical asset/save records.
+ */
+export function assertNewChatImageSupported(buffer: ArrayBuffer): void {
+    const bytes = new Uint8Array(buffer);
+    const heifBrands = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1']);
+    for (let offset = 0; offset + 8 <= bytes.length;) {
+        let length = u32(bytes, offset), header = 8;
+        if (length === 1) {
+            if (offset + 16 > bytes.length) return;
+            length = u32(bytes, offset + 8) * 4294967296 + u32(bytes, offset + 12);
+            header = 16;
+        } else if (!length) length = bytes.length - offset;
+        if (ascii(bytes, offset + 4, 4) === 'ftyp') {
+            const start = offset + header;
+            // Even a truncated/malformed container can identify its media family.
+            // Do not require dimensions, item metadata, or a working HEIC decoder.
+            const end = Number.isSafeInteger(length) && length >= header + 4
+                ? Math.min(bytes.length, offset + length) : bytes.length;
+            const rejectBrand = (position: number): void => {
+                if (position + 4 <= end && heifBrands.has(ascii(bytes, position, 4))) {
+                    throw new ImageProcessingError('heic-unsupported');
+                }
+            };
+            rejectBrand(start);
+            for (let position = start + 8; position + 4 <= end; position += 4) rejectBrand(position);
+        }
+        if (!Number.isSafeInteger(length) || length < header || offset + length > bytes.length) return;
+        offset += length;
+    }
+}
+
 function boxes(bytes: Uint8Array, start = 0, end = bytes.length): Box[] {
     const parts: Box[] = [];
     for (let offset = start; offset < end;) {

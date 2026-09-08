@@ -2,9 +2,9 @@ import { TFile, type App, type EventRef } from 'obsidian';
 import { getPlatformCrypto } from '../platform-dom';
 import type { ChatHistoryStore } from './chat-history-store';
 import type { ImageAssetService } from './image-assets';
-import { cloneMessageImages, validateImagePath, type MessageImage, type ImageVariantLease } from './image-types';
-import { assertSafeEncodedJpeg, inspectImage } from './image-format';
-import { imagePolicyFingerprint, imageSourceHash } from './image-policy';
+import { cloneMessageImages, isChatImageAsset, validateImagePath, type MessageImage } from './image-types';
+import { inspectImage } from './image-format';
+import { imageSourceHash } from './image-policy';
 import { cloneWritingVersion, hashWritingText, type WritingVersion } from './writing-types';
 import { cloneSaveReceipt, type SaveAttachment, type SaveReceipt } from './save-receipt-types';
 import { WRITING_NOTE_PROVENANCE_KEY } from './writing-note-provenance';
@@ -17,13 +17,13 @@ export interface PreparedWritingSave {
     previewMarkdown: string;
     release(): void;
 }
-interface SavePreview { receipt: SaveReceipt; leases: Map<number, ImageVariantLease>; released: boolean; }
+interface SavePreview { receipt: SaveReceipt; released: boolean; }
 interface FileVerification { assertCurrent(): void; release(): void; }
 export class WritingSaveError extends Error {
     constructor(public readonly code: string) { super(`writing_save:${code}`); this.name = 'WritingSaveError'; }
 }
 
-/** Explicit host save. No model calls, rollback deletion, or source-file mutation. */
+/** Explicit host save. Image promotion is owned by the image service's durable journal. */
 export class WritingSaveAction {
     private readonly previews = new Map<string, SavePreview>();
     private tail: Promise<void> = Promise.resolve();
@@ -47,43 +47,34 @@ export class WritingSaveAction {
             const crypto = getPlatformCrypto();
             if (!crypto?.randomUUID) throw new WritingSaveError('secure_identity_unavailable');
             const operationId = `save_${crypto.randomUUID().replace(/-/g, '')}`;
-            const leases = new Map<number, ImageVariantLease>();
-            try {
-                const attachments: SaveAttachment[] = [];
-                const identities = new Set<string>();
-                for (const image of selected) {
-                    this.check(input.signal);
-                    const key = `${image.ref.assetId}:${image.ref.contentHash}`;
-                    if (identities.has(key)) continue;
-                    identities.add(key);
-                    const original = await this.images.readOriginal(image.ref, 'note');
-                    const inspected = inspectImage(original.bytes);
-                    let outputHash = image.ref.contentHash, byteLength = original.bytes.byteLength;
-                    if (inspected.format === 'heic') {
-                        const lease = await this.images.resolveVariant(image.ref, 'note', { signal: input.signal });
-                        leases.set(attachments.length, lease);
-                        const output = await lease.blob.arrayBuffer(); assertSafeEncodedJpeg(output);
-                        outputHash = await imageSourceHash(output); byteLength = output.byteLength;
-                    }
-                    const sourceName = image.label || original.asset.originalPath.split('/').pop()!;
-                    const extension = inspected.format === 'heic' ? 'jpg' : inspected.format === 'jpeg' ? 'jpg' : inspected.format;
-                    attachments.push({ ref: image.ref, sourcePath: original.asset.originalPath, sourceName,
-                        attachmentKind: inspected.format === 'heic' ? 'heic_jpeg' : 'original',
-                        mime: inspected.format === 'heic' ? 'image/jpeg' : inspected.mime,
-                        filename: `pa-${operationId.slice(-16)}-${attachments.length + 1}.${extension}`,
-                        outputHash, byteLength, exportPolicy: inspected.format === 'heic' ? imagePolicyFingerprint('note') : 'original:v1', state: 'planned' });
-                }
+            const attachments: SaveAttachment[] = [];
+            const identities = new Set<string>();
+            for (const image of selected) {
                 this.check(input.signal);
-                const receipt: SaveReceipt = { id: operationId, operationId, writingVersionId: version.id,
-                    textHash: version.textHash, targetNotePath: input.targetNotePath, origin: version.origin,
-                    createdAt: Date.now(), attachments, initialNoteHash: '0'.repeat(64), noteContentHash: '0'.repeat(64),
-                    noteState: 'pending', state: 'prepared' };
-                receipt.initialNoteHash = receipt.noteContentHash = await hashWritingText(this.note(version, receipt, false));
-                const preview: SavePreview = { receipt: cloneSaveReceipt(receipt), leases, released: false };
-                this.previews.set(operationId, preview);
-                return { operationId, receipt: cloneSaveReceipt(receipt), previewMarkdown: this.note(version, receipt, false),
-                    release: () => this.releasePreview(operationId) };
-            } catch (error) { for (const lease of leases.values()) lease.release(); throw error; }
+                const original = await this.images.readOriginal(image.ref, 'note');
+                const key = `${original.asset.originalPath}:${image.ref.contentHash}`;
+                if (identities.has(key)) continue;
+                identities.add(key);
+                const inspected = inspectImage(original.bytes);
+                if (inspected.format === 'heic') throw new WritingSaveError('heic_unsupported');
+                const sourceName = image.label || original.asset.originalPath.split('/').pop()!;
+                const extension = inspected.format === 'jpeg' ? 'jpg' : inspected.format;
+                attachments.push({ ref: image.ref, sourcePath: original.asset.originalPath, sourceName,
+                    attachmentKind: 'original', transfer: isChatImageAsset(original.asset) ? 'move' : 'reference',
+                    mime: inspected.mime,
+                    filename: `pa-${operationId.slice(-16)}-${attachments.length + 1}.${extension}`,
+                    outputHash: image.ref.contentHash, byteLength: original.bytes.byteLength, exportPolicy: 'original:v1', state: 'planned' });
+            }
+            this.check(input.signal);
+            const receipt: SaveReceipt = { id: operationId, operationId, writingVersionId: version.id,
+                textHash: version.textHash, targetNotePath: input.targetNotePath, origin: version.origin,
+                createdAt: Date.now(), attachments, initialNoteHash: '0'.repeat(64), noteContentHash: '0'.repeat(64),
+                noteState: 'pending', state: 'prepared' };
+            receipt.initialNoteHash = receipt.noteContentHash = await hashWritingText(this.note(version, receipt, false));
+            const preview: SavePreview = { receipt: cloneSaveReceipt(receipt), released: false };
+            this.previews.set(operationId, preview);
+            return { operationId, receipt: cloneSaveReceipt(receipt), previewMarkdown: this.note(version, receipt, false),
+                release: () => this.releasePreview(operationId) };
         }, input.signal);
     }
 
@@ -100,7 +91,7 @@ export class WritingSaveAction {
                 // First durable receipt precedes every note/attachment write.
                 await this.store.putSaveReceipt(receipt);
             }
-            try { return await this.run(receipt, signal, preview); }
+            try { return await this.run(receipt, signal); }
             finally { this.releasePreview(operationId); }
         }, options.signal);
     }
@@ -120,7 +111,7 @@ export class WritingSaveAction {
         for (const id of [...this.previews.keys()]) this.releasePreview(id);
     }
 
-    private async run(input: SaveReceipt, signal?: AbortSignal, preview?: SavePreview): Promise<SaveReceipt> {
+    private async run(input: SaveReceipt, signal?: AbortSignal): Promise<SaveReceipt> {
         let receipt = cloneSaveReceipt(input);
         const verifications: FileVerification[] = [];
         try {
@@ -158,6 +149,17 @@ export class WritingSaveAction {
                 this.check(signal);
                 if (this.file(receipt.targetNotePath) !== note || note.path !== receipt.targetNotePath) throw new WritingSaveError('note_changed');
                 let attachment = receipt.attachments[index];
+                if (attachment.transfer) {
+                    const path = await this.transferAttachment(attachment, receipt, index, note, signal);
+                    if (attachment.plannedPath && attachment.plannedPath !== path) throw new WritingSaveError('attachment_path_conflict');
+                    const file = this.file(path);
+                    if (!file || await this.attachmentHash(file, attachment.byteLength) !== attachment.outputHash) throw new WritingSaveError('attachment_changed');
+                    // The image service persists its move intent before touching
+                    // the file. Only its actual result freezes this receipt path.
+                    receipt.attachments[index] = { ...attachment, plannedPath: path, state: 'written', writtenHash: attachment.outputHash };
+                    await this.store.putSaveReceipt(receipt);
+                    continue;
+                }
                 if (!attachment.plannedPath) {
                     const path = validateImagePath(await this.app.fileManager.getAvailablePathForAttachment(attachment.filename, note.path));
                     this.allowed(path);
@@ -172,7 +174,7 @@ export class WritingSaveAction {
                     if (await this.attachmentHash(file, attachment.byteLength) !== attachment.outputHash) throw new WritingSaveError('attachment_changed');
                 } else {
                     if (attachment.state === 'written') throw new WritingSaveError('attachment_missing');
-                    const output = await this.output(attachment, preview?.leases.get(index), signal);
+                    const output = await this.output(attachment);
                     // Materializing a held JPEG or hashing bytes can yield after
                     // the original was read. Re-admit its source at the write.
                     const source = await this.images.verify(attachment.ref, 'note');
@@ -220,21 +222,49 @@ export class WritingSaveAction {
         } finally { for (const verified of verifications) verified.release(); }
     }
 
-    private async output(attachment: SaveAttachment, held: ImageVariantLease | undefined, signal?: AbortSignal): Promise<ArrayBuffer> {
+    private async transferAttachment(attachment: SaveAttachment, receipt: SaveReceipt, index: number, note: TFile, signal?: AbortSignal): Promise<string> {
+        if (attachment.transfer === 'reference') {
+            const source = await this.images.verify(attachment.ref, 'note');
+            this.check(signal); this.allowed(attachment.sourcePath);
+            if (source.asset.originalPath !== attachment.sourcePath || !source.isCurrent()) throw new WritingSaveError('source_changed');
+            return attachment.sourcePath;
+        }
+        // A prior promotion is already the shared attachment. Resolve current
+        // attachment settings only if the image service must perform a new move.
+        const targetPath = async (): Promise<string> => {
+            const path = attachment.plannedPath ?? validateImagePath(await this.app.fileManager.getAvailablePathForAttachment(attachment.filename, note.path));
+            this.check(signal); this.allowed(path);
+            if (path.split('/').includes('pa-images')) throw new WritingSaveError('attachment_path_conflict');
+            return path;
+        };
+        const result = await this.images.promoteToNote(attachment.ref, { sourcePath: attachment.sourcePath, targetPath,
+            operationId: `${receipt.id}_${index}`, signal });
+        this.check(signal); this.allowed(result.path);
+        if (result.path.split('/').includes('pa-images') || receipt.attachments.some((other, i) => i !== index && other.plannedPath === result.path)) {
+            throw new WritingSaveError('attachment_path_conflict');
+        }
+        return result.path;
+    }
+
+    private async output(attachment: SaveAttachment): Promise<ArrayBuffer> {
+        // Legacy plans remain frozen, but missing HEIC exports cannot restart
+        // conversion after the product boundary has changed.
+        if (attachment.attachmentKind === 'heic_jpeg') throw new WritingSaveError('heic_unsupported');
         const original = await this.images.readOriginal(attachment.ref, 'note');
         if (original.asset.originalPath !== attachment.sourcePath) throw new WritingSaveError('source_changed');
-        let output = original.bytes;
-        if (attachment.attachmentKind === 'heic_jpeg') {
-            if (attachment.exportPolicy !== imagePolicyFingerprint('note')) throw new WritingSaveError('export_policy_changed');
-            const lease = held ?? await this.images.resolveVariant(attachment.ref, 'note', { signal });
-            try { output = await lease.blob.arrayBuffer(); assertSafeEncodedJpeg(output); }
-            finally { if (!held) lease.release(); }
-        }
+        const output = original.bytes;
         if (output.byteLength !== attachment.byteLength || await imageSourceHash(output) !== attachment.outputHash) throw new WritingSaveError('export_changed');
         return output;
     }
     private async verifySources(receipt: SaveReceipt): Promise<void> {
         for (const attachment of receipt.attachments) {
+            if (attachment.transfer) {
+                const source = await this.images.verify(attachment.ref, 'note');
+                if (!source.isCurrent() || (attachment.transfer === 'reference' && source.asset.originalPath !== attachment.sourcePath)) {
+                    throw new WritingSaveError('source_changed');
+                }
+                continue;
+            }
             // A durable matching formal attachment is already a frozen output.
             // Recovery checks it first and does not require an excluded HEIC
             // original to reappear merely to complete the note links.
@@ -246,6 +276,7 @@ export class WritingSaveAction {
                     continue;
                 }
             }
+            if (attachment.attachmentKind === 'heic_jpeg') throw new WritingSaveError('heic_unsupported');
             const source = await this.images.verify(attachment.ref, 'note');
             if (source.asset.originalPath !== attachment.sourcePath || !source.isCurrent()) throw new WritingSaveError('source_changed');
         }
@@ -354,7 +385,7 @@ export class WritingSaveAction {
     private releasePreview(operationId: string): void {
         const preview = this.previews.get(operationId);
         if (!preview || preview.released) return;
-        preview.released = true; for (const lease of preview.leases.values()) lease.release();
+        preview.released = true;
         this.previews.delete(operationId);
     }
     private check(signal?: AbortSignal): void {

@@ -1,0 +1,385 @@
+{
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "8c22f1ba514870fd74c0e8286e415cd6ab323b5a411c73f0f25bc31af4670039",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-08T15:50:46.423Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "fixtureHashes": {
+    "selected.jpg": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+    "actual.heic": "b9b2598e37cd0b0e9dc7a2bb378a2e499d900794249ba0d5c53555a579d7393b",
+    "unselected.png": "514f99d3f78b70de614342034d6f4a5b2031d550b120db026f2dbca2027cd17e"
+  },
+  "events": [
+    {
+      "n": 1,
+      "at": "2026-09-08T16:17:58.448Z",
+      "kind": "setup",
+      "identity": {
+        "schemaVersion": 1,
+        "pluginId": "personal-assistant",
+        "pluginVersion": "2.9.2",
+        "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+        "loadedPluginArtifactSha256": "8c22f1ba514870fd74c0e8286e415cd6ab323b5a411c73f0f25bc31af4670039",
+        "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+        "capturedAtPluginLoad": "2026-09-08T15:50:46.423Z",
+        "identitySource": "plugin-onload-cached-main-js",
+        "blocker": null
+      },
+      "fixtureHashes": {
+        "selected.jpg": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+        "actual.heic": "b9b2598e37cd0b0e9dc7a2bb378a2e499d900794249ba0d5c53555a579d7393b",
+        "unselected.png": "514f99d3f78b70de614342034d6f4a5b2031d550b120db026f2dbca2027cd17e"
+      },
+      "vault": "test",
+      "reusedPluginInstance": true
+    },
+    {
+      "n": 2,
+      "at": "2026-09-08T16:18:59.454Z",
+      "kind": "click",
+      "trusted": true,
+      "label": "Add images",
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 3,
+      "at": "2026-09-08T16:19:01.017Z",
+      "kind": "click",
+      "trusted": true,
+      "label": "From Files",
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 4,
+      "at": "2026-09-08T16:20:04.249Z",
+      "kind": "native-file-change",
+      "trusted": true,
+      "accept": "",
+      "files": [
+        {
+          "name": "selected.jpg",
+          "type": "image/jpeg",
+          "size": 1809
+        }
+      ],
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 5,
+      "at": "2026-09-08T16:20:04.318Z",
+      "kind": "import-accepted",
+      "input": {
+        "name": "selected.jpg",
+        "type": "image/jpeg",
+        "size": 1809,
+        "sha256": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+        "magic": [
+          255,
+          216,
+          255,
+          224,
+          0,
+          16,
+          74,
+          70,
+          73,
+          70,
+          0,
+          1,
+          1,
+          0,
+          0,
+          72,
+          0,
+          72,
+          0,
+          0,
+          255,
+          225,
+          0,
+          76,
+          69,
+          120,
+          105,
+          102,
+          0,
+          0,
+          77,
+          77
+        ],
+        "draft": "B19 draft  keep on cancel"
+      },
+      "asset": {
+        "id": "img_82140f90121f4e508216ef04ea9428e9",
+        "source": "imported",
+        "originalPath": "pa-images/img_82140f90121f4e508216ef04ea9428e9.jpg",
+        "originalHash": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37",
+        "byteLength": 1809,
+        "detectedMime": "image/jpeg",
+        "acquisition": "original_file",
+        "state": "available",
+        "anchorPath": "PA Chat.md",
+        "anchorKind": "logical_root",
+        "createdAt": 1788884404309,
+        "owners": [],
+        "importDirectory": "pa-images"
+      },
+      "byteMatch": true
+    },
+    {
+      "n": 6,
+      "at": "2026-09-08T16:20:13.062Z",
+      "kind": "click",
+      "trusted": true,
+      "label": "Add images",
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 7,
+      "at": "2026-09-08T16:20:14.979Z",
+      "kind": "click",
+      "trusted": true,
+      "label": "From Files",
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 8,
+      "at": "2026-09-08T16:20:41.315Z",
+      "kind": "native-file-change",
+      "trusted": true,
+      "accept": "",
+      "files": [
+        {
+          "name": "actual.heic",
+          "type": "image/heic",
+          "size": 528
+        }
+      ],
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 9,
+      "at": "2026-09-08T16:20:41.349Z",
+      "kind": "import-rejected",
+      "input": {
+        "name": "actual.heic",
+        "type": "image/heic",
+        "size": 528,
+        "sha256": "b9b2598e37cd0b0e9dc7a2bb378a2e499d900794249ba0d5c53555a579d7393b",
+        "magic": [
+          0,
+          0,
+          0,
+          36,
+          102,
+          116,
+          121,
+          112,
+          104,
+          101,
+          105,
+          99,
+          0,
+          0,
+          0,
+          0,
+          109,
+          105,
+          102,
+          49,
+          77,
+          105,
+          80,
+          114,
+          109,
+          105,
+          97,
+          102,
+          77,
+          105,
+          72,
+          66
+        ],
+        "draft": "B19 draft  keep on cancel"
+      },
+      "error": "ImageProcessingError: image_processing:heic-unsupported",
+      "assetDelta": 0,
+      "newFiles": []
+    },
+    {
+      "n": 10,
+      "at": "2026-09-08T16:22:29.853Z",
+      "kind": "paste",
+      "trusted": true,
+      "types": [
+        "text/plain",
+        "text/html"
+      ],
+      "files": [],
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 11,
+      "at": "2026-09-08T16:22:35.745Z",
+      "kind": "paste",
+      "trusted": true,
+      "types": [
+        "text/plain",
+        "text/html"
+      ],
+      "files": [],
+      "draft": "B19 draft  keep on cancel  "
+    },
+    {
+      "n": 12,
+      "at": "2026-09-08T16:22:53.607Z",
+      "kind": "paste",
+      "trusted": true,
+      "types": [
+        "text/plain",
+        "text/html"
+      ],
+      "files": [],
+      "draft": "B19 draft  keep on cancel  "
+    },
+    {
+      "n": 13,
+      "at": "2026-09-08T16:23:03.551Z",
+      "kind": "click",
+      "trusted": true,
+      "label": "Remove image: selected.jpg",
+      "draft": "B19 draft  keep on cancel  "
+    },
+    {
+      "n": 14,
+      "at": "2026-09-08T16:23:04.488Z",
+      "kind": "click",
+      "trusted": true,
+      "label": "Remove image: actual.heic",
+      "draft": "B19 draft  keep on cancel  "
+    },
+    {
+      "n": 15,
+      "at": "2026-09-08T16:23:09.841Z",
+      "kind": "paste",
+      "trusted": true,
+      "types": [
+        "text/plain",
+        "text/html"
+      ],
+      "files": [],
+      "draft": "B19 draft  keep on cancel  "
+    },
+    {
+      "n": 16,
+      "at": "2026-09-08T16:23:34.609Z",
+      "kind": "paste",
+      "trusted": true,
+      "types": [
+        "Files"
+      ],
+      "files": [
+        {
+          "name": "image.jpeg",
+          "type": "image/jpeg",
+          "size": 43471
+        }
+      ],
+      "draft": "B19 draft  keep on cancel  "
+    },
+    {
+      "n": 17,
+      "at": "2026-09-08T16:23:34.655Z",
+      "kind": "import-accepted",
+      "input": {
+        "name": "image.jpeg",
+        "type": "image/jpeg",
+        "size": 43471,
+        "sha256": "b8a91e4168888f5512ee0dac002cbc846cf79238b42d04be01313149b9c9421c",
+        "magic": [
+          255,
+          216,
+          255,
+          225,
+          1,
+          140,
+          69,
+          120,
+          105,
+          102,
+          0,
+          0,
+          77,
+          77,
+          0,
+          42,
+          0,
+          0,
+          0,
+          8,
+          0,
+          9,
+          1,
+          14,
+          0,
+          2,
+          0,
+          0,
+          0,
+          42,
+          0,
+          0
+        ],
+        "draft": "B19 draft  keep on cancel  "
+      },
+      "asset": {
+        "id": "img_ffb64fc2f8cc4489ad7642c2f3a9ba89",
+        "originalHash": "b8a91e4168888f5512ee0dac002cbc846cf79238b42d04be01313149b9c9421c",
+        "source": "imported",
+        "originalPath": "attachments/pa-images/img_ffb64fc2f8cc4489ad7642c2f3a9ba89.jpeg",
+        "byteLength": 43471,
+        "detectedMime": "image/jpeg",
+        "acquisition": "original_file",
+        "state": "available",
+        "anchorPath": "PA Chat.md",
+        "anchorKind": "logical_root",
+        "createdAt": 1788883072040,
+        "owners": [],
+        "importDirectory": "attachments/pa-images"
+      },
+      "byteMatch": true
+    }
+  ],
+  "errors": [],
+  "viewport": [
+    430,
+    932
+  ],
+  "draft": "B19 draft  keep on cancel  ",
+  "images": [
+    {
+      "alt": "IMG_2033.jpeg",
+      "complete": true,
+      "width": 640,
+      "height": 480
+    },
+    {
+      "alt": "image.jpeg",
+      "complete": true,
+      "width": 640,
+      "height": 480
+    }
+  ],
+  "restored": {
+    "observerRemoved": true,
+    "conversation": true,
+    "note": true,
+    "temporaryChatsRemaining": 0
+  }
+}

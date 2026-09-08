@@ -1,0 +1,18 @@
+{
+  "selected.png": {
+    "bytes": 608,
+    "sha256": "5472f2bf184edfd893e613b155946aca6e241a7c460e3bfbc2a4a25039321668"
+  },
+  "selected.jpg": {
+    "bytes": 1809,
+    "sha256": "cbadec49daf87826830fec406a1d3df3045f1286280fb12f1e66d92ce6930c37"
+  },
+  "actual.heic": {
+    "bytes": 528,
+    "sha256": "b9b2598e37cd0b0e9dc7a2bb378a2e499d900794249ba0d5c53555a579d7393b"
+  },
+  "unselected.png": {
+    "bytes": 608,
+    "sha256": "514f99d3f78b70de614342034d6f4a5b2031d550b120db026f2dbca2027cd17e"
+  }
+}

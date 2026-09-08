@@ -14,7 +14,7 @@ import { WritingRecoveryModal, WritingSaveModal, WritingStyleModal, WritingVersi
 import { WritingStyleUnavailableError } from '../src/chat/writing-style-service';
 import type { WritingVersion } from '../src/chat/writing-types';
 import type { WritingSaveAction, PreparedWritingSave } from '../src/chat/writing-save-action';
-import { ImageManagementModal, VaultImagePickerModal } from '../src/chat/image-management-modal';
+import { ImageManagementModal, ImageSourcePickerModal, VaultImagePickerModal } from '../src/chat/image-management-modal';
 import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
@@ -1344,6 +1344,25 @@ describe('LLMView turn lifecycle', () => {
         expect(execute).not.toHaveBeenCalled();
     });
 
+    it('keeps review-and-resume beside an incomplete save and retries the same operation', async () => {
+        const receipt = { operationId: 'save-existing', targetNotePath: 'Chosen.md', attachments: [], state: 'partial' };
+        const prepare = jest.fn(async () => ({ operationId: receipt.operationId, receipt, previewMarkdown: 'Exact body', release: jest.fn() }));
+        const execute = jest.fn(async () => receipt);
+        const retry = jest.fn(async (_operationId: string, _options?: { signal?: AbortSignal }) => ({ ...receipt, state: 'completed' }));
+        const save = { prepare, execute, retry, listReceipts: async () => [] } as unknown as WritingSaveAction;
+        const root = new MockElement('div');
+        const modal = new WritingSaveModal({ vault: { getAbstractFileByPath: () => null } } as unknown as App,
+            save, { id: 'version', text: 'Exact body', associatedImages: [] } as unknown as WritingVersion);
+        modal.contentEl = root as unknown as HTMLElement; modal.onOpen();
+        getButtonByText(root, 'Preview saving').click(); await flushPromises();
+        getButtonByText(root, 'Save this exact selection').click(); await flushPromises();
+        getButtonByText(root, 'Review and resume this save').click(); await flushPromises();
+        expect(retry).toHaveBeenCalledWith('save-existing', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+        expect(getButtonsByText(root, 'Review and resume this save')).toHaveLength(0);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        modal.onClose();
+    });
+
     it('shows exact reference samples separately, refreshes without losing edits, and cancels stale reads', async () => {
         const first = { id: 'first', conversationId: 'chat', text: 'Exact body', explanation: 'Separate explanation',
             requestId: 'request', messageId: 'message', textHash: 'a'.repeat(64), turnIndex: 0, createdAt: 0,
@@ -1436,6 +1455,26 @@ describe('LLMView turn lifecycle', () => {
         return { service, ref };
     }
 
+    it.each(['heic-unsupported', 'image_assets:heic_unsupported'])(
+        'explains unsupported HEIC import and retains the text draft: %s', async (code) => {
+            const context = createView();
+            const { service } = attachDisclosureService(context, new MemoryChatHistoryStore());
+            const importFile = jest.spyOn(service, 'importFile').mockRejectedValue(new Error(code));
+            try {
+                await context.view.onOpen();
+                const editor = getTextArea(context.containerEl);
+                editor.value = 'Keep my caption';
+                editor.dispatchEvent('paste', { clipboardData: { files: [
+                    new File(['heic'], 'photo.heic', { type: 'image/heic' }),
+                ] }, preventDefault: jest.fn() });
+                for (let i = 0; i < 5; i++) await flushPromises();
+                expect(importFile).toHaveBeenCalledWith(expect.any(File), expect.objectContaining({ acquisition: 'original_file' }));
+                expect(editor.value).toBe('Keep my caption');
+                expect(allText(getElementByClass(context.containerEl, 'pa-chat-image-draft'))).toContain('Convert the image to JPEG');
+                expect(service.resolveVariant).not.toHaveBeenCalled();
+            } finally { await context.view.onClose(); await service.dispose(); }
+        });
+
     it('renders pasted images once inside the composer and opens local details before original access', async () => {
         const context = createView();
         const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
@@ -1472,8 +1511,8 @@ describe('LLMView turn lifecycle', () => {
             expect(walkAll(draftEl, (element) => element.tagName === 'button')).toHaveLength(4);
             expect(walk(draftEl, (element) => element.classList.contains('pa-chat-images'))).toBeNull();
             expect(allText(draftEl)).not.toContain('original format');
-            expect(getButtonsByText(context.containerEl, 'Add original from Files')).toHaveLength(1);
-            expect(importFile.mock.calls.map((call) => call[1]?.acquisition)).toEqual(['unverified_import', 'unverified_import']);
+            expect(getButtonsByText(context.containerEl, 'Add original from Files')).toHaveLength(0);
+            expect(importFile.mock.calls.map((call) => call[1]?.acquisition)).toEqual(['original_file', 'original_file']);
             expect(getElementByClass(context.containerEl, 'send-button-visible').disabled).toBe(false);
             getElementByClass(entries[0], 'pa-chat-image-draft__preview').click();
             await flushPromises();
@@ -1481,7 +1520,7 @@ describe('LLMView turn lifecycle', () => {
             expect(detail).toBeDefined();
             expect(readOriginal).not.toHaveBeenCalled();
             expect(allText(detailRoot)).toContain('first.png');
-            expect(allText(detailRoot)).toContain('original format is unverified');
+            expect(allText(detailRoot)).not.toContain('original format is unverified');
             editor.value = 'Continue editing';
             const documentWithFocus = { activeElement: null as MockElement | null };
             Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
@@ -1497,6 +1536,22 @@ describe('LLMView turn lifecycle', () => {
             await service.dispose();
             open.mockRestore(); close.mockRestore(); readOriginal.mockRestore(); importFile.mockRestore();
         }
+    });
+
+    it('explains an unavailable historical HEIC preview while retaining original access', async () => {
+        const context = createView();
+        const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        jest.mocked(service.resolveVariant).mockRejectedValue(new Error('heic-unsupported'));
+        const root = new MockElement('div');
+        const modal = new ImageAttachmentDetailModal(context.app as unknown as App,
+            { ref, ordinal: 1, label: 'historical.heic' }, service);
+        modal.contentEl = root as unknown as HTMLElement;
+        try {
+            modal.onOpen(); await flushPromises();
+            expect(allText(root)).toContain('Convert the image to JPEG');
+            expect(getElementByClass(root, 'pa-chat-image__preview').disabled).toBe(false);
+            expect(allText(root)).not.toContain('original format is unverified');
+        } finally { modal.onClose(); await service.dispose(); }
     });
 
     it.each(['success', 'source_missing', 'open_failed'] as const)(
@@ -1517,7 +1572,7 @@ describe('LLMView turn lifecycle', () => {
                 if (outcome === 'open_failed') throw new Error('workspace unavailable');
                 return new Promise<void>((resolve) => { finishOpen = resolve; });
             });
-            const modal = new ImageAttachmentDetailModal({ workspace: { openLinkText } } as unknown as App, image, service, false);
+            const modal = new ImageAttachmentDetailModal({ workspace: { openLinkText } } as unknown as App, image, service);
             modal.contentEl = root as unknown as HTMLElement;
             const close = jest.spyOn(modal, 'close').mockImplementation(() => modal.onClose());
             const revokeUrl = jest.spyOn(URL, 'revokeObjectURL');
@@ -1591,6 +1646,11 @@ describe('LLMView turn lifecycle', () => {
         'reveals new image imports and failures while preserving ordinary draft scrolling: %s', async (outcome) => {
             const context = createView();
             const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+            const sourceOpen = jest.spyOn(ImageSourcePickerModal.prototype, 'open').mockImplementation(function (this: ImageSourcePickerModal) {
+                this.contentEl = new MockElement('div') as unknown as HTMLElement;
+                this.onOpen();
+                getButtonByText(this.contentEl as unknown as MockElement, 'From Files').click();
+            });
             type Imported = Awaited<ReturnType<ImageAssetService['importFile']>>;
             const imported = { ref, asset: { acquisition: 'original_file' } } as Imported;
             let finishImport!: (value: Imported) => void;
@@ -1630,7 +1690,8 @@ describe('LLMView turn lifecycle', () => {
                 draftEl.scrollTop = 37;
                 const documentWithFocus = { activeElement: editor as MockElement | null };
                 Object.defineProperty(globalThis, 'document', { configurable: true, value: documentWithFocus });
-                const picker = walkAll(context.containerEl, (element) => element.getAttribute('type') === 'file')[0];
+                getButtonByClass(context.containerEl, 'pa-chat-add-images').click();
+                const picker = walkAll(context.containerEl, (element) => element.getAttribute('type') === 'file')[1];
                 Object.assign(picker, { files: [new File(['invalid'], 'eighth.png', { type: 'image/png' })] });
                 (picker as unknown as { onchange: () => void }).onchange();
                 await flushPromises();
@@ -1653,7 +1714,7 @@ describe('LLMView turn lifecycle', () => {
             } finally {
                 await context.view.onClose();
                 await service.dispose();
-                bounds.mockRestore(); importFile.mockRestore();
+                bounds.mockRestore(); importFile.mockRestore(); sourceOpen.mockRestore();
             }
         },
     );
@@ -1762,6 +1823,57 @@ describe('LLMView turn lifecycle', () => {
         }
     });
 
+    it.each([false, true])('offers device-appropriate image sources and ignores a cancelled choice (mobile: %s)', (mobile) => {
+        const wasMobile = Platform.isMobileApp;
+        Object.assign(Platform, { isMobileApp: mobile });
+        try {
+            const choose = jest.fn();
+            const modal = new ImageSourcePickerModal({} as App, choose);
+            const root = new MockElement('div');
+            modal.contentEl = root as unknown as HTMLElement;
+            modal.onOpen();
+            const choices = walkAll(root, el => el.tagName === 'button');
+            expect(choices.map(button => button.textContent)).toEqual(mobile
+                ? ['Choose photos', 'From Files', 'From vault'] : ['From Files', 'From vault']);
+            modal.onClose();
+            choices[0].click();
+            expect(choose).not.toHaveBeenCalled();
+        } finally { Object.assign(Platform, { isMobileApp: wasMobile }); }
+    });
+
+    it.each(['Choose photos', 'From Files', 'From vault'])('routes the single image button through %s', async (source) => {
+        const wasMobile = Platform.isMobileApp;
+        Object.assign(Platform, { isMobileApp: true });
+        const context = createView();
+        Object.assign(context.plugin, { imageAssetService: {} });
+        let picker: ImageSourcePickerModal | undefined;
+        const sourceOpen = jest.spyOn(ImageSourcePickerModal.prototype, 'open').mockImplementation(function (this: ImageSourcePickerModal) {
+            picker = this; this.contentEl = new MockElement('div') as unknown as HTMLElement; this.onOpen();
+        });
+        const vaultOpen = jest.spyOn(VaultImagePickerModal.prototype, 'open').mockImplementation(() => undefined);
+        try {
+            await context.view.onOpen();
+            const inputs = walkAll(context.containerEl, element => element.getAttribute('type') === 'file');
+            const photosClick = jest.spyOn(inputs[0], 'click');
+            const filesClick = jest.spyOn(inputs[1], 'click');
+            getButtonByClass(context.containerEl, 'pa-chat-add-images').click();
+            expect(photosClick).not.toHaveBeenCalled(); expect(filesClick).not.toHaveBeenCalled();
+            getButtonByText(picker!.contentEl as unknown as MockElement, source).click();
+            expect(photosClick).toHaveBeenCalledTimes(source === 'Choose photos' ? 1 : 0);
+            expect(filesClick).toHaveBeenCalledTimes(source === 'From Files' ? 1 : 0);
+            expect(vaultOpen).toHaveBeenCalledTimes(source === 'From vault' ? 1 : 0);
+            await context.view.onClose();
+            getButtonByText(picker!.contentEl as unknown as MockElement, source).click();
+            expect(photosClick).toHaveBeenCalledTimes(source === 'Choose photos' ? 1 : 0);
+            expect(filesClick).toHaveBeenCalledTimes(source === 'From Files' ? 1 : 0);
+            expect(vaultOpen).toHaveBeenCalledTimes(source === 'From vault' ? 1 : 0);
+        } finally {
+            sourceOpen.mockRestore(); vaultOpen.mockRestore();
+            Object.assign(Platform, { isMobileApp: wasMobile });
+            await context.view.onClose();
+        }
+    });
+
     it.each(['files', 'vault'] as const)('discloses before the first %s image and not on later imports or view/service reopen', async (firstEntry) => {
         const store = new MemoryChatHistoryStore();
         const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
@@ -1769,6 +1881,12 @@ describe('LLMView turn lifecycle', () => {
         const providerNotices = () => notices.slice(initial).filter((item) => String(item.message).includes('AI provider receives'));
         const contexts: Array<ReturnType<typeof createView>> = [];
         const services: ImageAssetService[] = [];
+        let sourceChoice = 'From vault';
+        const sourceOpen = jest.spyOn(ImageSourcePickerModal.prototype, 'open').mockImplementation(function (this: ImageSourcePickerModal) {
+            this.contentEl = new MockElement('div') as unknown as HTMLElement;
+            this.onOpen();
+            getButtonByText(this.contentEl as unknown as MockElement, sourceChoice).click();
+        });
         const originalOpen = jest.spyOn(VaultImagePickerModal.prototype, 'open').mockImplementation(function (this: VaultImagePickerModal) {
             this.contentEl = new MockElement('div') as unknown as HTMLElement;
             this.onOpen();
@@ -1794,10 +1912,15 @@ describe('LLMView turn lifecycle', () => {
                     await context.view.onOpen();
                 }
                 if (entry === 'files') {
-                    const input = walkAll(context.containerEl, (element) => element.getAttribute('type') === 'file')[0];
+                    sourceChoice = 'From Files';
+                    getButtonByClass(context.containerEl, 'pa-chat-add-images').click();
+                    const input = walkAll(context.containerEl, (element) => element.getAttribute('type') === 'file')[1];
                     Object.assign(input, { files: [{ name: 'synthetic-source.png' }] });
                     (input as unknown as { onchange: () => void }).onchange();
-                } else getButtonByText(context.containerEl, 'Add an image from this vault').click();
+                } else {
+                    sourceChoice = 'From vault';
+                    getButtonByClass(context.containerEl, 'pa-chat-add-images').click();
+                }
                 for (let i = 0; i < 5; i++) await flushPromises();
                 expect(providerNotices()).toHaveLength(1);
                 expect(mockStreamLLM).not.toHaveBeenCalled();
@@ -1805,9 +1928,76 @@ describe('LLMView turn lifecycle', () => {
             }
         } finally {
             originalOpen.mockRestore();
+            sourceOpen.mockRestore();
             for (const context of contexts) await context.view.onClose();
             for (const service of services) await service.dispose();
         }
+    });
+
+    it.each(['Choose photos', 'From Files'])('rejects stale/cancelled %s results and allows a fresh selection', async (source) => {
+        const wasMobile = Platform.isMobileApp;
+        Object.assign(Platform, { isMobileApp: true });
+        const context = createView();
+        const { service, ref } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        const importFile = jest.spyOn(service, 'importFile').mockResolvedValue({ ref,
+            asset: { acquisition: source === 'Choose photos' ? 'unverified_import' : 'original_file' },
+        } as Awaited<ReturnType<ImageAssetService['importFile']>>);
+        const sourceOpen = jest.spyOn(ImageSourcePickerModal.prototype, 'open').mockImplementation(function (this: ImageSourcePickerModal) {
+            this.contentEl = new MockElement('div') as unknown as HTMLElement; this.onOpen();
+            getButtonByText(this.contentEl as unknown as MockElement, source).click();
+        });
+        try {
+            await context.view.onOpen(); await flushPromises();
+            const input = walkAll(context.containerEl, element => element.getAttribute('type') === 'file')[source === 'Choose photos' ? 0 : 1];
+            const choose = () => getButtonByClass(context.containerEl, 'pa-chat-add-images').click();
+            const deliver = () => {
+                Object.assign(input, { files: [{ name: 'selected.png' }] });
+                (input as unknown as { onchange: () => void }).onchange();
+            };
+            choose();
+            (context.view as unknown as { composerDraft: ComposerDraft<MessageImage> }).composerDraft.clear();
+            deliver(); await flushPromises();
+            expect(importFile).not.toHaveBeenCalled();
+            choose();
+            input.dispatchEvent('cancel', { currentTarget: input });
+            deliver(); await flushPromises();
+            expect(importFile).not.toHaveBeenCalled();
+            choose(); deliver();
+            for (let i = 0; i < 5; i++) await flushPromises();
+            expect(importFile).toHaveBeenCalledTimes(1);
+            expect(importFile.mock.calls[0][1]?.acquisition).toBe('original_file');
+            expect(getButtonsByText(context.containerEl, 'Add original from Files')).toHaveLength(0);
+        } finally {
+            sourceOpen.mockRestore(); Object.assign(Platform, { isMobileApp: wasMobile });
+            await context.view.onClose(); await service.dispose();
+        }
+    });
+
+    it('limits image management to imported files still in chat directories', async () => {
+        const context = createView();
+        const { service } = attachDisclosureService(context, new MemoryChatHistoryStore());
+        const asset = { id: 'chat', originalPath: 'assets/pa-images/chat.jpg', importDirectory: 'assets/pa-images',
+            source: 'imported', byteLength: 3, state: 'available', owners: [],
+            originalHash: 'a'.repeat(64), detectedMime: 'image/jpeg', acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', createdAt: 1 };
+        jest.spyOn(service, 'listAssets').mockResolvedValue([
+            asset,
+            { ...asset, id: 'promoted', source: 'vault_reference', originalPath: 'assets/promoted.jpg' },
+            { ...asset, id: 'external-move', originalPath: 'assets/relocated.jpg' },
+            { ...asset, id: 'vault-reference', source: 'vault_reference', originalPath: 'assets/pa-images/referenced.jpg' },
+        ] as Awaited<ReturnType<ImageAssetService['listAssets']>>);
+        const modal = new ImageManagementModal(context.app as unknown as App, service);
+        const root = new MockElement('div');
+        modal.contentEl = root as unknown as HTMLElement;
+        try {
+            modal.onOpen(); await flushPromises();
+            const rows = walkAll(root, (element) => element.classList.contains('pa-chat-image-management__item'));
+            expect(rows).toHaveLength(1);
+            expect(allText(rows[0])).toContain('assets/pa-images/chat.jpg');
+            expect(allText(root)).not.toContain('assets/promoted.jpg');
+            expect(allText(root)).not.toContain('assets/relocated.jpg');
+            expect(allText(root)).not.toContain('assets/pa-images/referenced.jpg');
+        } finally { modal.onClose(); await service.dispose(); }
     });
 
     it('makes provider disclosure readable again even when the image registry fails', async () => {
@@ -1821,7 +2011,7 @@ describe('LLMView turn lifecycle', () => {
             expect(walk(help, (element) => element.tagName === 'summary')?.textContent).toBe('Images and your AI provider');
             const paragraphs = walkAll(help, (element) => element.tagName === 'p').map((element) => element.textContent).join('\n');
             expect(paragraphs).toContain('AI provider receives');
-            expect(paragraphs).toContain('HEIC is saved as a JPEG');
+            expect(paragraphs).toContain('Convert HEIC to JPEG before adding it to PA');
             expect(walk(root, (element) => element.getAttribute('role') === 'status')?.textContent).toBeTruthy();
             modal.onClose();
         }
@@ -5701,11 +5891,12 @@ describe('LLMView turn lifecycle', () => {
         const sharedMenuItemBlock = getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item');
         const messageMenuItemBlock = getCssRuleBlock(css, '.pa-chat-message-menu .pa-chat-menu-item');
 
-        expect(css).toMatch(/\.pa-chat-message-menu\s*{[\s\S]*?top:\s*auto;[\s\S]*?bottom:\s*calc\(100% \+ 8px\);[\s\S]*?min-width:\s*96px;[\s\S]*?max-width:\s*min\(132px, calc\(100vw - 24px\)\);[\s\S]*?padding:\s*3px;/);
+        expect(css).toMatch(/\.pa-chat-message-menu\s*{[\s\S]*?--pa-chat-menu-min-width:\s*96px;[\s\S]*?top:\s*auto;[\s\S]*?bottom:\s*calc\(100% \+ 8px\);[\s\S]*?padding:\s*3px;/);
         expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.pa-chat-message-menu,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.pa-chat-message-menu\s*{[\s\S]*?right:\s*auto;[\s\S]*?left:\s*0;/);
         expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*110px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
         expect(css).toMatch(/\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*76px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
-        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.llm-message\.assistant\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*166px;[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*116px;[\s\S]*?\.pa-chat-message-menu\s*{[\s\S]*?min-width:\s*144px;/);
+        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.llm-message\.assistant\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*166px;[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*116px;/);
+        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{\s*\.pa-chat-message-menu\s*{\s*--pa-chat-menu-min-width:\s*144px;/);
         expect(css).toMatch(/\.pa-chat-message-menu::after\s*{[\s\S]*?top:\s*auto;[\s\S]*?right:\s*var\(--pa-chat-message-menu-arrow-right\);[\s\S]*?left:\s*var\(--pa-chat-message-menu-arrow-left\);[\s\S]*?bottom:\s*-6px;[\s\S]*?border-right:\s*1px solid var\(--background-modifier-border\);[\s\S]*?border-bottom:\s*1px solid var\(--background-modifier-border\);/);
         expect(css).toMatch(/\.pa-chat-message-menu\.pa-chat-message-menu-below\s*{[\s\S]*?top:\s*calc\(100% \+ 8px\);[\s\S]*?bottom:\s*auto;/);
         expect(sharedMenuItemBlock).toContain('box-sizing: border-box;');
@@ -5713,7 +5904,7 @@ describe('LLMView turn lifecycle', () => {
         expect(sharedMenuItemBlock).toContain('min-height: 38px;');
         expect(sharedMenuItemBlock).toContain('gap: 0 10px;');
         expect(css.indexOf('.pa-chat-message-menu .pa-chat-menu-item {')).toBeGreaterThan(css.indexOf('.pa-chat-menu .pa-chat-menu-item {'));
-        expect(messageMenuItemBlock).toContain('grid-template-columns: 18px max-content;');
+        expect(messageMenuItemBlock).toContain('grid-template-columns: 18px minmax(0, max-content);');
         expect(messageMenuItemBlock).toContain('justify-content: center;');
         expect(messageMenuItemBlock).toContain('padding: 0 8px;');
         expect(messageMenuItemBlock).not.toContain('font-size');
@@ -7037,6 +7228,9 @@ describe('LLMView turn lifecycle', () => {
         const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
         const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
         expect(composerMenu.hidden).toBe(true);
+        expect(getButtonsByText(composerMenu, 'Add original from Files')).toHaveLength(0);
+        expect(getButtonsByText(composerMenu, 'Add image from vault')).toHaveLength(0);
+        expect(getButtonsByText(composerMenu, 'Manage saved originals')).toHaveLength(0);
 
         moreButton.click();
         expect(composerMenu.hidden).toBe(false);
@@ -7046,6 +7240,7 @@ describe('LLMView turn lifecycle', () => {
         const memoryStatusIcon = getElementByClass(memoryStatusButton, 'pa-chat-menu-item-icon');
         const memoryStatusText = getElementByClass(memoryStatusButton, 'pa-chat-menu-item-text');
         expect(memoryStatusText.textContent).toBe('Show Memory Status');
+        expect(memoryStatusButton.getAttribute('title')).toBe(memoryStatusText.textContent);
         expect(memoryStatusButton.children).toEqual([memoryStatusIcon, memoryStatusText]);
         memoryStatusButton.click();
         expect(plugin.memoryStatus.showTechnicalStatus).toHaveBeenCalledTimes(1);
@@ -7054,6 +7249,55 @@ describe('LLMView turn lifecycle', () => {
         expect(app.setting.open).toHaveBeenCalledTimes(1);
         expect(app.setting.openTabById).toHaveBeenCalledWith('personal-assistant');
         expect(plugin.openMemorySettings).not.toHaveBeenCalled();
+    });
+
+    it.each([null, 'completed', 'prepared', 'partial', 'failed'])('shows unfinished saves only for a real pending record: %s', async (state) => {
+        const { view, containerEl, plugin } = createView();
+        const listReceipts = jest.fn(async () => state ? [{ state }] : []);
+        Object.assign(plugin, { writingSave: { listReceipts }, writingVersions: {} });
+        await view.onOpen();
+        const pending = getButtonByText(containerEl, 'Unfinished note saves');
+        const more = getButtonByClass(containerEl, 'pa-chat-more-button');
+        expect(pending.hidden).toBe(true);
+        more.click();
+        expect(getElementByClass(containerEl, 'pa-chat-composer-menu').hidden).toBe(false);
+        await flushPromises();
+        expect(pending.hidden).toBe(!state || state === 'completed');
+        more.click();
+        listReceipts.mockResolvedValue([]);
+        more.click(); await flushPromises();
+        expect(pending.hidden).toBe(true);
+        expect(listReceipts).toHaveBeenCalledTimes(2);
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        expect(getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item[hidden]')).toContain('display: none;');
+    });
+
+    it('ignores an older unfinished-save query after closing and reopening More', async () => {
+        const { view, containerEl, plugin } = createView();
+        const resolve: Array<(receipts: Array<{ state: string }>) => void> = [];
+        const listReceipts = jest.fn(() => new Promise<Array<{ state: string }>>(done => { resolve.push(done); }));
+        Object.assign(plugin, { writingSave: { listReceipts }, writingVersions: {} });
+        await view.onOpen();
+        const pending = getButtonByText(containerEl, 'Unfinished note saves');
+        const more = getButtonByClass(containerEl, 'pa-chat-more-button');
+        more.click(); more.click(); more.click();
+        resolve[1]([]); await flushPromises();
+        resolve[0]([{ state: 'partial' }]); await flushPromises();
+        expect(pending.hidden).toBe(true);
+        more.click(); more.click();
+        await view.onClose();
+        resolve[2]([{ state: 'failed' }]); await flushPromises();
+        expect(pending.hidden).toBe(true);
+    });
+
+    it('keeps More usable when unfinished-save storage cannot be read', async () => {
+        const { view, containerEl, plugin } = createView();
+        Object.assign(plugin, { writingSave: { listReceipts: async () => { throw new Error('unavailable'); } }, writingVersions: {} });
+        await view.onOpen();
+        getButtonByClass(containerEl, 'pa-chat-more-button').click(); await flushPromises();
+        expect(getElementByClass(containerEl, 'pa-chat-composer-menu').hidden).toBe(false);
+        expect(getButtonByText(containerEl, 'Unfinished note saves').hidden).toBe(true);
+        expect(getButtonByText(containerEl, 'New Chat').disabled).toBe(false);
     });
 
     it('auto-closes the composer More menu after idle time and resets on activity', async () => {

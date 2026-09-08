@@ -1,0 +1,95 @@
+{
+  "scope": "B-129 image management 2026-09-08/09; raw files copied without edits",
+  "files": [
+    {
+      "path": "mac/assets.json",
+      "sha256": "c6126a8b5be316f1cfad7830d35bf2aaeef0fe8a304f20afe689a0d686f3678f",
+      "bytes": 346,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/assets.json"
+    },
+    {
+      "path": "mac/fixtures.json",
+      "sha256": "9caa68762befd4a6e3f503849fb71741a0e9ae5077db5bbd7a07f1ab2dca53a9",
+      "bytes": 500,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/fixtures.json"
+    },
+    {
+      "path": "mac/prepared.json",
+      "sha256": "7c1cedda712b3bd3a8709f92b5eaefd3bd9f830eb5bbb755f4068831a2c982ca",
+      "bytes": 3848,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/prepared.json"
+    },
+    {
+      "path": "mac/saved.json",
+      "sha256": "1b20c0fc1edf8fbd3e9efc28008589a04129df2a9aaedfbb8e916db377d30344",
+      "bytes": 5690,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/saved.json"
+    },
+    {
+      "path": "mac/reopened.json",
+      "sha256": "71c1d2977684debb790e04c8eb7d7c6be73d2abc3efede1b99c1374a85fcc61a",
+      "bytes": 870,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/reopened.json"
+    },
+    {
+      "path": "mac/cleanup-final.json",
+      "sha256": "838e34cab05652d5ea13e7f1443371e94dbb70f590746a4cf3e4d600492ec6a4",
+      "bytes": 117,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/cleanup-final.json"
+    },
+    {
+      "path": "mac/mac-save-preview.png",
+      "sha256": "dd79af9ca1dfb37566385a7c77e21eb000f16e28ea24cfc215025e435a3dd2db",
+      "bytes": 308363,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/mac-save-preview.png"
+    },
+    {
+      "path": "mac/mac-saved.png",
+      "sha256": "678b07cdc2d56ddd3241076fb429d9d0d2e67489d223ef5e79e7dc233e10c426",
+      "bytes": 188321,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/mac-saved.png"
+    },
+    {
+      "path": "mac/mobile-en24-preview.png",
+      "sha256": "17f08c407e32c729b074dceec35e37b65454cc36e0da0b76325f38c0c55cd604",
+      "bytes": 136618,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/mobile-en24-preview.png"
+    },
+    {
+      "path": "mac/mobile-zh24-preview.png",
+      "sha256": "e04a9842b8fccd8f30662e2a767f1ed12b7562e2e79e1515f8544d11bb469a8e",
+      "bytes": 131167,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/mobile-zh24-preview.png"
+    },
+    {
+      "path": "ios/photos-final.json",
+      "sha256": "def24a1e0518a13471f66ff4c699f04dda9a1cb0b81422c715d262dbf4cf78e0",
+      "bytes": 5935,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/ios-receipts/final.json"
+    },
+    {
+      "path": "ios/photos-cleanup.json",
+      "sha256": "0aa414612cb7081af045361bd9e6d0d116ee0dfb83730709198acf73d53c8e67",
+      "bytes": 2140,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/ios-receipts/final-cleanup.json"
+    },
+    {
+      "path": "ios/manual-final.json",
+      "sha256": "e3c7607135155129df5f8bf3034708887e2319a01e6ebfa246afefbb658ab89d",
+      "bytes": 9178,
+      "source": "/Users/edonyzpc/code/personal-assistant/test/B129 Mac 20260908/ios-manual-receipts/final.json"
+    },
+    {
+      "path": "ios/photos-observer.js",
+      "sha256": "e05edae5f5d8f04c8ef36ac06b85f6a7ad1e30080d87b25db77bb8fc4e120512",
+      "bytes": 5702,
+      "source": "/private/tmp/pa-b129-ios-setup.js"
+    },
+    {
+      "path": "ios/manual-observer.js",
+      "sha256": "2ff1975105cf899452d6a4647c1c3077873f136d94c2266e0913507104c36d39",
+      "bytes": 6536,
+      "source": "/private/tmp/pa-b129-ios-manual-setup.js"
+    }
+  ]
+}

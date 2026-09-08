@@ -268,7 +268,10 @@ export class WritingSaveModal extends Modal {
                 edit.onclick = () => { this.releasePrepared(); result.empty(); form.hidden = false; title.focus(); };
                 const confirm = actions.createEl('button', { text: t('plugin.chat.writing.confirmSave'), cls: 'mod-cta', attr: { type: 'button' } });
                 confirm.onclick = () => { confirm.disabled = true; void this.run(prepared.receipt, false, result); };
-            } catch { if (!this.closed) result.setText(t('plugin.chat.writing.previewFailed')); }
+            } catch (error) {
+                if (!this.closed) result.setText(t(/heic[-_]unsupported/.test(String(error))
+                    ? 'plugin.chat.writing.heicUnsupported' : 'plugin.chat.writing.previewFailed'));
+            }
             finally { this.preparing = false; this.prepareController = undefined; form.disabled = false; }
         };
         const recoveries = root.createDiv();
@@ -311,7 +314,7 @@ export class WritingSaveModal extends Modal {
         details.createEl('p', { text: t('plugin.chat.writing.saveRules') });
         details.createEl('p', { text: receipt.targetNotePath });
         for (const attachment of receipt.attachments) details.createEl('p', {
-            text: `${attachment.state === 'written' ? '✓ ' : ''}${attachment.sourceName} → ${attachment.plannedPath ?? attachment.filename}${attachment.attachmentKind === 'heic_jpeg' ? ` · ${t('plugin.chat.writing.heicJpeg')}` : ''}`,
+            text: `${attachment.state === 'written' ? '✓ ' : ''}${attachment.sourceName} → ${attachment.plannedPath ?? (attachment.transfer === 'reference' ? attachment.sourcePath : attachment.filename)}${attachment.attachmentKind === 'heic_jpeg' && attachment.state === 'written' ? ` · ${t('plugin.chat.writing.heicJpeg')}` : ''}`,
         });
         if (markdown !== undefined) {
             details.createEl('h3', { text: t('plugin.chat.writing.fullNote') });
@@ -331,8 +334,11 @@ export class WritingSaveModal extends Modal {
             const receipt = retry ? await this.save.retry(plan.operationId, { signal: controller.signal }) : await this.save.execute(plan.operationId, { signal: controller.signal });
             this.releasePrepared();
             if (!this.closed) this.showReceipt(receipt, result);
-        } catch {
-            if (!this.closed) this.showReceipt({ ...plan, state: 'failed' }, result, retry);
+        } catch (error) {
+            if (!this.closed) {
+                this.showReceipt({ ...plan, state: 'failed' }, result, retry);
+                if (/heic[-_]unsupported/.test(String(error))) result.createEl('p', { text: t('plugin.chat.writing.heicUnsupported') });
+            }
         }
         finally { this.controller = undefined; }
     }
@@ -342,6 +348,7 @@ export class WritingSaveModal extends Modal {
         result.empty();
         result.createEl('p', { text: t(receipt.state === 'completed' ? 'plugin.chat.writing.saved'
             : receipt.state === 'failed' ? 'plugin.chat.writing.saveFailed' : 'plugin.chat.writing.partial') });
+        if (receipt.failureReason === 'heic_unsupported') result.createEl('p', { text: t('plugin.chat.writing.heicUnsupported') });
         this.renderDestination(result, receipt.targetNotePath);
         if (receipt.state !== 'completed') {
             const body = result.createEl('pre', { cls: 'pa-writing-modal__body', text: this.version.text });

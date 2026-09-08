@@ -1,4 +1,4 @@
-import { assertSafeEncodedJpeg, inspectImage } from '../src/chat/image-format';
+import { assertNewChatImageSupported, assertSafeEncodedJpeg, inspectImage } from '../src/chat/image-format';
 import { IMAGE_POLICY } from '../src/chat/image-policy';
 
 const bytes = (data: Uint8Array | number[] | string): ArrayBuffer =>
@@ -38,7 +38,38 @@ function heic(options: { count?: number; sequence?: boolean; dependent?: string;
                 box('ipma', Buffer.concat([word(0), word(1), Buffer.from([0, 1, 1, association])]))]))]))]));
 }
 
-describe('production image byte admission (container checks, not pixel decoding)', () => {
+describe('new chat image format boundary', () => {
+    it.each([
+        ['static', heic()], ['sequence', heic({ sequence: true })], ['multiple images', heic({ count: 2 })],
+        ['oversized geometry', heic({ width: 8001, height: 6000 })], ['truncated metadata', heic().slice(0, -1)],
+        ['missing metadata', heic().slice(0, 24)], ['truncated file type', heic().slice(0, 12)],
+        ['preceding free box', bytes(Buffer.concat([box('free', Buffer.alloc(4)), Buffer.from(heic())]))],
+    ])('rejects %s HEIC without full decoding or metadata admission', (_name, input) => {
+        expect(() => assertNewChatImageSupported(input as ArrayBuffer)).toThrow('image_processing:heic-unsupported');
+    });
+    it.each(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'])(
+        'recognizes major and compatible HEIF brand %s', (brand) => {
+            const major = bytes(box('ftyp', Buffer.concat([Buffer.from(brand), word(0)])));
+            const compatible = bytes(box('ftyp', Buffer.concat([Buffer.from('test'), word(0), Buffer.from(brand)])));
+            for (const input of [major, compatible]) {
+                expect(() => assertNewChatImageSupported(input)).toThrow('image_processing:heic-unsupported');
+            }
+        });
+    it('recognizes extended-size and malformed-size HEIF boxes', () => {
+        const extended = bytes(Buffer.concat([word(1), Buffer.from('ftyp'), word(0), word(24), Buffer.from('heic'), word(0)]));
+        const malformed = bytes(Buffer.concat([word(4), Buffer.from('ftypheic')]));
+        for (const input of [extended, malformed]) {
+            expect(() => assertNewChatImageSupported(input)).toThrow('image_processing:heic-unsupported');
+        }
+    });
+    it.each([jpeg(), png(), bytes(gif), webp(), bytes('<svg><text>ftypheic</text></svg>'),
+        jpeg(640, 480, segment(254, Buffer.from('ftypheic')))])(
+        'keeps other image admission separate and does not scan arbitrary image content for brands', (input) => {
+            expect(() => assertNewChatImageSupported(input)).not.toThrow();
+        });
+});
+
+describe('image container inspection including historical HEIC (not new input admission)', () => {
     it.each([[jpeg(), 'jpeg', 640, 480], [png(), 'png', 640, 480], [bytes(gif), 'gif', 1, 1],
         [webp(), 'webp', 640, 480], [heic(), 'heic', 640, 480]])('admits static %s', (input, format, width, height) => {
         expect(inspectImage(input as ArrayBuffer)).toMatchObject({ format, width, height, frames: 1 });
@@ -75,8 +106,8 @@ describe('production SVG post-parse admission', () => {
         Object.defineProperty(globalThis, 'DOMParser', { configurable: true, value: Parser });
     }
     it.each(['url(https://invalid/x)', 'u\\72l(https://invalid/x)', '@import "https://invalid/x"',
-        'image-set("https://invalid/x" 1x)', '-webkit-image-set("https://invalid/x" 1x)', 'image-/**/set("https://invalid/x" 1x)', 'animation: spin 1s'])
-    ('blocks external CSS before any decoder can fetch it: %s', (textContent) => {
+        'image-set("https://invalid/x" 1x)', '-webkit-image-set("https://invalid/x" 1x)', 'image-/**/set("https://invalid/x" 1x)', 'animation: spin 1s'])(
+        'blocks external CSS before any decoder can fetch it: %s', (textContent) => {
         parser({ localName: 'style', textContent });
         expect(() => inspectImage(bytes('<svg/>'))).toThrow('image_processing:unsafe-svg');
     });

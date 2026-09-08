@@ -60,9 +60,10 @@ export function renderComposerImageAttachments(
             preview.src = url;
             preview.hidden = false;
             placeholder.hidden = true;
-        }).catch(() => {
+        }).catch((error) => {
             if (!controller.signal.aborted && entry.status === 'ready') {
-                status.textContent = t('plugin.chat.images.previewUnavailable');
+                status.textContent = t(/heic[-_]unsupported/.test(String(error))
+                    ? 'plugin.chat.images.heicUnsupported' : 'plugin.chat.images.previewUnavailable');
                 item.setAttribute('data-preview-unavailable', 'true');
             }
         });
@@ -77,8 +78,7 @@ export function renderComposerImageAttachments(
 export class ImageAttachmentDetailModal extends Modal {
     private cleanup?: () => void;
 
-    constructor(app: App, private readonly image: MessageImage, private readonly service: ImageAssetService,
-        private readonly unverified: boolean) { super(app); }
+    constructor(app: App, private readonly image: MessageImage, private readonly service: ImageAssetService) { super(app); }
 
     onOpen(): void {
         const t = makePluginTranslator(getPluginUiLanguage());
@@ -87,7 +87,6 @@ export class ImageAttachmentDetailModal extends Modal {
         this.cleanup = renderImageAttachments(this.contentEl, [this.image], this.service, this.app, {
             onOriginalOpened: () => this.close(),
         });
-        if (this.unverified) this.contentEl.createEl('p', { text: t('plugin.chat.images.unverified') });
         this.contentEl.createEl('p', { text: t('plugin.chat.images.openOriginal', { name: this.image.label }) });
     }
 
@@ -149,7 +148,8 @@ export function renderImageAttachments(
                 label.title = `${lease.width} × ${lease.height}`;
             }).catch((error) => {
                 if (!controller.signal.aborted && currentAttempt === attempt) {
-                    status.textContent = t("plugin.chat.images.previewUnavailable");
+                    status.textContent = t(/heic[-_]unsupported/.test(String(error))
+                        ? 'plugin.chat.images.heicUnsupported' : 'plugin.chat.images.previewUnavailable');
                     relocate.hidden = !/source_missing|source_changed|asset_missing/.test(String(error));
                 }
             });

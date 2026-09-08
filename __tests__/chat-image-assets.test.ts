@@ -6,6 +6,8 @@ import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { IMAGE_POLICY, imagePolicyFingerprint, imageSourceHash, PROCESSOR_VERSION } from '../src/chat/image-policy';
 import type { ProcessImageOptions } from '../src/chat/image-processor';
 import type { ImageAsset, ImageVariantRecord } from '../src/chat/image-types';
+import { WritingSaveAction } from '../src/chat/writing-save-action';
+import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 
 const bytes = (...values: number[]): ArrayBuffer => Uint8Array.from(values).buffer;
@@ -27,6 +29,7 @@ function deferred<T>() {
 }
 function setup(store = new MemoryChatHistoryStore()) {
     const data = new Map<string, ArrayBuffer>();
+    const texts = new Map<string, string>();
     const entries = new Map<string, TFile | TFolder>();
     const listeners = new Map<string, (file: TFile | TFolder, oldPath?: string) => void>();
     const vault = {
@@ -37,6 +40,15 @@ function setup(store = new MemoryChatHistoryStore()) {
             const file = Object.assign(new TFile(), { path, stat: { size: value.byteLength, mtime: 0, ctime: 0 } }); entries.set(path, file); data.set(path, value.slice(0)); return file;
         }),
         readBinary: jest.fn(async (file: TFile) => { const value = data.get(file.path); if (!value) throw new Error('missing'); return value.slice(0); }),
+        create: jest.fn(async (path: string, text: string) => {
+            if (entries.has(path)) throw new Error('exists');
+            const file = Object.assign(new TFile(), { path, stat: { size: text.length, mtime: 0, ctime: 0 } });
+            entries.set(path, file); texts.set(path, text); return file;
+        }),
+        read: jest.fn(async (file: TFile) => texts.get(file.path)!),
+        process: jest.fn(async (file: TFile, change: (text: string) => string) => {
+            const updated = change(texts.get(file.path)!); texts.set(file.path, updated); return updated;
+        }),
         trash: jest.fn(async (file: TFile) => { entries.delete(file.path); data.delete(file.path); }),
         on: jest.fn((kind: string, fn: (file: TFile | TFolder, oldPath?: string) => void) => { listeners.set(kind, fn); return { kind }; }),
         offref: jest.fn(),
@@ -47,10 +59,190 @@ function setup(store = new MemoryChatHistoryStore()) {
             sourceHash: await imageSourceHash(input), processorVersion: PROCESSOR_VERSION, policyFingerprint: imagePolicyFingerprint(options.purpose) })),
         dispose: jest.fn(async () => undefined),
     };
-    const app = { vault, fileManager: { getAvailablePathForAttachment: jest.fn(async (name: string, _anchor: string) => `attachments/${name}`) } } as unknown as App;
+    const app = { vault, fileManager: {
+        getAvailablePathForAttachment: jest.fn(async (name: string, _anchor: string) => `attachments/${name}`),
+        generateMarkdownLink: (file: TFile) => `[[${file.path}]]`,
+        renameFile: jest.fn(async (file: TFile, path: string) => {
+            if (entries.has(path)) throw new Error('exists');
+            const oldPath = file.path, value = data.get(oldPath)!;
+            entries.delete(oldPath); data.delete(oldPath); file.path = path;
+            entries.set(path, file); data.set(path, value);
+            listeners.get('rename')?.(file, oldPath);
+        }),
+    } } as unknown as App;
     const service = new ImageAssetService(app, store, { processor });
     return { service, store, data, entries, listeners, vault, processor, app };
 }
+
+describe('chat-only images become shared note attachments', () => {
+    const jpeg = () => bytes(255, 216, 255, 192, 0, 8, 8, 0, 3, 0, 4, 1, 255, 217);
+    const importJpeg = (h: ReturnType<typeof setup>) => h.service.importFile(fileInput(jpeg()), { acquisition: 'unverified_import' });
+
+    it('rejects actual HEIC before registration or writes regardless of filename, including vault references', async () => {
+        const h = setup();
+        const heic = bytes(0, 0, 0, 20, 102, 116, 121, 112, 104, 101, 105, 99, 0, 0, 0, 0, 109, 105, 102, 49);
+        await expect(h.service.importFile({ ...fileInput(heic), name: 'photo.jpg' }, { acquisition: 'original_file' }))
+            .rejects.toMatchObject({ code: 'heic-unsupported' });
+        expect(await h.store.listImageAssets()).toEqual([]);
+        expect(h.vault.createBinary).not.toHaveBeenCalled();
+        await h.vault.createBinary('pretend.png', heic);
+        await expect(h.service.addVaultReference('pretend.png')).rejects.toMatchObject({ code: 'heic-unsupported' });
+        expect(await h.store.listImageAssets()).toEqual([]);
+        expect(h.processor.process).not.toHaveBeenCalled();
+    });
+
+    it('preserves actual JPEG delivery bytes even with an HEIC name and removes acquisition warnings', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        expect(imported.asset.acquisition).toBe('original_file');
+        expect(h.data.get(imported.asset.originalPath)).toEqual(jpeg());
+    });
+
+    it.each(['saved.jpg', 'attachments/saved.jpg', 'notes/saved.jpg', 'notes/assets/saved.jpg'])(
+        'moves bytes once to %s, repairs every alias and removes cleanup authority', async (targetPath) => {
+            const h = setup(), imported = await importJpeg(h);
+            await h.vault.createBinary('Another.md', bytes());
+            const alias = await h.service.addVaultReference(imported.asset.originalPath, { anchorPath: 'Another.md', anchorKind: 'existing_note' });
+            const result = await h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath, operationId: 'save_one' });
+            expect(result.path).toBe(targetPath);
+            expect(h.data.has(imported.asset.originalPath)).toBe(false);
+            expect(h.data.get(targetPath)).toEqual(jpeg());
+            for (const ref of [imported.ref, alias.ref]) {
+                expect((await h.service.readOriginal(ref)).asset).toMatchObject({ originalPath: targetPath, source: 'vault_reference' });
+            }
+            await h.service.clearCache();
+            expect((await h.service.readOriginal(alias.ref)).bytes).toEqual(jpeg());
+            await expect(h.service.cleanupSelected([{ ref: imported.ref, path: targetPath }]))
+                .rejects.toMatchObject({ code: 'cleanup_selection_changed' });
+            const second = await h.service.promoteToNote(alias.ref, { sourcePath: imported.asset.originalPath, targetPath: 'elsewhere.jpg', operationId: 'save_two' });
+            expect(second.path).toBe(targetPath);
+            expect(h.app.fileManager.renameFile).toHaveBeenCalledTimes(1);
+        });
+
+    it('does not overwrite or adopt an occupied same-content target before moving', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        await h.vault.createBinary('existing.jpg', jpeg());
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'existing.jpg', operationId: 'save_one' }))
+            .rejects.toMatchObject({ code: 'path_conflict' });
+        expect(h.data.get(imported.asset.originalPath)).toEqual(jpeg());
+        expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
+    });
+
+    it('fails before rename when the intent cannot persist', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        jest.spyOn(h.store, 'setImageSetting').mockRejectedValueOnce(new Error('quota'));
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'save_one' }))
+            .rejects.toThrow('quota');
+        expect(h.data.has(imported.asset.originalPath)).toBe(true);
+        expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
+    });
+
+    it('recovers a move after registry failure using durable intent, without copying or moving twice', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const put = jest.spyOn(h.store, 'putImageAsset');
+        put.mockRejectedValueOnce(new Error('registry unavailable'));
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'save_one' }))
+            .rejects.toThrow('registry unavailable');
+        expect(h.data.has(imported.asset.originalPath)).toBe(false);
+        expect(h.data.get('saved.jpg')).toEqual(jpeg());
+        expect((await h.service.readOriginal(imported.ref)).asset.originalPath).toBe('saved.jpg');
+        const result = await h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'other.jpg', operationId: 'save_one' });
+        expect(result.path).toBe('saved.jpg');
+        expect(h.app.fileManager.renameFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the source readable after an interrupted rename but forbids a competing save from taking its pending intent', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        (h.app.fileManager.renameFile as jest.Mock).mockRejectedValueOnce(new Error('interrupted'));
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'save_one' })).rejects.toThrow('interrupted');
+        expect((await h.service.readOriginal(imported.ref)).bytes).toEqual(jpeg());
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'another.jpg', operationId: 'save_two' }))
+            .rejects.toMatchObject({ code: 'promotion_incomplete' });
+        await h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'another.jpg', operationId: 'save_one' });
+        expect(h.data.get('saved.jpg')).toEqual(jpeg());
+        expect(h.data.has('another.jpg')).toBe(false);
+    });
+
+it('isolates unavailable pending moves in the management list and allows explicit relocation to recover', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        (h.app.fileManager.renameFile as jest.Mock).mockRejectedValueOnce(new Error('interrupted'));
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'save_one' })).rejects.toThrow();
+        h.entries.delete(imported.asset.originalPath); h.data.delete(imported.asset.originalPath);
+        const other = await h.service.importFile(fileInput(bytes(4, 5, 6)), { acquisition: 'original_file' });
+        expect((await h.service.listAssets()).map((a) => a.id)).toEqual(expect.arrayContaining([imported.ref.assetId, other.ref.assetId]));
+        await h.vault.createBinary('recovered.jpg', jpeg());
+        await h.service.relocate(imported.ref, 'recovered.jpg');
+        expect((await h.service.readOriginal(imported.ref)).asset.originalPath).toBe('recovered.jpg');
+        expect(await h.store.getImageSetting(`promotion-history:${imported.ref.assetId}:save_one`)).toMatchObject({ state: 'started' });
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'another.jpg', operationId: 'save_one' }))
+            .rejects.toMatchObject({ code: 'source_changed' });
+    });
+
+    it('repairs cancellation during rename before returning to the next read', async () => {
+        const h = setup(), imported = await importJpeg(h), controller = new AbortController();
+        const rename = (h.app.fileManager.renameFile as jest.Mock).getMockImplementation()!;
+        (h.app.fileManager.renameFile as jest.Mock).mockImplementationOnce(async (...args: unknown[]) => {
+            await rename(...args); controller.abort();
+        });
+        await h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'save_one', signal: controller.signal });
+        expect((await h.service.readOriginal(imported.ref)).asset).toMatchObject({ originalPath: 'saved.jpg', source: 'vault_reference' });
+    });
+
+    it('rejects a source changed during final verification before the rename', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const read = h.vault.readBinary.getMockImplementation()!;
+        let reads = 0;
+        h.vault.readBinary.mockImplementation(async (file) => {
+            const value = await read(file);
+            if (file.path === imported.asset.originalPath && ++reads === 2) {
+                h.data.set(file.path, bytes(6, 6, 6)); file.stat.mtime++;
+                h.listeners.get('modify')?.(file);
+            }
+            return value;
+        });
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'save_one' })).rejects.toThrow();
+        expect(h.app.fileManager.renameFile).not.toHaveBeenCalled();
+        expect(h.data.has('saved.jpg')).toBe(false);
+    });
+
+    it('integrates real save and image services across shared previews, interrupted receipt commits and changed attachment settings', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        const version: WritingVersion = { id: 'writing_integration', requestId: 'request_integration', messageId: 'message_integration',
+            text: 'Keep this exact text.', textHash: await hashWritingText('Keep this exact text.'), explanation: '', origin: 'ai_generated',
+            conversationId: 'conv_integration', turnIndex: 0, createdAt: 1, associatedImages: [{ ref: imported.ref, ordinal: 1, label: 'Photo' }],
+            backgroundSourceRefs: [], styleRevisionIds: [] };
+        await h.store.putWritingVersion(version);
+        const save = new WritingSaveAction(h.app, h.store, h.service);
+        const first = await save.prepare({ writingVersionId: version.id, targetNotePath: 'one.md' });
+        const second = await save.prepare({ writingVersionId: version.id, targetNotePath: 'two.md' });
+        const put = h.store.putSaveReceipt.bind(h.store);
+        let rejectCheckpoint = true;
+        jest.spyOn(h.store, 'putSaveReceipt').mockImplementation(async (receipt) => {
+            if (rejectCheckpoint && receipt.attachments.some((a) => a.state === 'written')) throw new Error('checkpoint unavailable');
+            return put(receipt);
+        });
+        expect((await save.execute(first.operationId)).state).toBe('partial');
+        expect(h.data.has(imported.asset.originalPath)).toBe(false);
+        rejectCheckpoint = false;
+        (h.app.fileManager.getAvailablePathForAttachment as jest.Mock).mockRejectedValue(new Error('attachment settings changed'));
+        expect((await save.retry(first.operationId)).state).toBe('completed');
+        const result = await save.execute(second.operationId);
+        expect(result.state).toBe('completed');
+        expect(h.app.fileManager.renameFile).toHaveBeenCalledTimes(1);
+        expect(h.vault.createBinary).toHaveBeenCalledTimes(1);
+        expect((await h.service.readOriginal(imported.ref)).asset.originalPath).toBe(result.attachments[0].plannedPath);
+        await save.dispose(); await h.service.dispose();
+    });
+
+    it('does not adopt same bytes if both source and target exist after a pending intent', async () => {
+        const h = setup(), imported = await importJpeg(h);
+        (h.app.fileManager.renameFile as jest.Mock).mockRejectedValueOnce(new Error('interrupted'));
+        await expect(h.service.promoteToNote(imported.ref, { sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'save_one' })).rejects.toThrow();
+        await h.vault.createBinary('saved.jpg', jpeg());
+        await expect(h.service.readOriginal(imported.ref)).rejects.toMatchObject({ code: 'path_conflict' });
+        expect(h.data.has(imported.asset.originalPath)).toBe(true);
+        expect(h.vault.trash).not.toHaveBeenCalled();
+    });
+});
 
 describe('image original ownership and recovery', () => {
     it('records provider disclosure once per device store across concurrent views and service reopens, independently of sync', async () => {
@@ -204,7 +396,7 @@ describe('image original ownership and recovery', () => {
             return write(path, value);
         });
         const a = await h.service.importFile(fileInput(), { acquisition: 'unverified_import', anchorPath: 'PA Chat.md' });
-        expect(a.asset.acquisition).toBe('unverified_import');
+        expect(a.asset.acquisition).toBe('original_file');
         expect(a.sync.noticeRequired).toBe(true);
         expect(a.sync.gitTracked).toBe('unknown');
         expect(h.app.fileManager.getAvailablePathForAttachment).toHaveBeenCalledWith(expect.any(String), 'PA Chat.md');
@@ -279,7 +471,7 @@ describe('image original ownership and recovery', () => {
         const held = await h.service.resolveVariant(imported.ref, 'preview'); held.release();
         await expect(h.service.relocate(imported.ref, 'wrong.heic')).rejects.toMatchObject({ code: 'source_changed' });
         const relocated = await h.service.relocate(imported.ref, 'user-copy.heic');
-        expect(relocated.asset).toMatchObject({ source: 'vault_reference', originalPath: 'user-copy.heic', acquisition: 'unverified_import' });
+        expect(relocated.asset).toMatchObject({ source: 'vault_reference', originalPath: 'user-copy.heic', acquisition: 'original_file' });
         expect(relocated.ref).toEqual(imported.ref);
         expect(await h.store.listImageVariants()).toEqual([]);
         await expect(h.service.cleanupSelected([{ ref: imported.ref, path: 'user-copy.heic' }])).rejects.toMatchObject({ code: 'cleanup_selection_changed' });

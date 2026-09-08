@@ -1,0 +1,100 @@
+{
+  "at": "2026-09-08T16:09:05.274Z",
+  "identity": {
+    "schemaVersion": 1,
+    "pluginId": "personal-assistant",
+    "pluginVersion": "2.9.2",
+    "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+    "loadedPluginArtifactSha256": "8c22f1ba514870fd74c0e8286e415cd6ab323b5a411c73f0f25bc31af4670039",
+    "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+    "capturedAtPluginLoad": "2026-09-08T15:50:46.423Z",
+    "identitySource": "plugin-onload-cached-main-js",
+    "blocker": null
+  },
+  "observerRemoved": true,
+  "restored": {
+    "attachment": true,
+    "conversation": true
+  },
+  "noteRestored": true,
+  "temporaryChatsRemaining": 0,
+  "eventCount": 14,
+  "accepted": [
+    {
+      "input": {
+        "name": "IMG_2033.jpeg",
+        "type": "image/jpeg",
+        "size": 43471,
+        "sha256": "b8a91e4168888f5512ee0dac002cbc846cf79238b42d04be01313149b9c9421c",
+        "magic": [
+          255,
+          216,
+          255,
+          225,
+          1,
+          140,
+          69,
+          120,
+          105,
+          102,
+          0,
+          0,
+          77,
+          77,
+          0,
+          42,
+          0,
+          0,
+          0,
+          8,
+          0,
+          9,
+          1,
+          14,
+          0,
+          2,
+          0,
+          0,
+          0,
+          42,
+          0,
+          0
+        ],
+        "draft": "B19 draft  keep on cancel"
+      },
+      "byteMatch": true
+    }
+  ],
+  "cancel": [
+    {
+      "n": 8,
+      "at": "2026-09-08T15:59:34.475Z",
+      "kind": "native-file-cancel",
+      "trusted": true,
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 11,
+      "at": "2026-09-08T16:02:17.685Z",
+      "kind": "native-file-cancel",
+      "trusted": true,
+      "draft": "B19 draft  keep on cancel"
+    },
+    {
+      "n": 14,
+      "at": "2026-09-08T16:08:00.873Z",
+      "kind": "native-file-cancel",
+      "trusted": true,
+      "draft": "B19 draft  keep on cancel"
+    }
+  ],
+  "images": [
+    {
+      "alt": "IMG_2033.jpeg",
+      "complete": true,
+      "width": 640,
+      "height": 480
+    }
+  ],
+  "errors": []
+}

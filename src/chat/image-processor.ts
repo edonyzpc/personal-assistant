@@ -1,6 +1,6 @@
 import type { App } from 'obsidian';
 import { getPlatformDocument } from '../platform-dom';
-import { assertSafeEncodedJpeg, inspectImage, type ChatImageMime } from './image-format';
+import { assertNewChatImageSupported, assertSafeEncodedJpeg, inspectImage, type ChatImageMime } from './image-format';
 import { checkImageDimensions, checkImageOperation, IMAGE_POLICY, imagePolicyFingerprint, ImageProcessingError,
     imageSourceHash, PROCESSOR_VERSION, type ImagePurpose } from './image-policy';
 
@@ -38,7 +38,7 @@ export class ImageProcessor {
     private readonly tasks = new Set<ImageTask>();
     private disposed = false;
 
-    constructor(private readonly app: Pick<App, 'vault'>) {}
+    constructor(_app: Pick<App, 'vault'>) {}
 
     process(bytes: ArrayBuffer, options: ProcessImageOptions): Promise<ProcessedImage> {
         if (this.disposed) return Promise.reject(new ImageProcessingError('disposed'));
@@ -120,6 +120,7 @@ export class ImageProcessor {
     }
 
     private async run(bytes: ArrayBuffer, options: ProcessImageOptions, signal: AbortSignal): Promise<ProcessedImage> {
+        assertNewChatImageSupported(bytes);
         const sourceHash = await imageSourceHash(bytes);
         checkImageOperation(signal, options.isCurrent);
         const inspected = inspectImage(bytes);
@@ -127,20 +128,7 @@ export class ImageProcessor {
             const decoded = await this.loadImage(embedded.bytes, embedded.mime, signal);
             decoded.release(); checkImageOperation(signal, options.isCurrent);
         }
-        let decoded: Awaited<ReturnType<ImageProcessor['loadImage']>>;
-        try { decoded = await this.loadImage(bytes, inspected.mime, signal); }
-        catch (error) {
-            if (!(error instanceof ImageProcessingError) || error.code !== 'decode-failed' || inspected.format !== 'heic') throw error;
-            checkImageOperation(signal, options.isCurrent);
-            if (!options.originalPath) throw new ImageProcessingError('conversion-unavailable');
-            const { convertMacOsHeicToPng } = await import('./image-macos-converter');
-            const png = await convertMacOsHeicToPng(this.app, { originalPath: options.originalPath, sourceBytes: bytes, sourceHash, signal, isCurrent: options.isCurrent });
-            // The native PNG is not a new original and may be larger than its
-            // compressed source. Read dimensions before decoding it as well.
-            if (png.byteLength < 24) throw new ImageProcessingError('conversion-failed');
-            const header = new DataView(png); checkImageDimensions(header.getUint32(16), header.getUint32(20));
-            decoded = await this.loadImage(png, 'image/png', signal);
-        }
+        const decoded = await this.loadImage(bytes, inspected.mime, signal);
         let canvas: HTMLCanvasElement | undefined;
         try {
             canvas = getPlatformDocument().createElement('canvas');
