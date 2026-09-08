@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, type TAbstractFile, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, apiVersion, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, type TAbstractFile, Component, Editor, ItemView, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, apiVersion, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
@@ -51,6 +51,9 @@ import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, hasDeprecatedSimpleSettingsFields, omitDeprecatedSimpleSettingsFields, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION, PROVIDER_PRESETS } from './settings'
 import { LocalGraph } from './local-graph';
+import { GraphOptionsModal, type GraphOptions } from './settings/graph-options-modal';
+import { FeaturedImageOptionsModal } from './settings/featured-image-options-modal';
+import type { FeaturedImageDefaults, FeaturedImageRunAdmission } from './ai-services/featured-image-options';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
@@ -1257,8 +1260,22 @@ export type AIProviderConfigurationPatch = Partial<Pick<PluginManagerSettings,
     | "embeddingModelName"
 >>;
 
+export type SettingsPermissionPatch = Partial<Pick<PluginManagerSettings,
+    | "memoryEnabled" | "memoryExtractionEnabled" | "memoryExtractionConsent"
+    | "memoryExtractionIncludeVaultInsights" | "memoryApprovalPolicy"
+    | "operationsAgentEnabled" | "operationsAuditIncludeContent"
+    | "webSearchEnabled" | "shareAnonymousCapabilityUsage" | "enableMetadataUpdating"
+    | "vssCacheExcludePath" | "metadataExcludePath" | "operationsAuditRetentionDays"
+>> & {
+    retrievalHabitProfile?: Partial<Pick<PluginManagerSettings["retrievalHabitProfile"], "enabled" | "state">>;
+    quickCapture?: Partial<Pick<PluginManagerSettings["quickCapture"], "postProcessingEnabled">>;
+    dataBoundary?: Partial<Pick<PluginManagerSettings["dataBoundary"], "generatedNotePolicy" | "excludedFolders" | "excludedTags">>;
+    pagelet?: Partial<Pick<PluginManagerSettings["pagelet"], "excludedFolders" | "excludedTags" | "excludedPatterns">>;
+};
+
 export class PluginManager extends Plugin {
     settings!: PluginManagerSettings
+    private activeFeatureOptionsModal: Modal | null = null;
     private _localGraph: LocalGraph | null = null;
     calloutManager: CalloutManager<true> | undefined;
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
@@ -1703,6 +1720,16 @@ export class PluginManager extends Plugin {
         });
 
         this.addCommand({
+            id: "pa-graph-options",
+            name: this.t("plugin.settings.graph.options.title"),
+            checkCallback: (checking) => {
+                if (this.app.workspace.getActiveViewOfType(ItemView)?.getViewType() !== "localgraph") return false;
+                if (!checking) this.openGraphOptions();
+                return true;
+            },
+        });
+
+        this.addCommand({
             id: 'switch-on-or-off-plugin',
             name: this.t("plugin.command.openControls"),
             callback: () => {
@@ -1825,15 +1852,8 @@ export class PluginManager extends Plugin {
             editorCheckCallback: (checking, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
                 if (this.settings.aiProvider !== 'qwen' || !getDashScopeImageGenerationEndpoint(this.settings.baseURL)) return false;
                 if (checking) return true;
-                if (!this.ensureAIConfigured()) return;
-                const sel = editor.getSelection();
-                const v = editor.getValue();
-
-                this.log("AI Featured Images invoked", { selectionLength: sel.length, documentLength: v.length });
                 if (view instanceof MarkdownView) {
-                    this.log("invoking LLM");
-                    const helper = new AssistantFeaturedImageHelper(this.app, this, editor, view);
-                    helper.generate().catch((e) => this.log("Featured image generation failed", e));
+                    this.openFeaturedImageOptions(editor, view);
                 }
             }
         });
@@ -9395,6 +9415,8 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        this.activeFeatureOptionsModal?.close();
+        this.activeFeatureOptionsModal = null;
         this.retrievalDiagnostics?.clear();
         closeAllShareCardModals();
         this.resetDeepDiscoverController();
@@ -10951,6 +10973,121 @@ export class PluginManager extends Plugin {
         if (saved) await this.notifySettingsChanged();
     }
 
+    openGraphOptions(): Modal {
+        this.activeFeatureOptionsModal?.close();
+        const modal = new GraphOptionsModal(this.app, {
+            readOptions: () => ({ localGraph: this.settings.localGraph,
+                enableGraphColors: this.settings.enableGraphColors, colorGroups: this.settings.colorGroups }),
+            saveOptions: (options) => this.saveGraphOptions(options),
+            applyOptions: () => this.localGraph.applyOptionsToOpenGraphs(),
+        });
+        this.activeFeatureOptionsModal = modal;
+        modal.open();
+        return modal;
+    }
+
+    async saveGraphOptions(options: GraphOptions): Promise<void> {
+        const requested = JSON.parse(JSON.stringify(options)) as GraphOptions;
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error("Plugin is unloading");
+            await this.saveSettingsData({ ...this.settings, ...requested });
+            Object.assign(this.settings, requested);
+        });
+        await this.notifySettingsChanged();
+    }
+
+    openFeaturedImageOptions(editor?: Editor, view?: MarkdownView): Modal | null {
+        if (this.settings.aiProvider !== "qwen" || !getDashScopeImageGenerationEndpoint(this.settings.baseURL)) return null;
+        if ((editor || view) && (!editor || !view?.file)) return null;
+        this.activeFeatureOptionsModal?.close();
+        const defaults: FeaturedImageDefaults = {
+            featuredImageModel: this.settings.featuredImageModel,
+            numFeaturedImages: this.settings.numFeaturedImages,
+            featuredImagePath: this.settings.featuredImagePath,
+        };
+        const saveDefaults = (options: FeaturedImageDefaults) => this.saveFeaturedImageDefaults(options);
+        const file = view?.file;
+        const path = file?.path;
+        const targetIsCurrent = () => Boolean(editor && view && file && path
+            && view.editor === editor && view.file === file && file.path === path
+            && view.containerEl.isConnected !== false
+            && this.app.vault.getAbstractFileByPath(path) === file);
+        const prepareRun = (): FeaturedImageRunAdmission | null => {
+            if (!targetIsCurrent() || !this.ensureAIConfigured()) return null;
+            const connection = Object.freeze({ aiProvider: this.settings.aiProvider,
+                baseURL: this.settings.baseURL, chatModelName: this.settings.chatModelName,
+                embeddingModelName: this.settings.embeddingModelName });
+            const imageEndpoint = getDashScopeImageGenerationEndpoint(connection.baseURL);
+            if (connection.aiProvider !== "qwen" || !imageEndpoint) return null;
+            const providerRevision = this.aiProviderConfigurationRevision;
+            const tokenRevision = this.aiTokenRevision;
+            return { connection, imageEndpoint, isCurrent: () => !this.unloading
+                && !this.hasActiveAIProviderCredentialTransition()
+                && this.aiProviderConfigurationRevision === providerRevision
+                && this.aiTokenRevision === tokenRevision && targetIsCurrent()
+                && this.settings.aiProvider === connection.aiProvider
+                && this.settings.baseURL === connection.baseURL
+                && this.settings.chatModelName === connection.chatModelName };
+        };
+        const modal = new FeaturedImageOptionsModal(this.app, editor && view && file ? {
+            defaults, saveDefaults, mode: "generate", sourceName: file.basename,
+            prepareRun, generate: (options) => new AssistantFeaturedImageHelper(this.app, this, editor, view).generate(options),
+        } : { defaults, saveDefaults, mode: "edit" });
+        this.activeFeatureOptionsModal = modal;
+        modal.open();
+        return modal;
+    }
+
+    async saveFeaturedImageDefaults(options: FeaturedImageDefaults): Promise<void> {
+        const requested = { ...options };
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error("Plugin is unloading");
+            await this.saveSettingsData({ ...this.settings, ...requested });
+            Object.assign(this.settings, requested);
+        });
+        await this.notifySettingsChanged();
+    }
+
+    /** Permission edits become effective only after their queued snapshot is saved. */
+    async saveSettingsPermissions(patch: SettingsPermissionPatch): Promise<void> {
+        const requested = JSON.parse(JSON.stringify(patch)) as SettingsPermissionPatch;
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error("Plugin is unloading");
+            const { retrievalHabitProfile, quickCapture, dataBoundary, pagelet, ...scalar } = requested;
+            const snapshot: PluginManagerSettings = {
+                ...this.settings,
+                ...scalar,
+                retrievalHabitProfile: { ...this.settings.retrievalHabitProfile, ...retrievalHabitProfile },
+                quickCapture: { ...this.settings.quickCapture, ...quickCapture },
+                dataBoundary: { ...this.settings.dataBoundary, ...dataBoundary },
+                pagelet: { ...this.settings.pagelet, ...pagelet },
+            };
+            await this.saveSettingsData(snapshot);
+            Object.assign(this.settings, scalar);
+            if (retrievalHabitProfile) Object.assign(this.settings.retrievalHabitProfile, retrievalHabitProfile);
+            if (quickCapture) Object.assign(this.settings.quickCapture, quickCapture);
+            if (dataBoundary) Object.assign(this.settings.dataBoundary, dataBoundary);
+            if (pagelet) Object.assign(this.settings.pagelet, pagelet);
+        });
+        await this.notifySettingsChanged();
+    }
+
+    async setStatisticsSyncEnabled(enabled: boolean): Promise<void> {
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error("Plugin is unloading");
+            const previous = this.settings.statisticsSyncEnabled;
+            await this.saveSettingsData({ ...this.settings, statisticsSyncEnabled: enabled });
+            try {
+                await this.statsManager?.setStatisticsSyncEnabled(enabled);
+            } catch (error) {
+                await this.saveSettingsData({ ...this.settings, statisticsSyncEnabled: previous });
+                throw error;
+            }
+            this.settings.statisticsSyncEnabled = enabled;
+        });
+        await this.notifySettingsChanged();
+    }
+
     private async persistMemoryAdmissionSettings(): Promise<void> {
         await this.trackRequiredSettingsTransaction(this.persistRequiredSettings());
     }
@@ -12454,7 +12591,6 @@ export class PluginManager extends Plugin {
     }
 
     private runAdvancedMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
-        if (!this.settings.memoryEnabled || !this.settings.showAdvancedMemoryControls) return false;
         return this.runMemoryCommand(checking, action);
     }
 

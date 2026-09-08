@@ -8,12 +8,11 @@
  *  - `mergePageletSettings`: per-field normalization. The function MUST be
  *    tolerant of every shape data.json can have on a legacy / corrupt install
  *    (undefined / missing key / wrong type / out-of-range number / invalid
- *    enum string). The 7 fields are independent — one bad value cannot
+ *    enum string). Fields are independent — one bad value cannot
  *    poison the others.
- *  - `renderPageletSection`: ensure all 7 settings render exactly once and
- *    in the SDD §10.3 order, that the i18n translator is consulted (we pass
- *    a stub so we can spy on calls), and that onChange handlers route through
- *    `saveSettings`.
+ *  - B-106 renderers: ordinary preferences and note privacy stay separate,
+ *    technical fields remain internal, conditional children preserve edits,
+ *    and save/retry/close follow the existing persistence boundary.
  *  - Read-only call limits: D020 froze them; the constant exists for B4's
  *    UI to display but must not become persisted state.
  */
@@ -28,6 +27,8 @@ import {
     mergePageletSettings,
     normalizeReviewsFolder,
     renderPageletSection,
+    renderPageletPreferences,
+    renderPageletNotePrivacy,
     type PageletReviewsFolderError,
     type PageletSettings,
     type PageletSettingBuilder,
@@ -35,6 +36,7 @@ import {
     type PageletSettingsHost,
 } from "../src/settings/pagelet";
 import { makePageletTranslator } from "../src/locales/pagelet";
+import { createSourceScopeSettingState } from "../src/settings/source-scope-setting";
 
 // ---------------------------------------------------------------------------
 // Tiny stub DOM + Setting harness. We intentionally do NOT pull in the
@@ -46,14 +48,22 @@ interface StubNode {
     tagName: string;
     text?: string;
     cls?: string;
+    hidden?: boolean;
+    disabled?: boolean;
+    textContent?: string;
     children: StubNode[];
     createEl: (tag: string, options?: { text?: string; cls?: string }) => StubNode;
+    addEventListener: (event: string, callback: () => void) => void;
+    dispatch: (event: string) => void;
 }
 
 function makeStubNode(tagName: string): StubNode {
+    const listeners = new Map<string, () => void>();
     const node: StubNode = {
         tagName,
         children: [],
+        addEventListener(event, callback) { listeners.set(event, callback); },
+        dispatch(event) { listeners.get(event)?.(); },
         createEl(tag: string, options?: { text?: string; cls?: string }): StubNode {
             const child = makeStubNode(tag);
             if (options?.text) child.text = options.text;
@@ -66,9 +76,11 @@ function makeStubNode(tagName: string): StubNode {
 }
 
 interface StubSetting {
+    parent?: StubNode;
     name?: string;
     desc?: string;
     toggleValue?: boolean;
+    toggleDisabled?: boolean;
     toggleOnChange?: (value: boolean) => unknown;
     textValue?: string;
     textPlaceholder?: string;
@@ -78,11 +90,11 @@ interface StubSetting {
     dropdownOnChange?: (value: string) => unknown;
 }
 
-function makeStubFactory(): { factory: PageletSettingFactory; rows: StubSetting[] } {
+function makeStubFactory(options: { notifyToggleChanges?: boolean } = {}): { factory: PageletSettingFactory; rows: StubSetting[] } {
     const rows: StubSetting[] = [];
     const factory: PageletSettingFactory = {
-        create(): PageletSettingBuilder {
-            const row: StubSetting = { dropdownOptions: [] };
+        create(parent): PageletSettingBuilder {
+            const row: StubSetting = { dropdownOptions: [], parent: parent as unknown as StubNode };
             rows.push(row);
             const builder: PageletSettingBuilder = {
                 setName(name) {
@@ -96,7 +108,13 @@ function makeStubFactory(): { factory: PageletSettingFactory; rows: StubSetting[
                 addToggle(cb) {
                     cb({
                         setValue(value) {
+                            const changed = row.toggleValue !== value;
                             row.toggleValue = value;
+                            if (changed && options.notifyToggleChanges) row.toggleOnChange?.(value);
+                            return this;
+                        },
+                        setDisabled(value) {
+                            row.toggleDisabled = value;
                             return this;
                         },
                         onChange(handler) {
@@ -152,7 +170,7 @@ function makeHost(
     quietRecallMode: "off" | "on" = "off",
 ): {
     host: PageletSettingsHost;
-    save: jest.Mock;
+    save: jest.Mock<() => Promise<void>>;
 } {
     const save = jest.fn(async () => { /* noop */ });
     const settings: PageletSettings = { ...PAGELET_DEFAULTS, ...overrides };
@@ -165,6 +183,10 @@ function makeHost(
             quietRecall: { quietRecallMode },
         },
         saveSettings: save,
+        saveSettingsPermissions: async (patch) => {
+            await save();
+            Object.assign(settings, patch.pagelet);
+        },
         setBackgroundDiscoveryEnabled: async (enabled) => {
             await save();
             settings.backgroundDiscoveryEnabled = enabled;
@@ -172,6 +194,152 @@ function makeHost(
     };
     return { host, save };
 }
+
+function makeSourceStates() {
+    return {
+        excludedFolders: createSourceScopeSettingState(),
+        excludedTags: createSourceScopeSettingState(),
+        excludedPatterns: createSourceScopeSettingState(),
+    };
+}
+
+function mountSourceFields(host: PageletSettingsHost, states = makeSourceStates(), isCurrent = () => true) {
+    const parent = Object.assign(makeStubNode("div"), { isConnected: true });
+    const { factory, rows } = makeStubFactory();
+    renderPageletNotePrivacy({
+        saveLocation: makeStubNode("div") as unknown as HTMLElement,
+        sourceExclusions: parent as unknown as HTMLElement,
+    }, host, factory, "en", { sourceScopeStates: states, isCurrent });
+    const keys = ["excludedFolders", "excludedTags", "excludedPatterns"] as const;
+    const groups = parent.children.filter((node) => node.cls === "pa-settings-source-scope-actions");
+    const t = makePageletTranslator("en");
+    return {
+        parent,
+        states,
+        field(key: typeof keys[number]) {
+            const group = groups[keys.indexOf(key)];
+            const row = rows.find((entry) => entry.name === t(`pagelet.settings.${key}.name`))!;
+            return {
+                row,
+                button: group.children.find((node) => node.tagName === "button")!,
+                status: group.children.find((node) => node.tagName === "span")!,
+                edit(value: string) { row.textValue = value; row.textOnChange!(value); },
+            };
+        },
+    };
+}
+
+async function settleSourceSave(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
+describe("Pagelet source exclusion saves", () => {
+    it.each(["excludedFolders", "excludedTags", "excludedPatterns"] as const)(
+        "%s stays committed during typing and failed saving, then retries only that field",
+        async (key) => {
+            const { host, save } = makeHost({
+                excludedFolders: ["private", "drafts"], excludedTags: ["#private", "#drafts"],
+                excludedPatterns: ["private", "draft"],
+            });
+            const before = structuredClone(host.settings.pagelet);
+            const persist = jest.spyOn(host, "saveSettingsPermissions");
+            const mounted = mountSourceFields(host);
+            const field = mounted.field(key);
+            expect(field.button.disabled).toBe(true);
+            field.edit("p");
+            field.edit("private");
+            expect(host.settings.pagelet).toEqual(before);
+            expect(save).not.toHaveBeenCalled();
+
+            let reject!: (error: Error) => void;
+            save.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+            field.button.dispatch("click");
+            field.button.dispatch("click");
+            expect(persist).toHaveBeenCalledTimes(1);
+            expect(persist).toHaveBeenCalledWith({ pagelet: { [key]: ["private"] } });
+            expect(field.button.disabled).toBe(true);
+            expect(host.settings.pagelet).toEqual(before);
+            reject(new Error("disk unavailable"));
+            await settleSourceSave();
+            expect(host.settings.pagelet).toEqual(before);
+            expect(field.row.textValue).toBe("private");
+            expect(field.status.textContent).toContain("not been saved");
+            expect(field.button.disabled).toBe(false);
+
+            field.button.dispatch("click");
+            await settleSourceSave();
+            expect(persist).toHaveBeenCalledTimes(2);
+            expect(host.settings.pagelet).toEqual({ ...before, [key]: ["private"] });
+            expect(field.status.textContent).toBe("");
+            expect(field.button.disabled).toBe(true);
+        },
+    );
+
+    it.each([false, true])("retains a reopened field's newer draft when an older save settles, failed=%s", async (failed) => {
+        const { host, save } = makeHost({ excludedFolders: ["private"] });
+        let resolve!: () => void;
+        let reject!: (error: Error) => void;
+        save.mockImplementationOnce(() => new Promise<void>((yes, no) => { resolve = yes; reject = no; }));
+        const states = makeSourceStates();
+        let firstVisible = true;
+        const first = mountSourceFields(host, states, () => firstVisible);
+        const oldField = first.field("excludedFolders");
+        oldField.edit("first");
+        oldField.button.dispatch("click");
+        firstVisible = false;
+        const second = mountSourceFields(host, states);
+        const newField = second.field("excludedFolders");
+        expect(newField.row.textValue).toBe("first");
+        expect(newField.button.disabled).toBe(true);
+        newField.edit("second, unfinished");
+        oldField.edit("ignored old render");
+        oldField.button.dispatch("click");
+        expect(states.excludedFolders.draft).toBe("second, unfinished");
+        expect(save).toHaveBeenCalledTimes(1);
+
+        if (failed) reject(new Error("first save failed"));
+        else resolve();
+        await settleSourceSave();
+        expect(host.settings.pagelet.excludedFolders).toEqual(failed ? ["private"] : ["first"]);
+        expect(newField.row.textValue).toBe("second, unfinished");
+        expect(newField.button.disabled).toBe(false);
+        expect(oldField.status.textContent).toContain("Saving");
+        expect(oldField.button.disabled).toBe(true);
+
+        newField.button.dispatch("click");
+        await settleSourceSave();
+        expect(host.settings.pagelet.excludedFolders).toEqual(["second", "unfinished"]);
+        expect(newField.status.textContent).toBe("");
+        expect(newField.button.disabled).toBe(true);
+    });
+
+    it.each([false, true])("does not write closed DOM when saving settles, failed=%s", async (failed) => {
+        const { host, save } = makeHost({ excludedFolders: ["private"] });
+        let resolve!: () => void;
+        let reject!: (error: Error) => void;
+        save.mockImplementationOnce(() => new Promise<void>((yes, no) => { resolve = yes; reject = no; }));
+        let visible = true;
+        const mounted = mountSourceFields(host, makeSourceStates(), () => visible);
+        const field = mounted.field("excludedFolders");
+        field.edit("");
+        field.button.dispatch("click");
+        const statusBeforeClose = field.status.textContent;
+        visible = false;
+        if (failed) reject(new Error("closed save failed"));
+        else resolve();
+        await settleSourceSave();
+
+        expect(field.status.textContent).toBe(statusBeforeClose);
+        expect(field.button.disabled).toBe(true);
+        const reopened = mountSourceFields(host, mounted.states).field("excludedFolders");
+        expect(reopened.row.textValue).toBe("");
+        expect(reopened.button.disabled).toBe(!failed);
+        expect(reopened.status.textContent).toBe(failed
+            ? "Scope changes have not been saved. The previous scope is still active." : "");
+    });
+});
 
 // ---------------------------------------------------------------------------
 // Defaults / bounds / fixed limits
@@ -1149,124 +1317,140 @@ describe("renderPageletSection", () => {
             .toContain("iPhone 上会跟随当前笔记工具栏");
     });
 
-    it("renders all settings exactly once", () => {
-        const parent = makeStubNode("div");
+    it("splits everyday preferences from note privacy without exposing internal tuning", () => {
+        const preferences = makeStubNode("div");
+        const saveLocation = makeStubNode("div");
+        const sourceExclusions = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost();
+        const internalBefore = {
+            temperature: host.settings.pagelet.temperature,
+            maxInputTokens: host.settings.pagelet.maxInputTokens,
+            maxOutputTokens: host.settings.pagelet.maxOutputTokens,
+            foregroundPerHourCap: host.settings.pagelet.foregroundPerHourCap,
+            foregroundPerDayCap: host.settings.pagelet.foregroundPerDayCap,
+            proactiveHintsCooldown: host.settings.pagelet.proactiveHintsCooldown,
+        };
+        renderPageletPreferences(preferences as unknown as HTMLElement, host, factory, "en");
+        const names = rows.map((row) => row.name);
+        expect(names).toEqual(expect.arrayContaining([
+            "Enable Pagelet", "Output language", "Discover connections in the background",
+            "Show Pet", "Pet corner", "Proactive hints", "High-value Recap hints",
+            "Quiet Recall", "Enable quiet hours", "Start time", "End time",
+        ]));
+        expect(names).not.toEqual(expect.arrayContaining(["Reviews folder"]));
+        expect(names.some((name) => /temperature|token|cap$|cooldown|preparation/i.test(name ?? ""))).toBe(false);
+        expect(new Set(names).size).toBe(names.length);
+        expect(host.settings.pagelet).toMatchObject(internalBefore);
 
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
-
-        expect(rows).toHaveLength(22);
-        expect(rows.map((r) => r.name)).toEqual([
-            "Enable Pagelet",
-            "Reviews folder",
-            "Output language",
-            "Temperature",
-            "Max input tokens",
-            "Max output tokens",
-            // Pet
-            "Show Pet",
-            "Pet corner",
-            "Proactive hints",
-            "Hint cooldown (minutes)",
-            // Unified Pagelet Agent
-            "Discover connections in the background",
-            "Today's Deep Discover usage",
-            // Scope Recap preparation (independent from generic preload)
-            "High-value Recap hints",
-            // Exclusions
-            "Excluded folders",
-            "Excluded tags",
-            "Excluded patterns",
-            // Quiet Recall
-            "Quiet Recall",
-            // Quiet Hours
-            "Enable quiet hours",
-            "Start time",
-            "End time",
-            // Foreground Cost
-            "Per-hour foreground cap",
-            "Per-day foreground cap",
+        const preferencesCount = rows.length;
+        renderPageletNotePrivacy({
+            saveLocation: saveLocation as unknown as HTMLElement,
+            sourceExclusions: sourceExclusions as unknown as HTMLElement,
+        }, host, factory, "en");
+        expect(rows.slice(preferencesCount).map((row) => row.name)).toEqual([
+            "Reviews folder", "Excluded folders", "Excluded tags", "Excluded patterns",
         ]);
+        expect(rows.find((row) => row.name === "Reviews folder")?.parent).toBe(saveLocation);
+        expect(rows.filter((row) => row.name?.startsWith("Excluded")).every((row) => row.parent === sourceExclusions)).toBe(true);
     });
 
-    it("emits the section heading, subtitle, beta callout, group headings, and the reviewsFolder error sibling", () => {
+    it("keeps native details and the folder error surface in the combined compatibility renderer", () => {
         const parent = makeStubNode("div");
         const { factory } = makeStubFactory();
         const { host } = makeHost();
-
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        // h2 + p + div (beta callout) + h3 (General) + div (reviewsFolder
-        // error sibling, kept empty until a validator rejection fires) +
-        // h3 (Model) + h3 (Limits).
-        const headings = parent.children.filter((c) => c.tagName.startsWith("h") || c.tagName === "p" || c.tagName === "div");
-        expect(headings.map((h) => h.tagName)).toEqual([
-            "h2", "p", "div", "h3", "div", "h3", "h3",
-            "h3", "h3", "h3", "h3", "h3", "h3", "h3",
-        ]);
-        expect(headings[0].text).toBe("Pagelet");
-        // The beta callout must be visible from the moment Pagelet ships
-        // (D013) — it's the channel we collect feedback through.
-        expect(headings[2].text).toContain("Beta");
-        expect(headings[2].cls).toBe("pa-pagelet-beta-callout");
-        // The reviewsFolder error sibling must exist with the expected
-        // class so styles target it; absence here means the inline error
-        // message has nowhere to render and rejections become silent.
-        const errorEl = parent.children.find(
-            (c) => c.tagName === "div" && c.cls === "pa-pagelet-settings-error",
-        );
-        expect(errorEl).toBeDefined();
-        // Initially empty so non-error state does not visually shift.
-        expect(errorEl?.text).toBeUndefined();
+        expect(parent.children[0].text).toBe("Pagelet");
+        expect(parent.children.find((node) => node.cls === "pa-pagelet-beta-callout")?.text).toContain("Beta");
+        const details = parent.children.find((node) => node.tagName === "details");
+        expect(details?.children[0]).toMatchObject({ tagName: "summary", text: "Appearance and reminders" });
+        expect(parent.children.find((node) => node.cls === "pa-pagelet-settings-error")).toBeDefined();
     });
 
-    it("uses zh dictionary when locale is zh", () => {
+    it("uses the Chinese dictionary and current saved values", () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
-        const { host } = makeHost();
-
+        const { host } = makeHost({ enabled: false, reviewsFolder: "custom/path", outputLanguage: "zh" });
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "zh");
 
-        expect(rows[0].name).toBe("启用拾页");
-        expect(rows[1].name).toBe("审阅笔记目录");
+        expect(rows.find((row) => row.name === "启用拾页")?.toggleValue).toBe(false);
+        expect(rows.find((row) => row.name === "审阅笔记目录")?.textValue).toBe("custom/path");
+        expect(rows.find((row) => row.dropdownOptions.some((option) => option.value === "auto"))?.dropdownValue).toBe("zh");
         expect(parent.children[0].text).toBe("拾页");
     });
 
-    it("seeds toggle/dropdown/text values from current settings", () => {
+    it("populates output-language options without resetting the chosen language", () => {
+        const { factory, rows } = makeStubFactory();
+        const { host } = makeHost({ outputLanguage: "zh" });
+        renderPageletPreferences(makeStubNode("div") as unknown as HTMLElement, host, factory, "en");
+        const row = rows.find((entry) => entry.name === "Output language")!;
+        expect(row.dropdownOptions.map((option) => option.value)).toEqual(["auto", "zh", "en"]);
+        expect(row.dropdownOptions[0].text).toBe("Auto (follow note language)");
+        expect(row.dropdownValue).toBe("zh");
+    });
+
+    it("changes only conditional child visibility while preserving saved choices and sibling drafts", async () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost({
-            enabled: false,
-            reviewsFolder: "custom/path",
-            outputLanguage: "zh",
-            ribbonPosition: "hidden",
-            temperature: 0.35,
-            maxInputTokens: 4096,
-            maxOutputTokens: 1024,
+            petVisible: false,
+            petCorner: "top-left",
+            proactiveHintsQuietHours: { enabled: false, start: "21:15", end: "07:30" },
         });
-
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
-
-        expect(rows[0].toggleValue).toBe(false);
-        expect(rows[1].textValue).toBe("custom/path");
-        expect(rows[2].dropdownValue).toBe("zh");
-        expect(rows[3].textValue).toBe("0.35");
-        expect(rows[4].textValue).toBe("4096");
-        expect(rows[5].textValue).toBe("1024");
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
+        const corner = rows.find((row) => row.name === "Pet corner")!;
+        const start = rows.find((row) => row.name === "Start time")!;
+        const originalRows = [...rows];
+        start.textValue = "22:45";
+        expect(corner.parent?.hidden).toBe(true);
+        expect(start.parent?.hidden).toBe(true);
+        await rows.find((row) => row.name === "Show Pet")!.toggleOnChange!(true);
+        await rows.find((row) => row.name === "Enable quiet hours")!.toggleOnChange!(true);
+        expect(corner.parent?.hidden).toBe(false);
+        expect(start.parent?.hidden).toBe(false);
+        expect(corner.dropdownValue).toBe("top-left");
+        expect(start.textValue).toBe("22:45");
+        expect(host.settings.pagelet.proactiveHintsQuietHours).toEqual({ enabled: true, start: "21:15", end: "07:30" });
+        expect(rows).toEqual(originalRows);
     });
 
-    it("populates dropdown option lists with both value and label", () => {
-        const parent = makeStubNode("div");
+    it("keeps a failed folder edit visible and offers a surface-local save retry", async () => {
+        const saveLocation = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
+        const { host, save } = makeHost({ reviewsFolder: "old/reviews" });
+        renderPageletNotePrivacy({
+            saveLocation: saveLocation as unknown as HTMLElement,
+            sourceExclusions: makeStubNode("div") as unknown as HTMLElement,
+        }, host, factory, "en");
+        const folder = rows.find((row) => row.name === "Reviews folder")!;
+        folder.textValue = "new/reviews";
+        save.mockRejectedValueOnce(new Error("disk unavailable"));
+        await folder.textOnChange!("new/reviews");
+        const status = saveLocation.children.find((node) => node.cls === "pa-settings-save-status")!;
+        const retry = saveLocation.children.find((node) => node.tagName === "button")!;
+        expect(folder.textValue).toBe("new/reviews");
+        expect(status.textContent).toContain("not been saved");
+        expect(retry.hidden).toBe(false);
+        retry.dispatch("click");
+        await Promise.resolve();
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(status.textContent).toBe("");
+        expect(retry.hidden).toBe(true);
+    });
+
+    it.each([false, true])("shows only ordinary usage counts and ignores a closed view, closed=%s", async (closed) => {
+        const parent = Object.assign(makeStubNode("div"), { isConnected: true });
+        const { factory } = makeStubFactory();
         const { host } = makeHost();
-
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
-
-        expect(rows[2].dropdownOptions.map((o) => o.value)).toEqual(["auto", "zh", "en"]);
-        // Spot-check that labels are i18n-resolved English strings, not key
-        // names — a regression here means the translator wasn't wired.
-        expect(rows[2].dropdownOptions[0].text).toBe("Auto (follow note language)");
+        let complete!: (value: { runs: number; dailyCap: number; modelTurns: number; toolCalls: number }) => void;
+        host.getDeepDiscoverUsage = () => new Promise((resolve) => { complete = resolve; });
+        renderPageletPreferences(parent as unknown as HTMLElement, host, factory, "en");
+        const usage = parent.children.find((node) => node.text === "Pagelet keeps discovery within a daily limit.")!;
+        if (closed) parent.isConnected = false;
+        complete({ runs: 3, dailyCap: 36, modelTurns: 12, toolCalls: 40 });
+        await Promise.resolve();
+        expect(usage.textContent).toBe(closed ? undefined : "Discoveries today: 3 of 36.");
     });
 
     it("persists toggle changes through saveSettings", async () => {
@@ -1337,7 +1521,7 @@ describe("renderPageletSection", () => {
         const { host, save } = makeHost();
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
-        await rows[1].textOnChange!("./notes/reviews/");
+        await rows.find((row) => row.name === "Reviews folder")!.textOnChange!("./notes/reviews/");
 
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
         expect(save).toHaveBeenCalledTimes(1);
@@ -1356,7 +1540,7 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
         // Seeded value rendered into the input.
-        expect(rows[1].textValue).toBe("notes/reviews");
+        expect(rows.find((row) => row.name === "Reviews folder")!.textValue).toBe("notes/reviews");
 
         // Read the error element. The stub does not track `textContent`
         // (the renderer writes to a raw DOM property), so we read it back
@@ -1372,12 +1556,11 @@ describe("renderPageletSection", () => {
         //   2. Visible text input reverts to that previously valid value.
         //   3. The error sibling shows the localised message for the
         //      rejected category.
-        //   4. `saveSettings` still ran (the merger is forgiving — settings
-        //      may have changed adjacent fields elsewhere).
-        await rows[1].textOnChange!(".obsidian/plugins/personal-assistant");
+        //   4. No save is needed for the rejected input.
+        await rows.find((row) => row.name === "Reviews folder")!.textOnChange!(".obsidian/plugins/personal-assistant");
 
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
-        expect(rows[1].textValue).toBe("notes/reviews");
+        expect(rows.find((row) => row.name === "Reviews folder")!.textValue).toBe("notes/reviews");
         // Compare to the resolved EN translation rather than a literal
         // substring so the assertion stays correct if/when the message copy
         // changes. The point is "the obsidian_config category surfaced",
@@ -1385,11 +1568,11 @@ describe("renderPageletSection", () => {
         expect(errorEl?.textContent).toBe(
             makePageletTranslator("en")("pagelet.settings.reviewsFolder.error.obsidian_config"),
         );
-        expect(save).toHaveBeenCalledTimes(1);
+        expect(save).not.toHaveBeenCalled();
 
         // After a clean edit the error must clear so a previous rejection
         // is not stuck on screen forever.
-        await rows[1].textOnChange!("clean/folder");
+        await rows.find((row) => row.name === "Reviews folder")!.textOnChange!("clean/folder");
         expect(host.settings.pagelet.reviewsFolder).toBe("clean/folder");
         expect(errorEl?.textContent).toBe("");
     });
@@ -1412,36 +1595,19 @@ describe("renderPageletSection", () => {
         ) as unknown as { textContent?: string } | undefined;
         expect(errorEl).toBeDefined();
 
-        await rows[1].textOnChange!(".git/pagelet");
+        await rows.find((row) => row.name === "Reviews folder")!.textOnChange!(".git/pagelet");
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
-        expect(rows[1].textValue).toBe("notes/reviews");
+        expect(rows.find((row) => row.name === "Reviews folder")!.textValue).toBe("notes/reviews");
         expect(errorEl?.textContent).toBe(
             makePageletTranslator("en")("pagelet.settings.reviewsFolder.error.forbidden_dotfolder"),
         );
 
         // too_long path through the same renderer surface.
-        await rows[1].textOnChange!("x".repeat(4097));
+        await rows.find((row) => row.name === "Reviews folder")!.textOnChange!("x".repeat(4097));
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
         expect(errorEl?.textContent).toBe(
             makePageletTranslator("en")("pagelet.settings.reviewsFolder.error.too_long"),
         );
-    });
-
-    it("clamps out-of-range temperature/token edits", async () => {
-        const parent = makeStubNode("div");
-        const { factory, rows } = makeStubFactory();
-        const { host } = makeHost();
-
-        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
-
-        await rows[3].textOnChange!("99"); // temperature
-        expect(host.settings.pagelet.temperature).toBe(PAGELET_BOUNDS.temperature.max);
-
-        await rows[4].textOnChange!("999999"); // maxInputTokens
-        expect(host.settings.pagelet.maxInputTokens).toBe(PAGELET_BOUNDS.maxInputTokens.max);
-
-        await rows[5].textOnChange!("-1"); // maxOutputTokens
-        expect(host.settings.pagelet.maxOutputTokens).toBe(PAGELET_BOUNDS.maxOutputTokens.min);
     });
 
     it("controls only background discovery and keeps legacy preload controls hidden", async () => {
@@ -1452,8 +1618,8 @@ describe("renderPageletSection", () => {
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
         expect(rows.map((row) => row.name)).not.toContain("Prepare reviews in the background");
-        expect(rows[10].name).toBe("Discover connections in the background");
-        await rows[10].toggleOnChange!(false);
+        expect(rows.find((row) => row.name === "Discover connections in the background")!.name).toBe("Discover connections in the background");
+        await rows.find((row) => row.name === "Discover connections in the background")!.toggleOnChange!(false);
         expect(host.settings.pagelet.backgroundDiscoveryEnabled).toBe(false);
     });
 
@@ -1466,6 +1632,38 @@ describe("renderPageletSection", () => {
         }).backgroundDiscoveryEnabled).toBe(true);
         expect(mergePageletSettings({ backgroundDiscoveryEnabled: false }).backgroundDiscoveryEnabled).toBe(false);
         expect(mergePageletSettings({ backgroundDiscoveryEnabled: "invalid" }).backgroundDiscoveryEnabled).toBe(true);
+    });
+
+    it.each([false, true])("does not reenter background save from the committed toggle update, closed=%s", async (closed) => {
+        const parent = Object.assign(makeStubNode("div"), { isConnected: true });
+        const { factory, rows } = makeStubFactory({ notifyToggleChanges: true });
+        const { host } = makeHost({ backgroundDiscoveryEnabled: false });
+        let finish!: () => void;
+        host.setBackgroundDiscoveryEnabled = jest.fn((enabled: boolean) => new Promise<void>((resolve) => {
+            finish = () => {
+                host.settings.pagelet.backgroundDiscoveryEnabled = enabled;
+                resolve();
+            };
+        }));
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        const row = rows.find((entry) => entry.name === "Discover connections in the background")!;
+        // Obsidian changes its own value before firing the registered handler.
+        row.toggleValue = true;
+        const saving = row.toggleOnChange!(true);
+        expect(row.toggleValue).toBe(false);
+        expect(row.toggleDisabled).toBe(true);
+        expect(host.settings.pagelet.backgroundDiscoveryEnabled).toBe(false);
+        await row.toggleOnChange!(true);
+        expect(host.setBackgroundDiscoveryEnabled).toHaveBeenCalledTimes(1);
+        const descriptionWhileSaving = row.desc;
+        if (closed) parent.isConnected = false;
+        finish();
+        await saving;
+        expect(host.settings.pagelet.backgroundDiscoveryEnabled).toBe(true);
+        expect(host.setBackgroundDiscoveryEnabled).toHaveBeenCalledTimes(1);
+        expect(row.toggleValue).toBe(!closed);
+        expect(row.toggleDisabled).toBe(closed);
+        if (closed) expect(row.desc).toBe(descriptionWhileSaving);
     });
 
     it("keeps the committed background choice while saving and allows retry after failure", async () => {

@@ -7,6 +7,12 @@ import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
 import { AIUtils, getDashScopeImageGenerationEndpoint } from './ai-utils';
 import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from './featured-image-path';
+import {
+    assertFeaturedImageRunCurrent,
+    FeaturedImageRunInvalidatedError,
+    freezeFeaturedImageRunOptions,
+    type FeaturedImageRunOptions,
+} from './featured-image-options';
 import type { PluginManager } from '../plugin'
 import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from '../settings';
 import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
@@ -304,8 +310,9 @@ export class AIService {
     /**
      * 生成特色图片
      */
-    async generateFeaturedImage(editor: Editor, view: MarkdownView): Promise<void> {
-        if (this.plugin.settings.aiProvider !== 'qwen' || !getDashScopeImageGenerationEndpoint(this.plugin.settings.baseURL)) {
+    async generateFeaturedImage(editor: Editor, view: MarkdownView, runOptions: FeaturedImageRunOptions): Promise<void> {
+        const options = freezeFeaturedImageRunOptions(runOptions);
+        if (options.connection.aiProvider !== 'qwen' || !getDashScopeImageGenerationEndpoint(options.connection.baseURL)) {
             new Notice(this.t("plugin.ai.notice.featuredUnsupported"), 3000);
             return;
         }
@@ -315,6 +322,7 @@ export class AIService {
         const { notice } = this.aiUtils.createAIFeaturedImageNotice();
 
         try {
+            assertFeaturedImageRunCurrent(options);
             const markdown = editor.getValue();
             const { content } = this.aiUtils.getDocumentContent(markdown);
 
@@ -327,9 +335,10 @@ export class AIService {
                 this.t("plugin.ai.progress.prompt"),
             );
             const imageDesc = await withFeaturedImageTimeout(
-                this.callLLM(content, this.getImageDescriptionPrompt()),
+                this.callLLM(content, this.getImageDescriptionPrompt(), options),
                 FEATURED_IMAGE_GENERATION_TIMEOUT_MS,
             );
+            assertFeaturedImageRunCurrent(options);
             if (imageDesc.length <= 0) {
                 notice.hide();
                 new Notice(this.t("plugin.ai.notice.unavailable"));
@@ -344,7 +353,8 @@ export class AIService {
                 "ai-featured-image-progress-2",
                 this.t("plugin.ai.progress.images"),
             );
-            const imageUrls = await this.generateFeaturedImageUrls(imageDesc);
+            const imageUrls = await this.generateFeaturedImageUrls(imageDesc, options);
+            assertFeaturedImageRunCurrent(options);
             if (!imageUrls || imageUrls.length === 0) {
                 return;
             }
@@ -377,20 +387,23 @@ export class AIService {
             const line = editorView.state.doc.lineAt(Math.min(insertionOffset, editorView.state.doc.length));
             const downloadedImages: string[] = [];
             let failedDownloadCount = 0;
-            const featuredImagePath = this.plugin.settings.featuredImagePath;
+            const featuredImagePath = options.featuredImagePath;
             let calloutImageSuffix = "";
             if (isPluginEnabled(this.plugin.app, "image-converter")) {
                 // 如果image-converter插件启用，则resize图片到480px
                 calloutImageSuffix = "|480";
             }
             for (let i = 0; i < imageUrls.length; i++) {
+                assertFeaturedImageRunCurrent(options);
                 const imageUrlStr = imageUrls[i].url;
                 try {
-                    const response = await this.downloadImageToVault(this.plugin.app, imageUrlStr, featuredImagePath);
+                    const response = await this.downloadImageToVault(this.plugin.app, imageUrlStr, featuredImagePath, options);
+                    assertFeaturedImageRunCurrent(options);
                     if (response) {
                         downloadedImages.push(`![[${response}${calloutImageSuffix}]]`);
                     }
                 } catch (downloadError) {
+                    if (downloadError instanceof FeaturedImageRunInvalidatedError) throw downloadError;
                     failedDownloadCount += 1;
                     this.plugin.log("Failed to download featured image", {
                         imageIndex: i,
@@ -414,6 +427,7 @@ export class AIService {
             this.completeProgressStep(progress3Div, this.t("plugin.ai.progress.downloadDone"));
             // append line breaks
             const imagesCallout = `${downloadedImages.map((image) => `${image}\n> `).join("")}\n\n`;
+            assertFeaturedImageRunCurrent(options);
             editorView.dispatch({
                 changes: [
                     {
@@ -433,6 +447,11 @@ export class AIService {
             );
 
         } catch (error) {
+            if (error instanceof FeaturedImageRunInvalidatedError) {
+                this.plugin.log('Featured image run stopped because its note or AI connection changed');
+                new Notice(this.t('plugin.settings.featuredImage.options.stopped'), 5000);
+                return;
+            }
             this.plugin.log("AI Featured Images failed", error);
             new Notice(this.t("plugin.ai.notice.featuredImageFailed", { error: this.formatErrorMessage(error) }), 5000);
         } finally {
@@ -443,13 +462,43 @@ export class AIService {
     /**
      * 调用LLM
      */
-    private async callLLM(query: string, systemPrompt: string): Promise<string> {
-        const llm = await this.aiUtils.createChatModel(0.8);
+    private async callLLM(query: string, systemPrompt: string, options?: FeaturedImageRunOptions): Promise<string> {
+        const requestAbort = options ? new AbortController() : undefined;
+        const assertCurrent = () => {
+            if (!options) return;
+            try {
+                assertFeaturedImageRunCurrent(options);
+            } catch (error) {
+                // A guard rejected inside fetch must also stop the SDK's retry loop.
+                requestAbort?.abort();
+                throw error;
+            }
+        };
+        assertCurrent();
+        // Keep the existing credential gate and transport; only bind this run's non-secret settings.
+        const aiUtils = options ? new AIUtils({
+            settings: options.connection,
+            getAPIToken: async () => {
+                assertCurrent();
+                const token = await this.plugin.getAPIToken();
+                assertCurrent();
+                return token;
+            },
+            log: (message, ...args) => this.plugin.log(message, ...args),
+        }) : this.aiUtils;
+        const llm = await aiUtils.createChatModel(0.8, options ? { onProviderRequestStart: assertCurrent } : {});
+        assertCurrent();
         const systemMessage = new SystemMessage(systemPrompt);
         const generateMessage = new HumanMessage(`**文字内容：**${query}`);
         const messages = [systemMessage, generateMessage];
 
-        const res = await llm.invoke(messages);
+        const res = await llm.invoke(messages, requestAbort ? { signal: requestAbort.signal } : undefined)
+            .catch((error: unknown) => {
+                // SDKs may wrap a fetch rejection; preserve the run's recovery reason.
+                assertCurrent();
+                throw error;
+            });
+        assertCurrent();
 
         const content = stringifyMessageContent(res.content);
         this.plugin.log("LLM response received", { contentLength: content.length });
@@ -577,10 +626,10 @@ export class AIService {
     /**
      * 生成特色图片 URL
      */
-    private async generateFeaturedImageUrls(genMsg: string): Promise<FeaturedImageUrl[] | null> {
-        const endpoint = getDashScopeImageGenerationEndpoint(this.plugin.settings.baseURL);
-        const model = normalizeFeaturedImageModel(this.plugin.settings.featuredImageModel);
-        const imageCount = normalizeFeaturedImageCount(this.plugin.settings.numFeaturedImages);
+    private async generateFeaturedImageUrls(genMsg: string, options: FeaturedImageRunOptions): Promise<FeaturedImageUrl[] | null> {
+        const endpoint = getDashScopeImageGenerationEndpoint(options.connection.baseURL);
+        const model = normalizeFeaturedImageModel(options.featuredImageModel);
+        const imageCount = normalizeFeaturedImageCount(options.numFeaturedImages);
 
         if (!endpoint) {
             this.plugin.log("Image generation endpoint is not supported", { model });
@@ -591,7 +640,10 @@ export class AIService {
         const endpointRegion = endpoint.includes("dashscope-intl") ? "international" : "domestic";
         let resp: RequestUrlResponse;
         try {
-            const token = await this.plugin.getAPIToken();
+            assertFeaturedImageRunCurrent(options);
+            const token = (await this.plugin.getAPIToken()).trim();
+            assertFeaturedImageRunCurrent(options);
+            if (!token) throw new Error('API token not configured');
             resp = await withFeaturedImageTimeout(requestUrl({
                 url: endpoint,
                 method: "POST",
@@ -618,7 +670,9 @@ export class AIService {
                 }),
                 throw: false,
             }), FEATURED_IMAGE_GENERATION_TIMEOUT_MS);
+            assertFeaturedImageRunCurrent(options);
         } catch (error) {
+            if (error instanceof FeaturedImageRunInvalidatedError) throw error;
             const timedOut = error instanceof FeaturedImageGenerationTimeoutError;
             this.plugin.log(timedOut
                 ? "Image generation request timed out"
@@ -696,8 +750,9 @@ export class AIService {
     /**
      * 下载图片到本地
      */
-    private async downloadImageToVault(app: App, imageUrl: string, folderPath: string) {
+    private async downloadImageToVault(app: App, imageUrl: string, folderPath: string, options: FeaturedImageRunOptions) {
         try {
+            assertFeaturedImageRunCurrent(options);
             // 从 URL 中提取文件名
             const filename = imageUrl.split('/').pop()?.split('?')[0] || 'image.png';
 
@@ -709,15 +764,18 @@ export class AIService {
                 const folder = app.vault.getAbstractFileByPath(normalizedFolderPath);
                 if (!folder) {
                     await app.vault.createFolder(normalizedFolderPath);
+                    assertFeaturedImageRunCurrent(options);
                 }
             }
 
             // 下载图片
+            assertFeaturedImageRunCurrent(options);
             const response = await requestUrl({
                 url: imageUrl,
                 method: "GET",
                 throw: false,
             });
+            assertFeaturedImageRunCurrent(options);
             if (!isOkStatus(response.status)) {
                 throw new Error(`Failed to download image: HTTP ${response.status}`);
             }
@@ -727,6 +785,7 @@ export class AIService {
 
             // 保存文件到 Obsidian vault
             await app.vault.createBinary(savePath, buffer);
+            assertFeaturedImageRunCurrent(options);
 
             // 显示成功通知
             new Notice(this.t("plugin.ai.notice.imageDownloaded", { path: savePath }));
@@ -735,6 +794,7 @@ export class AIService {
             return savePath;
 
         } catch (error) {
+            if (error instanceof FeaturedImageRunInvalidatedError) throw error;
             new Notice(this.t("plugin.ai.notice.imageDownloadFailed", { error: this.formatErrorMessage(error) }));
             throw error;
         }

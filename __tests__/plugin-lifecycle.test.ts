@@ -1,6 +1,12 @@
 import { describe, expect, it, jest, afterEach } from "@jest/globals";
-import { Notice } from "obsidian";
+import { ItemView, MarkdownView, Modal, Notice, TFile, type Command, type Editor } from "obsidian";
 import { setPlatformMobile, resetPlatform } from "./helpers/platform-mock";
+import { DomStubNode, findAllByTag } from './helpers/dom-stub';
+import { AssistantFeaturedImageHelper } from '../src/ai';
+import { pluginT } from '../src/locales/plugin';
+import type { FeaturedImageRunOptions } from '../src/ai-services/featured-image-options';
+import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
+import type { SettingsPermissionPatch } from '../src/plugin';
 
 jest.mock("obsidian-callout-manager", () => ({ getApi: jest.fn() }));
 jest.mock("../src/chat/chat-view", () => ({ VIEW_TYPE_LLM: "llm-view", LLMView: class {} }));
@@ -8,7 +14,9 @@ jest.mock("../src/share-card/share-card-modal", () => ({
     ShareCardModal: class {},
     closeAllShareCardModals: jest.fn(),
 }));
-jest.mock("../src/ai", () => ({ AssistantFeaturedImageHelper: class {}, AssistantHelper: class {} }));
+jest.mock("../src/ai", () => ({ AssistantFeaturedImageHelper: class {
+    async generate(_options: unknown) {}
+}, AssistantHelper: class {} }));
 jest.mock("../src/vss", () => ({ VSS: class {} }));
 jest.mock("../src/memory-manager", () => ({ MemoryManager: class { startAutoMaintenance() {} } }));
 jest.mock("../src/modal", () => ({ PluginControlModal: class {} }));
@@ -217,6 +225,486 @@ describe("B-106 settings lifecycle", () => {
         expect(persistedChoices).toEqual([true, false, true]);
         expect(plugin.settings.pagelet.backgroundDiscoveryEnabled).toBe(true);
         expect(state.deepDiscoverScheduler.setAutomaticEnabled.mock.calls).toEqual([[true], [false], [true]]);
+    });
+});
+
+describe('B-106 feature and permission Plugin integration', () => {
+    type State = {
+        unloading: boolean;
+        settingsSaveTail: Promise<void> | null;
+        aiProviderConfigurationRevision: number;
+        aiTokenRevision: number;
+        aiProviderCredentialTransitionCount: number;
+        tokenCacheState: 'unknown' | 'present' | 'missing';
+        _localGraph: unknown;
+        statsManager: { setStatisticsSyncEnabled(enabled: boolean): Promise<void> };
+        notifySettingsChanged(): Promise<void>;
+        runAdvancedMemoryCommand(checking: boolean, action: () => Promise<void>): boolean;
+        runManualMemoryAction(action: () => Promise<void>): Promise<void>;
+        vss: unknown;
+        memoryManager: unknown;
+        migrateSettings(): Promise<void>;
+    };
+    class Element extends DomStubNode {
+        onclick?: () => void | Promise<void>;
+        oninput?: () => void;
+        onchange?: () => void;
+        open = false;
+        focus = jest.fn();
+        addClass(value: string): void { this.classList.add(value); }
+        empty(): void { this.textContent = ''; }
+        createEl(tag: string, options: { cls?: string; text?: string; attr?: Record<string, string> } = {}): Element {
+            const element = this.appendChild(new Element(tag));
+            if (options.cls) element.addClass(options.cls);
+            if (options.text) element.setText(options.text);
+            for (const [key, value] of Object.entries(options.attr ?? {})) element.setAttribute(key, value);
+            return element;
+        }
+        createDiv(options?: Parameters<Element['createEl']>[1]): Element { return this.createEl('div', options); }
+        createSpan(options?: Parameters<Element['createEl']>[1]): Element { return this.createEl('span', options); }
+    }
+    const nodes = (modal: Modal, tag: string) => findAllByTag(modal.contentEl as unknown as DomStubNode, tag) as Element[];
+    const click = async (modal: Modal, key: string) => {
+        const target = nodes(modal, 'button').find((node) => node.textContent === pluginT(key));
+        expect(target).toBeDefined();
+        if (!target!.disabled) await target!.onclick?.();
+    };
+    function deferred<T = void>() {
+        let resolve!: (value: T) => void;
+        const promise = new Promise<T>((done) => { resolve = done; });
+        return { promise, resolve };
+    }
+    async function fixture() {
+        const harness = createPluginHarness({ initialData: {
+            aiProvider: 'qwen', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            chatModelName: 'qwen-plus', embeddingModelName: 'text-embedding-v4',
+            webSearchEnabled: false, operationsAgentEnabled: false,
+            statisticsSyncEnabled: false,
+        }, secretStorageValues: { 'pa-api-token': 'synthetic-token' } });
+        await harness.plugin.loadSettings();
+        const state = harness.plugin as unknown as State;
+        await state.migrateSettings();
+        state.notifySettingsChanged = jest.fn(async () => undefined);
+        return { ...harness, state };
+    }
+    function modalDom() {
+        jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+            Object.assign(this, { contentEl: new Element('div'), titleEl: new Element('h2') });
+            this.onOpen();
+        });
+        jest.spyOn(Modal.prototype, 'close').mockImplementation(function (this: Modal) { this.onClose(); });
+    }
+    function bindNote(plugin: Awaited<ReturnType<typeof fixture>>['plugin']) {
+        const file = Object.assign(new TFile(), { path: 'notes/bound.md', basename: 'bound', extension: 'md' });
+        const editor = { getValue: () => 'bound note' } as unknown as Editor;
+        const view = new MarkdownView(undefined as never);
+        Object.assign(view, { editor, file, containerEl: { isConnected: true } });
+        const lookup = jest.fn(() => file);
+        Object.assign(plugin.app.vault, { getAbstractFileByPath: lookup });
+        Object.assign(plugin.app, { workspace: { getActiveViewOfType: jest.fn(() => view) } });
+        return { editor, view, file, lookup };
+    }
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    it('builds permission snapshots when the queue runs and publishes only after durable success', async () => {
+        const { plugin, state, adapter, readPersisted } = await fixture();
+        const queued = deferred();
+        const entered = deferred();
+        const writing = deferred();
+        state.settingsSaveTail = queued.promise;
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementationOnce(async (...args: unknown[]) => {
+            entered.resolve();
+            await writing.promise;
+            return process(...args);
+        });
+        const saving = plugin.saveSettingsPermissions({ webSearchEnabled: true,
+            retrievalHabitProfile: { enabled: true }, quickCapture: { postProcessingEnabled: true } });
+        plugin.settings.author = 'concurrent author';
+        plugin.settings.retrievalHabitProfile.state = { aggregates: [], clearedAt: '2026-09-08T01:00:00.000Z' };
+        plugin.settings.quickCapture.inboxPath = 'custom/inbox.md';
+        queued.resolve();
+        await entered.promise;
+        expect(plugin.settings.webSearchEnabled).toBe(false);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        plugin.settings.retrievalHabitProfile.state = { aggregates: [], clearedAt: '2026-09-08T02:00:00.000Z' };
+        writing.resolve();
+        await saving;
+        expect(readPersisted()).toMatchObject({ author: 'concurrent author', webSearchEnabled: true,
+            retrievalHabitProfile: { enabled: true, state: { clearedAt: '2026-09-08T01:00:00.000Z' } },
+            quickCapture: { inboxPath: 'custom/inbox.md', postProcessingEnabled: true } });
+        expect(plugin.settings.retrievalHabitProfile.state.clearedAt).toBe('2026-09-08T02:00:00.000Z');
+        expect(plugin.settings.webSearchEnabled).toBe(true);
+        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not publish failed permission saves and keeps the requested patch independent of caller edits', async () => {
+        const { plugin, state, adapter } = await fixture();
+        const queued = deferred();
+        state.settingsSaveTail = queued.promise;
+        const requested = { operationsAgentEnabled: true, retrievalHabitProfile: { enabled: true } };
+        const saving = plugin.saveSettingsPermissions(requested);
+        requested.retrievalHabitProfile.enabled = false;
+        adapter.process.mockRejectedValueOnce(new Error('disk unavailable'));
+        const rejected = expect(saving).rejects.toThrow('disk unavailable');
+        queued.resolve();
+        await rejected;
+        expect(plugin.settings.operationsAgentEnabled).toBe(false);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        requested.retrievalHabitProfile.enabled = true;
+        const retry = plugin.saveSettingsPermissions(requested);
+        requested.retrievalHabitProfile.enabled = false;
+        await retry;
+        expect(plugin.settings.operationsAgentEnabled).toBe(true);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(true);
+    });
+
+    it('saves a generated-note policy without widening it early or discarding concurrent exclusions', async () => {
+        const { plugin, state, adapter, readPersisted } = await fixture();
+        const queued = deferred();
+        const entered = deferred();
+        const writing = deferred();
+        state.settingsSaveTail = queued.promise;
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementationOnce(async (...args: unknown[]) => { entered.resolve(); await writing.promise; return process(...args); });
+        const previous = plugin.settings.dataBoundary.generatedNotePolicy;
+        const saving = plugin.saveSettingsPermissions({ dataBoundary: { generatedNotePolicy: 'include-generated' } });
+        plugin.settings.dataBoundary.excludedFolders = ['private'];
+        queued.resolve();
+        await entered.promise;
+        expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe(previous);
+        plugin.settings.dataBoundary.excludedTags = ['confidential'];
+        writing.resolve();
+        await saving;
+        expect(readPersisted()).toMatchObject({ dataBoundary: { generatedNotePolicy: 'include-generated', excludedFolders: ['private'] } });
+        expect(plugin.settings.dataBoundary.excludedTags).toEqual(['confidential']);
+        expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('include-generated');
+    });
+
+    it('keeps all source scopes closed through a failed save, then publishes only their captured arrays', async () => {
+        const { plugin, state, adapter, readPersisted } = await fixture();
+        const scopePatch = (paths: string[]): SettingsPermissionPatch => ({
+            vssCacheExcludePath: [...paths], metadataExcludePath: [...paths],
+            dataBoundary: { excludedFolders: [...paths], excludedTags: [...paths] },
+            pagelet: { excludedFolders: [...paths], excludedTags: [...paths], excludedPatterns: [...paths] },
+        });
+        const readScopes = () => ({
+            vssCacheExcludePath: plugin.settings.vssCacheExcludePath,
+            metadataExcludePath: plugin.settings.metadataExcludePath,
+            dataBoundary: { excludedFolders: plugin.settings.dataBoundary.excludedFolders, excludedTags: plugin.settings.dataBoundary.excludedTags },
+            pagelet: { excludedFolders: plugin.settings.pagelet.excludedFolders, excludedTags: plugin.settings.pagelet.excludedTags, excludedPatterns: plugin.settings.pagelet.excludedPatterns },
+        });
+        await plugin.saveSettingsPermissions(scopePatch(['private']));
+        jest.mocked(state.notifySettingsChanged).mockClear();
+        const entered = deferred();
+        const writing = deferred();
+        adapter.process.mockImplementationOnce(async () => {
+            entered.resolve(); await writing.promise; throw new Error('scope save unavailable');
+        });
+        const failed = plugin.saveSettingsPermissions(scopePatch([]));
+        const rejected = expect(failed).rejects.toThrow('scope save unavailable');
+        await entered.promise;
+        expect(readScopes()).toEqual(scopePatch(['private']));
+        writing.resolve();
+        await rejected;
+        expect(readScopes()).toEqual(scopePatch(['private']));
+        expect(readPersisted()).toMatchObject(scopePatch(['private']));
+        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+
+        const queued = deferred();
+        const retryEntered = deferred();
+        const retryWriting = deferred();
+        state.settingsSaveTail = queued.promise;
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementationOnce(async (...args: unknown[]) => {
+            retryEntered.resolve(); await retryWriting.promise; return process(...args);
+        });
+        const requested = scopePatch([]);
+        const retry = plugin.saveSettingsPermissions(requested);
+        requested.pagelet!.excludedFolders!.push('caller-changed');
+        plugin.settings.pagelet.outputLanguage = 'zh';
+        const disclosure = plugin.settings.dataBoundary.providerDisclosureReasons.slice(0, 1);
+        plugin.settings.dataBoundary.providerDisclosureReasons = disclosure;
+        queued.resolve();
+        await retryEntered.promise;
+        expect(readScopes()).toEqual(scopePatch(['private']));
+        plugin.settings.pagelet.petVisible = !plugin.settings.pagelet.petVisible;
+        const livePetVisible = plugin.settings.pagelet.petVisible;
+        retryWriting.resolve();
+        await retry;
+        expect(readScopes()).toEqual(scopePatch([]));
+        expect(readPersisted()).toMatchObject({ ...scopePatch([]),
+            dataBoundary: { ...scopePatch([]).dataBoundary, providerDisclosureReasons: disclosure },
+            pagelet: { ...scopePatch([]).pagelet, outputLanguage: 'zh' },
+        });
+        expect(plugin.settings.pagelet.petVisible).toBe(livePetVisible);
+        expect(plugin.settings.dataBoundary.providerDisclosureReasons).toEqual(disclosure);
+        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('serializes statistics persistence before runtime switching and compensates a rejected runtime switch', async () => {
+        const { plugin, state, adapter, readPersisted } = await fixture();
+        const writing = deferred();
+        const entered = deferred();
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementationOnce(async (...args: unknown[]) => { entered.resolve(); await writing.promise; return process(...args); });
+        const switchSync = jest.fn<(enabled: boolean) => Promise<void>>(async () => undefined);
+        state.statsManager = { setStatisticsSyncEnabled: switchSync };
+        const saving = plugin.setStatisticsSyncEnabled(true);
+        await entered.promise;
+        expect(switchSync).not.toHaveBeenCalled();
+        expect(plugin.settings.statisticsSyncEnabled).toBe(false);
+        writing.resolve();
+        await saving;
+        expect(switchSync).toHaveBeenCalledWith(true);
+        expect(plugin.settings.statisticsSyncEnabled).toBe(true);
+        expect(readPersisted()?.statisticsSyncEnabled).toBe(true);
+        switchSync.mockRejectedValueOnce(new Error('store unavailable'));
+        await expect(plugin.setStatisticsSyncEnabled(false)).rejects.toThrow('store unavailable');
+        expect(plugin.settings.statisticsSyncEnabled).toBe(true);
+        expect(readPersisted()?.statisticsSyncEnabled).toBe(true);
+        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not switch statistics storage or publish when saving the sync preference fails', async () => {
+        const { plugin, state, adapter } = await fixture();
+        const switchSync = jest.fn<(enabled: boolean) => Promise<void>>(async () => undefined);
+        state.statsManager = { setStatisticsSyncEnabled: switchSync };
+        adapter.process.mockRejectedValueOnce(new Error('disk unavailable'));
+        await expect(plugin.setStatisticsSyncEnabled(true)).rejects.toThrow('disk unavailable');
+        expect(switchSync).not.toHaveBeenCalled();
+        expect(plugin.settings.statisticsSyncEnabled).toBe(false);
+        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+    });
+
+    it('keeps the bootstrapped Memory pause committed until its device repository transaction succeeds', async () => {
+        const { plugin, state } = await fixture();
+        plugin.settings.memoryAutoAcceptPaused = true;
+        type Policy = { confirmedMemoryCount: number; memoryAutoAcceptPaused: boolean };
+        const entered = deferred();
+        const writing = deferred();
+        const transact = jest.fn<() => Promise<Policy>>(async () => {
+            entered.resolve();
+            await writing.promise;
+            throw new Error('device store unavailable');
+        });
+        Object.assign(plugin, {
+            memoryGovernanceBootstrapState: 'ready',
+            memoryGovernanceOpaqueVaultKey: 'synthetic-vault',
+            memoryGovernanceSourceHash: 'synthetic-source',
+            deviceMemoryGovernanceRepository: { transact },
+        });
+        const failed = plugin.setMemoryAutoAcceptPaused(false);
+        const rejected = expect(failed).rejects.toThrow('device store unavailable');
+        await entered.promise;
+        expect(plugin.settings.memoryAutoAcceptPaused).toBe(true);
+        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        writing.resolve();
+        await rejected;
+        expect(plugin.settings.memoryAutoAcceptPaused).toBe(true);
+        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+        const committed = deferred<Policy>();
+        transact.mockImplementationOnce(() => committed.promise);
+        const retry = plugin.setMemoryAutoAcceptPaused(false);
+        expect(plugin.settings.memoryAutoAcceptPaused).toBe(true);
+        committed.resolve({ confirmedMemoryCount: 10, memoryAutoAcceptPaused: false });
+        await retry;
+        expect(plugin.settings.memoryAutoAcceptPaused).toBe(false);
+        expect(plugin.settings.confirmedMemoryCount).toBe(10);
+        expect(state.notifySettingsChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects newly queued feature and permission writes during unload', async () => {
+        const { plugin, state, adapter } = await fixture();
+        const queued = deferred();
+        state.settingsSaveTail = queued.promise;
+        const saves = [
+            plugin.saveSettingsPermissions({ webSearchEnabled: true }),
+            plugin.setStatisticsSyncEnabled(true),
+            plugin.saveGraphOptions({ localGraph: plugin.settings.localGraph, enableGraphColors: true, colorGroups: [] }),
+            plugin.saveFeaturedImageDefaults({ featuredImageModel: 'wan2.7-image-pro', numFeaturedImages: 3, featuredImagePath: 'images' }),
+        ];
+        const rejected = Promise.all(saves.map((save) => expect(save).rejects.toThrow('unloading')));
+        state.unloading = true;
+        const writesBeforeRelease = adapter.process.mock.calls.length;
+        queued.resolve();
+        await rejected;
+        expect(adapter.process).toHaveBeenCalledTimes(writesBeforeRelease);
+        expect(state.notifySettingsChanged).not.toHaveBeenCalled();
+    });
+
+    it('saves graph defaults through the shared modal without opening a graph when no leaf exists', async () => {
+        const { plugin, state, secretStorage, readPersisted } = await fixture();
+        modalDom();
+        const getLeaf = jest.fn();
+        Object.assign(plugin.app, { workspace: { getLeavesOfType: jest.fn(() => []), getLeaf } });
+        const { LocalGraph } = jest.requireActual<typeof import('../src/local-graph')>('../src/local-graph');
+        state._localGraph = new LocalGraph(plugin.app, plugin);
+        const modal = plugin.openGraphOptions();
+        const depth = nodes(modal, 'input')[0];
+        depth.value = '3'; depth.oninput?.();
+        await click(modal, 'plugin.settings.graph.options.save');
+        expect(plugin.settings.localGraph.depth).toBe(3);
+        expect(readPersisted()).toMatchObject({ localGraph: { depth: 3 } });
+        expect(getLeaf).not.toHaveBeenCalled();
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+    });
+
+    it('opens and cancels both featured image modes without token reads or helper work', async () => {
+        const { plugin, secretStorage } = await fixture();
+        modalDom();
+        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
+        const defaultsModal = plugin.openFeaturedImageOptions()!;
+        await click(defaultsModal, 'plugin.settings.featuredImage.options.cancel');
+        const { editor, view } = bindNote(plugin);
+        const generateModal = plugin.openFeaturedImageOptions(editor, view)!;
+        await click(generateModal, 'plugin.settings.featuredImage.options.cancel');
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+        expect(generate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a command target without a file rather than opening the defaults editor', async () => {
+        const { plugin, secretStorage } = await fixture();
+        modalDom();
+        const { editor, view } = bindNote(plugin);
+        Object.assign(view, { file: null });
+        expect(plugin.openFeaturedImageOptions(editor, view)).toBeNull();
+        expect(Modal.prototype.open).not.toHaveBeenCalled();
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke the helper after failed default persistence and preserves the displayed draft', async () => {
+        const { plugin, adapter } = await fixture();
+        modalDom();
+        const { editor, view } = bindNote(plugin);
+        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
+        const modal = plugin.openFeaturedImageOptions(editor, view)!;
+        nodes(modal, 'select')[1].value = '3';
+        adapter.process.mockRejectedValueOnce(new Error('disk unavailable'));
+        await click(modal, 'plugin.settings.featuredImage.options.generate');
+        expect(generate).not.toHaveBeenCalled();
+        expect(plugin.settings.numFeaturedImages).toBe(1);
+        expect(nodes(modal, 'select')[1].value).toBe('3');
+    });
+
+    it.each(['provider', 'token', 'file', 'editor', 'detached', 'credential-transition'] as const)
+    ('captures %s identity before saving and prevents a later mixed featured-image run', async (change) => {
+        const { plugin, state, adapter } = await fixture();
+        modalDom();
+        const { editor, view, file, lookup } = bindNote(plugin);
+        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
+        const entered = deferred();
+        const writing = deferred();
+        const process = adapter.process.getMockImplementation()!;
+        adapter.process.mockImplementationOnce(async (...args: unknown[]) => { entered.resolve(); await writing.promise; return process(...args); });
+        const modal = plugin.openFeaturedImageOptions(editor, view)!;
+        const submit = click(modal, 'plugin.settings.featuredImage.options.generate');
+        await entered.promise;
+        if (change === 'provider') state.aiProviderConfigurationRevision = (state.aiProviderConfigurationRevision ?? 0) + 1;
+        if (change === 'token') state.aiTokenRevision = (state.aiTokenRevision ?? 0) + 1;
+        if (change === 'file') lookup.mockReturnValue(Object.assign(new TFile(), { path: file.path }));
+        if (change === 'editor') Object.assign(view, { editor: {} });
+        if (change === 'detached') Object.assign(view, { containerEl: { isConnected: false } });
+        if (change === 'credential-transition') state.aiProviderCredentialTransitionCount = 1;
+        writing.resolve();
+        await submit;
+        expect(generate).not.toHaveBeenCalled();
+        expect(nodes(modal, 'p').some((node) => node.textContent === pluginT('plugin.settings.featuredImage.options.savedChanged'))).toBe(true);
+    });
+
+    it('hands off the bound note and freezes run defaults independently of subsequent default edits', async () => {
+        const { plugin, state } = await fixture();
+        modalDom();
+        const { editor, view } = bindNote(plugin);
+        const generate = jest.spyOn(AssistantFeaturedImageHelper.prototype, 'generate');
+        const modal = plugin.openFeaturedImageOptions(editor, view)!;
+        nodes(modal, 'select')[1].value = '3';
+        await click(modal, 'plugin.settings.featuredImage.options.generate');
+        expect(generate).toHaveBeenCalledTimes(1);
+        const options = generate.mock.calls[0][0] as FeaturedImageRunOptions;
+        expect(options.isCurrent()).toBe(true);
+        await plugin.saveFeaturedImageDefaults({ featuredImageModel: 'wan2.7-image-pro', numFeaturedImages: 4, featuredImagePath: 'changed' });
+        expect(options.numFeaturedImages).toBe(3);
+        expect(options.featuredImagePath).toBe('');
+        expect(options.isCurrent()).toBe(true);
+        state.aiTokenRevision = (state.aiTokenRevision ?? 0) + 1;
+        expect(options.isCurrent()).toBe(false);
+    });
+
+    it('registers context-sensitive commands that use the same graph and image modal entrypoints', async () => {
+        const { plugin, secretStorage } = await fixture();
+        modalDom();
+        const { editor, view } = bindNote(plugin);
+        const commands = new Map<string, Command>();
+        const registrationComplete = new Error('requested commands registered');
+        const shellElement = { addClass: jest.fn(), addEventListener: jest.fn(), setAttribute: jest.fn(), onClickEvent: jest.fn() };
+        Object.assign(plugin, {
+            ensureLoadedPluginBuildIdentity: jest.fn(async () => undefined),
+            cleanupLegacyMobileDebugLog: jest.fn(async () => undefined),
+            migrateSettings: jest.fn(async () => undefined),
+            initializeMemoryGovernanceBootstrap: jest.fn(async () => undefined),
+            surfacePendingPageletReviewsFolderMigration: jest.fn(),
+            surfacePendingMemoryExtractionConsentMigration: jest.fn(),
+            initializeMemorySubsystem: jest.fn(async () => undefined),
+            initializeStatsSubsystem: jest.fn(),
+            createChatHistoryStore: () => new MemoryChatHistoryStore(),
+            addRibbonIcon: () => shellElement,
+            addStatusBarItem: () => shellElement,
+            registerView: jest.fn(),
+            addCommand: (command: Command) => {
+                commands.set(command.id, command);
+                if (command.id === 'ai-assistant-featured-images') throw registrationComplete;
+                return command;
+            },
+        });
+        Object.assign(plugin.app.vault, { on: jest.fn(() => ({})) });
+        await expect(plugin.onload()).rejects.toBe(registrationComplete);
+        const graphEntry = jest.spyOn(plugin, 'openGraphOptions');
+        const imageEntry = jest.spyOn(plugin, 'openFeaturedImageOptions');
+        const activeView = jest.fn<(viewType: typeof ItemView) => ItemView | null>(() => null);
+        Object.assign(plugin.app.workspace, { getActiveViewOfType: activeView });
+        const graph = commands.get('pa-graph-options')!;
+        expect(graph.checkCallback?.(true)).toBe(false);
+        activeView.mockReturnValue(Object.assign(Object.create(ItemView.prototype) as ItemView, { getViewType: () => 'localgraph' }));
+        expect(graph.checkCallback?.(true)).toBe(true);
+        expect(activeView.mock.calls.every(([viewType]) => viewType === ItemView)).toBe(true);
+        expect(graphEntry).not.toHaveBeenCalled();
+        graph.checkCallback?.(false);
+        expect(graphEntry).toHaveBeenCalledTimes(1);
+        const image = commands.get('ai-assistant-featured-images')!;
+        expect(image.editorCheckCallback?.(true, editor, view)).toBe(true);
+        expect(imageEntry).not.toHaveBeenCalled();
+        image.editorCheckCallback?.(false, editor, view);
+        const imageCalls = imageEntry.mock.calls as Array<[unknown, unknown]>;
+        expect(imageCalls).toHaveLength(1);
+        expect(imageCalls[0][0] === editor).toBe(true);
+        expect(imageCalls[0][1] === view).toBe(true);
+        expect(secretStorage.getSecret).not.toHaveBeenCalled();
+        plugin.settings.aiProvider = 'openai';
+        expect(image.editorCheckCallback?.(true, editor, view)).toBe(false);
+    });
+
+    it('keeps advanced Memory commands reachable with the retired display preference off and retains effective gates', async () => {
+        const { plugin, state } = await fixture();
+        plugin.settings.showAdvancedMemoryControls = false;
+        plugin.settings.memoryEnabled = true;
+        state.vss = {}; state.memoryManager = {};
+        state.runManualMemoryAction = jest.fn(async (action: () => Promise<void>) => action());
+        const action = jest.fn(async () => undefined);
+        expect(state.runAdvancedMemoryCommand(true, action)).toBe(true);
+        expect(action).not.toHaveBeenCalled();
+        expect(state.runAdvancedMemoryCommand(false, action)).toBe(true);
+        expect(action).toHaveBeenCalledTimes(1);
+        plugin.settings.memoryEnabled = false;
+        expect(state.runAdvancedMemoryCommand(true, action)).toBe(false);
+        plugin.settings.memoryEnabled = true; state.vss = null;
+        expect(state.runAdvancedMemoryCommand(true, action)).toBe(false);
+        state.vss = {}; plugin.settings.aiProvider = '';
+        expect(state.runAdvancedMemoryCommand(true, action)).toBe(false);
+        expect(state.runAdvancedMemoryCommand(false, action)).toBe(true);
+        expect(action).toHaveBeenCalledTimes(1);
     });
 });
 

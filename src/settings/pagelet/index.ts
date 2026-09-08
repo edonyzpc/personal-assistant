@@ -34,6 +34,8 @@
  */
 
 import type { App } from "obsidian";
+import { pluginT } from "../../locales/plugin";
+import { createSourceScopeSettingState, renderSourceScopeSetting, type SourceScopeSettingState } from "../source-scope-setting";
 
 import {
     getVaultConfigDir,
@@ -400,8 +402,8 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         petCorner: normalizePetCorner(raw.petCorner),
         proactiveHints: typeof raw.proactiveHints === "boolean" ? raw.proactiveHints : PAGELET_DEFAULTS.proactiveHints,
         proactiveHintsCooldown: normalizeBoundedInt(raw.proactiveHintsCooldown, PAGELET_DEFAULTS.proactiveHintsCooldown, PAGELET_BOUNDS.proactiveHintsCooldown.min, PAGELET_BOUNDS.proactiveHintsCooldown.max),
-        // Unified Pagelet Agent. When the key is absent, preserve an existing
-        // user's historical background-provider choice; fresh installs default on.
+        // One current background preference. Missing/invalid values use the
+        // same default for all users; retired toggles never supply this value.
         backgroundDiscoveryEnabled: typeof raw.backgroundDiscoveryEnabled === "boolean"
             ? raw.backgroundDiscoveryEnabled
             : PAGELET_DEFAULTS.backgroundDiscoveryEnabled,
@@ -1042,6 +1044,9 @@ export interface PageletSettingsHost {
         chatModelName?: string;
     };
     saveSettings(): Promise<void> | void;
+    saveSettingsPermissions(patch: {
+        pagelet: Partial<Pick<PageletSettings, "excludedFolders" | "excludedTags" | "excludedPatterns">>;
+    }): Promise<void>;
     setBackgroundDiscoveryEnabled(enabled: boolean): Promise<void>;
     /** Content-free per-vault Deep Discover usage for the current local day. */
     getDeepDiscoverUsage?(): Promise<{
@@ -1098,16 +1103,19 @@ export interface PageletDropdownHandle {
     onChange(cb: (value: string) => void | Promise<void>): PageletDropdownHandle;
 }
 
-/**
- * Render the Pagelet section into `parentEl`.
- *
- * The function is intentionally synchronous — onChange handlers either
- * await `saveSettings` or schedule a debounced save (caller's choice).
- * Returning early when `enabled` is false would surprise users who want
- * to toggle it back on without re-opening the tab, so all controls
- * render regardless of the master toggle.
- */
+/** Legacy combined entrypoint; current Settings routes the two surfaces separately. */
 export function renderPageletSection(
+    parentEl: HTMLElement,
+    host: PageletSettingsHost,
+    factory: PageletSettingFactory,
+    locale: PageletLocale = "en",
+): void {
+    renderPageletPreferences(parentEl, host, factory, locale);
+    renderPageletNotePrivacy({ saveLocation: parentEl, sourceExclusions: parentEl }, host, factory, locale);
+}
+
+/** Everyday choices. Conditional children update locally without replacing other Settings drafts. */
+export function renderPageletPreferences(
     parentEl: HTMLElement,
     host: PageletSettingsHost,
     factory: PageletSettingFactory,
@@ -1115,12 +1123,6 @@ export function renderPageletSection(
 ): void {
     const t = makePageletTranslator(locale);
     const settings = host.settings.pagelet;
-    const configDir = getVaultConfigDir((host.app as { vault?: { configDir?: string } } | undefined)?.vault);
-    const saveOnChange = async (mutator: () => void) => {
-        mutator();
-        await host.saveSettings();
-    };
-
     // Section heading + Beta callout. Using `createEl` directly so the
     // markup matches existing PA conventions (h2 + p sibling).
     parentEl.createEl("h2", { text: t("pagelet.settings.section.title") });
@@ -1133,6 +1135,8 @@ export function renderPageletSection(
         cls: "pa-pagelet-beta-callout",
     });
 
+    const saveOnChange = createPageletSaveFeedback(parentEl, host, locale);
+
     // Master toggle. Rendered at the top so a user who only wants to
     // turn Pagelet off doesn't need to scroll past 6 other fields.
     factory.create(parentEl)
@@ -1143,9 +1147,209 @@ export function renderPageletSection(
                 .setValue(settings.enabled)
                 .onChange((value) => saveOnChange(() => { settings.enabled = value; })));
 
-    // ── General ─────────────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.general.heading") });
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.outputLanguage.name"))
+        .setDesc(t("pagelet.settings.outputLanguage.desc"))
+        .addDropdown((dropdown) => {
+            dropdown
+                .addOption("auto", t("pagelet.settings.outputLanguage.option.auto"))
+                .addOption("zh", t("pagelet.settings.outputLanguage.option.zh"))
+                .addOption("en", t("pagelet.settings.outputLanguage.option.en"))
+                .setValue(settings.outputLanguage)
+                .onChange((value) => saveOnChange(() => {
+                    settings.outputLanguage = normalizeOutputLanguage(value);
+                }));
+        });
 
+    // ── Deep Discover ──────────────────────────────────────────────────
+
+    const backgroundDescription = t("pagelet.settings.backgroundDiscovery.desc");
+    const backgroundRow = factory.create(parentEl)
+        .setName(t("pagelet.settings.backgroundDiscovery.name"))
+        .setDesc(backgroundDescription);
+    backgroundRow.addToggle((toggle) => {
+        let saving = false;
+        toggle.setValue(settings.backgroundDiscoveryEnabled).onChange(async (value) => {
+            if (saving) return;
+            saving = true;
+            toggle.setValue(host.settings.pagelet.backgroundDiscoveryEnabled);
+            toggle.setDisabled?.(true);
+            backgroundRow.setDesc(t("pagelet.settings.backgroundDiscovery.saving"));
+            try {
+                await host.setBackgroundDiscoveryEnabled(value);
+                if (parentEl.isConnected !== false) backgroundRow.setDesc(backgroundDescription);
+            } catch (error) {
+                host.log?.("Background discovery preference was not saved", error);
+                if (parentEl.isConnected !== false) {
+                    backgroundRow.setDesc(t("pagelet.settings.backgroundDiscovery.saveError"));
+                }
+            } finally {
+                if (parentEl.isConnected !== false) {
+                    // Obsidian setValue synchronously invokes onChange. Keep
+                    // the guard active while reflecting the committed value.
+                    toggle.setValue(host.settings.pagelet.backgroundDiscoveryEnabled);
+                    toggle.setDisabled?.(false);
+                }
+                saving = false;
+            }
+        });
+    });
+
+    const usageEl = parentEl.createEl("p", {
+        text: t("pagelet.settings.deepDiscover.usage.fixed"),
+        cls: "pa-settings-section-desc",
+    });
+    if (host.getDeepDiscoverUsage) {
+        void host.getDeepDiscoverUsage()
+            .then((usage) => {
+                if (parentEl.isConnected !== false) {
+                    usageEl.textContent = t("pagelet.settings.deepDiscover.usage.value", usage);
+                }
+            })
+            .catch((error) => {
+                host.log?.("Pagelet Deep Discover usage unavailable", error);
+            });
+    }
+
+    const detailsEl = parentEl.createEl("details", { cls: "pa-settings-detail" });
+    detailsEl.createEl("summary", { text: t("pagelet.settings.preferences.details") });
+    const detailsBodyEl = detailsEl.createEl("div", { cls: "pa-settings-detail__body" });
+
+    // ── Pet ────────────────────────────────────────────────────────────
+
+    factory.create(detailsBodyEl)
+        .setName(t("pagelet.settings.petVisible.name"))
+        .setDesc(t("pagelet.settings.petVisible.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.petVisible)
+                .onChange((value) => saveOnChange(() => {
+                    settings.petVisible = value;
+                    petCornerEl.hidden = !value;
+                })));
+
+    const petCornerEl = detailsBodyEl.createEl("div", { cls: "pa-pagelet-conditional" });
+    petCornerEl.hidden = !settings.petVisible;
+    factory.create(petCornerEl)
+        .setName(t("pagelet.settings.petCorner.name"))
+        .setDesc(t("pagelet.settings.petCorner.desc"))
+        .addDropdown((dropdown) => {
+            dropdown
+                .addOption("bottom-right", t("pagelet.settings.petCorner.option.bottom-right"))
+                .addOption("bottom-left", t("pagelet.settings.petCorner.option.bottom-left"))
+                .addOption("top-right", t("pagelet.settings.petCorner.option.top-right"))
+                .addOption("top-left", t("pagelet.settings.petCorner.option.top-left"))
+                .setValue(settings.petCorner)
+                .onChange((value) => saveOnChange(() => {
+                    settings.petCorner = normalizePetCorner(value);
+                }));
+        });
+
+    factory.create(detailsBodyEl)
+        .setName(t("pagelet.settings.proactiveHints.name"))
+        .setDesc(t("pagelet.settings.proactiveHints.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.proactiveHints)
+                .onChange((value) => saveOnChange(() => { settings.proactiveHints = value; })));
+
+    // The retained hint preference does not control provider preparation.
+    factory.create(detailsBodyEl)
+        .setName(t("pagelet.settings.scopeRecapHints.name"))
+        .setDesc(t("pagelet.settings.scopeRecapHints.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.scopeRecapHighValueHints)
+                .onChange((value) => saveOnChange(() => {
+                    settings.scopeRecapHighValueHints = value;
+                })));
+
+    // ── Quiet Recall (SG-01) ─────────────────────────────────────────
+    factory.create(detailsBodyEl)
+        .setName(t("pagelet.settings.quietRecallMode.name"))
+        .setDesc(t("pagelet.settings.quietRecallMode.desc"))
+        .addToggle((toggle) => {
+            toggle
+                .setValue(host.settings.quietRecall.quietRecallMode === "on")
+                .onChange((value) => saveOnChange(() => {
+                    host.settings.quietRecall.quietRecallMode = value ? "on" : "off";
+                }));
+        });
+
+    // ── Quiet Hours ───────────────────────────────────────────────────
+    factory.create(detailsBodyEl)
+        .setName(t("pagelet.settings.quietHoursEnabled.name"))
+        .setDesc(t("pagelet.settings.quietHoursEnabled.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.proactiveHintsQuietHours.enabled)
+                .onChange((value) => saveOnChange(() => {
+                    settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, enabled: value };
+                    quietTimesEl.hidden = !value;
+                })));
+
+    const quietTimesEl = detailsBodyEl.createEl("div", { cls: "pa-pagelet-conditional" });
+    quietTimesEl.hidden = !settings.proactiveHintsQuietHours.enabled;
+    factory.create(quietTimesEl)
+        .setName(t("pagelet.settings.quietHoursStart.name"))
+        .setDesc(t("pagelet.settings.quietHoursStart.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("22:00")
+                .setValue(settings.proactiveHintsQuietHours.start)
+                .onChange((value) => saveOnChange(() => {
+                    if (/^\d{2}:\d{2}$/.test(value)) {
+                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, start: value };
+                    }
+                })));
+
+    factory.create(quietTimesEl)
+        .setName(t("pagelet.settings.quietHoursEnd.name"))
+        .setDesc(t("pagelet.settings.quietHoursEnd.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("08:00")
+                .setValue(settings.proactiveHintsQuietHours.end)
+                .onChange((value) => saveOnChange(() => {
+                    if (/^\d{2}:\d{2}$/.test(value)) {
+                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, end: value };
+                    }
+                })));
+
+}
+
+export interface PageletNotePrivacyContainers {
+    saveLocation: HTMLElement;
+    sourceExclusions: HTMLElement;
+}
+
+export interface PageletSourceScopeOptions {
+    sourceScopeStates: Record<"excludedFolders" | "excludedTags" | "excludedPatterns", SourceScopeSettingState>;
+    isCurrent?: () => boolean;
+}
+
+/** Keep save destinations and local note exclusions beside their matching global Settings controls. */
+export function renderPageletNotePrivacy(
+    containers: PageletNotePrivacyContainers,
+    host: PageletSettingsHost,
+    factory: PageletSettingFactory,
+    locale: PageletLocale = "en",
+    sourceScopeOptions?: PageletSourceScopeOptions,
+): void {
+    renderPageletSaveLocation(containers.saveLocation, host, factory, locale);
+    renderPageletSourceExclusions(containers.sourceExclusions, host, factory, locale, sourceScopeOptions);
+}
+
+function renderPageletSaveLocation(
+    parentEl: HTMLElement,
+    host: PageletSettingsHost,
+    factory: PageletSettingFactory,
+    locale: PageletLocale,
+): void {
+    const t = makePageletTranslator(locale);
+    const settings = host.settings.pagelet;
+    const configDir = getVaultConfigDir((host.app as { vault?: { configDir?: string } } | undefined)?.vault);
+    const saveOnChange = createPageletSaveFeedback(parentEl, host, locale);
     // Track the last-known valid folder so a rejected edit can revert both
     // the persisted value AND the visible text input. Seeded with whatever
     // mergePageletSettings already accepted at load time.
@@ -1170,7 +1374,7 @@ export function renderPageletSection(
             text
                 .setPlaceholder(PAGELET_DEFAULTS.reviewsFolder)
                 .setValue(settings.reviewsFolder)
-                .onChange((value) => saveOnChange(() => {
+                .onChange(async (value) => {
                     const result = normalizeReviewsFolder(value, { configDir });
                     if (result.error) {
                         // Fail-closed: keep the previously valid folder so the
@@ -1184,7 +1388,6 @@ export function renderPageletSection(
                         return;
                     }
                     reviewsFolderErrorEl.textContent = "";
-                    settings.reviewsFolder = result.value;
                     lastValidReviewsFolder = result.value;
                     // If we trimmed leading/trailing slashes, reflect the
                     // normalised form in the visible input so the user sees
@@ -1192,311 +1395,91 @@ export function renderPageletSection(
                     if (value !== result.value) {
                         reviewsFolderTextHandle?.setValue(result.value);
                     }
-                }));
+                    await saveOnChange(() => { settings.reviewsFolder = result.value; });
+                });
         });
 
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.outputLanguage.name"))
-        .setDesc(t("pagelet.settings.outputLanguage.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("auto", t("pagelet.settings.outputLanguage.option.auto"))
-                .addOption("zh", t("pagelet.settings.outputLanguage.option.zh"))
-                .addOption("en", t("pagelet.settings.outputLanguage.option.en"))
-                .setValue(settings.outputLanguage)
-                .onChange((value) => saveOnChange(() => {
-                    settings.outputLanguage = normalizeOutputLanguage(value);
-                }));
-        });
+}
 
-    // ── Model ───────────────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.model.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.temperature.name"))
-        .setDesc(t("pagelet.settings.temperature.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder(PAGELET_DEFAULTS.temperature.toString())
-                .setValue(settings.temperature.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.temperature = normalizeBoundedNumber(
-                        value,
-                        PAGELET_DEFAULTS.temperature,
-                        PAGELET_BOUNDS.temperature.min,
-                        PAGELET_BOUNDS.temperature.max,
-                    );
-                })));
-
-    // ── Limits ──────────────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.limits.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.maxInputTokens.name"))
-        .setDesc(t("pagelet.settings.maxInputTokens.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder(PAGELET_DEFAULTS.maxInputTokens.toString())
-                .setValue(settings.maxInputTokens.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.maxInputTokens = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.maxInputTokens,
-                        PAGELET_BOUNDS.maxInputTokens.min,
-                        PAGELET_BOUNDS.maxInputTokens.max,
-                    );
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.maxOutputTokens.name"))
-        .setDesc(t("pagelet.settings.maxOutputTokens.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder(PAGELET_DEFAULTS.maxOutputTokens.toString())
-                .setValue(settings.maxOutputTokens.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.maxOutputTokens = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.maxOutputTokens,
-                        PAGELET_BOUNDS.maxOutputTokens.min,
-                        PAGELET_BOUNDS.maxOutputTokens.max,
-                    );
-                })));
-
-    // ── Pet ────────────────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.pet.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.petVisible.name"))
-        .setDesc(t("pagelet.settings.petVisible.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.petVisible)
-                .onChange((value) => saveOnChange(() => { settings.petVisible = value; })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.petCorner.name"))
-        .setDesc(t("pagelet.settings.petCorner.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("bottom-right", t("pagelet.settings.petCorner.option.bottom-right"))
-                .addOption("bottom-left", t("pagelet.settings.petCorner.option.bottom-left"))
-                .addOption("top-right", t("pagelet.settings.petCorner.option.top-right"))
-                .addOption("top-left", t("pagelet.settings.petCorner.option.top-left"))
-                .setValue(settings.petCorner)
-                .onChange((value) => saveOnChange(() => {
-                    settings.petCorner = normalizePetCorner(value);
-                }));
-        });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.proactiveHints.name"))
-        .setDesc(t("pagelet.settings.proactiveHints.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.proactiveHints)
-                .onChange((value) => saveOnChange(() => { settings.proactiveHints = value; })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.proactiveHintsCooldown.name"))
-        .setDesc(t("pagelet.settings.proactiveHintsCooldown.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("15", "15 min")
-                .addOption("30", "30 min")
-                .addOption("60", "1 hour")
-                .addOption("120", "2 hours")
-                .setValue(settings.proactiveHintsCooldown.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.proactiveHintsCooldown = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.proactiveHintsCooldown,
-                        PAGELET_BOUNDS.proactiveHintsCooldown.min,
-                        PAGELET_BOUNDS.proactiveHintsCooldown.max,
-                    );
-                }));
-        });
-
-    // ── Deep Discover ──────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.deepDiscover.heading") });
-
-    const backgroundDescription = t("pagelet.settings.backgroundDiscovery.desc");
-    const backgroundRow = factory.create(parentEl)
-        .setName(t("pagelet.settings.backgroundDiscovery.name"))
-        .setDesc(backgroundDescription);
-    backgroundRow.addToggle((toggle) => {
-        let saving = false;
-        toggle.setValue(settings.backgroundDiscoveryEnabled).onChange(async (value) => {
-            if (saving) return;
-            saving = true;
-            toggle.setValue(host.settings.pagelet.backgroundDiscoveryEnabled);
-            toggle.setDisabled?.(true);
-            try {
-                await host.setBackgroundDiscoveryEnabled(value);
-                if (parentEl.isConnected !== false) backgroundRow.setDesc(backgroundDescription);
-            } catch (error) {
-                host.log?.("Background discovery preference was not saved", error);
-                if (parentEl.isConnected !== false) {
-                    backgroundRow.setDesc(t("pagelet.settings.backgroundDiscovery.saveError"));
-                }
-            } finally {
-                saving = false;
-                if (parentEl.isConnected !== false) {
-                    toggle.setValue(host.settings.pagelet.backgroundDiscoveryEnabled);
-                    toggle.setDisabled?.(false);
-                }
-            }
-        });
+function renderPageletSourceExclusions(
+    parentEl: HTMLElement,
+    host: PageletSettingsHost,
+    factory: PageletSettingFactory,
+    locale: PageletLocale,
+    sourceScopeOptions?: PageletSourceScopeOptions,
+): void {
+    const t = makePageletTranslator(locale);
+    parentEl.createEl("p", {
+        text: t("pagelet.settings.exclusions.scope"),
+        cls: "pa-settings-section-desc",
     });
-
-    const usageRow = factory.create(parentEl)
-        .setName(t("pagelet.settings.deepDiscover.usage.name"))
-        .setDesc(t("pagelet.settings.deepDiscover.usage.fixed"));
-    if (host.getDeepDiscoverUsage) {
-        void host.getDeepDiscoverUsage()
-            .then((usage) => {
-                usageRow.setDesc(t("pagelet.settings.deepDiscover.usage.value", usage));
-            })
-            .catch((error) => {
-                host.log?.("Pagelet Deep Discover usage unavailable", error);
-            });
+    const fields = [
+        { key: "excludedFolders", placeholder: "private, drafts" },
+        { key: "excludedTags", placeholder: "#private, #no-ai, #no-review" },
+        { key: "excludedPatterns", placeholder: "draft, wip" },
+    ] as const;
+    for (const { key, placeholder } of fields) {
+        const row = factory.create(parentEl)
+            .setName(t(`pagelet.settings.${key}.name`))
+            .setDesc(t(`pagelet.settings.${key}.desc`));
+        renderSourceScopeSetting(parentEl, row, {
+            state: sourceScopeOptions?.sourceScopeStates[key] ?? createSourceScopeSettingState(),
+            read: () => host.settings.pagelet[key],
+            parse: (draft) => draft.split(",").map((value) => value.trim()).filter(Boolean),
+            save: (next) => host.saveSettingsPermissions({ pagelet: { [key]: next } }),
+            placeholder,
+            copy: {
+                save: pluginT("plugin.settings.sourceScope.save", locale),
+                saving: pluginT("plugin.settings.sourceScope.saving", locale),
+                failed: pluginT("plugin.settings.sourceScope.failed", locale),
+                retry: pluginT("plugin.settings.sourceScope.retry", locale),
+            },
+            isCurrent: sourceScopeOptions?.isCurrent,
+            log: host.log,
+        });
     }
 
-    // The retained hint preference does not control provider preparation.
-    parentEl.createEl("h3", { text: t("pagelet.settings.scopeRecap.heading") });
+}
 
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.scopeRecapHints.name"))
-        .setDesc(t("pagelet.settings.scopeRecapHints.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.scopeRecapHighValueHints)
-                .onChange((value) => saveOnChange(() => {
-                    settings.scopeRecapHighValueHints = value;
-                })));
-
-    // ── Reviews ────────────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.reviews.heading") });
-
-    // Exclusion rules (comma-separated text inputs)
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.excludedFolders.name"))
-        .setDesc(t("pagelet.settings.excludedFolders.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("private, drafts")
-                .setValue(settings.excludedFolders.join(", "))
-                .onChange((value) => saveOnChange(() => {
-                    settings.excludedFolders = value.split(",").map((s) => s.trim()).filter(Boolean);
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.excludedTags.name"))
-        .setDesc(t("pagelet.settings.excludedTags.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("#private, #no-ai, #no-review")
-                .setValue(settings.excludedTags.join(", "))
-                .onChange((value) => saveOnChange(() => {
-                    settings.excludedTags = value.split(",").map((s) => s.trim()).filter(Boolean);
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.excludedPatterns.name"))
-        .setDesc(t("pagelet.settings.excludedPatterns.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("draft, wip")
-                .setValue(settings.excludedPatterns.join(", "))
-                .onChange((value) => saveOnChange(() => {
-                    settings.excludedPatterns = value.split(",").map((s) => s.trim()).filter(Boolean);
-                })));
-
-    // ── Quiet Recall (SG-01) ─────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.quietRecall.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.quietRecallMode.name"))
-        .setDesc(t("pagelet.settings.quietRecallMode.desc"))
-        .addToggle((toggle) => {
-            toggle
-                .setValue(host.settings.quietRecall.quietRecallMode === "on")
-                .onChange((value) => saveOnChange(() => {
-                    host.settings.quietRecall.quietRecallMode = value ? "on" : "off";
-                }));
-        });
-
-    // ── Quiet Hours ───────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.quietHours.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.quietHoursEnabled.name"))
-        .setDesc(t("pagelet.settings.quietHoursEnabled.desc"))
-        .addToggle((toggle) =>
-            toggle
-                .setValue(settings.proactiveHintsQuietHours.enabled)
-                .onChange((value) => saveOnChange(() => {
-                    settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, enabled: value };
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.quietHoursStart.name"))
-        .setDesc(t("pagelet.settings.quietHoursStart.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("22:00")
-                .setValue(settings.proactiveHintsQuietHours.start)
-                .onChange((value) => saveOnChange(() => {
-                    if (/^\d{2}:\d{2}$/.test(value)) {
-                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, start: value };
-                    }
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.quietHoursEnd.name"))
-        .setDesc(t("pagelet.settings.quietHoursEnd.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder("08:00")
-                .setValue(settings.proactiveHintsQuietHours.end)
-                .onChange((value) => saveOnChange(() => {
-                    if (/^\d{2}:\d{2}$/.test(value)) {
-                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, end: value };
-                    }
-                })));
-
-    // ── Foreground Cost ────────────────────────────────────────────────
-    parentEl.createEl("h3", { text: t("pagelet.settings.foreground.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.foregroundPerHourCap.name"))
-        .setDesc(t("pagelet.settings.foregroundPerHourCap.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder(PAGELET_DEFAULTS.foregroundPerHourCap.toString())
-                .setValue(settings.foregroundPerHourCap.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.foregroundPerHourCap = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.foregroundPerHourCap,
-                        PAGELET_BOUNDS.foregroundPerHourCap.min,
-                        PAGELET_BOUNDS.foregroundPerHourCap.max,
-                    );
-                })));
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.foregroundPerDayCap.name"))
-        .setDesc(t("pagelet.settings.foregroundPerDayCap.desc"))
-        .addText((text) =>
-            text
-                .setPlaceholder(PAGELET_DEFAULTS.foregroundPerDayCap.toString())
-                .setValue(settings.foregroundPerDayCap.toString())
-                .onChange((value) => saveOnChange(() => {
-                    settings.foregroundPerDayCap = normalizeBoundedInt(
-                        value,
-                        PAGELET_DEFAULTS.foregroundPerDayCap,
-                        PAGELET_BOUNDS.foregroundPerDayCap.min,
-                        PAGELET_BOUNDS.foregroundPerDayCap.max,
-                    );
-                })));
+/** Surface-local feedback; the existing plugin queue continues to own persistence. */
+function createPageletSaveFeedback(
+    parentEl: HTMLElement,
+    host: PageletSettingsHost,
+    locale: PageletLocale,
+): (mutator: () => void) => Promise<void> {
+    const t = makePageletTranslator(locale);
+    const statusEl = parentEl.createEl("p", {
+        cls: "pa-settings-save-status",
+        attr: { role: "status", "aria-live": "polite" },
+    });
+    const retryEl = parentEl.createEl("button", {
+        text: t("pagelet.settings.save.retry"),
+        attr: { type: "button" },
+    });
+    retryEl.hidden = true;
+    let saveRevision = 0;
+    const save = async () => {
+        const revision = ++saveRevision;
+        if (parentEl.isConnected !== false) {
+            statusEl.textContent = t("pagelet.settings.save.pending");
+            retryEl.hidden = true;
+        }
+        try {
+            await host.saveSettings();
+            if (revision === saveRevision && parentEl.isConnected !== false) statusEl.textContent = "";
+        } catch (error) {
+            host.log?.("Pagelet preferences were not saved", error);
+            if (revision === saveRevision && parentEl.isConnected !== false) {
+                statusEl.textContent = t("pagelet.settings.save.error");
+                retryEl.hidden = false;
+            }
+        }
+    };
+    retryEl.addEventListener("click", () => {
+        if (!retryEl.hidden && parentEl.isConnected !== false) void save();
+    });
+    return async (mutator) => {
+        mutator();
+        await save();
+    };
 }

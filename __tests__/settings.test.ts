@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 jest.mock('obsidian', () => ({
     App: class { },
@@ -99,6 +100,7 @@ jest.mock('obsidian', () => ({
 	    Setting: class {
 	        containerEl: unknown;
 	        controlEl: HTMLElement;
+        descEl: HTMLElement;
 	        record: {
 	            name?: string;
             desc?: string;
@@ -121,9 +123,14 @@ jest.mock('obsidian', () => ({
 
 	        constructor(containerEl: unknown) {
 	            this.containerEl = containerEl;
+	            this.descEl = document.createElement('div');
 	            this.controlEl = document.createElement('div');
 	            (containerEl as { appendChild?: (child: unknown) => unknown })?.appendChild?.(this.controlEl);
 	            this.record = { toggles: [], dropdowns: [], buttons: [], texts: [], colorPickers: [] };
+            Object.assign(this.record, { controlEl: this.controlEl, descEl: this.descEl });
+            Object.defineProperty(this.record, 'desc', {
+                get: () => mockDomTextContent(this.descEl as unknown as MockDomNode),
+            });
             const globalObj = globalThis as typeof globalThis & {
                 __paSettingRecords?: Array<{
                     name?: string;
@@ -155,7 +162,13 @@ jest.mock('obsidian', () => ({
         }
 
         setDesc(desc: unknown) {
-            this.record.desc = mockStringifyText(desc);
+            const target = this.descEl as unknown as MockDomNode;
+            target.empty();
+            // Obsidian setText uses its own realm's DocumentFragment constructor.
+            if (desc instanceof MockDocumentFragment) {
+                target.appendText(desc.textContent || desc.innerText);
+                for (const child of desc.children) target.appendChild(child);
+            } else target.setText(mockStringifyText(desc));
             return this;
         }
 
@@ -177,6 +190,9 @@ jest.mock('obsidian', () => ({
             const toggleComponent = {
                 setValue: (value: boolean) => {
                     toggle.value = value;
+                    if ((globalThis as typeof globalThis & { __paToggleSetValueEmitsChange?: boolean }).__paToggleSetValueEmitsChange) {
+                        void toggle.onChange?.(value);
+                    }
                     return toggleComponent;
                 },
                 setDisabled: (disabled: boolean) => {
@@ -233,7 +249,11 @@ jest.mock('obsidian', () => ({
                     return textComponent;
                 },
                 onChange: (onChange: (value: string) => unknown) => {
-                    text.onChange = onChange;
+                    text.onChange = (value) => {
+                        text.value = value;
+                        inputEl.value = value;
+                        return onChange(value);
+                    };
                     return textComponent;
                 },
             };
@@ -275,11 +295,13 @@ jest.mock('obsidian', () => ({
         addDropdown(callback: (dropdown: {
             addOption: (value: string, text: string) => unknown;
             setValue: (value: string) => unknown;
+            setDisabled: (value: boolean) => unknown;
             onChange: (onChange: (value: string) => unknown) => unknown;
             selectEl: { querySelector: (selector: string) => { setAttribute: (name: string, value: string) => void } | null };
         }) => void) {
             const dropdown: {
                 value?: string;
+                disabled?: boolean;
                 options: Array<{ value: string; text: string }>;
                 onChange?: (value: string) => unknown;
             } = {
@@ -295,6 +317,10 @@ jest.mock('obsidian', () => ({
                 },
                 setValue: (value: string) => {
                     dropdown.value = value;
+                    return dropdownComponent;
+                },
+                setDisabled: (value: boolean) => {
+                    dropdown.disabled = value;
                     return dropdownComponent;
                 },
                 onChange: (onChange: (value: string) => unknown) => {
@@ -364,12 +390,25 @@ jest.mock('obsidian', () => ({
         addExtraButton(callback: (button: {
             setIcon: (icon: string) => unknown;
             setTooltip: (tooltip: string) => unknown;
-            onClick: (callback: () => void) => unknown;
+            setDisabled: (disabled: boolean) => unknown;
+            onClick: (callback: () => unknown) => unknown;
         }) => void) {
+            const button: { text?: string; disabled?: boolean; onClick?: () => unknown } = {};
+            this.record.buttons.push(button);
             const buttonComponent = {
                 setIcon: (_icon: string) => buttonComponent,
-                setTooltip: (_tooltip: string) => buttonComponent,
-                onClick: (_callback: () => void) => buttonComponent,
+                setTooltip: (tooltip: string) => {
+                    button.text = tooltip;
+                    return buttonComponent;
+                },
+                setDisabled: (disabled: boolean) => {
+                    button.disabled = disabled;
+                    return buttonComponent;
+                },
+                onClick: (onClick: () => unknown) => {
+                    button.onClick = onClick;
+                    return buttonComponent;
+                },
             };
             callback(buttonComponent);
             return this;
@@ -424,17 +463,17 @@ import {
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
 import { confirmUserAction } from '../src/confirm';
+import { pluginT } from '../src/locales/plugin';
+import type { SettingsPermissionPatch } from '../src/plugin';
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { buildMemoryControlCenterSnapshot } from '../src/pa/memory-control-center';
 
 function mockStringifyText(value: unknown): string {
-    if (typeof value === 'string') return value;
-    if (value && typeof value === 'object') {
-        const maybeText = value as { textContent?: unknown; innerText?: unknown };
-        if (typeof maybeText.textContent === 'string') return maybeText.textContent;
-        if (typeof maybeText.innerText === 'string') return maybeText.innerText;
-    }
-    return '';
+    return value instanceof MockDocumentFragment ? mockDomTextContent(value) : String(value ?? '');
+}
+
+function mockDomTextContent(node: MockDomNode): string {
+    return (node.textContent || node.innerText) + node.children.map(mockDomTextContent).join('');
 }
 
 type MockElOptions = {
@@ -445,6 +484,9 @@ type MockElOptions = {
 
 class MockDomNode {
     children: MockDomNode[] = [];
+    parentElement: MockDomNode | null = null;
+    isConnected = true;
+    hidden = false;
     checked = false;
     disabled = false;
     open = false;
@@ -495,14 +537,17 @@ class MockDomNode {
     }
 
     appendChild(child: MockDomNode) {
+        child.parentElement = this;
         this.children.push(child);
         return child;
     }
 
     remove = jest.fn(() => {
-        // The bounded Settings DOM mock does not keep parent pointers. Tests
-        // only need removal to be safe when cancelling an inline editor.
-        this.children = [];
+        if (this.parentElement) {
+            this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+        }
+        this.parentElement = null;
+        this.isConnected = false;
     });
 
     appendText(text: string) {
@@ -525,6 +570,7 @@ class MockDomNode {
 
     createEl(tagName: string, options?: MockElOptions | undefined, callback?: (element: MockDomNode) => void) {
         const child = new MockDomNode(tagName);
+        child.parentElement = this;
         if (options?.text) child.setText(options.text);
         if (options?.cls) {
             child.classes = Array.isArray(options.cls) ? [...options.cls] : [options.cls];
@@ -544,6 +590,10 @@ class MockDomNode {
     }
 
     empty() {
+        for (const child of this.children) {
+            child.parentElement = null;
+            child.isConnected = false;
+        }
         this.children = [];
     }
 
@@ -589,8 +639,13 @@ class MockDomNode {
 
 class MockContainerEl extends MockDomNode {
     empty = jest.fn(() => {
-        this.children = [];
+        super.empty();
     });
+}
+
+class MockDocumentFragment extends MockDomNode {
+    constructor() { super('fragment'); }
+    get [Symbol.toStringTag]() { return 'DocumentFragment'; }
 }
 
 type MockToggleRecord = { value?: boolean; disabled?: boolean; onChange?: (value: boolean) => unknown };
@@ -613,6 +668,8 @@ type MockColorPickerRecord = {
     setValueCalls: unknown[];
 };
 type MockSettingRecord = {
+    controlEl?: MockDomNode;
+    descEl?: MockDomNode;
     name?: string;
     desc?: string;
     toggles: Array<MockToggleRecord>;
@@ -632,6 +689,19 @@ function getMockSettingRecords(): MockSettingRecord[] {
     const globalObj = globalThis as typeof globalThis & { __paSettingRecords?: MockSettingRecord[] };
     globalObj.__paSettingRecords = globalObj.__paSettingRecords ?? [];
     return globalObj.__paSettingRecords;
+}
+
+function sourceScopeButton(record: MockSettingRecord): MockDomNode {
+    const control = record.controlEl;
+    const parent = control?.parentElement;
+    if (!parent || !control) throw new Error('Missing scope row');
+    const actions = parent.children[parent.children.indexOf(control) + 1];
+    if (!actions?.classes.includes('pa-settings-source-scope-actions')) throw new Error('Missing scope save action');
+    return actions.findAll('button')[0];
+}
+
+async function settleSettingsCallbacks(): Promise<void> {
+    for (let index = 0; index < 6; index += 1) await Promise.resolve();
 }
 
 function getMockModalInstances(): Array<{
@@ -655,7 +725,7 @@ function getMockModalInstances(): Array<{
 function installMockDocument() {
     const documentMock = {
         createElement: (tagName: string) => new MockDomNode(tagName),
-        createDocumentFragment: () => new MockDomNode('fragment'),
+        createDocumentFragment: () => new MockDocumentFragment(),
     };
     (globalThis as unknown as { document: unknown }).document = documentMock;
 }
@@ -750,7 +820,11 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             },
             ...overrides,
         },
-        saveSettings: jest.fn(async () => undefined),
+        saveSettings: jest.fn<() => Promise<void>>(async () => undefined),
+        saveSettingsPermissions: jest.fn<(patch: SettingsPermissionPatch) => Promise<void>>(),
+        setStatisticsSyncEnabled: jest.fn<(value: boolean) => Promise<void>>(),
+        openGraphOptions: jest.fn(() => ({ close: jest.fn() })),
+        openFeaturedImageOptions: jest.fn(() => ({ close: jest.fn() })),
         setMemoryAutoAcceptPaused: jest.fn(async (_paused: boolean) => undefined),
         clearTokenCache: jest.fn(),
         log: jest.fn(),
@@ -835,12 +909,24 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             invocationEpoch: number,
         ) => Promise<{ ok: boolean; code?: string }>>(),
         statsManager: {
-            setStatisticsSyncEnabled: jest.fn(async () => undefined),
+            setStatisticsSyncEnabled: jest.fn(async (_value: boolean) => undefined),
         },
     };
     plugin.updateAIProviderConfiguration.mockImplementation(async (patch) => {
         Object.assign(plugin.settings, patch);
         return { ok: true };
+    });
+    plugin.saveSettingsPermissions.mockImplementation(async ({ retrievalHabitProfile, quickCapture, dataBoundary, ...scalar }) => {
+        await plugin.saveSettings();
+        Object.assign(plugin.settings, scalar);
+        if (retrievalHabitProfile) Object.assign(plugin.settings.retrievalHabitProfile, retrievalHabitProfile);
+        if (quickCapture) Object.assign(plugin.settings.quickCapture, quickCapture);
+        if (dataBoundary) Object.assign(plugin.settings.dataBoundary, dataBoundary);
+    });
+    plugin.setStatisticsSyncEnabled.mockImplementation(async (value) => {
+        await plugin.saveSettings();
+        await plugin.statsManager.setStatisticsSyncEnabled(value);
+        plugin.settings.statisticsSyncEnabled = value;
     });
     return plugin;
 }
@@ -863,6 +949,7 @@ beforeEach(() => {
     delete (globalThis as typeof globalThis & { __paModalInstances?: unknown[] }).__paModalInstances;
     delete (globalThis as typeof globalThis & { __paModalOpenError?: unknown }).__paModalOpenError;
     delete (globalThis as typeof globalThis & { __paModalCloseError?: unknown }).__paModalCloseError;
+    delete (globalThis as typeof globalThis & { __paToggleSetValueEmitsChange?: boolean }).__paToggleSetValueEmitsChange;
     installMockDocument();
 });
 
@@ -943,7 +1030,7 @@ describe('PA settings refresh', () => {
         expect(globalClassList.remove).not.toHaveBeenCalled();
     });
 
-    it('re-renders the Pagelet group only in the Settings window that owns the visible tab', () => {
+    it('refreshes only the visible Pagelet section without rebuilding Settings or losing provider drafts', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         const visibleClasses = new Set<string>();
@@ -953,21 +1040,37 @@ describe('PA settings refresh', () => {
                 body: {
                     classList: {
                         contains: (className: string) => visibleClasses.has(className),
+                        add: (className: string) => visibleClasses.add(className),
                     },
                 },
             },
         });
         tab.containerEl = containerEl as never;
-        const display = jest.spyOn(tab, 'display').mockImplementation(() => undefined);
+        const display = jest.spyOn(tab, 'display');
         const openGroup = jest.spyOn(tab, 'openGroup').mockImplementation(() => undefined);
 
         expect(tab.refreshPageletSettingsIfVisible()).toBe(false);
         expect(display).not.toHaveBeenCalled();
 
-        visibleClasses.add('pa-settings-tab-open');
+        tab.display();
+        const provider = getMockSettingRecords().find((row) => row.name === 'Base URL')?.texts[0];
+        provider?.onChange?.('https://draft.example/v1');
+        display.mockClear();
+        const internal = tab as unknown as { pageletPreferencesContainer: MockDomNode; providerConfigContainer: MockDomNode };
+        const providerContainer = internal.providerConfigContainer;
+        const pageletContainer = internal.pageletPreferencesContainer;
         expect(tab.refreshPageletSettingsIfVisible()).toBe(true);
-        expect(display).toHaveBeenCalledTimes(1);
-        expect(openGroup).toHaveBeenCalledWith('features');
+        expect(display).not.toHaveBeenCalled();
+        expect(openGroup).not.toHaveBeenCalled();
+        expect(internal.pageletPreferencesContainer).toBe(pageletContainer);
+        expect(internal.providerConfigContainer).toBe(providerContainer);
+        expect(provider?.value).toBe('https://draft.example/v1');
+        expect(plugin.settings.baseURL).not.toBe('https://draft.example/v1');
+        visibleClasses.clear();
+        expect(tab.refreshPageletSettingsIfVisible()).toBe(false);
+        visibleClasses.add('pa-settings-tab-open');
+        pageletContainer.isConnected = false;
+        expect(tab.refreshPageletSettingsIfVisible()).toBe(false);
     });
 });
 
@@ -1086,7 +1189,6 @@ describe('settings row-layout styling hooks', () => {
         for (const name of [
             'rebuildProviderConfig',
             'rebuildQwenOptions',
-            'rebuildGraphColors',
             'rebuildMetadataList',
             'rebuildMemorySubSettings',
             'rebuildMemoryAdvanced',
@@ -1199,50 +1301,29 @@ describe('simple settings canonicalization', () => {
 
 describe('Phase 1 refactor invariants', () => {
     type SettingTabInternals = {
-        rebuildGraphColors: () => void;
         rebuildProviderConfig: () => void;
-        graphColorsContainer: unknown;
         metadataContainer: unknown;
         providerConfigContainer: unknown;
         featuredImageContainer: unknown;
         memoryAdvancedContainer: unknown;
     };
 
-    it('renders graph colors with the native color picker component', () => {
+    it('opens graph defaults through the same Plugin entry point as the graph command', async () => {
         const plugin = makePlugin({ enableGraphColors: true });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();
 
-        const record = getMockSettingRecords()
-            .find((entry) => entry.desc === 'This will be the Color used in the graph view.');
-        expect(record?.colorPickers[0]).toMatchObject({
-            value: '#64fa64',
-        });
-    });
-
-    it('graph color picker saves the normalized color and rebuilds the graph color section', async () => {
-        const plugin = makePlugin({ enableGraphColors: true });
-        const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        tab.containerEl = new MockContainerEl('div') as never;
-
-        tab.display();
-
-        const initialRecordCount = getMockSettingRecords().length;
-        const record = getMockSettingRecords()
-            .find((entry) => entry.desc === 'This will be the Color used in the graph view.');
-        const colorPicker = record?.colorPickers[0];
-
-        await Promise.resolve(colorPicker?.onChange?.('#123456'));
-
-        expect(plugin.settings.colorGroups[0].color.rgb).toBe(0x123456);
-        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
-        expect(getMockSettingRecords().length).toBeGreaterThan(initialRecordCount);
-        const latestGraphColorRecord = [...getMockSettingRecords()]
-            .reverse()
-            .find((entry) => entry.desc === 'This will be the Color used in the graph view.');
-        expect(latestGraphColorRecord?.colorPickers[0]?.value).toBe('#123456');
+        expect(getMockSettingRecords().some((row) => row.colorPickers.length > 0)).toBe(false);
+        const graph = getMockSettingRecords().find((row) => row.name === pluginT('plugin.settings.graph.options.title'));
+        expect(graph?.buttons[0].onClick).toBeDefined();
+        expect(plugin.openGraphOptions).not.toHaveBeenCalled();
+        await graph?.buttons[0].onClick?.();
+        expect(plugin.openGraphOptions).toHaveBeenCalledTimes(1);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+        tab.hide();
+        expect((plugin.openGraphOptions.mock.results[0].value as { close: jest.Mock }).close).toHaveBeenCalledTimes(1);
     });
 
     it('switching AI provider runs rebuildProviderConfig — not full display()', async () => {
@@ -1267,7 +1348,7 @@ describe('Phase 1 refactor invariants', () => {
         expect(displaySpy).not.toHaveBeenCalled();
     });
 
-    it('toggling Advanced memory controls leaves sibling sub-container refs intact', async () => {
+    it('opening Memory maintenance details preserves provider and sibling containers without persistence', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -1276,27 +1357,21 @@ describe('Phase 1 refactor invariants', () => {
 
         const internals = tab as unknown as SettingTabInternals;
         const before = {
-            graph: internals.graphColorsContainer,
             metadata: internals.metadataContainer,
             provider: internals.providerConfigContainer,
             featured: internals.featuredImageContainer,
         };
 
-        const records = getMockSettingRecords();
-        const advancedToggle = records.find((record) => record.name === 'Advanced memory controls')?.toggles[0];
-        expect(advancedToggle?.onChange).toBeDefined();
-
         const displaySpy = jest.spyOn(tab, 'display');
         const providerRebuildSpy = jest.spyOn(internals, 'rebuildProviderConfig');
 
-        await advancedToggle!.onChange!(true);
-        await advancedToggle!.onChange!(false);
+        tab.openGroup('memory-personalization', 'memory-data-recovery');
 
         expect(displaySpy).not.toHaveBeenCalled();
-        expect(providerRebuildSpy).toHaveBeenCalledTimes(2);
+        expect(providerRebuildSpy).not.toHaveBeenCalled();
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
         expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
         // Sibling sub-container refs preserved across the rebuild.
-        expect(internals.graphColorsContainer).toBe(before.graph);
         expect(internals.metadataContainer).toBe(before.metadata);
         expect(internals.providerConfigContainer).toBe(before.provider);
         expect(internals.featuredImageContainer).toBe(before.featured);
@@ -1499,6 +1574,52 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
 });
 
 describe('Phase 2 P0 data integrity', () => {
+    it('renders linked descriptions and editable metadata labels in a separate Settings window', () => {
+        const ForeignDocumentFragment = runInNewContext(`
+            (class DocumentFragment extends Base {
+                constructor() { super('fragment'); }
+                get [Symbol.toStringTag]() { return 'DocumentFragment'; }
+            })
+        `, { Base: MockDomNode }) as new () => MockDomNode;
+        const foreignFragment = new ForeignDocumentFragment();
+        expect(foreignFragment).not.toBeInstanceOf(MockDocumentFragment);
+        expect(mockStringifyText(foreignFragment)).toBe('[object DocumentFragment]');
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'activeDocument');
+        Object.defineProperty(globalThis, 'activeDocument', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockDomNode(tagName),
+                createDocumentFragment: () => new ForeignDocumentFragment(),
+            },
+        });
+        try {
+            const plugin = makePlugin({ enableMetadataUpdating: true,
+                metadatas: [{ key: 'synthetic-label', value: 'preserved-value', t: 'string' }] });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const records = getMockSettingRecords();
+            for (const name of [
+                pluginT('plugin.settings.record.fileFormat.name'),
+                pluginT('plugin.settings.metadata.enabled.name'),
+            ]) {
+                const row = records.find((record) => record.name === name)!;
+                expect(row.desc).not.toContain('[object DocumentFragment]');
+                const link = row.descEl?.querySelector('p')?.querySelector('a');
+                expect(link?.href).toBe('https://momentjs.com/docs/#/displaying/format/');
+                expect(link && mockDomTextContent(link)).toBeTruthy();
+            }
+            expect(records.some((record) => record.name?.includes('[object DocumentFragment]'))).toBe(false);
+            expect(records.find((record) => record.name === 'synthetic-label: ')?.texts[0]?.value)
+                .toBe('preserved-value');
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
+        } finally {
+            if (originalDocument) Object.defineProperty(globalThis, 'activeDocument', originalDocument);
+            else Reflect.deleteProperty(globalThis, 'activeDocument');
+        }
+    });
+
     it('isEnabledMetadataUpdating is no longer a persisted setting', () => {
         expect(DEFAULT_SETTINGS).not.toHaveProperty('isEnabledMetadataUpdating');
         // The user-facing toggle is unchanged.
@@ -1695,8 +1816,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
             false,
             false,
             false,
-            false,
-            false,
         ]);
     });
 
@@ -1711,8 +1830,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         expect(containerEl.findAll('.pa-settings-group').map((group) => group.open)).toEqual([
             true,
-            false,
-            false,
             false,
             false,
             false,
@@ -1731,7 +1848,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         memoryGroup.open = true;
         memoryGroup.dispatchEvent('toggle');
         expect(JSON.parse(localStorage.getItem('pa-settings-collapsed') ?? '{}'))
-            .toMatchObject({ 'memory-personalization': false });
+            .toMatchObject({ features: false });
 
         const reopenedTab = new SettingTab(makeMockApp() as never, plugin as never);
         const reopenedContainer = new MockContainerEl('div');
@@ -1767,7 +1884,166 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(reopenedGroups[1]?.open).toBe(false);
     });
 
-    it('adds a stable Memory & Personalization group and moves Memory into it', () => {
+    it.each([true, false])('preserves the four legacy group booleans and only uses retired-group state for child details (%p)', (collapsed) => {
+        const saved = { 'ai-provider': collapsed, features: !collapsed, 'data-privacy': collapsed,
+            system: !collapsed, 'memory-personalization': false, appearance: true };
+        localStorage.setItem('pa-settings-collapsed', JSON.stringify(saved));
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        expect(container.findAll('.pa-settings-group').map((group) => group.open))
+            .toEqual([!collapsed, collapsed, !collapsed, collapsed]);
+        expect(container.querySelector('#pa-settings-memory-management')?.open).toBe(true);
+        expect(container.querySelector('#pa-settings-save-format')?.open).toBe(false);
+        expect(JSON.parse(localStorage.getItem('pa-settings-collapsed')!)).toEqual(saved);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['memory-personalization', 'pa-settings-memory-management'],
+        ['appearance', 'pa-settings-save-format'],
+    ])('routes legacy %s links to the exact privacy detail before display', (legacy, id) => {
+        const tab = new SettingTab(makeMockApp() as never, makePlugin() as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.openGroup(legacy);
+        tab.display();
+        expect(container.querySelector('#pa-settings-group-data-privacy')?.open).toBe(true);
+        expect(container.querySelector(`#${id}`)?.open).toBe(true);
+        expect(container.querySelector(`#${id}`)?.querySelector('summary')?.focus).toHaveBeenCalled();
+        expect(container.findAll('.pa-settings-jump-select')[0].value).toBe('data-privacy');
+    });
+
+    it.each(['before display', 'before snapshot', 'after snapshot'])('opens pending recovery in system %s and expands every ancestor', async (timing) => {
+        const plugin = makePlugin();
+        const snapshot = await plugin.getMemoryControlCenterSnapshot();
+        plugin.getMemoryControlCenterSnapshot.mockClear();
+        let resolveSnapshot!: (value: typeof snapshot) => void;
+        plugin.getMemoryControlCenterSnapshot.mockImplementationOnce(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        if (timing === 'before display') tab.openGroup('memory-personalization', 'memory-data-recovery');
+        tab.display();
+        if (timing === 'before snapshot') tab.openGroup('memory-personalization', 'memory-data-recovery');
+        expect(container.findAll('.pa-memory-control-center__recovery')).toHaveLength(0);
+        resolveSnapshot(snapshot);
+        await Promise.resolve();
+        await Promise.resolve();
+        if (timing === 'after snapshot') tab.openGroup('memory-personalization', 'memory-data-recovery');
+        const target = container.findAll('.pa-memory-control-center__recovery')[0];
+        expect(target).toBeDefined();
+        for (let ancestor: MockDomNode | null = target; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.tagName === 'details') expect(ancestor.open).toBe(true);
+        }
+        expect(target.focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(container.findAll('.pa-settings-jump-select')[0].value).toBe('system');
+        expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('consumes a missing async target and returns to privacy management', async () => {
+        const tab = new SettingTab(makeMockApp() as never, makePlugin() as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.openGroup('memory-personalization', 'missing-claim-id');
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect((tab as unknown as { pendingMemoryControlCenterTargetId: unknown }).pendingMemoryControlCenterTargetId).toBeNull();
+        expect(container.querySelector('#pa-settings-group-data-privacy')?.open).toBe(true);
+        expect(container.querySelector('#pa-settings-memory-management')?.open).toBe(true);
+        expect(container.querySelector('#pa-settings-memory-management')?.querySelector('summary')?.focus).toHaveBeenCalled();
+    });
+
+    it.each([true, false])('keeps missing-target fallback as the final scroll destination when snapshot resolves before replay: %p', async (snapshotBeforeReplay) => {
+        const plugin = makePlugin();
+        const snapshot = await plugin.getMemoryControlCenterSnapshot();
+        plugin.getMemoryControlCenterSnapshot.mockClear();
+        let resolveSnapshot!: (value: typeof snapshot) => void;
+        plugin.getMemoryControlCenterSnapshot.mockImplementationOnce(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        const management = container.querySelector('#pa-settings-memory-management')!;
+        const managementSummary = management.querySelector('summary')!;
+        const privacySummary = container.querySelector('#pa-settings-group-data-privacy')!.querySelector('summary')!;
+        const pendingTarget = () => (tab as unknown as { pendingMemoryControlCenterTargetId: unknown }).pendingMemoryControlCenterTargetId;
+
+        jest.useFakeTimers();
+        try {
+            // Match openMemorySettings: immediate navigation, then one next-task replay.
+            tab.openGroup('memory-personalization', 'missing-claim-id');
+            setTimeout(() => tab.openGroup('memory-personalization', 'missing-claim-id'), 0);
+            expect(pendingTarget()).toBe('missing-claim-id');
+            expect(managementSummary.focus).not.toHaveBeenCalled();
+            if (snapshotBeforeReplay) {
+                resolveSnapshot(snapshot);
+                await settleSettingsCallbacks();
+            }
+            jest.runOnlyPendingTimers();
+            if (!snapshotBeforeReplay) {
+                expect(pendingTarget()).toBe('missing-claim-id');
+                expect(managementSummary.focus).not.toHaveBeenCalled();
+                resolveSnapshot(snapshot);
+                await settleSettingsCallbacks();
+            }
+
+            expect(management.open).toBe(true);
+            expect(managementSummary.focus).toHaveBeenLastCalledWith({ preventScroll: true });
+            expect(managementSummary.scrollIntoView).toHaveBeenLastCalledWith({ behavior: 'smooth', block: 'center' });
+            expect(managementSummary.scrollIntoView.mock.invocationCallOrder.at(-1))
+                .toBeGreaterThan(privacySummary.scrollIntoView.mock.invocationCallOrder.at(-1)!);
+            expect(pendingTarget()).toBeNull();
+            expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it.each(['reopen', 'local refresh'])('waits for the current snapshot after %s before resolving an exact Memory target', async (refreshMode) => {
+        const plugin = makePlugin();
+        const snapshot = await plugin.getMemoryControlCenterSnapshot();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        await settleSettingsCallbacks();
+        const nextSnapshot = { ...snapshot, items: [{
+            id: 'confirmed:new-claim', claimId: 'new-claim', label: 'Synthetic Memory target',
+            origin: 'confirmed_memory', authority: 'explicit_user', scopeLabel: 'Test vault',
+            effect: 'stored_not_in_use', lifecycle: 'active', provenance: [], supportedActions: [],
+        }] };
+        let resolveSnapshot!: (value: typeof snapshot) => void;
+        plugin.getMemoryControlCenterSnapshot.mockImplementationOnce(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+        if (refreshMode === 'reopen') {
+            tab.hide();
+            tab.display();
+        } else {
+            (tab as unknown as { refreshMemoryControlCenter: () => void }).refreshMemoryControlCenter();
+        }
+        const managementSummary = container.querySelector('#pa-settings-memory-management')!.querySelector('summary')!;
+        const privacySummary = container.querySelector('#pa-settings-group-data-privacy')!.querySelector('summary')!;
+        tab.openGroup('memory-personalization', 'new-claim');
+        expect(managementSummary.focus).not.toHaveBeenCalled();
+        expect((tab as unknown as { pendingMemoryControlCenterTargetId: unknown }).pendingMemoryControlCenterTargetId).toBe('new-claim');
+
+        resolveSnapshot(nextSnapshot as unknown as typeof snapshot);
+        await settleSettingsCallbacks();
+        // A replay after completion must still choose the exact record, not its parent.
+        tab.openGroup('memory-personalization', 'new-claim');
+        const target = container.findAll('.pa-memory-control-center__item')
+            .find((item) => item.dataset.paMemoryTargetId === 'new-claim')!;
+        expect(target.focus).toHaveBeenLastCalledWith({ preventScroll: true });
+        expect(target.scrollIntoView).toHaveBeenLastCalledWith({ behavior: 'smooth', block: 'center' });
+        expect(target.scrollIntoView.mock.invocationCallOrder.at(-1))
+            .toBeGreaterThan(privacySummary.scrollIntoView.mock.invocationCallOrder.at(-1)!);
+        expect((tab as unknown as { pendingMemoryControlCenterTargetId: unknown }).pendingMemoryControlCenterTargetId).toBeNull();
+    });
+
+    it('renders the four product groups with matching accessible navigation', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         const containerEl = new MockContainerEl('div');
@@ -1778,25 +2054,21 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const groupIds = containerEl.findAll('.pa-settings-group').map((node) => node.attrs.id);
         expect(groupIds).toEqual([
             'pa-settings-group-ai-provider',
-            'pa-settings-group-memory-personalization',
-            'pa-settings-group-data-privacy',
             'pa-settings-group-features',
-            'pa-settings-group-appearance',
+            'pa-settings-group-data-privacy',
             'pa-settings-group-system',
         ]);
         const tocItems = containerEl.findAll('.pa-settings-toc-item');
         const groupLabels = [
-            'AI & Provider',
-            'Memory & Personalization',
-            'Data & Privacy',
-            'Features',
-            'Appearance',
-            'System',
+            'AI connection',
+            'Preferences',
+            'Notes & privacy',
+            'Advanced & maintenance',
         ];
         expect(tocItems.map((node) => node.attrs['aria-label'])).toEqual(groupLabels);
         expect(containerEl.findAll('.pa-settings-toc-item__label').map((node) => node.textContent))
             .toEqual(groupLabels);
-        expect(containerEl.findAll('.pa-settings-toc-item__tick')).toHaveLength(6);
+        expect(containerEl.findAll('.pa-settings-toc-item__tick')).toHaveLength(4);
         expect(containerEl.findAll('.pa-settings-toc-item__tick')
             .every((node) => node.attrs['aria-hidden'] === 'true')).toBe(true);
         expect(containerEl.findAll('.pa-settings-group').every((group) => (
@@ -1812,8 +2084,8 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(jump.classes).toEqual(expect.arrayContaining(['pa-settings-jump-select', 'dropdown']));
         expect(jump.attrs['aria-label']).toBeUndefined();
         expect(jump.findAll('option').map((option) => option.textContent)).toEqual(groupLabels);
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/6');
-        expect(containerEl.findAll('.pa-settings-jump-progress__segment')).toHaveLength(6);
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/4');
+        expect(containerEl.findAll('.pa-settings-jump-progress__segment')).toHaveLength(4);
         expect(containerEl.findAll('.pa-memory-control-center')).toHaveLength(1);
         expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
     });
@@ -1836,7 +2108,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(tocItems[0]?.attrs['aria-current']).toBe('location');
         expect(tocItems.slice(1).every((item) => item.attrs['aria-current'] === 'false')).toBe(true);
         expect(jump.value).toBe('ai-provider');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/6');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('1/4');
         expect(containerEl.findAll('.pa-settings-jump-progress__segment')[0]?.attrs['data-current'])
             .toBe('true');
 
@@ -1855,20 +2127,20 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'aria-current': 'location',
             'aria-expanded': 'true',
         });
-        expect(jump.value).toBe('features');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('4/6');
+        expect(jump.value).toBe('system');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('4/4');
         expect(containerEl.findAll('.pa-settings-jump-progress__segment')[3]?.attrs['data-current'])
             .toBe('true');
         expect(summaries[3]?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
         expect(summaries[3]?.focus).toHaveBeenCalledWith({ preventScroll: true });
 
-        jump.value = 'appearance';
+        jump.value = 'data-privacy';
         jump.dispatchEvent('change');
-        expect(groups[4].open).toBe(true);
-        expect(tocItems[4]?.attrs['aria-current']).toBe('location');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('5/6');
-        expect(summaries[4]?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-        expect(summaries[4]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(groups[2].open).toBe(true);
+        expect(tocItems[2]?.attrs['aria-current']).toBe('location');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('3/4');
+        expect(summaries[2]?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+        expect(summaries[2]?.focus).toHaveBeenCalledWith({ preventScroll: true });
     });
 
     it('positions a mobile target below the measured sticky selector', () => {
@@ -1909,7 +2181,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             getBoundingClientRect: () => ({ top: 510 } as DOMRect),
         });
         const select = containerEl.findAll('.pa-settings-jump-select')[0];
-        select.value = 'features';
+        select.value = 'system';
         select.dispatchEvent('change');
 
         expect(scrollTo).toHaveBeenCalledWith({ top: 466, behavior: 'smooth' });
@@ -1956,7 +2228,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         tab.display();
 
         const summaries = containerEl.findAll('.pa-settings-group-summary');
-        [-120, -20, 180, 400, 620, 800].forEach((top, index) => {
+        [-120, -20, 180, 400].forEach((top, index) => {
             Object.assign(summaries[index], {
                 getBoundingClientRect: () => ({ top } as DOMRect),
             });
@@ -1965,25 +2237,23 @@ describe('Phase 3 IA reorder + provider UX', () => {
             tab as unknown as { syncActiveSettingsGroupFromScroll: (ids: string[]) => void }
         ).syncActiveSettingsGroupFromScroll([
             'ai-provider',
-            'memory-personalization',
-            'data-privacy',
             'features',
-            'appearance',
+            'data-privacy',
             'system',
         ]);
 
         sync();
         let tocItems = containerEl.findAll('.pa-settings-toc-item');
         expect(tocItems[1]?.attrs['aria-current']).toBe('location');
-        expect(containerEl.findAll('.pa-settings-jump-select')[0]?.value).toBe('memory-personalization');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/6');
+        expect(containerEl.findAll('.pa-settings-jump-select')[0]?.value).toBe('features');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/4');
 
         scrollRoot.scrollTop = 600;
         sync();
         tocItems = containerEl.findAll('.pa-settings-toc-item');
-        expect(tocItems[5]?.attrs['aria-current']).toBe('location');
+        expect(tocItems[3]?.attrs['aria-current']).toBe('location');
         expect(containerEl.findAll('.pa-settings-jump-select')[0]?.value).toBe('system');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('6/6');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('4/4');
     });
 
     it('accounts for the sticky selector height when tracking the active mobile group', () => {
@@ -2014,7 +2284,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             tab as unknown as { refreshSettingsNavigationMobileOffset: (root: HTMLElement) => number }
         ).refreshSettingsNavigationMobileOffset(scrollRoot as unknown as HTMLElement);
         const summaries = containerEl.findAll('.pa-settings-group-summary');
-        [-120, 93, 180, 400, 620, 800].forEach((top, index) => {
+        [-120, 93, 180, 400].forEach((top, index) => {
             Object.assign(summaries[index], {
                 getBoundingClientRect: () => ({ top } as DOMRect),
             });
@@ -2024,16 +2294,14 @@ describe('Phase 3 IA reorder + provider UX', () => {
             tab as unknown as { syncActiveSettingsGroupFromScroll: (ids: string[]) => void }
         ).syncActiveSettingsGroupFromScroll([
             'ai-provider',
-            'memory-personalization',
-            'data-privacy',
             'features',
-            'appearance',
+            'data-privacy',
             'system',
         ]);
 
         expect(containerEl.findAll('.pa-settings-toc-item')[1]?.attrs['aria-current'])
             .toBe('location');
-        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/6');
+        expect(containerEl.findAll('.pa-settings-jump-count')[0]?.textContent).toBe('2/4');
     });
 
     it('shares the measured mobile selector offset with CSS and cleans up its observer', () => {
@@ -2637,6 +2905,13 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(exactTarget?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
         expect(exactTarget?.focus).toHaveBeenCalledWith({ preventScroll: true });
         expect(exactTarget?.classes).toContain('pa-memory-control-center__item--targeted');
+        for (let ancestor = exactTarget?.parentElement; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.tagName === 'details') expect(ancestor.open).toBe(true);
+        }
+        const displayAfterOpen = jest.spyOn(tab, 'display');
+        const providerDraft = getMockSettingRecords().find((row) => row.name === 'Base URL')?.texts[0];
+        providerDraft?.onChange?.('https://draft-during-memory-action.example/v1');
+        const providerContainer = (tab as unknown as { providerConfigContainer: unknown }).providerConfigContainer;
 
         const pause = containerEl.findAll('button')
             .find((button) => button.textContent === 'Pause use');
@@ -2669,6 +2944,12 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'claim-exact-123',
             undefined,
         );
+        expect(displayAfterOpen).not.toHaveBeenCalled();
+        expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(2);
+        expect((tab as unknown as { providerConfigContainer: unknown }).providerConfigContainer).toBe(providerContainer);
+        expect(providerDraft?.value).toBe('https://draft-during-memory-action.example/v1');
+        expect(plugin.settings.baseURL).not.toBe('https://draft-during-memory-action.example/v1');
+        expect(containerEl.querySelector('#pa-settings-group-system')?.findAll('.pa-memory-control-center__recovery')).toHaveLength(1);
 
         applyDeviceWide?.dispatchEvent('click');
         for (let index = 0; index < 6; index += 1) await Promise.resolve();
@@ -2726,6 +3007,31 @@ describe('Phase 3 IA reorder + provider UX', () => {
         finish({ ok: true, message: 'Upgrade complete.' });
         for (let i = 0; i < 5; i++) await Promise.resolve();
         expect(container.findAll('button').some((node) => node.textContent === 'Check and upgrade')).toBe(false);
+    });
+
+    it('refreshes live legacy Memory controls after a successful upgrade without rebuilding Settings', async () => {
+        const plugin = makePlugin({ memoryEnabled: true, confirmedMemoryCount: 30 });
+        plugin.getMemoryGovernanceUiMode.mockReturnValue('legacy_threshold');
+        const base = await plugin.getMemoryControlCenterSnapshot();
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({ ...base, governanceMode: 'legacy_threshold' } as never);
+        plugin.checkAndUpgradeMemoryGovernance.mockImplementation(async () => {
+            plugin.getMemoryGovernanceUiMode.mockReturnValue('effect_based');
+            plugin.getMemoryControlCenterSnapshot.mockResolvedValue({ ...base, governanceMode: 'effect_based' } as never);
+            return { ok: true, message: 'Upgrade complete.' };
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        await settleSettingsCallbacks();
+        const autoSetting = getMockSettingRecords().find((row) => row.name === 'Remember trusted suggestions automatically')!;
+        expect(autoSetting.controlEl?.isConnected).toBe(true);
+        const display = jest.spyOn(tab, 'display');
+        container.findAll('button').find((button) => button.textContent === 'Check and upgrade')!.dispatchEvent('click');
+        await settleSettingsCallbacks();
+        expect(plugin.checkAndUpgradeMemoryGovernance).toHaveBeenCalledTimes(1);
+        expect(autoSetting.controlEl?.isConnected).toBe(false);
+        expect(display).not.toHaveBeenCalled();
     });
 
     it('shows fresh recovery proof and a safe reason when finalization is blocked', async () => {
@@ -2888,7 +3194,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.getMemoryFinalizationStatusMessage).toHaveBeenCalledWith(blockedReason);
     });
 
-    it('places Data and recovery after Recent changes and expands only active recovery work', async () => {
+    it('projects one Memory snapshot into privacy management and system recovery, expanding only active recovery work', async () => {
         const plugin = makePlugin({ debug: false });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         const containerEl = new MockContainerEl('div');
@@ -2900,10 +3206,12 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         const body = containerEl.findAll('.pa-memory-control-center__body')[0];
         const recent = body.findAll('.pa-memory-control-center__recent')[0];
-        const recovery = body.findAll('.pa-memory-control-center__recovery')[0];
+        const recovery = containerEl.querySelector('#pa-settings-group-system')!.findAll('.pa-memory-control-center__recovery')[0];
         expect(recovery.tagName).toBe('details');
         expect(recovery.open).toBe(false);
-        expect(body.children.indexOf(recent)).toBeLessThan(body.children.indexOf(recovery));
+        expect(recent).toBeDefined();
+        expect(body.findAll('.pa-memory-control-center__recovery')).toHaveLength(0);
+        expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
 
         plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
             generatedAt: '2026-07-10T08:00:00.000Z',
@@ -3136,91 +3444,24 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(containerEl.findAll('.pa-memory-control-center__loading')).toHaveLength(1);
     });
 
-    it('display() renders sections in the new IA order (h1/h2/h3 + featured image)', () => {
-        // Use qwen so the otherwise-empty Featured Image section actually emits
-        // a Setting we can locate in the order check.
-        const plugin = makePlugin({ aiProvider: 'qwen' });
+    it('places note controls in privacy and maintenance controls in system, with graph and image options at their own entry points', () => {
+        const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        tab.containerEl = new MockContainerEl('div') as never;
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
         tab.display();
-
-        // Walk all nodes recursively in render order. Heading tags
-        // (h1/h2/h3) are collected by textContent. With grouped settings
-        // (<details> wrappers), headings are nested inside groups, not
-        // top-level children.
-        type MockNode = { tagName: string; textContent?: string; children?: MockNode[] };
-        const headingTags = new Set(['h1', 'h2', 'h3']);
-        const sectionLabels: string[] = [];
-        const walkNodes = (nodes: MockNode[]) => {
-            for (const node of nodes) {
-                if (headingTags.has(node.tagName)) {
-                    sectionLabels.push(`${node.tagName}:${node.textContent ?? ''}`);
-                }
-                if (node.children) walkNodes(node.children);
-            }
-        };
-        const children = (tab.containerEl as unknown as { children: MockNode[] }).children;
-        walkNodes(children);
-
-        // Skills uses h3, all others h2; the only un-titled section is
-        // Featured Image, which we verify separately below.
-        expect(sectionLabels).toEqual([
-            'h1:Settings for Obsidian Assistant',
-            'h2:AI Assistant',
-            'h3:Qwen response options',
-            'h2:Memory and personalization',
-            'h2:Memory',
-            'h2:Data & Privacy Boundaries',
-            'h3:Local recall preferences',
-            'h3:Local data cleanup',
-            // Pagelet section ships between Memory and Statistics (B3). Its
-            // sub-headings are also top-level
-            // children of containerEl because `renderPageletSection` writes
-            // them onto the same parent as the h2.
-            'h2:Pagelet',
-            'h3:General',
-            'h3:Model',
-            'h3:Limits',
-            'h3:Pet',
-            'h3:Deep Discover',
-            'h3:Scope Recap',
-            'h3:Reviews',
-            'h3:Quiet Recall',
-            'h3:Quiet Hours',
-            'h3:Foreground Cost',
-            'h2:Quick Capture',
-            'h2:Vault Statistics',
-            'h2:Settings for Record',
-            'h2:Settings for Hover Local Graph',
-            'h2:Graph Colors',
-            'h2:Metadata Management',
-            // No heading between Metadata and Advanced — that gap is the
-            // Featured Image section, asserted via Setting records below.
-            'h2:Advanced',
-            'h2:Legal / About',
-        ]);
-
-        // Featured Image lives between Metadata Management and Advanced. With
-        // aiProvider='qwen' it renders a single "Featured image folder" Setting.
-        // Use the Setting record list to confirm it falls in that gap, between
-        // the metadata section's only default-rendered Setting ("Enable
-        // Updating Metadata") and Advanced's Debug toggle.
-        const settingNames = getMockSettingRecords().map((r) => r.name);
-        const featuredIdx = settingNames.indexOf('Featured image folder');
-        const metadataIdx = settingNames.indexOf('Enable Updating Metadata');
-        const debugIdx = settingNames.indexOf('Debug');
-        expect(featuredIdx).toBeGreaterThan(-1);
-        expect(metadataIdx).toBeGreaterThan(-1);
-        expect(debugIdx).toBeGreaterThan(-1);
-        expect(featuredIdx).toBeGreaterThan(metadataIdx);
-        expect(featuredIdx).toBeLessThan(debugIdx);
-
-        const featuredSetting = getMockSettingRecords()[featuredIdx];
-        expect(featuredSetting.desc).toContain('saved in your vault');
-        expect(featuredSetting.texts[0].placeholder).toBe('attachments/ai-images');
+        const privacy = container.querySelector('#pa-settings-group-data-privacy')!;
+        const system = container.querySelector('#pa-settings-group-system')!;
+        expect(privacy.findAll('h2').map((node) => node.textContent)).toContain('Memory');
+        expect(privacy.findAll('h2').map((node) => node.textContent)).not.toContain('Metadata Management');
+        expect(system.findAll('h2').map((node) => node.textContent)).toContain('Metadata Management');
+        const records = getMockSettingRecords();
+        expect(records.filter((row) => row.name === pluginT('plugin.settings.graph.options.title'))).toHaveLength(1);
+        expect(records.filter((row) => row.name === pluginT('plugin.settings.featuredImage.options.title'))).toHaveLength(1);
+        expect(records.some((row) => row.name === 'Featured image model' || row.name === 'Images per run')).toBe(false);
     });
 
-    it('renders Quick Capture destination settings with safe defaults', () => {
+    it('renders Quick Capture destination settings with safe defaults', async () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -3245,7 +3486,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         destination?.onChange?.('current-file');
         inboxPath?.onChange?.('Captures/Inbox');
-        postProcessingToggle?.onChange?.(true);
+        await postProcessingToggle?.onChange?.(true);
 
         expect(plugin.settings.quickCapture.destination).toBe('current-file');
         expect(plugin.settings.quickCapture.inboxPath).toBe('Captures/Inbox.md');
@@ -3480,7 +3721,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(memory.records[0].id).toBe('mem-1');
     });
 
-    it('renders Data Boundary settings and only enables explicit forgetting-prevention cleanup', () => {
+    it('renders Data Boundary settings and only enables explicit forgetting-prevention cleanup', async () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -3513,7 +3754,13 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         excludedFolders?.onChange?.('private, archive/sensitive, private');
         excludedTags?.onChange?.('#sensitive, private');
-        generatedNotes?.onChange?.('include-generated');
+        expect(plugin.settings.dataBoundary.excludedFolders).toEqual(DEFAULT_SETTINGS.dataBoundary.excludedFolders);
+        expect(plugin.settings.dataBoundary.excludedTags).toEqual([]);
+        expect(plugin.cancelActiveMemoryPreparation).not.toHaveBeenCalled();
+        sourceScopeButton(records.find((row) => row.name === 'Excluded folders')!).dispatchEvent('click');
+        sourceScopeButton(records.find((row) => row.name === 'Excluded tags')!).dispatchEvent('click');
+        await settleSettingsCallbacks();
+        await generatedNotes?.onChange?.('include-generated');
 
         expect(plugin.settings.dataBoundary.excludedFolders).toEqual(['private', 'archive/sensitive']);
         expect(plugin.settings.dataBoundary.excludedTags).toEqual(['sensitive', 'private']);
@@ -3521,7 +3768,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(2);
     });
 
-    it('cancels active Memory before tightening the generated-note boundary', () => {
+    it('cancels active Memory before tightening the generated-note boundary', async () => {
         const plugin = makePlugin({
             dataBoundary: {
                 ...DEFAULT_SETTINGS.dataBoundary,
@@ -3537,7 +3784,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const generatedNotes = getMockSettingRecords()
             .find((record) => record.name === 'Generated notes')?.dropdowns[0];
 
-        generatedNotes?.onChange?.('exclude-generated');
+        await generatedNotes?.onChange?.('exclude-generated');
 
         expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(1);
         expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('exclude-generated');
@@ -3629,8 +3876,18 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.rollbackMemoryGovernance).not.toHaveBeenCalled();
 
         setMockConfirmDecision(true);
+        const display = jest.spyOn(tab, 'display');
+        plugin.rollbackMemoryGovernance.mockImplementationOnce(async () => {
+            plugin.settings.confirmedMemoryCount = 30;
+            plugin.getMemoryGovernanceUiMode.mockReturnValue('legacy_threshold');
+            return { ok: true, message: 'Compatible Memory was restored for this vault.' };
+        });
         await action?.onClick?.();
         expect(plugin.rollbackMemoryGovernance).toHaveBeenCalledTimes(1);
+        expect(display).not.toHaveBeenCalled();
+        const liveAutoSetting = getMockSettingRecords().find((row) => row.name === 'Remember trusted suggestions automatically'
+            && row.controlEl?.isConnected);
+        expect(liveAutoSetting?.toggles[0].onChange).toBeDefined();
     });
 
     it('keeps prevention-marker cleanup failure contained in the canonical Settings control', async () => {
@@ -3896,7 +4153,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const debugIdx = headings.indexOf('Debug');
         const telemetryIdx = headings.indexOf('Share anonymous capability usage');
         expect(debugIdx).toBeGreaterThan(0);
-        expect(telemetryIdx).toBeGreaterThan(debugIdx);
+        expect(telemetryIdx).toBeLessThan(debugIdx);
     });
 
     it('fresh install shows the placeholder option and hides the provider config', () => {
@@ -4084,7 +4341,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(confirmUserAction).not.toHaveBeenCalled();
     });
 
-    it('keeps a pending Memory-model draft across an advanced-controls rerender and refreshes after success', async () => {
+    it('keeps a pending Memory-model draft across a provider-controls rerender and refreshes after success', async () => {
         const plugin = makePlugin({
             aiProvider: 'qwen',
             aiProviderPreset: 'qwen',
@@ -4098,7 +4355,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const originalMemoryModel = getMockSettingRecords()
             .find((record) => record.name === 'Memory model')?.texts[0];
         originalMemoryModel?.onChange?.('draft-embedding-model');
-        (tab as unknown as { rebuildMemoryAdvanced(): void }).rebuildMemoryAdvanced();
+        (tab as unknown as { rebuildProviderConfig(): void }).rebuildProviderConfig();
 
         const rerenderedDraft = [...getMockSettingRecords()].reverse()
             .find((record) => record.name === 'Memory model')?.texts[0];
@@ -4168,7 +4425,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             .filter((record) => record.name === 'Keep memory updated in background');
         expect(backgroundRecordsAfterProviderSettle).toHaveLength(1);
         expect(backgroundRecordsAfterProviderSettle[0]?.toggles[0]).toBe(backgroundToggle);
-        expect(memoryModel?.value).toBe('settled-embedding-model');
+        expect([...getMockSettingRecords()].reverse().find((row) => row.name === 'Memory model')?.texts[0]?.value).toBe('settled-embedding-model');
         expect(plugin.settings.embeddingModelName).toBe('settled-embedding-model');
         expect(plugin.settings.memoryApprovalPolicy).toBe('always');
 
@@ -4184,7 +4441,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.memoryManager.scheduleAutoFlush).toHaveBeenCalledWith('settings');
     });
 
-    it('ignores an old provider failure but rolls the latest failed draft back with localized feedback', async () => {
+    it('ignores old provider failure, retains the latest failed draft and retries without publishing unsaved configuration', async () => {
         const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
         Notice.mockClear();
         const plugin = makePlugin({
@@ -4194,10 +4451,11 @@ describe('Phase 3 IA reorder + provider UX', () => {
             chatModelName: PROVIDER_PRESETS.qwen.chatModelName,
         });
         const requests: Array<{
+            patch: Record<string, unknown>;
             resolve: (result: { ok: boolean; code?: string }) => void;
         }> = [];
-        plugin.updateAIProviderConfiguration.mockImplementation(() => (
-            new Promise((resolve) => { requests.push({ resolve }); })
+        plugin.updateAIProviderConfiguration.mockImplementation((patch) => (
+            new Promise((resolve) => { requests.push({ resolve, patch }); })
         ));
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -4233,20 +4491,35 @@ describe('Phase 3 IA reorder + provider UX', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(refreshSpy).toHaveBeenCalledTimes(1);
+        expect(refreshSpy).not.toHaveBeenCalled();
         expect((tab as unknown as {
             latestAIProviderConfigurationDraft: unknown;
-        }).latestAIProviderConfigurationDraft).toBeNull();
+        }).latestAIProviderConfigurationDraft).toMatchObject({
+            baseURL: 'https://older-draft.example/v1', chatModelName: 'newer-draft-chat',
+        });
         expect([...getMockSettingRecords()].reverse()
             .find((record) => record.name === 'Base URL')?.texts[0]?.value)
-            .toBe(PROVIDER_PRESETS.qwen.baseURL);
+            .toBe('https://older-draft.example/v1');
         expect([...getMockSettingRecords()].reverse()
             .find((record) => record.name === 'Chat Model Name')?.texts[0]?.value)
-            .toBe(PROVIDER_PRESETS.qwen.chatModelName);
+            .toBe('newer-draft-chat');
+        expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS.qwen.baseURL);
+        expect(plugin.settings.chatModelName).toBe(PROVIDER_PRESETS.qwen.chatModelName);
         expect(Notice).toHaveBeenCalledWith(
             'Could not save the AI provider settings. Review the current configuration and try again.',
             5000,
         );
+        const feedback = (tab.containerEl as unknown as MockContainerEl).findAll('.pa-settings-save-feedback')[0];
+        expect(feedback.findAll('span')[0]?.textContent).toBe(pluginT('plugin.settings.simple.saveFailed'));
+        feedback.findAll('button')[0].dispatchEvent('click');
+        expect(requests).toHaveLength(3);
+        Object.assign(plugin.settings, requests[2].patch);
+        requests[2].resolve({ ok: true });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(refreshSpy).toHaveBeenCalledTimes(1);
+        expect(feedback.hidden).toBe(true);
+        expect(plugin.settings.baseURL).toBe('https://older-draft.example/v1');
     });
 
     it('switching to "custom" confirms and preserves URL/model fields', async () => {
@@ -4380,6 +4653,28 @@ describe('Phase 3 IA reorder + provider UX', () => {
             ?.buttons[0];
         expect(apiTokenButton?.text).toBe('Manage API token');
         expect(plugin.getConfiguredAPITokenSecret).not.toHaveBeenCalled();
+    });
+
+    it.each(['qwen', 'custom'])('keeps %s advanced connection reachable with no secret read on passive expansion', (preset) => {
+        const plugin = makePlugin({ aiProvider: 'qwen', aiProviderPreset: preset,
+            baseURL: preset === 'custom' ? 'https://custom.example/v1' : PROVIDER_PRESETS.qwen.baseURL,
+            showAdvancedMemoryControls: false });
+        plugin.getAPITokenCacheState.mockReturnValue('unknown');
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        const detail = container.findAll('.pa-settings-detail')
+            .find((node) => node.querySelector('summary')?.textContent === pluginT('plugin.settings.simple.advancedConnection'))!;
+        expect(detail).toBeDefined();
+        expect(detail.open).toBe(preset === 'custom');
+        detail.open = true;
+        detail.dispatchEvent('toggle');
+        expect(getMockSettingRecords().some((row) => row.name === 'Memory model')).toBe(true);
+        expect(plugin.getConfiguredAPITokenSecret).not.toHaveBeenCalled();
+        expect(plugin.refreshAPITokenPresence).not.toHaveBeenCalled();
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+        expect(plugin.updateAIProviderConfiguration).not.toHaveBeenCalled();
     });
 
     it('fails closed with visible feedback when an explicit token read throws', async () => {
@@ -4826,6 +5121,207 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
 });
 
 describe('Phase 4 P1 UX', () => {
+    it.each([
+        ['Excluded folders', 'folders'], ['Excluded tags', 'tags'],
+        ['Memory Exclude Path', 'memory'], ['Meta Updating Exclude Path', 'metadata'],
+    ] as const)('retains the %s draft across failed persistence and reopening while the previous scope remains active', async (name, key) => {
+        const plugin = makePlugin({ enableMetadataUpdating: true,
+            dataBoundary: { ...DEFAULT_SETTINGS.dataBoundary, excludedFolders: ['private'], excludedTags: ['private'] },
+            vssCacheExcludePath: ['private'], metadataExcludePath: ['private'] });
+        const read = {
+            folders: () => plugin.settings.dataBoundary.excludedFolders,
+            tags: () => plugin.settings.dataBoundary.excludedTags,
+            memory: () => plugin.settings.vssCacheExcludePath,
+            metadata: () => plugin.settings.metadataExcludePath,
+        };
+        let rejectSave!: (reason: unknown) => void;
+        plugin.saveSettings.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        const currentRow = () => [...getMockSettingRecords()].reverse().find((row) => row.name === name
+            && (key === 'folders' ? row.desc === pluginT('plugin.settings.dataBoundary.excludedFolders.desc')
+                : key === 'tags' ? row.desc === pluginT('plugin.settings.dataBoundary.excludedTags.desc') : true))!;
+        currentRow().texts[0].onChange!('');
+        expect(read[key]()).toEqual(['private']);
+        expect(plugin.saveSettingsPermissions).not.toHaveBeenCalled();
+        sourceScopeButton(currentRow()).dispatchEvent('click');
+        expect(read[key]()).toEqual(['private']);
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
+        tab.hide();
+        tab.display();
+        const reopened = currentRow();
+        expect(reopened.texts[0].value).toBe('');
+        expect(sourceScopeButton(reopened).disabled).toBe(true);
+        rejectSave(new Error('disk unavailable'));
+        await settleSettingsCallbacks();
+        expect(read[key]()).toEqual(['private']);
+        expect(reopened.texts[0].value).toBe('');
+        expect(sourceScopeButton(reopened).disabled).toBe(false);
+        expect(sourceScopeButton(reopened).textContent).toBe(pluginT('plugin.settings.sourceScope.retry'));
+        sourceScopeButton(reopened).dispatchEvent('click');
+        await settleSettingsCallbacks();
+        expect(read[key]()).toEqual([]);
+        for (const sibling of Object.keys(read) as Array<keyof typeof read>) {
+            if (sibling !== key) expect(read[sibling]()).toEqual(['private']);
+        }
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(2);
+        expect(plugin.cancelActiveMemoryPreparation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['toggle', true], ['toggle', false], ['scope', true], ['scope', false],
+    ] as const)('keeps a pending %s disabled after reopening and synchronizes the current control on success=%p', async (kind, succeeds) => {
+        (globalThis as typeof globalThis & { __paToggleSetValueEmitsChange?: boolean }).__paToggleSetValueEmitsChange = true;
+        const plugin = makePlugin();
+        setMockConfirmDecision(true);
+        let resolveSave!: () => void;
+        let rejectSave!: (reason: unknown) => void;
+        plugin.saveSettings.mockImplementationOnce(() => new Promise<void>((resolve, reject) => {
+            resolveSave = resolve;
+            rejectSave = reject;
+        }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        const control = () => {
+            const row = [...getMockSettingRecords()].reverse().find((candidate) => candidate.name === (
+                kind === 'toggle' ? pluginT('plugin.settings.retrievalHabit.enabled.name') : 'Generated notes'))!;
+            return kind === 'toggle' ? row.toggles[0] : row.dropdowns[0];
+        };
+        tab.display();
+        const original = control();
+        const saving = kind === 'toggle'
+            ? (original as MockToggleRecord).onChange!(true)
+            : (original as MockDropdownRecord).onChange!('include-generated');
+        for (let index = 0; index < 4; index += 1) await Promise.resolve();
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
+        tab.hide();
+        tab.display();
+        const reopened = control();
+        expect(reopened).not.toBe(original);
+        expect(reopened).toMatchObject({ value: kind === 'toggle' ? false : 'exclude-generated', disabled: true });
+        if (succeeds) resolveSave();
+        else rejectSave(new Error('disk unavailable'));
+        await saving;
+        expect(reopened).toMatchObject({
+            value: kind === 'toggle' ? succeeds : succeeds ? 'include-generated' : 'exclude-generated', disabled: false,
+        });
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not submit an opt-in after Settings closes while confirmation is pending', async () => {
+        const plugin = makePlugin();
+        let resolveConfirmation!: (value: boolean) => void;
+        (confirmUserAction as jest.Mock).mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveConfirmation = resolve; }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const row = getMockSettingRecords().find((candidate) => candidate.name === pluginT('plugin.settings.retrievalHabit.enabled.name'))!;
+        const pending = row.toggles[0].onChange!(true);
+        tab.hide();
+        tab.display();
+        resolveConfirmation(true);
+        await pending;
+        expect(plugin.saveSettingsPermissions).not.toHaveBeenCalled();
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+        const reopened = [...getMockSettingRecords()].reverse()
+            .find((candidate) => candidate.name === pluginT('plugin.settings.retrievalHabit.enabled.name'))!.toggles[0];
+        expect(reopened).toMatchObject({ value: false, disabled: false });
+    });
+
+    it('keeps learning and recall opt-ins independently available while note Memory is off, without authorizing pending or failed saves', async () => {
+        (globalThis as typeof globalThis & { __paToggleSetValueEmitsChange?: boolean }).__paToggleSetValueEmitsChange = true;
+        const plugin = makePlugin({ memoryEnabled: false, memoryExtractionEnabled: false });
+        setMockConfirmDecision(true);
+        let rejectSave!: (reason: unknown) => void;
+        plugin.saveSettings.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        const extraction = getMockSettingRecords().find((row) => row.name === pluginT('plugin.memoryExtraction.settings.enabled.name'))!.toggles[0];
+        const recall = getMockSettingRecords().find((row) => row.name === pluginT('plugin.settings.retrievalHabit.enabled.name'))!.toggles[0];
+        expect(extraction.disabled).toBe(false);
+        expect(recall.disabled).toBe(false);
+        const saving = extraction.onChange!(true);
+        for (let index = 0; index < 4; index += 1) await Promise.resolve();
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
+        expect(extraction).toMatchObject({ value: false, disabled: true });
+        expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+        expect(plugin.settings.memoryExtractionConsent.state).toBe('unconfirmed');
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+        await extraction.onChange!(true);
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
+        rejectSave(new Error('disk unavailable'));
+        await saving;
+        expect(extraction).toMatchObject({ value: false, disabled: false });
+        expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+        await extraction.onChange!(true);
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(2);
+        expect(plugin.settings.memoryExtractionEnabled).toBe(true);
+        expect(plugin.settings.memoryExtractionConsent.state).toBe('confirmed');
+        expect(plugin.settings.memoryEnabled).toBe(false);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+        const currentRecall = [...getMockSettingRecords()].reverse()
+            .find((row) => row.name === pluginT('plugin.settings.retrievalHabit.enabled.name'))!.toggles[0];
+        await currentRecall.onChange!(true);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(true);
+        expect(plugin.settings.memoryEnabled).toBe(false);
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps generated-note scope closed until persistence and allows retry after failure', async () => {
+        const plugin = makePlugin();
+        let rejectSave!: (reason: unknown) => void;
+        plugin.saveSettings.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        const dropdown = getMockSettingRecords().find((row) => row.name === 'Generated notes')!.dropdowns[0];
+        const saving = dropdown.onChange!('include-generated');
+        expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('exclude-generated');
+        expect(dropdown).toMatchObject({ value: 'exclude-generated', disabled: true });
+        await dropdown.onChange!('include-generated');
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(1);
+        rejectSave(new Error('disk unavailable'));
+        await saving;
+        expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('exclude-generated');
+        expect(dropdown).toMatchObject({ value: 'exclude-generated', disabled: false });
+        await dropdown.onChange!('include-generated');
+        expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('include-generated');
+        expect(plugin.saveSettingsPermissions).toHaveBeenCalledTimes(2);
+        expect(plugin.settings.dataBoundary.excludedFolders).toEqual(DEFAULT_SETTINGS.dataBoundary.excludedFolders);
+    });
+
+    it('retains ordinary edits with visible failed-save feedback and retries locally', async () => {
+        const plugin = makePlugin();
+        plugin.saveSettings.mockRejectedValueOnce(new Error('disk unavailable'));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const container = new MockContainerEl('div');
+        tab.containerEl = container as never;
+        tab.display();
+        const display = jest.spyOn(tab, 'display');
+        const author = getMockSettingRecords().find((row) => row.name === 'Author')!.texts[0];
+        author.onChange!('Draft author');
+        const feedback = container.findAll('.pa-settings-save-feedback')[0];
+        expect(feedback.hidden).toBe(false);
+        expect(feedback.findAll('span')[0]?.textContent).toBe(pluginT('plugin.settings.simple.saving'));
+        (tab as unknown as { debouncedSaveRunner: { run(): void } }).debouncedSaveRunner.run();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(feedback.findAll('span')[0]?.textContent).toBe(pluginT('plugin.settings.simple.saveFailed'));
+        expect(author.value).toBe('Draft author');
+        expect(display).not.toHaveBeenCalled();
+        feedback.findAll('button')[0].dispatchEvent('click');
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+        expect(feedback.hidden).toBe(true);
+        expect(display).not.toHaveBeenCalled();
+    });
+
     type Phase4Internals = {
         debouncedSaveRunner: { __record: MockDebounceRecord };
         rebuildMemorySubSettings: () => void;
@@ -4840,19 +5336,17 @@ describe('Phase 4 P1 UX', () => {
             tab.display();
 
             const records = getMockSettingRecords();
-            // "Meta Updating Exclude Path" has a single addText whose onChange
-            // mutates plugin.settings.metadataExcludePath then calls debouncedSave.
-            const excludeRecord = records.find((r) => r.name === 'Meta Updating Exclude Path');
-            expect(excludeRecord?.texts[0]?.onChange).toBeDefined();
+            const authorRecord = records.find((r) => r.name === 'Author');
+            expect(authorRecord?.texts[0]?.onChange).toBeDefined();
 
             const beforeSaves = plugin.saveSettings.mock.calls.length;
             const debounceRecord = (tab as unknown as Phase4Internals).debouncedSaveRunner.__record;
             const beforeDebounceCalls = debounceRecord.calls.length;
 
-            await excludeRecord!.texts[0].onChange!('tmp/,drafts/');
+            await authorRecord!.texts[0].onChange!('New author');
 
             // Mutation lands synchronously…
-            expect(plugin.settings.metadataExcludePath).toEqual(['tmp/', 'drafts/']);
+            expect(plugin.settings.author).toBe('New author');
             // …debounced save is queued, not called…
             expect(debounceRecord.calls.length).toBe(beforeDebounceCalls + 1);
             // …and saveSettings has not run yet.
@@ -4944,7 +5438,7 @@ describe('Phase 4 P1 UX', () => {
             const names = getMockSettingRecords().map((r) => r.name);
             expect(names).toContain('Use memory from my notes');
             expect(names).not.toContain('Check before preparing Memory again');
-            expect(names).toContain('Advanced memory controls');
+            expect(names).not.toContain('Advanced memory controls');
         });
 
         it('does not expose the legacy automatic-Memory toggle in effect-based mode', () => {
@@ -4977,12 +5471,12 @@ describe('Phase 4 P1 UX', () => {
             expect(plugin.settings.memoryAutoAcceptPaused).toBe(false);
             expect(toggle?.value).toBe(true);
             expect(plugin.log).toHaveBeenCalledWith(
-                'Failed to persist automatic Memory setting',
+                'Failed to save Settings permission',
                 expect.any(Error),
             );
             const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
             expect(Notice).toHaveBeenCalledWith(
-                'Could not change automatic Memory. The previous setting is still active.',
+                pluginT('plugin.settings.simple.permissionSaveFailed'),
                 5000,
             );
 
@@ -5153,7 +5647,7 @@ describe('Phase 4 P1 UX', () => {
             // Sub-settings now appear in the records.
             const namesAfter = getMockSettingRecords().map((r) => r.name);
             expect(namesAfter).not.toContain('Check before preparing Memory again');
-            expect(namesAfter).toContain('Advanced memory controls');
+            expect(namesAfter).not.toContain('Advanced memory controls');
         });
 
         it('cancels active preparation synchronously before disabling Memory', async () => {
@@ -5297,7 +5791,7 @@ describe('Phase 4 P1 UX', () => {
             expect(confirmUserAction).toHaveBeenCalledTimes(1);
         });
 
-        it('cancels active preparation before adding a Memory exclude path', () => {
+        it('cancels active preparation when explicitly saving an added Memory exclusion', async () => {
             const plugin = makePlugin({ showAdvancedMemoryControls: true });
             plugin.cancelActiveMemoryPreparation.mockImplementation(() => {
                 expect(plugin.settings.vssCacheExcludePath).not.toContain('private');
@@ -5305,10 +5799,14 @@ describe('Phase 4 P1 UX', () => {
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
             tab.display();
-            const excludePath = getMockSettingRecords()
-                .find((r) => r.name === 'Memory Exclude Path')?.texts[0];
+            const row = getMockSettingRecords().find((r) => r.name === 'Memory Exclude Path')!;
+            const excludePath = row.texts[0];
 
             excludePath?.onChange?.(`${plugin.settings.vssCacheExcludePath.join(',')},private`);
+            expect(plugin.cancelActiveMemoryPreparation).not.toHaveBeenCalled();
+            expect(plugin.settings.vssCacheExcludePath).not.toContain('private');
+            sourceScopeButton(row).dispatchEvent('click');
+            await settleSettingsCallbacks();
 
             expect(plugin.cancelActiveMemoryPreparation).toHaveBeenCalledTimes(1);
             expect(plugin.settings.vssCacheExcludePath).toContain('private');
@@ -5380,6 +5878,84 @@ describe('Phase 4 P1 UX', () => {
     });
 
     describe('4e: metadata form polish', () => {
+        it('preserves a new metadata draft when Remove rebuilds the same container before an older Add save completes', async () => {
+            const plugin = makePlugin({ enableMetadataUpdating: true,
+                metadatas: [{ key: 'existing', value: 'remove me', t: 'string' }] });
+            const saves: Array<() => void> = [];
+            plugin.saveSettings.mockImplementation(() => new Promise<void>((resolve) => { saves.push(resolve); }));
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const form = () => [...getMockSettingRecords()].reverse()
+                .find((row) => row.name === 'Add Key:Value in frontmatter')!;
+            const initialForm = form();
+            const container = (tab as unknown as { metadataContainer: unknown }).metadataContainer;
+            const removeRow = getMockSettingRecords().find((row) => row.name?.trim() === 'existing:')!;
+            const removing = removeRow.buttons.find((button) => button.text === 'Remove')!.onClick!();
+            initialForm.texts[0].onChange!('submittedKey');
+            initialForm.texts[1].onChange!('submittedValue');
+            const adding = initialForm.buttons[0].onClick!();
+            expect(saves).toHaveLength(2);
+
+            saves[0]();
+            await removing;
+            const currentForm = form();
+            expect(currentForm).not.toBe(initialForm);
+            expect((tab as unknown as { metadataContainer: unknown }).metadataContainer).toBe(container);
+            currentForm.texts[0].onChange!('newDraftKey');
+            currentForm.texts[1].onChange!('newDraftValue');
+            const rebuild = jest.spyOn(tab as unknown as { rebuildMetadataList(): void }, 'rebuildMetadataList');
+
+            saves[1]();
+            await adding;
+            expect(rebuild).not.toHaveBeenCalled();
+            expect(form()).toBe(currentForm);
+            expect(currentForm.texts.map((text) => text.value)).toEqual(['newDraftKey', 'newDraftValue']);
+            expect(plugin.settings.metadatas).toEqual([{ key: 'submittedKey', value: 'submittedValue', t: 'string' }]);
+        });
+
+        it('does not rebuild the reopened metadata form or clear a new draft after an old Add finishes', async () => {
+            const plugin = makePlugin({ enableMetadataUpdating: true });
+            let resolveSave!: () => void;
+            plugin.saveSettings.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveSave = resolve; }));
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const form = () => [...getMockSettingRecords()].reverse().find((row) => row.name === 'Add Key:Value in frontmatter')!;
+            const original = form();
+            original.texts[0].onChange!('oldKey');
+            original.texts[1].onChange!('oldValue');
+            const saving = original.buttons[0].onClick!();
+            tab.hide();
+            tab.display();
+            const current = form();
+            current.texts[0].onChange!('newDraftKey');
+            current.texts[1].onChange!('newDraftValue');
+            const rebuild = jest.spyOn(tab as unknown as { rebuildMetadataList(): void }, 'rebuildMetadataList');
+            resolveSave();
+            await saving;
+            expect(rebuild).not.toHaveBeenCalled();
+            expect(form()).toBe(current);
+            expect(current.texts.map((text) => text.value)).toEqual(['newDraftKey', 'newDraftValue']);
+        });
+
+        it('retains failed Add inputs and retries without adding the same rule twice', async () => {
+            const plugin = makePlugin({ enableMetadataUpdating: true });
+            plugin.saveSettings.mockRejectedValueOnce(new Error('disk unavailable'));
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const row = getMockSettingRecords().find((candidate) => candidate.name === 'Add Key:Value in frontmatter')!;
+            row.texts[0].onChange!('retryKey');
+            row.texts[1].onChange!('retryValue');
+            await row.buttons[0].onClick!();
+            expect(row.texts.map((text) => text.value)).toEqual(['retryKey', 'retryValue']);
+            expect(plugin.settings.metadatas.filter((rule) => rule.key === 'retryKey')).toHaveLength(1);
+            await row.buttons[0].onClick!();
+            expect(plugin.settings.metadatas.filter((rule) => rule.key === 'retryKey')).toHaveLength(1);
+            expect(row.texts.map((text) => text.value)).toEqual(['', '']);
+        });
+
         it('uses a corrected desc string ("Value only supports …")', () => {
             const plugin = makePlugin({ enableMetadataUpdating: true });
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
@@ -5499,36 +6075,21 @@ describe('Phase 4 P1 UX', () => {
             expect(settings.featuredImageModel).toBe('wan2.7-image');
         });
 
-        it('wires the featured image model dropdown and image count save clamp', async () => {
-            const plugin = makePlugin({
-                aiProvider: 'qwen',
-                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-                featuredImageModel: 'wan2.7-image-pro',
-                numFeaturedImages: 9,
-            });
+        it('opens image options through the shared Plugin entry point without generating or saving', async () => {
+            const plugin = makePlugin({ aiProvider: 'qwen', baseURL: PROVIDER_PRESETS.qwen.baseURL });
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
-
             tab.display();
-
-            const records = getMockSettingRecords();
-            const modelRow = records.find((row) => row.name === 'Featured image model');
-            expect(modelRow?.dropdowns[0].options).toEqual([
-                { value: 'wan2.7-image', text: 'Balanced - Wan 2.7 Image' },
-                { value: 'wan2.7-image-pro', text: 'Quality - Wan 2.7 Image Pro' },
-            ]);
-            expect(modelRow?.dropdowns[0].value).toBe('wan2.7-image-pro');
-
-            await modelRow?.dropdowns[0].onChange?.('wanx2.1-t2i-plus');
-            expect(plugin.settings.featuredImageModel).toBe('wan2.7-image');
-
-            const countRow = records.find((row) => row.name === 'Images per run');
-            expect(countRow?.texts[0].placeholder).toBe('1');
-            expect(countRow?.texts[0].value).toBe('4');
-
-            await countRow?.texts[0].onChange?.('99');
-            expect(plugin.settings.numFeaturedImages).toBe(4);
+            const option = getMockSettingRecords().find((row) => row.name === pluginT('plugin.settings.featuredImage.options.title'));
+            expect(option?.buttons[0].onClick).toBeDefined();
+            expect(plugin.openFeaturedImageOptions).not.toHaveBeenCalled();
+            await option?.buttons[0].onClick?.();
+            expect(plugin.openFeaturedImageOptions).toHaveBeenCalledTimes(1);
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
+            tab.hide();
+            expect((plugin.openFeaturedImageOptions.mock.results[0].value as { close: jest.Mock }).close).toHaveBeenCalledTimes(1);
         });
+
     });
 
     describe('mobile platform', () => {

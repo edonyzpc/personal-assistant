@@ -100,6 +100,46 @@ export class LocalGraph extends ViewResize {
         }));
     }
 
+    /** Apply saved display choices without opening or resizing any graph. */
+    async applyOptionsToOpenGraphs(): Promise<void> {
+        const { localGraph, enableGraphColors, colorGroups } = this.plugin.settings;
+        const displayOptions = {
+            localJumps: localGraph.depth,
+            showTags: localGraph.showTags,
+            showAttachments: localGraph.showAttach,
+            localInterlinks: localGraph.showNeighbor,
+            close: localGraph.collapse,
+        };
+        const results = await Promise.allSettled(this.getLocalGraphLeaves().map(async (leaf) => {
+            const viewState = leaf.getViewState();
+            const state = viewState.state ?? {};
+            const options = state.options && typeof state.options === 'object'
+                ? state.options as Record<string, unknown>
+                : {};
+            await leaf.setViewState({
+                ...viewState,
+                state: {
+                    ...state,
+                    options: {
+                        ...options,
+                        ...displayOptions,
+                        // Saving explicitly applies PA colors; autoColors governs startup only.
+                        ...(enableGraphColors ? {
+                            colorGroups: colorGroups.map((group) => ({
+                                ...group,
+                                color: { ...group.color },
+                            })),
+                        } : {}),
+                    },
+                },
+            });
+        }));
+        // Wait for every leaf before reporting failure; another save can then retry safely.
+        for (const result of results) {
+            if (result.status === 'rejected') throw result.reason;
+        }
+    }
+
     private async readGlobalGraphColorGroups(): Promise<GraphColorGroup[]> {
         const graphConfigPath = this.getGraphConfigPath();
 

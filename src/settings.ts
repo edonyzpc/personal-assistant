@@ -1,6 +1,8 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Modal, Notice, Platform, PluginSettingTab, Setting, debounce } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting, debounce } from "obsidian";
+import type { ToggleComponent } from "obsidian";
+import { createSourceScopeSettingState, renderSourceScopeSetting } from "./settings/source-scope-setting";
 
 import type { AIProviderConfigurationPatch, PluginManager } from "./plugin"
 import type { AISetupResult } from "./chat/ChatHost";
@@ -9,13 +11,12 @@ import type { WritingStyleScene } from './pa/writing-style';
 import { DEFAULT_NOTE_TEMPLATE } from "./note-template";
 import { isRecord } from "./pa/helpers";
 import { getDashScopeImageGenerationEndpoint, isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
-import { STAT_PREVIEW_TYPE } from './stats-view'
-import { normalizeStatisticsView } from './stats/stats-store'
 import { confirmUserAction } from "./confirm";
 import {
     PAGELET_DEFAULTS,
     mergePageletSettings,
-    renderPageletSection,
+    renderPageletPreferences,
+    renderPageletNotePrivacy,
     type PageletSettings,
     type PageletSettingFactory,
 } from "./settings/pagelet";
@@ -474,14 +475,6 @@ interface GraphColor {
     }
 }
 
-const DEFAULT_GRAPH_COLOR: GraphColor = {
-    query: "path:/",
-    color: {
-        a: 1,
-        rgb: 6617700,
-    }
-}
-
 const QWEN_RESPONSE_OPTIONS_DASHSCOPE_DESC =
     "Qwen thinking and builtin WebSearch require Alibaba Cloud DashScope. They do not change Memory from your notes.";
 const QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC =
@@ -489,8 +482,6 @@ const QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC =
 export const STATISTICS_SYNC_SETTING_DESC =
     "Creates Statistics history files inside this plugin's vault folder so writing history can sync across devices. Leave off to avoid ongoing Git changes from synced history.";
 const PREVIEW_LIMITS_MAX = 100;
-const LOCAL_GRAPH_DEPTH_MAX = 6;
-const LOCAL_GRAPH_DIMENSION_MAX = 2000;
 const PA_LEGAL_REPO_URL = "https://github.com/edonyzpc/personal-assistant";
 
 export function buildPaLegalLinks(releaseTag: string) {
@@ -504,16 +495,6 @@ export function buildPaLegalLinks(releaseTag: string) {
         networkPrivacyEn: `${PA_LEGAL_REPO_URL}/blob/${tag}/README.md#network-and-privacy-note`,
         networkPrivacyZh: `${PA_LEGAL_REPO_URL}/blob/${tag}/README-CN.md#网络与隐私说明`,
     });
-}
-
-function formatGraphColorHex(rgb: number): string {
-    const normalized = Number.isFinite(rgb) ? rgb : DEFAULT_GRAPH_COLOR.color.rgb;
-    return `#${(normalized & 0xffffff).toString(16).padStart(6, "0")}`;
-}
-
-function normalizeGraphColorInput(value: string): string | null {
-    const match = value.trim().match(/^#?([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/);
-    return match?.[1]?.toLowerCase() ?? null;
 }
 
 /**
@@ -1013,12 +994,20 @@ export class SettingTab extends PluginSettingTab {
     private qwenOptionsContainer: HTMLDivElement | null = null;
     private memorySubContainer: HTMLDivElement | null = null;
     private memoryAdvancedContainer: HTMLDivElement | null = null;
-    private graphColorsContainer: HTMLDivElement | null = null;
     private metadataContainer: HTMLDivElement | null = null;
     private featuredImageContainer: HTMLDivElement | null = null;
+    private featureOptionsModal: Modal | null = null;
+    private pageletSaveLocationContainer: HTMLElement | null = null;
+    private pageletSourceExclusionsContainer: HTMLElement | null = null;
     private memoryModelTextControl: { setValue(value: string): unknown } | null = null;
     private apiTokenSecretModal: (Modal & { closeSafely(): void }) | null = null;
     private memoryControlCenterGeneration = 0;
+    // Replayed deep links may resolve absence only after the current snapshot renders.
+    private memoryControlCenterSnapshotReady = false;
+    private memoryControlCenterRefresh: (() => void) | null = null;
+    private memoryRecoveryContainer: HTMLElement | null = null;
+    private pageletPreferencesContainer: HTMLElement | null = null;
+    private pendingSettingsGroup: { id: string; targetId?: string } | null = null;
     private pendingMemoryControlCenterTargetId: string | null = null;
     private settingsNavigationButtons = new Map<string, HTMLButtonElement>();
     private settingsNavigationSelect: HTMLSelectElement | null = null;
@@ -1058,13 +1047,32 @@ export class SettingTab extends PluginSettingTab {
     // some of them rebuild dependent UI (e.g. enableGraphColors,
     // enableMetadataUpdating, aiProvider).
     private hasPendingSettingsSave = false;
+    private settingsEditRevision = 0;
+    private settingsSaveError = false;
+    private providerSaveError = false;
+    private settingsVisible = false;
+    private metadataRenderRevision = 0;
+    private settingsSaveFeedback: HTMLElement | null = null;
+    private sourceScopeStates = {
+        folders: createSourceScopeSettingState(),
+        tags: createSourceScopeSettingState(),
+        memory: createSourceScopeSettingState(),
+        metadata: createSourceScopeSettingState(),
+        pagelet: {
+            excludedFolders: createSourceScopeSettingState(),
+            excludedTags: createSourceScopeSettingState(),
+            excludedPatterns: createSourceScopeSettingState(),
+        },
+    };
+    // A pending permission belongs to this tab, not to one rendered control.
+    // Reopening Settings must reflect the same transaction until it settles.
+    private permissionControls = new Map<string, {
+        saving: boolean;
+        sync: (() => void) | null;
+        refresh: (() => void) | null;
+    }>();
     private debouncedSaveRunner = debounce(() => {
-        if (!this.hasPendingSettingsSave) return;
-        this.hasPendingSettingsSave = false;
-        void this.plugin.saveSettings().catch((error) => {
-            this.hasPendingSettingsSave = true;
-            this.log("Failed to persist delayed Settings changes", error);
-        });
+        void this.savePendingSettings();
     }, 400, true);
 
     constructor(app: App, plugin: PluginManager) {
@@ -1074,14 +1082,21 @@ export class SettingTab extends PluginSettingTab {
     }
 
     openGroup(groupId: string, memoryTargetId?: string): void {
-        const normalizedId = groupId.trim();
-        if (!normalizedId) return;
+        const requestedId = groupId.trim();
         const normalizedTargetId = memoryTargetId?.trim();
-        if (normalizedId === "memory-personalization" && normalizedTargetId) {
+        const normalizedId = requestedId === "memory-personalization"
+            ? normalizedTargetId === "memory-data-recovery" ? "system" : "data-privacy"
+            : requestedId === "appearance" ? "data-privacy" : requestedId;
+        if (!normalizedId) return;
+        if (normalizedTargetId) {
             this.pendingMemoryControlCenterTargetId = normalizedTargetId;
         }
         const details = this.containerEl.querySelector(`#pa-settings-group-${normalizedId}`);
-        if (!details || details.tagName.toLowerCase() !== "details") return;
+        if (!details || details.tagName.toLowerCase() !== "details") {
+            this.pendingSettingsGroup = { id: requestedId, targetId: normalizedTargetId };
+            return;
+        }
+        this.pendingSettingsGroup = null;
         (details as HTMLDetailsElement).open = true;
         this.persistGroupCollapseState(normalizedId, false);
         const summary = details.querySelector("summary");
@@ -1097,15 +1112,59 @@ export class SettingTab extends PluginSettingTab {
             (summary as HTMLElement | null)?.focus?.({ preventScroll: true });
         }
         this.settingsNavigationButtons.get(normalizedId)?.setAttr("aria-expanded", "true");
-        this.focusPendingMemoryControlCenterTarget(false);
+        if (requestedId === "memory-personalization" && !normalizedTargetId) {
+            this.expandSettingsTarget(this.containerEl.querySelector("#pa-settings-memory-management"));
+        } else if (requestedId === "appearance") {
+            this.expandSettingsTarget(this.containerEl.querySelector("#pa-settings-save-format"));
+        }
+        this.focusPendingMemoryControlCenterTarget(this.memoryControlCenterSnapshotReady);
     }
 
     refreshPageletSettingsIfVisible(): boolean {
         const ownerDocument = (this.containerEl as HTMLElement).ownerDocument;
         if (!ownerDocument?.body?.classList.contains("pa-settings-tab-open")) return false;
-        this.display();
-        this.openGroup("features");
+        if (!this.pageletPreferencesContainer?.isConnected) return false;
+        this.pageletPreferencesContainer.empty();
+        this.renderPageletSection(this.pageletPreferencesContainer);
+        this.markFormControlSettings(this.pageletPreferencesContainer);
         return true;
+    }
+
+    private refreshMemoryControlCenter(): void {
+        this.memoryControlCenterRefresh?.();
+    }
+
+    private createSettingsDetail(
+        parent: HTMLElement,
+        labelKey: PluginMessageKey,
+        id?: string,
+        legacyGroup?: string,
+    ): HTMLDivElement {
+        const details = parent.createEl("details", {
+            cls: "pa-settings-detail",
+            attr: id ? { id } : {},
+        });
+        details.open = legacyGroup ? !this.isGroupCollapsed(legacyGroup) : false;
+        if (legacyGroup) details.addEventListener("toggle", () => {
+            this.persistGroupCollapseState(legacyGroup, !details.open);
+        });
+        details.createEl("summary", { text: this.t(labelKey) });
+        return details.createDiv({ cls: "pa-settings-detail__body" });
+    }
+
+    private expandSettingsTarget(target: Element | null): void {
+        if (!target) return;
+        let ancestor: Element | null = target;
+        while (ancestor && ancestor !== this.containerEl) {
+            if (ancestor.tagName.toLowerCase() === "details") {
+                (ancestor as HTMLDetailsElement).open = true;
+            }
+            ancestor = ancestor.parentElement;
+        }
+        const focus = target.tagName.toLowerCase() === "details"
+            ? target.querySelector("summary") : target;
+        (focus as HTMLElement | null)?.focus?.({ preventScroll: true });
+        (focus as HTMLElement | null)?.scrollIntoView?.({ behavior: this.settingsScrollBehavior(), block: "center" });
     }
 
     private t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
@@ -1113,9 +1172,18 @@ export class SettingTab extends PluginSettingTab {
     }
 
     display(): void {
+        this.settingsVisible = true;
         const { containerEl } = this;
         const doc = (containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
         this.memoryControlCenterGeneration += 1;
+        this.memoryControlCenterSnapshotReady = false;
+        this.clearPermissionControlBindings();
+        this.clearSourceScopeBindings();
+        this.memoryControlCenterRefresh = null;
+        this.memoryRecoveryContainer = null;
+        this.pageletPreferencesContainer = null;
+        this.pageletSaveLocationContainer = null;
+        this.pageletSourceExclusionsContainer = null;
 
         this.stopSettingsNavigation();
         containerEl.empty();
@@ -1128,7 +1196,6 @@ export class SettingTab extends PluginSettingTab {
         this.qwenOptionsContainer = null;
         this.memorySubContainer = null;
         this.memoryAdvancedContainer = null;
-        this.graphColorsContainer = null;
         this.metadataContainer = null;
         this.featuredImageContainer = null;
         this.memoryModelTextControl = null;
@@ -1137,34 +1204,58 @@ export class SettingTab extends PluginSettingTab {
 
         const shell = containerEl.createDiv({ cls: "pa-settings-shell" });
         this.renderHeader(shell);
+        this.settingsSaveFeedback = shell.createDiv({
+            cls: "pa-settings-save-feedback",
+            attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" },
+        });
+        this.updateSettingsSaveFeedback();
 
         const groups: Array<{ id: string; labelKey: string; sections: Array<(parent: HTMLElement) => void> }> = [
             { id: "ai-provider", labelKey: "plugin.settings.group.aiProvider", sections: [
                 (p) => this.renderAISection(p),
             ] },
-            { id: "memory-personalization", labelKey: "plugin.settings.group.memoryPersonalization", sections: [
-                (p) => this.renderMemoryControlCenterOverview(p),
-                (p) => this.renderMemorySection(p),
+            { id: "features", labelKey: "plugin.settings.group.features", sections: [
+                (p) => {
+                    this.pageletPreferencesContainer = p.createDiv();
+                    this.renderPageletSection(this.pageletPreferencesContainer);
+                },
+                (p) => this.renderQuickCaptureSection(p),
+                (p) => this.renderSaveSuggestionPreference(this.createSettingsDetail(p, "plugin.settings.simple.notifications")),
+                (p) => this.renderStatisticsSection(this.createSettingsDetail(p, "plugin.settings.statistics.title")),
+                (p) => this.renderGraphSection(p),
             ] },
             { id: "data-privacy", labelKey: "plugin.settings.group.dataPrivacy", sections: [
-                (p) => this.renderDataBoundarySection(p),
+                (p) => this.renderMemorySection(p),
+                (p) => this.renderRetrievalHabitSection(p),
+                (p) => this.renderMemoryUpdatePreference(this.createSettingsDetail(p, "plugin.settings.memory.background.name")),
+                (p) => this.renderMemoryControlCenterOverview(this.createSettingsDetail(
+                    p, "plugin.settings.memoryControlCenter.title", "pa-settings-memory-management", "memory-personalization",
+                )),
+                (p) => {
+                    const body = this.createSettingsDetail(p, "plugin.settings.dataBoundary.title");
+                    this.renderDataBoundarySection(body);
+                    this.pageletSourceExclusionsContainer = body.createDiv();
+                },
+                (p) => this.renderMemoryExclusions(this.createSettingsDetail(p, "plugin.settings.simple.memoryExclusions")),
                 (p) => this.renderOperationsAgentSection(p),
-            ] },
-            { id: "features", labelKey: "plugin.settings.group.features", sections: [
-                (p) => this.renderPageletSection(p),
-                (p) => this.renderQuickCaptureSection(p),
-                (p) => this.renderStatisticsSection(p),
-            ] },
-            { id: "appearance", labelKey: "plugin.settings.group.appearance", sections: [
-                (p) => this.renderRecordSection(p),
-                (p) => this.renderGraphSection(p),
-                (p) => this.renderGraphColorsSection(p),
-                (p) => this.renderMetadataSection(p),
-                (p) => this.renderFeaturedImageSection(p),
+                (p) => this.renderPrivacySharingSection(this.createSettingsDetail(p, "plugin.settings.simple.sharing")),
+                (p) => {
+                    const body = this.createSettingsDetail(p, "plugin.settings.simple.saveFormat", "pa-settings-save-format", "appearance");
+                    this.renderRecordSection(body);
+                    this.pageletSaveLocationContainer = body.createDiv();
+                    this.renderFeaturedImageSection(body);
+                },
             ] },
             { id: "system", labelKey: "plugin.settings.group.system", sections: [
-                (p) => this.renderAdvancedSection(p),
-                (p) => this.renderLegalSection(p),
+                (p) => { this.memoryRecoveryContainer = p.createDiv(); },
+                (p) => this.renderDataCleanupSection(this.createSettingsDetail(p, "plugin.settings.dataBoundary.cleanup.title")),
+                (p) => {
+                    this.memoryAdvancedContainer = this.createSettingsDetail(p, "plugin.settings.simple.memoryMaintenance");
+                    this.rebuildMemoryAdvanced();
+                },
+                (p) => this.renderMetadataSection(this.createSettingsDetail(p, "plugin.settings.metadata.title")),
+                (p) => this.renderAdvancedSection(this.createSettingsDetail(p, "plugin.settings.advanced.title")),
+                (p) => this.renderLegalSection(this.createSettingsDetail(p, "plugin.settings.legal.title")),
             ] },
         ];
 
@@ -1260,13 +1351,27 @@ export class SettingTab extends PluginSettingTab {
             this.settingsNavigationProgressSegments.push(progressSegment);
         }
         jumpSelect.addEventListener("change", () => this.openGroup(jumpSelect.value));
+        if (this.pageletSaveLocationContainer && this.pageletSourceExclusionsContainer) {
+            const generation = this.memoryControlCenterGeneration;
+            renderPageletNotePrivacy({ saveLocation: this.pageletSaveLocationContainer,
+                sourceExclusions: this.pageletSourceExclusionsContainer }, this.plugin,
+            { create: (container) => new Setting(container) as unknown as ReturnType<PageletSettingFactory["create"]> },
+            getPageletUiLanguage(), { sourceScopeStates: this.sourceScopeStates.pagelet,
+                isCurrent: () => this.settingsVisible && generation === this.memoryControlCenterGeneration });
+        }
         this.setActiveSettingsGroup(groups[0]?.id ?? "");
         this.startSettingsNavigation(groups.map((group) => group.id));
         this.startSettingsNavigationOffsetTracking(jump);
         this.markFormControlSettings(containerEl);
+        if (this.pendingSettingsGroup) {
+            this.openGroup(this.pendingSettingsGroup.id, this.pendingSettingsGroup.targetId);
+        }
     }
 
     hide(): void {
+        this.settingsVisible = false;
+        this.featureOptionsModal?.close();
+        this.featureOptionsModal = null;
         // Obsidian invokes hide() when the user closes the settings tab.
         this.stopSettingsNavigation();
         const apiTokenSecretModal = this.apiTokenSecretModal;
@@ -1280,23 +1385,155 @@ export class SettingTab extends PluginSettingTab {
             }
         }
         this.memoryControlCenterGeneration += 1;
+        this.memoryControlCenterSnapshotReady = false;
+        this.clearPermissionControlBindings();
+        this.clearSourceScopeBindings();
+        this.memoryControlCenterRefresh = null;
         const doc = (this.containerEl as HTMLElement).ownerDocument ?? getPlatformDocument();
         doc.body?.classList.remove("pa-settings-tab-open");
         this.debouncedSaveRunner.cancel();
         this.debouncedAIProviderSaveRunner.cancel();
-        if (this.hasPendingSettingsSave) {
-            this.hasPendingSettingsSave = false;
-            void this.plugin.saveSettings().catch((error) => {
-                this.hasPendingSettingsSave = true;
-                this.log("Failed to persist Settings changes on close", error);
-            });
-        }
+        void this.savePendingSettings();
         this.flushPendingAIProviderConfiguration();
     }
 
     private debouncedSave(): void {
+        this.settingsEditRevision += 1;
         this.hasPendingSettingsSave = true;
+        this.settingsSaveError = false;
+        this.updateSettingsSaveFeedback();
         this.debouncedSaveRunner();
+    }
+
+    private async savePendingSettings(): Promise<boolean> {
+        if (!this.hasPendingSettingsSave) return true;
+        const revision = this.settingsEditRevision;
+        let saved = false;
+        try {
+            await this.plugin.saveSettings();
+            saved = true;
+            if (revision === this.settingsEditRevision) {
+                this.hasPendingSettingsSave = false;
+                this.settingsSaveError = false;
+            }
+        } catch (error) {
+            if (revision === this.settingsEditRevision) this.settingsSaveError = true;
+            this.log("Failed to persist Settings changes", error);
+        }
+        this.updateSettingsSaveFeedback();
+        return saved;
+    }
+
+    private async saveImmediateSettings(): Promise<boolean> {
+        this.settingsEditRevision += 1;
+        this.hasPendingSettingsSave = true;
+        this.settingsSaveError = false;
+        this.updateSettingsSaveFeedback();
+        return this.savePendingSettings();
+    }
+
+    private updateSettingsSaveFeedback(): void {
+        const container = this.settingsSaveFeedback;
+        if (!this.settingsVisible || !container || container.isConnected === false) return;
+        container.empty();
+        const failed = this.settingsSaveError || this.providerSaveError;
+        const pending = this.hasPendingSettingsSave || this.latestAIProviderConfigurationDraft !== null;
+        container.hidden = !failed && !pending;
+        if (!failed && !pending) return;
+        container.createSpan({ text: this.t(failed
+            ? "plugin.settings.simple.saveFailed" : "plugin.settings.simple.saving") });
+        if (!failed) return;
+        const retry = container.createEl("button", {
+            text: this.t("plugin.settings.memoryControlCenter.retry"), attr: { type: "button" },
+        });
+        retry.addEventListener("click", () => {
+            retry.disabled = true;
+            if (this.providerSaveError && this.latestAIProviderConfigurationDraft) {
+                const pendingProvider = this.beginAIProviderConfigurationDraft(this.latestAIProviderConfigurationDraft);
+                this.providerSaveError = false;
+                void this.submitAIProviderConfiguration(pendingProvider.draft, pendingProvider.invocationEpoch);
+            }
+            if (this.settingsSaveError) {
+                this.settingsSaveError = false;
+                void this.savePendingSettings();
+            }
+            this.updateSettingsSaveFeedback();
+        });
+    }
+
+    private configurePermissionToggle(
+        key: string,
+        toggle: ToggleComponent,
+        read: () => boolean,
+        save: (value: boolean) => Promise<void>,
+        confirm?: (value: boolean) => Promise<boolean>,
+        refresh?: () => void,
+        disabled?: () => boolean,
+    ): void {
+        this.configurePermissionControl(key, toggle, read, save, confirm, refresh, disabled);
+    }
+
+    private clearPermissionControlBindings(): void {
+        for (const state of this.permissionControls.values()) {
+            state.sync = null;
+            state.refresh = null;
+        }
+    }
+
+    private clearSourceScopeBindings(): void {
+        const { folders, tags, memory, metadata, pagelet } = this.sourceScopeStates;
+        for (const state of [folders, tags, memory, metadata, ...Object.values(pagelet)]) {
+            state.refresh = undefined;
+        }
+    }
+
+    private configurePermissionControl<T extends boolean | string>(
+        key: string,
+        control: {
+            setValue(value: T): unknown;
+            setDisabled(disabled: boolean): unknown;
+            onChange(callback: (value: T) => Promise<void>): unknown;
+        },
+        read: () => T,
+        save: (value: T) => Promise<void>,
+        confirm?: (value: T) => Promise<boolean>,
+        refresh?: () => void,
+        disabled?: () => boolean,
+    ): void {
+        const state = this.permissionControls.get(key) ?? { saving: false, sync: null, refresh: null };
+        this.permissionControls.set(key, state);
+        const generation = this.memoryControlCenterGeneration;
+        let syncing = false;
+        const sync = () => {
+            if (generation !== this.memoryControlCenterGeneration) return;
+            syncing = true;
+            try {
+                control.setValue(read());
+                control.setDisabled(state.saving || Boolean(disabled?.()));
+            } finally {
+                syncing = false;
+            }
+        };
+        state.sync = sync;
+        state.refresh = refresh ?? null;
+        sync();
+        control.onChange(async (value) => {
+            if (syncing || state.saving || disabled?.() || value === read()) return;
+            state.saving = true;
+            sync();
+            try {
+                if (confirm && !await confirm(value)) return;
+                if (generation !== this.memoryControlCenterGeneration) return;
+                await save(value);
+                state.refresh?.();
+            } catch (error) {
+                this.log("Failed to save Settings permission", error);
+                new Notice(this.t("plugin.settings.simple.permissionSaveFailed"), 5000);
+            } finally {
+                state.saving = false;
+                state.sync?.();
+            }
+        });
     }
 
     private getEffectiveAIProviderConfiguration(): {
@@ -1327,6 +1564,8 @@ export class SettingTab extends PluginSettingTab {
         };
         this.latestAIProviderConfigurationDraft = draft;
         this.latestAIProviderConfigurationEpoch = invocationEpoch;
+        this.providerSaveError = false;
+        this.updateSettingsSaveFeedback();
         return { draft, invocationEpoch };
     }
 
@@ -1363,10 +1602,15 @@ export class SettingTab extends PluginSettingTab {
 
     private settleAIProviderConfiguration(invocationEpoch: number, result: AISetupResult): void {
         if (this.latestAIProviderConfigurationEpoch !== invocationEpoch) return;
-        this.latestAIProviderConfigurationDraft = null;
-        this.latestAIProviderConfigurationEpoch = null;
-        this.refreshAIProviderConfigurationControls();
-        if (result.ok) return;
+        if (result.ok) {
+            this.latestAIProviderConfigurationDraft = null;
+            this.latestAIProviderConfigurationEpoch = null;
+            if (this.settingsVisible) this.refreshAIProviderConfigurationControls();
+            this.updateSettingsSaveFeedback();
+            return;
+        }
+        this.providerSaveError = true;
+        this.updateSettingsSaveFeedback();
 
         this.log("Failed to persist AI provider changes", result.code);
         new Notice(this.t("plugin.settings.ai.provider.saveFailed"), 5000);
@@ -1437,7 +1681,7 @@ export class SettingTab extends PluginSettingTab {
 
     private settingsScrollBehavior(): ScrollBehavior {
         try {
-            const win = getPlatformDocument().defaultView;
+            const win = (this.containerEl.ownerDocument ?? getPlatformDocument()).defaultView;
             return win?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
         } catch {
             return "smooth";
@@ -1893,16 +2137,7 @@ export class SettingTab extends PluginSettingTab {
                     plugin.settings.targetPath = value;
                     this.debouncedSave();
                 }));
-        const desc_format = getPlatformDocument().createDocumentFragment();
-        desc_format.createEl('p', undefined, (p) => {
-            p.innerText = this.t("plugin.settings.record.fileFormat.descPrefix");
-            p.createEl('a', undefined, (link) => {
-                link.innerText = this.t("plugin.settings.record.fileFormat.link");
-                link.href = 'https://momentjs.com/docs/#/displaying/format/';
-            });
-        });
-        new Setting(parentEl).setName(this.t("plugin.settings.record.fileFormat.name"))
-            .setDesc(desc_format)
+        const fileFormatSetting = new Setting(parentEl).setName(this.t("plugin.settings.record.fileFormat.name"))
             .addText(text => text.setPlaceholder('YYYY-MM-DD')
                 .setValue(plugin.settings.fileFormat)
                 .onChange((value) => {
@@ -1910,6 +2145,13 @@ export class SettingTab extends PluginSettingTab {
                     plugin.settings.fileFormat = value;
                     this.debouncedSave();
                 }));
+        fileFormatSetting.descEl.createEl('p', undefined, (p) => {
+            p.innerText = this.t("plugin.settings.record.fileFormat.descPrefix");
+            p.createEl('a', undefined, (link) => {
+                link.innerText = this.t("plugin.settings.record.fileFormat.link");
+                link.href = 'https://momentjs.com/docs/#/displaying/format/';
+            });
+        });
         new Setting(parentEl).setName(this.t("plugin.settings.record.author.name"))
             .setDesc(this.t("plugin.settings.record.author.desc"))
             .addText(text => text
@@ -1950,17 +2192,24 @@ export class SettingTab extends PluginSettingTab {
             cls: "pa-settings-section-desc-sm",
         });
 
-        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.enabled.name"))
-            .setDesc(this.t("plugin.settings.quickCapture.enabled.desc"))
+        const enabledSetting = new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.enabled.name"))
+            .setDesc(this.t("plugin.settings.quickCapture.enabled.desc"));
+        const children = parentEl.createDiv({ cls: "pa-settings-nested" });
+        children.hidden = !plugin.settings.quickCapture.enabled;
+        enabledSetting
             .addToggle(toggle => toggle
                 .setValue(plugin.settings.quickCapture.enabled)
                 .onChange((value) => {
                     plugin.settings.quickCapture.enabled = value;
-                    void plugin.saveSettings();
+                    children.hidden = !value;
+                    this.debouncedSave();
                 }));
 
-        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.destination.name"))
-            .setDesc(this.t("plugin.settings.quickCapture.destination.desc"))
+        const destinationSetting = new Setting(children).setName(this.t("plugin.settings.quickCapture.destination.name"))
+            .setDesc(this.t("plugin.settings.quickCapture.destination.desc"));
+        const inbox = children.createDiv();
+        inbox.hidden = plugin.settings.quickCapture.destination !== "inbox";
+        destinationSetting
             .addDropdown(dropdown => dropdown
                 .addOption("daily", this.t("plugin.settings.quickCapture.destination.daily"))
                 .addOption("inbox", this.t("plugin.settings.quickCapture.destination.inbox"))
@@ -1968,10 +2217,11 @@ export class SettingTab extends PluginSettingTab {
                 .setValue(plugin.settings.quickCapture.destination)
                 .onChange((value) => {
                     plugin.settings.quickCapture.destination = normalizeQuickCaptureDestination(value);
-                    void plugin.saveSettings();
+                    inbox.hidden = plugin.settings.quickCapture.destination !== "inbox";
+                    this.debouncedSave();
                 }));
 
-        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.inboxPath.name"))
+        new Setting(inbox).setName(this.t("plugin.settings.quickCapture.inboxPath.name"))
             .setDesc(this.t("plugin.settings.quickCapture.inboxPath.desc"))
             .addText(text => text
                 .setPlaceholder(QUICK_CAPTURE_DEFAULTS.inboxPath)
@@ -1981,14 +2231,11 @@ export class SettingTab extends PluginSettingTab {
                     this.debouncedSave();
                 }));
 
-        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.postProcessing.name"))
+        new Setting(children).setName(this.t("plugin.settings.quickCapture.postProcessing.name"))
             .setDesc(this.t("plugin.settings.quickCapture.postProcessing.desc"))
-            .addToggle(toggle => toggle
-                .setValue(plugin.settings.quickCapture.postProcessingEnabled)
-                .onChange((value) => {
-                    plugin.settings.quickCapture.postProcessingEnabled = value;
-                    void plugin.saveSettings();
-                }));
+            .addToggle(toggle => this.configurePermissionToggle("quickCapture.postProcessingEnabled", toggle,
+                () => plugin.settings.quickCapture.postProcessingEnabled,
+                (value) => plugin.saveSettingsPermissions({ quickCapture: { postProcessingEnabled: value } })));
     }
 
     private renderDataBoundarySection(parentEl: HTMLElement): void {
@@ -1999,59 +2246,48 @@ export class SettingTab extends PluginSettingTab {
             cls: "pa-settings-section-desc-sm",
         });
 
-        new Setting(parentEl)
+        this.renderSourceExclusion(parentEl, new Setting(parentEl)
             .setName(this.t("plugin.settings.dataBoundary.excludedFolders.name"))
-            .setDesc(this.t("plugin.settings.dataBoundary.excludedFolders.desc"))
-            .addText(text => text
-                .setPlaceholder("private, archive/sensitive")
-                .setValue(plugin.settings.dataBoundary.excludedFolders.join(", "))
-                .onChange((value) => {
-                    const next = normalizeTrimmedStringArray(value.split(","), []);
-                    if (addsExclusions(plugin.settings.dataBoundary.excludedFolders, next)) {
-                        plugin.cancelActiveMemoryPreparation();
-                    }
-                    plugin.settings.dataBoundary.excludedFolders = next;
-                    this.debouncedSave();
-                }));
+            .setDesc(this.t("plugin.settings.dataBoundary.excludedFolders.desc")),
+        this.sourceScopeStates.folders, "private, archive/sensitive",
+        () => plugin.settings.dataBoundary.excludedFolders,
+        (next) => plugin.saveSettingsPermissions({ dataBoundary: { excludedFolders: next } }));
 
-        new Setting(parentEl)
+        this.renderSourceExclusion(parentEl, new Setting(parentEl)
             .setName(this.t("plugin.settings.dataBoundary.excludedTags.name"))
-            .setDesc(this.t("plugin.settings.dataBoundary.excludedTags.desc"))
-            .addText(text => text
-                .setPlaceholder("private, sensitive")
-                .setValue(plugin.settings.dataBoundary.excludedTags.join(", "))
-                .onChange((value) => {
-                    const next = normalizeTrimmedStringArray(value.split(","), [])
-                        .map((tag) => tag.replace(/^#/, ""))
-                        .filter(Boolean);
-                    if (addsExclusions(plugin.settings.dataBoundary.excludedTags, next)) {
-                        plugin.cancelActiveMemoryPreparation();
-                    }
-                    plugin.settings.dataBoundary.excludedTags = next;
-                    this.debouncedSave();
-                }));
+            .setDesc(this.t("plugin.settings.dataBoundary.excludedTags.desc")),
+        this.sourceScopeStates.tags, "private, sensitive",
+        () => plugin.settings.dataBoundary.excludedTags,
+        (next) => plugin.saveSettingsPermissions({ dataBoundary: { excludedTags: next } }),
+        (value) => normalizeTrimmedStringArray(value.split(","), [])
+            .map((tag) => tag.replace(/^#/, "")).filter(Boolean));
 
         new Setting(parentEl)
             .setName(this.t("plugin.settings.dataBoundary.generatedNotes.name"))
             .setDesc(this.t("plugin.settings.dataBoundary.generatedNotes.desc"))
-            .addDropdown(dropdown => dropdown
-                .addOption("exclude-generated", this.t("plugin.settings.dataBoundary.generatedNotes.exclude"))
-                .addOption("include-generated", this.t("plugin.settings.dataBoundary.generatedNotes.include"))
-                .setValue(plugin.settings.dataBoundary.generatedNotePolicy)
-                .onChange((value) => {
+            .addDropdown(dropdown => {
+                dropdown.addOption("exclude-generated", this.t("plugin.settings.dataBoundary.generatedNotes.exclude"))
+                    .addOption("include-generated", this.t("plugin.settings.dataBoundary.generatedNotes.include"));
+                this.configurePermissionControl("dataBoundary.generatedNotePolicy", dropdown,
+                    () => plugin.settings.dataBoundary.generatedNotePolicy,
+                    async (value) => {
                     const next = normalizeDataBoundaryGeneratedNotePolicy(value);
                     if (plugin.settings.dataBoundary.generatedNotePolicy === "include-generated"
                         && next === "exclude-generated") {
                         plugin.cancelActiveMemoryPreparation();
                     }
-                    plugin.settings.dataBoundary.generatedNotePolicy = next;
-                    void plugin.saveSettings();
-                }));
+                    await plugin.saveSettingsPermissions({ dataBoundary: { generatedNotePolicy: next } });
+                });
+            });
 
         new Setting(parentEl)
             .setName(this.t("plugin.settings.dataBoundary.providerDisclosure.name"))
             .setDesc(this.t("plugin.settings.dataBoundary.providerDisclosure.desc"));
 
+    }
+
+    private renderRetrievalHabitSection(parentEl: HTMLElement): void {
+        const plugin = this.plugin;
         parentEl.createEl("h3", { text: this.t("plugin.settings.retrievalHabit.title") });
         parentEl.createEl("p", {
             text: this.t("plugin.settings.retrievalHabit.desc"),
@@ -2061,23 +2297,14 @@ export class SettingTab extends PluginSettingTab {
         new Setting(parentEl)
             .setName(this.t("plugin.settings.retrievalHabit.enabled.name"))
             .setDesc(this.t("plugin.settings.retrievalHabit.enabled.desc"))
-            .addToggle(toggle => toggle
-                .setValue(plugin.settings.retrievalHabitProfile.enabled)
-                .onChange(async (value) => {
-                    if (value && !plugin.settings.retrievalHabitProfile.enabled) {
-                        const confirmed = await confirmUserAction(this.app, {
+            .addToggle(toggle => this.configurePermissionToggle("retrievalHabitProfile.enabled", toggle,
+                () => plugin.settings.retrievalHabitProfile.enabled,
+                (value) => plugin.saveSettingsPermissions({ retrievalHabitProfile: { enabled: value } }),
+                async (value) => !value || confirmUserAction(this.app, {
                             title: this.t("plugin.settings.retrievalHabit.enableConfirm.title"),
                             message: this.t("plugin.settings.retrievalHabit.enableConfirm.message"),
                             confirmText: this.t("plugin.settings.retrievalHabit.enableConfirm.confirm"),
-                        });
-                        if (!confirmed) {
-                            toggle.setValue(false);
-                            return;
-                        }
-                    }
-                    plugin.settings.retrievalHabitProfile.enabled = value;
-                    await plugin.saveSettings();
-                }));
+                })));
 
         new Setting(parentEl)
             .setName(this.t("plugin.settings.retrievalHabit.clear.name"))
@@ -2086,21 +2313,30 @@ export class SettingTab extends PluginSettingTab {
                 .setButtonText(this.t("plugin.settings.retrievalHabit.clear.button"))
                 .setDisabled(plugin.settings.retrievalHabitProfile.state.aggregates.length === 0)
                 .onClick(async () => {
+                    const generation = this.memoryControlCenterGeneration;
                     const confirmed = await confirmUserAction(this.app, {
                         title: this.t("plugin.settings.retrievalHabit.clearConfirm.title"),
                         message: this.t("plugin.settings.retrievalHabit.clearConfirm.message"),
                         confirmText: this.t("plugin.settings.retrievalHabit.clearConfirm.confirm"),
                     });
-                    if (!confirmed) return;
-                    plugin.settings.retrievalHabitProfile.state = {
-                        aggregates: [],
-                        clearedAt: new Date().toISOString(),
-                    };
-                    await plugin.saveSettings();
-                    new Notice(this.t("plugin.settings.retrievalHabit.clear.done"), 4000);
-                    this.display();
+                    if (!confirmed || generation !== this.memoryControlCenterGeneration) return;
+                    button.setDisabled(true);
+                    try {
+                        await plugin.saveSettingsPermissions({ retrievalHabitProfile: {
+                            state: { aggregates: [], clearedAt: new Date().toISOString() },
+                        } });
+                        new Notice(this.t("plugin.settings.retrievalHabit.clear.done"), 4000);
+                        this.refreshMemoryControlCenter();
+                    } catch (error) {
+                        plugin.log("Failed to clear local learning", error);
+                        new Notice(this.t("plugin.settings.simple.permissionSaveFailed"), 5000);
+                        if (generation === this.memoryControlCenterGeneration) button.setDisabled(false);
+                    }
                 }));
 
+    }
+
+    private renderDataCleanupSection(parentEl: HTMLElement): void {
         parentEl.createEl("h3", { text: this.t("plugin.settings.dataBoundary.cleanup.title") });
         parentEl.createEl("p", {
             text: this.t("plugin.settings.dataBoundary.cleanup.desc"),
@@ -2124,222 +2360,38 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private renderGraphSection(parentEl: HTMLElement): void {
-        const plugin = this.plugin;
-        parentEl.createEl('h2', { text: this.t("plugin.settings.graph.title") });
-        parentEl.createEl("p", { text: this.t("plugin.settings.graph.desc"), cls: "pa-settings-section-desc-sm" });
-        new Setting(parentEl).setName(this.t("plugin.settings.graph.type.name"))
-            .setDesc(this.t("plugin.settings.graph.type.desc"))
-            .addText(text => {
-                text.setPlaceholder('popover')
-                    .setValue(plugin.settings.localGraph.type)
-                    .onChange((value) => {
-                        plugin.settings.localGraph.type = value;
-                        this.debouncedSave();
-                    })
-            });
-        new Setting(parentEl).setName(this.t("plugin.settings.graph.depth.name"))
-            .setDesc(this.t("plugin.settings.graph.depth.desc"))
-            .addText(text => {
-                text.setPlaceholder('2')
-                    .setValue(plugin.settings.localGraph.depth.toString())
-                    .onChange((value) => {
-                        plugin.settings.localGraph.depth = safeParseInt(value, plugin.settings.localGraph.depth, 1, LOCAL_GRAPH_DEPTH_MAX);
-                        this.debouncedSave();
-                    })
-            });
-        new Setting(parentEl).setName(this.t("plugin.settings.graph.showTags.name"))
-            .setDesc(this.t("plugin.settings.graph.showTags.desc"))
-            .addToggle(toggle => {
-                toggle.setValue(plugin.settings.localGraph.showTags)
-                    .onChange(async (value) => {
-                        plugin.settings.localGraph.showTags = value;
-                        await plugin.saveSettings();
-                    })
-            });
-        new Setting(parentEl).setName(this.t("plugin.settings.graph.showAttachment.name"))
-            .setDesc(this.t("plugin.settings.graph.showAttachment.desc"))
-            .addToggle(toggle => {
-                toggle.setValue(plugin.settings.localGraph.showAttach)
-                    .onChange(async (value) => {
-                        plugin.settings.localGraph.showAttach = value;
-                        await plugin.saveSettings();
-                    })
-            });
-        new Setting(parentEl).setName(this.t("plugin.settings.graph.showNeighbor.name"))
-            .setDesc(this.t("plugin.settings.graph.showNeighbor.desc"))
-            .addToggle(toggle => {
-                toggle.setValue(plugin.settings.localGraph.showNeighbor)
-                    .onChange(async (value) => {
-                        plugin.settings.localGraph.showNeighbor = value;
-                        await plugin.saveSettings();
-                    })
-            });
-        new Setting(parentEl).setName(this.t("plugin.settings.graph.collapse.name"))
-            .setDesc(this.t("plugin.settings.graph.collapse.desc"))
-            .addToggle(toggle => {
-                toggle.setValue(plugin.settings.localGraph.collapse)
-                    .onChange(async (value) => {
-                        plugin.settings.localGraph.collapse = value;
-                        await plugin.saveSettings();
-                    })
-            });
-        new Setting(parentEl).setName(this.t("plugin.settings.graph.autoColors.name"))
-            .setDesc(this.t("plugin.settings.graph.autoColors.desc"))
-            .addToggle(toggle => {
-                toggle.setValue(plugin.settings.localGraph.autoColors).onChange(async value => {
-                    plugin.settings.localGraph.autoColors = value;
-                    await plugin.saveSettings();
-                })
-            });
-        parentEl.createEl("p", { text: this.t("plugin.settings.graph.resize"), cls: "pa-settings-section-desc-md" });
-        const doc = getPlatformDocument();
-        const h = doc.createDocumentFragment();
-        h.createEl('span', undefined, (p) => {
-            p.innerText = this.t("plugin.settings.graph.height");
-            p.setAttr("class", "pa-settings-resize-label");
-        });
-        const w = doc.createDocumentFragment();
-        w.createEl('span', undefined, (p) => {
-            p.innerText = this.t("plugin.settings.graph.width");
-            p.setAttr("class", "pa-settings-resize-label");
-        });
-        new Setting(parentEl).setName(h)
-            .addText(text => {
-                text.setPlaceholder('height')
-                    .setValue(plugin.settings.localGraph.resizeStyle.height.toString())
-                    .onChange((value) => {
-                        plugin.settings.localGraph.resizeStyle.height =
-                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.height, 1, LOCAL_GRAPH_DIMENSION_MAX);
-                        this.debouncedSave();
-                    })
-            });
-        new Setting(parentEl).setName(w)
-            .addText(text => {
-                text.setPlaceholder('width')
-                    .setValue(plugin.settings.localGraph.resizeStyle.width.toString())
-                    .onChange((value) => {
-                        plugin.settings.localGraph.resizeStyle.width =
-                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.width, 1, LOCAL_GRAPH_DIMENSION_MAX);
-                        this.debouncedSave();
-                    })
-            });
-    }
-
-    private renderGraphColorsSection(parentEl: HTMLElement): void {
-        const plugin = this.plugin;
-        parentEl.createEl('h2', { text: this.t("plugin.settings.graphColors.title") });
-        new Setting(parentEl).setName(this.t("plugin.settings.graphColors.enabled.name"))
-            .setDesc(this.t("plugin.settings.graphColors.enabled.desc"))
-            .addToggle(toggle => {
-                toggle.setValue(plugin.settings.enableGraphColors).onChange(async value => {
-                    plugin.settings.enableGraphColors = value;
-                    await plugin.saveSettings();
-                    this.rebuildGraphColors();
-                })
-            });
-        this.graphColorsContainer = parentEl.createDiv();
-        this.rebuildGraphColors();
-    }
-
-    private rebuildGraphColors(): void {
-        if (!this.graphColorsContainer) return;
-        this.graphColorsContainer.empty();
-
-        const plugin = this.plugin;
-        if (!plugin.settings.enableGraphColors) return;
-
-        const container = this.graphColorsContainer;
-        // deep copy setting.colorGroups for rendering
-        const colorGroups: { query: string, color: { a: number, rgb: number } }[] = JSON.parse(JSON.stringify(plugin.settings.colorGroups));
-        colorGroups.forEach((colorGroup) => {
-            // find if the item is exist in plugin.settings
-            const index = this.findGraphColor(colorGroup);
-            const color = formatGraphColorHex(colorGroup.color.rgb);
-            const nameEl = getPlatformDocument().createDocumentFragment();
-            nameEl.createSpan({ text: "●" }).setCssStyles({ color });
-            nameEl.appendText(` ${this.t("plugin.settings.graphColors.colorFor", { query: colorGroup.query })}`);
-            new Setting(container)
-                .setName(nameEl)
-                .setDesc(this.t("plugin.settings.graphColors.colorDesc"))
-                .addText(text => {
-                    text.setValue(plugin.settings.colorGroups[index].query)
-                        .onChange((value) => {
-                            if (index > -1) {
-                                plugin.settings.colorGroups[index].query = value;
-                                this.debouncedSave();
-                            }
-                        })
-                })
-                .addColorPicker(picker => {
-                    picker.setValue(color).onChange(async (value) => {
-                        if (index < 0) return;
-                        const hexColor = normalizeGraphColorInput(value);
-                        if (!hexColor) return;
-                        plugin.settings.colorGroups[index].color.rgb = parseInt(hexColor, 16);
-                        await plugin.saveSettings();
-                        this.rebuildGraphColors();
-                    });
-                })
-                .addExtraButton(btn => {
-                    btn.setIcon("trash").setTooltip(this.t("plugin.settings.graphColors.remove")).onClick(async () => {
-                        if (index > -1) {
-                            this.log("removing color group", plugin.settings.colorGroups[index]);
-                            plugin.settings.colorGroups.splice(index, 1);
-                        }
-                        await plugin.saveSettings();
-                        this.rebuildGraphColors();
-                    });
-                })
-                .addExtraButton(btn => {
-                    btn.setIcon("reset").setTooltip(this.t("plugin.settings.graphColors.reset")).onClick(async () => {
-                        if (index > -1) {
-                            this.log("resetting color group", plugin.settings.colorGroups[index]);
-                            plugin.settings.colorGroups[index] = JSON.parse(JSON.stringify(DEFAULT_GRAPH_COLOR));
-                        }
-                        await plugin.saveSettings();
-                        this.rebuildGraphColors();
-                    });
-                });
-        });
-        new Setting(container)
-            .addButton(btn => {
-                btn.setButtonText(this.t("plugin.settings.graphColors.add")).onClick(async () => {
-                    this.log("adding new color");
-                    plugin.settings.colorGroups.push(JSON.parse(JSON.stringify(DEFAULT_GRAPH_COLOR)));
-                    await plugin.saveSettings();
-                    this.rebuildGraphColors();
-                })
-            });
-        this.markFormControlSettings(container);
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.graph.options.title"))
+            .setDesc(this.t("plugin.settings.graph.options.nextOpenDesc"))
+            .addButton((button) => button
+                .setButtonText(this.t("plugin.settings.legal.open"))
+                .onClick(() => { this.featureOptionsModal = this.plugin.openGraphOptions(); }));
     }
 
     private renderMetadataSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
         // setting options for updating metadata
         parentEl.createEl('h2', { text: this.t("plugin.settings.metadata.title") });
-        const descFormat = getPlatformDocument().createDocumentFragment();
-        descFormat.createEl('p', undefined, (p) => {
+        const metadataSetting = new Setting(parentEl).setName(this.t("plugin.settings.metadata.enabled.name"))
+            .addToggle(toggle => this.configurePermissionToggle("enableMetadataUpdating", toggle,
+                () => plugin.settings.enableMetadataUpdating,
+                (value) => plugin.saveSettingsPermissions({ enableMetadataUpdating: value }),
+                undefined, () => this.rebuildMetadataList()));
+        metadataSetting.descEl.createEl('p', undefined, (p) => {
             p.innerText = this.t("plugin.settings.metadata.descPrefix");
             p.createEl('a', undefined, (link) => {
                 link.innerText = this.t("plugin.settings.metadata.descLink");
                 link.href = 'https://momentjs.com/docs/#/displaying/format/';
             });
         });
-        new Setting(parentEl).setName(this.t("plugin.settings.metadata.enabled.name"))
-            .setDesc(descFormat)
-            .addToggle(toggle => {
-                toggle.setValue(plugin.settings.enableMetadataUpdating).onChange(async value => {
-                    plugin.settings.enableMetadataUpdating = value;
-                    await plugin.saveSettings();
-                    this.rebuildMetadataList();
-                })
-            });
         this.metadataContainer = parentEl.createDiv();
         this.rebuildMetadataList();
     }
 
     private rebuildMetadataList(): void {
         if (!this.metadataContainer) return;
+        const renderRevision = ++this.metadataRenderRevision;
+        this.sourceScopeStates.metadata.refresh = undefined;
         this.metadataContainer.empty();
         const plugin = this.plugin;
         if (!plugin.settings.enableMetadataUpdating) return;
@@ -2347,16 +2399,11 @@ export class SettingTab extends PluginSettingTab {
         const container = this.metadataContainer;
         // deep copy metadata for rendering
         const metas = JSON.parse(JSON.stringify(plugin.settings.metadatas)) as PluginManagerSettings["metadatas"];
-        const doc = getPlatformDocument();
-        const nameEl1 = doc.createDocumentFragment();
-        nameEl1.createSpan({ text: "---" });
-        new Setting(container).setName(nameEl1);
+        new Setting(container).setName("---");
         for (let i = 0; i < metas.length; i++) {
             const index = this.findMetadata(metas[i].key);
-            const nameEl = doc.createDocumentFragment();
-            nameEl.appendText(`${metas[i].key}: `);
             new Setting(container)
-                .setName(nameEl)
+                .setName(`${metas[i].key}: `)
                 .addText(text => {
                     text.setValue(plugin.settings.metadatas[index].value)
                         .onChange((value) => {
@@ -2368,18 +2415,20 @@ export class SettingTab extends PluginSettingTab {
                 })
                 .addExtraButton(btn => {
                     btn.setIcon("trash").setTooltip(this.t("plugin.settings.graphColors.remove")).onClick(async () => {
+                        const generation = this.memoryControlCenterGeneration;
+                        btn.setDisabled(true);
                         if (index > -1) {
                             this.log("removing metadata rule", plugin.settings.metadatas[index]);
                             plugin.settings.metadatas.splice(index, 1);
                         }
-                        await plugin.saveSettings();
+                        await this.saveImmediateSettings();
+                        if (generation !== this.memoryControlCenterGeneration || container !== this.metadataContainer
+                            || renderRevision !== this.metadataRenderRevision) return;
                         this.rebuildMetadataList();
                     });
                 })
         }
-        const nameEl2 = doc.createDocumentFragment();
-        nameEl2.createSpan({ text: "---" });
-        new Setting(container).setName(nameEl2);
+        new Setting(container).setName("---");
 
         // Initialize with the dropdown's first option ("string") so a user who
         // clicks Add without touching the dropdown gets a valid type instead of
@@ -2387,6 +2436,7 @@ export class SettingTab extends PluginSettingTab {
         let key = "";
         let value = "";
         let t = "string";
+        let pendingAddition: PluginManagerSettings["metadatas"][number] | null = null;
         // Track the input components so the Add handler can reset their visible
         // value after a successful save — otherwise the form retains the just-
         // submitted text and the next entry has to be typed over it.
@@ -2421,14 +2471,26 @@ export class SettingTab extends PluginSettingTab {
             })
             .addButton(btn => {
                 btn.setButtonText(this.t("plugin.settings.metadata.add.button")).onClick(async () => {
+                    const generation = this.memoryControlCenterGeneration;
                     const trimmedKey = key.trim();
                     if (!trimmedKey) {
                         new Notice(this.t("plugin.settings.metadata.keyRequired"), 4000);
                         return;
                     }
                     this.log("adding new frontmatter");
-                    plugin.settings.metadatas.push({ key: trimmedKey, value: value, t: t });
-                    await plugin.saveSettings();
+                    const submitted = { key: trimmedKey, value, t };
+                    if (!pendingAddition || pendingAddition.key !== trimmedKey
+                        || pendingAddition.value !== value || pendingAddition.t !== t
+                        || !plugin.settings.metadatas.includes(pendingAddition)) {
+                        pendingAddition = submitted;
+                        plugin.settings.metadatas.push(pendingAddition);
+                    }
+                    btn.setDisabled(true);
+                    const saved = await this.saveImmediateSettings();
+                    if (generation !== this.memoryControlCenterGeneration || container !== this.metadataContainer
+                        || renderRevision !== this.metadataRenderRevision) return;
+                    btn.setDisabled(false);
+                    if (!saved || key.trim() !== submitted.key || value !== submitted.value || t !== submitted.t) return;
                     // Reset the form so the next add starts blank. We update both
                     // the captured local vars (consumed by the next Add click)
                     // and the visible inputs (rebuildMetadataList will re-mount,
@@ -2440,16 +2502,12 @@ export class SettingTab extends PluginSettingTab {
                     this.rebuildMetadataList();
                 })
             });
-        new Setting(container).setName(this.t("plugin.settings.metadata.excludePath.name"))
-            .setDesc(this.t("plugin.settings.metadata.excludePath.desc"))
-            .addText(text => {
-                text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
-                    .setValue(plugin.settings.metadataExcludePath.join(','))
-                    .onChange((value) => {
-                        plugin.settings.metadataExcludePath = value.split(",");
-                        this.debouncedSave();
-                    })
-            });
+        this.renderSourceExclusion(container, new Setting(container)
+            .setName(this.t("plugin.settings.metadata.excludePath.name"))
+            .setDesc(this.t("plugin.settings.metadata.excludePath.desc")),
+        this.sourceScopeStates.metadata, "tmp/,notes/templates",
+        () => plugin.settings.metadataExcludePath,
+        (next) => plugin.saveSettingsPermissions({ metadataExcludePath: next }), undefined, false);
         this.markFormControlSettings(container);
     }
 
@@ -2457,50 +2515,11 @@ export class SettingTab extends PluginSettingTab {
         const plugin = this.plugin;
         // setting for show statistics
         parentEl.createEl('h2', { text: this.t("plugin.settings.statistics.title") });
-        new Setting(parentEl).setName(this.t("plugin.settings.statistics.show.name"))
-            .setDesc(this.t("plugin.settings.statistics.show.desc"))
-            .addDropdown(dropDown => {
-                dropDown.addOption('overview', this.t("plugin.settings.statistics.view.overview"));
-                dropDown.addOption('daily', this.t("plugin.settings.statistics.view.daily"));
-                dropDown.addOption('growth', this.t("plugin.settings.statistics.view.growth"));
-                dropDown.addOption('composition', this.t("plugin.settings.statistics.view.composition"));
-                dropDown.setValue(normalizeStatisticsView(plugin.settings.statisticsType));
-                dropDown.onChange(async (value) => {
-                    plugin.log("changing statistics type", value);
-                    plugin.settings.statisticsType = value;
-                    await plugin.saveSettings();
-
-                    const leaf = this.app.workspace.getLeaf(Platform.isDesktop ? "window" : true);
-                    await leaf.setViewState({ type: STAT_PREVIEW_TYPE, active: !Platform.isDesktop });
-                    await this.app.workspace.revealLeaf(leaf);
-                });
-            });
-        new Setting(parentEl).setName(this.t("plugin.settings.statistics.sync.name"))
-            .setDesc(this.t("plugin.settings.statistics.sync.desc"))
-            .addToggle((toggle) => {
-                toggle.setValue(Boolean(plugin.settings.statisticsSyncEnabled))
-                    .onChange(async (value) => {
-                        const previousValue = Boolean(plugin.settings.statisticsSyncEnabled);
-                        plugin.settings.statisticsSyncEnabled = value;
-                        try {
-                            await plugin.statsManager?.setStatisticsSyncEnabled(value);
-                            await plugin.saveSettings();
-                        } catch (error) {
-                            plugin.settings.statisticsSyncEnabled = previousValue;
-                            toggle.setValue(previousValue);
-                            await plugin.saveSettings();
-                            plugin.log("Failed to change Statistics sync setting", error);
-                            new Notice(this.t("plugin.settings.statistics.sync.error"), 5000);
-                        }
-                    });
-            });
         new Setting(parentEl).setName(this.t("plugin.settings.statistics.animation.name")).addToggle((cb) =>
             cb.setValue(plugin.settings.animation)
                 .onChange((value) => {
                     plugin.settings.animation = value;
-                    void plugin.saveSettings().catch((error) => {
-                        plugin.log("Failed to save animation setting", error);
-                    });
+                    void this.saveImmediateSettings();
                 })
         );
 
@@ -2512,7 +2531,7 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(plugin.settings.displaySectionCounts)
                     .onChange(async (value) => {
                         plugin.settings.displaySectionCounts = value;
-                        await plugin.saveSettings();
+                        await this.saveImmediateSettings();
                     });
             });
 
@@ -2524,7 +2543,7 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(plugin.settings.countComments)
                     .onChange(async (value) => {
                         plugin.settings.countComments = value;
-                        await plugin.saveSettings();
+                        await this.saveImmediateSettings();
                     });
             });
     }
@@ -2629,7 +2648,8 @@ export class SettingTab extends PluginSettingTab {
         if (!this.providerConfigContainer) return;
         this.providerConfigContainer.empty();
         const plugin = this.plugin;
-        const container = this.providerConfigContainer;
+        const root = this.providerConfigContainer;
+        let container = root;
         const providerConfiguration = this.getEffectiveAIProviderConfiguration();
 
         if (!providerConfiguration.aiProvider) {
@@ -2659,6 +2679,9 @@ export class SettingTab extends PluginSettingTab {
                     .onClick(() => this.openApiTokenSecretEditor());
             });
 
+        container = this.createSettingsDetail(root, "plugin.settings.simple.advancedConnection");
+        const connectionDetails = container.parentElement as HTMLDetailsElement;
+        connectionDetails.open = deriveDisplayPreset(providerConfiguration) === "custom";
         new Setting(container)
             .setName(this.t("plugin.settings.ai.baseUrl.name"))
             .setDesc(this.t("plugin.settings.ai.baseUrl.desc"))
@@ -2702,7 +2725,7 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
 
-        if (plugin.settings.showAdvancedMemoryControls) {
+        {
             const policyModelSetting = new Setting(container);
             (policyModelSetting as Setting & { settingEl?: HTMLElement }).settingEl?.addClass("pa-policy-model-setting");
             policyModelSetting
@@ -2717,6 +2740,7 @@ export class SettingTab extends PluginSettingTab {
                     });
                 });
         }
+        this.renderMemoryModelField(container);
         this.markFormControlSettings(container);
     }
 
@@ -2729,7 +2753,7 @@ export class SettingTab extends PluginSettingTab {
         const providerConfiguration = this.getEffectiveAIProviderConfiguration();
         if (providerConfiguration.aiProvider !== 'qwen') return;
 
-        const container = this.qwenOptionsContainer;
+        const container = this.createSettingsDetail(this.qwenOptionsContainer, "plugin.settings.qwen.title");
         const qwenOptionToggles: QwenResponseOptionToggle[] = [];
         container.createEl('h3', { text: this.t("plugin.settings.qwen.title") });
         const qwenOptionsDescriptionEl = container.createEl("p", { cls: "pa-settings-section-desc-sm" });
@@ -2743,6 +2767,7 @@ export class SettingTab extends PluginSettingTab {
                     nonDashScopeDescription: this.t("plugin.qwen.desc.nonDashScope"),
                 },
             );
+            this.permissionControls.get("webSearchEnabled")?.sync?.();
         };
 
         new Setting(container)
@@ -2754,7 +2779,7 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(plugin.settings.qwenThinkingEnabled)
                     .onChange(async (value) => {
                         plugin.settings.qwenThinkingEnabled = value;
-                        await plugin.saveSettings();
+                        await this.saveImmediateSettings();
                     });
             });
 
@@ -2763,12 +2788,11 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.qwen.webSearch.desc"))
             .addToggle((toggle) => {
                 qwenOptionToggles.push(toggle);
-                toggle
-                    .setValue(plugin.settings.webSearchEnabled)
-                    .onChange(async (value) => {
-                        plugin.settings.webSearchEnabled = value;
-                        await plugin.saveSettings();
-                    });
+                this.configurePermissionToggle("webSearchEnabled", toggle,
+                    () => plugin.settings.webSearchEnabled,
+                    (value) => plugin.saveSettingsPermissions({ webSearchEnabled: value }),
+                    undefined, undefined,
+                    () => !isDashScopeCompatibleBaseURL(this.getEffectiveAIProviderConfiguration().baseURL));
             });
 
         this.refreshQwenResponseOptionAvailability();
@@ -2789,22 +2813,24 @@ export class SettingTab extends PluginSettingTab {
                 cb.setValue(plugin.settings.debug)
                     .onChange((value) => {
                         plugin.settings.debug = value;
-                        void plugin.saveSettings().catch((error) => {
-                            plugin.log("Failed to save debug setting", error);
-                        });
+                        void this.saveImmediateSettings();
                     }));
 
+    }
+
+    private renderPrivacySharingSection(parentEl: HTMLElement): void {
+        const plugin = this.plugin;
+        new Setting(parentEl).setName(this.t("plugin.settings.statistics.sync.name"))
+            .setDesc(this.t("plugin.settings.statistics.sync.desc"))
+            .addToggle((toggle) => this.configurePermissionToggle("statisticsSyncEnabled", toggle,
+                () => Boolean(plugin.settings.statisticsSyncEnabled),
+                (value) => plugin.setStatisticsSyncEnabled(value)));
         new Setting(parentEl)
             .setName(this.t("plugin.settings.advanced.shareUsage.name"))
             .setDesc(this.t("plugin.settings.advanced.shareUsage.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.shareAnonymousCapabilityUsage)
-                    .onChange(async (value) => {
-                        plugin.settings.shareAnonymousCapabilityUsage = value;
-                        await plugin.saveSettings();
-                    });
-            });
+            .addToggle((toggle) => this.configurePermissionToggle("shareAnonymousCapabilityUsage", toggle,
+                () => plugin.settings.shareAnonymousCapabilityUsage,
+                (value) => plugin.saveSettingsPermissions({ shareAnonymousCapabilityUsage: value })));
     }
 
     private renderLegalSection(parentEl: HTMLElement): void {
@@ -2899,9 +2925,9 @@ export class SettingTab extends PluginSettingTab {
         const factory: PageletSettingFactory = {
             create: (containerEl) => new Setting(containerEl) as unknown as ReturnType<PageletSettingFactory["create"]>,
         };
-        renderPageletSection(
+        renderPageletPreferences(
             parentEl,
-            plugin as unknown as Parameters<typeof renderPageletSection>[1],
+            plugin as unknown as Parameters<typeof renderPageletPreferences>[1],
             factory,
             getPageletUiLanguage(),
         );
@@ -2918,22 +2944,14 @@ export class SettingTab extends PluginSettingTab {
         new Setting(parentEl)
             .setName(this.t("plugin.settings.memory.enabled.name"))
             .setDesc(this.t("plugin.settings.memory.enabled.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.memoryEnabled)
-                    .onChange(async (value) => {
-                        if (!value && plugin.settings.memoryEnabled) {
-                            plugin.cancelActiveMemoryPreparation();
-                        }
-                        plugin.settings.memoryEnabled = value;
-                        await plugin.saveSettings();
-                        this.rebuildMemorySubSettings();
-                    });
-            });
+            .addToggle((toggle) => this.configurePermissionToggle("memoryEnabled", toggle,
+                () => plugin.settings.memoryEnabled,
+                async (value) => {
+                    if (!value) plugin.cancelActiveMemoryPreparation();
+                    await plugin.saveSettingsPermissions({ memoryEnabled: value });
+                }, undefined, () => this.rebuildMemorySubSettings()));
 
-        // Everything below the master toggle lives in a sub-container so we
-        // can hide it entirely when memoryEnabled is off (mirroring the
-        // enableGraphColors / enableMetadataUpdating pattern).
+        // Conversation learning is independent of using note Memory.
         this.memorySubContainer = parentEl.createDiv({ cls: "pa-settings-nested pa-settings-nested--level-1" });
         this.rebuildMemorySubSettings();
     }
@@ -2960,7 +2978,16 @@ export class SettingTab extends PluginSettingTab {
             attr: { "aria-busy": "true" },
         });
 
+        let requestSequence = 0;
         const loadSnapshot = (focusStatus = false): void => {
+            const request = ++requestSequence;
+            this.memoryControlCenterSnapshotReady = false;
+            const recovery = this.memoryRecoveryContainer;
+            if (recovery) {
+                recovery.empty();
+                recovery.createEl("p", { text: this.t("plugin.settings.memoryControlCenter.loading"),
+                    attr: { role: "status" } });
+            }
             body.empty();
             body.setAttr("aria-busy", "true");
             liveStatus.setText(this.t("plugin.settings.memoryControlCenter.loading"));
@@ -2974,17 +3001,27 @@ export class SettingTab extends PluginSettingTab {
 
             void this.plugin.getMemoryControlCenterSnapshot()
                 .then((snapshot) => {
-                    if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
+                    if (generation !== this.memoryControlCenterGeneration || request !== requestSequence || body.isConnected === false) return;
                     body.empty();
                     body.setAttr("aria-busy", "false");
                     this.renderMemoryControlCenterSnapshot(body, snapshot);
+                    const recovery = this.memoryRecoveryContainer;
+                    if (recovery?.isConnected !== false && recovery) {
+                        recovery.empty();
+                        this.renderMemoryControlCenterUpgrade(recovery, snapshot);
+                        this.renderMemoryControlCenterFinalization(recovery, snapshot);
+                        this.renderMemoryControlCenterDataRecovery(recovery, snapshot);
+                        this.markFormControlSettings(recovery);
+                    }
+                    this.memoryControlCenterSnapshotReady = true;
+                    this.focusPendingMemoryControlCenterTarget(true);
                     this.markFormControlSettings(body);
                     liveStatus.setText(this.t("plugin.settings.memoryControlCenter.loaded", {
                         count: snapshot.items.length,
                     }));
                 })
                 .catch((error) => {
-                    if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
+                    if (generation !== this.memoryControlCenterGeneration || request !== requestSequence || body.isConnected === false) return;
                     this.log("Failed to render Memory control center overview", error);
                     body.empty();
                     body.setAttr("aria-busy", "false");
@@ -3000,9 +3037,18 @@ export class SettingTab extends PluginSettingTab {
                         attr: { type: "button" },
                     });
                     retry.addEventListener("click", () => loadSnapshot(true));
+                    const recovery = this.memoryRecoveryContainer;
+                    if (recovery) {
+                        recovery.empty();
+                        recovery.createEl("p", { text: message, attr: { role: "status" } });
+                        recovery.createEl("button", {
+                            text: this.t("plugin.settings.memoryControlCenter.retry"), attr: { type: "button" },
+                        }).addEventListener("click", () => loadSnapshot(true));
+                    }
                 });
         };
 
+        this.memoryControlCenterRefresh = () => loadSnapshot();
         loadSnapshot();
     }
 
@@ -3054,8 +3100,6 @@ export class SettingTab extends PluginSettingTab {
                 ? this.t(snapshot.boundary.explanationKey as PluginMessageKey, undefined, snapshot.boundary.explanationKey)
                 : this.t("plugin.settings.memoryControlCenter.boundary.compatibility"),
         });
-        this.renderMemoryControlCenterUpgrade(parentEl, snapshot);
-        this.renderMemoryControlCenterFinalization(parentEl, snapshot);
 
         if (snapshot.governanceMode === "unavailable") {
             parentEl.createEl("p", {
@@ -3089,8 +3133,6 @@ export class SettingTab extends PluginSettingTab {
             }
         }
         this.renderMemoryControlCenterRecentChanges(parentEl, snapshot);
-        this.renderMemoryControlCenterDataRecovery(parentEl, snapshot);
-        this.focusPendingMemoryControlCenterTarget(true);
     }
 
     private renderMemoryControlCenterDataRecovery(
@@ -3157,7 +3199,8 @@ export class SettingTab extends PluginSettingTab {
                             );
                         }
                         if (generation !== this.memoryControlCenterGeneration) return;
-                        this.display();
+                        this.rebuildMemorySubSettings();
+                        this.refreshMemoryControlCenter();
                         this.openGroup("memory-personalization", "memory-data-recovery");
                     }));
         }
@@ -3189,7 +3232,7 @@ export class SettingTab extends PluginSettingTab {
                         );
                     }
                     if (generation !== this.memoryControlCenterGeneration) return;
-                    this.display();
+                    this.refreshMemoryControlCenter();
                     this.openGroup("memory-personalization", "memory-data-recovery");
                 }));
     }
@@ -3223,7 +3266,8 @@ export class SettingTab extends PluginSettingTab {
                 status.textContent = result.message;
                 if (result.ok) {
                     new Notice(result.message, 5000);
-                    this.display();
+                    this.rebuildMemorySubSettings();
+                    this.refreshMemoryControlCenter();
                     this.openGroup("memory-personalization");
                 } else button.disabled = false;
             }).catch((error) => {
@@ -3303,7 +3347,7 @@ export class SettingTab extends PluginSettingTab {
                 const result = await this.plugin.finalizeMemoryGovernance(finalization.confirmationToken!);
                 new Notice(result.message, result.ok ? 4000 : 6000);
                 if (generation !== this.memoryControlCenterGeneration) return;
-                this.display();
+                this.refreshMemoryControlCenter();
                 this.openGroup("memory-personalization");
             })().catch((error) => {
                 this.log("Memory finalization action failed", error);
@@ -3631,7 +3675,7 @@ export class SettingTab extends PluginSettingTab {
                 return;
             }
             if (generation !== this.memoryControlCenterGeneration) return;
-            this.display();
+            this.refreshMemoryControlCenter();
             this.openGroup("memory-personalization", targetId);
         } catch (error) {
             this.log("Memory control-center action failed", error);
@@ -3655,21 +3699,19 @@ export class SettingTab extends PluginSettingTab {
         const target = Array.from(this.containerEl.querySelectorAll<HTMLElement>(".pa-memory-control-center__item"))
             .find((element) => element.dataset.paMemoryTargetId === targetId);
         if (!target) {
-            if (consumeIfMissing) this.pendingMemoryControlCenterTargetId = null;
+            if (consumeIfMissing) {
+                this.pendingMemoryControlCenterTargetId = null;
+                this.openGroup("data-privacy");
+                this.expandSettingsTarget(this.containerEl.querySelector("#pa-settings-memory-management"));
+            }
             return;
         }
-        const details = this.containerEl.querySelector(".pa-memory-control-center__details");
-        if (details && details.tagName.toLowerCase() === "details") {
-            (details as HTMLDetailsElement).open = true;
-        }
-        if (target.tagName.toLowerCase() === "details") {
-            (target as HTMLDetailsElement).open = true;
-        }
+        this.expandSettingsTarget(target);
         target.setAttr("tabindex", "-1");
         (target as HTMLElement & { addClass?: (cls: string) => void })
             .addClass?.("pa-memory-control-center__item--targeted");
         target.classList?.add?.("pa-memory-control-center__item--targeted");
-        target.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        target.scrollIntoView?.({ behavior: this.settingsScrollBehavior(), block: "center" });
         target.focus?.({ preventScroll: true });
         this.pendingMemoryControlCenterTargetId = null;
     }
@@ -3799,87 +3841,42 @@ export class SettingTab extends PluginSettingTab {
     private rebuildMemorySubSettings(): void {
         if (!this.memorySubContainer) return;
         this.memorySubContainer.empty();
-        // Advanced sub-container is a child of the now-cleared memorySubContainer.
-        this.memoryAdvancedContainer = null;
-        this.memoryModelTextControl = null;
-
         const plugin = this.plugin;
-        if (!plugin.settings.memoryEnabled) return;
 
         const container = this.memorySubContainer;
 
 
-        if ((plugin.getMemoryGovernanceUiMode?.() ?? "legacy_threshold") === "legacy_threshold"
+        if (plugin.settings.memoryEnabled
+            && (plugin.getMemoryGovernanceUiMode?.() ?? "legacy_threshold") === "legacy_threshold"
             && getMemoryTrustLevel(normalizeConfirmedMemoryCount(plugin.settings.confirmedMemoryCount)) >= 2) {
             new Setting(container)
                 .setName(this.t("plugin.settings.memory.autoAccept.name"))
                 .setDesc(this.t("plugin.settings.memory.autoAccept.desc"))
-                .addToggle((toggle) => {
-                    toggle
-                        .setValue(!plugin.settings.memoryAutoAcceptPaused)
-                        .onChange(async (value) => {
-                            const previousPaused = plugin.settings.memoryAutoAcceptPaused;
-                            try {
-                                await plugin.setMemoryAutoAcceptPaused(!value);
-                            } catch (error) {
-                                toggle.setValue(!previousPaused);
-                                plugin.log("Failed to persist automatic Memory setting", error);
-                                new Notice(this.t("plugin.settings.memory.autoAccept.saveFailed"), 5000);
-                            }
-                        });
-                });
+                .addToggle((toggle) => this.configurePermissionToggle("memoryAutoAcceptPaused", toggle,
+                    () => !plugin.settings.memoryAutoAcceptPaused,
+                    (value) => plugin.setMemoryAutoAcceptPaused(!value)));
         }
 
         new Setting(container)
-            .setName(this.t("plugin.settings.memory.advancedControls.name"))
-            .setDesc(this.t("plugin.settings.memory.advancedControls.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.showAdvancedMemoryControls)
-                    .onChange(async (value) => {
-                        plugin.settings.showAdvancedMemoryControls = value;
-                        await plugin.saveSettings();
-                        this.rebuildMemoryAdvanced();
-                        this.rebuildProviderConfig();
-                    });
-            });
-
-        new Setting(container)
             .setName(this.t("plugin.memoryExtraction.settings.enabled.name"))
-            .setDesc(this.t("plugin.memoryExtraction.settings.enabled.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.memoryExtractionEnabled)
-                    .onChange(async (value) => {
-                        if (value && !plugin.settings.memoryExtractionEnabled) {
-                            const confirmed = await confirmUserAction(this.app, {
+            .setDesc(this.t("plugin.memoryExtraction.settings.enabled.desc")
+                + (plugin.settings.memoryEnabled ? "" : ` ${this.t("plugin.settings.simple.learningPaused")}`))
+            .addToggle((toggle) => this.configurePermissionToggle("memoryExtractionEnabled", toggle,
+                () => plugin.settings.memoryExtractionEnabled,
+                (value) => plugin.saveSettingsPermissions({
+                    memoryExtractionEnabled: value,
+                    memoryExtractionConsent: {
+                        state: value ? "confirmed" : "paused",
+                        version: MEMORY_EXTRACTION_CONSENT_VERSION,
+                        confirmedAt: value ? new Date().toISOString() : plugin.settings.memoryExtractionConsent.confirmedAt,
+                    },
+                    ...(!value ? { memoryExtractionIncludeVaultInsights: false } : {}),
+                }),
+                async (value) => !value || confirmUserAction(this.app, {
                                 title: this.t("plugin.memoryExtraction.settings.enableConfirm.title"),
                                 message: this.t("plugin.memoryExtraction.settings.enableConfirm.message"),
                                 confirmText: this.t("plugin.memoryExtraction.settings.enableConfirm.confirm"),
-                            });
-                            if (!confirmed) {
-                                toggle.setValue(false);
-                                return;
-                            }
-                            plugin.settings.memoryExtractionConsent = {
-                                state: "confirmed",
-                                version: MEMORY_EXTRACTION_CONSENT_VERSION,
-                                confirmedAt: new Date().toISOString(),
-                            };
-                        }
-                        if (!value) {
-                            plugin.settings.memoryExtractionConsent = {
-                                state: "paused",
-                                version: MEMORY_EXTRACTION_CONSENT_VERSION,
-                                confirmedAt: plugin.settings.memoryExtractionConsent.confirmedAt,
-                            };
-                            plugin.settings.memoryExtractionIncludeVaultInsights = false;
-                        }
-                        plugin.settings.memoryExtractionEnabled = value;
-                        await plugin.saveSettings();
-                        this.rebuildMemorySubSettings();
-                    });
-            });
+                }), () => this.rebuildMemorySubSettings()));
 
         if (plugin.settings.memoryExtractionEnabled) {
             new Setting(container)
@@ -3899,30 +3896,20 @@ export class SettingTab extends PluginSettingTab {
             new Setting(container)
                 .setName(this.t("plugin.memoryExtraction.settings.includeVaultInsights.name"))
                 .setDesc(this.t("plugin.memoryExtraction.settings.includeVaultInsights.desc"))
-                .addToggle((toggle) => {
-                    toggle
-                        .setValue(plugin.settings.memoryExtractionIncludeVaultInsights)
-                        .onChange(async (value) => {
-                            plugin.settings.memoryExtractionIncludeVaultInsights = value;
-                            await plugin.saveSettings();
-                        });
-                });
+                .addToggle((toggle) => this.configurePermissionToggle("memoryExtractionIncludeVaultInsights", toggle,
+                    () => plugin.settings.memoryExtractionIncludeVaultInsights,
+                    (value) => plugin.saveSettingsPermissions({ memoryExtractionIncludeVaultInsights: value })));
         }
 
-        this.memoryAdvancedContainer = container.createDiv({ cls: "pa-settings-nested pa-settings-nested--level-2" });
-        this.rebuildMemoryAdvanced();
         this.markFormControlSettings(container);
     }
 
     private rebuildMemoryAdvanced(): void {
         if (!this.memoryAdvancedContainer) return;
         this.memoryAdvancedContainer.empty();
-        this.memoryModelTextControl = null;
         const plugin = this.plugin;
-        if (!plugin.settings.showAdvancedMemoryControls) return;
 
         const container = this.memoryAdvancedContainer;
-        const providerConfiguration = this.getEffectiveAIProviderConfiguration();
         const showMemoryNotReadyNotice = () => {
             new Notice(this.t("plugin.memory.diagnostics.notInitializedSummary"), 5000);
         };
@@ -3937,34 +3924,34 @@ export class SettingTab extends PluginSettingTab {
             return null;
         };
 
+        this.renderMemoryMaintenanceActions(container, getMemoryManager, getVss);
+        this.markFormControlSettings(container);
+    }
+
+    private renderMemoryUpdatePreference(container: HTMLElement): void {
+        const plugin = this.plugin;
         new Setting(container)
             .setName(this.t("plugin.settings.memory.background.name"))
             .setDesc(this.t("plugin.settings.memory.background.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.memoryApprovalPolicy === "auto-refresh-after-prepare")
-                    .onChange(async (value) => {
-                        if (value) {
-                            const confirmed = await confirmUserAction(this.app, {
+            .addToggle((toggle) => this.configurePermissionToggle("memoryApprovalPolicy", toggle,
+                () => plugin.settings.memoryApprovalPolicy === "auto-refresh-after-prepare",
+                async (value) => {
+                    await plugin.saveSettingsPermissions({ memoryApprovalPolicy: value ? "auto-refresh-after-prepare" : "always" });
+                    if (value) {
+                        plugin.memoryManager?.scheduleReconcile("settings");
+                        plugin.memoryManager?.scheduleAutoFlush("settings");
+                    }
+                },
+                async (value) => !value || confirmUserAction(this.app, {
                                 title: this.t("plugin.settings.memory.background.title"),
                                 message: this.t("plugin.settings.memory.background.message"),
                                 confirmText: this.t("plugin.settings.memory.background.confirm"),
-                            });
-                            if (!confirmed) {
-                                toggle.setValue(false);
-                                return;
-                            }
-                        }
-                        plugin.settings.memoryApprovalPolicy = value ? "auto-refresh-after-prepare" : "always";
-                        await plugin.saveSettings();
-                        if (value) {
-                            const memoryManager = getMemoryManager();
-                            memoryManager?.scheduleReconcile("settings");
-                            memoryManager?.scheduleAutoFlush("settings");
-                        }
-                    });
-            });
+                })));
+    }
 
+    private renderMemoryModelField(container: HTMLElement): void {
+        const plugin = this.plugin;
+        const providerConfiguration = this.getEffectiveAIProviderConfiguration();
         new Setting(container)
             .setName(this.t("plugin.settings.memory.model.name"))
             .setDesc(this.t("plugin.settings.memory.model.desc"))
@@ -3986,7 +3973,14 @@ export class SettingTab extends PluginSettingTab {
                     });
                 });
             });
+    }
 
+    private renderMemoryMaintenanceActions(
+        container: HTMLElement,
+        getMemoryManager: () => PluginManager["memoryManager"] | null,
+        getVss: () => PluginManager["vss"] | null,
+    ): void {
+        const plugin = this.plugin;
         new Setting(container)
             .setName(this.t("plugin.settings.memory.update.name"))
             .setDesc(this.t("plugin.settings.memory.update.desc"))
@@ -4057,21 +4051,45 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
 
-        new Setting(container).setName(this.t("plugin.settings.memory.excludePath.name"))
-            .setDesc(this.t("plugin.settings.memory.excludePath.desc"))
-            .addText(text => {
-                text.setPlaceholder('tmp/,notes/templates')
-                    .setValue(plugin.settings.vssCacheExcludePath.join(','))
-                    .onChange((value) => {
-                        const next = value.split(",").map((path) => path.trim()).filter(Boolean);
-                        if (addsExclusions(plugin.settings.vssCacheExcludePath, next)) {
-                            plugin.cancelActiveMemoryPreparation();
-                        }
-                        plugin.settings.vssCacheExcludePath = next;
-                        this.debouncedSave();
-                    })
-            });
+    }
+
+    private renderMemoryExclusions(container: HTMLElement): void {
+        const plugin = this.plugin;
+        this.renderSourceExclusion(container, new Setting(container)
+            .setName(this.t("plugin.settings.memory.excludePath.name"))
+            .setDesc(this.t("plugin.settings.memory.excludePath.desc")),
+        this.sourceScopeStates.memory, "tmp/,notes/templates",
+        () => plugin.settings.vssCacheExcludePath,
+        (next) => plugin.saveSettingsPermissions({ vssCacheExcludePath: next }));
         this.markFormControlSettings(container);
+    }
+
+    private renderSourceExclusion(
+        parent: HTMLElement,
+        setting: Setting,
+        state: ReturnType<typeof createSourceScopeSettingState>,
+        placeholder: string,
+        read: () => string[],
+        save: (next: string[]) => Promise<void>,
+        parse = (value: string) => normalizeTrimmedStringArray(value.split(","), []),
+        cancelMemoryPreparation = true,
+    ): void {
+        const generation = this.memoryControlCenterGeneration;
+        renderSourceScopeSetting(parent, setting, {
+            state, read, parse, placeholder,
+            save: async (next) => {
+                if (cancelMemoryPreparation && addsExclusions(read(), next)) this.plugin.cancelActiveMemoryPreparation();
+                await save(next);
+            },
+            copy: {
+                save: this.t("plugin.settings.sourceScope.save"),
+                saving: this.t("plugin.settings.sourceScope.saving"),
+                failed: this.t("plugin.settings.sourceScope.failed"),
+                retry: this.t("plugin.settings.sourceScope.retry"),
+            },
+            isCurrent: () => this.settingsVisible && generation === this.memoryControlCenterGeneration,
+            log: (error) => this.log("Failed to save source scope", error),
+        });
     }
 
     private renderOperationsAgentSection(parentEl: HTMLElement): void {
@@ -4079,111 +4097,62 @@ export class SettingTab extends PluginSettingTab {
         new Setting(parentEl)
             .setName(this.t("plugin.settings.operationsAgent.name"))
             .setDesc(this.t("plugin.settings.operationsAgent.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.operationsAgentEnabled)
-                    .onChange(async (value) => {
-                        plugin.settings.operationsAgentEnabled = value;
-                        await plugin.saveSettings();
-                    });
+            .addToggle((toggle) => this.configurePermissionToggle("operationsAgentEnabled", toggle,
+                () => plugin.settings.operationsAgentEnabled,
+                (value) => plugin.saveSettingsPermissions({ operationsAgentEnabled: value })));
+        const audit = this.createSettingsDetail(parentEl, "plugin.settings.operationsAgent.auditContent.name");
+        new Setting(audit)
+            .setName(this.t("plugin.settings.operationsAgent.auditContent.name"))
+            .setDesc(this.t("plugin.settings.operationsAgent.auditContent.desc"))
+            .addToggle((toggle) => this.configurePermissionToggle("operationsAuditIncludeContent", toggle,
+                () => plugin.settings.operationsAuditIncludeContent,
+                (value) => plugin.saveSettingsPermissions({ operationsAuditIncludeContent: value })));
+        new Setting(audit)
+            .setName(this.t("plugin.settings.operationsAgent.auditRetention.name"))
+            .setDesc(this.t("plugin.settings.operationsAgent.auditRetention.desc"))
+            .addDropdown((dropdown) => {
+                dropdown
+                    .addOption("30", this.t("plugin.settings.operationsAgent.auditRetention.30"))
+                    .addOption("90", this.t("plugin.settings.operationsAgent.auditRetention.90"));
+                this.configurePermissionControl("operationsAuditRetentionDays", dropdown,
+                    () => String(plugin.settings.operationsAuditRetentionDays),
+                    (value) => plugin.saveSettingsPermissions({ operationsAuditRetentionDays: value === "90" ? 90 : 30 }));
             });
+    }
+
+    private renderSaveSuggestionPreference(parentEl: HTMLElement): void {
+        const plugin = this.plugin;
         new Setting(parentEl)
             .setName(this.t("plugin.settings.operationsAgent.proactiveSave.name"))
             .setDesc(this.t("plugin.settings.operationsAgent.proactiveSave.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.operationsProactiveSaveSuggestionsEnabled)
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.operationsProactiveSaveSuggestionsEnabled = value;
-                        await plugin.saveSettings();
-                    });
-            });
-        new Setting(parentEl)
-            .setName(this.t("plugin.settings.operationsAgent.auditContent.name"))
-            .setDesc(this.t("plugin.settings.operationsAgent.auditContent.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.operationsAuditIncludeContent)
-                    .onChange(async (value) => {
-                        plugin.settings.operationsAuditIncludeContent = value;
-                        await plugin.saveSettings();
-                    });
-            });
-        new Setting(parentEl)
-            .setName(this.t("plugin.settings.operationsAgent.auditRetention.name"))
-            .setDesc(this.t("plugin.settings.operationsAgent.auditRetention.desc"))
-            .addDropdown((dropdown) => {
-                dropdown
-                    .addOption("30", this.t("plugin.settings.operationsAgent.auditRetention.30"))
-                    .addOption("90", this.t("plugin.settings.operationsAgent.auditRetention.90"))
-                    .setValue(String(plugin.settings.operationsAuditRetentionDays))
-                    .onChange(async (value) => {
-                        plugin.settings.operationsAuditRetentionDays = value === "90" ? 90 : 30;
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     });
             });
     }
 
     private renderFeaturedImageSection(parentEl: HTMLElement): void {
-        // 图片生成设置（仅Qwen支持）
         this.featuredImageContainer = parentEl.createDiv();
         this.rebuildFeaturedImage();
     }
 
-    private rebuildFeaturedImage(
-        baseURL = this.getEffectiveAIProviderConfiguration().baseURL,
-    ): void {
-        if (!this.featuredImageContainer) return;
-        this.featuredImageContainer.empty();
-        const plugin = this.plugin;
-        if (this.getEffectiveAIProviderConfiguration().aiProvider !== 'qwen') return;
-        if (!getDashScopeImageGenerationEndpoint(baseURL)) return;
-
+    private rebuildFeaturedImage(baseURL = this.getEffectiveAIProviderConfiguration().baseURL): void {
         const container = this.featuredImageContainer;
-
+        if (!container) return;
+        container.empty();
+        if (this.getEffectiveAIProviderConfiguration().aiProvider !== "qwen"
+            || !getDashScopeImageGenerationEndpoint(baseURL)) return;
         new Setting(container)
-            .setName(this.t("plugin.settings.featuredImage.path.name"))
+            .setName(this.t("plugin.settings.featuredImage.options.title"))
             .setDesc(this.t("plugin.settings.featuredImage.path.desc"))
-            .addText((text) => {
-                text.setPlaceholder("attachments/ai-images");
-                text.setValue(plugin.settings.featuredImagePath.toString());
-                text.onChange((value: string) => {
-                    plugin.settings.featuredImagePath = value;
-                    this.debouncedSave();
-                });
-            });
-        new Setting(container)
-            .setName(this.t("plugin.settings.featuredImage.model.name"))
-            .setDesc(this.t("plugin.settings.featuredImage.model.desc"))
-            .addDropdown((dropdown) => {
-                dropdown
-                    .addOption("wan2.7-image", this.t("plugin.settings.featuredImage.model.balanced"))
-                    .addOption("wan2.7-image-pro", this.t("plugin.settings.featuredImage.model.quality"))
-                    .setValue(normalizeFeaturedImageModel(plugin.settings.featuredImageModel))
-                    .onChange((value) => {
-                        plugin.settings.featuredImageModel = normalizeFeaturedImageModel(value);
-                        this.debouncedSave();
-                    });
-            });
-        new Setting(container).setName(this.t("plugin.settings.featuredImage.count.name"))
-            .setDesc(this.t("plugin.settings.featuredImage.count.desc"))
-            .addText(text => {
-                text.setPlaceholder('1')
-                    .setValue(normalizeFeaturedImageCount(plugin.settings.numFeaturedImages).toString())
-                    .onChange((value) => {
-                        plugin.settings.numFeaturedImages = normalizeFeaturedImageCount(value);
-                        this.debouncedSave();
-                    })
-            });
+            .addButton((button) => button
+                .setButtonText(this.t("plugin.settings.legal.open"))
+                .onClick(() => { this.featureOptionsModal = this.plugin.openFeaturedImageOptions(); }));
         this.markFormControlSettings(container);
-    }
-
-    private findGraphColor(graphColor: GraphColor): number {
-        return this.plugin.settings.colorGroups.findIndex((color) => {
-            return graphColor.query === color.query &&
-                graphColor.color.a === color.color.a &&
-                graphColor.color.rgb === color.color.rgb;
-        });
     }
 
     private findMetadata(metaKey: string) {

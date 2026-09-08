@@ -2,6 +2,7 @@
 import { App, Editor, MarkdownView, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import { AIService } from './ai-services/service';
+import type { FeaturedImageRunOptions } from './ai-services/featured-image-options';
 import { PluginManager } from './plugin'
 import { getVaultTags } from './obsidian-internals';
 
@@ -99,7 +100,7 @@ export class AssistantFeaturedImageHelper {
         this.aiService = new AIService(plugin);
     }
 
-    async generate() {
-        await this.aiService.generateFeaturedImage(this.editor, this.view);
+    async generate(options: FeaturedImageRunOptions) {
+        await this.aiService.generateFeaturedImage(this.editor, this.view, options);
     }
 }

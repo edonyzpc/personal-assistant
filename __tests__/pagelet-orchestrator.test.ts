@@ -5693,7 +5693,7 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(getDeepDiscoverUsage).toHaveBeenCalledTimes(1);
         expect(getPageletFeatureRateLimitStatus).not.toHaveBeenCalled();
         const message = jest.mocked(Notice).mock.calls.at(-1)?.[0] as string;
-        expect(message).toBe("4 / 36 runs · 12 model turns · 31 tool calls");
+        expect(message).toBe("Discoveries today: 4 of 36.");
     });
 });
 

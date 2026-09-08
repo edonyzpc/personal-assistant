@@ -201,8 +201,15 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const [activeView, setActiveView] = useState<StatisticsView>(
 		normalizeStatisticsView(plugin.settings.statisticsType)
 	);
+	const [viewSaveStatus, setViewSaveStatus] = useState<"idle" | "saving" | "error">("idle");
+	const viewSaveRevision = useRef(0);
 	const [chartRange, setChartRange] = useState<StatsRange>("90d");
 	const [rangeTouched, setRangeTouched] = useState(false);
+
+	useEffect(() => () => {
+		// Pending saves must not update a closed view, including an effect remount.
+		viewSaveRevision.current += 1;
+	}, []);
 
 	useEffect(() => {
 		const element = containerRef.current;
@@ -447,12 +454,18 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	);
 	const maxCompositionValue = Math.max(...compositionRows.map((row) => row.value), 1);
 
-	const handleViewChange = (view: StatisticsView) => {
+	const handleViewChange = async (view: StatisticsView) => {
 		setActiveView(view);
 		plugin.settings.statisticsType = view;
-		void plugin.saveSettings().catch((error) => {
+		const revision = ++viewSaveRevision.current;
+		setViewSaveStatus("saving");
+		try {
+			await plugin.saveSettings();
+			if (viewSaveRevision.current === revision) setViewSaveStatus("idle");
+		} catch (error) {
 			plugin.log("Failed to save statistics view setting", error);
-		});
+			if (viewSaveRevision.current === revision) setViewSaveStatus("error");
+		}
 	};
 
 	const handleRangeChange = (range: StatsRange) => {
@@ -490,13 +503,25 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 								aria-selected={activeView === tab.id}
 								data-active={activeView === tab.id ? "true" : "false"}
 								className="pa-statistics-tab"
-								onClick={() => handleViewChange(tab.id)}
+								onClick={() => { void handleViewChange(tab.id); }}
 							>
 								{t(tab.labelKey)}
 							</button>
 						))}
 					</div>
 				</div>
+				{viewSaveStatus !== "idle" ? (
+					<div className={`pa-mt-3 pa-flex pa-flex-wrap pa-items-center pa-gap-2 pa-text-xs ${viewSaveStatus === "error" ? "pa-stat-warning pa-p-2" : "pa-stat-text-secondary"}`}>
+						<span role="status" aria-live="polite">
+							{t(viewSaveStatus === "error" ? "plugin.statistics.view.saveFailed" : "plugin.statistics.view.saving")}
+						</span>
+						{viewSaveStatus === "error" ? (
+							<button type="button" className="pa-statistics-retry" onClick={() => { void handleViewChange(activeView); }}>
+								{t("plugin.statistics.view.retry")}
+							</button>
+						) : null}
+					</div>
+				) : null}
 				{issueMessage ? (
 					<div className="pa-stat-warning pa-mt-3 pa-p-2 pa-text-xs">
 						{issueMessage}

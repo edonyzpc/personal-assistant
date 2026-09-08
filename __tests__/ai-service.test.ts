@@ -4,6 +4,8 @@ import {
     getFeaturedImageSavePath,
     normalizeFeaturedImageFolderPath,
 } from '../src/ai-services/featured-image-path';
+import { AIUtils, getDashScopeImageGenerationEndpoint } from '../src/ai-services/ai-utils';
+import { freezeFeaturedImageRunOptions, type FeaturedImageRunOptions } from '../src/ai-services/featured-image-options';
 
 jest.mock('obsidian');
 jest.mock('nanoid', () => ({ nanoid: () => 'test-id' }));
@@ -31,6 +33,7 @@ const noticeMessages = MockNotice.messages;
 const { AIService, mergeFrontmatterTags, parseSummaryResponse } = require('../src/ai-services/service') as typeof import('../src/ai-services/service');
 
 beforeEach(() => {
+    jest.restoreAllMocks();
     jest.useRealTimers();
     requestUrl.mockReset();
     noticeMessages.length = 0;
@@ -40,13 +43,17 @@ function createFeaturedImageService(settings: {
     baseURL?: string;
     featuredImageModel?: string;
     numFeaturedImages?: number;
+    featuredImagePath?: string;
 } = {}) {
     const plugin = {
         settings: {
             aiProvider: 'qwen',
+            chatModelName: 'qwen-plus',
+            embeddingModelName: 'text-embedding-v4',
             baseURL: settings.baseURL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             featuredImageModel: settings.featuredImageModel ?? 'wan2.7-image',
             numFeaturedImages: settings.numFeaturedImages ?? 1,
+            featuredImagePath: settings.featuredImagePath ?? '',
         },
         app: {
             plugins: {
@@ -58,9 +65,17 @@ function createFeaturedImageService(settings: {
         log: jest.fn(),
     };
     const service = new AIService(plugin as never) as unknown as {
-        generateFeaturedImageUrls: (prompt: string) => Promise<Array<{ url: string }> | null>;
+        generateFeaturedImageUrls: (prompt: string, options: FeaturedImageRunOptions) => Promise<Array<{ url: string }> | null>;
     };
-    return { plugin, service };
+    const options = freezeFeaturedImageRunOptions({
+        connection: { ...plugin.settings },
+        featuredImageModel: plugin.settings.featuredImageModel as FeaturedImageRunOptions['featuredImageModel'],
+        numFeaturedImages: plugin.settings.numFeaturedImages,
+        featuredImagePath: plugin.settings.featuredImagePath,
+        imageEndpoint: getDashScopeImageGenerationEndpoint(plugin.settings.baseURL) ?? '',
+        isCurrent: () => true,
+    });
+    return { plugin, service, options };
 }
 
 function createMockNoticeElement(): {
@@ -74,6 +89,41 @@ function createMockNoticeElement(): {
             empty: jest.fn(),
         })),
     };
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+}
+
+function createFeaturedImageRun() {
+    const fixture = createFeaturedImageService({ featuredImagePath: 'images', numFeaturedImages: 2 });
+    let current = true;
+    const options: FeaturedImageRunOptions = { ...fixture.options, isCurrent: () => current };
+    const noticeElement = createMockNoticeElement();
+    const dispatch = jest.fn();
+    const editor = { getValue: () => 'note body' };
+    const view = { editor: { cm: { state: { doc: { length: 9, lineAt: () => ({ from: 0, to: 0 }) } }, dispatch } } };
+    const vault = {
+        getAbstractFileByPath: jest.fn(() => null),
+        createFolder: jest.fn(async (_path: string) => undefined),
+        createBinary: jest.fn(async (_path: string, _bytes: ArrayBuffer) => undefined),
+    };
+    Object.assign(fixture.plugin.app, { vault });
+    const service = fixture.service as unknown as {
+        generateFeaturedImage(editor: unknown, view: unknown, options: FeaturedImageRunOptions): Promise<void>;
+        generateFeaturedImageUrls(prompt: string, options: FeaturedImageRunOptions): Promise<Array<{ url: string }> | null>;
+        callLLM(query: string, prompt: string, options: FeaturedImageRunOptions): Promise<string>;
+        downloadImageToVault(app: unknown, url: string, path: string, options: FeaturedImageRunOptions): Promise<string>;
+    };
+    Object.assign(service, {
+        aiUtils: {
+            createAIFeaturedImageNotice: () => ({ notice: { messageEl: noticeElement, hide: jest.fn() } }),
+            getDocumentContent: (markdown: string) => ({ content: markdown, frontmatterInfo: { exists: false, contentStart: 0 } }),
+        },
+    });
+    return { ...fixture, service, options, editor, view, vault, dispatch, invalidate: () => { current = false; } };
 }
 
 describe('AI summary response parsing', () => {
@@ -183,6 +233,156 @@ describe('AIService featured image vault paths', () => {
 });
 
 describe('AI featured image generation', () => {
+    it('uses frozen image defaults while later edits change the global defaults', async () => {
+        const run = createFeaturedImageRun();
+        const prompt = deferred<string>();
+        jest.spyOn(run.service, 'callLLM').mockReturnValue(prompt.promise);
+        requestUrl.mockResolvedValueOnce({ status: 200, json: { output: { choices: [
+            { message: { content: [{ image: 'https://example.com/first.png' }] } },
+        ] } } });
+        requestUrl.mockResolvedValueOnce({ status: 200, arrayBuffer: new ArrayBuffer(1) });
+        const generating = run.service.generateFeaturedImage(run.editor, run.view, run.options);
+        run.plugin.settings.featuredImageModel = 'wan2.7-image-pro';
+        run.plugin.settings.numFeaturedImages = 4;
+        run.plugin.settings.featuredImagePath = 'changed-folder';
+        prompt.resolve('A quiet library');
+        await generating;
+        expect(JSON.parse((requestUrl.mock.calls[0][0] as { body: string }).body)).toMatchObject({
+            model: 'wan2.7-image', parameters: { n: 2 },
+        });
+        expect(run.vault.createBinary).toHaveBeenCalledWith('images/first.png', expect.any(ArrayBuffer));
+        expect(run.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops before image generation when the prompt finishes after invalidation', async () => {
+        const run = createFeaturedImageRun();
+        const prompt = deferred<string>();
+        jest.spyOn(run.service, 'callLLM').mockReturnValue(prompt.promise);
+        const generating = run.service.generateFeaturedImage(run.editor, run.view, run.options);
+        run.invalidate();
+        prompt.resolve('A quiet library');
+        await generating;
+        expect(run.plugin.getAPIToken).not.toHaveBeenCalled();
+        expect(requestUrl).not.toHaveBeenCalled();
+        expect(run.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('rechecks image admission after awaiting the existing credential gate', async () => {
+        const run = createFeaturedImageRun();
+        const token = deferred<string>();
+        run.plugin.getAPIToken.mockReturnValue(token.promise);
+        const result = run.service.generateFeaturedImageUrls('prompt', run.options);
+        run.invalidate();
+        token.resolve('new-token');
+        await expect(result).rejects.toMatchObject({ name: 'FeaturedImageRunInvalidatedError' });
+        expect(requestUrl).not.toHaveBeenCalled();
+    });
+
+    it('does not send an image request with a missing token or a rejected credential gate', async () => {
+        const run = createFeaturedImageRun();
+        run.plugin.getAPIToken.mockResolvedValueOnce('   ').mockRejectedValueOnce(new Error('credential transition'));
+        await expect(run.service.generateFeaturedImageUrls('prompt', run.options)).resolves.toBeNull();
+        await expect(run.service.generateFeaturedImageUrls('prompt', run.options)).resolves.toBeNull();
+        expect(requestUrl).not.toHaveBeenCalled();
+    });
+
+    it('guards prompt-model token resolution without mixing a new token with the captured connection', async () => {
+        const run = createFeaturedImageRun();
+        const token = deferred<string>();
+        run.plugin.getAPIToken.mockReturnValue(token.promise);
+        const result = run.service.callLLM('note', 'describe', run.options);
+        run.invalidate();
+        token.resolve('new-token');
+        await expect(result).rejects.toMatchObject({ name: 'FeaturedImageRunInvalidatedError' });
+        expect(requestUrl).not.toHaveBeenCalled();
+    });
+
+    it('uses the captured prompt-model connection through the real SDK transport', async () => {
+        const run = createFeaturedImageRun();
+        const body = JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'qwen-plus',
+            choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'generated prompt' } }] });
+        requestUrl.mockResolvedValueOnce({ status: 200, headers: { 'content-type': 'application/json' },
+            arrayBuffer: new TextEncoder().encode(body).buffer, text: body, json: null });
+        run.plugin.settings.baseURL = 'https://other.example/v1';
+        run.plugin.settings.chatModelName = 'changed-model';
+        await expect(run.service.callLLM('note', 'describe', run.options)).resolves.toBe('generated prompt');
+        const sent = requestUrl.mock.calls[0][0] as { url: string; body: string };
+        expect(sent.url).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions');
+        expect(JSON.parse(sent.body).model).toBe('qwen-plus');
+    });
+
+    it('stops a real SDK retry before another provider request after invalidation', async () => {
+        jest.useFakeTimers();
+        const run = createFeaturedImageRun();
+        requestUrl.mockImplementationOnce(async () => {
+            run.invalidate();
+            const body = JSON.stringify({ error: { message: 'Try later', type: 'rate_limit', code: 'rate_limit' } });
+            return { status: 429, headers: { 'content-type': 'application/json' },
+                arrayBuffer: new TextEncoder().encode(body).buffer, text: body, json: null };
+        });
+        const result = run.service.callLLM('note', 'describe', run.options);
+        const stopped = expect(result).rejects.toMatchObject({ name: 'FeaturedImageRunInvalidatedError' });
+        await jest.runAllTimersAsync();
+        await stopped;
+        expect(requestUrl).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes prompt request guards to the existing SDK transport for every send and retry', async () => {
+        const run = createFeaturedImageRun();
+        let requestStarts = 0;
+        jest.spyOn(AIUtils.prototype, 'createChatModel').mockImplementation(async (_temperature, options) => ({
+            invoke: async () => {
+                options?.onProviderRequestStart?.();
+                requestStarts++;
+                run.invalidate();
+                options?.onProviderRequestStart?.();
+                requestStarts++;
+                return { content: 'prompt' };
+            },
+        }) as never);
+        await expect(run.service.callLLM('note', 'describe', run.options)).rejects.toMatchObject({ name: 'FeaturedImageRunInvalidatedError' });
+        expect(requestStarts).toBe(1);
+    });
+
+    it('stops after folder creation if the target changed before download admission', async () => {
+        const run = createFeaturedImageRun();
+        const folder = deferred<undefined>();
+        run.vault.createFolder.mockReturnValue(folder.promise);
+        const result = run.service.downloadImageToVault(run.plugin.app, 'https://example.com/first.png', 'images', run.options);
+        run.invalidate();
+        folder.resolve(undefined);
+        await expect(result).rejects.toMatchObject({ name: 'FeaturedImageRunInvalidatedError' });
+        expect(requestUrl).not.toHaveBeenCalled();
+        expect(run.vault.createBinary).not.toHaveBeenCalled();
+    });
+
+    it('does not save downloaded bytes after the original target becomes invalid', async () => {
+        const run = createFeaturedImageRun();
+        requestUrl.mockImplementationOnce(async () => {
+            run.invalidate();
+            return { status: 200, arrayBuffer: new ArrayBuffer(1) };
+        });
+        await expect(run.service.downloadImageToVault(run.plugin.app, 'https://example.com/first.png', 'images', run.options))
+            .rejects.toMatchObject({ name: 'FeaturedImageRunInvalidatedError' });
+        expect(requestUrl).toHaveBeenCalledTimes(1);
+        expect(run.vault.createBinary).not.toHaveBeenCalled();
+    });
+
+    it('stops subsequent downloads and insertion after an already-admitted file write loses its target', async () => {
+        const run = createFeaturedImageRun();
+        jest.spyOn(run.service, 'callLLM').mockResolvedValue('prompt');
+        jest.spyOn(run.service, 'generateFeaturedImageUrls').mockResolvedValue([
+            { url: 'https://example.com/first.png' }, { url: 'https://example.com/second.png' },
+        ]);
+        requestUrl.mockResolvedValue({ status: 200, arrayBuffer: new ArrayBuffer(1) });
+        run.vault.createBinary.mockImplementationOnce(async () => { run.invalidate(); });
+        await run.service.generateFeaturedImage(run.editor, run.view, run.options);
+        expect(requestUrl).toHaveBeenCalledTimes(1);
+        expect(run.vault.createBinary).toHaveBeenCalledTimes(1);
+        expect(run.dispatch).not.toHaveBeenCalled();
+        expect(run.plugin.log).toHaveBeenCalledWith('Featured image run stopped because its note or AI connection changed');
+    });
+
     it('posts the Wan 2.7 synchronous request body and returns image URLs', async () => {
         requestUrl.mockResolvedValueOnce({
             status: 200,
@@ -196,9 +396,9 @@ describe('AI featured image generation', () => {
                 },
             },
         });
-        const { service } = createFeaturedImageService();
+        const { service, options } = createFeaturedImageService();
 
-        await expect(service.generateFeaturedImageUrls('A quiet library')).resolves.toEqual([
+        await expect(service.generateFeaturedImageUrls('A quiet library', options)).resolves.toEqual([
             { url: 'https://example.com/image-1.png' },
         ]);
 
@@ -236,12 +436,12 @@ describe('AI featured image generation', () => {
                 },
             },
         });
-        const { service } = createFeaturedImageService({
+        const { service, options } = createFeaturedImageService({
             featuredImageModel: 'wan2.7-image-pro',
             numFeaturedImages: 99,
         });
 
-        await expect(service.generateFeaturedImageUrls('prompt')).resolves.toEqual([
+        await expect(service.generateFeaturedImageUrls('prompt', options)).resolves.toEqual([
             { url: 'https://example.com/image-1.png' },
             { url: 'https://example.com/image-2.png' },
         ]);
@@ -260,11 +460,11 @@ describe('AI featured image generation', () => {
                 },
             },
         });
-        const { service } = createFeaturedImageService({
+        const { service, options } = createFeaturedImageService({
             baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/',
         });
 
-        await service.generateFeaturedImageUrls('prompt');
+        await service.generateFeaturedImageUrls('prompt', options);
 
         expect((requestUrl.mock.calls[0][0] as { url: string }).url).toBe(
             'https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
@@ -272,11 +472,11 @@ describe('AI featured image generation', () => {
     });
 
     it('does not call the image endpoint for unsupported base URLs', async () => {
-        const { service } = createFeaturedImageService({
+        const { service, options } = createFeaturedImageService({
             baseURL: 'https://example.invalid/compatible-mode/v1',
         });
 
-        await expect(service.generateFeaturedImageUrls('prompt')).resolves.toBeNull();
+        await expect(service.generateFeaturedImageUrls('prompt', options)).resolves.toBeNull();
 
         expect(requestUrl).not.toHaveBeenCalled();
     });
@@ -290,9 +490,9 @@ describe('AI featured image generation', () => {
                 message: 'provider detail that may include user prompt text',
             },
         });
-        const { plugin, service } = createFeaturedImageService();
+        const { plugin, service, options } = createFeaturedImageService();
 
-        await expect(service.generateFeaturedImageUrls('private prompt')).resolves.toBeNull();
+        await expect(service.generateFeaturedImageUrls('private prompt', options)).resolves.toBeNull();
 
         expect(plugin.log).toHaveBeenCalledWith('Image generation request failed', expect.objectContaining({
             requestId: 'req-secret',
@@ -321,7 +521,7 @@ describe('AI featured image generation', () => {
             },
         });
         const errored = createFeaturedImageService();
-        await expect(errored.service.generateFeaturedImageUrls('prompt')).resolves.toBeNull();
+        await expect(errored.service.generateFeaturedImageUrls('prompt', errored.options)).resolves.toBeNull();
         expect(errored.plugin.log).toHaveBeenCalledWith('Image generation provider returned an error', expect.objectContaining({
             message: '[provider message omitted]',
         }));
@@ -331,16 +531,16 @@ describe('AI featured image generation', () => {
             json: { output: { choices: [null, { message: { content: [] } }] } },
         });
         const empty = createFeaturedImageService();
-        await expect(empty.service.generateFeaturedImageUrls('prompt')).resolves.toBeNull();
+        await expect(empty.service.generateFeaturedImageUrls('prompt', empty.options)).resolves.toBeNull();
         expect(empty.plugin.log).toHaveBeenCalledWith('Image generation response did not include image URLs', expect.any(Object));
     });
 
     it('times out stalled image generation requests', async () => {
         jest.useFakeTimers();
         requestUrl.mockImplementationOnce(() => new Promise(() => { }));
-        const { plugin, service } = createFeaturedImageService();
+        const { plugin, service, options } = createFeaturedImageService();
 
-        const generation = service.generateFeaturedImageUrls('private prompt');
+        const generation = service.generateFeaturedImageUrls('private prompt', options);
         await Promise.resolve();
         await Promise.resolve();
         expect(requestUrl).toHaveBeenCalledTimes(1);
@@ -366,7 +566,7 @@ describe('AI featured image generation', () => {
                 message: 'provider detail that may include private prompt and test-token',
             },
         });
-        const { plugin, service } = createFeaturedImageService();
+        const { plugin, service, options } = createFeaturedImageService();
         const noticeElement = createMockNoticeElement();
         (service as unknown as {
             aiUtils: {
@@ -384,10 +584,11 @@ describe('AI featured image generation', () => {
         (service as unknown as { callLLM: () => Promise<string> }).callLLM = jest.fn(async () => 'private prompt');
 
         await (service as unknown as {
-            generateFeaturedImage: (editor: unknown, view: unknown) => Promise<void>;
+            generateFeaturedImage: (editor: unknown, view: unknown, options: FeaturedImageRunOptions) => Promise<void>;
         }).generateFeaturedImage(
             { getValue: () => 'note body' },
             { editor: { cm: {} } },
+            options,
         );
 
         expect(noticeMessages
@@ -402,7 +603,7 @@ describe('AI featured image generation', () => {
 
     it('times out stalled LLM prompt generation during featured image flow', async () => {
         jest.useFakeTimers();
-        const { plugin, service } = createFeaturedImageService();
+        const { plugin, service, options } = createFeaturedImageService();
         const noticeElement = createMockNoticeElement();
 
         (service as unknown as {
@@ -423,10 +624,11 @@ describe('AI featured image generation', () => {
         );
 
         const generation = (service as unknown as {
-            generateFeaturedImage: (editor: unknown, view: unknown) => Promise<void>;
+            generateFeaturedImage: (editor: unknown, view: unknown, options: FeaturedImageRunOptions) => Promise<void>;
         }).generateFeaturedImage(
             { getValue: () => 'note body' },
             { editor: { cm: {} } },
+            options,
         );
         await Promise.resolve();
         await Promise.resolve();
@@ -442,7 +644,7 @@ describe('AI featured image generation', () => {
     });
 
     it('inserts successfully downloaded featured images when one download fails', async () => {
-        const { plugin, service } = createFeaturedImageService();
+        const { plugin, service, options } = createFeaturedImageService();
         const noticeElement = createMockNoticeElement();
         const dispatch = jest.fn();
         const lineAt = jest.fn(() => ({ from: 0, to: 0 }));
@@ -476,7 +678,7 @@ describe('AI featured image generation', () => {
         });
 
         await (service as unknown as {
-            generateFeaturedImage: (editor: unknown, view: unknown) => Promise<void>;
+            generateFeaturedImage: (editor: unknown, view: unknown, options: FeaturedImageRunOptions) => Promise<void>;
         }).generateFeaturedImage(
             { getValue: () => 'note body' },
             {
@@ -492,6 +694,7 @@ describe('AI featured image generation', () => {
                     },
                 },
             },
+            options,
         );
 
         expect(dispatch).toHaveBeenCalledTimes(1);
