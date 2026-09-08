@@ -1,0 +1,8 @@
+{
+  "attachment": true,
+  "font": true,
+  "conversation": true,
+  "note": true,
+  "mobile": false,
+  "locale": "en"
+}

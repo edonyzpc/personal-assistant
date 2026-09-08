@@ -69,8 +69,9 @@ Work item: B-129
 旧 HEIC、旧保存记录的兼容方案须在实施前设计；本决定不批准自动删除或批量转换
 历史资产。回退也必须保护已迁出的文件与已保存笔记，不自动搬回或恢复旧路径。
 
-实施前后差异见 [Architecture](../../architecture/multimodal-chat-architecture.md#图片管理修订与当前实现差异)，
-后续启动见 [Backlog B-129](../../backlog.md#下一步可执行)。
+当前实现与兼容边界见 [Architecture](../../architecture/multimodal-chat-architecture.md#图片管理与保存恢复)，
+修订验证见 [Mac / iPhone 证据](../../archive/2026/chat-image-management-validation.md)，
+剩余旧应用夹具验证见 [T-006](../../backlog.md#触发型评估)。
 
 ### 已确认的产品边界
 

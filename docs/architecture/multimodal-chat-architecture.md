@@ -1,20 +1,20 @@
 # Multimodal Chat Architecture
 
 Document status: Current
-Updated: 2026-09-08
+Updated: 2026-09-09
 Work item: B-129
 Authority: 当前图片聊天、文案版本、图文保存及显式风格参考的技术契约。
 Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)
-Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md)
+Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md) / [图片管理修订验证](../archive/2026/chat-image-management-validation.md)
 
-## 图片管理修订与当前实现差异
+## 图片管理与保存恢复
 
 2026-09-08 用户已确认 [DEC-030 图片管理简化修订](../product/decisions/dec-030-multimodal-chat-image-copywriting.md#2026-09-08-图片管理简化修订)。
-目标行为及验收见 [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)，
-执行与验证见 [Tracker](../development/active/chat-image-management/tracker.md)。
-以下描述本次源码，旧验证不证明新增移动生命周期已通过。
+产品行为及验收见 [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)。
+以下是当前源码的技术契约；同构建 Mac 与 iPhone 输入证据、未验证范围见
+[图片管理修订验证](../archive/2026/chat-image-management-validation.md)。
 
-| 责任 | 当前代码事实 | 新契约要求与设计入口 |
+| 责任 | 当前代码事实 | 保护边界 |
 | --- | --- | --- |
 | 输入与原图定义 | 所有入口使用实际交付文件语义，旧 acquisition 枚举可读但不触发警告 | 内容身份及异步草稿保护不变 |
 | HEIC | 导入和库内新引用在登记前按容器字节拒绝，处理器无 HEIC 转换调用 | 旧可读缓存保留；缺缓存提示 JPEG，不转换 |
@@ -22,8 +22,21 @@ Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-mu
 | 路径与归属 | 迁出更新同源资产并转为 vault_reference，保留导入来源证据 | 管理和删除同时核验来源与当前聊天目录 |
 | 兼容与中断恢复 | 图片服务持久意图先于 rename，保存记录冻结返回的实际路径 | 旧 HEIC 已写 JPEG 可恢复；缺输出保留记录并拒绝转换 |
 
-无批量存量迁移或手动引用监听。source-verified 设计、兼容边界和风险映射见
-[SDD](../development/active/chat-image-management/sdd.md)；实际验证结果仅在 Tracker 记录。
+图片服务在自身队列内串行迁出；保存服务负责冻结文字、所选图片和结果记录。
+`promoteToNote` 先持久化 source/target/hash/operation 意图，再核对源 hash/size、
+目标不存在及双方 Data Boundary，最后移动文件。保存 receipt 冻结返回的实际路径；
+失败重试使用同一 operationId。源和目标同时存在就是冲突，即使内容 hash 相同也不覆盖。
+源已消失而目标内容正确时，仅凭已有移动意图认领，不把任意同 hash 外部文件视为成功。
+
+同路径资产一起更新为 `vault_reference`，保留 importDirectory 作为来源证据。
+目标解析延迟到首次迁出；多个预览通过 PA 迁出记录复用实际位置，后续附件设置改变
+不再搬动普通附件。读取与核验先恢复相关意图；单项失败不隐藏管理列表其他资产，
+pending 意图阻止清理。显式重新定位保留旧意图为历史并退出当前恢复路径，不能伪造旧操作完成。
+
+旧 receipt 缺省 transfer 继续按旧 copy 解释，冻结字段不得改写。旧 HEIC 已有正式 JPEG
+时按冻结 hash 恢复；缺输出则保留原件、文字和记录，拒绝再转换。旧可读缓存可以继续使用，
+缺缓存不产生新转换。回退保留已迁出的普通附件；旧版本不能理解新 receipt 时安全拒绝恢复。
+不批量改写存量数据，不监听手动笔记引用，不自动搬回文件；文件与本地登记不是原子事务。
 
 ## 模块与数据流
 

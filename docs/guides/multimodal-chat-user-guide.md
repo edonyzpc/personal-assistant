@@ -2,8 +2,8 @@
 
 适用于包含 B-129 的构建；是否已发布以实际安装版本及发布记录为准。产品范围见 [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)，历史验证与实机边界见 [验证证据](../archive/2026/b129-multimodal-chat-validation.md)。
 
-本指南描述采用 2026-09-08 图片管理规则的构建。开发与验证进度见
-[Tracker](../development/active/chat-image-management/tracker.md)，不据此推定旧版本已经更新。
+本指南描述采用 2026-09-08 图片管理规则的构建。该修订的实际验证与范围限制见
+[图片管理验证](../archive/2026/chat-image-management-validation.md)，不据此推定旧版本已经更新。
 
 ## 加入图片并继续聊天
 

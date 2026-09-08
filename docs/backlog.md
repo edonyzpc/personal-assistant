@@ -52,6 +52,7 @@ Updated: 2026-09-08
 | T-003 | Write-action production audit | 出现不明写入、需要可见 write history，或合规要求 durable audit | [Write Action Framework](./architecture/write-action-framework-sdd.md) |
 | T-004 | Active Package 局部后续任务的 ID 映射成本 | 在后续真实任务反复出现全契约映射负担，并有可定位的新增成本时再评估；先排除完整 namespace 漏写。当前不改 checker、不减追溯/验证门禁；若设计显式局部 scope，必须保持默认全量检查及未知/跨契约 ID 拒绝 | [GOV-001](./development/governance/gov-001-agent-managed-project-lifecycle.md), [Astra 试点结论](./archive/2026/astra-feature-workflow-optimization-validation.md) |
 | T-005 | 图片系统选择器的入口诊断 | 正常受支持图片也稳定复现无法提交，或用户明确要求排查该入口时重启；先区分系统选择器、夹具和 PA 导入链路。当前只观察到故意损坏 PNG 的 Open 禁用，原因未知，不作为已确认 PA 缺陷 | [图片体验验证与限制](./archive/2026/chat-image-experience-validation.md#limits-and-disposition) |
+| T-006 | 图片管理修订的旧应用状态兼容验证 | 2026-09-09 closeout 保留 NOT TESTED：旧 HEIC registry/cache、旧已写 JPEG/缺输出 receipt、未完成迁出在真实应用中未建立独立夹具；相关源码回归已通过。用户要求补齐、兼容/恢复代码改变或拿到独立旧状态时重启；只用合成旧状态，不改真实用户历史，不重复相册/Files/粘贴与共享布局矩阵 | [图片管理修订验证](./archive/2026/chat-image-management-validation.md), [当前恢复契约](./architecture/multimodal-chat-architecture.md#图片管理与保存恢复) |
 
 ## 维护规则
 

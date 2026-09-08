@@ -1,7 +1,7 @@
 # PA Multimodal Chat Product Spec
 
 Document status: Current
-Updated: 2026-09-08
+Updated: 2026-09-09
 Work item: B-129
 Decision: [DEC-030](../decisions/dec-030-multimodal-chat-image-copywriting.md)
 Authority: B-129 用户已确认的图片理解、个性化文案、显式保存与风格参考产品契约。
@@ -12,10 +12,10 @@ Authority: B-129 用户已确认的图片理解、个性化文案、显式保存
 后续紧凑图片输入与保存表单的独有证据见 [图片体验验证](../../archive/2026/chat-image-experience-validation.md)。
 验收证据的覆盖范围不能扩大为所有模型、设备和交互均已验证，也不自行授予发布权限。
 
-2026-09-08 图片管理修订以本页 REQ/AC 为目标契约；“Current”不表示新规则已实现。
-本次源码的输入、迁出和兼容边界见
-[Architecture](../../architecture/multimodal-chat-architecture.md#图片管理修订与当前实现差异)。
-执行与验证见 [Tracker](../../development/active/chat-image-management/tracker.md)；历史验证不覆盖本次迁移规则。
+2026-09-08 图片管理修订已落实于当前源码，输入、迁出和兼容边界见
+[Architecture](../../architecture/multimodal-chat-architecture.md#图片管理与保存恢复)。
+本轮 [Mac / iPhone 验证](../../archive/2026/chat-image-management-validation.md) 单独保留
+构建身份、实际输入、保存与字节证据；旧 HEIC/未完成保存的应用夹具未验证，不借用旧转换 PASS。
 
 ## Problem And Product Outcome
 
@@ -327,8 +327,9 @@ PA 收到的文件可能保留拍摄位置等元数据，迁出成为正式附�
 
 ## Current Implementation And Limits
 
-- 2026-09-08 修订的实施差异由 [Architecture 差异表](../../architecture/multimodal-chat-architecture.md#图片管理修订与当前实现差异)
-  描述；本节以下与历史验证均为现有实现基线，不是新 AC 已通过的证明。
+- 2026-09-08 修订的当前实现由 [Architecture](../../architecture/multimodal-chat-architecture.md#图片管理与保存恢复)
+  描述；新增移动生命周期与实际输入以 [修订验证](../../archive/2026/chat-image-management-validation.md) 为据，
+  不复用旧 HEIC 转换或正式附件复制的结论。
 - 原图、用途不同的处理副本、历史引用和正式附件分别管理；固定会话锚点与
   Obsidian 公共附件规则决定实际路径。清理聊天不删除原件或正式文件。
 - B-128 上下文链路承接图片身份、最终请求准入、工具续轮和重试；文本摘要不
@@ -350,29 +351,14 @@ PA 收到的文件可能保留拍摄位置等元数据，迁出成为正式附�
   [历史验证](../../archive/2026/b129-multimodal-chat-validation.md)。是否已发布以发布
   元数据为准，开发完成或本地整合均不等于 Shipped。
 
-## Implementation Preparation
+## Compatibility And Validation Limits
 
-产品定义已确认，不再重复询问输入来源定义、HEIC 新输入支持或自动引用监听范围。
-用户已进一步授权开发，实施由 [Feature Home](../../development/active/chat-image-management/README.md)
-及其 Tracker、source-verified SDD 承接；
-涉及数据迁移与共享附件，不能作为纯文案替换直接删掉旧逻辑。遵守 `1 Now + 1 Next`，
-本页不预占执行优先级，也不代替 Tracker 记录实现状态。
+新 HEIC 拒绝与旧数据读取分开：不删除历史原件，不批量转换，不改写冻结保存记录。
+旧可读缓存保留，缺缓存提示 JPEG；旧保存已经写好的 JPEG 可核验恢复，缺输出拒绝再转换。
+移动意图、幂等恢复、共享定位及旧版本回退保护由当前 Architecture 和对应源码回归承接。
 
-实施前设计必须回答以下兼容与工程问题，不把方案草稿当作新的用户批准：
-
-1. 旧 HEIC 资产、历史、未完成/已完成保存记录如何读取和恢复；新输入拒绝与旧数据
-   兼容分开，不删除旧文件，不擅自批量转换，不改写冻结记录伪造旧操作结果。
-   若保留历史恢复必须继续调用旧转换能力，应明确限定旧操作并提交产品取舍，不能
-   以兼容之名继续接受新 HEIC。
-2. 移动前的源/目标/内容身份记录，移动、资产定位、笔记链接与完成状态之间的恢复
-   顺序；移动成功但旧路径消失时如何认领目标，覆盖中断、重试、并发和文件冲突。
-3. 多聊天/草稿/文案共享同一图片及保存记录冻结路径的协调；迁出后退出聊天专用
-   清理集合，同时保留可追溯身份，不能仅靠 rename 更新路径就认为迁移完成。
-4. 根目录、指定目录、笔记相对目录、设置改变与目标排除时的首次迁出规则；已有
-   普通附件不随每篇笔记移动。旧版本回退不能搬回已迁出的文件或破坏正式笔记。
-
-验证在 Tracker 按 `REQ/AC -> change -> evidence -> pass condition -> expansion trigger`
-安排：AC-01/04/15 覆盖各输入路径与格式拒绝，AC-05/06/11 覆盖移动/引用/同步/清理，
-旧数据与保存中断单独设夹具；相关源码测试先行，再按共享存储影响运行所需完整检查，
-并以同一构建完成 Desktop/iOS 受影响流程的实际 Obsidian 验证。历史 HEIC 转换和
-复制附件的 PASS 不可复用于新规则，未改变的输入/环境证据才可按规范复用。
+2026-09-09 用户明确授权本轮 closeout。Mac 完成当前构建、真实保存闭环及 mobile
+中英文/字号检查；iPhone 完成相册、Files JPEG/HEIC、粘贴和取消。共享行为按用户选择
+优先在 Mac mobile 验证，不扩大成手机全矩阵 PASS。旧 HEIC/未完成保存应用夹具缺口
+保留为 [T-006](../../backlog.md#触发型评估)，准备独立旧状态或相关恢复路径变更时重启；
+自动回归通过不等于旧应用状态实测。closeout、分支整合及发布分别由对应授权决定。
