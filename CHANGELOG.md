@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.5](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.4...2.10.0-beta.5) (2026-09-08)
+
+### Features
+- chat: simplify image composer and note saving
+
+### Docs
+- codex: streamline Astra feature delivery workflow
+- codex: clarify evidence reuse and workflow sampling
+- close image experience and Astra workflow tracks
+
+### Tests
+- chat: await macOS converter lifecycle events
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
