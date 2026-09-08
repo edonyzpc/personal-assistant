@@ -1,6 +1,6 @@
 # Simple Settings Delivery Plan
 
-Document status: Draft
+Document status: Approved
 Updated: 2026-09-08
 Work item: B-106
 Authority: B-106 的阶段顺序、依赖、验证策略与执行边界。
@@ -10,7 +10,8 @@ Tracker: [Development Tracker](./tracker.md)
 ## Goal And Non-goals
 
 按 DEC-033 完整交付统一默认、四入口 Settings、有效权限与功能现场选择。
-本轮为 `sdd-only`，仅完成设计与开发任务；运行时实施需后续进入实施模式。
+设计阶段采用 `sdd-only`；Owner 后续已明确要求按本 SDD 完成全部 Settings 优化，
+当前授权模式为 `implement-approved-spec`，实施到完整验证通过。
 不顺手删除整个 legacy Pagelet 子系统，不重做 provider/VSS/Memory 存储，
 不增加设置框架或持久化迁移服务，不改变现有配额与质量门。
 
@@ -31,7 +32,7 @@ flowchart LR
 
 | Phase | Outcome | Scope | Exit gate | Stop point |
 | --- | --- | --- | --- | --- |
-| P0 | 可执行、无未决产品选择的源码设计 | 字段闭集、接口、生命周期、任务与风险核查 | 独立设计复核、docs check、diff check；无未处置 P0/P1/P2 设计问题 | 本轮停在这里，不改 runtime |
+| P0 | 可执行、无未决产品选择的源码设计 | 字段闭集、接口、生命周期、任务与风险核查 | 独立设计复核、docs check、diff check；无未处置 P0/P1/P2 设计问题 | 设计请求在此结束；已授权实施继续 P1 |
 | P1 | 新旧用户同一运行规则，必要机制完整 | T-01..T-06；现有六组 UI 同步移除废弃控件并提供新后台控制，避免中间状态不可操作 | focused source/tooling、Local Validation Gate；冻结后 `make deploy`，真实 test vault 验证手动/后台与 Memory；独立 review/fix 闭环 | App 验证通过后才能进入 P2 |
 | P2 | 四入口和完整可达的专业/治理操作 | T-07..T-12；先有现场替代入口再移除旧行；EN/ZH、局部保存、窄屏 | focused source、Local Validation Gate；最终输入冻结后 `make deploy`、Desktop 和 targeted real-iOS smoke；独立 review/fix 闭环 | 全部适用 AC 通过，真实设备缺口不得标 PASS |
 | P3 | 可审阅的完整交付与准确证据 | T-13；源码/契约/任务核对，吸收当前行为说明 | 复用最终 P2 相同输入/产物的证据，补齐未覆盖项，docs/diff check | 实施模式只到 Validated；closeout、commit、release 分别授权 |
@@ -70,7 +71,7 @@ P3 不因阶段名称另跑同一套 build/full tests。P2 后若修复代码或
 
 ## Validation Strategy
 
-- 本轮设计：`npm run docs:check`、`git diff --check`；没有运行时修改，不跑
+- 仅设计阶段：`npm run docs:check`、`git diff --check`；没有运行时修改，不跑
   build、TypeScript、插件 Jest 或设备 smoke。
 - 实施每个任务的风险→证据→通过条件→重跑触发见 Tracker，不为低影响文案新造测试。
 - P1/P2 的 focused suite 见 SDD Test Matrix；source 用 `npm test`，runner/script
@@ -89,5 +90,5 @@ P3 不因阶段名称另跑同一套 build/full tests。P2 后若修复代码或
 ## Approval
 
 - Plan authority: DEC-033 与 Owner 2026-09-08“按照项目的开发规范（sdd）设计开发任务”。
-- Approved on: 产品范围已明确；本文件为本轮形成的设计稿，不冒充 Owner 对技术稿逐项批准。
-- Authorized implementation scope: 本轮仅文档设计与任务编排；未执行 runtime、部署或 Git 操作。
+- Approved on: 2026-09-08；Owner 明确要求按 SDD 方案设计与任务规划完成全部 Settings 优化。
+- Authorized implementation scope: Owner 后续“按照sdd对应的方案设计与任务规划，帮我完成所有的setting优化”授权本计划全部实施与对应测试库/设备验证；不含新增 Git 提交、整合或发布。

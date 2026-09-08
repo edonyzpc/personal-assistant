@@ -1,7 +1,7 @@
 # Simple Settings Development Tracker
 
 Document status: Current
-Delivery status: Planned
+Delivery status: Implementing
 Updated: 2026-09-08
 Work item: B-106
 Authority: 本 track 的唯一执行状态、任务依赖、finding 与验证证据。
@@ -11,11 +11,10 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: P0 完成 — 源码盘点、SDD、开发任务、三路独立设计复核与文档校验通过。
-- Next action: 后续进入实施时从 T-01 开始，不跳过 P1 阶段验证。
-- Blocker / decision needed: 无未决产品选择；本轮授权为设计开发任务，未开始 runtime 实施。
-- Last verified behavior: 当前源码为 `master@b4de9c03`；本轮开始时仅有前序 DEC-033
-  产品文档未提交修改。当前只有静态源码证据，不把历史测试/旧 build 作为 B-106 PASS。
+- Current phase: P1 验证 — T-01..05 实现和独立 review 完成；旧测试夹具已修复，完整测试和类型检查通过。Owner 要求先把当前修改提交到新的开发分支。
+- Next action: 完成当前阶段本地提交后，核对并复用未改变的 lint/build/test 证据，部署当前产物并执行 T-06 App gate；P2 页面重构尚未开始。
+- Blocker / decision needed: 无；Owner 已授权按照 SDD 完成全部 Settings 优化。
+- Last verified behavior: 实施基线为 `codex/simple-settings-b106@9deeb392`；当前冻结代码的 240 suites / 6275 tests 全通过并自然退出0，TypeScript通过。尚未部署本阶段产物或完成 App/device 验证。
 
 ## Work
 
@@ -25,12 +24,12 @@ SDD: [Software Design Document](./sdd.md)
 | ID | Requirement / AC | Slice / owner scope | Depends on | Status | Evidence / completion condition |
 | --- | --- | --- | --- | --- | --- |
 | T-00 | B-106/REQ-01..08 / B-106/AC-01..07 | P0：源码设计、字段闭集、依赖与验证计划；integrator + read-only reviewers | DEC-033 | [x] | 三路设计 review 无未处理 P0/P1/P2，docs/diff check 通过；见 Validation Log |
-| T-01 | B-106/REQ-05 / B-106/REQ-07 / B-106/AC-05 | 五旧键规范化、单一新后台偏好、raw 检测与 save strip；Settings/Plugin integrator | T-00 | [ ] | 新旧值等价、幂等、不复活、失败重试、保护有效数据 |
-| T-02 | B-106/REQ-06 / B-106/AC-02 / B-106/AC-05 | automatic/explicit admission、局部暂停/epoch、结果提交与提交后生效setter；Pagelet worker，Plugin 接缝由 integrator | T-01 | [ ] | pending/active/关开/late publish/force 路径，手动不被后台取消，保存失败不提前开启自动调用 |
-| T-03 | B-106/REQ-02 / B-106/AC-02 | Memory bypass 删除、内置指南全链默认；Memory/Skills worker | T-01 | [ ] | 正常 readiness 保留、catalog/prompt/load_skill 一致、未知 ID 拒绝 |
-| T-04 | B-106/REQ-04 / B-106/REQ-07 / B-106/AC-04 / B-106/AC-05 | 独立 opt-in、旧 extraction consent 对齐与权限保全；integrator | T-01 | [ ] | 00/10/01/11、有效旧启用、paused+raw true、来源/写入/治理 sentinel |
-| T-05 | B-106/REQ-01 / B-106/REQ-02 / B-106/REQ-05 / B-106/AC-01 | P1 现有页面最小接线、删旧控件、新后台控制；同步三个 runner；integrator | T-02/T-03/T-04 | [ ] | 中间版本无悬空控件，runner 不靠废弃设置隔离或通过 |
-| T-06 | B-106/AC-01 / B-106/AC-02 / B-106/AC-04 / B-106/AC-05 / B-106/AC-06 | P1 freeze→完整 gate→Desktop smoke→review/fix；一个 gate executor | T-05 | [ ] | 旧配置、新偏好、手动/后台、Memory 的实际 App 路径闭合 |
+| T-01 | B-106/REQ-05 / B-106/REQ-07 / B-106/AC-05 | 五旧键规范化、单一新后台偏好、raw 检测与 save strip；Settings/Plugin integrator | T-00 | [x] | 新旧值等价、幂等、不复活、失败重试、保护有效数据；focused/full及独立review通过，App集成归T-06 |
+| T-02 | B-106/REQ-06 / B-106/AC-02 / B-106/AC-05 | automatic/explicit admission、局部暂停/epoch、结果提交与提交后生效setter；Pagelet worker，Plugin 接缝由 integrator | T-01 | [x] | 自动/手动隔离、epoch、写后失败与排队测试通过，独立review缺口已补齐；App集成归T-06 |
+| T-03 | B-106/REQ-02 / B-106/AC-02 | Memory bypass 删除、内置指南全链默认；Memory/Skills worker | T-01 | [x] | readiness、catalog/prompt/load_skill及未知ID拒绝测试通过；App集成归T-06 |
+| T-04 | B-106/REQ-04 / B-106/REQ-07 / B-106/AC-04 / B-106/AC-05 | 独立 opt-in、旧 extraction consent 对齐与权限保全；integrator | T-01 | [x] | 独立选择、旧启用、paused+raw true与治理数据保护测试通过；UI重组仍归T-08 |
+| T-05 | B-106/REQ-01 / B-106/REQ-02 / B-106/REQ-05 / B-106/AC-01 | P1 现有页面最小接线、删旧控件、新后台控制；同步三个 runner；integrator | T-02/T-03/T-04 | [x] | 新控件保存失败/重试和三个runner的source/tooling契约通过；App交互归T-06 |
+| T-06 | B-106/AC-01 / B-106/AC-02 / B-106/AC-04 / B-106/AC-05 / B-106/AC-06 | P1 freeze→完整 gate→Desktop smoke→review/fix；一个 gate executor | T-05 | [~] | lint/build/full通过；部署及旧配置、新偏好、手动/后台、Memory的实际App路径待验证 |
 | T-07 | B-106/REQ-01 / B-106/AC-01 / B-106/AC-07 | 四组 registry、原生 details、旧深链/折叠偏好、局部刷新；Settings integrator | T-06 | [ ] | 首次AI、四组导航、精确记忆祖先展开、pending target、Pagelet刷新 |
 | T-08 | B-106/REQ-04 / B-106/REQ-07 / B-106/REQ-08 / B-106/AC-04 / B-106/AC-06 / B-106/AC-07 | AI详情、长期学习、数据范围、Memory管理/恢复与保存反馈；integrator | T-07 | [ ] | provider draft/SecretStorage、权限、治理动作、失败反馈与目标消失焦点 |
 | T-09 | B-106/REQ-01 / B-106/REQ-03 / B-106/AC-01 / B-106/AC-03 | 使用/保存/Metadata/统计分层；复用Statistics现场tab；integrator | T-08 | [ ] | 目的地条件展示、合法旧值保留、统计现场保存/重开、专业详情可达 |
@@ -63,17 +62,17 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 
 | ID | Severity | Finding | Decision / fix | Verification | State |
 | --- | --- | --- | --- | --- | --- |
-| D-01 | P1 | 现有旧总开关关闭会reset scheduler并取消显式请求 | 新后台偏好不入全局identity，automatic lane定向暂停与epoch | T-02设计及竞态测试目标 | 设计处理；实现待执行 |
-| D-02 | P1 | merge先丢旧键会令迁移无法观察需写回；陈旧snapshot可重新写入 | raw存在性pending + 保存前精确strip，不全量merge | T-01 raw/load/save/conflict与barrier目标 | 设计处理；实现待执行 |
+| D-01 | P1 | 现有旧总开关关闭会reset scheduler并取消显式请求 | 新后台偏好不入全局identity，automatic lane定向暂停与epoch | T-02竞态测试及独立review通过 | 已实现；App集成待T-06 |
+| D-02 | P1 | merge先丢旧键会令迁移无法观察需写回；陈旧snapshot可重新写入 | raw存在性pending + 保存前精确strip，不全量merge | T-01 raw/load/save/conflict与barrier测试通过 | 已实现；App集成待T-06 |
 | D-03 | P2 | 图谱/题图没有完整PA现场配置入口，直接移除会丢能力 | 先新Modal/入口，再删除原行；统计已有tabs直接复用 | T-10/T-11入口与交互目标 | 设计处理；实现待执行 |
-| D-04 | P1 | raw extraction=true可能覆盖显式paused/unconfirmed并重新授权 | 对齐合法legacy启用与显式consent优先级，00/10/01/11独立 | T-04 loader/consent目标 | 设计处理；实现待执行 |
+| D-04 | P1 | raw extraction=true可能覆盖显式paused/unconfirmed并重新授权 | 对齐合法legacy启用与显式consent优先级，00/10/01/11独立 | T-04 loader/consent及保护sentinel测试通过 | 已实现；App集成待T-06 |
 | D-05 | P2 | 普通debouncedSave失败只有日志，Memory动作仍全量display丢其他草稿 | 受影响区域失败反馈/重试，管理局部refresh | T-08异步失败/关闭/草稿目标 | 设计处理；实现待执行 |
-| D-06 | P2 | 三个现有runner依赖废弃字段，continuity probe以Skills开关隔离 | P1同步runner，保持isolated host拒绝行为 | T-05 tooling targets | 设计处理；实现待执行 |
-| D-07 | P2 | 仅deny工具不能避免bundled catalog影响continuity输入，ChatService无透传接缝 | 提取私有实例createAgentRuntime；隔离service包装传null，生产不变 | T-05 catalog/load_skill输入及拒绝测试目标；独立设计复核通过 | 设计处理；实现待执行 |
+| D-06 | P2 | 三个现有runner依赖废弃字段，continuity probe以Skills开关隔离 | P1同步runner，保持isolated host拒绝行为 | T-05 tooling与完整测试通过 | 已实现；实际App证据待T-06 |
+| D-07 | P2 | 仅deny工具不能避免bundled catalog影响continuity输入，ChatService无透传接缝 | 提取私有实例createAgentRuntime；隔离service包装传null，生产不变 | T-05实际离线模型输入、catalog/load_skill与拒绝测试通过 | 已实现并验证隔离契约 |
 | D-08 | P2 | 有效保存建议提示和分钟节流的去向不明确 | 明列operationsProactiveSaveSuggestionsEnabled有效入口；cooldown作为内部数值保留 | T-09提示保留/普通UI目标；独立设计复核通过 | 设计处理；实现待执行 |
 | D-09 | P2 | 图谱apply不能覆盖类型/尺寸，保存失败与应用失败未区分 | 草稿/取消明确；保存后即时apply可用字段，类型/尺寸下次打开 | T-10现场与失败/重开目标；独立设计复核通过 | 设计处理；实现待执行 |
 | D-10 | P2 | 题图多次await重新读全局参数，现有helper不接收快照 | Proposed只读RunOptions贯穿原helper/service，连接revision/currentness复验 | T-11默认值变化/连接变化/取消目标；独立设计复核通过 | 设计处理；实现待执行 |
-| D-11 | P1 | 现有窄保存helper先改live值，保存失败前可能意外开启自动调用 | Proposed专用setter用queued snapshot保存，成功才publish新字段并sync自动lane | T-02延迟/失败/写后抛错/多次排队目标；独立设计复核通过 | 设计处理；实现待执行 |
+| D-11 | P1 | 现有窄保存helper先改live值，保存失败前可能意外开启自动调用 | 专用setter用queued snapshot保存，成功才publish新字段并sync自动lane | T-02延迟/写前与写后失败/多次排队测试通过；review缺口已补齐 | 已实现；App交互待T-06 |
 
 ## Validation Log
 
@@ -82,6 +81,14 @@ Status markers: `[ ] Todo`, `[~] In progress`, `[x] Done`, `[-] Deferred/Cancell
 | 2026-09-08 | B-106 全范围设计 | 三路只读源码核对：字段/调度、UI/现场入口、权限契约；核对HEAD与工作区 | 设计输入已取得 | 只读事实与Proposed接口明确区分；尚未验证运行时 |
 | 2026-09-08 | B-106 全范围设计 | 三路独立设计review及修订复核：运行/保存边界、UI/现场入口、产品契约/任务覆盖 | PASS；无未处理设计P0/P1/P2 | D-01..11均有设计处理及实施验证目标；不代表代码修复或运行时PASS |
 | 2026-09-08 | B-106 全范围设计 | `npm run docs:check`；`git diff --check` | PASS；均自然退出0 | 198 Markdown / 1626 local links；4项既有episodic-memory索引/孤立文档提示保持advisory。工作区仅文档改动，未执行runtime测试、build或App/device smoke |
+| 2026-09-08 | T-01/T-02/T-04/T-05 | `npm test -- --runInBand __tests__/settings.test.ts __tests__/pagelet-settings.test.ts __tests__/plugin-lifecycle.test.ts` | PASS；3 suites / 361 tests，自然退出0 | 最终补齐写后readback失败、连续setter、关开snapshot、UI保存失败重试；随后仅测试参数类型注解修正，生产输入不变 |
+| 2026-09-08 | T-02 | `npm test -- --runInBand __tests__/pagelet-agent-quality-cache.test.ts __tests__/pagelet-agent-runtime.test.ts __tests__/pagelet-orchestrator.test.ts __tests__/pagelet-background-preparation-coordinator.test.ts` | PASS；4 suites / 331 tests，自然退出0 | 自动/手动隔离、cache-hit/fresh commit/交付epoch、已发生调用metrics、旧管线停用；独立review无P0/P1/P2 |
+| 2026-09-08 | T-03 | Tracker指定6个Memory/Skills/Chat focused suites | PASS；397 tests | Memory最终54/54、其余5 suites 343/343；两处新增fixture类型已修正，Memory重跑54/54自然退出0；生产输入未变 |
+| 2026-09-08 | T-05 | ChatService source + continuity/Pagelet/retrieval tooling | PASS；63 + 18 + 438 tests | 正确source/tooling分组；实际离线模型请求证明catalog/load_skill隔离与正常生产默认，拒绝工具仍有效；各对应最终suite自然退出0 |
+| 2026-09-08 | P1 gate | `make deploy`（日志 `/private/tmp/b106-p1-deploy.log`） | Lint/build PASS；全测FAIL，尚未部署 | 240 suites中239 PASS；6274 tests中41失败均在plugin-record-note的旧整模块mock/旧断言。测试报告后异步等待最终自行结束，make自然退出2；未修改生产代码来满足旧checker |
+| 2026-09-08 | P1 DOM源约束 | 根AGENTS的`rg`禁用DOM注入扫描；`git diff --check` | PASS；分别自然退出1无匹配 / 0 | 当前冻结source无runtime style/HTML注入；不是Hosted Community或App证据 |
+| 2026-09-08 | P1 fixture修复 | `npm test -- --runInBand __tests__/plugin-record-note.test.ts` | PASS；320 tests，自然退出0 | 整模块mock接入真实纯清理函数并更新scheduler stub；旧preload断言改为零调用/零配额，保留前台通知与保存断言；仅测试文件改变 |
+| 2026-09-08 | P1完整测试与类型检查 | `npm run test:all -- --runInBand`；`npx tsc -noEmit -skipLibCheck` | PASS；240 suites / 6275 tests；两命令均自然退出0 | 日志 `/private/tmp/b106-p1-all-final.log`；Jest报告后曾提示异步操作未退出，随后自行退出0，未使用forceExit。复用前次lint/build的相同生产输入；未部署或宣称App/device通过 |
 
 ## Closeout Readiness
 

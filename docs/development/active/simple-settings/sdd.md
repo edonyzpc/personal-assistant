@@ -1,6 +1,6 @@
 # Simple Settings Software Design Document
 
-Document status: Draft
+Document status: Approved
 Updated: 2026-09-08
 Work item: B-106
 Authority: 本 track 的源码核实实现设计、字段闭集、生命周期与验证映射。
@@ -248,7 +248,7 @@ skip-memory、联网/写入关闭与异常工具中止。只屏蔽工具执行�
 
 ## Test Matrix
 
-以下都是实施时的证据目标；本轮未执行这些 runtime tests。最小充分命令、通过
+以下都是实施时的证据目标；实际执行结果只记录在 Tracker。最小充分命令、通过
 条件与扩张触发由 Tracker 的 Evidence Plan 承担。
 
 | Requirement / AC | Unit / integration | App smoke | Failure / fallback | Evidence target |
@@ -272,6 +272,6 @@ skip-memory、联网/写入关闭与异常工具中止。只屏蔽工具执行�
 ## Approval
 
 - Design authority: DEC-033、Approved Product Spec 与 Owner 2026-09-08 的 SDD 设计任务。
-- Approved on: 本轮技术稿为 Draft，已定产品范围不再重复审批；设计复核记录见 Tracker。
-- Authorized implementation scope: 本轮只写设计、计划和任务；后续明确进入实施时，
-  按已确认范围完成 prereqs 和验证，不以此 Draft 状态制造重复产品确认。
+- Approved on: 2026-09-08；Owner 明确要求“按照sdd对应的方案设计与任务规划，帮我完成所有的setting优化”，授权采用此设计实施；设计复核记录见 Tracker。
+- Authorized implementation scope: Owner 后续明确要求按此 SDD 和任务规划完成全部
+  Settings 优化，已授权范围内的实施、修复与验证；范围或权限的实质偏差仍需另作决定。
