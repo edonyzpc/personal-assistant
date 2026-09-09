@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.6](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.5...2.10.0-beta.6) (2026-09-09)
+
+### Features
+- settings: unify runtime defaults and retire redundant toggles
+- chat: preserve delivered images and move originals on note save
+- settings: add simple settings controls for memory workflows
+
+### Fix
+- chat: bound menus and consolidate image actions
+
+### Improvements
+- chat: integrate B-129 image management
+
+### Docs
+- simple-settings: add B-106 simple settings design handoff
+- simple-settings: sync migration plan, sdd and tracker
+- chat: define image attachment lifecycle simplification
+- chat: record image lifecycle validation and Mac handoff
+- agent: plan unified execution and reliable writing delivery
+- simple-settings: update settings and pagelet product documentation
+- chat: closeout B-129 chat image management validation
+
+### Tests
+- chat: await writing persistence in topic restoration tests
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
