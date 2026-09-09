@@ -1167,6 +1167,12 @@ describe('LLMView turn lifecycle', () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'writing-topic-boundary' });
         const versions = new WritingVersionService(store);
+        const createVersion = versions.create.bind(versions);
+        jest.spyOn(versions, 'create').mockImplementationOnce(async (input) => {
+            // Exercise persistence that outlives the old eight-tick flush.
+            for (let i = 0; i < 16; i++) await flushPromises();
+            return createVersion(input);
+        });
         const material: MessageImage = { ordinal: 3, label: 'travel.png', ref: { assetId: 'travel', contentHash: 'a'.repeat(64) } };
         await store.putImageAsset({ id: material.ref.assetId, originalHash: material.ref.contentHash, source: 'vault_reference',
             originalPath: 'travel.png', detectedMime: 'image/png', byteLength: 3, acquisition: 'original_file',
@@ -1174,13 +1180,24 @@ describe('LLMView turn lifecycle', () => {
         let fixture = createView({ chatHistoryManager: manager });
         Object.assign(fixture.plugin, { writingVersions: versions });
         await fixture.view.onOpen();
+        const waitUntil = async (ready: () => boolean) => {
+            const deadline = Date.now() + 2000;
+            while (!ready() && Date.now() < deadline) await flushPromises();
+            expect(ready()).toBe(true);
+        };
         const send = async (text: string) => {
+            const callIndex = streamCalls.length;
             fixture.view.prefillComposer(text);
             getElementByClass(fixture.containerEl, 'send-button-visible').click();
-            await flushPromises();
-            return streamCalls.at(-1)!;
+            await waitUntil(() => streamCalls.length > callIndex);
+            return streamCalls[callIndex];
         };
-        const settle = async (call: StreamCall) => { call.resolve(); for (let i = 0; i < 8; i++) await flushPromises(); };
+        const settle = async (call: StreamCall) => {
+            call.resolve();
+            // Finalization awaits native hashing and persistence; event-loop
+            // ticks do not imply that either operation has completed.
+            await waitUntil(() => fixture.view.abortController === null);
+        };
         const writing = await send('写一段旅行文案');
         writing.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1', kind: 'writing-artifact',
             requestId: writing.options.writingRequest!.requestId, messageId: 'travel-writing', body: 'Trip body', explanation: '', associatedImages: [material] });
@@ -1197,20 +1214,26 @@ describe('LLMView turn lifecycle', () => {
         let release!: () => void;
         const pending = new Promise<void>((resolve) => { release = resolve; });
         const readVersion = versions.get.bind(versions);
-        const lookup = timing === 'while_lookup' ? jest.spyOn(versions, 'get').mockImplementation(async (id) => {
-            const version = await readVersion(id); await pending; return version;
-        }) : undefined;
+        const lookup = jest.spyOn(versions, 'get').mockImplementation(async (id) => {
+            const version = await readVersion(id);
+            if (timing === 'while_lookup') await pending;
+            return version;
+        });
         fixture = createView({ chatHistoryManager: manager });
         Object.assign(fixture.plugin, { writingVersions: versions });
         await fixture.view.onOpen();
-        for (let i = 0; i < 8; i++) await flushPromises();
-        if (lookup) {
+        await waitUntil(() => fixture.view.chatHistory.length > 0);
+        if (timing !== 'before_reopen') {
             expect(lookup).toHaveBeenCalledTimes(1);
-            await newTopic();
-            release();
-            for (let i = 0; i < 8; i++) await flushPromises();
-            lookup.mockRestore();
+            if (timing === 'while_lookup') {
+                await newTopic();
+                release();
+            }
+            await lookup.mock.results[0].value;
+        } else {
+            expect(lookup).not.toHaveBeenCalled();
         }
+        lookup.mockRestore();
         const short = await send('短一点');
         if (timing === 'same_task') {
             expect(short.options.writingRequest).toBeDefined();
