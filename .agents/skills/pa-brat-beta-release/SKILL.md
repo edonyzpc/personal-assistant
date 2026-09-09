@@ -70,7 +70,8 @@ When asked to prepare a beta:
    - `git switch master`
    - `git pull --ff-only`
    - verify `git rev-parse master` equals `git rev-parse origin/master`
-   - run the validation gate appropriate to the change
+   - do not run another full gate here: `make release` obtains exact-master CI
+     evidence or runs the full local fallback after the packaging branch is ready
    If local `master` is ahead, publishing beta must stop until the user
    explicitly authorizes pushing `master` and the two refs match.
 4. Choose the next prerelease version, usually `<next-stable>-beta.N`.
@@ -87,6 +88,28 @@ When asked to prepare a beta:
 The release command uses the release-critical documentation gate. Full
 `docs:check` lifecycle/status findings remain a separate CI and maintenance
 signal and must not block beta or stable publication.
+
+## Validation Reuse And Cost
+
+Use ordinary `make release VERSION=<beta>` once. It automatically tries to
+reuse the latest same-repository master push CI for the exact clean,
+synchronized source SHA. The current attempt must have passed the full
+`validate` job, including dependencies, Lint, Build, Test and Audit bundle;
+docs-only success, skipped steps, old SHA/run/attempt or incomplete API data
+cannot substitute. The script prints the accepted run URL/SHA or fallback reason.
+
+Reuse retains local diff, third-party notice and release-doc checks. Missing
+evidence, unsupported origin, missing `gh` or a bounded API timeout falls back
+to the existing local full gate. `RELEASE_LOCAL_CHECKS=1 make release VERSION=...`
+forces full local checks for diagnosis. Stable defaults remain unchanged;
+dry-run does not query CI or execute checks. Do not use `SKIP_CHECKS` as a
+substitute for this evidence check.
+
+The final tag workflow still installs dependencies, builds, runs full coverage
+and audits the versioned assets. Reused master CI does not prove this machine's
+node_modules or old dist is valid for deployment. Do not add another full
+test/build before `make release`, after it, or while waiting on tag CI without
+new changed inputs or a concrete failure.
 
 `scripts/release.mjs` enforces both the matching `beta/<target-version>` name and
 the pre-release `HEAD == master` source invariant.
@@ -129,16 +152,29 @@ After publish, verify the GitHub prerelease before claiming BRAT readiness:
 
 ```bash
 gh release view <target-version> \
-  --json tagName,name,isPrerelease,assets \
-  --jq '{tagName,name,isPrerelease,assets:[.assets[].name]}'
+  --json tagName,name,isDraft,isPrerelease,assets \
+  --jq '{tagName,name,isDraft,isPrerelease,assets:[.assets[].name]}'
 ```
 
 Expected:
 
 - `tagName` and `name` equal `<target-version>`.
 - `isPrerelease` is `true`.
-- Assets include `main.js`, `manifest.json`, and `styles.css`.
+- `isDraft` is `false` and the tag workflow completed successfully.
+- Assets include `main.js`, `manifest.json`, `styles.css`, `LICENSE`, `NOTICE`,
+  and `THIRD_PARTY_NOTICES.md`.
 - The released `manifest.json` asset has `version` equal to `<target-version>`.
+
+Download only `manifest.json` for the default completion check. Download all
+assets for local hashes/JS syntax checks only when explicitly requested or a
+specific artifact/download failure needs diagnosis. Wait for download completion
+before inspecting the file. Asset verification is not BRAT/app/device smoke.
+
+Use workflow-step changes and blockers for progress updates. If the host
+requires periodic updates during an unchanged step, keep them short; do not
+launch redundant checks to fill the wait. Separate local preparation, remote
+tag gate and post-publish timing; polling/sleep overlaps the running gate and
+must not be added to its elapsed time.
 
 For release workflow failures, inspect GitHub Actions before giving testers the
 BRAT URL.

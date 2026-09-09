@@ -30,12 +30,52 @@ make publish VERSION=1.6.6
 2. Verifies the target version is valid, greater than `package.json`, and not already tagged. For prereleases, it also requires the matching `beta/<VERSION>` branch with pre-release `HEAD` exactly equal to local `master`.
 3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
 4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
-5. Runs `git diff --check`, `npm run check:third-party-notices`, `npm run docs:check:release`, `npm run lint`, `npm run build`, `npm run test:all -- --runInBand --coverage`, and `npm run audit:bundle`. The production build precedes Jest because receipt suites bind the current `dist/main.js` and its production provenance.
+5. For beta preparation, first tries to reuse successful full CI for the exact synchronized master commit, as described below. Reuse still runs `git diff --check`, `npm run check:third-party-notices` and `npm run docs:check:release` locally. Otherwise (including stable releases), also runs `npm run lint`, `npm run build`, `npm run test:all -- --runInBand --coverage`, and `npm run audit:bundle`. The production build precedes Jest because receipt suites bind the current `dist/main.js` and its production provenance.
 6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, `CHANGELOG.md`, and release-tag references in `NOTICE`.
 7. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
 8. Creates annotated tag `x.y.z`.
 
 Set `SKIP_CHECKS=1` or pass `--skip-checks` only when checks have already been run in the same workspace and no files changed afterward.
+
+### Beta Preparation: Reuse Exact Master CI
+
+Ordinary `make release VERSION=x.y.z-beta.N` automatically checks the GitHub
+repository identified by `origin` (github.com SSH or HTTPS URLs). Reuse requires:
+
+- A clean matching beta branch at local master, with live `origin/master` at
+  that exact SHA. Source, tests, fixtures, configuration and lockfile therefore
+  match the tested commit; a nearby commit or PR merge SHA is insufficient.
+- The latest run for that SHA from `.github/workflows/ci.yml`, triggered by a
+  push to master in the same repository, completed successfully. A newer failed
+  or running attempt cannot be replaced with an older green result.
+- That run's current attempt has a successful `validate` job with successful
+  Install dependencies, Lint, Build, Test and Audit bundle steps. A docs-only
+  green run or skipped/missing Test does not qualify. Keep those step names tied
+  to their full gate commands when changing CI.
+
+The command prints the reused run URL and SHA. API failure, unsupported origin,
+missing `gh`, timeout or incomplete evidence prints a reason and falls back to
+the existing full local gate. Queries are bounded; no receipt or cross-commit
+cache is created. Dirty or changed source is rejected before packaging.
+
+Force the full local gate without a CI lookup when diagnosing a local issue:
+
+```bash
+RELEASE_LOCAL_CHECKS=1 make release VERSION=x.y.z-beta.N
+# Equivalent direct invocation:
+node scripts/release.mjs --local-checks x.y.z-beta.N
+```
+
+Do not combine this with `SKIP_CHECKS` / `--skip-checks`. The manual skip option
+is not the CI reuse mechanism. Dry-run performs neither network lookup nor
+validation. Stable releases retain full local validation by default.
+
+Reused CI proves source validation on the CI runner; it does not validate this
+machine's installed dependencies or old `dist/`. Final tag CI still installs
+dependencies, builds the versioned assets, runs full coverage and audits them
+before publishing. Do not run another full gate before `make release` merely
+to prepare the beta branch, and do not redeploy a stale local build on the basis
+of this CI evidence.
 
 ## Release Gate Levels
 
@@ -104,6 +144,9 @@ The tag release workflow always rebuilds and runs complete coverage against the
 final versioned tag. A pre-version-bump local build cannot substitute for those
 release assets. This optimization does not authorize publishing or change the
 release gates.
+
+Beta preparation can reuse exact-master CI as above. This changes where source
+validation is obtained, not the final tag gate or the coverage thresholds.
 
 ## Changelog
 

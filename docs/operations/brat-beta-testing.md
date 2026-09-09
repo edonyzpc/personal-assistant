@@ -91,9 +91,9 @@ Any output means the branch still has commits not integrated into `master`.
 Review them, then use a PR merge or authorized direct commit/merge before
 continuing. Do not create beta from that work branch.
 
-After the appropriate validation passes on `master`, create a temporary beta
-packaging branch from its exact HEAD. The branch name must match the target
-version:
+Create a temporary beta packaging branch from the clean, synchronized master
+HEAD. `make release` selects exact-master CI reuse or full local validation;
+do not run an extra full gate first. The branch name must match the target version:
 
 ```bash
 git switch master
@@ -105,13 +105,19 @@ git rev-parse HEAD
 The two hashes must match before `make release`. The release script enforces
 this invariant and rejects any beta-only code/docs commit.
 
-Run the local gate that matches the scope. For broad beta builds, use the full
-release gate:
+Run the release command once. It first looks for a successful full master CI
+for the exact source SHA, then falls back to full local checks if evidence is
+unavailable. Reuse keeps local diff/notice/release-doc checks and the independent
+final-tag full gate. See [CI reuse conditions](./release-process.md#beta-preparation-reuse-exact-master-ci).
 
 ```bash
 make release-dry-run VERSION=2.9.0-beta.1
 make release VERSION=2.9.0-beta.1
 ```
+
+For a deliberately local full gate, use
+`RELEASE_LOCAL_CHECKS=1 make release VERSION=2.9.0-beta.1`. Do not use
+`SKIP_CHECKS` to simulate CI reuse. Dry-run does not query CI or run tests.
 
 Publish only after the beta scope and validation evidence are accepted:
 
@@ -160,8 +166,8 @@ After `make publish`, confirm the release object and asset set:
 
 ```bash
 gh release view 2.9.0-beta.1 \
-  --json tagName,name,isPrerelease,assets \
-  --jq '{tagName,name,isPrerelease,assets:[.assets[].name]}'
+  --json tagName,name,isDraft,isPrerelease,assets \
+  --jq '{tagName,name,isDraft,isPrerelease,assets:[.assets[].name]}'
 ```
 
 Expected:
@@ -169,7 +175,9 @@ Expected:
 - `tagName` is `2.9.0-beta.1`.
 - `name` is `2.9.0-beta.1`.
 - `isPrerelease` is `true`.
-- Assets include at least `main.js`, `manifest.json`, and `styles.css`.
+- `isDraft` is `false`, and the tag release workflow completed successfully.
+- Assets include `main.js`, `manifest.json`, `styles.css`, `LICENSE`, `NOTICE`,
+  and `THIRD_PARTY_NOTICES.md`.
 
 Download the released manifest asset and confirm the runtime version matches
 the tag:
@@ -181,6 +189,18 @@ MANIFEST_DIR="$manifest_dir" node -p "require(process.env.MANIFEST_DIR + '/manif
 ```
 
 Expected manifest version: `2.9.0-beta.1`.
+
+The default completion check downloads only `manifest.json`. Downloading all
+assets for local hashes or `node --check` is optional for an explicit request
+or a concrete download/package incident; the release workflow already builds,
+audits and attests the published assets. Always wait for download completion
+before reading or validating a file. This does not replace BRAT/app smoke.
+
+Report timing as local preparation, remote tag gate and post-publish checks.
+Do not add polling/sleep durations to the tests they overlap. Report meaningful
+step changes or blockers; avoid repeating an unchanged test status. If a host
+requires periodic updates, keep unchanged updates brief and do not start extra
+checks merely to fill the wait.
 
 If `isPrerelease` is false for a tag containing `-`, stop and fix the release
 workflow before inviting testers.
@@ -219,7 +239,8 @@ BRAT from the published GitHub Release.
 ## Update a Beta
 
 For another beta build on the same train, put every accepted fix on `master`
-first, validate `master`, then cut a fresh packaging branch from its exact HEAD:
+first, then cut a fresh packaging branch from its exact synchronized HEAD and
+let `make release` validate or reuse that source:
 
 ```bash
 git fetch origin master
