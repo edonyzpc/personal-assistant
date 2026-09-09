@@ -425,7 +425,19 @@ under the Local Deployment conditions when those checks already passed.
 - Publish only after explicit user request or confirmation: `make publish VERSION=x.y.z`.
 - `make changelog VERSION=x.y.z` writes `CHANGELOG.md`; do not use it for inspect-only tasks.
 - Read-only changelog preview can use `node scripts/changelog.mjs --target-version x.y.z`.
-- `make release` requires a clean worktree, validates version/tag availability, generates changelog, runs tests/lint/build, updates release metadata, creates the release commit, and creates the annotated tag.
+- `make release` requires a clean worktree and validates version/tag availability.
+  Beta preparation reuses only exact synchronized master CI with a successful
+  full `validate` job; missing or invalid evidence falls back to full local
+  checks. It retains cheap local diff/notice/release-doc checks. Stable defaults
+  to full local checks; `RELEASE_LOCAL_CHECKS=1` forces them for beta. Final tag
+  CI always builds and runs full coverage before publication. Do not run an
+  extra full gate before this command or treat `SKIP_CHECKS` as CI reuse.
+  The command updates release metadata and creates the release commit/tag.
+- After beta publish, verify successful tag workflow, non-draft prerelease,
+  all six assets and the downloaded manifest version. Full asset downloads,
+  hashes and local JS syntax checks are diagnostic/explicit-request work.
+  Wait for downloads to finish before checking files; BRAT/device smoke is
+  separate evidence.
 - Do not delete, rewrite, or move release tags unless explicitly requested.
 - Do not publish, push tags, or create GitHub Releases unless the user clearly asked to publish or confirmed the action in the current turn.
 

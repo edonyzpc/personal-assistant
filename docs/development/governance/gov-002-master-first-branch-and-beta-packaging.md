@@ -2,7 +2,7 @@
 
 Document status: Current
 Governance ID: GOV-002
-Updated: 2026-09-05
+Updated: 2026-09-09
 Work item: B-117
 Authority: PA 仓库的代码、测试、研究/设计文档、工程治理与 BRAT beta 分支来源规则；不定义 PA runtime 或用户产品行为。
 
@@ -49,13 +49,49 @@ contract 下的同会话工程维护，不创建产品 Decision 或新的跨会�
   校验失败必须在修改目标目录前退出。该入口仅证明构建身份，不代表测试已通过；
   仅在当前改动已经完成相应验证、构建输入未变时使用。
 - 正式发布仍独立验证最终 tag 的版本、来源、构建与完整测试。预先验证的旧版本
-  `dist/` 不能替代版本更新后的 tag 构建；不增加默认 skip-checks 或跨提交绿色缓存。
+  `dist/` 不能替代版本更新后的 tag 构建；不增加无证据的默认 skip-checks 或跨提交绿色缓存。
 
 验证映射：CI classifier 用真实临时 Git 仓库覆盖重命名、删除、混合与未知基线；
 测试分组验证无重叠且并集等于 Jest 的完整发现结果；部署测试覆盖当前产物复制及
 过期/缺失/不匹配时目标不变；原 release tests 继续锁定 build-before-full-test。
 回滚只需恢复 CI 的无条件完整路径、`npm test` 的完整入口及默认部署调用；无 PA
 数据迁移或产品行为变化。
+
+## Beta Preparation CI Reuse
+
+2026-09-09 用户根据 beta.6 的耗时分析授权优化 beta 发布流程。本轮沿用本
+contract 的同会话工程维护入口，不创建新的产品或跨会话过程包。已核实 beta.6
+本地完整测试耗时 1205.859 秒，标签 CI Test 耗时 891 秒；同一 master 此前已有
+成功 CI。本次选择复用 master CI 的源码验证，保留最终标签独立完整门禁。
+
+- B-117/REQ-07: beta 本地 preparation 默认查询 origin 所属 GitHub 仓库的
+  `.github/workflows/ci.yml`，只复用与干净 checkout、local master 和实时
+  origin/master 完全相同 SHA 的 master push CI。最新 run/attempt 必须完成且成功，
+  `validate` job 的依赖安装、Lint、Build、Test、Audit bundle 均必须成功；
+  docs-only、跳过/缺失步骤、旧 SHA、旧成功 run、PR/fork、未知状态均不算证据。
+- B-117/REQ-08: 查询有界，证据不可用时说明原因并回退本地完整门禁；显式
+  `RELEASE_LOCAL_CHECKS=1` 或 `--local-checks` 可强制本地完整门禁。stable 保持
+  原完整验证。dry-run 不查询网络或执行门禁。既有手动 skip-checks 不作为复用途径。
+- B-117/REQ-09: 复用成功仍执行本地 diff、notice 和发布文档检查，在写入前确认
+  HEAD、master、分支与工作区未漂移。此证据只替代 preparation 的本地重验，
+  不声明本机 node_modules/dist 已通过验证；最终 tag 必须重新安装依赖、构建、
+  完整 coverage、审计和发布。不创建本地 receipt/cache 服务。
+- B-117/REQ-10: 发布后默认核实工作流成功、非草稿 prerelease、完整资产列表和
+  下载的 manifest 版本；全资产下载/hash/语法验证用于明确请求或具体诊断。
+  必须等下载自然完成再读取文件，轮询等待不计为额外测试时间。
+
+验证映射与通过条件：
+
+| Risk / requirement | Change | Minimum evidence | Pass / expansion trigger |
+| --- | --- | --- | --- |
+| REQ-07 错误复用 | CI 身份与完整步骤校验 | `release-ci-evidence-script` 表驱动反例 | exact success 接受；不完整、漂移、旧 run/attempt 拒绝；API schema 改动重跑 |
+| REQ-08/09 门禁绕过或漂移 | release CLI 分支与写前复核 | `release-script` 临时 Git + fake API/npm | 成功只跑轻检查；无证据回退；stable/force-local 完整；漂移不创建发布状态 |
+| REQ-09 最终发布包 | 保留 tag workflow | 既有 release/publish 契约与完整验证 | tag build-before-full-test、来源与包装检查仍通过；workflow变更扩大审查 |
+| REQ-10 核验过重 | operations docs + BRAT skill | docs/release-docs + 定向文档审查 | 默认下载仅 manifest，实机证据仍独立；核验要求变化重审 |
+
+回滚使用 `RELEASE_LOCAL_CHECKS=1 make release VERSION=...` 恢复本地完整门禁，
+或撤回本节及对应自动复用实现；不改写已有 beta、tag 或 Release。此优化不是新版本
+发布授权，也不改变 master-first、Community Error 或真实设备 smoke 的证据边界。
 
 ## Non-goals
 
