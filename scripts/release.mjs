@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import process, { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import semver from "semver";
+import { findVerifiedMasterCi } from "./lib/release-ci-evidence.mjs";
 import {
   generateChangelog,
   upsertChangelogSection,
@@ -43,6 +44,7 @@ function parseArgs(argv) {
   const options = {
     dryRun: false,
     skipChecks: process.env.SKIP_CHECKS === "1",
+    localChecks: process.env.RELEASE_LOCAL_CHECKS === "1",
   };
   const positional = [];
   for (let index = 0; index < argv.length; index++) {
@@ -51,6 +53,8 @@ function parseArgs(argv) {
       options.dryRun = true;
     } else if (arg === "--skip-checks") {
       options.skipChecks = true;
+    } else if (arg === "--local-checks") {
+      options.localChecks = true;
     } else if (arg === "--target-version") {
       options.targetVersion = argv[++index];
     } else if (arg.trim() !== "") {
@@ -59,6 +63,9 @@ function parseArgs(argv) {
   }
   if (!options.targetVersion && positional.length > 0) {
     options.targetVersion = positional[0];
+  }
+  if (options.skipChecks && options.localChecks) {
+    throw new Error("--local-checks / RELEASE_LOCAL_CHECKS cannot be combined with --skip-checks / SKIP_CHECKS.");
   }
   return options;
 }
@@ -166,6 +173,36 @@ function runChecks() {
   assertCleanWorktree("after validation checks");
 }
 
+function runReleaseChecks(targetVersion, options, sourceCommit) {
+  if (options.skipChecks) return;
+  if (semver.prerelease(targetVersion) === null || options.localChecks) {
+    console.log("Release validation: full local checks.");
+    runChecks();
+    return;
+  }
+
+  const evidence = findVerifiedMasterCi({
+    sourceCommit,
+    // A failed/missing GitHub connection must not create another long wait
+    // before the existing local gate can take over. Nothing is cached.
+    capture: (command, args) => execFileSync(command, args, {
+      encoding: "utf8", stdio: "pipe", timeout: 15000,
+    }).trim(),
+  });
+  if (!evidence.verified) {
+    console.log(`Master CI cannot be reused: ${evidence.reason}`);
+    console.log("Release validation: falling back to full local checks.");
+    runChecks();
+    return;
+  }
+
+  console.log(`Release validation: reusing master CI ${evidence.url} for ${sourceCommit}.`);
+  console.log("Final tag CI will still build, test with coverage and audit the versioned release.");
+  run("git", ["diff", "--check"]);
+  run("npm", ["run", "check:third-party-notices"]);
+  run("npm", ["run", "docs:check:release"]);
+}
+
 function licenseComplianceBulletsFor(targetVersion) {
   if (targetVersion !== "2.8.0") return [];
   return [
@@ -230,18 +267,26 @@ async function main() {
   assertTagAvailable(targetVersion);
   assertCleanWorktree();
   assertCurrentVersionTagged(currentVersion);
+  const sourceCommit = capture("git", ["rev-parse", "HEAD"]);
 
   const changelog = generateChangelog({ targetVersion, targetRef: "HEAD" });
   const releaseSection = changelogSectionForRelease(targetVersion, changelog.section);
 
   if (options.dryRun) {
     printDryRunPlan({ currentVersion, targetVersion, changelog, releaseSection });
+    console.log("Validation is not run by dry-run. Beta preparation tries exact-master CI reuse; otherwise full local checks run.");
     return;
   }
 
-  if (!options.skipChecks) {
-    runChecks();
+  runReleaseChecks(targetVersion, options, sourceCommit);
+  // GitHub queries and local checks take time; bind packaging to the input
+  // inspected above rather than silently using a changed checkout.
+  assertCleanWorktree("after validation checks");
+  if (capture("git", ["rev-parse", "HEAD"]) !== sourceCommit) {
+    throw new Error("Release source changed during validation; restart from the intended source.");
   }
+  assertPrereleaseBranch(targetVersion);
+  assertPrereleaseSourceMatchesMaster(targetVersion);
 
   upsertChangelogSection("CHANGELOG.md", targetVersion, releaseSection);
   run("npm", ["version", targetVersion, "--no-git-tag-version"]);
