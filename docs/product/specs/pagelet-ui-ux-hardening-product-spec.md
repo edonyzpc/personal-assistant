@@ -1,7 +1,7 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-08-07
+Updated: 2026-09-09
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
@@ -13,6 +13,10 @@ Approval boundary: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
 B-118。SG-05/SG-06 仅以 DEC-023 为当前权威；
 用户于 2026-07-21 为 Quiet Recall 语义候选选择 DEC-024 方案 A，并为
 foreground Review / generic background preload 风险分类选择 DEC-023 方案 A。
+
+2026-09-09 scoped amendment：Retrieval Habit Profile默认行为按
+[DEC-033](../decisions/dec-033-simple-settings-and-unified-defaults.md)改为默认开启、
+首次透明说明与独立退出。新默认实现/验证全部由[B-135 Tracker](../../development/active/unified-task-execution/tracker.md)承接，不重开旧任务，不改变B-118原有实测证据。
 
 > [!note] Successor amendment 2026-08-06
 > B-118 的三项长按菜单与对应 smoke 保持历史事实，不改写为已验证四项。当前 Ring 由
@@ -80,8 +84,8 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
   `bubbleNudgesEnabled=true` 为 On、false 为 Off，全部缺失或非法时为 Off。显式 canonical
   值始终优先，迁移后不得继续保存 Pagelet mirror；deprecated legacy boolean 仅作兼容
   输入，不能与 canonical 共同控制 runtime。Quiet Recall 与 generic proactive hints、Scope Recap preparation/hints
-  分别控制，互不联动；Retrieval Habit Profile 仍需显式启用或完成 first-use notice，
-  不能随 Recall 设置静默 opt in。英文名称保留 `Quiet Recall`，中文使用“相关回顾”。
+  分别控制，互不联动；Retrieval Habit Profile按DEC-033默认开启并首次透明说明，
+  真实关闭/暂停不能随Recall设置修改被复活。英文名称保留`Quiet Recall`，中文使用“相关回顾”。
 - B-118/REQ-08: Bubble 的来源链接、动作说明等辅助文字在 Obsidian 14px、16px、
   24px 基准下保持可读、按比例缩放且不溢出；目标可读下限约 12px。
 - B-118/REQ-09: 桌面 Bubble 以 active leaf 的可用区域放置，在左右侧栏开关、
@@ -224,7 +228,8 @@ Reduce Motion 下保留静态状态差异，不持续闪烁、跳动、脉冲或
   规定冷 query embedding 是真实调用并与 evaluator/retry 共用现有 Quiet Recall
   10/hour、50/day bucket；source snapshot 在调用前与结果使用前都必须保持 current。
 - Local learning: [Retrieval Habit Profile](./pa-retrieval-habit-profile-product-spec.md)
-  继续要求 first-use notice 或显式 enable，且仅 local、clearable、weak influence。
+  按DEC-033默认开启并首次透明说明，可独立关闭/暂停；仍仅local、clearable、
+  weak influence。真实退出时零收集/写入/排序影响，默认策略不授予provider权限。
 - Later / durable intent: [Saved Insight and Insight Ledger](./pa-saved-insight-ledger-product-spec.md)
   继续定义 durable insight 语义；B-118 中 Quiet Recall Bubble 的 `Later` 明确进入
   既有 Review Queue，`Link / Save` 仍留在 Tab。

@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-09-08
+Updated: 2026-09-09
 
 ## Status
 
@@ -24,6 +24,12 @@ Settings 简化的产品目标和旧选项失效规则见
 产品契约，运行时仍以当前源码为准；实施入口为
 [B-106 Feature Home](../development/active/simple-settings/README.md)，执行状态只看
 [Tracker](../development/active/simple-settings/tracker.md)。
+
+2026-09-09产品修订将长期记忆提取与本地习惯学习改为分别默认开启。当前源码仍为
+旧默认关闭及consent准入；新默认、真实退出和旧值迁移全部由
+[B-135 Tracker](../development/active/unified-task-execution/tracker.md)承接，产品修订见
+[DEC-034](../product/decisions/dec-034-unified-agent-task-execution.md)。旧B-106不新增后续任务。本页下述既有实现说明及2026-09-08验证不证明该新规则已实现，不能只凭
+Product Spec获批宣称当前设置已默认开启。
 
 Highest-risk Settings issues are no longer open:
 

@@ -1,13 +1,13 @@
 # PA Retrieval Habit Profile Product Spec
 
-Updated: 2026-07-27
+Updated: 2026-09-09
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Confirmed decision spec; M12 runtime implemented for local opt-in weak retrieval adaptation. B-118 completed the Quiet Recall exact-candidate Dismiss boundary and validated it through focused side-effect tests plus the authorized current Pagelet/Settings surfaces. |
+| Status | Current contract includes the 2026-09-09 default-on amendment. Historical M12 opt-in runtime and B-118 exact-candidate Dismiss validation remain evidence for their original scopes; all new default, migration and validation work is owned by B-135. |
 | Feature family | Retrieval Habit Profile / Local retrieval adaptation |
 | Primary surfaces | Active Vault Indexer, Quiet Recall, Pagelet, Settings advanced data controls |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -26,6 +26,15 @@ The [B-118 compact closeout](../../archive/2026/pagelet-b118-ui-ux-hardening-clo
 preserves the completed runtime/current-surface evidence and its residual
 boundaries; this spec does not extend weak feedback beyond the exact candidate.
 
+The owner-approved [DEC-033 amendment of 2026-09-09](../decisions/dec-033-simple-settings-and-unified-defaults.md)
+now sets local habit learning on by default, with a first-use explanation and
+independent disable/pause/clear controls. It supersedes the earlier opt-in
+default, without rewriting the historical implementation evidence above. The
+[B-135 Tracker](../../development/active/unified-task-execution/tracker.md) owns all
+new default, admission, migration and validation work under
+[DEC-034](../decisions/dec-034-unified-agent-task-execution.md). Earlier tracks
+are not reopened; the new default is not yet a claim about the shipped runtime.
+
 The product definition:
 
 > Retrieval Habit Profile helps PA adapt to how the user finds notes in this
@@ -34,12 +43,12 @@ The product definition:
 The active [Memory Control Center spec](./pa-memory-control-center-product-spec.md)
 does not promote this layer into user-profile Memory or same-device
 collaboration state. Retrieval Habit Profile remains vault-scoped, weak,
-clearable adaptation with its existing opt-in and retention controls; the
+clearable adaptation with independent exit and retention controls; the
 control center may deep-link to those controls but does not materialize its
 aggregate signals as durable user claims.
 
-This document records the one-question-at-a-time product decisions confirmed on
-2026-06-28.
+This document retains the product decisions confirmed on 2026-06-28 and the
+dated default-policy amendment of 2026-09-09.
 
 ## Confirmed Decisions
 
@@ -53,7 +62,7 @@ This document records the one-question-at-a-time product decisions confirmed on
 | RHP-D6 | Use rolling window plus decay. | Recent retrieval behavior matters more; old habits naturally fade. |
 | RHP-D7 | Include deterministic eval for weak-influence boundaries. | Tests assert it cannot cross explicit scope, Data Boundary, Context Firewall, or evidence strength. |
 | RHP-D8 | Provide lightweight why-shown explanations. | Example: "Shown higher because you often use tags in this vault." |
-| RHP-D9 | Default collection requires a lightweight first-use notice or explicit enablement. | PA does not silently start behavior-like local adaptation without a visible Data & Privacy control. |
+| RHP-D9 | Local habit learning is on by default under the 2026-09-09 DEC-033 amendment, with a first-use explanation and independent exit controls. | The explanation is informative, not an activation confirmation; an actual user disable/pause remains effective and cannot be reversed by unrelated settings. |
 | RHP-D10 | Quiet Recall `Dismiss` is a weak signal for the exact candidate only. | When RHP is off, collection, writes, and ranking influence are zero; passive close/ignore is neutral and similar candidates are unchanged. |
 
 ## 1. Product Decision
@@ -170,13 +179,18 @@ Controls:
 
 Default state:
 
-- v1 starts disabled until the user enables `Improve recall locally` or confirms
-  a lightweight first-use notice.
+- The current product default is enabled, with a lightweight first-use
+  explanation; no notice confirmation or separate activation is required.
+  The earlier v1 opt-in behavior remains historical evidence only.
 - The notice must say the profile is local-only, clearable, weak influence,
   and not Confirmed Memory.
 - Enabling does not permit provider calls, vault writes, sync, export, or
   cross-vault tracking.
 - Disabling stops both future signal collection and retrieval influence.
+- Product-default activation must not invent a user-confirmation event. Legacy
+  defaults, explicit disables and ambiguous stored values follow the B-135
+  migration design; default-on does not authorize forcibly reopening unknown
+  old values or discarding existing aggregates.
 
 Do not build:
 

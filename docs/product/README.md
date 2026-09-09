@@ -43,6 +43,8 @@
 
 ## Shared Product Infrastructure
 
+- [Unified Agent Task Execution](./specs/pa-unified-task-execution-product-spec.md)
+
 - [Simple Settings](./specs/pa-simple-settings-product-spec.md)
 - [Active Vault Indexer](./specs/pa-active-vault-indexer-product-spec.md)
 - [Data Boundary](./specs/pa-data-boundary-product-spec.md)

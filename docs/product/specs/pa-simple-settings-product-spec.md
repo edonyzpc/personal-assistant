@@ -1,10 +1,16 @@
 # Simple Settings Product Spec
 
 Document status: Approved
-Updated: 2026-09-08
+Updated: 2026-09-09
 Work item: B-106
 Decision: [DEC-033 — Simple Settings And Unified Defaults](../decisions/dec-033-simple-settings-and-unified-defaults.md)
 Authority: 设置简化的用户行为、功能完整性、默认策略与旧选项失效边界；不表示运行时已经交付。
+
+## Scoped Successor — 2026-09-09
+
+Owner在B-135讨论中将长期提取和本地习惯学习改为分别默认开启，并明确全部新增工作由B-135跟踪。新的当前默认/退出/准入/迁移目标由[DEC-034](../decisions/dec-034-unified-agent-task-execution.md)及[B-135/REQ-17、AC-17](./pa-unified-task-execution-product-spec.md)承接；以下B-106/REQ-04、AC-04中原主动开启规则只描述原交付基线，已被该有日期的选择覆盖。REQ-07/AC-05的有效偏好、权限与治理保护继续适用，不用废弃字段规则强制重开模糊旧false。
+
+本Spec保留B-106原需求/验收身份以解释历史证据，不在旧Tracker新增任务或将新默认标为已验证。新增实现与全部组合回归只见[B-135 Tracker](../../development/active/unified-task-execution/tracker.md)。
 
 ## Problem And Product Outcome
 

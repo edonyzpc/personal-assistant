@@ -2,7 +2,7 @@
 
 Decision ID: DEC-021
 Status: Accepted
-Updated: 2026-07-27
+Updated: 2026-09-09
 Authority: 用户于 2026-07-19 要求把当日 UI/UX 审查与桌面/iPhone 实测完整交接给 Claude Code，并用于后续优化开发；2026-07-21 选择 DEC-023 方案 A，补齐 Review/preload 风险分类
 Work item: B-118
 Scoped resolution: SG-01 至 SG-04、SG-07a/SG-07b 已由用户于 2026-07-20
@@ -63,9 +63,11 @@ lightweight saved draft；共享 Data Boundary 采用 first-use 加 broad/sensit
    - Data Boundary 的标准有界 Pagelet provider path 共用一次非阻断 first-use
      notice；broad/sensitive/costly/whole-vault 与 excluded override 仍逐次阻断。
      B-118 不创建或重置 feature-specific first-use state。
-   - Retrieval Habit Profile 继续默认关闭，只有显式启用或完成轻量 first-use notice
-     才能收集反馈并影响排序；Quiet Recall 的 `Dismiss` 仅在此边界内成为具体
-     candidate 的弱信号。
+   - Retrieval Habit Profile 的默认遵循[DEC-033 2026-09-09修订](./dec-033-simple-settings-and-unified-defaults.md)：
+     默认开启、首次透明说明、独立关闭/暂停；取代本记录2026-07-27保留的
+     “默认关闭、显式启用或确认notice后收集”规则。Quiet Recall的`Dismiss`
+     仍只在有效启用时成为具体candidate的弱信号；被关闭时不收集或影响排序。
+     新默认的实现/验证全部由[B-135 Tracker](../../development/active/unified-task-execution/tracker.md)承接，长期选择见[DEC-034](./dec-034-unified-agent-task-execution.md)；不重开旧任务，不回填为B-118当时已验证的行为。
    - Quiet Recall Bubble 的 `Later` 进入既有 Review Queue；`Link / Save` 仍留在
      Recall Detail Tab，不新增平行 queue 或 snooze 模型。
 7. 2026-07-19 提出的 SG-01 至 SG-04、SG-07 不再是未决 gate：当前实现必须执行

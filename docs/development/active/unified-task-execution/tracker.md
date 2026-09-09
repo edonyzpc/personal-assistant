@@ -1,0 +1,493 @@
+# Unified Agent Task Execution Development Tracker
+
+Document status: Current
+Delivery status: Implementing
+Updated: 2026-09-09
+Work item: B-135
+Authority: 本 track 全部新增工作的唯一执行状态、finding、验证证据与 closeout readiness。
+Product spec: [Unified Agent Task Execution](../../../product/specs/pa-unified-task-execution-product-spec.md)
+Plan: [Delivery Plan](./plan.md)
+SDD: [Software Design Document](./sdd.md)
+
+## Current Snapshot
+
+- Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
+- Next action: T-13已将真实用户消息ID、scope控制schema、完整读计划、真实文件身份/动态句柄及Memory范围快照连入生产run；独立控制轮和图片队列调用级读门已修复并定向验证。下一片从T-14实际runtime读取A/B→收窄仅B反例开始，补普通Vault结果、完整历史/派生来源及每次物理输入；自然语言质量、真实模型及完整App门仍未通过，不能把生产接线等同整项交付。
+- Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
+- Last verified behavior: 本片冻结组合15 suites/589 tests PASS（12.64s，自然exit0），覆盖生产scope/独立控制轮、动态句柄、Memory/Operations/skill/图片、completion与SDK transport；最终tsc及定向lint自然exit0。具体命令、docs/diff/DOM检查见Work。此前T-14摘要当前性及Personal/Memory刷新4 suites/161 tests等仅按未变输入复用，当前修改后未重新build/部署。此前D11冻结输入完整lint/build、254 suites/6974 tests PASS自然exit0；test库仍加载历史main.js（SHA256 `898fed3a1f9910194e83487b641c8300e5e4f795de5c3c597fd71afb64d763dd`），旧App证据不证明新增范围检索或请求刷新运行。Qwen合成语义fixture仍仅是provider组件证据。
+- Workspace: `/tmp/pa-b135-docs`，开发分支 `codex/b135-discussion-followup`，本次累计改动基线 `c923ee22089ef3e669b275718bce6052e98d7749`。Owner 2026-09-09 已授权将当前修改分组提交并推送同名远程开发分支；接手时以该分支实际HEAD/tree核验交付，不把这里的基线当最新提交。基线与main工作区master `8be89c4c` 仅发布治理/工具规则不同；构建/测试复用仍以实际输入为准。main工作区本轮核对干净。
+- Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
+- Authorization: 既有全量实施授权继续适用；此前逐项讨论轮记录真实产品答复，随后按已确认方案持续实施。Owner 于2026-09-09明确要求“为当前修改创建commits并推送到远程开发分支”，授权本次累计B-135代码/测试/方案提交到origin的同名开发分支；不包含PR、master合并、tag、release或closeout。新产品偏差仍须单独决定。
+
+## Decisions
+
+状态为 Pending 的选项不得因本文件或 DEC-034 自写 Accepted 获得授权；收到用户答复后记录真实日期与原意，并同步稳定契约。技术验证与用户选择分别列出，不把回答“同意方案”写成测试通过。
+
+| ID | State / evidence | Choice, recommendation and tradeoff | Gate / rollback |
+| --- | --- | --- | --- |
+| D1 | 产品边界已确认；执行设计待 P0 | 当前笔记限定保留个性化、已有 Memory、风格及获准历史；同一 Agent 解释新增取材约束，宿主验证结构化边界/真实权限。已有设置、排除、撤销可在首请求前执行；任意新增自然语言“不要发送背景”不能在已经发送后补救，也不能声称普遍支持 | T-04/T-13：明确首请求输入、历史/摘要及每次物理调用；未覆盖的严格发送能力不纳入已实现承诺，若需新增 UI/前置机制再提交具体方案；禁止统一空背景或独立 classifier fallback |
+| D2/D3 | Confirmed — Owner 2026-09-09 答复“采用专用作品通道，兼容验证通过后切换（推荐）” | 采用主 Agent 纯作品输出通道，Chat 收尾可文字或一个作品；无新取材/动作，无额外 acknowledgement 模型轮 | T-03 当前模型 native/预览/finish/旧 reader 兼容通过后才切换；产品选择不是验证 PASS，失败停止推广并重新讨论，不自动双协议 |
+| D4 | Engineering candidate — P0 需证据 | 复用 Type A 理解用户语义；宿主事实与模型候选分开；未知不默认 ordinary；真实个人陈述与本次写作要求混合时分别处理，不丢掉独立事实 | T-04/T-10：提取输入准入和两条最终持久化准入分别证明；保留旧 hostProvenance/reader，失败不写不兼容字段 |
+| D5 | Confirmed — Owner 2026-09-09 对语义提议及保留执行保护答复“同意” | 主 Agent 在现有 per-vault opt-in 和四个 core tools 内按目标提出 Operations 建议，替代本地操作意图规则；不明确时澄清，实际执行仍确认、stale-safe、Undo、审计，准备读取仍受来源约束 | T-15：schema、canExport/canExecute、提议、执行一并适配与验证；关闭/未确认/取消/目标 stale 均零写入。产品批准不代表已实现或验收通过 |
+| D6 | Engineering candidate — T-06 验证 | 单一绝对硬截止；已开始正文/作品允许在原硬期限内接收，不因软过渡丢弃重答。仍可能用尽重答预留，硬期限/取消不得延期 | fake-clock 测试 startup、reasoning、partial body、late tool、重复 finalization；独立回退预算适配，保留完成事实修复 |
+| D7 | Confirmed — Owner 2026-09-09 | 长期提取、本地习惯学习分别默认开启，可独立关闭/暂停/管理；首次透明说明，已有调度/预算/治理/权限不扩张 | 全量归 B-135/REQ-17、AC-17、T-08/T-09，不回 B-106 |
+| D8 | Confirmed — Owner 2026-09-09：“同意，默认开启，旧的false如果不是明确用户关闭也设置为开启” | 两项能力分别默认开启；旧 false 没有明确用户关闭证据时也迁移为开启，包括来源不明旧 false；明确用户关闭或有效暂停保持原状态，不额外询问一次。该补充覆盖先前“未知 false 保持关闭”的推荐 | T-08/T-09 在归一化前分类 raw settings；未知不是已知默认或用户授权事实，不伪造 confirmedAt。按产品策略迁移一次，迁移后明确关闭不得在 load/save/reload 时重新开启；兼容与实际准入仍待验证 |
+| D9 | Confirmed — Owner 本次请求 | 旧 track 已交付或 closeout 的相关接缝不重开；本次所有增量与组合验收都在 B-135，必要的稳定契约修订保留有日期来源 | T-01/T-22；旧过程文件无本次新增 diff，历史证据不改写为新默认 PASS |
+| D10 | Confirmed — Owner 2026-09-09 对拆开新提取与已有画像使用答复“同意” | 关闭/暂停长期提取只停止新学习；已有有效 Personal 可继续用于后续模型输入，仍受 Memory 主开关、来源有效性、治理、排除、遗忘与预算控制。显式 style 保留独立授权/撤销规则；设置说明明确停止学习不等于停止使用已有背景 | T-11 联同 T-08/T-09：停提取零新学习但已有画像可用；关闭 Memory、删除/遗忘、来源失效即禁止相应读取/投影；覆盖保存失败、重载和实际 provider 输入，不以字段解耦冒充验收 |
+| D11 | Confirmed — Owner 2026-09-09 对明确版本边界建议答复“同意” | 新语义凭据采用明确格式版本；降级旧版时保留治理库数据并停止该库的读取/确认/恢复，升级回来再恢复使用。接受旧版暂不能操作该治理库的代价；原笔记不修改 | T-04/T-10/T-19 全量跟踪：旧 parser 拒绝未知版本仅是局部证据；必须验证旧插件 bootstrap、普通保存、确认、恢复、legacy 画像路径及重新升级的数据保真。不得清空、覆盖或绕过治理库拒绝结果；产品批准不代表安全降级已验证 |
+
+## Work
+
+2026-09-09开发分支交付：提交前核对tracked/untracked全量路径、模块依赖及合成模型fixture；按Memory/default/governance、图片队列、Agent/source/native/Operations、文档四个职责分组。已有源码验证输入保持不变；只修DEC-033和Brief仍停留早期“未批准”的表述，按D8及其他真实后续决定对齐，并更新本Snapshot交付授权。本次是开发检查点，T-13/T-14等未完成项与真实模型/App/iOS门保持待验，不以提交或远程同步代替完成证据。
+
+2026-09-09本片最终冻结验证：`npm test -- --runInBand __tests__/b129-multimodal-runtime.test.ts __tests__/chat-service.test.ts __tests__/operations-agent-runtime.test.ts __tests__/skill-context-provider.test.ts __tests__/task-source-run.test.ts __tests__/task-source-executor.test.ts __tests__/pa-agent-loop.test.ts __tests__/pa-agent-writing-preview.test.ts __tests__/pa-agent-answer-completion-policy.test.ts __tests__/pa-agent-required-capability-policy.test.ts __tests__/pa-agent-control-policy.test.ts __tests__/pa-agent-host-tools.test.ts __tests__/ai-ios-dashscope-transport.test.ts __tests__/chat-image-assets.test.ts __tests__/b129-image-request.test.ts`，15 suites/589 tests PASS（12.64s，自然exit0）。最终`npx tsc -noEmit -skipLibCheck`及本片8个源文件定向ESLint均自然exit0；早先新增mock零参数导致的TS2554已改用真实MemorySearchPort参数类型，未修改业务API绕过类型。来源代码/测试/fixture/config/依赖在组合检查期间冻结，未进行build/full/App/device gate；跨会话复用仍须核验实际输入，不凭HEAD直接复用。当前main工作区核对干净，所有本片新增实现/修复/验证仍归B-135。
+
+T-13生产接线：AC-01/03/04 → 每run真实用户消息ID/笔记身份/范围state，控制schema与动态handle说明、完整工具批次wrapper及Memory路径快照；移除runtime自然语言regex工具名单 → run helper、真实runtime批次/Memory/current-note/Operations及独立图片/skill回归，类型检查 → 缺声明/越界混合批次零读取，已批准声明与读取同轮，已授权背景能力保持原门 → scope/schema/工具适配/路径身份变化复验，完整集成和App门仍需阶段执行。
+
+本片文档及源检查：完整docs:check通过206 Markdown/1801链接，4项既有episodic advisory；沙箱首次跳过Git删除连续性检查，改在获准环境重跑同一只读命令后完整通过。git diff --check通过；DOM源扫描无匹配（exit1按约定为PASS）。文档仅记录本片实现/证据/未完成项，不重开旧过程任务，也不将定向验证升级为全量或App/device证明。
+
+2026-09-09生产scope片：TaskSourceRun捕获真实文件身份并与loop实际userMessageId对应；主Agent可同响应声明及取材，宿主完整预检后提交范围，Memory检索取得同一scope的有限路径。移除runtime内current-note/notes-only/no-web的NL regex工具名单，保留skip-memory、registry、Data Boundary和Operations opt-in/确认门。load_skill按实际provider拥有的capability对象、图片按本run注册对象识别独立上下文，不按meta或同名工具赋豁免；图片仍读取/验证注册字节，不记录成零I/O。
+
+独立审查发现内部identity登记会在current-note之外泄露路径、vault枚举会使目录无界膨胀；已分开内部cache与公开目录。只有来源重验后的有效返回sourceRecords可发布，当前scope/live再次检查，最多32条/转义JSON8000字符；原结果及旧handle绑定不删除。真实runtime验证全库Memory枚举的内部路径未进入任何provider输入；helper真实3000次登记也不改变目录。该finding独立复核关闭。root另核对合法context-used即使非citation也需保留后续定位句柄，仅memory-reference沿citation资格门；真实Operations runtime三轮正向测试从非当前笔记标题结果取得公开句柄，再收窄为selected并读取更多标题，第三轮目录仅保留该笔记、currentNoteHandle为null。该suite 12 tests PASS（1.52s，自然exit0），正文/枚举/暂存/写入均零调用。
+
+T-13控制轮接续映射：AC-03/04 → completion把成功scope控制回执与资料观察分开，保留原loop调用/轮次/硬截止 → 真实runtime独立声明→读取→回答及completion混合失败/重复回归 → 控制轮不记录证据或观察、不提前final-only；实际失败/重复仍按原策略收尾 → outcome分类、ledger、control snapshot或final-only执行门变化复验。
+
+真实SDK离线fixture暴露独立声明后两项合法读取都被final_answer_only_violation拒绝，根因是控制prompt被当观察。修复仅从completion事实与ledger剔除成功且带host标记的declare_source_scope；调用和结果仍留在turn，预算/硬期限不改。新增独立声明与control+failure/duplicate测试通过；runtime+completion 2 suites/85 tests PASS（2.17s），completion/required-policy/host-tools 3 suites/136 tests PASS（1.466s），均自然exit0。独立只读审查确认没有final-only绕过或失败掩盖，该finding关闭；本片完整冻结验证另记，不用这两项冒充全量/App门。
+
+Memory follow-up兼容映射：同源follow-up快照不能意外移除已获准的收窄范围控制 → 在原notes snippet集合中仅保留上一快照已allowed、未blocked、非final的declare_source_scope → required-policy三态与原control-policy回归 → 无原权限不新增、关闭不恢复、Web/Memory/skill等不重开，shared Set不被修改 → snapshot/follow-up metadata变化复验。独立审查确认接缝及最小修复。当前标准Memory返回needsSnippetFollowup:false；此项证明保留的兼容metadata分支，不声称普通生产查询必然触发。
+
+T-13/T-14图片队列读门映射：AC-04/08 → verify及更早的resolveVariant沿实际队列、恢复读取、readVerified/readBinary传递调用级signal/currentness；ChatImageRequestScope的prepare/resolve提供真实快照 → 真实service队列和request scope反例、处理等待/恢复及并发隔离回归 → 排队失效零字节读取，异步后不重读/处理/缓存写入，不把取消记为源损坏；正常有效调用及旧无guard调用继续使用 → 图片队列/处理器/缓存/恢复路径或request identity变化复验。
+
+最初两个verify排队反例在旧代码下均仍readBinary一次（0.875s，自然exit1），证明外层await后检查不足。verify先修复后，主审发现prepare更早的resolveVariant也读取原图，故同一接缝一并接通；没有扩大图片功能。调用级guard只留在闭包，不写入asset/缓存/来源receipt，避免正常turn清理误撤销有效来源。恢复中已开始的写入不能追溯撤销，失效后不启动后续步骤，保留pending供重试；独立vault事件维护保持原有权限。
+
+最终图片定向51 tests PASS（1.236s，自然exit0）：真实scope的首次prepare、已物化后的verify、历史resolve分别覆盖abort/request失效/输入身份变化；队列有效并发不被污染；处理等待失效后零额外读取/缓存写入；普通/待恢复验证读取失效不将资产标changed，也不完成恢复。恢复fixture最初把独立rename事件维护的写入误归到verify，改为明确“移动中断且丢失通知”的现有恢复场景后通过；未修改生产事件维护或放宽零写断言。当前未关闭T-13/T-14，也未重新build/部署。
+
+T-14后续明确入口：`MemoryEvidenceRegistry.prepareTranscript`当前只重验search_memory；普通Vault结果在执行返回前有guard，但后续transcript clone没有逐来源重新投影。动态目录取交集不能替代正文/metadata/summary准入。继续实现时先用实际runtime读取A/B→收窄仅B，分别断言A不再提供、B及获准助手/用户历史继续可用；并覆盖来源删除/同路径重建、摘要及物理retry。不能用统一清空历史或将全部旧工具内容当个性化来满足该反例。本条是未完成的T-14工作，不将当前生产接线标为完整AC-04通过。
+
+T-14摘要请求有效性：AC-04 → 摘要模型构造后、工具证据异步刷新后及物理发送入口复验当前request/image/style → 真实runtime/ChatOpenAI离线网络fixture → 等待模型或SDK发送前撤销时零实际请求，合法摘要仍正常发送，独立摘要超时不扩成run取消 → summary准备、transport/retry和来源有效性回调改变时复验。本片不替代Personal/Memory背景快照或完整历史来源治理。
+
+T-14背景刷新：AC-04/D10 → 首发和fallback统一准备，所有await后同步读取最新Personal/Memory，按最新背景重算style预算；物理answer/SDK重试校验实际格式化背景是否变化 → 真实runtime/SDK请求正文与次数反例、既有style/runtime/summary回归、tsc → 删除零旧背景、更新消费最新背景、稳定背景仍可用、变化后不发送已序列化旧body；trace-only元数据不触发无关失效 → host selector/formatter/budget/transport变化时复验。仍需完整历史/工具来源、真实provider和App门。
+
+2026-09-09摘要/背景片：先补真实runtime→ChatOpenAI→离线fetch反例，旧源码在模型等待/物理发送前request失效（signal未abort）后仍发送两次summary；修复后摘要构造后、证据await后及SDK每次物理请求均检查request/image/style。首次fixture未消费runtime预期拒绝，修正为先断言拒绝再检查实际请求数，随后确认上述真实失败，未放松零发送断言。summary及runtime三套124 tests PASS（2.883s，自然exit0）；之后背景代码变更需最终组合复验，不能沿用该数字冒充最终状态。
+
+独立复核发现合法selected-image长历史在summary前尚未prepare会被新assertReady误拒绝，已在真正summary分支开始独立deadline前建立图片receipt；answer仍最终准备。后续复核确认此回归修复、摘要超时独立、背景刷新/预算与物理guard一致，无新增必须修finding。背景guard比较当前请求实际formatter正文，排除未投影trace及独立style/Pagelet字段；不构造跨run缓存，不修改已序列化SDK消息，不删除未知旧历史。完整GenerationInputSnapshot及其历史/工具来源用途仍待T-14后续完成。
+
+最终冻结组合：`npm test -- --runInBand __tests__/b129-multimodal-runtime.test.ts __tests__/pa-agent-context-summarizer.test.ts __tests__/pa-agent-runtime-search-vss.test.ts __tests__/pa-agent-writing-preview.test.ts`，4 suites/161 tests PASS（3.581s，自然exit0）。新增21个背景/图片用例含有效非空背景、Personal及governed Memory在模型等待/style等待/SDK发送前/429 retry期间删除和替换；真实formatter背景增长到5900字符后保留最新Memory、移除超预算style及其revision。主请求未abort的摘要失效、selected-image合法摘要/撤销均覆盖。最终`npx tsc -noEmit -skipLibCheck`自然exit0、runtime定向lint自然exit0、diff及DOM扫描通过；main工作区核对仍干净。未build/部署/真实provider或设备验收，不关闭T-14或P1/P3。
+
+T-13原始批次读计划接入：AC-03/04 → executor支持互斥的单调用/完整有序批次resolver，声明先剥离、所有调用ID必须精确覆盖后才提交scope → executor及integration定向测试、类型检查 → 缺失/额外/错误ID/无计划均在base预检和prepare前拒绝，创建输出只授予目标存在性检查 → resolver、工具参数规范化或Operations虚拟目标顺序改变时复验。生产runtime接线仍待完成。
+
+2026-09-09批次读计划：新增纯resolver覆盖现有八个Vault工具、Memory、web与四个Operations工具，复用真实路径别名/默认当前笔记及输入规则，不调用准备或读取正文/metadata。每路径首次操作保留真实baseline，create→append只准目标存在性、append→create仍要求旧素材；虚拟目标不跨批次或外借给其他读取工具。未知/meta/image/style保留unplanned，后续生产接线必须明确处理，不能直接默认none或移除能力。
+
+冻结输入验证：read-plans、executor及executor-integration三套69 tests PASS（1.318s，自然exit0），含实际factory alias对照、真实身份替换、Operations controller零旧正文读取及wrapper顺序/拒绝反例；最终tsc自然exit0。executor接线独立只读复核无必须修finding，root对照实际工厂规范化路径一致。定向lint、diff/DOM扫描和docs检查按本轮文件完成；不重复旧build/全量结果，不把本片作为App、生产runtime或T-13阶段验收。
+
+T-13受限Memory与笔记身份映射：AC-03/04 → per-run file对象/path绑定与不可重绑opaque句柄；Memory请求级允许/排除路径在vector评分/FTS候选limit前下推，逐调用host同时保护graph、latest body与generation；后续Memory证据保留host guard至每次投影 → identity/state、SQLite worker真实SQL/transport、Memory host/search/registry及manager定向组合 → 同路径重建不复活，越界批次零读取，旧scope不全库后过滤，provider构造等待后失效零发送，受限检索不触发全库prepare/verify；已有独立后台维护与无scope的DEC-028保持 → identity/SQL/port/graph/provider/维护准入变化复验，生产runtime自然语言接通及实际App另验。
+
+2026-09-09受限Memory片：TaskSourceNoteIdentities捕获真实对象/path，不读editor/title/stat；支持既有Markdown/Canvas，同文件换pane有效，delete/同路径replace/rename/lookup失败后旧身份不复活、原排除路径保留。host动态注册不重绑handle/path、不改变已commit范围；真实identity→state→query guard组合覆盖同路径重建拒绝。身份与state定向2 suites/37 tests PASS（0.845s，自然exit0）。
+
+NoteSearchScope在VSS/SQLite队列前复制，通过worker structured payload传递；冷cache直接WHERE限定id/embedding，不先加载全库向量或把局部cache记为完整。FTS在ORDER/LIMIT前绑定JSON路径集合；保留原时间、generation和融合语义。现有非SQLite普通search接口不支持范围时明确拒绝，不能全库search或getChunksByPath替代。上层scoped host对全库任务也先仅枚举path，与真实guard和原DataBoundary交集后传有限集合；graph先过滤源键再读边值，越界源不作opaque中转，latest/generation/ranked chunks读取前后重验。
+
+MemorySearchTool逐调用child使用独立host，rewrite/rerank在模型构造等待后及物理发送回调检查guard；Recovery和MemoryEvidenceRegistry保留同一host guard至后续投影，不序列化进transcript。主审/独立复核发现父dispose原本不能释放child，已加parent-owned集合、同步dispose及parent lifetime门；对应await中销毁反例零rerank发送。受限readiness只看cached ready，不触发全库verify/prepare；完全全库任务保留原DEC-028，且proxy保留调用方显式existingOnly。原先全库scope在SQL后才检查DataBoundary、冷cache先加载全向量的两个前门缺口均已在本片修复。
+
+验证阶段：上层11 suites/422 tests PASS（6.997s，自然exit0），含plugin bridge、runtime、manager、真实Memory search/registry、scope和身份。tsc随后发现新fixture缺includeInNextPrompt、worker union未收窄、jest参数unknown及proxy可选cache判断，已按实际契约补齐，未改产品断言；受影响SQLite/host/search组合最终结果见Current Snapshot。真实SQL证据使用安装版本SQLite/WASM内存FTS执行从生产worker捕获的query，证明LIMIT 1仍得到允许的较低排名笔记；向量worker仍为SQLite mock，不是OPFS/App/device证明。sandbox内子进程曾stdin等待/空stdout，两等待运行明确superseded TERM退出143，空stdout失败未计PASS；相同冻结输入sandbox外3 suites/55 tests自然exit0（1.524s），有延迟退出提示但未forceExit。
+
+收口：受影响5 suites/93 tests PASS（2.745s，自然exit0），进程延迟退出提示后正常结束；最后worker测试仅将结构断言类型改为实际VectorHybridSearchResult，执行语义与该证据相同。最终tsc自然exit0、相关16源码定向lint（proxy末次判断另复验）、diff/DOM与完整docs检查通过。独立上层只读复核确认父子销毁finding已关闭；root确认host范围下推和冷cache前门修复，无其他已知必须修复项。本片未build/部署/设备验证，不关闭T-13、T-14或阶段退出门。
+
+T-13声明消费映射：同一Agent声明+首批读取同响应 → host wrapper解析唯一declare_source_scope、绑定当前run/user与精确指令出处、为全批解析host读计划并验证后commit；dispatcher消费纯控制回执，将已提交guard传至batch/每次execute → 新scope-executor与batch-preflight、真实factory/Operations组合 → 声明不落普通unknown tool、不伪造来源，任一越界整批零准备，旧scope只收紧，候选过期/源失效不读，原工具/取消/预算路径保留 → schema/消费顺序/guard传递/读计划映射变更复验。runtime注册及各物理provider投影仍独立接通，不将可注入wrapper证明成默认已启用。
+
+2026-09-09声明消费片：新增runtime纯控制schema与可注入executor wrapper，绑定run/实际userInput，完整解析原始调用的host读计划后才commit；未知计划、重复ID、多声明、越界或旧host gate拒绝均不commit。无新素材读取的输出计划无需额外声明轮，host guard只开放精确输出存在性，不允许旧正文。dispatcher将声明从canonical/prepare/mode/execute移除，保留顺序/生命周期及独立control_applied回执，剥除sourceRecords/contextUsed；准备前后和实际execute前后复核本批guard，共享executor不保存全局scope。
+
+真实PaAgentLoop→wrapper→registry/adapter→current-note factory组合证明同响应声明后读取真实editor；混合越界批次零execute/零editor读且不commit。首轮测试读取错了PaAgentMessage的回执字段，改为content.metadata及sourceRecords/contextUsed，未放宽产品断言。5 suites/70 tests PASS（1.589s，自然exit0），tsc/定向lint通过。独立审查另发现read-first/declare-last且只剩1额度时，已commit声明可能只收到超额回执；要求准备与实际分配都优先预留控制额度，保留原输出顺序并补反例。该修复最终证据另记，不以此前PASS覆盖变更。
+
+该预算finding已修复：collect及sequential/parallel使用批次局部剩余控制数预留额度，read-first/declare-last只剩1额度时来源零canonical/prepare/execute，控制正常applied；控制总数超过剩余额度整批准备前拒绝。独立复核另指出当前controlSnapshot明确禁声明时不得先commit，wrapper已在候选准备前复用现有allowed/blocked工具门整批拒绝，两反例保证零commit。最终wrapper/preflight/两外层wrapper/loop/host-tools组合5 suites/227 tests PASS（2.306s，自然exit0），定向lint通过；范围状态与实际readguard未变输入复用此前组合。生产runtime与物理请求仍未接通，未build/部署，不以此关闭T-13或阶段退出门。
+
+T-13真实读取接缝映射：AC-03/04 → 每次工具调用携带host-only `taskSourceReadGuard`（当前性及允许路径），capability adapter保持传递；各Vault工具在metadata/editor/正文读取前与异步结果投影前校验，并叠加已有factory路径边界 → 真factory配spy editor/vault/metadata及adapter/executor组合测试 → 禁止路径零读取、途中scope失效不返回旧结果、无guard保持既有行为；不将action/meta或raw工具结果当Personal豁免 → guard传递、读取入口、辅助metadata/backlink来源或异步等待变更复验。search_memory/Operations与物理provider门独立接通，不以普通Vault工具通过冒充完整T-13。
+
+2026-09-09实际读门实现：host execution input→registry context→adapter保持同一guard；执行前、capability返回后及外层Recovery等待返回后的证据capture前重验。最后一项由独立审查发现并补反例：恢复revalidate撤销来源后零capture/零成功返回。State.createReadGuard只接受已提交current revision，host文件identity resolver可拒绝同路径重建文件，且复核host生命周期；共享executor并发两调用分别保持自己的guard，一项撤销不影响另一项。
+
+8个Vault factory复用逐调用过滤host，在editor/lookup/cachedRead/getFileCache前保护，async后重验；旧factory边界取交集。元数据图先枚举来源路径，仅访问允许来源的边值；被排除backlink、标题、stat没有先读后滤。current-note执行时的实际view路径及editor各读方法复核。独立主审未发现另一项必须修复问题；当前host仍须在runtime先绑定真实文件对象+路径，不能把以后按路径重查视为同一原文件。
+
+Operations StageOperationsIntentInput只携带host-only guard，先验证完整规范化目标批次，再逐路径resolve/exists/baseline及async返回复核；不修改共享controller或持久化guard。首次create只检查精确输出目标存在性，其他首次目标读正文；同批create→append使用virtual内容，无额外旧正文读取。精确输出目标例外不能用于append→create或读取已存在碰撞文件正文。原Data Boundary、确认、stale-safe、Undo与审计独立。主审追加prepareBatch进入base准备前及等待后有效性门，过期时整批返回拒绝，不进入参数准备/目标读取。
+
+验证：真实executor/adapter/state、8factory、controller与staging组合9 suites/196 tests PASS（2.536s，自然exit0）；最后Ops前后门与fixture outcome字面类型修复后，3 suites/45 tests PASS（1.484s），其他输入不变复用。独立贡献者此前Operations runtime/service/audit-Undo 3 suites/25 tests PASS（1.256s）为兼容证据。最终tsc、定向ESLint、diff和DOM源扫描通过。未进行本片build/App/device，生产声明及guard尚未启用；阶段门仍待完整接通后验证，不把可注入的测试链路当成已上线行为。
+
+T-13完整批次预检映射：AC-03/04及prepareArguments提前读取风险 → dispatcher在解析完整批次后、任何过滤/canonical key/prepareBatch/执行之前进行同步host预检；运行期范围记录绑定真实user/run及host note handles，同一请求只能收紧 → 新batch-preflight和task-source-constraint定向suite，随后runtime/context集成suite → 越界/冲突/异常整批零准备零执行；未知句柄拒绝、范围不可放宽、旧预算/取消/final-only保护保留，正常背景准备不要求声明 → preflight位置、wrapper转发、scope投影或模型schema变化复验。本片先实现host契约和执行接缝，未连接主Agent声明及全部物理输入前不得将T-13标完成。
+
+2026-09-09 T-13基础实现：`TaskSourceConstraintState`复制host user/run/句柄事实，精确quote仅作用户输入出处，冻结候选并以当前revision/WeakMap约束commit；同run允许集合和web权限只能收紧。无声明拒绝新增任务读取，Personalization不作为可由模型更改的read kind。受限范围不允许先全库检索再过滤；真实scoped read计划和动态host句柄仍待接通。独立只读审查未发现新增P1/P2；候选预检不等于commit，真正执行须使用已提交且仍current快照。
+
+dispatcher同步preflight收到完整解析批次（含无效/重复/被policy禁用项），拒绝/异常/非法异步返回整批纠正且无canonical/prepare/mode/execute，拒绝消耗既有调用预算但不伪造成功/来源。保留final-only、取消和硬截止；主审补上成功callback后的取消/截止复核，两反例零准备。Operations/action wrapper只在base有hook时转发；真实loop混合可读当前笔记与越界操作证明两包装均零准备/执行。7 suites/229 tests PASS（2.757s，自然exit0），包括原loop/host-tools/Operations/action回归；只在该基础范围内证明接缝，尚未配置生产source callback或完整投影，不能标T-13完成。
+
+该片类型检查发现新测试的`reason: retry`不属于现有union，改为`corrective_turn`后受影响preflight suite 15 tests PASS（0.736s，自然exit0）；其余6 suites输入未变复用。最终tsc、定向ESLint、diff和DOM源扫描通过；完整docs:check通过（206文档/1801链接，4项既有episodic advisory）。未重跑production build/full suite或App，因为生产source callback尚未启用；未来接通后必须补其相应门，不能复用上一片部署来证明新机制。
+
+2026-09-09 D11当前实现与证据：governed Profile采用独立`personal-assistant-governed-user-profile-v1`命名空间，canonical link/outbox/Queue记录`store: governed`与opaque `semantic-xxxxxxxx` key；缺省归属仍指旧库。scheduler从host baseline复用稳定ID，身份冲突不推进cursor。恢复只修新派生库缺失/错key/无归属错ID，另一有效claim拥有的ID不得清除；缺来源/写失败保持pending，晚到history由现有retry恢复。correction/Undo不把新正文回写旧库，Forget按每份精确副本完成才结束。回滚不得剥离新目标归属。初次遗忘组合fixture缺精确fingerprint，补齐真实契约后通过，未放宽生产门。
+
+定向证据：plugin 366 tests PASS（22.203s），覆盖重启缺库/缺来源/错key/错ID、晚到history真实timer、旧outbox归属修复、冲突ID保护、修复第二次写失败与Forget第二份删除失败重试；其余persistence/admission/coordinator/worker/reader/port/history证据按未变输入复用。真实Qwen `qwen3.8-max`使用现有factory、temperature0/maxTokens256及当前TypeA prompt，仅3组合成材料，候选1/0/2；无新全文来源发送。原始响应/usage/prompt保存在`__tests__/fixtures/b135-semantic-extraction-trace.json`，semantic+legacy extraction 2 suites/73 tests PASS（1.125s），校验prompt未漂移、精确quote及非学习一次性要求。实际返回usage包含reasoning，不能把请求maxTokens解释成总token硬上限或凭此推断成本优势。
+
+统一验证：首次`make deploy`平台扫描388 TS、lint和production build通过，sandbox内工具子进程EPERM导致测试失败，停止该运行exit130且未部署；同冻结源码在sandbox外全量测试251 suites通过、3 suites/5 tests失败。失败均为B135改变的当前schema/default与旧fixture假设不符；调整当前/未来版本、保留历史adapter拒绝新格式及显式habit关闭证据，3 suites/93 tests定向通过。最终`npm run test:all -- --runInBand`为254 suites/6974 tests PASS（293.96s），有退出清理延迟提示，随后自然exit0，没有forceExit。生产源码/配置/依赖未变，复用该lint/build；diff/DOM扫描通过。旧B118/B129命名suite的新增回归全部由B135承担，旧过程文档未重开。
+
+真实宿主证据：以`node scripts/deploy-current.mjs /mnt/code/personal-assistant/test/.obsidian/plugins/personal-assistant`验证构建身份并复制四资产，逐资产SHA256与dist相等；实际open test库路径已核实。插件reload后新factory/reader存在、profileStore为governed。2026-09-09的独立合成数据库probe（startedAt `1788957466551`）验证旧reader看不到新库、新写入保持旧snapshot、真实来源删除abort IDB事务、旧新数据各自保留及新连接重开；12检查通过，3个本次创建的库均清理，fresh console无错误，debug/mobile均关闭。这是当前构建app-runtime证据；没有真实窗口UI、iOS或完整旧插件降级/重新升级交互PASS。
+
+T-04/T-10/T-19 D11派生缓存隔离映射：新semantic正文不得借旧Profile reader绕过版本拒绝 → 独立governed Profile命名空间、canonical目标存储归属与host提取key、scheduler/worker统一路由、旧副本精确清理 → persistence/admission/governance/worker、Profile store与plugin定向组合及基线旧reader对照 → 旧库保持历史字节、新正文只到新库、跨会话/重启稳定ID、写失败不applied/不推进cursor、correction/Undo不回旧库、Forget每份精确副本完成才结束 → 目标字段、存储路由、恢复/清理或身份映射改变复验；真实浏览器/设备独立门不由fake替代。
+
+T-04/T-10 生产接通映射：AC-10/11/17 → scheduler实际semantic投影、ChatHistoryManager来源lifetime、plugin准入/Queue确认及Profile恢复重验 → semantic/extraction、history manager、plugin与Profile端口定向suite → 源增删改/prune或关闭使旧批次失效，retry不推进cursor，不退回regex或直接写Profile；恢复只用当前匹配来源，完整接通前不启用生产flag → 来源存储、队列、恢复或设置lifetime变更复验。lifetime只覆盖该manager的写入，不宣称跨数据库原子提交或任意外部writer保护。
+
+2026-09-09 来源接通实现：scheduler semantic lane要求admission/model/有效lifetime，模型前后重新读取真实sources；候选merge保留当次kind/confidence/receipt，confirmed=false，不继承legacy证据。HistoryManager在修改开始即使同会话lease失效；prune全局失效，进行中捕获的lease不复活；短期observer提供写事务abort signal并释放。plugin Type A入口验证实际投影并保留精确单会话provenance；Queue确认与Profile恢复重新加载当前来源，guard贯穿Profile port/store至IDB完成。Profile旧初始化规范化仍是独立维护，不在新投影guard范围内。
+
+验证：semantic/legacy extraction 2 suites/63 tests PASS（1.008s）；真实HistoryManager 1 suite/31 tests PASS（1.105s）；Profile port/store及scheduler 3 suites/76 tests PASS（1.423s）。主线程最终组合6 suites/480 tests PASS（17.618s），自然exit0，包含真实MemoryChatHistoryStore→coordinator Queue→plugin确认→MemoryUserProfileStore的有效来源、确认前删除、恢复await中删除。有效写入保留原kind/confidence且confirmed=false；删除时不写Profile，已提交Queue的恢复任务保持pending，observer全部释放。IDB abort证据为事务fake，非浏览器。初期Queue fixture误将推断敏感候选/低风险明确候选期待为review，按现行policy改用正向低风险白名单外的明确个人偏好；成功outbox保留applied记录，未把它误当必须删除的pending任务。未放宽生产policy。
+
+生产前P2（独立只读复核）：基线HEAD c923ee22的plugin在governance读取失败后仍可创建旧scheduler并注入独立Profile内容（旧plugin 2230–2258、9537–9539、9641–9653；旧profile-store 95–101）。当前semantic Profile投影若落入原DB，confirmed=false与删除receipt均不能阻止旧reader读取新正文。这是已证实的D11隔离缺口，不是仅缺测试；保留productionflag关闭，后续隔离当前派生缓存与旧可读来源，并覆盖旧reader/Forget/重启/重复提取身份后才切换。来源接线审阅无另一个必须修复问题，本片不关闭T-04/T-10/T-19。
+
+本片收口检查：最终tsc、相关源文件Lint、diff及DOM扫描通过；完整docs:check通过206 Markdown/1801链接，4项既有episodic advisory未新增。Lint初次发现剔除legacy证据的未用解构变量，改为副本显式delete后通过；行为不变，复用上述组合测试。没有当前production build、部署、真实App或设备证据。
+
+T-04/T-10 生产前接缝映射：AC-10/11/17 → 既有Type A单模型semantic方法、实际500/2000字符投影、来源quote receipt；新增governed_preserving_legacy内部迁移phase以保留旧副本并停止有损增量 → semantic/extraction、admission/migration/governance/persistence、plugin与Queue相关suite → 不增加独立classifier/模型轮，provider/JSON/顶层错误retry且不regexfallback；首semantic提交原子transition，重启不adopt旧数据，普通save保留raw，Forget仍精确清理 → source/lifetime/budget/迁移phase/保存重验变化复验。Type A方法暂不接scheduler；新phase不是finalized，不制造用户清理确认。
+
+2026-09-09 实现与验证：Type A新增semantic方法单次invoke；实际投影回传且仅对提供片段定位，provider/JSON/顶层错误retry、单项无效过滤。2 suites/53 tests PASS，0.988s，自然exit0，含多消息转义计入2000字符预算及未提供消息拒绝；独立只读复核未发现必须修复项。该方法仍未接生产scheduler。
+
+保留旧副本phase实现：首个实际持久化的semantic候选在同一事务退出compatibility，保留payload/delta，无finalize确认；新phase继续治理/精确legacy Forget，GC保留兼容材料而Undo正常到期，旧hash变化只隔离pending。4 suites/140 tests PASS（4.206s）；plugin重启绕过adoption、localpolicy/snapshot可读，save保留raw，GC调度避免过期循环，旧record adapter释放，Queue允许新phase。plugin/Queue/extraction组合4 suites/416 tests PASS（21.66s），均自然exit0。复核发现reject/ephemeral也会提前切phase，已将转换推迟至policy允许持久化后；两反例及原suite共41 tests PASS（1.387s）。不把commitSequence既有递增称为整库零写，只证明phase、候选、revision和保留材料不变。
+
+本片最终独立只读复核确认P2关闭，无剩余必须修复问题；冻结后的TypeScript、Lint（末次coordinator修改另做定向Lint）、diff、DOM扫描及完整docs:check通过。docs保留4项原有episodic advisory；尚未构建/部署当前源码，生产Type A/scheduler、Profile恢复来源与真实模型/宿主仍待接通验证。
+
+T-04/T-10/T-19 schema3接缝映射：AC-10/11 → 旧1/2原子升级、revision/Undo/Queue typed receipt及两种origin最终提交重验、禁止有损legacy导出 → persistence/coordinator/rollback/plugin及migration/Profile worker suites → 不造旧证据、非法/错位/额外来源拒绝、source变更零commit、重开保真、旧格式拒绝 → schema/parser/准入/迁移状态变化重跑相关组合；真实IDB与生产入口未接不关闭任务。
+
+2026-09-09 schema3片：逻辑与IDB版本升3，旧1/2无receipt数据在同一升级事务验证全部stores后更新meta，失败全量保留；新字段仅revision/Undo revision/Queue envelope合法。coordinator新规则须receipt+宿主candidate/projection+lifetime，admit和confirm在final commit重验，revision/outbox和Queue保留确切receipt。compatibility journal中暂拒绝新semantic记录；rollback入口拒绝目标vault任何新receipt，避免主动丢凭据导出。生产Type A/plugin仍未接，compatibility窗口正确退出仍是必做，非功能缩减决策。
+
+验证：首轮5 suites/461 tests PASS（21.273s）；增加rollback拒绝后2 suites/52 tests PASS（2.056s）；migration/migration-coordinator/governance-coordinator/Profile worker 4 suites/75 tests PASS（4.254s）。独立复核发现P2 provenance可夹带未证会话/笔记，已改为receipt会话精确相等，coordinator两origin、revision/Undo/Queue均覆盖。roundtrip fixture原带note来源因此按新门失败，修正为真实匹配conversation，未放宽校验。修复后5 suites/466 tests PASS（19.87s）。最后将fingerprint排序固定为UTF-16而非环境locale，来源身份仍不受候选改写/投影预算影响，受影响3 suites/100 tests PASS（1.485s）；均自然exit0。独立复核确认P2关闭。tsc/Lint/diff/DOM扫描通过；无当前build/App/设备升级证明，旧reader实验作为升级前历史证据保留，现future fixture使用版本4。
+
+T-04/T-10 语义凭据实现映射：AC-10 → 绑定规范化候选正文、模型语义标签、宿主核验的message/hash/quote span与规则版本；模型只能提交messageId/quote，不可提交host span/权限 → 新receipt定向测试覆盖混合消息、任务/引用/不确定拒绝、正文篡改、重复/越界/来源变化、旧receipt隔离 → 只产生可供治理审查的候选凭据，不产生confirmed；新持久化格式与两条准入接通前不切生产 → receipt结构、投影、TypeA或最终准入变化复验。
+
+2026-09-09 实现证据：新增 `chat-memory-semantic-receipt.ts`，独立于旧chatEvidence；混合写作消息保留hostKind，quote由host定位，候选正文trim后hash和kind/confidence均绑定。`chat-memory-semantic-receipt` + `chat-memory-semantic-sources` 2 suites/25 tests PASS，0.785 s，自然exit0；tsc/lint、diff及DOM扫描通过。凭据解析只验证结构，最终门仍须用当前宿主投影verify及lifetime guard；当前未接Type A生产调用、治理schema或两条持久化门，不宣称来源语义已交付。
+
+D11组合证据：将既有transactional IDB fake提取为共享helper，无新依赖。实际IndexedDbMemoryGovernanceRepository遇未来logical-schema/database-version后进入plugin failed；先非Memory队列创建与普通save，再确认有效候选得到queue_reserve_failed，队列未变；Forget/Profile/GC retry未启动，原stores/version及legacy保存数据保留。`memory-governance-persistence` + `plugin-record-note` 2 suites/375 tests PASS，16.205 s，自然exit0。未来数据仍是opaque fixture，IDB仍是fake，不代表合法新writer输出、真实宿主持久化或重新升级恢复。
+
+本片独立复核P2已修：verify最初重建时沿用receipt.meaning，当前候选改为task_instruction仍可能通过；现比较候选meaning并用当前候选重建，未知/缺失也拒绝。补3个语义变更反例后两套25 tests PASS，0.922 s，自然exit0；冻结后tsc/lint/diff通过。只读复核确认缺口关闭，未连接生产的边界不变。当前persistence源码与HEAD一致，未来reader拒绝组合证据明确绑定该旧读取实现。完整docs:check通过，4项原有episodic advisory。
+
+D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打开保留完整记录的新逻辑版本/新 IndexedDB 版本 fixture，再尝试事务与重开 → 所有读取和事务拒绝、回调不执行、零通知、所有 stores 原样保留 → persistence 定向测试；任何 schema、open/upgrade、bootstrap 或写入恢复变更后重跑。该片不代替旧插件与重新升级验收。
+
+2026-09-09 D11 新增证据：`memory-governance-persistence.test.ts` 1 suite/27 tests PASS，1.047 s，自然 exit 0。新增未来逻辑 schema 与数据库版本的事务 fake：连续两次新 reader 的 initialize/transact 均拒绝、事务回调与订阅通知零执行、完整 stores（含未知凭据）及 DB 版本保持原样。未改生产 persistence reader，不能把 fake 当真实宿主 IDB 或重新升级证明。plugin-record-note 的既有 generic storage-failure 测试补 suggested 候选确认失败/不变、repo/coordinator/worker 清空、Forget/Profile retry 不启动与零 Profile 创建；定向 1 test PASS，2.453 s，自然 exit 0（其余345未运行）。初次沿用 applied fixture，不能覆盖确认准入；改为启动前 suggested 后验证真实拒绝分支，未放宽断言。
+
+独立只读核查当前与HEAD的bootstrap/普通保存/queue确认/恢复路径未发现拒绝后清空或覆盖治理库；失败发生在迁移/worker创建前，save只写data.json。旧版仍可沿独立scheduler使用历史UserProfile，这是独立存储，不等于读取被拒绝治理库；D11不承诺停用所有Personal/学习。下一步将未来格式的真实拒绝reader与plugin harness联测，并实现新格式迁移/重新升级保真；这些门仍未完成。
+
+同片确认分支证据更正：增加精确 `queue_reserve_failed` 断言后发现上述2.453 s结果因fixture缺memoryType在前置校验拒绝，不能证明确认保护分支。补齐合法memoryType/sensitivity，保留精确失败原因、队列不变及恢复不启动断言后，定向1 test PASS，2.495 s，自然exit 0。生产行为未为fixture调整。本片TypeScript、完整docs:check及diff检查通过；docs保留4项原有episodic advisory。
+
+任务必须按 Plan 的阶段退出门完成 implement → focused validation → review → fix → verify。每一行的完成包括自己的失败与兼容路径，不能把写完代码当 Done。
+
+| ID | Requirement / AC | Slice | Status | Evidence / dependency |
+| --- | --- | --- | --- | --- |
+| T-01 | B-135/REQ-11 / B-135/AC-11 | 建立 L3 Decision/Spec/SDD/Plan/Tracker，旧任务新增工作转归 B-135 | [x] | 文档 gate、2 suites/58 docs tests 及独立设计复核见下方日志；不代表 P0 已完成 |
+| T-02 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-17 / B-135/AC-17 | 记录真实产品答复，冻结范围及迁移，不重问已确认边界 | [x] | D2/D3、D5、D8、D10 已按真实答复同步 DEC-034/Spec/SDD；仅产品选择及文档任务完成，T-03/T-04 可行性和 P0 退出门未通过 |
+| T-03 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07；B-135/REQ-14 / B-135/AC-14 | native 输出与旧协议独立兼容对照：当前 qwen 配置、转义/Unicode、增量预览、正常工具结束、tail 异常 | [~] | 当前 Qwen 合成文本 native/旧 envelope 对照已返回完整正文；真实参数片段预览回放、终局/混批/旧reader整链及其他支持环境仍须验证，失败不推广 |
+| T-04 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04；B-135/REQ-10 / B-135/AC-10 | P0 来源声明/物理输入、混合消息两段准入、旧新 reader 最小可行性 | [~] | D4 TypeA/plugin两门已贯穿，D11新库隔离有当前App证据；D1完整来源声明/物理请求及完整兼容矩阵未完成 |
+| T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | adapter先4RED、loop先2RED后修复；4 suites/149 tests通过含旧作品整链。native工具正常结束类型、完整故障矩阵与实际App仍未完成 |
+| T-06 | B-135/REQ-15 / B-135/AC-15；B-135/REQ-16 / B-135/AC-16 | 单一绝对期限、软收尾过渡、投影前无正文诊断 | [~] | 共同runStartedAt与startup零dispatch已有证据；本轮实现incremental已开始正文延续至原hardAt，softAt后走terminal policy而不再请求，工具仍受soft准入。新增正常完成/异常/取消/late tool及hardAt反例；完整诊断与App门仍待完成 |
+| T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [~] | 正在添加受宿主来源约束的预览、可读恢复与独立提示；完整作品decoder/结束检查不变。需字符前缀、来源撤销、取消、持久化/reload与Desktop smoke |
+| T-08 | B-135/REQ-17 / B-135/AC-17 | 原始旧值分类、默认策略/用户动作分离、版本迁移与 load/save/reload | [~] | D8 已确认；新增默认版本区分旧 false 与迁移后明确偏好，不伪造 consent/confirmedAt、不清空治理数据 |
+| T-09 | B-135/REQ-17 / B-135/AC-17 | 默认实际准入、scheduler/collector、独立关闭暂停/恢复、首次说明与设置 UI | [~] | 随 T-08 调整真实准入，11/10/01/00、持久化失败/并发保存、零新增收集及 App 仍须验证 |
+| T-10 | B-135/REQ-10 / B-135/AC-10 | Chat 来源、Type A 语义候选与两条最终准入；混合真实事实/任务要求，默认开启也不学成长期风格 | [~] | semantic lane、最终保存/确认/恢复、稳定ID及source lifetime已实现；当前Qwen合成混合事实/纯任务/双事实1/0/2候选可回放。完整Chat/设置组合及语义质量门仍待验收；关闭时不另跑提取模型分类 |
+| T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed 与 legacy 无 scheduler 读取已分别实现，设置说明已补；只读加载/设置通知/存储范围/失败/Forget迟到读取已有定向证据。仍需默认迁移组合、实际物理输入与 App/device 验收 |
+| T-12 | B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 主 prompt/工具指导承接语义；去关键词路由、预测必调/隐藏与参数强制覆盖 | [~] | runtime已移除独立分类调用和预测required名单；policyModelName的rewrite/rerank保留。自然语言工具范围、writing识别、prompt与语义场景对照仍未完成；schema、真实证据、dedup和取消保留 |
+| T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [~] | 生产run已接声明/有序读计划/真实身份及受限Memory，Vault/Ops读门保持；动态句柄、独立控制轮和图片队列读门已有定向证据。完整来源投影及真实模型/App门仍待完成。profile/Memory/style与任务事实分开，不默认空背景 |
+| T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 已有摘要、背景刷新及物理SDK发送/retry guard；普通Vault结果、完整历史/派生summary来源投影与GenerationInputSnapshot未完成。保留assistant建议和“采用第二个”，不合并union复活被排除图片 |
+| T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [~] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。生产source预检下create→append及越界混合批次已有定向证据；真实语义质量、完整来源投影及App门未完成 |
+| T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [ ] | 多版本、失败继续、新话题、selected image 和授权撤销 |
+| T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | host opt-in loop 单输出与严格 provider 身份累计已接入；无 dispatcher/ack，保留 host 最终门。runtime schema/bridge/生成快照/幂等成版与 App 仍待补；T-03/T-13/T-16 依赖未解除 |
+| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | native bridge 已接预览/来源重验/恢复和单作品事件；普通说明与精确版本正文拆开。完整 runtime、图片style/旧reader/保存动作组合及 App 尚待验证 |
+| T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3拒绝/保留、governed缓存隔离与source abort/reopen已有证据；完整旧插件降级/重新升级及native/media/版本矩阵仍待T-10/T-17/T-18，不批量改历史或媒体，Desktop/iOS分别验证 |
+| T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [ ] | 身份/输入相同，记录调用序列、耗时、可得 usage；不把未知写 0，不推断模型净耗时 |
+| T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [ ] | focused PASS 不是 full/app/device PASS；检查自然退出 |
+| T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [ ] | 本次开发分支提交/推送已获授权；closeout/release未授权，不先删除Brief独有故障证据 |
+
+## Confirmed Discussion To Delivery Mapping
+
+本次方案与任务安排请求重申以下执行约束；不改变既有验证记录，也不将 Pending 选项自动转为批准。
+
+| 已确认讨论 | 需求与开发任务 | 完成时必须可追踪的结果 |
+| --- | --- | --- |
+| 长期记忆提取、习惯学习分别默认开启，满足功能需要 | REQ/AC-17；T-08、T-09、T-10 | 新安装的两项能力实际可运行，独立退出/暂停有效；迁移、保存、重载、调度与设置一致。默认不伪造用户确认，不联动其他权限；未知旧 false 按 D8 的真实答复处理 |
+| “只用当前笔记”仍保留个人画像、既有 Memory 和已授权风格样例 | REQ/AC-03、04、09；T-04、T-11、T-13、T-14、T-16 | 分开任务材料和个性化用途；在实际模型输入验证背景保留、来源有效、撤销生效，既有经历不冒充当前笔记事实；普通 Personal 与提取开关的现有耦合按 D10 处理 |
+| 已 closeout 任务涉及的新增改动全部在 B-135 全量完成 | REQ/AC-11；T-01、T-19、T-21、T-22，以及各领域实现任务 | 新需求、设计发现、代码修复、迁移、回归和 App/device 缺口均记录在本 Tracker；旧包不增加任务或改回执行状态，旧契约按实际交付更新并指向 B-135 |
+
+后续新增发现先映射现有 T-xx；确需新增任务时在本表所属 Tasks 中追加稳定 ID，并补需求、依赖、最小验证和完成条件。不得把未完成验收转移到旧 track 以关闭 B-135。
+
+## Validation Plan
+
+每个 slice 开始前补齐精确测试选取与输入身份；下表给最小证明问题和现有入口。新 fixture 只为未覆盖不变量添加，不为文案或实现镜像新建测试平台。
+
+| REQ/AC or risk | Change / tasks | Minimum sufficient evidence / command | Pass condition | Rerun / expansion trigger |
+| --- | --- | --- | --- | --- |
+| 文档权威与全量归属 | T-01 | `npm run docs:check`；`npm run test:docs -- --runInBand`；`git diff --check`；比对旧包 diff | 链接/ID/1 Now+1 Next/合约通过；旧任务无新增阶段；讨论无遗漏 | 任何契约、索引、Tracker/SDD 或 checker 输入改变 |
+| T-06 已开始正文跨软截止 | loop接收使用原hardAt；terminal policy收尾 | loop fake timers：soft70/hard100；75时stop/error/abort/tool；100时未完成正文；现有reasoning/buffered/lease回归 | 正文不改为thinking或重答；至多一次请求；工具零执行；原硬截止与取消生效 | consumer/clock/dispatch/terminal policy修改重跑；Chat可读呈现另由T-07 App证明 |
+| T-07 可读内容与作品分离 | 独立preview decoder、bridge宿主门、Chat显示与恢复提示 | writing-preview/stream-bridge/chat-view/旧decoder suites；来源guard撤销、前缀/转义、取消/错误、reload；随后受影响Desktop/UI验证 | 预览不成版；原字符保留；无效身份/来源不可曝露；失败保留获准正文和状态；旧记录仍可恢复 | 协议/parser/事件/source guard/persistence变化失效对应证据；native替换时复验组合路径 |
+| 结束、deadline、诊断，AC-05/14/15/16 | T-05–T-07 | 现有 runtime/loop/chunk-consumer/stream-bridge 测试，加 fake-clock 与 array chunk 对照；`npm test -- --runInBand <affected suites>` | stop/length/missing finish/tailerror/deadline 分离，partial 可读，硬期限不延期，late tools 零执行 | clock/completion/adapter 共享变更扩大至所有 transport，UI 变更补 app |
+| 默认/退出与旧值，AC-17 | T-08/T-09 | `npm test -- --runInBand __tests__/settings.test.ts __tests__/plugin-lifecycle.test.ts __tests__/retrieval-habit-profile.test.ts`；实际 scheduler 相关测试按 SDD 选取 | raw missing/true/false/paused/unknown + 11/10/01/00，真实触发成功、停用零收集；失败保存不先变权限 | normalization/persistence/scheduler/governance 变更扩大相邻回归；Desktop/iOS 设置 smoke 为阶段门 |
+| Personal/style/Memory 语义，AC-04/09/10 | T-10/T-11 | `npm test -- --runInBand __tests__/plugin-record-note.test.ts` 及 SDD 中 admission/Type A/context suites；混合消息样例 | 提取输入准入与两条持久化准入一致；任务要求不变长期风格，真事实不整体丢弃；退出/forget 有效 | persisted metadata/reader/治理门变化扩大旧新 reader 与上下文回归 |
+| 语义/范围/history，AC-01/02/03/04/08/13 | T-12–T-15 | runtime/control/prepare/projector/history/Operations 受影响 suites；真实模型固定案例；Desktop Chat/Operations smoke | 原句仍咨询；禁网/当前笔记/跨轮更正/选第二个成立；来源批次合法；未确认零写入 | prompt/model/provider/投影/工具状态变化重跑相关语义案例；不因纯 docs 重跑 runtime |
+| 输出/版本/保存，AC-05/06/07/08/10/11 | T-16–T-19 | writing-output/version/style、bridge/history、Chat/save 现有 suites；P0 live provider；Desktop/iOS 图文流 | Unicode/空白/hash/parent/material 精确；截断不成版，部分保存真实，旧记录可读且不串图 | native schema/serializer/persistence/image/save lifecycle 漂移使相应证据失效 |
+| 综合质量/成本及所有 AC | T-20/T-21 | `npm run lint`；`npm run build`；`npm run test:all -- --runInBand`；AGENTS 社区 source scan；未覆盖 App/provider/device | 自然退出，全部 AC 有对应证据；真实模型结果与调用成本分别记录，不承诺固定提速比例 | 源码/tests/fixtures/config/deps/build/environment 任一相关输入改变；共享改动扩大 |
+
+UI/runtime 的阶段验证使用 `make deploy` 或符合复用条件的 current-build 部署，随后真实观察交互；iOS 按真实设备 skill。已被 enclosing gate 覆盖的命令不重复跑，缺少环境只记录未测，不能把阶段标 Done。全量目标中的 P0 和语义对照使用有界测试样例与现有模型配置，不额外发送真实私人笔记；涉及未决产品路径先等待该选择。
+
+## Findings
+
+2026-09-09 本次任务核对将新增恢复问题 F-17/F-18 统一纳入 T-07；后续先完成其修复及定向复核，再补阶段 App 验证。既有代码和历史验证记录保留，本次文档更新不将未修问题标为完成。
+
+| ID | Severity | Finding | Decision / fix | Verification | State |
+| --- | --- | --- | --- | --- | --- |
+| F-17 | P2 implementation | 异常后的异步渲染/保存期间仍接收迟到正文，现场与已捕获的历史内容可能不同 | T-07：异常结算关闭流回调，渲染与恢复身份独立；旧 render 被取消不阻止有效恢复重渲染 | deferred save 迟到 legacy/canonical、deferred render 异常/取消回归；249 Chat tests 与独立复核通过，关闭/切会话身份保护保留 | Closed — automated scope only |
+| F-18 | P2 implementation | typed partial-output-error 后正常 resolve 或 writingRecovery 缺少持久化中断标记，重开可能恢复完成操作 | T-07：所有部分结果在持久化前统一中断 warning，现场与 reload 共同使用 | typed partial/writingRecovery 保存重开，正文/result/Add to Editor/用户取消 warning；249 Chat tests 与独立复核通过 | Closed — automated scope only |
+| F-01 | P1 design | 新默认仍可能被旧 consent 门压回关闭，旧 true 迁移还会制造当前 confirmedAt | T-08/T-09 同步默认、实际准入和历史事实 | settings/load/runtime/collector fixtures | Open — planned |
+| F-02 | P1 design | 来源不明旧 false 无法从持久化值可靠判断是否人为关闭 | D8 已选择：无明确关闭证据即按新默认开启，不声称推断出用户历史意愿 | T-08 raw settings matrix，明确关闭/暂停优先，迁移只运行一次 | Decision resolved — implementation pending |
+| F-03 | P1 design | 首请求带背景后，不能再实现任意自然语言“不发送”的前置承诺 | D1 只承诺可证实准入，P0 明确支持边界 | 物理输入 fixture，不靠回答自证 | Open — P0 |
+| F-04 | P1 design | native 工具结束目前会落 unknown；参数完整不等于真实完成 | T-03/T-05/T-17 | native/finish/tail/format 对照 | Open — P0 |
+| F-05 | P1 design | non-ordinary 在 Type A 前被滤除，单改 prompt 无法实现语义分层 | T-04/T-10 分开输入/最终候选两条准入 | 混合事实+任务、旧新 reader | Open — P0 |
+| F-06 | P2 design | 新增任务曾误归 B-106，并将其 Validated 改 Planned；稳定文档也有旧归属残留 | 本轮恢复旧包，全部新增任务归本 Tracker，Brief/DEC005/021/Habit/Pagelet 的新工作入口全部修正 | 旧三文件 diff 为空；独立复核及新 owner 引用检查 | Closed — docs only |
+| F-07 | P1 design | 普通 Personal 已有读取受 extraction 门影响，直接拆门会改变发送行为 | D10 已获明确同意；已有画像可继续发送，仍受 Memory/来源/遗忘控制 | T-11 plugin-record-note 与实际输入对照、停用/撤销/重载反例 | Decision resolved — implementation pending |
+| F-08 | P2 implementation | T-05初稿将所有buffered完成都豁免overrun，softAt后才完成可能再触发模型请求 | 按实际completedTextAt与softAt比较；早完成仅tail拖延才豁免，晚完成保留原有界overrun；buffered fixture实际通知dispatch | with/without finish、单次model调用、tail-hang的buffered真实路径；独立复核确认关闭 | Closed — source scope only |
+| F-09 | P2 implementation | T-06初稿正文转工具后仍用hardAt，late tool可在execute前进入有副作用的prepareBatch | early tool恢复softAt；late tool在入buffer前拒绝并保留正文/警告，不申请第二请求 | early tool收尾额度、late prepareBatch/execute双spy；独立复核 | Closed — source scope only |
+| F-10 | P2 implementation | 新正文终局分支可能绕过没有finalizeAfterTurn的Pagelet来源验证，导致合法结果最终被清空 | 本分支保留旧host afterTurn验证，并将continue约束成terminal incomplete，不能再dispatch | 真实Pagelet policy的接受/拒绝及continue回归；独立复核 | Closed — source scope only |
+| F-11 | P2 implementation | 取消/transport cleanup 的signal被runtime、style选择及笔记来源回执误当来源撤销，导致正文预览清空或正常作品拒绝 | 分开生成准入与来源事实；准备仍检查signal，来源回执保留epoch/file/stat/path/治理检查 | 真实runtime+governed style取消、stop+tailerror、Forget；plugin note-backed receipt；独立复核及完整gate | Closed — automated scope only |
+| F-12 | P2 implementation | 普通回答取消时createTerminalEntry删除已显示正文 | 有正文且真实用户取消时保存partial历史和警告；零正文保留取消行；关闭时释放render owner | Chat普通正文/零正文cancel、late chunk、owner释放；独立复核及完整gate | Closed — automated scope only |
+| F-13 | P2 implementation | 取消后拒收全部生命周期事件，使保留正文的canonical状态缺失，现场/reload可能误示完成 | 同一已取消run只接收终态状态，不接收迟到正文/来源；恢复持久化记录aborted | mock DOM真正click cancel、晚到预览、持久化/reload状态与提示；独立复核及完整gate | Closed — automated scope only |
+
+## Validation Log
+
+T-15 Operations语义提议：AC-13 → 删除latest-message关键词门，按live opt-in/controller/四core动作/原policy导出与执行；prompt承接目标语义 → 无关键词续轮可提议但未确认零写、关闭拒绝、普通回答不产生卡片、原stale/Undo回归 → tool schema与stage一致，真实语义质量另需模型案例 → action/policy/prompt/source准备变化复验；T-13来源整批预检未完成前不关闭T-15。
+
+2026-09-09 续轮确认与定向验证：Owner 对 D11 明确降级版本边界答复“同意”，同步 Decision/Spec/SDD，本次确认不代表格式已升级或降级验收通过。T-15 当前输入运行 `npm test -- --runInBand __tests__/operations-agent-runtime.test.ts __tests__/chat-service.test.ts __tests__/pa-agent-runtime-prompt.test.ts`，3 suites/82 tests PASS，1.771 s，自然 exit 0；含模型开始后关闭 Operations 的拒绝反例。脚本模型仅证明宿主准入与 staging，不证明实际模型语义质量。当前变更仍未部署，无新增 App/device 证据。
+
+T-10 exact Profile revision：来源/revision身份风险 → plugin传递并核对worker的targetRevisionId，在Profile写前重验active revision/link/lifecycle → 缺行/已有行在worker读后切换revision的先RED反例、旧outbox pending零修改、新revision outbox正常应用 → source/fixture变化或失败复验。独立执行者仅修改plugin.ts和plugin-record-note.test.ts；主线程汇总最终证据。
+
+- 已传递targetRevisionId，按exact revision查正文/来源并核对summary/active/link/Forget。两个反例先RED（旧callback错误mutate一次），修复后缺行/已有行均零旧写入、旧outbox pending，新revision任务applied。plugin-record-note整suite346 tests PASS，15.184s，自然exit 0，包含既有bootstrap/upsert/stale/partial commit恢复。常规入口同一memoryLifecycleMutationTail串行，非跨库原子提交；绕过队列的writer不由本片证明。
+- 主线程补memory-profile-projection-worker 1suite/7 tests PASS，0.721s，自然exit 0；冻结后的tsc/Lint自然exit 0，diff通过。独立只读复核无必须修复问题，确认覆盖worker取快照后到plugin读取证据前revision变化的窗口，不扩张为任意外部并发证明。未部署当前build/App；D11仍Pending。
+
+T-04 旧读取机制实验：新凭据降级风险 → 当前未修改且与HEAD一致的memory-governance-persistence读取器，完整revision与Queue envelope添加未知receipt字段、未知来源/版本反例 → 未知receipt被剥弃而原summary/envelope/ruleFingerprint保留；未知来源/版本拒绝整个状态而非只忽略新记录 → 1 suite/25 tests PASS，0.985 s，自然exit 0。初次fixture误用pending状态，实际契约为suggested；修正fixture保留校验。此片是读取/构造器证据，不是旧插件确认/恢复/降级全链。实际旧bootstrap失败还会建立legacy兼容入口，需进一步验明，不能把parser拒绝等同于所有路径安全。
+
+T-04/T-10 来源审阅与精确引用定位：AC-10 → 独立语义审阅source collector保留hostKind/unknown，不沿用ordinary准入；宿主按实际呈现前缀精确定位quote → 混合事实/临时改稿、无metadata、重复ID、重复quote、截断/Unicode反例 → 未授长期权限、未改旧receipt；只返回宿主身份/hash/span → collector/预算/receipt变更复验；TypeA模型接入及两条最终准入仍须完成后才切换。
+
+- 新helper保留mixed writing_request/user_local_edit供语义审阅，无provenance为unclassified，非法provenance不fallback，排除ai_draft/explicit_style_action及重复ID。旧collector/receipt/admission不变；当前未接生产scheduler或model，所以不是新提取规则已上线。
+- UTF-16预算前缀不切开合法surrogate pair；quote在传入前缀内唯一精确匹配，host返回span与full/projection/quote hash。其含义仅来源定位；调用者后续必须从真实provider投影快照传入presentedText，不能使用模型自报。前缀唯一不是全文唯一，定位成功不能证明个人长期意图或授予权限。
+- 2 suites/49 tests PASS，0.932 s，自然exit 0：chat-memory-semantic-sources、b129-chat-memory-admission；最终tsc/Lint自然exit 0、diff通过。独立只读复核无必须修复问题，明确本片不证明Type-A实际输入、两条持久化门或新receipt旧reader兼容，T-04/T-10不标完成。
+- 两条最终门只读核对：Type-A在plugin候选校验后只生成conversation provenance；Queue builder只处理note sourceRefs。新Chat receipt须独立typed字段贯穿admission/envelope/revision，静态校验落coordinator.prepareAdmission，消息当前性沿既有lifetime/final commit guard；Queue现未传该guard，且不得回落ReviewQueueStore.create。不能伪造note来源或塞metadata。
+- Profile outbox已带targetRevisionId，无需复制原文；plugin applyExactProfileProjection目前丢掉该ID并读取active revision，后续须接收/核对确切revision并传递receipt。Queue claim存在trim/用户编辑，最终claim绑定须在规范化后核验；不能照搬旧receipt。新parser白名单及revision构造也须同步。
+- 旧reader兼容风险已确认但未完成实验：parseRevision/parseMemoryQueueAdmission会剥掉新optional receipt而继续保留合法v1数据；ruleFingerprint仅非空校验，新增文本不足以保护旧版确认/恢复。后续需实际旧reader对queue/revision/outbox往返，确定可识别的失败关闭版本边界；未解决前不接通新语义持久化，不把additive字段当兼容证明。
+
+T-03/T-17 当前完整schema真实模型验证：AC-06/07/14 → 从当前writing-output源码生成native schema/指令，已加载test宿主factory绑定并发送固定合成文字 → 记录声明、配置、原始id/index/name/args、finish及精确正文，随后当前adapter/loop/bridge回放 → 当前模型接受完整声明、唯一输出正常结束且正文保真 → schema/SDK/模型配置变化重验；旧已加载host仅证明factory/transport，不冒充当前工作树部署或真实UI。
+
+- 2026-09-09 新探针 `__paB135CurrentSchemaProbe`，startedAt=1788948625332，完成状态经同一句柄核对后读取。test已加载host 2.9.2、qwen/qwen3.8-max、thinking=true、temperature=0、maxTokens=2048；源码生成完整schema含enum/minLength与当前native指令，固定合成文字，不读笔记/Memory、不执行工具/保存作品。126 chunks、39原始参数片段、finish仅tool_calls，12007ms；解码正文与输入逐字符相等。单次耗时不是性能结论。
+- 保存 `__tests__/fixtures/b135-current-schema-trace.json`；测试核对捕获声明与当前源码schema/instruction完全一致，真实片段经当前adapter→loop→bridge产生非空部分预览和唯一精确作品，结束后全事件重放不重复成版。声明变化会要求重新取得相应证据。
+- 冻结输入后4 suites/125 tests PASS，2.052 s，自然 exit 0：native-writing-bridge、native-writing-call、native-writing-output、pa-agent-writing-preview。最终tsc自然exit 0，diff通过；独立复核确认schema、原参数与正文一致，无必须修复问题。本轮仅tests/fixture/docs变化，runtime/Lint证据输入不变。
+- 复核边界：fixture为39个参数增量及分别汇总的text/finish，不是原126个SDK chunk全帧记录；回放重新组成前置文字→参数→结束，不证明原始分组/usage/时序。此次真实preamble未单独断言，沿用独立preamble回归。temperature/maxTokens/transport由实际探针调用记录证明，非fixture自身字段；单次准确复写不等于始终准确或整体质量验收。
+- test磁盘bundle SHA256仍为d21e45b0e99adf347ccdac9fb1920b7ed8e3041d7d836819d16452d2f337214e，未部署当前工作树。此证据属于当前声明+已加载factory的合成文字兼容和当前代码离线回放；不证明真实图片、多provider、iOS、完整Chat宿主输入与实际保存操作。默认协议仍不切换。
+
+T-17/T-19 图片与授权 style 组合：AC-08/09/11 → 真实 runtime native 路径沿既有 ImageRequestScope 准备像素与宿主来源回执 → 两张顺序图片+历史未选择图片、来源撤销、授权style输入及artifact关联/lease释放 → 仅当前选择像素进入请求、宿主决定作品关联、撤销不成版，旧reader独立验证 → 图片投影/bridge/source/存储变化复验；合成bytes不证明真实图片模型能力。
+
+- 两张合成图片通过真实 runtime/图片 scope/授权style 服务进入物理 provider 输入，断言两个 data URL 顺序；resolveVariant 仅收到当前两张ref，未解析历史未选择图片的像素。artifact保留宿主关联图片和style revision，共用release spy累计调用两次。来源在预览后撤销时零artifact且recovery raw/preview清空。初次 revoke 用例同时注入 tail-error，实际正确抛 provider_failed；隔离为正常finish只测来源撤销，不把传输故障当来源判据。
+- 捕获的真实 native 参数经完整decoder、既有WritingVersionService和两种history store保存，与旧JSON恢复记录并存。旧reader读回精确正文/hash/图片/style/背景引用；聊天前置说明保留而版本正文不混入。IndexedDB模拟器使用同一factory创建新store再initialize；memory仅重建service，不声称持久重启。三个reader文件相对本分支HEAD `c923ee2` 无diff，不声称验证其他历史发行版本或真实browser/device。
+- 最终6 suites/127 tests PASS，4.397 s，自然 exit 0：pa-agent-writing-preview、chat-history-store、writing-versions、writing-save-action、chat-writing-output、b129-image-request。最终tsc自然exit 0，diff通过。本轮仅tests/docs变更，runtime/Lint证据输入未变；独立只读复核无必须修复问题。复核明确1 byte合成Blob仅证明投影顺序，不证明JPEG编解码/视觉识别；像素未解析不外推为所有metadata未读取；共用release spy不证明每份资源分别恰好释放一次。复制/编辑/保存/receipt的实际App操作、来源约束后的历史图片选择与完整默认切换仍未完成。
+
+T-17 静态输出登记与控制快照：AC-06/07 → 现有 CapabilityRegistry 保留唯一纯输出名、提供固定 schema 入口，loop 在每个真实 turn 投影宿主输出声明，runtime 按声明绑定 → 注册冲突/普通工具不可执行、最终阶段控制声明、native runtime 与旧模式回归 → 无 provider 可自行登记纯输出、无来源/动作豁免、模型定义与宿主声明一致 → registry/control/loop/runtime 改动重验；生产 reserved-final 组合另补。
+
+- 登记路径只返回固定输出 schema；动态同名注册拒绝且不进入普通 definitions/executor，独立调用返回新 schema，不能由修改上一请求结果污染下一请求。controlSnapshot.writingOutput 每轮由 host 合约重新声明，无合约时剥离；不是模型可扩展的输出类型系统。
+- 生产 runtime 可控 Date.now 覆盖模型 setup 到原1000ms预算的750ms（reserve300ms）：普通请求在物理dispatch前退出，收尾只绑定 present_writing，唯一实际 provider 输入仍含授权 style，交付一个精确版本。另四个实际 runtime reserved-final 混批反例（search_memory/get_current_note_context/vault_create/第二present_writing）均 incomplete、零artifact、零tool_execution_start；原截止不延期。
+- 冻结源码后6 suites/263 tests PASS，3.772 s，自然 exit 0：capability-registry、native-writing-loop、pa-agent-writing-preview、pa-agent-control-policy、pa-agent-loop、pagelet-agent-runtime。最终tsc/Lint自然 exit 0，diff/社区DOM扫描通过。类型初检指出纯输出名不属于 ChatToolName，保留该类型边界，通过运行时字符串保护与模拟外部同名记录测试解决，没有把纯输出加入普通工具联合类型。独立只读复核未发现必须修复问题，确认当前 prepare/retry 保留控制声明，提示与绑定一致；若后续允许改写声明则需同步投影并补反例。真实新schema/provider、旧reader、图片与App门未由本轮代替。
+
+T-17 runtime 协议候选接入：AC-06/07 → 内部显式 native 模式同步指令、provider schema、原始身份捕获、loop 与 bridge；默认仍走既有协议 → 真实 runtime 的合成 provider、授权 style、完成/取消/Forget 对照及最终阶段 schema 检查 → native 模式无 JSON 文本要求、输出不授予读取/写入、旧默认不变 → schema/prompt/control/runtime/style 变化复验；P0 组合门通过后另切换默认。
+
+- `writingOutputProtocol: "native"` 必须同时有 host writingRequest；固定 present_writing schema 只提供 body、可选 explanation、精确 handle。普通轮提示同步列出纯输出声明，reserved final 指令允许普通文字或唯一作品；最终阶段只追加纯输出 schema，不开放来源/动作。缺少 bindTools 在物理请求前报错，不静默退回旧协议。该内部候选不是用户设置或默认上线。
+- 新增真实 runtime→governed style→adapter→loop→bridge 合成模型回归：授权 style 实际进入输入，完整作品保留 revision，取消保留正文、Forget 清空恢复内容；各一条模型请求、零工具执行。缺 bindTools 反例证明 provider 未执行、style 未准备且无作品。首轮三个超时由测试误从 update 而非 event 读取 metadata 导致，停止该失败进程、修正监听后通过，没有增加超时或绕过断言。
+- 最终6 suites/260 tests PASS，3.581 s，自然 exit 0：pa-agent-writing-preview、native-writing-loop、native-writing-output、pa-agent-loop、pa-agent-runtime-prompt、pagelet-agent-runtime；tsc 自然 exit 0。Lint 在相同最终 src/__mocks__ 输入通过（随后仅 tests/docs 变动），diff/DOM检查通过。独立只读复核未发现候选路径必须修复问题，未另跑测试。
+- 仍待静态登记/control snapshot 一致表达、生产 reserved-final 整链、图片/旧reader、真实 provider 对当前 enum/minLength schema 的兼容与 App/iOS；现有 loop final-only 单测不能代替 production runtime 组合，之前较简 schema 探针也不自动复用于当前绑定 schema。默认未切换，T-17/P0 仍部分完成。
+
+T-17/T-18 native bridge 接入：AC-05/06/07 → loop 输出 host-owned 原参数预览/完成标记，bridge 显式 native handle 模式独立校验、来源重验并复用既有 artifact/recovery → adapter→loop→bridge 真实片段、部分预览/取消/权限撤销/混批/重放对照 → 完整且host允许时一个作品；不完整仅可读恢复，不从完整JSON自行批准 → lifecycle/bridge/来源/旧reader变化复验；runtime默认、Chat展示与持久化组合仍需后续验收。
+
+- loop 原参数累计预览和完成标记在宿主 lifecycle metadata 内传递，不由模型 JSON 自报。bridge 显式 nativeContextHandle 模式要求对应标记、唯一 present_writing、正常 tool_calls、run completed 和来源重验才生成既有 artifact；普通文本可以独立回答，旧 envelope 模式不变。
+- 截断/取消保留获准正文，混批撤回预览；独立来源检查拒绝或抛错时不成版，清空 native recovery 的 rawText/preview，避免通过恢复入口重曝撤销内容。补 isCurrent=false、isPreviewCurrent=true 的真实取消形态；未用完整JSON替代权限。
+- artifact 增加仅事件内可选 preamble，bridge从当前canonical普通text取原字符；Chat显示及聊天历史用段落间隔连接说明/正文，WritingVersion创建仍只取精确body/explanation，不把说明纳入作品hash、编辑或保存正文。ChatView模拟持久化验证有/无说明均只产生一个正确版本；不是实际App操作证据。
+- 独立只读复核未发现 bridge 准入必须修问题；指出的普通说明显示缺口及独立预览门组合已补。中途乱序事件兼容未证明，仅验证agent结束后的全事件重放不重复成版；图片/style/旧reader/真实App仍为后续组合门。
+- 冻结本轮输入后 `npm test -- --runInBand __tests__/native-writing-bridge.test.ts __tests__/native-writing-loop.test.ts __tests__/native-writing-call.test.ts __tests__/pa-agent-loop.test.ts __tests__/pa-agent-stream-bridge.test.ts __tests__/pa-agent-writing-preview.test.ts __tests__/chat-view.test.ts`：7 suites/473 tests PASS，4.708 s，自然 exit 0；tsc/lint 自然 exit 0，diff 与社区 DOM 扫描通过。补充只读复核确认 preamble 与精确作品正文分离、取消和独立来源门回归无必须修问题；复核者未另跑测试。该证据不覆盖生产 runtime 默认接入、实际旧 reader 或 App/device。
+
+T-03/T-17 loop 纯输出接入：AC-06/07/14/15 → 显式 host nativeWriting 配置、原始 provider identity、严格单调用累计、dispatcher 前纯输出分支、host terminal policy → scripted adapter→loop 的唯一调用/混批/身份冲突/取消/过期/尾帧/final-only/禁止额外轮测试 → 无工具执行、副作用或追加模型轮，宿主最终裁决保留 → loop/adapter/schema/collector 改动复跑；runtime export/bridge/App 默认切换仍为后续门。
+
+- 增加独立 `NativeWritingCallCollector`，每个 delta 都使用显式捕获的原始 provider identity；synthetic/canonical id 不授权。支持省略已知身份字段、合法分块名称、raw/一致 structured 镜像；混批、冲突、缺身份或超预算永久拒绝。adapter 的 `captureToolIdentity` 默认为未启用，stream setup/iteration fallback 均显式传给 invoke adapter。
+- loop 只在 host 显式提供 nativeWriting 时启用：完整参数、真实 tool_calls、唯一 canonical 调用、current guard 才成为候选；普通 afterTurn 或 reserved terminal policy 仍执行。宿主 continue 被收束为 incomplete，无额外生成轮；异步检查返回后再验来源/取消。混批全零 prepare/execute，作品不消耗普通工具执行额度。
+- 已完成 native 输出立即停止消费 optional EOF/usage tail，给异步 host 检查保留原 hard budget；未观察的尾部状态/usage 不冒充成功或零用量。普通工具/旧文本尾帧规则不变。fake-clock 覆盖 80ms 完成、110ms 超出原100ms截止，以及20ms host检查不被200ms尾部等待挤占；模型/真实网络验证仍另需补齐。
+- 复核发现分块工具名会误把前置说明改成 thinking，且原 index 丢失造成两个 canonical buffer。两条反例先 RED：现 opt-in 模式待整批判定再重分类，保存真实 index/后续关联坐标，最终唯一 native 调用补全名称及原始参数。默认旧模式保持原行为。另补两条 invoke fallback 及 id先到/index后引入回归。
+- 冻结源码后 `npm test -- --runInBand __tests__/native-writing-loop.test.ts __tests__/native-writing-call.test.ts __tests__/pa-agent-loop.test.ts __tests__/pa-agent-started-text.test.ts __tests__/pa-agent-stream-fallback.test.ts __tests__/pa-agent-stream-bridge.test.ts __tests__/pagelet-agent-runtime.test.ts`：7 suites/325 tests PASS，3.47 s，自然 exit 0；tsc/lint 自然 exit 0。lint 初次指出 collector 控制字符正则不符合规则，改为等价字符码检查后重跑通过，未放宽身份约束。此片是 opt-in adapter/loop 证据，不是 runtime schema/bridge、真实模型完整身份 trace、App 或 iOS 验收。
+- 随后真实身份探针：旧已加载 test host 的 qwen/qwen3.8-max、thinking=true、maxTokens=2048，仅合成文字，未读笔记/Memory、未执行工具/保存作品；3350ms 返回14个原始工具片段及 tool_calls。`fixtures/b135-native-identity-trace.json` 保留 id/index/name/args，其中最后空片段为 id:null/index:0。实际回放先 RED（误判 incomplete），现 null 只代表省略字段，不清除既有身份；首片全部null仍拒绝，明确冲突仍拒绝。修正两项把SDK缺省误当非法的fixture，保留缺失/冲突反例。
+- null 占位兼容修复后同一7 suites/326 tests PASS，3.672 s，自然 exit 0，最终tsc/lint自然 exit 0，docs:check/diff通过（4项既有advisory）；原始片段经真实 adapter→collector→loop 完成且零prepare/execute。该证据证明当前SDK返回形态兼容，不代表新工作树已部署、模型已通过完整Chat宿主输入/bridge/存储或其他provider/iOS门。
+
+T-03/T-17 native 参数完成边界：AC-06/07 → 增加独立完整参数 decoder，绑定宿主 contextHandle、白名单和字符预算 → 真实捕获参数与逐字符截断、重复键、伪造来源/权限/保存字段反例 → 只完整合法参数返回精确 body/explanation，不制造 provider 完成或版本权限 → schema/decoder/bridge 改动复验；loop/最终来源重验和 runtime 默认切换另验证。
+
+- `decodeNativeWritingOutput` 先复用 preview 的重复键/Unicode/白名单验证，再由 JSON.parse 确认完整结构；精确匹配宿主 handle，保留 body/explanation 原字符。独立只读复核无必须修问题。新增 25 个回归覆盖实际捕获参数、所有不完整前缀、错误 handle、空正文、错误类型、伪造宿主字段、包装/重复键、非法代理项和预算边界。
+- 最终 `npm test -- --runInBand __tests__/native-writing-output.test.ts __tests__/writing-preview.test.ts __tests__/chat-writing-output.test.ts __tests__/pa-agent-stream-fallback.test.ts __tests__/pa-agent-loop.test.ts __tests__/pa-agent-stream-bridge.test.ts`：6 suites/276 tests PASS，1.877 s，自然 exit 0；tsc/lint 自然 exit 0，diff/社区 DOM 扫描通过。helper 尚未接入 runtime 默认路径，T-17 及 P0 均未完成；实际来源/调用身份/终态与当前 App 证据仍需补齐。
+
+T-03/T-05 native finish 接缝：AC-14 → ProviderCompletion 保留独立 tool_calls 值，readProviderCompletion 不再降为 unknown → adapter 使用真实合成参数片段并在 finish 后抛 tail 异常，另跑 loop/bridge → 最终参数先于独立结束事件、tail 失败不触发第二次生成、旧文本成版仍只接受 stop → completion/transport/loop/bridge 改动复跑；此步不启用 native 成版或放宽工具准入。
+
+- 新增真实片段 adapter 反例先 RED，确认 tool_calls 被改为 unknown；修复仅保留该独立 provider 事实，未将其映射为 stop，旧 bridge 的文本成版门保持不变。5 suites/251 tests PASS，2.117 s，自然 exit 0：pa-agent-stream-fallback、pa-agent-loop、pa-agent-stream-bridge、writing-preview、chat-writing-output。最终源码 tsc/lint 自然 exit 0；docs:check 和 diff check 通过，4 项既有文档 advisory。原生工具的后续成版/终局仍待实现。
+
+T-03 当前模型协议与增量预览（2026-09-09）：AC-05/06/07/14 → 复用实际配置模型 factory，合成文本分别走 native 和旧 envelope；新增仅供显示的 native 参数 decoder → 真实 argument delta 回放、UTF-16 每字符截断与现有旧 reader 测试 → 正文保真、部分预览不成版、无额外模型 acknowledgement → schema/adapter/decoder/模型配置变化复验；final-only/混批/终态/旧历史及 App/device 是独立门。
+
+- test vault 已加载的旧 host factory，配置 qwen/qwen3.8-max、thinking=true、maxTokens=2048；两条请求仅发送固定合成正文，不读取笔记/Memory、不执行工具或保存作品。不是当前工作树部署证明。
+- 已完成 trace：native 72 chunks、17 argument deltas、单个 present_writing、finish=tool_calls、6174 ms；旧 pa.writing/version=1 envelope 291 chunks、finish=stop、24238 ms。两者正文逐字匹配合成输入；native 原始参数拼接与 SDK concat 后解析正文一致。单次时长不是性能结论；trace 保存在 `__tests__/fixtures/b135-writing-protocol-trace.json`，包含合成输入/返回与实际片段。
+- 较早 native 探针参数合法但未逐字复写且未保留 raw，不能归因为协议损失。此前普通 JSON 对照不是旧 PA envelope，解析失败也不能说明旧协议失败；本次完整 envelope 对照通过纠正了这一证据缺口。
+- native preview 支持 body 在 contextHandle 前出现，逐片段解码转义/Unicode；宿主仍须独立核验实际工具身份、来源和生命周期。该 helper 不授予 context handle、完成或成版权限，尚未切换生产输出通道。
+- `npm test -- --runInBand __tests__/writing-preview.test.ts __tests__/chat-writing-output.test.ts`：2 suites/120 tests PASS，0.856 s，自然 exit 0。真实 native 片段产生多次部分正文快照，最终与捕获参数正文一致；真实旧 envelope 同时通过旧整体和预览 reader。每个 UTF-16 截断、非法参数/重复键/转义及预算反例通过。tsc/lint 自然 exit 0；diff/社区 DOM 扫描通过。docs:check（含删除连续性）206 Markdown/1801 links 通过，4 项既有 advisory。无当前 build/deploy/App 证据。
+- 独立只读复核未发现 preview helper 必须修问题；确认回放实际覆盖非空中间快照和最终精确字符。该结论不外推到 runtime 接入、多调用身份、终态或其他 provider/App。
+
+T-10 最终提交准入（2026-09-09）：AC-10/17 → scheduler 提供 host-only batch lifetime/signal，plugin 生命周期队列、逐条 admission 和 cursor 重验，coordinator 复用 repository commit guard → scheduler lifetime、队列后重开、coordinator 操作前/提交前失效及 cursor final-commit 回归 → 旧批次永久失效、无新 claim/cursor 提交；已提交 outbox 继续既有恢复 → scheduler/plugin/coordinator/repository 变更复跑，真实 IndexedDB/App 与来源语义仍是独立门。
+
+- 已实现 batch `isCurrent`/signal（不序列化），coordinator 与 cursor 均传入既有 repository 最终 guard；plugin 同时检查有效提取门、卸载、coordinator/vault 身份。scheduler 停止后旧 batch 永久失效，不因开启新实例恢复。
+- 关闭设置在保存成功并发布后立即停止旧 scheduler，再等待通知；新增延迟 watcher→关闭→重开回归，避免异步通知晚于下一次开启而保留旧实例。失败保存仍不提前停止。
+- 独立部分提交测试使用真实 backend 的首条 commit 通知使 batch 失效：第一条 claim/outbox 保留，第二条及 cursor 零提交；调用既有 Profile projection 恢复调度，实际计时器已安排并由测试清理。恢复只消费已提交 outbox，不重跑过期 batch。
+- 冻结后的统一命令：`npm test -- --runInBand __tests__/memory-admission-coordinator.test.ts __tests__/memory-extraction.test.ts __tests__/memory-governance-persistence.test.ts __tests__/plugin-record-note.test.ts __tests__/plugin-lifecycle.test.ts`，5 suites/550 tests PASS，20.894 s，自然 exit 0；tsc/lint 自然 exit 0，diff check 通过。覆盖 in-memory final-commit 及既有模拟 IndexedDB guard 契约，不声称真实设备事务或 provider 请求取消通过。此前 7 个直接 Type-A admission fixture 未显式启用提取，按新增实际准入补启用前提，原 host evidence/治理断言保持。
+
+T-09/T-10 执行中退出准入（2026-09-09）：AC-17/10 → scheduler 在 durable cursor、模型创建与模型结果三个异步接缝重新检查停止状态 → `memory-extraction` deferred 回归 → 关闭后不启动尚未发送的模型调用，迟到结果不进入 admission、不推进 cursor → scheduler/权限通知/admission 改动复跑；已开始的底层 provider 请求取消与事务排队写入门另行验证。
+
+- 新增三个 deferred 反例，cursor/model 两个先 RED：dispose 后仍 invoke；response 反例已通过，说明原有结果返回门有效。现在 baseline、durable cursor 与模型创建 await 后均重查 disposed，阻止未发送的调用继续启动。
+- `npm test -- --runInBand __tests__/memory-extraction.test.ts __tests__/plugin-lifecycle.test.ts`：2 suites/158 tests PASS，2.57 s，自然 exit 0；tsc/lint 自然 exit 0，diff check 通过。这是停止后的发送/结果准入保护，不宣称已发出的网络请求被取消。
+- 后续已定位：`admitGovernedTypeABatch` 仅入口读取 Memory 主门，生命周期队列及 coordinator repository transaction 内尚缺有效提取偏好的最终重验；legacy SerializedProfileGovernancePort 有自己的 disposed/队列检查。T-10 要分别证明最终事务准入，不能用本次 scheduler PASS 代替。
+
+T-08/T-09 真实调用链与基线 reader（2026-09-09）：
+
+- AC-17 → 真实 plugin load/merge/migrate/权限队列及 gate→真实 scheduler→Type A 模型适配器、plugin→真实 habit collector→保存 → `plugin-lifecycle` 两条集成回归 → 默认启动/首次说明后推进 48h，无历史查询和模型创建；新 Chat 回合 invoke 一次，关闭取消排队并拒绝新调度；默认 habit 反馈实际落盘，独立关闭后不再记录且 extraction 保持开启 → settings/scheduler/collector/admission/保存变化复跑；历史、模型和 Profile store 是 fixture，不证明真实 provider/App 或执行中最终持久化退出门。
+- 最终 `npm test -- --runInBand __tests__/plugin-lifecycle.test.ts __tests__/memory-extraction.test.ts __tests__/retrieval-habit-profile.test.ts`：3 suites/165 tests PASS，3.092 s，自然 exit 0；tsc 自然 exit 0。首次 tsc 指出新 getTurns mock 的零参数签名与 calledWith 不符，补实际 conversationId 参数，不修改生产代码或放宽行为断言。本轮未改变上轮已通过 lint 的 src/locale 输入。
+- 实际旧 reader probe：复制 `git show c923ee22089ef3e669b275718bce6052e98d7749:src/settings.ts`（SHA256 `f962e15a16b125f7390f0ceb61c4ccb21b5bbb507de1a6726ab656c98095387a`）为临时模块，与真实新 merge 并行加载；default/enabled/disabled 各经旧 merge、JSON 序列化保存、新 merge，另测旧 paused。4 tests PASS，1.592 s，自然 exit 0。旧 merge 确实压低 extraction 镜像但保留顶层权威，新 reader 恢复正确；临时模块/测试已删除，不保留整份旧生产代码。共享依赖为当前工作树，habit helper 仅默认值改动且所有 probe 输入含显式布尔，不冒充完整旧 App 运行或旧 UI 行为。
+
+T-08/T-09 默认迁移实现（2026-09-09）：
+
+- 顶层版本化 `learningPreferences` 区分产品默认与真实开关动作；旧未知 false 默认开启，paused 保留；四种独立组合经队列保存、无关保存与重载保持，失败不提前生效。删除旧 true → confirmed/当前时间的自动补写；保留 paused 的已有 confirmedAt，不联动 provider、治理暂停或 Vault Insights。
+- 独立复核指出仅版本号会被旧 reader 的 false 镜像误导，已改为独立顶层权威偏好。旧保存形状回归通过；真实旧 reader/UI 往返尚未执行，旧 UI 无法更新新版偏好的已知局限记录于 SDD，不称作完整回滚兼容。
+- 复核发现默认开启使 Vault Insights 独立 toggle 在 unconfirmed 下可见，但旧即时/重载准入不一致；现独立开启需真实发送/成本确认，再保存确认事实；scheduler/governed/legacy/notice 保持确认门。新增取消不授权、确认后重载保留测试。此确认只由用户操作发生，默认迁移不生成它。
+- `npm test -- --runInBand __tests__/settings.test.ts __tests__/plugin-lifecycle.test.ts __tests__/retrieval-habit-profile.test.ts __tests__/plugin-record-note.test.ts __tests__/pa-locales-plugin.test.ts`：5 suites/706 tests PASS，19.824 s，自然 exit 0；tsc/lint 自然 exit 0。首轮旧默认断言与依赖旧默认的权限测试 fixture 已按新契约更新，失败/并发保护断言保留。未复用旧 build/App 身份，T-08/T-09 继续部分实现，实际调度、旧版往返和 App/device 仍为独立门。
+- 最终独立只读复核确认 Vault Insights P2 关闭，无新增必须修；docs:check（含 Git 删除连续性）通过，206 Markdown/1801 links，4 项既有 advisory 保留；diff/社区 DOM 源扫描通过。上述 UI 证据为模拟保存与真实 merge，不是 App、真实旧 reader 或 scheduler 生命周期验证。
+
+T-08/T-09 开始（2026-09-09）：AC-17 → 默认版本、raw false/明确 paused 分类、merge/load、真实 extraction gate 和设置确认/说明 → settings/plugin-lifecycle/retrieval-habit-profile/plugin-record-note 现有契约及新增矩阵 → 新默认 11 可用，既有明确暂停保留，迁移后 11/10/01/00 重载不变，旧无 consent true 不制造 confirmedAt；includeVaultInsights 不联动；权限保存失败不提前生效 → defaults/merge/permission/scheduler/collector 改变复跑，旧 reader 与真实 App 属独立门。
+
+T-11 legacy 读取实现（2026-09-09）：
+
+- AC-04/09 → plugin 独立只读快照、onload/设置通知 await、主门/存储 scope/epoch/治理模式/卸载与 mutation 失效 → ExistingUserProfileReader 及 plugin fixture → 关闭提取时已有 Profile 可读、不建可写库/模型/调度器；unknown/无库/空/失败无旧缓存，删除事务不能被迟到 read 复活 → load/watch/reader/mutation/投影变更复跑；来源物理输入与 App 仍是独立门。
+- 实现后 5 suites / 510 tests PASS，16.347 s，自然 exit 0（plugin-record-note、plugin-lifecycle、profile-store-existing-reader、memory-extraction、pa-locales-plugin）。初次删除 fixture 使用不合法的自造 profileRecordId，与 sanitizer 生成的稳定 ID 不符；改用实际已读取的规范 ID，未放宽精确删除校验。补冷启动顺序 fixture 后 legacy 定向 15 tests PASS，2.34 s，自然 exit 0；它证明 onload 在后续启动前 await 只读 Profile，不代表完整 App 启动 smoke。
+- MCC Profile 使用标志改为 Memory 主门；中文/英文设置描述说明停止学习与停止使用的区别。旧“启用需确认”部分暂保留当前代码事实，T-09 默认/准入切换时再同步，不能提前冒充新默认已生效。源码模式判定额外拒绝治理不可用时启用新 legacy 回退，bootstrap 故障不复活画像。
+- 冷启动、重载/保存通知、主门、scope变化、卸载、治理切换、真实 mutation 及读失败为本次自动化范围；跨窗口存储变动与每次 provider 物理发送重新验证尚未完成，T-11/P2 继续未完成。所有变更归 B-135，旧 track 未新增任务。
+- 独立审查指出：仅在 refresh 前后检查 legacy 模式仍不足，extraction=true 且 scheduler 缺席时 getter 可能拿旧缓存作 unavailable-governance 回退；cache 候选自身现也要求已知 legacy_threshold，既有 scheduler 兼容路径独立保留。新增 true/false 两种 unavailable 反例后 legacy 16 tests PASS，3.137 s，自然 exit 0；没有凭开关 true 扩张新缓存的治理准入。
+- 最终冻结源码后统一相关验证：`npm test -- --runInBand __tests__/plugin-record-note.test.ts __tests__/plugin-lifecycle.test.ts __tests__/profile-store-existing-reader.test.ts __tests__/memory-extraction.test.ts __tests__/pa-locales-plugin.test.ts __tests__/chat-service.test.ts __tests__/pa-agent-runtime-memory.test.ts`，7 suites/593 tests PASS，18.328 s，自然 exit 0；tsc/lint 自然 exit 0，diff/社区 DOM 源扫描通过。独立只读复核确认缓存治理门问题关闭，无新增必须修问题；cold onload fixture 的证明范围限初始化顺序，不是完整 Obsidian 启动。docs:check 通过，4 项原有 advisory 保留；未复用旧 build/App 身份或标 T-11/P2 完成。
+
+T-11 D10 开始（2026-09-09）：REQ/AC-04/09 → governed 已有画像及控制中心/Pagelet 使用状态与新提取门解耦，保留 Memory 主门、claim Pause/Forget、来源校验；Vault Insights 不从 D10 自动取得额外权限 → `plugin-record-note` 的真实 governance fixture 分别切 extraction false/unconfirmed/paused，检查已有正文/trace/UI、主开关/记录暂停/来源撤销反例 → 已有画像可用但新提取运行门仍关闭，不建模型/不采集；legacy 另验证无 scheduler 重载 → plugin callbacks、治理选择、保存/reader/投影变化重跑，最终实际 provider 与 App 证据仍必需。
+
+- governed 首片将 prompt 与 UI 使用门改为 Memory 主门/治理模式，claim 和来源校验仍由原 selector 执行；Vault Insights 保留旧 extraction+consent+include 门，D10 不扩张该能力。
+- 先有 4 个目标 RED；修复后新 fixture 未提供 current-note claim 所需当前笔记，补入匹配 scope 并先断言启用基线确实可读，未放宽 selector。`npm test -- --runInBand __tests__/plugin-record-note.test.ts` 325 tests PASS，15.768 s，自然 exit 0；tsc/lint 自然 exit 0。
+- 独立只读调查确认 legacy getter 在 scheduler dispose 后没有画像缓存；现有 ExistingUserProfileReader 为不创建数据库的准确只读入口。最小加载/失效设计已写入 SDD，尚未实现；对应冷启动、保存/重载、Forget/迟到 read、主门关闭以及设置说明仍待完成，因此 T-11 不标 Done。
+- 现有下游 `chat-service` 与 `pa-agent-runtime-memory` 2 suites / 81 tests PASS，1.954 s，自然 exit 0；只证明已覆盖投影/Memory 接缝无回归，不等于真实 provider 已验证 D10。此 plugin 源码修改使此前构建/部署身份失效，后续合并冻结输入再运行所需 broad gate。
+- 独立只读复核 governed selector/UI 无必须修：bootstrap、effect/sensitivity、scope/partition、pending/Forget/suppression、Data Boundary 仍经过原选择器；UI currentlyUsed 与实际读取主门一致。没有发现 runtime/projector 残留的提取/consent 读取门，Vault Insights 原门保留。tsc/lint/diff/DOM 源扫描及 docs:check 通过；4 项原有 episodic advisory 保留。该证据仅覆盖 governed 局部，legacy、设置说明、完整来源物理输入及 App/device 仍未完成。
+
+T-07 F-17/F-18 修复（2026-09-09）：
+
+- AC-05 → 错误结算立即拒收流事件，但保留当前渲染/恢复身份；所有部分结果在持久化前补统一中断 warning → Chat 回归夹住 deferred save 与 deferred Markdown render，在等待中注入迟到正文；typed partial→resolve 和 writingRecovery→resolve/reopen 验证正文、状态、result 与 Add to Editor → 字符/历史一致，未完成内容不恢复完成操作 → 回调/渲染/持久化/历史操作变化须复跑，真实 UI 仍待阶段 smoke。
+- 修复前 Chat suite 3 个 RED，分别复现保存等待期间正文覆盖及两条 reload 限制丢失；初稿将流关闭与渲染身份绑在一起，独立审查发现可能导致 pending render 后恢复退出，已分开两种判断并加入对应回归。
+- 手动选取恢复正文的既有 fixture 在全套中一次提前读取结果、单独运行通过；改为 await 既有按钮 click 返回的操作 Promise，不增加等待次数、不改产品逻辑。最终 `npm test -- --runInBand __tests__/chat-view.test.ts` 248 tests PASS，2.993 s，自然 exit 0。
+- 本 slice 仅 ChatView、对应测试和 B-135 Tracker 变更；旧 runtime 全量/build/App 证据不复用于新 UI。来源失效仍清除无效内容，provider_failed 保留已获准正文；没有将 native、默认迁移或阶段验收标记完成。
+- 关联取消变体：pending Markdown render 期间 click cancel 后，旧渲染返回 false 导致恢复提前退出；定向测试先 RED（历史 assistant 缺失）。`settleLiveMarkdownRenderBeforeFinal` 现在只等待旧渲染结束，并以恢复 finalizer 当前身份决定是否继续；未渲染成功的正文由既有 final renderer 重渲染，关闭/切会话仍拒绝。最终 Chat suite 249 tests PASS，3.212 s，自然 exit 0；lint PASS。此结果覆盖异常和取消，不将其记成 App 验证。
+- 最终 source 的 `npx tsc -noEmit -skipLibCheck`、lint、diff check 均自然 exit 0，社区 DOM 源扫描无匹配（exit 1 为通过）；独立只读复核确认 F-17/F-18 和取消变体闭合，无新增必须修问题。当前 view/session/controller 身份失效仍阻止关闭或切会话后的恢复；旧 full build/test/App 证据不覆盖本次修改，T-07/P1 继续未完成。
+
+2026-09-09 顺序产品决策完成：Owner 依次确认 D5 语义提议及保留执行保护、D8 无明确用户关闭证据的旧 false 迁移为开启、D10 停止新提取与已有画像读取解耦。已同步 DEC-034、Product Spec、SDD 与任务依赖；T-02 仅标记产品决定/文档完成，T-03/T-04 与阶段门仍未通过。此轮仅修改 B-135 文档，未修改 runtime 或旧任务过程文件；文档 checker/fixture/配置未变，沿用本轮已通过的 2 suites/58 docs contract tests，最终文档重跑 docs:check 与 diff check。
+
+2026-09-09 SDD 任务核对：D2/D3 按 Owner 本次原意转为 Confirmed，同步 DEC-034、Product Spec、SDD；T-02 保持未全量冻结，新增 F-17/F-18 归 T-07。仅修改文档，未修改运行时或旧任务过程文件。`npm run docs:check` 完整运行（含 Git 删除连续性）通过：206 Markdown、1801 links，4 项原有 episodic advisory；`npm run test:docs -- --runInBand` 2 suites / 58 tests PASS，5.906 s，自然 exit 0；`git diff --check` 通过。无新增 runtime/App/provider 验证，旧值迁移问题已提出，未收到答复前继续 Pending。
+
+| Date | Requirement / AC | Check | Result | Evidence / residual risk |
+| --- | --- | --- | --- | --- |
+| 2026-09-09 | 设计来源与基线 | git status / local HEAD / `git ls-remote --heads origin master`；源码及测试只读核对 | PASS — baseline only | local/remote master 8be89c4c；工作树 c923，B-135 源码一致；无运行时验证 |
+| 2026-09-09 | 历史证据分层 | 读取 Brief 原故障/离线 probe；此前文档 gate 2 suites/58 tests | Historical only | 旧测试/文档证据不覆盖新增 SDD、默认学习和 native 行为；本次 gate 待运行 |
+| 2026-09-09 | T-01 文档契约 | `npm run docs:check`、`git diff --check` | PASS — docs only | 当前 B-135 文档、链接/ID/WIP/删除连续性校验；4 项原有 episodic-memory 未索引/不可达 finding 仍为精确 advisory，未新增豁免 |
+| 2026-09-09 | T-01 现有文档测试 | `npm run test:docs -- --runInBand` | PASS — 2 suites / 58 tests，6.094 s，自然 exit 0 | check-docs-script / pa-docs-lifecycle-skills；checker、测试、fixture、skills、Jest 配置及 lock/dependencies 未改，后续纯产品文档修订复跑 docs:check，不重复此 fixture suite |
+| 2026-09-09 | T-01 / F-06 设计复核 | 独立只读复核 Decision/Spec/Plan/SDD/Tracker、17 AC 与22任务、默认/旧值/Personal 源码及旧包 diff | PASS — 文档一致性；不代表技术可行性通过 | 修复新工作错误归属；修正 consent merger 函数名。待决项仍 Pending，P0 与 runtime/provider/device 证据均未执行 |
+| 2026-09-09 | T-05 / AC-14 最小反例 | `npm test -- --runInBand __tests__/pa-agent-stream-fallback.test.ts`，新增4个回归先对现有代码运行 | RED — 4 failed / 15 passed，exit 1，4.322 s | 确认array文本空白/转义被改写、非文本块使流失败、finish延迟到tail、空已完成响应tail失败误invoke；这是缺陷证据，不作为通过 |
+| 2026-09-09 | T-05 adapter 修复 | `npm test -- --runInBand __tests__/pa-agent-stream-fallback.test.ts __tests__/chat-writing-output.test.ts` | PASS — 2 suites / 51 tests，exit 0，1.245 s | runtime adapter/helper与6个新增回归；覆盖stream/invoke保真、finish先于tail、usage保留、禁止完成后fallback；仅适配层和旧decoder，不覆盖loop/bridge完整交付 |
+| 2026-09-09 | T-05 类型 | `npx tsc -noEmit -skipLibCheck` | PASS — natural exit 0 | adapter/helper及其tests输入；后续loop共享类型修改需重新检查。尚未build/deploy/App/provider/device验证 |
+| 2026-09-09 | T-05/T-06 下游反例 | `npm test -- --runInBand __tests__/pa-agent-loop.test.ts -t 'B-135 P0 content completion boundary'`，最初4项 | RED — 2 failed / 2 passed，84未选，exit 1，1.873 s | stop+正文之后tailerror/deadline覆盖stopReason；完成前取消和普通工具完整后执行两项保护通过；修复后原4项PASS，1.281 s |
+| 2026-09-09 | F-08 复现与修复 | 原buffered overrun用例增加正常finish，两模式对照；修复后纳入完整suite | RED then PASS | 初稿withFinish=true因误启动第二请求导致fixture等待5s超时；未增timeout，改为在等待前断言一次model并修正完成时刻判据。独立review已确认关闭 |
+| 2026-09-09 | T-05/T-06 focused gate | `npm test -- --runInBand __tests__/pa-agent-loop.test.ts __tests__/pa-agent-stream-fallback.test.ts __tests__/chat-writing-output.test.ts __tests__/pa-agent-stream-bridge.test.ts` | PASS — 4 suites / 149 tests，exit 0，2.287 s | loop/adapter/current JSON decoder/bridge完整输入；新增整链5cases证明完整+stop+tailerror交付，invalid/source-revoked/length/missing-finish仍拒绝。非native/provider/App证据 |
+| 2026-09-09 | T-05/T-06 local gate | `npx tsc -noEmit -skipLibCheck`；`npm run lint`；`git diff --check`；AGENTS DOM source scan | PASS — tsc/lint自然exit0；diff无错误；source scan exit1且零匹配 | 当前两源文件、3个受影响/新增测试文件；配置/dependencies未变；后续源码/fixture/config变化失效相关证据 |
+| 2026-09-09 | T-05/T-06 review | 独立只读adapter兼容/fallback与loop完成/工具/取消/时钟审查，修复后复核F-08 | PASS — 当前局部diff无剩余必须修finding | 不扩大为整个T05/T06/T07或B135通过；缺少完整P0、build、App/provider/device门 |
+
+本轮 T-06 续作证据（2026-09-09）：
+
+- `npm test -- --runInBand __tests__/pa-agent-loop.test.ts __tests__/pa-agent-stream-fallback.test.ts __tests__/pa-agent-stream-bridge.test.ts __tests__/chat-writing-output.test.ts __tests__/pa-agent-started-text.test.ts __tests__/pa-agent-required-capability-policy.test.ts`：6 suites / 206 tests PASS，2.641 s，自然 exit 0。
+- 证明 soft70/hard100 下正文75时完成/失败/取消/late tool、100时中断；early tool恢复soft边界；真实Pagelet来源接受/拒绝与continuation拒绝。F-09/F-10独立复核关闭，仅源码与合成provider证据。
+- `npm run lint` PASS，自然 exit 0。首次 `tsc` 揭示新增测试 hook 返回 Jest 对象的类型错误；改为显式void回调后，`npx tsc -noEmit -skipLibCheck` PASS，自然 exit 0；`pa-agent-started-text.test.ts`复验3 tests PASS，1.170 s，自然 exit 0。该测试修订不改变production、其余fixtures/config/dependencies；其余5 suites证据仍适用。
+- 此 slice 尚未 production build/deploy、真实provider或App/device验证；不标T-06或P1完成。
+
+本轮 T-07 与 P1 自动化/部署证据（2026-09-09）：
+
+- Preview decoder：78 tests PASS，0.734 s；独立预览不修复完整协议。集成首轮6 suites/370 tests PASS，4.736 s；补普通取消及真实点击取消状态后Chat suite 241 tests PASS，2.994 s。
+- 真实 `PaAgentRuntime` / LangChain prompt / `WritingStyleService` / governance / bridge（仅provider输出为离线脚本）：runtime与style service共27 tests PASS，1.647 s；非空已授权风格确实进入输入，取消保留正文，stop+tail清理不撤销来源，Forget撤回预览。plugin note-backed来源的7项focused tests PASS，7.469 s；其余317项当时未选，后续完整gate覆盖。
+- F-11/F-12/F-13独立审查与修复复核通过。保持Memory主开关、治理、epoch、文件身份/修改、路径排除、Forget等来源控制；取消仍阻止继续生成。mock DOM点击不作为真实窗口交互证据。
+- 部署前完整gate：`make bin`的平台检查（386 TS）与lint通过；首次build因新runtime测试hook返回Jest对象类型失败，修为void后`npm run build`自然exit0。首次普通沙箱`npm run test:all -- --runInBand`因tooling/artifact子进程`spawnSync node EPERM`停止（SIGINT/exit130），不记PASS、不修改断言。在允许子进程的环境重跑同一命令：**247 suites / 6583 tests PASS，303.165 s，自然exit0**。测试/配置/依赖及production输入随后冻结；无需重复已覆盖lint/type/focused gate。
+- 构建：`dist/main.js` SHA-256 `49c2bb5760b07e3361cb6aa80fa45d35c8fc50cfcc37b885fc10b174991d534d`，7,073,292 bytes；production input count 421，input SHA-256 `fb394c0f6111c87b0886d3e200db0486e85d0c67d5164c86870b4ca7a9bd4d01`。任一相关源码/配置/依赖/构建输入修改后失效对应证据；HEAD本身不足以复用。
+- 部署：CLI只读确认真实test vault为`/mnt/code/personal-assistant/test`（隔离worktree的`test`并非已打开vault），因此使用同一既有helper `node scripts/deploy-current.mjs /mnt/code/personal-assistant/test/.obsidian/plugins/personal-assistant`，构建身份检查通过；main.js/styles.css/manifest.json/manifest-beta.json与dist逐字节一致。没有改部署脚本、合并代码或发布。
+- 运行时挂载：先清空dev errors，`obsidian vault=test plugin:reload id=personal-assistant`及`command id=personal-assistant:open-chat`成功；`.llm-chat-container`数量1。只读eval确认vault=test、plugin enabled、加载后的style prepare包含isSourceCurrent接口；新错误缓冲为空。debug未附着、mobile emulation已关闭。该证据仅证明部署/加载/挂载，**不证明预览/取消/复制/恢复真实交互**。
+- 环境与后续门：原生窗口交互工具不可用；现有Obsidian CLI可用（普通沙箱Electron启动失败，获准同命令外层执行后成功）。真实窗口full-ui与iOS为NOT TESTED；配置只读核对为qwen/qwen3.8-max，policyModelName为空，未调用真实provider。保留P1的这些门，不标T-05/T-06/T-07完成。
+- 辅助CPU测量：纯preview decoder对75,092字符、3,754个20字符累计前缀耗时3,562 ms；不是实时provider/UI或端到端性能证据。逐chunk重扫成本仍在T-20/实际流验证中评估，本轮未引入缓存或新测量平台。
+
+T-06 投影前诊断续作（2026-09-09）：
+
+- AC-16 → loop保留实际consumer结束类型，bridge在作品/恢复事件前输出严格白名单诊断，runtime仅debug开启时写现有本地log → stream-bridge/loop/真实runtime离线fixture与类型检查 → 正常finish+tailerror可交付、无finish但完整JSON不成版、格式不完整独立报告；默认不写新增诊断、无正文/样例/token/provider配置 → completion/event/bridge/logger变化重跑。
+- 字段使用宿主run、writing request、turn、message标识，run终态、stop、provider finish、transport、schema、字符数与本地解码上限。writing request标识不是provider返回的物理request ID；本记录不推断provider token上限，也不将本地字符限制标成实发max_tokens。物理调用身份/实际发送限额的完整关联仍待T-06后续核对。
+- 本次改动使此前production build、完整测试和App加载证据不再覆盖当前源码；已有结果保留为历史输入证据，不重复宣称当前全量PASS。阶段仍需真实provider、窗口交互和剩余诊断门。
+- `npm test -- --runInBand __tests__/pa-agent-stream-bridge.test.ts __tests__/pa-agent-loop.test.ts __tests__/pa-agent-writing-preview.test.ts`：3 suites / 113 tests PASS，2.144 s，自然exit0；`npx tsc -noEmit -skipLibCheck` PASS，自然exit0。包含debug开关的真实runtime离线fixture、投影前顺序与字段白名单断言。补日志sink异常隔离用例后，bridge 11 tests PASS，1.060 s，自然exit0；其余源码/测试输入未变。最终source的lint、diff和社区source scan通过。
+- 独立只读审查未发现本轮诊断增量必须修问题，确认三轴证据、候选重置、debug开关、同步sink异常隔离与无正文白名单；未替代真实provider/App门。`docs:check`通过（206 Markdown/1801 links，4项原有episodic advisory）。
+
+T-06 实际发送限额与宿主 attempt（2026-09-09）：
+
+- AC-16 → 在现有native fetch / Obsidian requestUrl入口、准入通过并创建物理调用后同步观察最终序列化请求体 → obsidian-fetch / ai-ios-dashscope-transport及真实runtime离线fixture → 只报告`max_tokens`/`max_completion_tokens`实际正整数字段；缺失为absent，不可读/非法为unknown；不消费Request流、不修改body、不记录正文/配置 → SDK序列化/transport/admission/logger变化重跑。
+- answer与context_summary记录runId、turnId、stage和run内唯一宿主attemptId（`run:http:n`），每次实际fetch入口调用独立计数；这不是provider返回ID，也不是整个run的全部工具/分类/重写请求账单。辅助路径完整覆盖与SDK重试对照仍须核验，不声称已全部完成。诊断仅debug本地log，sink错误隔离。
+- 3 suites / 36 tests PASS（obsidian-fetch、ai-ios-dashscope-transport、pa-agent-writing-preview），2.377 s，自然exit0。补真实PaAgentRuntime→AIUtils→SDK→requestUrl→projection关联用例后transport suite 13 tests PASS，1.465 s，自然exit0。该链仅替换网络响应；桌面native/iOS路由测试证明SDK实发字段与记录一致，不是真实设备或provider证据。
+- 来源准入拒绝时无dispatch诊断；日志失败仍发送原body；正文/token配置未进入白名单。两入口新增wrapper后当前production build和旧App证据继续失效，P1与T-06仍未完成。
+- 最终source的`npx tsc -noEmit -skipLibCheck`、`npm run lint`自然exit0；`git diff --check`与社区源扫描通过。补scope等待/drain后准入拒绝仍零诊断断言，obsidian-fetch 19 tests PASS，0.719 s，自然exit0。`docs:check`通过，4项原有episodic advisory保持；未进行真实网络、build/deploy或设备测试。
+
+本轮独立审查修复 F-14（P2）：初稿在取消/准入与物理调用之间通知diagnostic observer，同步observer取消可能仍派发requestUrl。现改为物理调用创建后的finally通知，两transport均保留最后准入/取消与dispatch同步邻接；新增有/无scope的顺序与同步abort反例。诊断时刻代表本地dispatch创建后的观察，不代表provider收到或开始生成。修复后上述3 suites / 39 tests PASS，2.006 s，自然exit0。
+
+关联复核 F-15（P2）：无scope时，observer同步取消后`withAbort`可能在接住已创建物理promise之前抛出，迟到网络错误成为未处理拒绝。修复为立即取消分支先接住现有promise的拒绝，再返回本地AbortError；有/无scope均补deferred网络失败回归，不取消或重发实际请求。最终3 suites / 41 tests PASS，2.004 s，自然exit0；tsc/lint/docs/diff均通过。独立只读复核及零网络内存探针确认两scope的迟到拒绝均被消费，F-14/F-15关闭于自动化范围；无新增必须修问题，完整App/provider门仍待完成。
+
+T-06 SDK retry 对照（2026-09-09）：
+
+- AC-16 → 已有SDK/transport/runtime fixture新增首次HTTP500、第二次正常响应 → `npm test -- --runInBand __tests__/ai-ios-dashscope-transport.test.ts` → 16 tests PASS，6.036 s，自然exit0。使用服务端`retry-after-ms: 1`缩短fixture等待，没有修改产品重试策略或测试timeout。
+- 桌面native和iOS requestUrl均确认真实SDK调用两次，诊断数量等于物理调用数量，两次序列化body逐字相等，输出限额均321；真实runtime的两次attempt共享run/turn且ID分别为http:1/http:2，均先于作品投影日志。无真实网络或设备操作；不覆盖SDK以外的新请求重写或全部辅助调用。
+- 本slice仅测试/Tracker改变，保留上一轮source验证，不复跑production lint/build/deploy；最终test类型检查及文档/diff按当前输入执行。新增重试测试不把T-06或P1标为完成。
+
+T-06 Memory 辅助模型诊断（2026-09-09）：
+
+- AC-16 → standard/relaxed宿主invocation保留只在内存中的诊断工厂，按当前turn绑定query_rewrite/rerank，再传入AIUtils既有物理发送观察器 → memory-search-phase1 / ai-ios-dashscope-transport → 改写/重排选项转换不丢回调，原准入/timeout/drain有效，callback不进入模型schema、seed或持久化 → invocation/prepare/model构造/transport变更复跑。
+- 初2 suites / 49 tests PASS，7.242 s，自然exit0。补真实runtime重排超时链的answer→rerank→answer记录断言后transport 16 tests PASS，6.222 s；三个attempt唯一且共享run，重排绑定发起工具的turn。补rewrite/rerank模型选项保真断言后memory-search-phase1 33 tests PASS，1.099 s；未重复无关全量gate。
+- 本轮不改重写/重排算法、次数、provider参数或权限，不加分类模型。原能力分类、embedding与其他工具的全部物理账单尚未纳入本诊断声明；这些覆盖范围在T-06继续核对，不能把上述日志当整个run总成本。无真实provider/设备验收，当前build/deploy证据仍需更新。
+- 独立只读审查无必须修问题：standard/relaxed保留host-only回调，重排归属发起turn，relaxed不新增rewrite；callback不进入schema/prompt/seed/持久化。lint/docs/diff及DOM源扫描通过。类型检查首次发现新测试mock零参数推断导致断言签名错误，仅补mock参数签名；复验Memory 33 tests PASS，1.132 s，自然exit0，最终`npx tsc -noEmit -skipLibCheck`自然exit0。
+
+T-12 主 Agent 取材选择首片（2026-09-09）：
+
+- AC-01/02/12 → runtime不再调用独立分类模型，也不以deterministic预测替代；给原host completion policy显式空classification，不生成预测required工具列表 → runtime-search-vss / ai-ios-dashscope-transport / pa-agent-writing-preview / required-capability-policy → 已配置policyModelName的主Agent可先澄清notes请求，一次实际main请求、零预测搜索；已用证据、真实来源/权限、终态检查继续保留 → routing/control/prompt/host policy变化重跑。
+- 删除ChatPlanner专用分类方法及runtime创建分类器的入口；不删除policyModelName字段和Memory rewrite/rerank用途。旧classifier helper尚有独立测试/引用，未把模块整体删除冒充迁移完成。Operations继续原意图/opt-in/导出执行/确认准入，取消initial required名单导致的取材工具预缩；来源regex约束等待T-13，不将其视为统一语义已完成。
+- 首轮3 suites / 60 tests PASS，6.789 s，自然exit0；新增真实runtime澄清反例后transport + required policy两套66 tests PASS，6.757 s，自然exit0。网络响应为离线fixture；不代表真实模型语义质量、P3或T-12完成。本片独立于Pending产品选择，后续来源投影替换仍先满足T-04/T-13。
+- T-06的最小故障定位与T-20完整成本对照分开：不为将被移除的分类路线新增长期诊断框架，也不把部分模型日志当整个run账单。分类调用在本片已从当前runtime删除，其他物理调用覆盖及真实失败对照仍需按AC验证。
+- Chat集成初7项失败均追溯到预测依赖：分类额外调用、天气初始工具预缩、来源撤销后的额外补答、Ops未调预测来源警告。按新契约更新断言，保留stale path/body零出站、实际search一次、显式no-web/current-note约束；不为旧revalidation调用数制造请求。
+- F-16（P2）独立审查发现仅保留Operations required名单会隐藏混合请求的Memory/Web/current-note工具；删除initial requiredToolNames，保留获准read和Ops同时可见。新增真实bound schema含search_memory/vault_create、提议state=pending、vault.create零调用断言。Ops空ack的completed仅指已生成待确认卡片，不证明资料验证或执行完成；D5准入未改。
+- 修复后5 suites / 140 tests PASS，8.174 s，自然exit0（chat-service、control-policy、iOS transport离线fixture、runtime-search-vss、writing-preview）；tsc/lint自然exit0。独立复核F-16关闭，无新增必须修问题。共享runtime输入现冻结，安排production build和全量test；之前的构建/部署证据不作为此次结果。
+
+当前冻结输入的统一gate（2026-09-09，T-06诊断与T-12首片后）：
+
+- `npm run build` PASS，自然exit0；`dist/main.js` SHA256 `d21e45b0e99adf347ccdac9fb1920b7ed8e3041d7d836819d16452d2f337214e`，7,073,281 bytes。production input count421、SHA256 `a46bc2a88468b0bc8837e2c07b4e9d775a06d88783fb34d8fad7f666d9c8f805`；styles/manifests未产生额外diff。
+- `npm run test:all -- --runInBand`：247 suites / 6607 tests PASS，281.271 s，自然exit0。Jest报告退出超过一秒的提示，未强制退出。针对本轮取消/transport/runtime相关6套运行`--detectOpenHandles`：180 tests PASS，15.668 s，自然exit0，无句柄报告；这没有定位全量提示来源，不据此宣称全仓无退出延迟。后续同输入复发且影响gate时扩大定位。
+- lint/tsc/docs/diff及社区源扫描已通过；全量执行期间source/tests/config/deps保持冻结，随后仅文档证据更新。发布fixture操作仅在临时仓库；没有提交/推送项目或发布。以上不证明剩余AC或真实provider/App/device行为。
+- `node scripts/deploy-current.mjs /mnt/code/personal-assistant/test/.obsidian/plugins/personal-assistant`身份检查及复制成功；`obsidian vault=test plugin:reload id=personal-assistant`自然exit0，open-chat成功，DOM容器数量1、dev:errors无错误。没有调用provider或进行真实窗口输入；仅证明部署/重载命令和Chat挂载，不证明语义选择/取消/保存交互。构建hash和当前输入按上述条目绑定。
+
+T-07 普通回答异常后的可读恢复（2026-09-09）：
+
+- AC-05 → 普通回答已有正文后抛错，保留内容并写partial_output_error提示；canonical终态为error，未产生作品。空回答保留原错误行；已知图片来源/请求身份失效不保留撤回文本，provider_failed可保留 → Chat suite legacy/canonical异常、持久化/reopen、迟到chunk、图片错误类别、既有取消/清理 → 正文原字符保留、失败状态可恢复、无成功作品/自动保存建议 → UI finalizer/lifecycle/persistence/source错误变化重跑。
+- 初反例发现共用finalizer把partial正文更新为可复用result并挂AddToEditor；现对已标partial的收尾保留阅读/复制，不提供已完成输出的直接编辑入口，reopen根据已存partial_output_error/user_abort一致处理，不改变长期提取或风格授权。canonical测试初期错误地使用legacy onChunk，改用真实message_start/text_delta后验证通过，未修改生产逻辑来兼容错误fixture。
+- `npm test -- --runInBand __tests__/chat-view.test.ts`：246 tests PASS，3.103 s，自然exit0；`npx tsc -noEmit -skipLibCheck`和lint自然exit0。当前源改变使上一轮构建/全量/App加载证据失效；本片尚未重新build/deploy或真实窗口验证，T-07仍未完成。
+
+## Closeout Readiness
+
+
+- [ ] 所有产品待决项已按真实用户答复处置，SDD 关键发现闭合。
+- [ ] 全部 17 项 REQ/AC 与当前实现一致，新增工作没有遗留到旧 track。
+- [ ] 每阶段 required review、provider、Desktop/iOS smoke 及最终 broad gate 有真实证据。
+- [ ] 稳定结论已吸收到 current contracts/Architecture/tests；未完成项有明确去向。
+- [ ] Brief 独有事故证据有入链的保留方案；过程文档按生命周期处置。
+- [ ] 已取得 closeout 授权；Git/release 仍按各自边界执行。
