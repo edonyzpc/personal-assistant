@@ -1,3 +1,4 @@
+import { copyNoteSearchScope } from "./types";
 import type {
     EmbeddingProfile,
     LexicalIncrementalMaintenanceReceipt,
@@ -192,6 +193,7 @@ export class SqliteVectorIndex implements VectorIndex {
         retrieval?: RetrievalSearchRuntimeParameters,
         options: VectorHybridSearchOptions = {},
     ): Promise<VectorHybridSearchResult> {
+        const noteScope = copyNoteSearchScope(options.noteScope);
         return this.enqueue(() => this.send<VectorHybridSearchResult>("searchHybrid", {
             queryEmbedding,
             ftsQuery,
@@ -203,6 +205,7 @@ export class SqliteVectorIndex implements VectorIndex {
             lexicalBudget,
             excludedPathGenerations,
             ...(retrieval ? { retrieval } : {}),
+            ...(noteScope ? { noteScope } : {}),
         }, options.signal), options.signal);
     }
 

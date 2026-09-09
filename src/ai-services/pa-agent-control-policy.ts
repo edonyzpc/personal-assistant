@@ -44,6 +44,8 @@ export interface AgentControlToolConstraints {
 
 /** Immutable snapshot of the agent's tool-exposure, source-scope, budget, and constraint state at a point in time. */
 export interface AgentControlSnapshot {
+    /** Current turn's host-declared pure output; never a source/action allowance. */
+    writingOutput?: "present_writing";
     exposureMode: PaAgentToolExposureMode;
     sourceScope: PaAgentSourceScope;
     allowedToolNames?: ReadonlySet<string>;
@@ -264,8 +266,16 @@ export function deriveSameSourceFollowUpAgentControlSnapshot(
 ): AgentControlSnapshot {
     const base = previous ?? createAgentControlSnapshot();
     const allowedToolNames = options.sourceScope === "notes"
-        ? NOTES_FOLLOW_UP_TOOL_NAMES
+        ? new Set(NOTES_FOLLOW_UP_TOOL_NAMES)
         : new Set<string>();
+    // A targeted follow-up can still narrow an already granted task scope.
+    // Preserve this control only; do not reopen other material or meta tools.
+    if (options.sourceScope === "notes"
+        && base.exposureMode !== "final-only" && base.toolMode !== "final_answer_only"
+        && base.allowedToolNames?.has("declare_source_scope")
+        && !base.blockedToolNames?.has("declare_source_scope")) {
+        allowedToolNames.add("declare_source_scope");
+    }
     return createAgentControlSnapshot({
         exposureMode: "follow-up",
         sourceScope: options.sourceScope,
@@ -315,6 +325,7 @@ export function summarizeAgentControlSnapshot(
     return {
         exposureMode: snapshot.exposureMode,
         sourceScope: snapshot.sourceScope,
+        ...(snapshot.writingOutput ? { writingOutput: snapshot.writingOutput } : {}),
         ...(snapshot.allowedToolNames ? { allowedToolNames: [...snapshot.allowedToolNames].sort() } : {}),
         ...(snapshot.blockedToolNames ? { blockedToolNames: [...snapshot.blockedToolNames].sort() } : {}),
         ...(Object.keys(snapshot.blockedReasons).length > 0 ? { blockedReasons: snapshot.blockedReasons } : {}),

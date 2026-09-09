@@ -7,6 +7,8 @@ import type { AiServiceHost, LatestMemorySourceMaterial } from "./AiServiceHost"
 import { createAbortError, throwIfAborted } from "./chat-utils";
 import { truncate } from "./chat-tool-execution-helpers";
 import { normalizeVaultPath } from "../pa/helpers";
+import { assertTaskSourceReadCurrent, type TaskSourceReadGuard } from './task-source-read-guard';
+import { createTaskSourceMemoryHost } from './task-source-memory-host';
 import { createHeadingAwareMarkdownChunks } from "../vss/markdown-chunker";
 import { buildGraphBoundarySnapshot } from "../graph/graph-boundary-snapshot";
 import { runInterruptibleParallelGroup } from "../graph/interruptible-macrotask";
@@ -186,6 +188,7 @@ export type MemorySearchInvocationOptions =
         readonly runEpoch?: string;
         readonly absoluteDeadlineMs?: number;
         readonly providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
+        readonly providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
         /** Run-owned lifetime for detached DEC-028 preparation; never an attempt deadline signal. */
         readonly memoryPreparationOwnerSignal?: AbortSignal;
     }
@@ -197,11 +200,18 @@ export type MemorySearchInvocationOptions =
         readonly runEpoch?: string;
         readonly absoluteDeadlineMs?: number;
         readonly providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
+        readonly providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
         /** Run-owned lifetime for detached DEC-028 preparation; never an attempt deadline signal. */
         readonly memoryPreparationOwnerSignal?: AbortSignal;
     };
 
 const MEMORY_SEARCH_INVOCATIONS = new WeakMap<AbortSignal, MemorySearchInvocationOptions>();
+export type MemorySearchRequestDiagnostic = (
+    stage: "query_rewrite" | "rerank",
+) => ProviderRequestOptions["onProviderRequestDiagnostic"];
+interface MemorySearchProviderRequestOptions extends ProviderRequestOptions {
+    providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
+}
 const MEMORY_SEARCH_TEMPORAL_FILTER_CAPTURES = new WeakMap<
     MemorySearchInvocationOptions,
     MemorySearchTemporalFilterCapture
@@ -220,6 +230,7 @@ export function createStandardMemorySearchInvocation(options: {
     runEpoch?: string;
     absoluteDeadlineMs?: number;
     providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
+    providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
     memoryPreparationOwnerSignal?: AbortSignal;
 }): MemorySearchInvocationOptions {
     const invocation: MemorySearchInvocationOptions = Object.freeze({
@@ -235,6 +246,7 @@ export function createStandardMemorySearchInvocation(options: {
             ? { absoluteDeadlineMs: options.absoluteDeadlineMs }
             : {}),
         ...(options.providerRequestScope ? { providerRequestScope: options.providerRequestScope } : {}),
+        ...(options.providerRequestDiagnostic ? { providerRequestDiagnostic: options.providerRequestDiagnostic } : {}),
         ...(options.memoryPreparationOwnerSignal
             ? { memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal }
             : {}),
@@ -252,6 +264,7 @@ export function createRelaxedMemorySearchInvocation(
         runEpoch?: string;
         absoluteDeadlineMs?: number;
         providerRequestScope?: ProviderRequestOptions["providerRequestScope"];
+        providerRequestDiagnostic?: MemorySearchRequestDiagnostic;
         memoryPreparationOwnerSignal?: AbortSignal;
     } = {},
 ): MemorySearchInvocationOptions {
@@ -267,6 +280,7 @@ export function createRelaxedMemorySearchInvocation(
             ? { absoluteDeadlineMs: control.absoluteDeadlineMs }
             : {}),
         ...(control.providerRequestScope ? { providerRequestScope: control.providerRequestScope } : {}),
+        ...(control.providerRequestDiagnostic ? { providerRequestDiagnostic: control.providerRequestDiagnostic } : {}),
         ...(control.memoryPreparationOwnerSignal
             ? { memoryPreparationOwnerSignal: control.memoryPreparationOwnerSignal }
             : {}),
@@ -310,12 +324,14 @@ export class MemorySearchTool {
     private readonly aiUtils: AIUtils;
     private readonly diagnosticSurface: RetrievalDiagnosticSurface;
     private readonly activeGraphRankRequests = new Map<string, ActiveGraphRankRequest>();
+    private readonly scopedSearches = new Set<MemorySearchTool>();
     private disposed = false;
 
     constructor(
         host: AiServiceHost,
         aiUtils: AIUtils,
         diagnosticSurface: RetrievalDiagnosticSurface = "chat",
+        private readonly taskSourceReadGuard?: TaskSourceReadGuard,
     ) {
         this.host = host;
         this.aiUtils = aiUtils;
@@ -325,13 +341,25 @@ export class MemorySearchTool {
     dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
+        for (const scoped of this.scopedSearches) scoped.dispose();
+        this.scopedSearches.clear();
         for (const request of [...this.activeGraphRankRequests.values()]) {
             this.invalidateGraphRankRequest(request);
             this.finishGraphRankRequest(request);
         }
     }
 
-    async search(query: string, signal?: AbortSignal, onBeforeVssSearch?: () => void): Promise<MemorySearchResult> {
+    async search(query: string, signal?: AbortSignal, onBeforeVssSearch?: () => void, guard?: TaskSourceReadGuard): Promise<MemorySearchResult> {
+        if (guard) {
+            const scoped = this.forTaskSource(guard);
+            try {
+                const result = await scoped.search(query, signal, onBeforeVssSearch);
+                assertTaskSourceReadCurrent(scoped.taskSourceReadGuard);
+                assertTaskSourceReadCurrent(guard);
+                return result;
+            } finally { this.scopedSearches.delete(scoped); scoped.dispose(); }
+        }
+        assertTaskSourceReadCurrent(this.taskSourceReadGuard);
         throwIfAborted(signal);
         const invocation = signal ? MEMORY_SEARCH_INVOCATIONS.get(signal) : undefined;
         if (invocation?.mode === "relaxed") {
@@ -378,7 +406,18 @@ export class MemorySearchTool {
         signal?: AbortSignal,
         temporalFilter: MemoryTemporalFilter | null = null,
         temporalAudit?: MemoryTemporalProjectionAudit,
+        guard?: TaskSourceReadGuard,
     ): Promise<MemorySearchResult> {
+        if (guard) {
+            const scoped = this.forTaskSource(guard);
+            try {
+                const current = await scoped.revalidateForProvider(result, signal, temporalFilter, temporalAudit);
+                assertTaskSourceReadCurrent(scoped.taskSourceReadGuard);
+                assertTaskSourceReadCurrent(guard);
+                return current;
+            } finally { this.scopedSearches.delete(scoped); scoped.dispose(); }
+        }
+        assertTaskSourceReadCurrent(this.taskSourceReadGuard);
         throwIfAborted(signal);
         if (temporalAudit) {
             temporalAudit.temporalFilterApplied = temporalFilter ? 1 : 0;
@@ -428,6 +467,21 @@ export class MemorySearchTool {
             hasAnswerableContent: true,
             memoryEvidenceState: result.memoryEvidenceState === "partial" ? "partial" : "evidence",
         };
+    }
+
+    private forTaskSource(guard: TaskSourceReadGuard): MemorySearchTool {
+        if (this.disposed) throw new Error('Memory search is disposed.');
+        assertTaskSourceReadCurrent(guard);
+        const scope = guard.getNoteSearchScope?.();
+        if (!scope) throw new Error('Task source search scope is unavailable.');
+        const lifetime: TaskSourceReadGuard = {
+            isCurrent: () => !this.disposed && guard.isCurrent(),
+            isPathAllowed: (path, kind) => !this.disposed && guard.isPathAllowed(path, kind),
+        };
+        const scoped = new MemorySearchTool(createTaskSourceMemoryHost(this.host, lifetime, scope), this.aiUtils,
+            this.diagnosticSurface, lifetime);
+        this.scopedSearches.add(scoped);
+        return scoped;
     }
 
     private async searchVss(
@@ -826,7 +880,7 @@ export class MemorySearchTool {
         query: string,
         policyModelName: string,
         signal?: AbortSignal,
-        providerRequestOptions?: ProviderRequestOptions,
+        providerRequestOptions?: MemorySearchProviderRequestOptions,
     ): Promise<RewrittenQuery> {
         const controller = new AbortController();
         const combined = combineAbortSignals(signal ? [signal, controller.signal] : [controller.signal]);
@@ -836,11 +890,14 @@ export class MemorySearchTool {
             const llm = await this.aiUtils.createChatModel(0, {
                 transport: "native",
                 modelName: policyModelName,
+                ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceReadCurrent(this.taskSourceReadGuard) } : {}),
+                onProviderRequestDiagnostic: providerRequestOptions?.providerRequestDiagnostic?.("query_rewrite"),
                 ...(providerRequestOptions?.providerRequestScope
                     ? { providerRequestScope: providerRequestOptions.providerRequestScope }
                     : {}),
             });
             const invoker = async (q: string, s?: AbortSignal) => {
+                assertTaskSourceReadCurrent(this.taskSourceReadGuard);
                 const escapedSystemPrompt = REWRITE_SYSTEM_PROMPT.replace(/\{/g, "{{").replace(/\}/g, "}}");
                 const prompt = ChatPromptTemplate.fromMessages([
                     SystemMessagePromptTemplate.fromTemplate(escapedSystemPrompt),
@@ -864,7 +921,7 @@ export class MemorySearchTool {
         selectedModel: SelectedRerankModel,
         signal?: AbortSignal,
         absoluteDeadlineMs?: number,
-        providerRequestOptions?: ProviderRequestOptions,
+        providerRequestOptions?: MemorySearchProviderRequestOptions,
     ): Promise<RerankOutcome> {
         throwIfAborted(signal);
         if (candidates.length === 0) {
@@ -889,7 +946,7 @@ export class MemorySearchTool {
         selectedModel: SelectedRerankModel,
         signal?: AbortSignal,
         absoluteDeadlineMs?: number,
-        providerRequestOptions?: ProviderRequestOptions,
+        providerRequestOptions?: MemorySearchProviderRequestOptions,
     ): Promise<PreparedMemoryReranker | null> {
         throwIfAborted(signal);
         const controller = new AbortController();
@@ -955,6 +1012,8 @@ export class MemorySearchTool {
                 Promise.resolve(this.aiUtils.createChatModel(0, {
                     transport: "native",
                     modelName: selectedModel.modelName,
+                    ...(this.taskSourceReadGuard ? { onProviderRequestStart: () => assertTaskSourceReadCurrent(this.taskSourceReadGuard) } : {}),
+                    onProviderRequestDiagnostic: providerRequestOptions?.providerRequestDiagnostic?.("rerank"),
                     ...(providerRequestOptions?.providerRequestScope
                         ? { providerRequestScope: providerRequestOptions.providerRequestScope }
                         : {}),
@@ -982,6 +1041,7 @@ export class MemorySearchTool {
             return {
                 dispose,
                 invoke: async (query, candidates) => {
+                    assertTaskSourceReadCurrent(this.taskSourceReadGuard);
                     throwIfAborted(signal);
                     if (candidates.length === 0) return createDeterministicEmptyOutcome();
                     if (controller.signal.aborted) {

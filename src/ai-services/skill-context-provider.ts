@@ -53,6 +53,12 @@ export class SkillContextProvider implements CapabilityProvider {
 
     private readonly resources: readonly BundledSkillResource[];
     private loadedSkills: LoadedSkillResource[] = [];
+    private readonly ownedCapabilities = new WeakSet<AgentCapability>();
+
+    /** Identify our actual in-memory skill reader, never a same-name replacement. */
+    ownsCapability(capability: AgentCapability): boolean {
+        return this.ownedCapabilities.has(capability);
+    }
 
     constructor(resources: readonly BundledSkillResource[]) {
         this.resources = resources;
@@ -94,7 +100,9 @@ export class SkillContextProvider implements CapabilityProvider {
 
     private buildLoadSkillCapabilities(): AgentCapability[] {
         if (this.loadedSkills.length === 0) return [];
-        return [new LoadSkillCapability(this)];
+        const capability = new LoadSkillCapability(this);
+        this.ownedCapabilities.add(capability);
+        return [capability];
     }
 
     executeLoadSkill(rawInput: unknown): AgentCapabilityResult {

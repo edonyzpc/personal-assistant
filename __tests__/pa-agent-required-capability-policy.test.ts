@@ -1106,6 +1106,29 @@ describe("PA Agent required capability HostPolicy", () => {
         }
     });
 
+    it.each(["absent", "allowed", "blocked"])("preserves only an already allowed scope control in Memory follow-up: %s", async state => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check notes, then narrow the source.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const decision = await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory", { metadata: { needsSnippetFollowup: true } })],
+            controlSnapshot: createAgentControlSnapshot({
+                allowedToolNames: new Set(["search_memory", "webSearch", "load_skill",
+                    ...(state === "absent" ? [] : ["declare_source_scope"])]),
+                blockedToolNames: new Set(state === "blocked" ? ["declare_source_scope"] : []),
+            }),
+        }));
+        expect(decision.action).toBe("continue");
+        if (decision.action !== "continue") throw new Error("Expected follow-up");
+        expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual([
+            "search_vault_snippets", ...(state === "allowed" ? ["declare_source_scope"] : []),
+        ]);
+        expect(decision.controlSnapshot!.budgetState.followUpRoundCount).toBe(1);
+        expect(decision.controlSnapshot!.blockedToolNames?.has("declare_source_scope")).toBe(state === "blocked");
+    });
+
     it("opens notes follow-up tools only when Memory explicitly requests snippet follow-up", async () => {
         const policy = createRequiredCapabilityHostPolicy({
             userInput: "Check my notes for Zhou Zhi.",

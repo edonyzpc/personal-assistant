@@ -60,6 +60,40 @@ export interface ObsidianFetchControl {
     providerRequestScope?: ProviderRequestScope;
     /** Synchronous admission check immediately before each physical HTTP dispatch. */
     onProviderRequestStart?: () => void;
+    onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
+}
+
+export interface ProviderRequestDiagnostic {
+    transport: 'obsidian' | 'native';
+    bodyState: 'json_object' | 'unknown';
+    maxTokens: number | 'absent' | 'unknown';
+    maxCompletionTokens: number | 'absent' | 'unknown';
+}
+
+/** Inspect only the serialized dispatch body. Never expose its content to logs. */
+export function reportProviderRequestDiagnostic(
+    body: unknown,
+    transport: ProviderRequestDiagnostic['transport'],
+    observer: ObsidianFetchControl['onProviderRequestDiagnostic'],
+): void {
+    if (!observer) return;
+    let record: Record<string, unknown> | undefined;
+    if (typeof body === 'string') {
+        try {
+            const parsed: unknown = JSON.parse(body);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) record = parsed as Record<string, unknown>;
+        } catch { /* Opaque/non-JSON bodies have no observable token limits. */ }
+    }
+    const readLimit = (key: string): number | 'absent' | 'unknown' => {
+        if (!record) return 'unknown';
+        if (!Object.prototype.hasOwnProperty.call(record, key)) return 'absent';
+        const value = record[key];
+        return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 'unknown';
+    };
+    try {
+        observer({ transport, bodyState: record ? 'json_object' : 'unknown',
+            maxTokens: readLimit('max_tokens'), maxCompletionTokens: readLimit('max_completion_tokens') });
+    } catch { /* Diagnostics cannot block the physical request. */ }
 }
 
 const createAbortError = (): Error => {
@@ -79,6 +113,9 @@ const throwIfAborted = (signal?: AbortSignal | null): void => {
 
 const withAbort = async <T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> => {
     if (!signal) return promise;
+    // The request already exists. Even an immediate local cancellation must
+    // consume its later rejection; requestUrl cannot cancel the physical work.
+    if (signal.aborted) void promise.catch(() => undefined);
     throwIfAborted(signal);
 
     return await new Promise<T>((resolve, reject) => {
@@ -226,9 +263,13 @@ export const obsidianFetch = async (
         requestParam.body = body;
     }
 
+    const dispatch = () => {
+        try { return requestUrl(requestParam); }
+        finally { reportProviderRequestDiagnostic(body, 'obsidian', control.onProviderRequestDiagnostic); }
+    };
     const response = control.providerRequestScope
         ? await control.providerRequestScope.startRequest(
-            () => requestUrl(requestParam),
+            dispatch,
             init.signal,
             control.onProviderRequestStart,
         )
@@ -236,7 +277,7 @@ export const obsidianFetch = async (
             throwIfAborted(init.signal);
             control.onProviderRequestStart?.();
             throwIfAborted(init.signal);
-            return await withAbort(requestUrl(requestParam), init.signal);
+            return await withAbort(dispatch(), init.signal);
         })();
     const status = normalizeStatus(response.status);
     const canHaveBody = status !== 204 && status !== 205 && status !== 304;

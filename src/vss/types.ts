@@ -174,6 +174,27 @@ export interface VectorHybridSearchResult {
 export interface VectorHybridSearchOptions {
     /** Caller cancellation is fail-closed; queued work must not reach the Worker. */
     signal?: AbortSignal;
+    noteScope?: NoteSearchScope;
+}
+
+/** Host-owned request scope, never an index setting. Empty allowlist denies all notes. */
+export interface NoteSearchScope {
+    allowedPaths: readonly string[] | null;
+    excludedPaths: readonly string[];
+}
+
+export function copyNoteSearchScope(scope: NoteSearchScope | undefined): NoteSearchScope | undefined {
+    if (scope === undefined) return undefined;
+    const validPaths = (paths: unknown): paths is string[] => Array.isArray(paths)
+        && paths.every((path) => typeof path === 'string' && path.length > 0);
+    if (!scope || (scope.allowedPaths !== null && !validPaths(scope.allowedPaths))
+        || !validPaths(scope.excludedPaths)) {
+        throw new Error('Invalid Memory search note scope.');
+    }
+    return {
+        allowedPaths: scope.allowedPaths === null ? null : [...new Set(scope.allowedPaths)],
+        excludedPaths: [...new Set(scope.excludedPaths)],
+    };
 }
 
 /** Caller-owned holder populated by one hybrid-search invocation only. */

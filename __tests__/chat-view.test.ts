@@ -18,6 +18,7 @@ import { ImageManagementModal, ImageSourcePickerModal, VaultImagePickerModal } f
 import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
+import { ChatImageRequestError } from '../src/ai-services/image-capability';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import type { ComposerDraft } from '../src/chat/composer-draft';
@@ -997,7 +998,7 @@ describe('LLMView turn lifecycle', () => {
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
     });
 
-    it('freezes a host-bound writing artifact once and keeps the raw envelope out of the visible/copy answer', async () => {
+    it.each([undefined, '先说明本次写作的取舍。'])('freezes a host-bound artifact independently of its preamble (%s)', async (preamble) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'writing-conversation' });
         const versions = new WritingVersionService(store);
@@ -1016,7 +1017,7 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain(raw);
         const artifact = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1,
             kind: 'writing-artifact' as const, runId: 'run_1', requestId: call.options.writingRequest!.requestId,
-            messageId: 'writing_answer', body: '  海边的风。\n带着盐味。🙂', explanation: '辅助说明单独保留' };
+            messageId: 'writing_answer', body: '  海边的风。\n带着盐味。🙂', explanation: '辅助说明单独保留', preamble };
         call.options.onEvent?.(artifact);
         call.options.onEvent?.(artifact);
         call.resolve();
@@ -1025,7 +1026,9 @@ describe('LLMView turn lifecycle', () => {
         expect(stored).toHaveLength(1);
         expect(stored[0].text).toBe(artifact.body);
         expect(stored[0].explanation).toBe(artifact.explanation);
-        expect(view.chatHistory[1].content).toBe(artifact.body);
+        expect(view.chatHistory[1].content).toBe(preamble ? `${preamble}\n\n${artifact.body}` : artifact.body);
+        expect((await store.getTurns('writing-conversation'))[0].assistant.content)
+            .toBe(preamble ? `${preamble}\n\n${artifact.body}` : artifact.body);
         expect(view.chatHistory[1].writingVersionId).toBe(stored[0].id);
         expect((await store.getTurns('writing-conversation'))[0].assistant.writingVersionId).toBe(stored[0].id);
         expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
@@ -1055,6 +1058,60 @@ describe('LLMView turn lifecycle', () => {
         expect((await store.getTurns('recovery-conversation'))[0].assistant.writingRecovery?.rawText).toBe(rawText);
         expect(allText(containerEl)).not.toContain(rawText);
         expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
+    });
+
+    it.each([false, true])('keeps preview/recovery and truthful status after reopen (user cancel=%s)', async (cancelled) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'preview-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_start', message: assistantMessage('preview-answer', []) }));
+        const shared = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1,
+            runId: 'run_1', requestId: call.options.writingRequest!.requestId, messageId: 'preview-answer' };
+        const text = '  海边的风。\n保留这段未完成的正文。🌊';
+        call.options.onEvent?.({ ...shared, kind: 'writing-preview', text });
+        for (let i = 0; i < 6; i++) await flushPromises();
+        expect(allText(containerEl)).toContain('保留这段未完成的正文');
+        expect(await versions.list('preview-conversation')).toEqual([]);
+        expect(await store.getTurns('preview-conversation')).toEqual([]);
+        if (cancelled) getButtonByClass(containerEl, 'cancel-button').click();
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: cancelled ? 'aborted' : 'completed_with_warning' }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: cancelled ? 'aborted' : 'completed_with_warning' }));
+        call.options.onEvent?.({ ...shared, kind: 'writing-recovery', rawText: '{"body":"partial', previewText: text, reason: 'incomplete' });
+        if (cancelled) {
+            call.options.onEvent?.({ ...shared, kind: 'writing-preview', text: 'late cancelled text' });
+            call.reject(new DOMException('Aborted', 'AbortError'));
+        } else call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(view.chatHistory[1].content).toBe(text);
+        expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        expect(view.chatHistory[1].canonicalTurn?.status).toBe(cancelled ? 'aborted' : 'completed_with_warning');
+        expect(allText(containerEl)).not.toContain('late cancelled text');
+        expect((await store.getTurns('preview-conversation'))[0].assistant.content).toBe(text);
+        expect(await versions.list('preview-conversation')).toEqual([]);
+        expect(getElementsByClass(containerEl, 'pa-chat-writing-recovery-notice')).toHaveLength(1);
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, { writingVersions: versions });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1].content).toBe(text);
+        expect(restored.view.chatHistory[1].canonicalTurn?.status).toBe(cancelled ? 'aborted' : 'completed_with_warning');
+        expect(restored.view.result).toBe('');
+        expect(getButtonsByText(restored.containerEl, 'Add to Editor')).toHaveLength(0);
+        expect(restored.view.chatHistory[1].runtimeWarnings).toContainEqual(expect.objectContaining({
+            type: cancelled ? 'user_abort' : 'partial_output_error',
+        }));
+        if (cancelled) expect(allText(restored.containerEl)).toContain('Generation cancelled');
+        expect(getElementsByClass(restored.containerEl, 'pa-chat-writing-recovery-notice')).toHaveLength(1);
     });
 
     it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
@@ -1098,7 +1155,7 @@ describe('LLMView turn lifecycle', () => {
             const areas = walkAll(modalRoot, (element) => element.tagName === 'textarea');
             const buttons = walkAll(modalRoot, (element) => element.tagName === 'button');
             Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
-            buttons[0].click(); buttons[1].click();
+            buttons[0].click(); await buttons[1].click();
             for (let i = 0; i < 8; i++) await flushPromises();
             const recovered = (await versions.list('resolved-writing'))[0];
             expect(recovered.text).toBe('BODY');
@@ -1288,11 +1345,12 @@ describe('LLMView turn lifecycle', () => {
         const rawText = '{"body":"中断的原始回答"';
         call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
             kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
-            messageId: 'failed_answer', rawText, reason: 'incomplete', associatedImages: [material] });
+            messageId: 'failed_answer', rawText, previewText: '中断的原始回答', reason: 'incomplete', associatedImages: [material] });
         call.reject(failure === 'cancel' ? new DOMException('Cancelled', 'AbortError') : new Error('transport failed'));
         for (let i = 0; i < 8; i++) await flushPromises();
         expect(await versions.list('failed-writing-conversation')).toEqual([]);
         expect(view.chatHistory[1].writingRecovery?.rawText).toBe(rawText);
+        expect(view.chatHistory[1].content).toBe('中断的原始回答');
         expect(view.chatHistory[1].shareCardEligible).toBe(false);
         expect((await store.getTurns('failed-writing-conversation'))[0].assistant.writingRecovery?.rawText).toBe(rawText);
         expect((await store.getTurns('failed-writing-conversation'))[0].assistant.images).toEqual([material]);
@@ -3882,7 +3940,157 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(0);
     });
 
-    it('unloads assistant markdown render owners when a streamed answer becomes a terminal row', async () => {
+    it.each([false, true])('retains ordinary failed text and its status after reopen (canonical=%s)', async (canonical) => {
+        const store = new MemoryChatHistoryStore();
+        let releaseSave!: () => void;
+        const saving = new Promise<void>((resolve) => { releaseSave = resolve; });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        const appendSpy = jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            await saving;
+            return append(...args);
+        });
+        const manager = new ChatHistoryManager({ store, generateId: () => 'failed-ordinary' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'explain this topic';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        if (canonical) {
+            emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'message_start', message: assistantMessage('ordinary-failure', []) }));
+            emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'ordinary-failure',
+                update: { kind: 'text_delta', text: '  已收到的正文\n仍可阅读 🌊' } }));
+        }
+        call.onChunk('  已收到的正文\n仍可阅读 🌊');
+        call.reject(new Error('network fixture failure'));
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(appendSpy).toHaveBeenCalledTimes(1);
+        // The stream has failed, but finalization is still awaiting persistence.
+        // Both callback paths must already be closed during this window.
+        call.onChunk('late stale replacement');
+        if (canonical) emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'ordinary-failure',
+            update: { kind: 'text_delta', text: 'late canonical replacement' } }));
+        for (let i = 0; i < 3; i++) await flushPromises();
+        const settlementText = allText(containerEl);
+        releaseSave();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(settlementText).not.toContain('late stale replacement');
+        expect(settlementText).not.toContain('late canonical replacement');
+
+        expect(view.chatHistory[1]).toMatchObject({
+            role: 'assistant', content: '  已收到的正文\n仍可阅读 🌊', shareCardEligible: false,
+            runtimeWarnings: [expect.objectContaining({ type: 'partial_output_error' })],
+        });
+        expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+        expect(view.result).toBe('');
+        expect(getButtonsByText(containerEl, 'Add to Editor')).toHaveLength(0);
+        if (canonical) expect(view.chatHistory[1].canonicalTurn?.status).toBe('error');
+        call.onChunk('late stale replacement');
+        await flushPromises();
+        expect(view.chatHistory[1].content).toBe('  已收到的正文\n仍可阅读 🌊');
+        expect(allText(containerEl)).not.toContain('late stale replacement');
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1].content).toBe('  已收到的正文\n仍可阅读 🌊');
+        expect(restored.view.chatHistory[1].runtimeWarnings).toContainEqual(expect.objectContaining({ type: 'partial_output_error' }));
+        if (canonical) expect(restored.view.chatHistory[1].canonicalTurn?.status).toBe('error');
+        expect(restored.view.result).toBe('');
+        expect(getButtonsByText(restored.containerEl, 'Add to Editor')).toHaveLength(0);
+        await restored.view.onClose();
+    });
+
+    it('preserves interrupted actions after a typed partial error resolves and reopens', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'typed-partial' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'explain the topic';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.onChunk('Readable partial answer');
+        call.options.onEvent?.({ version: 1, turnId: 'legacy-partial', seq: 1, timestamp: 1,
+            kind: 'partial-output-error', category: 'provider' });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(view.result).toBe('');
+        expect(getButtonsByText(containerEl, 'Add to Editor')).toHaveLength(0);
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1]).toMatchObject({ content: 'Readable partial answer', shareCardEligible: false,
+            runtimeWarnings: [expect.objectContaining({ type: 'partial_output_error' })] });
+        expect(restored.view.result).toBe('');
+        expect(getButtonsByText(restored.containerEl, 'Add to Editor')).toHaveLength(0);
+        await restored.view.onClose();
+    });
+
+    it.each([false, true])('finishes recovery after a pending markdown render (user cancel=%s)', async (cancelled) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'pending-render-error' });
+        let releaseRender!: () => void;
+        const pendingRender = new Promise<void>((resolve) => { releaseRender = resolve; });
+        const renderedText = 'Body already received';
+        let heldRender = false;
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>)
+            .mockImplementation(async (_app, markdown, el) => {
+                if (markdown === renderedText && !heldRender) {
+                    heldRender = true;
+                    await pendingRender;
+                }
+                el.setText(markdown);
+            });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'explain this';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.onChunk(renderedText);
+        runAnimationFrames();
+        await flushPromises();
+        expect(heldRender).toBe(true);
+        if (cancelled) getButtonByClass(containerEl, 'cancel-button').click();
+        call.reject(cancelled ? new DOMException('Aborted', 'AbortError') : new Error('failed during render'));
+        await flushPromises();
+        call.onChunk('unaccepted replacement');
+        releaseRender();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(view.chatHistory[1]).toMatchObject({ content: renderedText, shareCardEligible: false });
+        expect(view.chatHistory[1].runtimeWarnings).toContainEqual(expect.objectContaining({
+            type: cancelled ? 'user_abort' : 'partial_output_error',
+        }));
+        expect((await store.getTurns('pending-render-error'))[0].assistant.content).toBe(renderedText);
+        expect(allText(containerEl)).toContain(renderedText);
+        expect(allText(containerEl)).not.toContain('unaccepted replacement');
+        await view.onClose();
+    });
+
+    it.each(['source_unavailable', 'request_changed', 'provider_failed'] as const)('keeps image invalidation distinct from transport failure: %s', async (code) => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        getTextArea(containerEl).value = 'describe the scene';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('received description');
+        streamCalls[0].reject(new ChatImageRequestError(code));
+        for (let i = 0; i < 8; i++) await flushPromises();
+        if (code === 'provider_failed') {
+            expect(view.chatHistory[1].content).toBe('received description');
+            expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        } else {
+            expect(view.chatHistory).toEqual([]);
+            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
+        }
+        await view.onClose();
+    });
+
+    it('keeps cancelled partial text and releases its markdown render owners on close', async () => {
         const unloadSpy = jest.spyOn(Component.prototype, 'unload');
         try {
             const { view, containerEl } = createView();
@@ -3900,12 +4108,14 @@ describe('LLMView turn lifecycle', () => {
 
             getButtonByClass(containerEl, 'cancel-button').click();
             streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
-            await flushPromises();
-            await flushPromises();
+            for (let i = 0; i < 8; i++) await flushPromises();
 
-            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
+            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+            expect(view.chatHistory[1].content).toBe('partial **answer**');
+            expect(view.chatHistory[1].shareCardEligible).toBe(false);
             expect(allText(containerEl)).toContain('Generation cancelled');
-            expect((view as any).markdownRenderOwners.size).toBe(1); // eslint-disable-line @typescript-eslint/no-explicit-any
+            await view.onClose();
+            expect((view as any).markdownRenderOwners.size).toBe(0); // eslint-disable-line @typescript-eslint/no-explicit-any
             expect(unloadSpy).toHaveBeenCalled();
         } finally {
             unloadSpy.mockRestore();

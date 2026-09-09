@@ -1073,7 +1073,7 @@ describe("PaAgentLoop", () => {
         }
     });
 
-    it("lets one dispatched buffered request finish after softAt without starting tools or another turn", async () => {
+    it.each([false, true])("lets one dispatched buffered request finish after softAt without starting tools or another turn (finish=%s)", async (withFinish) => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
@@ -1105,6 +1105,7 @@ describe("PaAgentLoop", () => {
                         input.notifyProviderRequestStarted?.();
                         await new Promise<void>((resolve) => setTimeout(resolve, 75));
                         yield { type: "text_delta", text: "Buffered final answer." } as const;
+                        if (withFinish) yield { type: "provider_completion", completion: "stop" } as const;
                     },
                 },
                 toolExecutor: { execute },
@@ -1125,6 +1126,7 @@ describe("PaAgentLoop", () => {
             expect(modelInputs).toHaveLength(1);
 
             await jest.advanceTimersByTimeAsync(5);
+            expect(modelInputs).toHaveLength(1);
             const result = await pending;
 
             expect(result.status).toBe("completed_with_warning");
@@ -1369,7 +1371,7 @@ describe("PaAgentLoop", () => {
         }
     });
 
-    it("does not commit partial ordinary-turn text when the soft deadline reserves finalization", async () => {
+    it("keeps started text through softAt and preserves partial text at the original hard deadline", async () => {
         jest.useFakeTimers();
         try {
             const modelInputs: PaAgentModelInput[] = [];
@@ -1429,28 +1431,127 @@ describe("PaAgentLoop", () => {
 
             const resultPromise = loop.run();
             await jest.advanceTimersByTimeAsync(70);
+            expect(ordinaryAbortObserved).toBe(false);
+            expect(modelInputs).toHaveLength(1);
+            await jest.advanceTimersByTimeAsync(30);
             const result = await resultPromise;
 
-            expect(result.status).toBe("completed");
-            expect(result.committedFinalText).toBe("Grounded final answer.");
+            expect(result.status).toBe("completed_with_warning");
+            expect(result.committedFinalText).toBe("Unfinished draft");
             expect(ordinaryAbortObserved).toBe(true);
-            expect(finalStartedAfterAbort).toBe(true);
-            expect(committed).toEqual(["Grounded final answer."]);
+            expect(finalStartedAfterAbort).toBe(false);
+            expect(committed).toEqual(["Unfinished draft"]);
             expect(result.turns[0]).toMatchObject({
-                status: "incomplete",
-                committedFinalText: "",
-                pendingTextReclassified: true,
+                status: "completed_with_warning",
+                committedFinalText: "Unfinished draft",
+                pendingTextReclassified: false,
                 assistantMessage: {
                     content: [expect.objectContaining({
-                        type: "thinking",
+                        type: "text",
                         text: "Unfinished draft",
                     })],
                 },
             });
             expect(modelInputs.map((input) => input.toolMode)).toEqual([
                 undefined,
-                "final_answer_only",
             ]);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it.each(["stop", "error", "tool", "abort"] as const)("finishes started incremental text after softAt without another request (%s)", async (ending) => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const controller = new AbortController();
+            const execute = jest.fn(async () => ({ outcome: "success" as const, promptText: "unexpected" }));
+            const prepareBatch = jest.fn(async () => undefined);
+            const afterTurn = jest.fn(() => ({ action: "continue" as const, reason: "corrective_turn" as const }));
+            const loop = new PaAgentLoop({
+                runId: `started-text-${ending}`,
+                userInput: "answer",
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        input.notifyProviderRequestStarted?.();
+                        yield { type: "text_delta", text: "First " } as const;
+                        await new Promise<void>((resolve) => setTimeout(resolve, 75));
+                        if (ending === "abort") {
+                            controller.abort();
+                            return;
+                        }
+                        if (ending === "error") throw new Error("provider interrupted");
+                        if (ending === "tool") {
+                            yield { type: "toolcall_delta", id: "late", name: "search_memory", input: { query: "late" }, index: 0 } as const;
+                        } else {
+                            yield { type: "text_delta", text: "second." } as const;
+                            yield { type: "provider_completion", completion: "stop" } as const;
+                        }
+                    },
+                },
+                hostPolicy: { afterTurn, finalizeAfterTurn: (_summary, context) => ({ action: "stop", status: context.defaultStatus, reason: "verified" }) },
+                signal: controller.signal,
+                toolExecutor: { execute, prepareBatch },
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                assistantIdleTimeoutMs: 1000,
+                createId: createDeterministicId,
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(75);
+            const result = await pending;
+            expect(modelInputs).toHaveLength(1);
+            expect(afterTurn).not.toHaveBeenCalled();
+            expect(execute).not.toHaveBeenCalled();
+            expect(prepareBatch).not.toHaveBeenCalled();
+            expect(result.turns).toHaveLength(1);
+            const expectedStatus = { stop: "completed", error: "completed_with_warning", tool: "completed_with_warning", abort: "aborted" };
+            expect(result.status).toBe(expectedStatus[ending]);
+            expect(result.committedFinalText).toBe(ending === "stop" ? "First second." : "First ");
+            expect(result.turns[0]?.diagnostics).toContainEqual(expect.objectContaining({ type: "finalization_reserve_used_by_text" }));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("restores the soft deadline when started text becomes an early tool phase", async () => {
+        jest.useFakeTimers();
+        try {
+            const modelInputs: PaAgentModelInput[] = [];
+            const execute = jest.fn(async () => ({ outcome: "success" as const, promptText: "unexpected" }));
+            const prepareBatch = jest.fn(async () => undefined);
+            const loop = new PaAgentLoop({
+                runId: "text-then-early-tool",
+                userInput: "answer",
+                model: {
+                    stream: async function* (input) {
+                        modelInputs.push(input);
+                        if (input.toolMode === "final_answer_only") {
+                            yield { type: "text_delta", text: "Bounded final answer" } as const;
+                            yield { type: "provider_completion", completion: "stop" } as const;
+                            return;
+                        }
+                        yield { type: "text_delta", text: "Let me check" } as const;
+                        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+                        yield { type: "toolcall_delta", id: "early", name: "search_memory", argsText: "{", index: 0 } as const;
+                        await new Promise<void>((resolve) => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
+                    },
+                },
+                toolExecutor: { execute, prepareBatch },
+                maxWallClockMs: 100,
+                finalizationReserveMs: 30,
+                assistantIdleTimeoutMs: 1000,
+                createId: createDeterministicId,
+            });
+            const pending = loop.run();
+            await jest.advanceTimersByTimeAsync(70);
+            const result = await pending;
+            expect(modelInputs.map((input) => input.toolMode)).toEqual([undefined, "final_answer_only"]);
+            expect(result.committedFinalText).toBe("Bounded final answer");
+            expect(result.turns[0]?.diagnostics).toContainEqual(expect.objectContaining({ type: "finalization_reserve_reached" }));
+            expect(prepareBatch).not.toHaveBeenCalled();
+            expect(execute).not.toHaveBeenCalled();
         } finally {
             jest.useRealTimers();
         }
@@ -2181,6 +2282,242 @@ describe("PaAgentLoop", () => {
         expect(events.find((event) => event.type === "turn_end")).toMatchObject({
             status: "completed_with_warning",
             metadata: { diagnostics: [expect.objectContaining({ type: "provider_error" })] },
+        });
+    });
+
+    describe("B-135 P0 content completion boundary", () => {
+        it("counts startup time against the existing run budget before dispatching a model turn", async () => {
+            const events: AgentEvent[] = [];
+            let modelStreamCalled = false;
+            const loop = new PaAgentLoop({
+                runId: "b135-startup-exhausted-budget",
+                userInput: "Give the complete answer.",
+                model: {
+                    stream: async function* () {
+                        modelStreamCalled = true;
+                        yield { type: "text_delta", text: "Must not dispatch." } as const;
+                    },
+                },
+                createId: createDeterministicId,
+                now: () => 201,
+                runStartedAt: 100,
+                maxWallClockMs: 100,
+                finalizationReserveMs: 0,
+                onEvent: (event) => events.push(event),
+            });
+
+            const result = await loop.run();
+
+            expect(modelStreamCalled).toBe(false);
+            expect(events.filter((event) => event.type === "turn_start")).toHaveLength(0);
+            expect(result.turns).toHaveLength(0);
+            expect(result.status).toBe("incomplete");
+            expect(result.endPayload).toMatchObject({ reason: "wall_clock_exceeded", maxWallClockMs: 100 });
+            expect(events.at(-1)).toMatchObject({ type: "agent_end", status: "incomplete" });
+        });
+
+        it("keeps completed text complete when the transport fails after provider stop", async () => {
+            const events: AgentEvent[] = [];
+            const body = 'Complete answer.\nExact whitespace:  "海风" 🌊';
+            const loop = new PaAgentLoop({
+                runId: "b135-stop-before-tail-error",
+                userInput: "Give the complete answer.",
+                model: {
+                    stream: async function* () {
+                        yield { type: "text_delta", text: body } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
+                        throw new Error("transport failed after content completion");
+                    },
+                },
+                createId: createDeterministicId,
+                now: () => 100,
+                onEvent: (event) => events.push(event),
+            });
+
+            const result = await loop.run();
+
+            expect(result.committedFinalText).toBe(body);
+            expect(result.transcript.find((message) => message.role === "assistant")).toMatchObject({
+                providerCompletion: "stop",
+                stopReason: "stop",
+            });
+            expect(result.status).toBe("completed");
+            expect(events.at(-1)).toMatchObject({ type: "agent_end", status: "completed" });
+        });
+
+        it.each(["incremental", "buffered"] as const)("retains %s completion received before the hard deadline when the transport tail hangs", async (providerResponseDelivery) => {
+            const events: AgentEvent[] = [];
+            let now = 0;
+            let releaseTail!: () => void;
+            const tail = new Promise<void>((resolve) => { releaseTail = resolve; });
+            const loop = new PaAgentLoop({
+                runId: "b135-stop-before-tail-deadline",
+                userInput: "Give the complete answer.",
+                model: {
+                    stream: async function* (input) {
+                        input.notifyProviderRequestStarted?.();
+                        yield { type: "text_delta", text: "Complete before the deadline." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
+                        now = 31;
+                        await tail;
+                    },
+                },
+                createId: createDeterministicId,
+                now: () => now,
+                providerResponseDelivery,
+                maxWallClockMs: 30,
+                finalizationReserveMs: providerResponseDelivery === "buffered" ? 5 : 0,
+                assistantIdleTimeoutMs: 1000,
+                onEvent: (event) => events.push(event),
+            });
+
+            try {
+                const result = await loop.run();
+
+                expect(result.committedFinalText).toBe("Complete before the deadline.");
+                expect(result.transcript.find((message) => message.role === "assistant")).toMatchObject({
+                    providerCompletion: "stop",
+                    stopReason: "stop",
+                });
+                expect(result.status).toBe("completed");
+                expect(events.filter((event) => event.type === "turn_start")).toHaveLength(1);
+            } finally {
+                releaseTail();
+            }
+        });
+
+        it("keeps a cancellation before provider completion aborted even if stop arrives later", async () => {
+            const controller = new AbortController();
+            const loop = new PaAgentLoop({
+                runId: "b135-cancel-before-stop",
+                userInput: "Give the complete answer.",
+                model: {
+                    stream: async function* () {
+                        yield { type: "text_delta", text: "Visible candidate." } as const;
+                        controller.abort();
+                        yield { type: "provider_completion", completion: "stop" } as const;
+                    },
+                },
+                createId: createDeterministicId,
+                now: () => 100,
+                signal: controller.signal,
+            });
+
+            const result = await loop.run();
+
+            expect(result.status).toBe("aborted");
+            expect(result.committedFinalText).toBe("Visible candidate.");
+            expect(result.transcript.find((message) => message.role === "assistant")).toMatchObject({
+                stopReason: "aborted",
+            });
+            expect(result.transcript.find((message) => message.role === "assistant" && message.providerCompletion === "stop")).toBeUndefined();
+        });
+
+        it("rejects a tool call arriving after provider stop before batch preparation or execution", async () => {
+            const prepareBatch = jest.fn(async () => undefined);
+            const execute = jest.fn(async () => ({ outcome: "success" as const, promptText: "Must not execute." }));
+            const loop = new PaAgentLoop({
+                runId: "b135-tool-after-stop",
+                userInput: "Give the complete answer.",
+                model: {
+                    stream: async function* () {
+                        yield { type: "text_delta", text: "Candidate answer." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
+                        yield { type: "toolcall_delta", id: "late_call", name: "search_memory", argsText: '{"query":"launch"}', index: 0 } as const;
+                    },
+                },
+                toolExecutor: { prepareBatch, execute },
+                createId: createDeterministicId,
+                now: () => 100,
+            });
+
+            const result = await loop.run();
+
+            expect(prepareBatch).not.toHaveBeenCalled();
+            expect(execute).not.toHaveBeenCalled();
+            expect(result.status).toBe("completed_with_warning");
+            expect(result.committedFinalText).toBe("Candidate answer.");
+            expect(result.transcript.find((message) => message.role === "assistant")).toMatchObject({
+                providerCompletion: "stop",
+                stopReason: "error",
+            });
+            expect(result.turns[0].diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: "provider_content_after_completion" }),
+            ]));
+        });
+
+        it("does not accept conflicting provider completion markers as a completed answer", async () => {
+            const loop = new PaAgentLoop({
+                runId: "b135-conflicting-completion",
+                userInput: "Give the complete answer.",
+                model: {
+                    stream: async function* () {
+                        yield { type: "text_delta", text: "Candidate answer." } as const;
+                        yield { type: "provider_completion", completion: "stop" } as const;
+                        yield { type: "provider_completion", completion: "length" } as const;
+                    },
+                },
+                createId: createDeterministicId,
+                now: () => 100,
+            });
+
+            const result = await loop.run();
+
+            expect(result.status).toBe("completed_with_warning");
+            expect(result.committedFinalText).toBe("Candidate answer.");
+            expect(result.transcript.find((message) => message.role === "assistant")).toMatchObject({
+                providerCompletion: "stop",
+                stopReason: "error",
+            });
+            expect(result.turns[0].diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: "provider_completion_conflict" }),
+            ]));
+        });
+
+        it("prepares and executes a normal tool phase only after its complete arguments and message end", async () => {
+            const order: string[] = [];
+            const preparedInputs: unknown[] = [];
+            const executedInputs: unknown[] = [];
+            const loop = new PaAgentLoop({
+                runId: "b135-normal-tool-phase",
+                userInput: "Search my notes.",
+                model: {
+                    stream: async function* () {
+                        yield { type: "toolcall_delta", id: "call_1", name: "search_memory", argsText: '{"query":', index: 0 } as const;
+                        order.push("complete-arguments");
+                        yield { type: "toolcall_delta", id: "call_1", name: "search_memory", argsText: '"launch"}', index: 0 } as const;
+                        // Preserve the currently supported EOF tool phase. Native
+                        // tool_calls completion needs a real type-chain change first.
+                        order.push("content-phase-ended");
+                    },
+                },
+                toolExecutor: {
+                    prepareBatch: async ({ toolCalls }) => {
+                        order.push("prepare-batch");
+                        preparedInputs.push(...toolCalls.map((call) => call.input));
+                    },
+                    execute: async ({ toolCall }) => {
+                        order.push("execute");
+                        executedInputs.push(toolCall.input);
+                        return { outcome: "success", promptText: "Memory result." };
+                    },
+                },
+                hostPolicy: {
+                    afterTurn: () => ({ action: "stop", status: "completed", reason: "normal_tool_phase_verified" }),
+                },
+                createId: createDeterministicId,
+                now: () => 100,
+                onEvent: (event) => {
+                    if (event.type === "message_end" && event.message.role === "assistant") order.push("assistant-message-end");
+                },
+            });
+
+            const result = await loop.run();
+
+            expect(order).toEqual(["complete-arguments", "content-phase-ended", "assistant-message-end", "prepare-batch", "execute"]);
+            expect(preparedInputs).toEqual([{ query: "launch" }]);
+            expect(executedInputs).toEqual([{ query: "launch" }]);
+            expect(result.turns[0]).toMatchObject({ status: "tool_results_ready" });
         });
     });
 

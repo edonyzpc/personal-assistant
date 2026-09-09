@@ -44,6 +44,20 @@ const executeMemorySearch = async (
 });
 
 describe("CapabilityRegistry and core tool capabilities", () => {
+    it("keeps the fixed writing output separate from provider-registerable executable tools", () => {
+        const registry = new CapabilityRegistry();
+        const providerCapability = createTestCapability("search_memory");
+        Object.defineProperty(providerCapability, "name", { value: "present_writing" });
+        expect(registry.register(providerCapability)).toBe(false);
+        expect(registry.get("present_writing")).toBeUndefined();
+        expect(registry.listDefinitions().map((definition) => String(definition.name))).not.toContain("present_writing");
+        expect(registry.exportProviderSchemas()).toEqual([]);
+        const schema = registry.getWritingOutputSchema({ requestId: "host-context" });
+        expect(schema.function.name).toBe("present_writing");
+        expect(schema.function.parameters.properties.contextHandle.enum).toEqual(["host-context"]);
+        schema.function.parameters.properties.contextHandle.enum?.push("mutated");
+        expect(registry.getWritingOutputSchema({ requestId: "next-context" }).function.parameters.properties.contextHandle.enum).toEqual(["next-context"]);
+    });
     it("exports the 9 core tools as provider schemas in canonical order", () => {
         const registry = new CapabilityRegistry();
         registry.registerMany(createCoreCapabilities());

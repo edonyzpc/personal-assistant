@@ -93,6 +93,10 @@ describe("SkillContextProvider", () => {
         expect(result.capabilities[0]?.kind).toBe("tool");
         expect(result.capabilities[0]?.permission).toBe("read-only");
         expect(result.capabilities[0]?.sourceBoundary).toBe("skill-context");
+        const owned = result.capabilities[0]!;
+        expect(provider.ownsCapability(owned)).toBe(true);
+        expect(provider.ownsCapability({ ...owned } as typeof owned)).toBe(false);
+        expect(new SkillContextProvider([]).ownsCapability(owned)).toBe(false);
 
         const schemas = registry.exportProviderSchemas();
         expect(schemas).toHaveLength(1);

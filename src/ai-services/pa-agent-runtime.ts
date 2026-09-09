@@ -1,4 +1,3 @@
-import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate } from "@langchain/core/prompts";
 
 import type {
     AIUtils,
@@ -10,6 +9,8 @@ import type { MemoryMode } from "../memory-manager";
 import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization-platform-policy";
 import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { MemorySearchTool } from "./memory-search-tool";
+import { TaskSourceRun } from "./task-source-run";
+import { createTaskSourceConstrainedExecutor, createTaskSourceDeclarationSchema, DECLARE_SOURCE_SCOPE } from "./task-source-executor";
 import {
     captureExplicitTemporalIntent,
     ChatMemoryRecoveryCoordinator,
@@ -52,7 +53,7 @@ import { PaAgentContextSummarizer, type PaAgentSummaryInvoke } from "./context/P
 import { cloneMessage } from "./context/clone-utils";
 import { isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
-import { readProviderCompletion, writingOutputInstruction, cloneChatWritingRequest, selectedWritingContext } from "./writing-output";
+import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext } from "./writing-output";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
 import { ChatImageRequestError, isStructuredImageUnsupportedError, type ChatImageCapability } from "./image-capability";
 import { formatInjectedContext, MEMORY_CONTEXT_MAX_CHARS } from "./context/PaAgentContextProjector";
@@ -75,7 +76,6 @@ import {
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import {
     createProviderRequestScope,
-    type ProviderRequestScope,
 } from "./obsidian-fetch";
 import { errorMessage } from "./agent-utils";
 import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-provider";
@@ -104,12 +104,7 @@ import {
     type WriteActionCapability,
 } from "./write-action-framework";
 import {
-    applyUserExplicitCapabilityConstraints,
     createRequiredCapabilityHostPolicy,
-    getExplicitlySuppressedRequiredCapabilities,
-    isExplicitCurrentNoteOnlyRequest,
-    resolveRequiredCapabilityClassification,
-    type RequiredCapabilityClassifier,
     type RequiredCapability,
 } from "./pa-agent-required-capability-policy";
 import {
@@ -175,6 +170,8 @@ export interface PaAgentRunOptions {
 }
 
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
+    /** Host-only compatibility candidate. Default switching requires B-135 P0 evidence. */
+    writingOutputProtocol?: "native";
     /** Internal per-turn budget override. Never increases the normal history allowance. */
     historyBudgetChars?: number;
     qwenRequestOptions?: QwenRequestOptions;
@@ -260,20 +257,29 @@ const OPERATIONS_SUPPORT_TOOL_NAMES = [
 class OperationsTurnPolicyEngine extends PolicyEngine {
     private actionsAllowedForTurn = false;
 
+    constructor(options: PolicyEngineOptions, private readonly isEnabled: () => boolean) {
+        super(options);
+    }
+
+    private allowsAction(capability: AgentCapability): boolean {
+        return this.actionsAllowedForTurn && this.isEnabled()
+            && CORE_WRITE_TOOL_NAMES.some((name) => name === capability.name);
+    }
+
     setActionsAllowedForTurn(allowed: boolean): void {
         this.actionsAllowedForTurn = allowed;
     }
 
     override canExport(capability: AgentCapability): CapabilityPolicyDecision {
-        if (capability.kind === "action" && !this.actionsAllowedForTurn) {
-            return { allowed: false, reason: "action capabilities require current-turn write intent" };
+        if (capability.kind === "action" && !this.allowsAction(capability)) {
+            return { allowed: false, reason: "Operations core actions require live opt-in and a staging controller" };
         }
         return super.canExport(capability);
     }
 
     override canExecute(capability: AgentCapability): CapabilityPolicyDecision {
-        if (capability.kind === "action" && !this.actionsAllowedForTurn) {
-            return { allowed: false, reason: "action capabilities require current-turn write intent" };
+        if (capability.kind === "action" && !this.allowsAction(capability)) {
+            return { allowed: false, reason: "Operations core actions require live opt-in and a staging controller" };
         }
         return super.canExecute(capability);
     }
@@ -290,7 +296,6 @@ export const canFallbackToNonStreaming = (
         && !isAbortError(error, signal);
 };
 
-type ModelContentPart = string | Record<string, unknown>;
 
 export interface NativeToolCallCandidate {
     id?: string;
@@ -567,6 +572,7 @@ export function createWriteActionAwareToolExecutor(
     options: WriteActionAwareToolExecutorOptions,
 ): PaAgentToolExecutor {
     return {
+        preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
         getCanonicalToolCallKey: (toolCall, context) => (
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),
@@ -735,7 +741,7 @@ export class PaAgentRuntime {
             ? new OperationsTurnPolicyEngine({
                 platform: runtimePlatform,
                 ...effectivePolicyOptions,
-            })
+            }, () => this.host.isOperationsAgentEnabled)
             : null;
         this.toolRegistry = new CapabilityRegistry({
             policyEngine: this.operationsPolicyEngine ?? new PolicyEngine({
@@ -769,7 +775,7 @@ export class PaAgentRuntime {
         const memoryTool = this.memoryTool;
         const coreCapabilities = createCoreToolCapabilities([
             createSearchMemoryTool((input, context) => {
-                return memoryTool.search(input.query, context.signal, context.onBeforeVssSearch);
+                return memoryTool.search(input.query, context.signal, context.onBeforeVssSearch, context.taskSourceReadGuard);
             }),
             createCurrentNoteContextTool(),
             createSearchVaultMetadataTool(),
@@ -815,22 +821,28 @@ export class PaAgentRuntime {
 
     private async streamPaAgentCanonicalTurn(options: PaAgentStreamOptions): Promise<void> {
         if (options.writingRequest) options = { ...options, writingRequest: cloneChatWritingRequest(options.writingRequest) };
+        const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
         const imageScope = options.images?.length || options.chatHistory?.some((message) => message.images?.length) || options.writingContext || options.writingMaterialContext
             ? new ChatImageRequestScope({ images: options.images, history: options.chatHistory, writingContext: options.writingContext,
                 writingMaterialContext: options.writingMaterialContext,
                 prompt: options.prompt, service: options.imageAssetService, isCurrent: options.isCurrent }) : undefined;
         let writingStyle: import("./chat-types").ChatWritingStyleResult | undefined;
-        const assertRequestCurrent = (signal?: AbortSignal): void => {
-            throwIfAborted(signal ?? options.signal);
+        const assertRequestSourcesCurrent = (signal?: AbortSignal): void => {
             if (options.isCurrent?.() === false) throw createAbortError();
             imageScope?.assertReady(signal);
-            if (writingStyle && !writingStyle.isCurrent()) throw new ChatImageRequestError("request_changed");
+            if (writingStyle && !(writingStyle.isSourceCurrent ? writingStyle.isSourceCurrent() : writingStyle.isCurrent())) {
+                throw new ChatImageRequestError("request_changed");
+            }
             if (imageScope?.hasSelectedImages && options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
+        };
+        const assertRequestCurrent = (signal?: AbortSignal): void => {
+            throwIfAborted(signal ?? options.signal);
+            assertRequestSourcesCurrent(signal);
         };
         // Reject an irreducibly large current request before optional startup classifier calls.
         // This lower bound does not replace the complete, revalidated per-attempt guard below.
         const minimumRequestChars = measurePaAgentRequestChars({
-            input: [options.prompt, selectedWritingContext(options.writingContext), options.writingRequest ? writingOutputInstruction(options.writingRequest) : ""].filter(Boolean).join("\n\n"),
+            input: [options.prompt, selectedWritingContext(options.writingContext), options.writingRequest ? (nativeWritingRequest ? nativeWritingOutputInstruction(options.writingRequest) : writingOutputInstruction(options.writingRequest)) : ""].filter(Boolean).join("\n\n"),
             available_skills: "",
             tool_definitions: "",
             tool_observations: "",
@@ -842,8 +854,7 @@ export class PaAgentRuntime {
         const runtimeStartedAt = Date.now();
         const startupTimings: PaAgentStartupTiming[] = [];
         const operationsActionsEligible = this.host.isOperationsAgentEnabled
-            && Boolean(this.options.operationsIntentController)
-            && hasOperationsWriteIntent(options.prompt);
+            && Boolean(this.options.operationsIntentController);
         let operationsIntentStaged = false;
         let operationsAcknowledgementRequested = false;
         this.operationsPolicyEngine?.setActionsAllowedForTurn(operationsActionsEligible);
@@ -871,7 +882,25 @@ export class PaAgentRuntime {
         };
 
         const runId = createAgentRunId();
+        const userMessageId = `${runId}:source-user`;
+        let sourceRunActive = true;
+        const sourceRun = new TaskSourceRun({
+            runId, userMessageId, userText: options.prompt,
+            workspace: this.host.app.workspace,
+            getFileByPath: path => this.host.isDataBoundaryAllowedPath?.(path) === false
+                ? undefined : this.host.app.vault.getAbstractFileByPath(path),
+            isCurrent: () => sourceRunActive && !options.signal?.aborted && options.isCurrent?.() !== false,
+        });
         const providerRequestScope = createProviderRequestScope();
+        let physicalRequestSequence = 0;
+        const requestDiagnostic = (stage: "answer" | "context_summary" | "query_rewrite" | "rerank", turnId: string) =>
+            (evidence: import("./obsidian-fetch").ProviderRequestDiagnostic) => {
+                const attempt = ++physicalRequestSequence;
+                if (this.host.settings.debug) this.host.log("PA Agent physical request", {
+                    runId, turnId, stage, attemptId: `${runId}:http:${attempt}`, timestamp: Date.now(),
+                    ...evidence,
+                });
+            };
         const memoryPreparationOwnerSignal = options.signal;
         const maxWallClockMs = this.options.maxWallClockMs ?? MAX_TURN_WALL_CLOCK_MS;
         const configuredReserveMs = this.options.finalizationReserveMs
@@ -925,8 +954,8 @@ export class PaAgentRuntime {
             recordDiagnostic: retrievalRecorder,
         });
         this.activeMemoryRecoveryCoordinators.add(memoryRecoveryCoordinator);
-        const memoryEvidenceRegistry = new MemoryEvidenceRegistry((result, signal, temporalFilter) => (
-            this.memoryTool.revalidateForProvider(result, signal, temporalFilter)
+        const memoryEvidenceRegistry = new MemoryEvidenceRegistry((result, signal, temporalFilter, guard) => (
+            this.memoryTool.revalidateForProvider(result, signal, temporalFilter, undefined, guard)
         ));
         try {
         const legacyEvents = new AgentEventEmitter(options.onEvent);
@@ -949,14 +978,23 @@ export class PaAgentRuntime {
         }
         const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent, options.writingRequest ? {
             request: options.writingRequest, maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
+            ...(nativeWritingRequest ? { nativeContextHandle: nativeWritingRequest.requestId } : {}),
             isCurrent: () => { assertRequestCurrent(); return imageScope?.isUsable() ?? true; },
+            // Stopping generation does not revoke already received text. Source,
+            // model, image and style changes still invalidate its visible preview.
+            isPreviewCurrent: () => { assertRequestSourcesCurrent(); return imageScope?.isUsable() ?? true; },
             getStyleRevisionIds: () => writingStyle?.revisionIds ?? [],
             getAssociatedImages: () => imageScope?.writingMaterials ?? [],
+            onDiagnostic: (diagnostic) => {
+                if (this.host.settings.debug) this.host.log("PA Agent writing delivery", diagnostic);
+            },
         } : undefined);
+        let imageCapability: AgentCapability | undefined;
         if (imageScope?.hasImages) {
             const capability = createChatToolCapability(createResolveChatImagesTool(imageScope), { providerId: "chat-images" });
             capability.executionMode = "sequential";
             this.toolRegistry.register(capability);
+            imageCapability = capability;
         }
         let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
@@ -967,18 +1005,6 @@ export class PaAgentRuntime {
         const hostContext = await recordStartupTimingAsync(
             "host_context",
             () => this.loadCanonicalHostContextForRun(options, runId, options.signal),
-        );
-        const rawRequiredCapabilityClassification = await recordStartupTimingAsync(
-            "required_capability_classification",
-            () => resolveRequiredCapabilityClassification({
-                userInput: options.prompt,
-                classifier: this.createRequiredCapabilityClassifier(providerRequestScope),
-                signal: options.signal,
-            }),
-        );
-        const requiredCapabilityClassification = applyUserExplicitCapabilityConstraints(
-            rawRequiredCapabilityClassification,
-            options.prompt,
         );
         startupTimings.push({
             phase: "runtime_startup_total",
@@ -996,6 +1022,7 @@ export class PaAgentRuntime {
             }
         }
         const availableMetaToolNames = new Set<string>();
+        availableMetaToolNames.add(DECLARE_SOURCE_SCOPE);
         if (imageScope?.hasImages) availableMetaToolNames.add(RESOLVE_CHAT_IMAGES);
         if (this.toolRegistry.getDefinition(LOAD_SKILL_TOOL_NAME)) {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
@@ -1003,28 +1030,23 @@ export class PaAgentRuntime {
         const requiredCapabilityPolicy = createRequiredCapabilityHostPolicy({
             userInput: options.prompt,
             availableCapabilities: availableRequiredCapabilities,
-            classification: requiredCapabilityClassification,
+            // The main Agent chooses sources from the actual task/context.
+            // Keep observed-evidence completion checks without predicting a
+            // mandatory tool list or invoking a separate intent model.
+            classification: { items: [] },
         });
-        const toolUseConstraints = includeOperationsInToolUseConstraints(
-            createPaAgentToolUseConstraints(options.prompt),
-            operationsActionsEligible,
-        );
+        // Structured host controls apply before dispatch. Natural-language task
+        // boundaries are interpreted by the same main Agent and admitted below.
+        const toolUseConstraints: PaAgentToolUseConstraints = {
+            blockedToolNames: new Set(options.memoryMode === "skip-memory" ? ["search_memory"] : []),
+        };
         const initialRuntimeInstruction = combineRuntimeInstructions([
             requiredCapabilityPolicy.initialRuntimeInstruction,
-            createPaAgentToolConstraintRuntimeInstruction(toolUseConstraints),
         ]);
         const initialControlSnapshot = createInitialAgentControlSnapshot({
             ...(toolUseConstraints ? { constraints: toolUseConstraints } : {}),
             availableSemanticToolNames,
             availableMetaToolNames,
-            requiredToolNames: new Set([
-                ...requiredCapabilityClassification.items
-                    .filter((item) => item.level === "required")
-                    .map((item) => item.capability),
-                ...(operationsActionsEligible
-                    ? [...CORE_WRITE_TOOL_NAMES, ...OPERATIONS_SUPPORT_TOOL_NAMES]
-                    : []),
-            ]),
             ...(initialRuntimeInstruction
                 ? { initialRuntimeInstruction }
                 : {}),
@@ -1036,9 +1058,11 @@ export class PaAgentRuntime {
         const contextManager = this.contextManager;
         const contextSummarizer = this.contextSummarizer;
         let runSummaries: PaAgentContextSummaries = {};
-        const withImageContext = (input: PaAgentModelInput): PaAgentModelInput => imageScope?.hasImages ? {
-            ...input, runtimeInstruction: combineRuntimeInstructions([input.runtimeInstruction, imageScope.contextText()]),
-        } : input;
+        const withImageContext = (input: PaAgentModelInput): PaAgentModelInput => ({
+            ...input, runtimeInstruction: combineRuntimeInstructions([
+                input.runtimeInstruction, sourceRun.contextInstruction(), imageScope?.hasImages ? imageScope.contextText() : undefined,
+            ]),
+        });
         const buildCanonicalModelInput = (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
@@ -1063,10 +1087,44 @@ export class PaAgentRuntime {
             toolDefinitions, injectedContext, boundSchemas,
         ).projection;
         const readInjectedContext = () => this.readInjectedContext(options.pageletHandoff);
+        const formatBackground = (context: PaAgentInjectedContext | undefined) => formatInjectedContext({
+            ...context, pageletHandoff: undefined, writingStyleContext: undefined,
+        });
+        let preparedBackground: string | undefined;
+        const assertProviderInputCurrent = (signal?: AbortSignal): void => {
+            assertRequestCurrent(signal);
+            const currentBackground = formatBackground(readInjectedContext());
+            assertRequestCurrent(signal);
+            if (preparedBackground === undefined || preparedBackground !== currentBackground) {
+                // The serialized SDK input cannot be replaced here. The ordinary
+                // invoke fallback may prepare a fresh input before visible output.
+                throw new Error("Personal context changed before provider dispatch");
+            }
+        };
+        const availableStyleBudget = (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]) => {
+            const baseline = previewCanonicalModelInput(input, definitions, schemas);
+            return {
+                remainingTextChars: Math.max(0, MAX_PA_AGENT_PROMPT_CHARS - baseline.budget.promptChars - 2),
+                remainingMemoryChars: Math.max(0, MEMORY_CONTEXT_MAX_CHARS - formatBackground(injectedContext).length - 2),
+            };
+        };
         const buildProviderInput = (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]): Record<string, unknown> => {
             assertRequestCurrent(input.signal);
+            // All asynchronous preparation has finished. Even an absent result
+            // replaces the previous background; it must never revive old Memory.
+            injectedContext = readInjectedContext();
+            preparedBackground = formatBackground(injectedContext);
+            if (writingStyle) {
+                const budget = availableStyleBudget(input, definitions, schemas);
+                if (writingStyle.context.length <= Math.min(WRITING_STYLE_MAX_CONTEXT_CHARS, budget.remainingTextChars, budget.remainingMemoryChars)) {
+                    injectedContext = { ...injectedContext, writingStyleContext: writingStyle.context };
+                } else {
+                    writingStyle = undefined;
+                }
+            }
             const result: Record<string, unknown> = buildCanonicalModelInput(input, definitions, schemas);
             if (imageScope?.hasImages) result.messages = [imageScope.message(result.input as string, input.signal)];
+            assertProviderInputCurrent(input.signal);
             return result;
         };
         const prepareCanonicalProviderInput = async (
@@ -1078,10 +1136,7 @@ export class PaAgentRuntime {
             if (options.writingRequest && options.prepareWritingStyle) {
                 injectedContext = readInjectedContext();
                 writingStyle = undefined;
-                const baseline = previewCanonicalModelInput(prepared, definitions, schemas);
-                const memoryChars = formatInjectedContext({ ...injectedContext, pageletHandoff: undefined, writingStyleContext: undefined }).length;
-                const remainingTextChars = Math.max(0, MAX_PA_AGENT_PROMPT_CHARS - baseline.budget.promptChars - 2);
-                const remainingMemoryChars = Math.max(0, MEMORY_CONTEXT_MAX_CHARS - memoryChars - 2);
+                const { remainingTextChars, remainingMemoryChars } = availableStyleBudget(prepared, definitions, schemas);
                 const style = await options.prepareWritingStyle({ remainingTextChars, remainingMemoryChars, signal: input.signal });
                 const styleIsCurrent = typeof style.isCurrent === "function" && style.isCurrent();
                 if (style.context && !styleIsCurrent) throw new ChatImageRequestError("request_changed");
@@ -1118,6 +1173,13 @@ export class PaAgentRuntime {
                 const schemas = schemaResult.ok && input.toolMode !== "final_answer_only"
                     ? schemaResult.schemas
                     : [];
+                if (schemaResult.ok && input.toolMode !== "final_answer_only"
+                    && isAllowedHostToolCall(DECLARE_SOURCE_SCOPE, activeToolUseConstraints?.allowedToolNames, activeToolUseConstraints?.blockedToolNames)) {
+                    schemas.push(createTaskSourceDeclarationSchema());
+                }
+                if (nativeWritingRequest && input.controlSnapshot?.writingOutput === "present_writing") {
+                    schemas.push(toolRegistry.getWritingOutputSchema(nativeWritingRequest));
+                }
                 const toolDefinitions = input.toolMode === "final_answer_only"
                     ? []
                     : toolRegistry.listDefinitions(exportFilter);
@@ -1125,15 +1187,19 @@ export class PaAgentRuntime {
                     transport: "native",
                     qwenRequestOptions: options.qwenRequestOptions,
                     providerRequestScope,
-                    onProviderRequestStart: () => { assertRequestCurrent(input.signal); input.notifyProviderRequestStarted?.(); },
+                    onProviderRequestStart: () => { assertProviderInputCurrent(input.signal); input.notifyProviderRequestStarted?.(); },
+                    onProviderRequestDiagnostic: requestDiagnostic("answer", input.turnId),
                 });
+                if (nativeWritingRequest && !asNativeToolBindableModel(llm)) {
+                    throw new Error("Native writing requires model tool binding.");
+                }
                 const runnable = bindStreamingToolsIfAvailable(llm, schemas);
                 const streamedToolNames = new Map<string, string>();
                 const prompt = createPaAgentAnswerStreamPrompt(imageScope?.hasImages ?? false);
                 const rawChain = prompt.pipe(runnable) as unknown as NativeToolStreamingAndInvocableRunnable;
                 const chain: NativeToolStreamingAndInvocableRunnable = {
-                    stream: (request, config) => { assertRequestCurrent(input.signal); return rawChain.stream(request, config); },
-                    invoke: (request, config) => { assertRequestCurrent(input.signal); return rawChain.invoke(request, config); },
+                    stream: (request, config) => { assertProviderInputCurrent(input.signal); return rawChain.stream(request, config); },
+                    invoke: (request, config) => { assertProviderInputCurrent(input.signal); return rawChain.invoke(request, config); },
                 };
                 // Model/provider construction may suspend after the Loop's
                 // ordinary preflight. Revalidate again only once the real
@@ -1142,9 +1208,16 @@ export class PaAgentRuntime {
                 let providerInput = input.prepareForProviderRetry
                     ? await input.prepareForProviderRetry()
                     : input;
+                injectedContext = readInjectedContext();
                 const preview = previewCanonicalModelInput(providerInput, toolDefinitions, schemas);
                 if (input.toolMode !== "final_answer_only" && preview.outcome.admission === "fit"
                     && (preview.outcome.historyCompressed || preview.reducedToolMessageIds.length > 0)) {
+                    // Summary guards include selected image currentness. Establish
+                    // those receipts before the optional summary invokes them.
+                    if (imageScope?.hasSelectedImages) {
+                        if (options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
+                        await imageScope.prepare(providerInput.signal);
+                    }
                     const startedAt = Date.now();
                     let modelCalls = 0;
                     const preparation = new TurnExecutionDeadline(input.signal, 30_000, "context_summary_timeout");
@@ -1155,8 +1228,10 @@ export class PaAgentRuntime {
                         const summaryModel = await planner.createFinalAnswerModel(0, {
                             transport: "native", maxTokens: payload.maxOutputTokens,
                             qwenRequestOptions: { enableThinking: false }, providerRequestScope,
+                            onProviderRequestStart: () => assertRequestCurrent(signal),
+                            onProviderRequestDiagnostic: requestDiagnostic("context_summary", input.turnId),
                         });
-                        throwIfAborted(signal);
+                        assertRequestCurrent(signal);
                         if (source) {
                             // Optional summary work uses its own cancellation scope. Do not
                             // mutate the Loop's retry input or fail-close the entire run on
@@ -1167,7 +1242,7 @@ export class PaAgentRuntime {
                                 throw new Error("Context summary source changed before dispatch");
                             }
                         }
-                        throwIfAborted(signal);
+                        assertRequestCurrent(signal);
                         if (JSON.stringify(payload.messages).length + 2048 > MAX_PA_AGENT_PROMPT_CHARS) {
                             throw new Error("Context summary request exceeds local budget");
                         }
@@ -1210,9 +1285,7 @@ export class PaAgentRuntime {
                     providerInput = input.prepareForProviderRetry
                         ? await input.prepareForProviderRetry() : input;
                 }
-                const canonicalProviderInput = imageScope?.hasSelectedImages || (options.writingRequest && options.prepareWritingStyle)
-                    ? await prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas)
-                    : buildProviderInput(providerInput, toolDefinitions, schemas);
+                const canonicalProviderInput = await prepareCanonicalProviderInput(providerInput, toolDefinitions, schemas);
                 // P0-D: if streaming fails before any visible output (e.g., provider rejected stream
                 // outright or dropped the connection pre-flight), retry via chain.invoke() so the user
                 // still gets the answer instead of a hard runtime error.
@@ -1224,6 +1297,7 @@ export class PaAgentRuntime {
                     // alone would let a timed-out stream/invoke keep running.
                     signal: providerInput.signal,
                     streamedToolNames,
+                    captureToolIdentity: Boolean(nativeWritingRequest),
                     requestDiagnostics: (requestInput) => {
                         const canonicalInput = requestInput as Record<string, string>;
                         const projection = parseOptionalDiagnostic(canonicalInput.__context_projection_diagnostic);
@@ -1281,12 +1355,14 @@ export class PaAgentRuntime {
             memoryRecoveryCoordinator,
             providerRequestScope,
             memoryPreparationOwnerSignal,
-            revalidateMemorySearch: (result, signal, temporalFilter, temporalAudit) => (
+            getMemoryRequestDiagnostic: (turnId) => (stage) => requestDiagnostic(stage, turnId),
+            revalidateMemorySearch: (result, signal, temporalFilter, temporalAudit, guard) => (
                 this.memoryTool.revalidateForProvider(
                     result,
                     signal,
                     temporalFilter,
                     temporalAudit,
+                    guard,
                 )
             ),
             onBeforeVssSearch: () => {
@@ -1303,7 +1379,7 @@ export class PaAgentRuntime {
                 ? { blockedToolNames: toolUseConstraints.blockedToolNames }
                 : {}),
         });
-        const toolExecutor = operationsActionsEligible && this.options.operationsIntentController
+        const materialToolExecutor = operationsActionsEligible && this.options.operationsIntentController
             ? createOperationsStagingToolExecutor({
                 baseExecutor: baseToolExecutor,
                 registry: this.toolRegistry,
@@ -1336,11 +1412,39 @@ export class PaAgentRuntime {
                     : {}),
             })
             : baseToolExecutor;
+        const toolExecutor = createTaskSourceConstrainedExecutor({
+            baseExecutor: materialToolExecutor, state: sourceRun.state,
+            resolveHostNoteId: sourceRun.resolveNoteId,
+            isHostCurrent: sourceRun.isCurrent,
+            resolveNoteSearchScope: sourceRun.resolveNoteSearchScope,
+            resolveReadPlans: calls => {
+                // These exact host readers have independent permissions. Images
+                // still verify registered refs and read bytes; this is not a
+                // generic meta/action exemption or a claim of zero I/O.
+                const independent = calls.filter(call => {
+                    const capability = this.toolRegistry.get(call.name);
+                    return capability !== undefined && (capability === imageCapability
+                        || (call.name === LOAD_SKILL_TOOL_NAME && this.skillContextProvider?.ownsCapability(capability)));
+                });
+                const independentIds = new Set(independent.map(call => call.id));
+                const plans = sourceRun.resolveReadPlans(calls.filter(call => !independentIds.has(call.id)));
+                if (!plans) return undefined;
+                const complete = new Map(plans);
+                for (const call of independent) complete.set(call.id, { reads: [] });
+                return complete;
+            },
+        });
         const loop = new PaAgentLoop({
             runId,
+            userMessageId,
             userInput: options.prompt,
             userImages: options.images,
             writingRequest: options.writingRequest,
+            ...(nativeWritingRequest ? { nativeWriting: {
+                contextHandle: nativeWritingRequest.requestId,
+                maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
+                isCurrent: () => { assertRequestCurrent(); return imageScope?.isUsable() ?? true; },
+            } } : {}),
             model,
             prepareModelInput: async (input) => {
                 const failClosedOnAbort = () => memoryEvidenceRegistry.failClosed();
@@ -1351,6 +1455,21 @@ export class PaAgentRuntime {
                         input.transcript,
                         input.signal,
                     );
+                    const constraint = sourceRun.state.snapshot();
+                    if (constraint) {
+                        for (const message of transcript) {
+                            if (message.role !== "toolResult" || message.isError || !message.content.includeInNextPrompt) continue;
+                            const paths = (message.content.sourceRecords ?? []).flatMap(record =>
+                                record.path && !record.redacted && !record.statusOnly
+                                && (record.kind === "context-used"
+                                    || (record.kind === "memory-reference" && record.citationEligible !== false))
+                                    ? [record.path] : []);
+                            // Publishing is separate from identity lookup: only
+                            // already returned, still-admitted source paths may
+                            // become a bounded directory of model-visible handles.
+                            sourceRun.publishAdmittedNotePaths(paths, constraint);
+                        }
+                    }
                     requiredCapabilityPolicy.synchronizeProjectedTranscript(transcript);
                     return {
                         ...input,
@@ -1477,6 +1596,7 @@ export class PaAgentRuntime {
             signal: options.signal,
             maxTurns: this.options.maxModelTurns ?? 20,
             maxWallClockMs,
+            runStartedAt: runtimeStartedAt,
             finalizationReserveMs,
             providerResponseDelivery: this.options.providerResponseDelivery,
             ...(retrievalRecorder
@@ -1535,6 +1655,7 @@ export class PaAgentRuntime {
             throw new Error(`PA Agent canonical runtime failed${detail}`);
         }
         } finally {
+            sourceRunActive = false;
             imageScope?.dispose();
             try {
                 const observedFinalizationOutcome = options.signal?.aborted
@@ -1599,22 +1720,6 @@ export class PaAgentRuntime {
             available.add("webSearch");
         }
         return available;
-    }
-
-    private createRequiredCapabilityClassifier(
-        providerRequestScope: ProviderRequestScope,
-    ): RequiredCapabilityClassifier | undefined {
-        const policyModelName = this.host.settings.policyModelName.trim();
-        if (!policyModelName) return undefined;
-        return {
-            classify: async ({ userInput, signal }) =>
-                this.planner.classifyRequiredCapabilities(
-                    userInput,
-                    policyModelName,
-                    signal,
-                    providerRequestScope,
-                ),
-        };
     }
 
     private async loadCanonicalHostContextForRun(
@@ -1701,12 +1806,16 @@ export class PaAgentRuntime {
     ) {
         const availableSkills = formatSkillCatalog(input.hostContext);
         const hostContext = formatCanonicalHostContext(input.hostContext);
-        const toolDefinitionsText = input.toolMode === "final_answer_only"
-            ? "No tools are available in this finalization turn."
+        const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
+        let toolDefinitionsText = input.toolMode === "final_answer_only"
+            ? (nativeWritingRequest ? "Only present_writing (pure output) is available. No source, context or action tools are available in this finalization turn." : "No tools are available in this finalization turn.")
             : formatPlannerToolDefinitions(toolDefinitions ?? filterToolDefinitionsByToolUseConstraints(
                 this.toolRegistry.listDefinitions(),
                 toolUseConstraints,
             ));
+        if (nativeWritingRequest && input.toolMode !== "final_answer_only") {
+            toolDefinitionsText += `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest).function)}`;
+        }
         const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
         const projection = this.contextManager.forPrompt({
             prompt: options.prompt,
@@ -1718,7 +1827,7 @@ export class PaAgentRuntime {
             hostContext,
             runtimeInstruction: combineRuntimeInstructions([input.runtimeInstruction,
                 selectedWritingContext(options.writingContext),
-                options.writingRequest ? writingOutputInstruction(options.writingRequest) : ""]),
+                options.writingRequest ? (nativeWritingRequest ? nativeWritingOutputInstruction(options.writingRequest) : writingOutputInstruction(options.writingRequest)) : ""]),
             injectedContext,
             summaries,
             availableSkills,
@@ -1766,31 +1875,6 @@ class ChatPlanner {
         options: Parameters<AIUtils["createChatModel"]>[1],
     ) {
         return this.aiUtils.createChatModel(temperature, options);
-    }
-
-    async classifyRequiredCapabilities(
-        userInput: string,
-        policyModelName: string,
-        signal?: AbortSignal,
-        providerRequestScope?: ProviderRequestScope,
-    ): Promise<unknown> {
-        const policyPrompt = ChatPromptTemplate.fromMessages([
-            SystemMessagePromptTemplate.fromTemplate([
-                "You classify whether a Personal Assistant chat request requires read-only capabilities.",
-                "Read only the user request. Do not assume hidden vault, Memory, current-note, WebSearch, or SkillContext content.",
-                "Return JSON only with this shape:",
-                "{\"items\":[{\"capability\":\"search_memory|webSearch|get_current_note_context\",\"confidence\":0.0,\"reason\":\"short reason\"}]}",
-                "Use confidence >= 0.75 when the capability is required, 0.45-0.74 when it is only suggested, and below 0.45 when it should be ignored.",
-            ].join("\n")),
-            HumanMessagePromptTemplate.fromTemplate("{input}"),
-        ]);
-        const llm = await this.aiUtils.createChatModel(0, {
-            transport: "obsidian",
-            modelName: policyModelName,
-            providerRequestScope,
-        });
-        const response = await policyPrompt.pipe(llm).invoke({ input: userInput }, { signal });
-        return response.content;
     }
 
 }
@@ -2050,194 +2134,11 @@ export function preserveOperationsActionsInControlSnapshot(
     };
 }
 
-const OPERATIONS_WRITE_INTENT_ENGLISH = [
-    /^(?:please\s+)?save(?:\s+(?:it|this))?[.!]?$/iu,
-    /\b(?:save|store|persist)\s+(?:it|this|that|these|previous|above)\b/iu,
-    /\b(?:save|store|persist)\s+(?:(?:the|our|your|my)\s+)?(?:conclusion|decision|result|summary|plan|answer|analysis)\b/iu,
-    /\b(?:save|store|persist)\b.{0,40}\b(?:to|into|in|as)\b.{0,30}\b(?:note|notes|vault|markdown|frontmatter|propert(?:y|ies)|file)\b/iu,
-    /\b(?:write|append|add)\b.{0,60}\b(?:to|into)\b.{0,30}\b(?:note|notes|vault|markdown|file)\b/iu,
-    /\b(?:insert|replace)\b.{0,60}\b(?:in|into|within)\b.{0,30}\b(?:note|notes|vault|markdown|file)\b/iu,
-    /\b(?:delete|remove)\b.{0,60}\b(?:from|in|within)\b.{0,30}\b(?:note|notes|vault|markdown|file)\b/iu,
-    /\b(?:in|within)\s+(?:the\s+)?(?:(?:current|existing)\s+)?(?:note|file|markdown)\b.{0,60}\b(?:write|append|add|update|edit|insert|replace|set|change|remove|delete)\b/iu,
-    /\b(?:create|write|add)\s+(?:(?:a|an|the|this|that|my|our|your|new)\s+)?(?:markdown\s+)?(?:note|file)\b/iu,
-    /\b(?:update|edit)\s+(?:(?:the|this|that|my|our|your)\s+)?(?:(?:current|existing)\s+)?(?:note|file|markdown|frontmatter)\b/iu,
-    /\b(?:update|edit|set|change|remove|delete)\s+(?:the\s+)?(?:[\p{L}\p{N}_-]+\s+){0,3}(?:frontmatter|propert(?:y|ies))\b/iu,
-    /\b(?:save|store|persist|write|append|add|create|update|edit|insert|replace|remove|delete)\b.{0,100}[^\s"'`<>|]+\.md\b/iu,
-    /[^\s"'`<>|]+\.md\b.{0,60}\b(?:save|store|persist|write|append|add|create|update|edit|insert|replace|remove|delete)\b/iu,
-];
-const OPERATIONS_WRITE_INTENT_CHINESE = [
-    /^(?:请)?(?:保存|存一下|保存一下)(?:它|这个|这条)?[。！!]?$/u,
-    /(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改).{0,60}(?:笔记|知识库|属性|正文|文件|Markdown)/u,
-    /(?:把|将).{0,100}(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改)/u,
-    /(?:在|向).{0,40}(?:笔记|知识库|正文|文件|Markdown).{0,80}(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改)/u,
-    /(?:保存|存下)(?:这个|这条|这些|以上|上述|刚才|上一条|结论|内容|方案|决定)/u,
-    /(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改).{0,100}[^\s"'`<>|]+\.md\b/iu,
-    /[^\s"'`<>|]+\.md\b.{0,80}(?:保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|删除|移除|设置|变更|更改)/iu,
-];
-
-const OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE = "save|store|persist|write|create|append|add|update|edit|insert|replace|set|change|remove|delete";
-const OPERATIONS_WRITE_ACTION_CHINESE_SOURCE = "保存|存下|存到|写入|写到|记到|记录到|落到|追加|加到|新建|创建|更新|修改|插入|替换|设置|变更|更改|移除|删除";
-const OPERATIONS_WRITE_ACTION_ENGLISH = new RegExp(`\\b(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`, "iu");
-const OPERATIONS_WRITE_ACTION_CHINESE = new RegExp(`(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})`, "u");
-const OPERATIONS_WRITE_NEGATION_ENGLISH = /\b(?:do\s+not|don't|never|should\s+not|shouldn't|must\s+not|mustn't|need\s+not|no\s+need\s+to|without)\b/iu;
-const OPERATIONS_WRITE_NEGATION_CHINESE = /(?:不要|别|无需|不用|不必|不应|不应该|不可|禁止)/u;
-const OPERATIONS_EXPLICIT_WRITE_ENGLISH = new RegExp([
-    `^(?:(?:please|just|only)\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
-    `^(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
-    `^i\\s+(?:want|need|would\\s+like)\\s+(?:you\\s+)?to\\s+(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
-    `^(?:in\\s+)?[^\\n]{0,120}\\.md\\b(?:\\s+(?:after|before|under|at)\\s+[^,;.!?\\n]{1,40})?[\\s,:-]{0,8}(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
-    `^(?:in|within)\\s+(?:the\\s+)?(?:(?:current|existing)\\s+)?(?:note|file|markdown)\\b(?:\\s+(?:after|before|under|at)\\s+[^,;.!?\\n]{1,40})?[\\s,:-]{0,8}(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b`,
-].join("|"), "iu");
-const OPERATIONS_EXPLICIT_WRITE_CHINESE = new RegExp([
-    `^(?:(?:请|请帮我|帮我|麻烦你?|可以帮我|能否帮我|只需|只)\\s*)?(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})`,
-    `^(?:(?:请|我想|我要|我需要)\\s*)?(?:把|将).{0,120}(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})`,
-    `^[^\\n]{0,120}\\.md\\b(?:中|里|内|\\s*的?(?:末尾|开头|尾部|顶部)|\\s*的?[^，,。；;]{1,40}(?:后|前|下))?[\\s，,:：-]*(?:(?:请)?(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})|(?:请)?(?:把|将).{0,80}(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE}))`,
-    `^(?:请)?(?:在|向).{0,40}(?:笔记|知识库|正文|文件|Markdown)(?:中|里|内|的[^，,。；;]{0,30})?[\\s，,:：-]*(?:(?:请)?(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE})|(?:请)?(?:把|将).{0,80}(?:${OPERATIONS_WRITE_ACTION_CHINESE_SOURCE}))`,
-].join("|"), "iu");
-
-function operationsWriteIntentCandidates(input: string): string[] {
-    const candidates = new Set<string>();
-    const clauses = input.split(/[;；。！？!?\n]+|\.(?=\s|$)/u);
-    for (const clause of clauses) {
-        const trimmed = clause.trim();
-        if (!trimmed) continue;
-        candidates.add(trimmed);
-        if (isOperationsInstructionalScope(trimmed)) continue;
-        const boundaryPattern = isOperationsNegationScope(trimmed)
-            ? /,\s*(?:and\s+)?(?:just|only)\b|，\s*(?:只需|只要|只|就)|\b(?:but|instead)\b|(?:但是|但|而是)/giu
-            : new RegExp([
-                ",\\s*(?:and\\s+)?(?:just|only)\\b",
-                "，\\s*(?:只需|只要|只|就)",
-                `\\band\\s+(?=(?:please\\s+)?(?:${OPERATIONS_WRITE_ACTION_ENGLISH_SOURCE})\\b)`,
-                "\\b(?:and\\s+then|then|after\\s+that|but|instead)\\b",
-                "(?:然后|接着|随后|但是|但|而是)",
-            ].join("|"), "giu");
-        let segmentStart = 0;
-        for (const boundary of trimmed.matchAll(boundaryPattern)) {
-            const boundaryIndex = boundary.index ?? 0;
-            const segment = trimmed.slice(segmentStart, boundaryIndex).trim();
-            if (segment) candidates.add(segment);
-            segmentStart = boundaryIndex + boundary[0].length;
-        }
-        const tail = trimmed.slice(segmentStart).trim();
-        if (tail) candidates.add(tail);
-    }
-    return [...candidates];
-}
-
-function isOperationsInstructionalScope(candidate: string): boolean {
-    return /^(?:how\s+(?:do|can|should)\s+i|(?:should|can|could|would)\s+i)\b/iu.test(candidate)
-        || /^(?:what|which|why|when|where)\s+(?:is|are|do|does|would|should|can|could)\b/iu.test(candidate)
-        || /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:explain|describe|teach|translate|quote|proofread)\b/iu.test(candidate)
-        || /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:show|tell)\s+me\s+(?:how|why|when|whether|the\s+(?:steps?|method|way))\b/iu.test(candidate)
-        || /^(?:如何|怎么|怎样|是否|要不要|可否)/u.test(candidate)
-        || /^(?:请)?(?:解释|说明|描述|教我|翻译|改写|润色|校对|引用)/u.test(candidate)
-        || /^(?:请)?(?:把|将)\s*[“"'`].{0,240}[”"'`]\s*(?:翻译|改写|润色|校对|解释|说明)(?:成|为|一下)?/u.test(candidate)
-        || /^(?:请)?(?:告诉我|展示|演示)(?:如何|怎么|怎样|为什么|何时|是否)/u.test(candidate);
-}
-
-function isOperationsInstructionalCandidate(candidate: string): boolean {
-    return isOperationsInstructionalScope(candidate)
-        || /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:show|tell)\b/iu.test(candidate)
-        || /^(?:请)?(?:告诉我|展示|演示)/u.test(candidate);
-}
-
-function isOperationsNegationScope(candidate: string): boolean {
-    return /^(?:please\s+)?(?:do\s+not|don't|never|need\s+not|no\s+need\s+to|without)\b/iu.test(candidate)
-        || /^(?:请)?(?:不要|别|无需|不用|不必|不应|不应该|不可|禁止)/u.test(candidate);
-}
-
-function isOperationsWriteNegatedBeforeAction(candidate: string): boolean {
-    const actionIndexes = [
-        OPERATIONS_WRITE_ACTION_ENGLISH.exec(candidate)?.index,
-        OPERATIONS_WRITE_ACTION_CHINESE.exec(candidate)?.index,
-    ].filter((index): index is number => index !== undefined);
-    if (actionIndexes.length === 0) return false;
-    const firstActionIndex = Math.min(...actionIndexes);
-    const negationIndexes = [
-        OPERATIONS_WRITE_NEGATION_ENGLISH.exec(candidate)?.index,
-        OPERATIONS_WRITE_NEGATION_CHINESE.exec(candidate)?.index,
-    ].filter((index): index is number => index !== undefined);
-    return negationIndexes.some((index) => index < firstActionIndex);
-}
-
-/** Latest-message-only discovery gate; it exposes schemas but never authorizes a write. */
-export function hasOperationsWriteIntent(userInput: string): boolean {
-    const input = userInput.trim();
-    if (!input) return false;
-    const writeIntentPatterns = [...OPERATIONS_WRITE_INTENT_ENGLISH, ...OPERATIONS_WRITE_INTENT_CHINESE];
-    return operationsWriteIntentCandidates(input).some((candidate) => (
-        !isOperationsInstructionalCandidate(candidate)
-        && !isOperationsWriteNegatedBeforeAction(candidate)
-        && (OPERATIONS_EXPLICIT_WRITE_ENGLISH.test(candidate) || OPERATIONS_EXPLICIT_WRITE_CHINESE.test(candidate))
-        && writeIntentPatterns.some((pattern) => pattern.test(candidate))
-    ));
-}
-
-function includeOperationsInToolUseConstraints(
-    constraints: PaAgentToolUseConstraints | undefined,
-    includeOperations: boolean,
-): PaAgentToolUseConstraints | undefined {
-    if (!includeOperations || !constraints?.allowedToolNames) return constraints;
-    return {
-        ...constraints,
-        allowedToolNames: new Set([
-            ...constraints.allowedToolNames,
-            ...CORE_WRITE_TOOL_NAMES,
-        ]),
-    };
-}
-
-function createPaAgentToolUseConstraints(userInput: string): PaAgentToolUseConstraints | undefined {
-    const blockedToolNames = new Set<string>(getExplicitlySuppressedRequiredCapabilities(userInput));
-    if (isExplicitCurrentNoteOnlyRequest(userInput)) {
-        return {
-            allowedToolNames: new Set(["get_current_note_context"]),
-            blockedToolNames,
-        };
-    }
-    if (isExplicitNotesOnlyRequest(userInput)) {
-        blockedToolNames.add("webSearch");
-        blockedToolNames.add("get_current_note_context");
-        return {
-            allowedToolNames: new Set(["search_memory"]),
-            blockedToolNames,
-        };
-    }
-    return blockedToolNames.size > 0 ? { blockedToolNames } : undefined;
-}
-
-function createPaAgentToolConstraintRuntimeInstruction(
-    constraints: PaAgentToolUseConstraints | undefined,
-): string | undefined {
-    if (!constraints?.blockedToolNames?.has("webSearch")) return undefined;
-    return [
-        "The user explicitly forbids web or internet access for this request.",
-        "Do not call webSearch and do not claim webSearch is available in this run.",
-        "Ignore any prior assistant message that described webSearch as available for a different run.",
-        "If a live or current external fact cannot be verified without web access, say that directly and answer only from non-web context or prior conversation when appropriate.",
-    ].join(" ");
-}
-
 function combineRuntimeInstructions(instructions: Array<string | undefined>): string | undefined {
     const parts = instructions
         .map((instruction) => instruction?.trim())
         .filter((instruction): instruction is string => !!instruction);
     return parts.length > 0 ? parts.join(" ") : undefined;
-}
-
-function isExplicitNotesOnlyRequest(userInput: string): boolean {
-    const normalized = userInput.toLowerCase();
-    return /\b(only|just)\s+(from|use|using|search)\s+(my\s+)?(notes|vault|memory)\b/.test(normalized)
-        || /\b(from|in)\s+my\s+(notes|vault|memory)\s+only\b/.test(normalized)
-        || [
-            "只从我的笔记",
-            "仅从我的笔记",
-            "只从笔记",
-            "仅从笔记",
-            "只看我的笔记",
-            "仅看我的笔记",
-        ].some((token) => userInput.includes(token));
 }
 
 function filterToolDefinitionsByToolUseConstraints(
@@ -2260,6 +2161,7 @@ function isToolAllowedByToolUseConstraints(
 function getCanonicalToolCallDeltas(
     chunk: unknown,
     streamedToolNames: Map<string, string>,
+    captureToolIdentity = false,
 ): PaAgentModelStreamChunk[] {
     // Prefer tool_call_chunks (LangChain raw streaming format) over tool_calls.
     // tool_calls includes both LangChain's pre-parsed entries (args already an object)
@@ -2289,11 +2191,15 @@ function getCanonicalToolCallDeltas(
             }
         }
         const name = explicitName || (key ? streamedToolNames.get(key) : undefined);
-        if (!name) return [];
+        if (!name && !captureToolIdentity) return [];
         const delta: Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }> = {
             type: "toolcall_delta",
-            name,
+            name: name ?? "",
             ...getStreamingToolCallIdentity(record, key),
+            ...(captureToolIdentity && typeof record?.index === "number" ? { index: record.index } : {}),
+            ...(captureToolIdentity ? { providerIdentity: {
+                id: record?.id, index: record?.index, name: record?.name ?? functionRecord?.name,
+            } } : {}),
         };
         if (typeof rawArgs === "string") {
             delta.argsText = rawArgs;
@@ -2457,6 +2363,8 @@ export async function* streamWithInvokeFallback(args: {
     input: unknown;
     signal?: AbortSignal;
     streamedToolNames?: Map<string, string>;
+    /** Preserve original identity for the opt-in native output admission path. */
+    captureToolIdentity?: boolean;
     onFallback?: (reason: StreamWithInvokeFallbackReason, error: unknown) => void;
     prepareInvokeInput?: () => unknown | PromiseLike<unknown>;
     /** Emitted for each attempted request, never for preliminary projections. */
@@ -2478,7 +2386,7 @@ export async function* streamWithInvokeFallback(args: {
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity);
             return;
         }
         throw error;
@@ -2489,7 +2397,7 @@ export async function* streamWithInvokeFallback(args: {
     try {
         for await (const chunk of stream) {
             throwIfAborted(signal);
-            providerCompletion = readProviderCompletion(chunk) ?? providerCompletion;
+            const chunkCompletion = readProviderCompletion(chunk);
             const providerUsage = extractProviderUsage(chunk);
             if (providerUsage) {
                 yield { type: "diagnostic", diagnostic: { type: "provider_usage", usage: providerUsage } };
@@ -2504,20 +2412,26 @@ export async function* streamWithInvokeFallback(args: {
                 receivedAnyVisibleOutput = true;
                 yield { type: "text_delta", text: content };
             }
-            for (const toolDelta of getCanonicalToolCallDeltas(chunk, streamedToolNames)) {
+            for (const toolDelta of getCanonicalToolCallDeltas(chunk, streamedToolNames, args.captureToolIdentity)) {
                 receivedAnyVisibleOutput = true;
                 yield toolDelta;
             }
+            // Finish belongs to this content chunk, not to the optional usage/EOF tail.
+            // Publish it after the chunk's content so downstream retains both facts
+            // even if advancing the transport subsequently fails.
+            if (chunkCompletion && chunkCompletion !== providerCompletion) {
+                providerCompletion = chunkCompletion;
+                yield { type: "provider_completion", completion: providerCompletion };
+            }
         }
-        if (providerCompletion) yield { type: "provider_completion", completion: providerCompletion };
     } catch (error) {
-        if (canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
+        if (providerCompletion === undefined && canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
             onFallback?.("stream_iteration_failed", error);
             const invokeInput = args.prepareInvokeInput
                 ? await args.prepareInvokeInput()
                 : input;
             throwIfAborted(signal);
-            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics);
+            yield* invokeAsModelChunks(chain, invokeInput, signal, streamedToolNames, args.requestDiagnostics, args.captureToolIdentity);
             return;
         }
         throw error;
@@ -2530,6 +2444,7 @@ async function* invokeAsModelChunks(
     signal: AbortSignal | undefined,
     streamedToolNames: Map<string, string>,
     requestDiagnostics?: (input: unknown) => Array<Record<string, unknown>>,
+    captureToolIdentity = false,
 ): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
     let response: unknown;
     try {
@@ -2552,7 +2467,7 @@ async function* invokeAsModelChunks(
     if (content) {
         yield { type: "text_delta", text: content };
     }
-    for (const toolDelta of getCanonicalToolCallDeltas(response, streamedToolNames)) {
+    for (const toolDelta of getCanonicalToolCallDeltas(response, streamedToolNames, captureToolIdentity)) {
         yield toolDelta;
     }
     const completion = readProviderCompletion(response);
@@ -2630,29 +2545,23 @@ function stringifyModelContent(content: unknown): string {
         return content;
     }
     if (Array.isArray(content)) {
-        return content.map(stringifyModelContentPart).join("\n").trim();
+        return content.map(stringifyModelContentPart).join("");
     }
-    if (content === null || content === undefined) {
-        return "";
-    }
-    try {
-        return JSON.stringify(content);
-    } catch {
-        return "[unserializable content]";
-    }
+    return "";
 }
 
-function stringifyModelContentPart(part: ModelContentPart): string {
+function stringifyModelContentPart(part: unknown): string {
     if (typeof part === "string") {
         return part;
     }
-    if (typeof part.text === "string") {
-        return part.text;
+    const record = asRecord(part);
+    if (!record || (record.type !== undefined && record.type !== "text" && record.type !== "output_text")) {
+        return "";
     }
-    if (typeof part.content === "string") {
-        return part.content;
+    if (typeof record.text === "string") {
+        return record.text;
     }
-    return JSON.stringify(part);
+    return typeof record.content === "string" ? record.content : "";
 }
 
 export {

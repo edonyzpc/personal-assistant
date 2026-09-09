@@ -460,6 +460,7 @@ export class MemoryManager {
         _prompt?: string,
         signal?: AbortSignal,
         preparationOwnerSignal: AbortSignal | undefined = signal,
+        options?: { existingOnly?: boolean },
     ): Promise<MemoryDecisionResult> {
         if (signal?.aborted) {
             return { decision: "cancel" };
@@ -467,6 +468,14 @@ export class MemoryManager {
         const lifecycleToken = this.lifecycleVersion;
         if (!this.host.settings.memoryEnabled) {
             return { decision: "answer-now" };
+        }
+
+        // Restricted task material cannot trigger whole-vault verification or
+        // preparation. The actual scoped search still checks the durable marker
+        // and current source bodies; this cached status grants no broader read.
+        if (options?.existingOnly) {
+            const snapshot = this.getStatusSnapshot();
+            return { decision: snapshot.status === "ready" ? "use-memory" : "answer-now" };
         }
 
         const initialPlan = await awaitChatOperation(this.getMaintenancePlan(), signal);

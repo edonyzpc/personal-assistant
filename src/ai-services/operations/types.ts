@@ -1,3 +1,5 @@
+import type { TaskSourceReadGuard } from "../task-source-read-guard";
+
 export const CORE_WRITE_TOOL_NAMES = [
     "vault_create",
     "vault_append",
@@ -220,6 +222,8 @@ export interface StageOperationsIntentInput {
     runId: string;
     turnId: string;
     operations: readonly OperationsToolCall[];
+    /** Host-owned staging read boundary; never copied into the retained intent. */
+    taskSourceReadGuard?: TaskSourceReadGuard;
 }
 
 export type OperationsControllerEvent =

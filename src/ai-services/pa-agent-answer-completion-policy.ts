@@ -61,10 +61,13 @@ export function createAnswerCompletionLedger(): AnswerCompletionLedger {
 }
 
 export function deriveAnswerCompletionTurnFacts(summary: PaAgentTurnSummary): AnswerCompletionTurnFacts {
-    const promptIncludedResults = summary.toolResults.filter(hasPromptIncludedObservation);
-    const successfulEvidenceResults = summary.toolResults.filter(hasSuccessfulEvidence);
-    const duplicateOrNoopResults = summary.toolResults.filter(isDuplicateOrNoopResult);
-    const failureOrStatusResults = summary.toolResults.filter(isFailureOrStatusResult);
+    // An accepted scope changes admission state but supplies no task evidence.
+    // Keep it out of completion heuristics; the loop still charges its turn/budget.
+    const observations = summary.toolResults.filter(result => !isAppliedSourceControl(result));
+    const promptIncludedResults = observations.filter(hasPromptIncludedObservation);
+    const successfulEvidenceResults = observations.filter(hasSuccessfulEvidence);
+    const duplicateOrNoopResults = observations.filter(isDuplicateOrNoopResult);
+    const failureOrStatusResults = observations.filter(isFailureOrStatusResult);
 
     return {
         hasFinalText: summary.committedFinalText.trim().length > 0,
@@ -74,12 +77,12 @@ export function deriveAnswerCompletionTurnFacts(summary: PaAgentTurnSummary): An
         hasToolResults: summary.toolResults.length > 0,
         hasNewSuccessfulEvidence: successfulEvidenceResults.length > 0,
         hasPromptIncludedObservation: promptIncludedResults.length > 0,
-        hasOnlyDuplicateOrNoopResults: summary.toolResults.length > 0
-            && summary.toolResults.every(isDuplicateOrNoopResult),
-        hasOnlyFailureOrStatusResults: summary.toolResults.length > 0
+        hasOnlyDuplicateOrNoopResults: observations.length > 0
+            && observations.every(isDuplicateOrNoopResult),
+        hasOnlyFailureOrStatusResults: observations.length > 0
             && successfulEvidenceResults.length === 0
             && failureOrStatusResults.length > 0
-            && summary.toolResults.every((result) => isFailureOrStatusResult(result) || isDuplicateOrNoopResult(result)),
+            && observations.every((result) => isFailureOrStatusResult(result) || isDuplicateOrNoopResult(result)),
         failedToolNames: uniqueToolNames(failureOrStatusResults),
         duplicateOrNoopToolNames: uniqueToolNames(duplicateOrNoopResults),
     };
@@ -91,6 +94,7 @@ export function recordAnswerCompletionTurn(
     facts: AnswerCompletionTurnFacts = deriveAnswerCompletionTurnFacts(summary),
 ): void {
     for (const result of summary.toolResults) {
+        if (isAppliedSourceControl(result)) continue;
         if (hasSuccessfulEvidence(result)) {
             ledger.successfulEvidenceTools.add(result.toolName);
         }
@@ -223,6 +227,14 @@ function forceFinalizeOnce(
             tools: [...new Set(toolNames)],
         }],
     };
+}
+
+function isAppliedSourceControl(result: PaAgentTurnSummary["toolResults"][number]): boolean {
+    return !result.isError
+        && result.toolName === "declare_source_scope"
+        && result.content.metadata?.outcome === "control_applied"
+        && result.content.metadata?.sourceScopeControl === true
+        && result.content.metadata?.preflightOnly === true;
 }
 
 function hasPromptIncludedObservation(

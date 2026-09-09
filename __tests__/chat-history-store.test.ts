@@ -2,6 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import type { Vault } from "obsidian";
 import type { ImageAsset } from "../src/chat/image-types";
 import { hashWritingText, type WritingVersion } from "../src/chat/writing-types";
+import { WritingVersionService } from "../src/chat/writing-versions";
+import { decodeNativeWritingOutput } from "../src/ai-services/writing-output";
+import writingProtocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
 
@@ -580,6 +583,39 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
             : new IndexedDbChatHistoryStore('images', new FakeIndexedDbFactory() as unknown as IDBFactory);
         await store.initialize(); return store;
     };
+    it('reads native output through existing version/history readers alongside old recovery records', async () => {
+        const factory = new FakeIndexedDbFactory() as unknown as IDBFactory;
+        const store = backend === 'memory' ? new MemoryChatHistoryStore() : new IndexedDbChatHistoryStore('native-reader', factory);
+        await store.initialize();
+        await store.putImageAsset(asset());
+        await store.upsertConversation(makeConversation());
+        const trace = writingProtocolTrace.results.find((result) => result.mode === 'native')!;
+        const decoded = decodeNativeWritingOutput(trace.rawArguments, 'b135-probe', 20_000)!;
+        expect(decoded.body).toBe(trace.expected);
+        const versions = new WritingVersionService(store);
+        const images = [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }];
+        const version = await versions.create({ requestId: 'native-request', messageId: 'native-message',
+            conversationId: 'conv-1', turnIndex: 0, text: decoded.body, explanation: decoded.explanation,
+            images, styleRevisionIds: ['authorized-style'], backgroundSourceRefs: [{ path: 'notes/context.md' }],
+        });
+        const displayed = `前置说明\n\n${decoded.body}`;
+        await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: displayed, writingVersionId: version.id } }));
+        const oldRecovery = { requestId: 'old-request', rawText: '{"kind":"pa.writing",', reason: 'incomplete' as const };
+        await store.appendTurn(makeTurn({ turnIndex: 1, assistant: { role: 'assistant', content: '旧恢复内容', writingRecovery: oldRecovery } }));
+        versions.dispose();
+        const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('native-reader', factory) : store;
+        await reader.initialize();
+        const reopened = new WritingVersionService(reader);
+        expect(await reopened.get(version.id)).toEqual(version);
+        expect((await reopened.list('conv-1'))[0]).toMatchObject({ text: trace.expected, associatedImages: images,
+            styleRevisionIds: ['authorized-style'], backgroundSourceRefs: [{ path: 'notes/context.md' }],
+        });
+        expect((await reader.getTurns('conv-1')).map((turn) => turn.assistant)).toEqual([
+            expect.objectContaining({ content: displayed, writingVersionId: version.id }),
+            expect.objectContaining({ content: '旧恢复内容', writingRecovery: oldRecovery }),
+        ]);
+        reopened.dispose();
+    });
     it('retains a fixed conversation anchor before any image and does not let a stale turn snapshot undo a folder rename', async () => {
         const store = await open(), original = makeConversation({ imageAnchor: { kind: 'existing_note', path: 'notes/source.md' } });
         await store.upsertConversation(original);

@@ -358,6 +358,26 @@ describe('SqliteVectorIndex worker recovery', () => {
         }));
     });
 
+    it('snapshots host note scope before its queued worker transmission', async () => {
+        Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class {} });
+        const worker = new MockWorker(true, { results: [], lexical: { attempted: false, state: 'unavailable' } });
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js', workerFactory: () => worker as unknown as Worker,
+        });
+        const noteScope = { allowedPaths: ['allowed.md'], excludedPaths: ['excluded.md'] };
+        const pending = index.searchHybridDetailed([1], null, 1, 1,
+            undefined, undefined, undefined, undefined, undefined, undefined, { noteScope });
+        noteScope.allowedPaths.push('outside.md');
+        noteScope.excludedPaths.length = 0;
+        await pending;
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'searchHybrid', payload: expect.objectContaining({
+                noteScope: { allowedPaths: ['allowed.md'], excludedPaths: ['excluded.md'] },
+            }),
+        }));
+        await index.dispose();
+    });
+
     it('sends searchHybrid with null ftsQuery when no keyword query', async () => {
         Object.defineProperty(globalThis, 'Worker', {
             configurable: true,

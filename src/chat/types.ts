@@ -37,6 +37,7 @@ export type RenderedMessage = {
     shareButton?: HTMLButtonElement;
     deleteButton?: HTMLButtonElement;
     writingButton?: HTMLButtonElement;
+    writingRecoveryNotice?: HTMLElement;
     renderToken: number;
     copyContent: string;
     renderOwner?: Component;
@@ -76,6 +77,7 @@ export type UiTurn = {
     writingMaterials?: MessageImage[];
     writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[] };
     writingRecovery?: ChatWritingRecovery;
+    writingRecoveryText?: string;
     memoryMetadata?: ChatTurnMemoryMetadata;
     contextUsedItems: ChatContextUsedItem[];
     activityDetails: string[];

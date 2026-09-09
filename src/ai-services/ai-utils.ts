@@ -7,6 +7,8 @@ import { computeContentHash } from '../vss-helpers';
 import {
     createScopedObsidianFetch,
     obsidianFetch,
+    reportProviderRequestDiagnostic,
+    type ProviderRequestDiagnostic,
     type ProviderRequestCancellationCapability,
     type ProviderRequestScope,
 } from './obsidian-fetch';
@@ -228,6 +230,7 @@ export interface ProviderRequestOptions {
     providerRequestScope?: ProviderRequestScope;
     /** Runs synchronously immediately before each physical HTTP dispatch, including SDK retries. */
     onProviderRequestStart?: () => void;
+    onProviderRequestDiagnostic?: (evidence: ProviderRequestDiagnostic) => void;
 }
 
 export interface CreateChatModelOptions extends ProviderRequestOptions {
@@ -343,9 +346,10 @@ export class AIUtils {
         if (resolution.effective === 'obsidian') {
             options.fetch = providerRequestOptions.providerRequestScope
                 || providerRequestOptions.onProviderRequestStart
+                || providerRequestOptions.onProviderRequestDiagnostic
                 ? createScopedObsidianFetch(providerRequestOptions)
                 : obsidianFetch;
-        } else if (providerRequestOptions.onProviderRequestStart) {
+        } else if (providerRequestOptions.onProviderRequestStart || providerRequestOptions.onProviderRequestDiagnostic) {
             // Keep native fetch and its propagating AbortSignal. The SDK may
             // await serialization/retry backoff after prompt preparation.
             options.fetch = (input, init) => {
@@ -353,7 +357,10 @@ export class AIUtils {
                 throwIfAborted(signal ?? undefined);
                 providerRequestOptions.onProviderRequestStart?.();
                 throwIfAborted(signal ?? undefined);
-                return globalThis.fetch(input, init);
+                // Request objects / non-string bodies stay unknown; do not read
+                // or consume their streams just to obtain optional diagnostics.
+                try { return globalThis.fetch(input, init); }
+                finally { reportProviderRequestDiagnostic(init?.body, 'native', providerRequestOptions.onProviderRequestDiagnostic); }
             };
         }
 

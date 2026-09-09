@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type {
     SqliteWorkerMessage,
     SqliteWorkerRequest,
@@ -458,6 +460,76 @@ describe('sqlite worker OPFS lifecycle', () => {
         });
     });
 
+    it.each([
+        [{ allowedPaths: ['allowed.md', 'excluded.md'], excludedPaths: ['excluded.md'] }, ['allowed.md']],
+        [{ allowedPaths: null, excludedPaths: ['excluded.md', 'outside.md'] }, ['allowed.md']],
+        [{ allowedPaths: [], excludedPaths: [] }, []],
+    ])('filters host note scope before vector Top-1: %j', async (noteScope, expectedPaths) => {
+        const { workerScope, sqlRequests } = await setupGraphRankingWorker([
+            graphRow(1, 'outside.md', 0, [1, 0]),
+            graphRow(2, 'excluded.md', 0, [1, 0.01]),
+            graphRow(3, 'allowed.md', 0, [1, 0.5]),
+        ], '7');
+        dispatch(workerScope, {
+            id: 2,
+            type: 'searchHybrid',
+            payload: {
+                queryEmbedding: [1, 0], ftsQuery: null, k: 1, fusionTopK: 1,
+                lexicalSkipReason: 'feature_disabled', noteScope,
+            },
+        });
+        const response = await waitForResponse(workerScope, 2);
+        expect(response.ok).toBe(true);
+        if (!response.ok) throw new Error('Scoped worker query failed.');
+        const result = response.result as import('../src/vss/types').VectorHybridSearchResult;
+        expect(result.results.map((entry) => entry.doc.metadata.path)).toEqual(expectedPaths);
+        expect(sqlRequests.some((query) => query.sql.trim() === 'SELECT id, embedding FROM vss_chunks')).toBe(false);
+        expect(sqlRequests.some((query) => query.sql.includes('SELECT id, embedding FROM vss_chunks WHERE'))).toBe(true);
+    });
+
+    it('binds the same note scope before lexical ORDER BY and LIMIT', async () => {
+        const { workerScope, sqlRequests } = await setupGraphRankingWorker([], '7', new Map(), { lexical: true });
+        dispatch(workerScope, {
+            id: 2, type: 'searchHybrid', payload: {
+                queryEmbedding: [1, 0], ftsQuery: '"topic"', k: 1, fusionTopK: 1,
+                lexicalBoundaryFingerprint: 'scope-test',
+                noteScope: { allowedPaths: ['allowed.md', 'excluded.md'], excludedPaths: ['excluded.md'] },
+            },
+        });
+        const response = await waitForResponse(workerScope, 2);
+        expect(response).toMatchObject({ ok: true, result: { lexical: { attempted: true } } });
+        const query = sqlRequests.find((entry) => entry.sql.includes(' MATCH ?'));
+        expect(query).toBeDefined();
+        expect(query!.sql.indexOf('AND c.path IN (SELECT value FROM json_each(?))'))
+            .toBeLessThan(query!.sql.indexOf('ORDER BY'));
+        expect(query!.sql.indexOf('AND c.path NOT IN (SELECT value FROM json_each(?))'))
+            .toBeLessThan(query!.sql.indexOf('LIMIT ?'));
+        expect(query!.bind?.slice(0, 3)).toEqual([
+            '"topic"', '["allowed.md","excluded.md"]', '["excluded.md"]',
+        ]);
+        // Execute the worker-generated query against the installed SQLite/WASM,
+        // not a fake SQL evaluator, including FTS ranking and its one-row cap.
+        const { stdout: actualPaths } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+            import init from '@sqlite.org/sqlite-wasm';
+            const query = JSON.parse(process.argv[1]);
+            const sqlite = await init();
+            const db = new sqlite.oo1.DB(':memory:');
+            const table = query.sql.match(/FROM\\s+(\\w+)/)[1];
+            db.exec('CREATE TABLE vss_chunks(id INTEGER, path TEXT, chunk_index INTEGER, content TEXT, metadata TEXT, last_modified INTEGER)');
+            db.exec('CREATE TABLE vss_files(path TEXT, evidence_generation TEXT)');
+            db.exec('CREATE VIRTUAL TABLE ' + table + ' USING fts5(title, heading, body, path)');
+            for (const [index, path] of ['outside.md', 'excluded.md', 'allowed.md'].entries()) {
+                db.exec({sql: 'INSERT INTO vss_chunks VALUES(?, ?, 0, ?, ?, 100)', bind: [index + 1, path, 'topic', '{}']});
+                db.exec({sql: 'INSERT INTO vss_files VALUES(?, ?)', bind: [path, 'generation']});
+                db.exec({sql: 'INSERT INTO ' + table + '(rowid,title,heading,body,path) VALUES(?, ?, ?, ?, ?)', bind: [index + 1, 'topic', '', index === 2 ? 'topic other words' : 'topic topic topic', path]});
+            }
+            const paths = db.exec({sql: query.sql, bind: query.bind, rowMode: 'object', returnValue: 'resultRows'}).map(row => row.path);
+            db.close();
+            process.stdout.write(JSON.stringify(paths));
+        `, JSON.stringify(query)], { encoding: 'utf8' });
+        expect(JSON.parse(actualPaths)).toEqual(['allowed.md']);
+    });
+
     it('removes unchanged generations before vector Top-12 so repeats do not occupy seats', async () => {
         const rows = Array.from({ length: 15 }, (_, index) => (
             graphRow(index + 1, `p${index.toString().padStart(2, '0')}.md`, 0, [1, index / 100])
@@ -630,12 +702,14 @@ async function setupGraphRankingWorker(
     rows: GraphMockRow[],
     initialEpoch: string,
     generations = new Map(rows.map((row) => [row.path, `generation-${row.path}`])),
-    options: { onLegacyGenerationUpdated?: (path: string) => void } = {},
+    options: { onLegacyGenerationUpdated?: (path: string) => void; lexical?: boolean } = {},
 ): Promise<{
     workerScope: MockWorkerScope;
     meta: Map<string, string>;
     generations: Map<string, string>;
+    sqlRequests: Array<{ sql: string; bind?: unknown[] }>;
 }> {
+    const sqlRequests: Array<{ sql: string; bind?: unknown[] }> = [];
     const meta = new Map<string, string>([['chunkMutationEpoch', initialEpoch]]);
     let transactionGenerations: Map<string, string> | null = null;
     const db = {
@@ -663,6 +737,7 @@ async function setupGraphRankingWorker(
                 rowMode?: string;
                 resultRows?: unknown[];
             };
+            sqlRequests.push(query);
             if (
                 query.sql.includes("pragma_table_info('vss_chunks')")
                 || query.sql.includes("pragma_table_info('vss_files')")
@@ -772,10 +847,19 @@ async function setupGraphRankingWorker(
                 for (const row of rows) query.resultRows?.push([row.id, row.embedding]);
                 return;
             }
-            if (query.sql.includes('SELECT id FROM vss_chunks') && query.sql.includes('WHERE 1=1')) {
-                const excludedPaths = new Set((query.bind ?? []).map(String));
+            if ((query.sql.includes('SELECT id FROM vss_chunks')
+                || query.sql.includes('SELECT id, embedding FROM vss_chunks WHERE')) && query.sql.includes('WHERE 1=1')) {
+                const binds = [...(query.bind ?? [])];
+                const allowedPaths = query.sql.includes('AND path IN (SELECT value FROM json_each(?))')
+                    ? new Set<string>(JSON.parse(String(binds.shift()))) : null;
+                const scopeExcluded = query.sql.includes('AND path NOT IN (SELECT value FROM json_each(?))')
+                    ? new Set<string>(JSON.parse(String(binds.shift()))) : new Set<string>();
+                const excludedPaths = new Set(binds.map(String));
                 for (const row of rows) {
-                    if (!excludedPaths.has(row.path)) query.resultRows?.push({ id: row.id });
+                    if ((!allowedPaths || allowedPaths.has(row.path))
+                        && !scopeExcluded.has(row.path) && !excludedPaths.has(row.path)) {
+                        query.resultRows?.push(query.rowMode === 'array' ? [row.id, row.embedding] : { id: row.id });
+                    }
                 }
                 return;
             }
@@ -819,6 +903,7 @@ async function setupGraphRankingWorker(
     jest.doMock('@sqlite.org/sqlite-wasm', () => ({
         __esModule: true,
         default: jest.fn(async () => ({
+            capi: { sqlite3_progress_handler: jest.fn() },
             installOpfsSAHPoolVfs: async () => ({
                 OpfsSAHPoolDb: MockDb,
                 pauseVfs: jest.fn(),
@@ -839,10 +924,12 @@ async function setupGraphRankingWorker(
             },
             databaseName: 'graph-ranking.sqlite3',
             wasmUrl: 'blob:sqlite-wasm',
+            lexicalProfileEnabled: options.lexical,
+            lexicalBoundaryFingerprint: 'scope-test',
         },
     });
     expect(initialized.ok).toBe(true);
-    return { workerScope, meta, generations };
+    return { workerScope, meta, generations, sqlRequests };
 }
 
 async function waitForResponse(scope: MockWorkerScope, id: number): Promise<SqliteWorkerResponse> {

@@ -1,0 +1,212 @@
+{
+  "status": "complete",
+  "startedAt": 1788948625332,
+  "provider": "qwen",
+  "model": "qwen3.8-max",
+  "thinking": true,
+  "hostVersion": "2.9.2",
+  "declaration": {
+    "schema": {
+      "type": "function",
+      "function": {
+        "name": "present_writing",
+        "description": "Deliver one finished writing result. This ends the response without saving or modifying notes. Use it alone, after all necessary source work.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Exact finished writing text, preserving whitespace and punctuation."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Optional explanation separate from the writing text."
+            },
+            "contextHandle": {
+              "type": "string",
+              "enum": [
+                "b135-current-schema"
+              ],
+              "description": "Copy the host-provided context handle exactly."
+            }
+          },
+          "required": [
+            "body",
+            "contextHandle"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "instruction": "Reply with ordinary text when appropriate. To deliver a finished writing result, call present_writing exactly once as the only call in that response.\nUse contextHandle \"b135-current-schema\". Keep the exact writing in body and any optional explanation separate. Do not wrap the writing in a JSON text envelope.\nFinish necessary source work before delivery. Never combine present_writing with source, context or action calls. It reads nothing and saves nothing; the host alone controls sources, versions and saving.\nYou may introduce the result in ordinary text before delivery. Delivery ends generation; no additional acknowledgement response is needed. If the result is unfinished, use ordinary text without presenting it as a finished writing result.\nIn a finalization turn only ordinary text or this single output is allowed; no new source or action calls are allowed."
+  },
+  "expected": "第一行：“安静且可信。”\n第二行：C:\\notes\\draft.md；\"引号\"；🙂\n\n## 收尾\n保留  两个空格。",
+  "deltas": [
+    {
+      "id": "call_d5b80b3dc7024be9af96e219",
+      "index": 0,
+      "name": "present_writing",
+      "args": ""
+    },
+    {
+      "index": 0,
+      "args": "{\"body\": "
+    },
+    {
+      "index": 0,
+      "args": "\"第一"
+    },
+    {
+      "index": 0,
+      "args": "行：“安静且"
+    },
+    {
+      "index": 0,
+      "args": "可信。”\\n第二"
+    },
+    {
+      "index": 0,
+      "args": "行：C:\\\\"
+    },
+    {
+      "index": 0,
+      "args": "notes\\\\draft.md"
+    },
+    {
+      "index": 0,
+      "args": "；\\\"引号"
+    },
+    {
+      "index": 0,
+      "args": "\\\"；🙂\\n"
+    },
+    {
+      "index": 0,
+      "args": "\\n## 收尾"
+    },
+    {
+      "index": 0,
+      "args": "\\n保留  两个"
+    },
+    {
+      "index": 0,
+      "args": "空格。"
+    },
+    {
+      "index": 0,
+      "args": "\""
+    },
+    {
+      "index": 0,
+      "args": ", \"contextHandle\": "
+    },
+    {
+      "index": 0,
+      "args": "\"b13"
+    },
+    {
+      "index": 0,
+      "args": "5-current-schema"
+    },
+    {
+      "index": 0,
+      "args": "\""
+    },
+    {
+      "index": 0,
+      "args": ", \"explanation\": \"已"
+    },
+    {
+      "index": 0,
+      "args": "逐字符还原 JSON"
+    },
+    {
+      "index": 0,
+      "args": " "
+    },
+    {
+      "index": 0,
+      "args": "字符串：\\\\n"
+    },
+    {
+      "index": 0,
+      "args": " 转为"
+    },
+    {
+      "index": 0,
+      "args": "换行，\\\\\\\\"
+    },
+    {
+      "index": 0,
+      "args": " 转为单个反"
+    },
+    {
+      "index": 0,
+      "args": "斜杠，"
+    },
+    {
+      "index": 0,
+      "args": "\\\\\\\" 转为半"
+    },
+    {
+      "index": 0,
+      "args": "角双引号"
+    },
+    {
+      "index": 0,
+      "args": "，🙂"
+    },
+    {
+      "index": 0,
+      "args": " 与全角"
+    },
+    {
+      "index": 0,
+      "args": "标点"
+    },
+    {
+      "index": 0,
+      "args": "原样保留，"
+    },
+    {
+      "index": 0,
+      "args": "\\\""
+    },
+    {
+      "index": 0,
+      "args": "保留\\\"与\\\""
+    },
+    {
+      "index": 0,
+      "args": "两个空格"
+    },
+    {
+      "index": 0,
+      "args": "\\\"之间的两个空格"
+    },
+    {
+      "index": 0,
+      "args": "未"
+    },
+    {
+      "index": 0,
+      "args": "作合并。"
+    },
+    {
+      "index": 0,
+      "args": "\""
+    },
+    {
+      "id": null,
+      "index": 0,
+      "args": "}"
+    }
+  ],
+  "finishes": [
+    "tool_calls"
+  ],
+  "text": "我将按原样交付这段文字，包括反斜杠路径、半角引号、表情符号、空行以及末尾的两个空格。\n\n",
+  "chunks": 126,
+  "elapsedMs": 12007
+}

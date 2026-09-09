@@ -7,6 +7,7 @@ import { PaAgentContextOverflowError } from "./context/PaAgentContextOverflowErr
 import type { AgentRunLease } from "./agent-run-coordinator";
 import { createAbortError, isAbortError } from "./chat-utils";
 import {
+    createAgentControlSnapshot,
     deriveContinuedAgentControlSnapshot,
     summarizeAgentControlSnapshot,
     type AgentControlSnapshot,
@@ -22,6 +23,8 @@ import type {
     UserMessageContent,
 } from "./chat-types";
 import { ModelChunkConsumer, appendTextPart } from "./pa-agent-chunk-consumer";
+import { NativeWritingCallCollector } from "./native-writing-call";
+import type { NativeWritingOutput } from "./writing-output";
 import {
     ToolExecutionDispatcher,
     defaultIncludeInNextPrompt,
@@ -119,6 +122,9 @@ export interface PaAgentTurnSummary {
     metrics: Array<Record<string, unknown>>;
     timing: PaAgentTurnTiming;
     controlSnapshot?: AgentControlSnapshot;
+    /** Host-admitted pure output candidate; final Host Policy still decides delivery. */
+    nativeWriting?: NativeWritingOutput;
+    nativeWritingAttempted?: true;
 }
 
 export interface PaAgentTerminalPolicyContext {
@@ -186,8 +192,12 @@ export type PaAgentTurnLeaseProvider = (
 export interface PaAgentLoopOptions {
     runId: string;
     userInput: string;
+    /** Host-supplied identity shared with request-local source admission. */
+    userMessageId?: string;
     userImages?: import("../chat/image-types").MessageImage[];
     writingRequest?: import("./chat-types").ChatWritingRequest;
+    /** Host opt-in only. Pagelet and existing text output retain their own protocol. */
+    nativeWriting?: { contextHandle: string; maxTextChars: number; isCurrent: () => boolean };
     userMessageContent?: UserMessageContent;
     model: PaAgentModel;
     /** Request-local projection hook invoked before every logical model request. */
@@ -210,6 +220,8 @@ export interface PaAgentLoopOptions {
     providerResponseDelivery?: 'incremental' | 'buffered';
     assistantIdleTimeoutMs?: number;
     maxWallClockMs?: number;
+    /** Host run origin in the same clock as `now`; includes preparation before loop construction. */
+    runStartedAt?: number;
     /**
      * Optional final-answer reserve inside `maxWallClockMs`. Ordinary turns and
      * their lease waits stop at the soft deadline; `final_answer_only` may use
@@ -270,6 +282,13 @@ const FINALIZATION_RESERVE_RUNTIME_INSTRUCTION = [
     "If evidence is unavailable or insufficient, say so directly without inferring it.",
 ].join(" ");
 
+const NATIVE_WRITING_FINALIZATION_RUNTIME_INSTRUCTION = [
+    "The ordinary turn deadline has been reached.",
+    "This is the single reserved finalization turn. Reply with ordinary text or one present_writing output; no source, context or action calls are allowed.",
+    "Use only existing observations and available context to answer.",
+    "If evidence is unavailable or insufficient, say so directly without inferring it.",
+].join(" ");
+
 export class PaAgentLoop {
     private readonly events: AgentLifecycleEventEmitter;
     private readonly now: () => number;
@@ -301,7 +320,7 @@ export class PaAgentLoop {
             options.finalizationReserveMs,
             this.maxWallClockMs,
         );
-        this.runStartedAt = this.now();
+        this.runStartedAt = options.runStartedAt ?? this.now();
         this.startupTimings = options.startupTimings ?? [];
         this.events = new AgentLifecycleEventEmitter({
             runId: options.runId,
@@ -355,7 +374,9 @@ export class PaAgentLoop {
             }
         };
         const resolveFinalizationTurnPreparation = (summary: PaAgentTurnSummary) => {
-            const defaultRuntimeInstruction = FINALIZATION_RESERVE_RUNTIME_INSTRUCTION;
+            const defaultRuntimeInstruction = this.options.nativeWriting
+                ? NATIVE_WRITING_FINALIZATION_RUNTIME_INSTRUCTION
+                : FINALIZATION_RESERVE_RUNTIME_INSTRUCTION;
             const defaultControlSnapshot = deriveContinuedAgentControlSnapshot(summary.controlSnapshot, {
                 runtimeInstruction: defaultRuntimeInstruction,
                 toolMode: "final_answer_only",
@@ -534,6 +555,29 @@ export class PaAgentLoop {
                 return this.createResult(status);
             }
 
+            if (turnSummary.nativeWritingAttempted) {
+                const fallback: PaAgentTerminalDecision = {
+                    action: "stop",
+                    status: turnSummary.nativeWriting ? this.agentStatusFromTurn(turnSummary.status) : "incomplete",
+                    reason: turnSummary.nativeWriting ? "native_writing_output" : "native_writing_invalid",
+                    diagnostics: turnSummary.diagnostics,
+                };
+                const hostDecision = loopReservedFinalTurn
+                    ? await this.decideFinalizationAfterTurn(turnSummary, fallback, unobservedFinalizationTurnSummary, true)
+                    : await this.decideAfterTurn(turnSummary);
+                const decision = mergeTerminalDecisions(fallback, hostDecision.action === "continue"
+                    ? { action: "stop", status: "incomplete", reason: "native_writing_policy_requested_continuation" }
+                    : { ...hostDecision, status: hostDecision.status ?? fallback.status });
+                const status = this.isAborted() ? "aborted"
+                    : !this.isNativeWritingCurrent() ? "incomplete" : decision.status;
+                if (loopReservedFinalTurn) reportFinalizationReserve(status === "completed" ? "completed" : "failed");
+                this.endAgent(status, { reason: decision.reason,
+                    ...(decision.warnings ? { warnings: decision.warnings } : {}),
+                    ...(decision.diagnostics ? { diagnostics: decision.diagnostics } : {}),
+                });
+                return this.createResult(status);
+            }
+
             if (turnSummary.diagnostics.some((diagnostic) => (
                 diagnostic.type === "finalization_reserve_exhausted_by_buffered_provider"
             ))) {
@@ -579,6 +623,23 @@ export class PaAgentLoop {
                     diagnostics: turnSummary.diagnostics,
                 });
                 return this.createResult(status);
+            }
+
+            if (turnSummary.diagnostics.some((diagnostic) => (
+                diagnostic.type === "finalization_reserve_used_by_text"
+            ))) {
+                const decision = await this.decideFinalizationAfterTurn(turnSummary, {
+                    action: "stop",
+                    status: this.agentStatusFromTurn(turnSummary.status),
+                    reason: "finalization_reserve_used_by_text",
+                    diagnostics: turnSummary.diagnostics,
+                }, undefined, true);
+                this.endAgent(decision.status, {
+                    reason: decision.reason,
+                    ...(decision.warnings ? { warnings: decision.warnings } : {}),
+                    ...(decision.diagnostics ? { diagnostics: decision.diagnostics } : {}),
+                });
+                return this.createResult(decision.status);
             }
 
             if (loopReservedFinalTurn) {
@@ -672,6 +733,17 @@ export class PaAgentLoop {
         toolMode?: PaAgentToolMode,
         controlSnapshot?: AgentControlSnapshot,
     ): Promise<PaAgentTurnSummary> {
+        // Recompute from the host run contract on each turn rather than inheriting
+        // model data or treating a source-tool allowlist as output authority.
+        if (this.options.nativeWriting) {
+            controlSnapshot = {
+                ...(controlSnapshot ?? createAgentControlSnapshot()),
+                writingOutput: "present_writing",
+            };
+        } else if (controlSnapshot?.writingOutput) {
+            controlSnapshot = { ...controlSnapshot };
+            delete controlSnapshot.writingOutput;
+        }
         const turnAbort = this.createTurnAbortScope();
         const turnStartedAt = this.now();
         const turnId = this.createId("turn");
@@ -709,6 +781,7 @@ export class PaAgentLoop {
         let firstModelChunkElapsedMs: number | undefined;
         let modelChunkCount = 0;
         let providerRequestStarted = false;
+        let textUsesHardDeadline = false;
         let providerPreparationDeadlineReason:
             | "finalization_reserve_reached"
             | "wall_clock_exceeded"
@@ -745,6 +818,9 @@ export class PaAgentLoop {
         let stopReason: "stop" | "tool_calls" | "error" | "aborted" | "idle_timeout" | "wall_clock_exceeded" | undefined;
         const diagnostics: Array<Record<string, unknown>> = [];
         const metrics: Array<Record<string, unknown>> = [];
+        const nativeCollector = this.options.nativeWriting
+            ? new NativeWritingCallCollector(this.options.nativeWriting.contextHandle, this.options.nativeWriting.maxTextChars)
+            : undefined;
 
         let iterator: AsyncIterator<PaAgentModelStreamChunk> | undefined;
         let inputPreparationCompleted = !this.options.prepareModelInput;
@@ -802,11 +878,11 @@ export class PaAgentLoop {
                 signal: turnAbort.signal,
                 assistantIdleTimeoutMs: this.assistantIdleTimeoutMs,
                 isAborted: () => this.isAborted(),
-                isWallClockExceeded: () => this.isProviderWaitDeadlineExceeded(
+                isWallClockExceeded: () => textUsesHardDeadline ? this.isWallClockExceeded() : this.isProviderWaitDeadlineExceeded(
                     toolMode,
                     providerRequestStarted,
                 ),
-                wallClockRemainingMs: () => this.providerWaitDeadlineRemainingMs(
+                wallClockRemainingMs: () => textUsesHardDeadline ? this.wallClockRemainingMs() : this.providerWaitDeadlineRemainingMs(
                     toolMode,
                     providerRequestStarted,
                 ),
@@ -817,9 +893,31 @@ export class PaAgentLoop {
             })
             : undefined;
 
+        let completedTextAt: number | undefined;
+        let completedOutputAt: number | undefined;
+        let transportOutcome = "unknown";
         while (consumer) {
             const next = await consumer.nextChunk();
+            if (next.type !== "chunk") transportOutcome = next.type;
             if (next.type === "done") {
+                break;
+            }
+            // A normal provider finish proves the preceding text phase ended.
+            // Failure to receive optional usage/EOF is a transport outcome, not
+            // evidence that this already completed text became partial. Tool
+            // phases require separate admission and deliberately do not use this.
+            if (
+                completedTextAt !== undefined
+                && !this.isAborted()
+                && (next.type === "error" || next.type === "idle" || next.type === "wall_clock_exceeded")
+            ) {
+                turnAbort.abort();
+                stopReason = "stop";
+                metrics.push({
+                    type: "provider_transport_end",
+                    outcome: next.type,
+                    contentCompletedAt: completedTextAt,
+                });
                 break;
             }
             if (next.type === "idle") {
@@ -876,8 +974,57 @@ export class PaAgentLoop {
                 continue;
             }
             if (chunk.type === "provider_completion") {
+                if (assistantMessage.providerCompletion !== undefined && assistantMessage.providerCompletion !== chunk.completion) {
+                    stopReason = "error";
+                    terminalStatus = "completed_with_warning";
+                    diagnostics.push({ type: "provider_completion_conflict" });
+                    turnAbort.abort();
+                    break;
+                }
                 assistantMessage.providerCompletion = chunk.completion;
+                if (chunk.completion === "stop" && pendingText.length > 0 && !sawToolCall) {
+                    completedTextAt ??= this.now();
+                }
+                if (chunk.completion === "tool_calls" && nativeCollector?.decode() && this.isNativeWritingCurrent()) {
+                    completedOutputAt ??= this.now();
+                    // Pure output has no execution/ack phase. Stop consuming the
+                    // optional tail now so Host Policy keeps the remaining hard
+                    // budget. Unobserved EOF/usage is not recorded as successful.
+                    try { void Promise.resolve(iterator?.return?.()).catch(() => undefined); }
+                    catch { /* Closing an already finished producer cannot change its content facts. */ }
+                    break;
+                }
                 continue;
+            }
+            if (assistantMessage.providerCompletion !== undefined) {
+                stopReason = "error";
+                terminalStatus = pendingText.length > 0 ? "completed_with_warning" : "error";
+                diagnostics.push({ type: "provider_content_after_completion" });
+                turnAbort.abort();
+                break;
+            }
+            if (chunk.type === "toolcall_delta" && nativeCollector) {
+                nativeCollector.consume(chunk);
+                if (nativeCollector.hasWritingCall && !nativeCollector.isCandidate) {
+                    this.events.messageUpdate(turnId, assistantMessage.id, { kind: "toolcall_delta", text: "" }, {
+                        nativeWritingContextHandle: this.options.nativeWriting!.contextHandle,
+                        nativeWritingArguments: "",
+                    });
+                    terminalStatus = "incomplete";
+                    diagnostics.push({ type: "native_writing_identity_or_batch_invalid" });
+                    turnAbort.abort();
+                    break;
+                }
+            }
+            if (chunk.type === "toolcall_delta" && textUsesHardDeadline && !nativeCollector?.isCandidate
+                && this.isFinalizationReserveReached(toolMode)) {
+                // Tool preparation can stage an action. Reject before buffering,
+                // not merely before execute, once only text reception is allowed.
+                stopReason = "error";
+                terminalStatus = "completed_with_warning";
+                diagnostics.push({ type: "late_tool_after_text", toolName: chunk.name });
+                turnAbort.abort();
+                break;
             }
             modelChunkCount += 1;
             if (firstModelChunkElapsedMs === undefined) {
@@ -898,12 +1045,25 @@ export class PaAgentLoop {
                         this.events.messageUpdate(turnId, assistantMessage.id, { kind: "text_start" });
                     }
                     pendingText += chunk.text;
-                    appendTextPart(assistantMessage.content, sawToolCall ? "thinking" : "text", chunk.text);
+                    if (!textUsesHardDeadline && !sawToolCall && pendingText.length > 0
+                        && this.providerResponseDelivery !== "buffered"
+                        && this.usesFinalizationReserve(toolMode)) {
+                        // Finish this already visible response within the original
+                        // hard budget. Tool admission retains its soft deadline.
+                        textUsesHardDeadline = true;
+                        for (const listener of providerRequestDeadlineListeners) listener();
+                    }
+                    appendTextPart(assistantMessage.content, sawToolCall && !nativeCollector ? "thinking" : "text", chunk.text);
                     this.events.messageUpdate(turnId, assistantMessage.id, { kind: "text_delta", text: chunk.text });
                     break;
                 case "toolcall_delta": {
+                    const outputUsesHardDeadline = nativeCollector?.isCandidate === true;
+                    if (textUsesHardDeadline !== outputUsesHardDeadline) {
+                        textUsesHardDeadline = outputUsesHardDeadline;
+                        for (const listener of providerRequestDeadlineListeners) listener();
+                    }
                     sawToolCall = true;
-                    if (pendingText.length > 0) {
+                    if (pendingText.length > 0 && !nativeCollector) {
                         pendingTextReclassified = true;
                         reclassifyTextPartsAsThinking(assistantMessage.content);
                     }
@@ -913,6 +1073,12 @@ export class PaAgentLoop {
                         chunk,
                         this.createId,
                     );
+                    const sourceIndex = nativeCollector?.providerIdentity?.index;
+                    if (sourceIndex !== undefined) {
+                        buffer.index = sourceIndex;
+                        const part = assistantMessage.content[buffer.partIndex];
+                        if (part.type === "toolCall") part.index = sourceIndex;
+                    }
                     if (isNew) {
                         this.events.messageUpdate(turnId, assistantMessage.id, {
                             kind: "toolcall_start",
@@ -926,15 +1092,33 @@ export class PaAgentLoop {
                         text: chunk.argsText ?? stringifyToolInput(chunk.input),
                         toolCallId: buffer.id,
                         index: buffer.index,
-                    });
+                    }, nativeCollector?.isCandidate ? {
+                        nativeWritingContextHandle: this.options.nativeWriting!.contextHandle,
+                        nativeWritingArguments: nativeCollector.rawArguments,
+                    } : undefined);
                     break;
                 }
             }
         }
 
+        if (textUsesHardDeadline
+            && (completedTextAt ?? this.now()) - this.runStartedAt >= this.maxWallClockMs - this.finalizationReserveMs) {
+            diagnostics.push({
+                type: "finalization_reserve_used_by_text",
+                finalizationReserveMs: this.finalizationReserveMs,
+                remainingMs: this.wallClockRemainingMs() ?? 0,
+            });
+        }
+
+        const bufferedContentOverranReserve = completedTextAt !== undefined
+            && this.usesBufferedProviderHardDeadline(toolMode, providerRequestStarted)
+            && completedTextAt - this.runStartedAt >= this.maxWallClockMs - this.finalizationReserveMs;
         if (
-            terminalStatus === undefined
-            && this.didBufferedProviderOverrunFinalizationReserve(toolMode, providerRequestStarted)
+            terminalStatus === undefined && completedOutputAt === undefined
+            && (bufferedContentOverranReserve || (
+                completedTextAt === undefined
+                && this.didBufferedProviderOverrunFinalizationReserve(toolMode, providerRequestStarted)
+            ))
         ) {
             terminalStatus = toolCallBuffers.length === 0 && pendingText.trim().length > 0
                 ? "completed_with_warning"
@@ -947,7 +1131,8 @@ export class PaAgentLoop {
                 reservePreserved: false,
             });
         } else if (
-            this.usesBufferedProviderHardDeadline(toolMode, providerRequestStarted)
+            completedTextAt === undefined
+            && this.usesBufferedProviderHardDeadline(toolMode, providerRequestStarted)
             && this.isWallClockExceeded()
         ) {
             diagnostics.push({
@@ -976,10 +1161,29 @@ export class PaAgentLoop {
 
         const toolCalls = toolCallBuffers.map((buffer) => assistantMessage.content[buffer.partIndex]).filter(isToolCallPart);
         const hasToolCall = toolCalls.length > 0;
+        const nativeWritingAttempted = nativeCollector?.hasWritingCall === true;
+        const nativeWriting = nativeWritingAttempted && toolCalls.length === 1 && terminalStatus === undefined
+            && assistantMessage.providerCompletion === "tool_calls" && !this.isAborted() && this.isNativeWritingCurrent()
+            ? nativeCollector?.decode() : undefined;
+        if (nativeWriting && toolCalls.length === 1) {
+            toolCalls[0].name = "present_writing";
+            toolCalls[0].input = nativeCollector!.rawArguments;
+        }
+        if (nativeCollector && hasToolCall && !nativeWriting && pendingText.length > 0) {
+            pendingTextReclassified = true;
+            reclassifyTextPartsAsThinking(assistantMessage.content);
+        }
+        if (nativeWritingAttempted && !nativeWriting && terminalStatus === undefined) {
+            terminalStatus = "incomplete";
+            diagnostics.push({ type: "native_writing_invalid" });
+        }
         assistantMessage.stopReason = stopReason ?? (hasToolCall ? "tool_calls" : "stop");
         assistantMessage.providerCompletion ??= "unknown";
         const modelElapsedMs = elapsedSince(modelStartedAt, this.now());
         this.events.messageEnd(turnId, assistantMessage, {
+            transportOutcome,
+            ...(nativeWriting ? { nativeWritingContextHandle: this.options.nativeWriting!.contextHandle,
+                nativeWritingValidated: true } : {}),
             timing: {
                 elapsedMs: modelElapsedMs,
                 ...(firstModelChunkElapsedMs !== undefined ? { firstChunkElapsedMs: firstModelChunkElapsedMs } : {}),
@@ -993,7 +1197,7 @@ export class PaAgentLoop {
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         let toolExecutionStoppedBy: "aborted" | "wall_clock_exceeded" | undefined;
         let toolExecutionElapsedMs: number | undefined;
-        if (hasToolCall && terminalStatus === undefined) {
+        if (hasToolCall && terminalStatus === undefined && !nativeWritingAttempted) {
             const toolExecutionStartedAt = this.now();
             const execution = await this.dispatcher.executeBufferedToolCalls(
                 turnId, turnIndex, toolCallBuffers, toolMode, controlSnapshot,
@@ -1002,7 +1206,7 @@ export class PaAgentLoop {
             toolResults.push(...execution.toolResults);
             diagnostics.push(...execution.diagnostics);
             toolExecutionStoppedBy = execution.stoppedBy;
-        } else if (hasToolCall) {
+        } else if (hasToolCall && !nativeWritingAttempted) {
             diagnostics.push({
                 type: "tool_required",
                 message: this.options.toolExecutor
@@ -1033,7 +1237,7 @@ export class PaAgentLoop {
             });
         }
         const status: TurnEndStatus = terminalStatus
-            ?? (hasToolCall ? (toolResults.length > 0 ? "tool_results_ready" : "incomplete") : "completed");
+            ?? (nativeWriting ? "completed" : hasToolCall ? (toolResults.length > 0 ? "tool_results_ready" : "incomplete") : "completed");
 
         if (!hasToolCall && pendingText.length > 0 && status !== "error" && status !== "incomplete") {
             this.committedFinalText += pendingText;
@@ -1080,6 +1284,8 @@ export class PaAgentLoop {
             metrics,
             timing: turnTiming,
             ...(controlSnapshot ? { controlSnapshot } : {}),
+            ...(nativeWritingAttempted ? { nativeWritingAttempted: true as const } : {}),
+            ...(nativeWriting ? { nativeWriting } : {}),
         };
         turnAbort.dispose();
         return summary;
@@ -1140,7 +1346,7 @@ export class PaAgentLoop {
     private createUserMessage(): PaAgentMessage {
         return {
             role: "user",
-            id: this.createId("message_user"),
+            id: this.options.userMessageId ?? this.createId("message_user"),
             content: this.options.userMessageContent ?? this.options.userInput,
             ...(this.options.userImages?.length ? { images: this.options.userImages.map((image) => ({ ...image, ref: { ...image.ref } })) } : {}),
             timestamp: this.now(),
@@ -1159,19 +1365,25 @@ export class PaAgentLoop {
         };
     }
 
+    private isNativeWritingCurrent(): boolean {
+        try { return this.options.nativeWriting?.isCurrent() === true; }
+        catch { return false; }
+    }
+
     private async decideFinalizationAfterTurn(
         summary: PaAgentTurnSummary,
         fallback: PaAgentTerminalDecision,
         unobservedTurnSummary?: PaAgentTurnSummary,
+        useOrdinaryPolicyFallback = false,
     ): Promise<PaAgentTerminalDecision> {
         const hostPolicy = this.options.hostPolicy;
-        if (!hostPolicy?.finalizeAfterTurn) return fallback;
+        if (!hostPolicy || (!hostPolicy.finalizeAfterTurn && !useOrdinaryPolicyFallback)) return fallback;
 
-        const decision = await this.evaluateHostPolicy(() => hostPolicy.finalizeAfterTurn!(summary, {
+        const decision = await this.evaluateHostPolicy(() => hostPolicy.finalizeAfterTurn ? hostPolicy.finalizeAfterTurn(summary, {
             reason: fallback.reason,
             defaultStatus: fallback.status,
             ...(unobservedTurnSummary ? { unobservedTurnSummary } : {}),
-        }));
+        }) : hostPolicy.afterTurn(summary));
         if (decision.action === "continue") {
             return mergeTerminalDecisions(fallback, {
                 action: "stop",
@@ -1628,7 +1840,8 @@ function isPreflightOnlyToolResult(result: PaAgentToolExecutionResult): boolean 
     if (result.metadata?.preflightOnly === true) return true;
     return result.outcome === "schema_invalid"
         || result.outcome === "budget_exceeded"
-        || result.outcome === "duplicate_skipped";
+        || result.outcome === "duplicate_skipped"
+        || result.outcome === "control_applied";
 }
 
 function elapsedSince(startedAt: number, endedAt: number): number {
@@ -1799,7 +2012,7 @@ function readMetadataNumber(metadata: Record<string, unknown> | undefined, key: 
 }
 
 function isErrorToolOutcome(outcome: ToolExecutionOutcome): boolean {
-    return outcome !== "success" && outcome !== "duplicate_skipped";
+    return outcome !== "success" && outcome !== "duplicate_skipped" && outcome !== "control_applied";
 }
 
 function stringifyToolInput(input: unknown): string {

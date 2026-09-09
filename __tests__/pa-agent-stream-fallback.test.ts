@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import type { PaAgentModelStreamChunk } from "../src/ai-services/pa-agent-loop";
 import { PaAgentContextOverflowError } from "../src/ai-services/context";
+import protocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 
 type FallbackArgs = Parameters<typeof streamWithInvokeFallback>[0];
 type ChainStream = FallbackArgs["chain"]["stream"];
@@ -29,6 +30,116 @@ function makeChain(overrides: {
 }
 
 describe("streamWithInvokeFallback (P0-D)", () => {
+    it("preserves native tool completion after real argument fragments without invoking again on a failed tail", async () => {
+        const trace = protocolTrace.results.find((result) => result.mode === "native")!;
+        const invoke = jest.fn<ChainInvoke>(async () => ({ content: "duplicate" }));
+        const chunks: PaAgentModelStreamChunk[] = [];
+        await expect((async () => {
+            for await (const chunk of streamWithInvokeFallback({ input: {}, chain: makeChain({
+                stream: async function* () {
+                    for (const [index, args] of trace.argumentDeltas.entries()) {
+                        yield { tool_call_chunks: [{ index: 0, args,
+                            ...(index === 0 ? { id: "call-probe", name: "present_writing" } : {}),
+                        }] };
+                    }
+                    yield { response_metadata: { finish_reason: "tool_calls" } };
+                    throw new Error("native usage tail lost");
+                }, invoke,
+            }) })) chunks.push(chunk);
+        })()).rejects.toThrow("native usage tail lost");
+        expect(chunks.at(-1)).toEqual({ type: "provider_completion", completion: "tool_calls" });
+        expect(chunks.filter((chunk) => chunk.type === "toolcall_delta")).toHaveLength(trace.argumentDeltas.length);
+        expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("preserves JSON whitespace and escape boundaries across array text blocks", async () => {
+        const expected = ' {"body":"a\\nb😀 ","explanation":""} ';
+        const chunks = await drain(streamWithInvokeFallback({
+            chain: makeChain({ stream: async function* () {
+                yield { content: [{ type: "text", text: ' {"body":"a\\' }, { type: "text", text: 'nb😀 ' }] };
+                yield { content: [{ type: "text", text: '","explanation":""} ' }] };
+            } }), input: {},
+        }));
+        const text = chunks.filter((chunk) => chunk.type === "text_delta").map((chunk) => chunk.text).join("");
+        expect(text).toBe(expected);
+        expect(JSON.parse(text)).toEqual({ body: "a\nb😀 ", explanation: "" });
+    });
+
+    it("does not render non-text response blocks as assistant prose", async () => {
+        const chunks = await drain(streamWithInvokeFallback({
+            chain: makeChain({ stream: async function* () {
+                yield { content: [null, 7, { type: "image_url", image_url: "private" },
+                    { type: "reasoning", text: "hidden" }, { type: "text", text: " visible " }] };
+            } }), input: {},
+        }));
+        expect(chunks).toEqual([{ type: "text_delta", text: " visible " }]);
+    });
+
+    it("emits completion after its final content without first advancing to the transport tail", async () => {
+        let tailRead = false;
+        const generator = streamWithInvokeFallback({
+            chain: makeChain({ stream: async function* () {
+                yield { content: "complete", response_metadata: { finish_reason: "stop" } };
+                tailRead = true;
+                throw new Error("usage tail failed");
+            } }), input: {},
+        });
+        expect((await generator.next()).value).toEqual({ type: "text_delta", text: "complete" });
+        expect((await generator.next()).value).toEqual({ type: "provider_completion", completion: "stop" });
+        expect(tailRead).toBe(false);
+        await expect(generator.next()).rejects.toThrow("usage tail failed");
+    });
+
+    it("never invokes a second generation after an empty but completed response loses its tail", async () => {
+        const invoke = jest.fn<ChainInvoke>(async () => ({ content: "duplicate" }));
+        const chunks: PaAgentModelStreamChunk[] = [];
+        await expect((async () => {
+            for await (const chunk of streamWithInvokeFallback({
+                chain: makeChain({ stream: async function* () {
+                    yield { content: "", response_metadata: { finish_reason: "stop" } };
+                    throw new Error("tail lost");
+                }, invoke }), input: {},
+            })) chunks.push(chunk);
+        })()).rejects.toThrow("tail lost");
+        expect(chunks).toEqual([{ type: "provider_completion", completion: "stop" }]);
+        expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("retains usage after completion without repeating or erasing its finish reason", async () => {
+        const chunks = await drain(streamWithInvokeFallback({
+            chain: makeChain({ stream: async function* () {
+                yield { content: "done", response_metadata: { finish_reason: "stop" } };
+                yield { response_metadata: { finish_reason: "stop" } };
+                yield { response_metadata: { finish_reason: null }, usage_metadata: {
+                    input_tokens: 12, output_tokens: 3, total_tokens: 15,
+                } };
+            } }), input: {},
+        }));
+        expect(chunks).toEqual([
+            { type: "text_delta", text: "done" },
+            { type: "provider_completion", completion: "stop" },
+            { type: "diagnostic", diagnostic: { type: "provider_usage", usage: {
+                promptTokens: 12, completionTokens: 3, totalTokens: 15,
+            } } },
+        ]);
+    });
+
+    it("preserves array text in the invoke fallback without serializing unsupported blocks", async () => {
+        const chunks = await drain(streamWithInvokeFallback({
+            chain: makeChain({
+                stream: async function* () { throw new Error("stream not supported"); },
+                invoke: async () => ({ content: [
+                    " leading ", { text: "legacy" }, { content: " content " },
+                    { type: "output_text", text: "trailing " }, { type: "image", source: "private" },
+                ], response_metadata: { finish_reason: "stop" } }),
+            }), input: {},
+        }));
+        expect(chunks).toEqual([
+            { type: "text_delta", text: " leading legacy content trailing " },
+            { type: "provider_completion", completion: "stop" },
+        ]);
+    });
+
     it("records each attempted projection but never records or sends a rejected fallback projection", async () => {
         const input = { revision: "stream-fit" };
         const invoke = jest.fn<ChainInvoke>(async () => ({ content: "must not run" }));

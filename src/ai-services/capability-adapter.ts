@@ -285,6 +285,7 @@ export function createChatToolCapability<Input, Output>(
                 // statusMessage callbacks should not throw; ignore defensively.
             }
             const chatContext: ChatToolContext = {
+                taskSourceReadGuard: context.taskSourceReadGuard,
                 host: context.host,
                 signal: context.signal,
                 outerToolDeadlineAt: context.outerToolDeadlineAt,

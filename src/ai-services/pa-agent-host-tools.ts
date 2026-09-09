@@ -43,6 +43,7 @@ import {
 import type { ChatMemoryRecoveryCoordinator } from "./retrieval-recovery-coordinator";
 import type { ProviderRequestScope } from "./obsidian-fetch";
 import { stableStringify } from "./agent-utils";
+import { assertTaskSourceReadCurrent, type TaskSourceReadGuard } from "./task-source-read-guard";
 
 const MAX_PREVIEW_CHARS = 1200;
 
@@ -58,6 +59,7 @@ export interface PaAgentCapabilityToolExecutorOptions {
     memoryRecoveryCoordinator?: ChatMemoryRecoveryCoordinator;
     /** Shared by every Provider request in one logical Agent run. */
     providerRequestScope?: ProviderRequestScope;
+    getMemoryRequestDiagnostic?: (turnId: string) => import("./memory-search-tool").MemorySearchRequestDiagnostic;
     /** Run-owned lifetime for detached DEC-028 Memory preparation. */
     memoryPreparationOwnerSignal?: AbortSignal;
     revalidateMemorySearch?: (
@@ -65,6 +67,7 @@ export interface PaAgentCapabilityToolExecutorOptions {
         signal?: AbortSignal,
         temporalFilter?: MemoryTemporalFilter | null,
         temporalAudit?: MemoryTemporalProjectionAudit,
+        taskSourceReadGuard?: TaskSourceReadGuard,
     ) => Promise<MemorySearchResult>;
 }
 
@@ -73,6 +76,7 @@ interface RegisteredMemoryEvidence {
     turnId: string;
     result: Omit<ChatToolResult<MemorySearchResult>, "content"> & { content: MemorySearchResult };
     temporalFilter: MemoryTemporalFilter | null;
+    taskSourceReadGuard?: TaskSourceReadGuard;
 }
 
 interface MemoryEvidenceCollision {
@@ -95,6 +99,7 @@ export class MemoryEvidenceRegistry {
         result: MemorySearchResult,
         signal?: AbortSignal,
         temporalFilter?: MemoryTemporalFilter | null,
+        taskSourceReadGuard?: TaskSourceReadGuard,
     ) => Promise<MemorySearchResult>) { }
 
     capture(
@@ -102,6 +107,7 @@ export class MemoryEvidenceRegistry {
         result: ChatToolResult<unknown>,
         turnId: string,
         temporalFilter: MemoryTemporalFilter | null = null,
+        taskSourceReadGuard?: TaskSourceReadGuard,
     ): MemoryEvidenceCaptureOutcome {
         if (toolCall.name !== "search_memory") return { status: "ignored" };
         if (this.seenToolCallIds.has(toolCall.id)) {
@@ -122,6 +128,7 @@ export class MemoryEvidenceRegistry {
             turnId,
             result: result as Omit<ChatToolResult<MemorySearchResult>, "content"> & { content: MemorySearchResult },
             temporalFilter: cloneMemoryTemporalFilter(temporalFilter),
+            ...(taskSourceReadGuard ? { taskSourceReadGuard } : {}),
         });
         return { status: "captured" };
     }
@@ -153,11 +160,14 @@ export class MemoryEvidenceRegistry {
                 current = createUnavailableMemoryObservationResult(registered.result.content.query);
             } else {
                 try {
+                    assertTaskSourceReadCurrent(registered.taskSourceReadGuard);
                     current = await this.revalidate(
                         registered.result.content,
                         signal,
                         cloneMemoryTemporalFilter(registered.temporalFilter),
+                        ...(registered.taskSourceReadGuard ? [registered.taskSourceReadGuard] : []),
                     );
+                    assertTaskSourceReadCurrent(registered.taskSourceReadGuard);
                 } catch {
                     if (signal?.aborted) throw createAbortError();
                     current = createUnavailableMemoryObservationResult(registered.result.content.query);
@@ -481,6 +491,7 @@ export function createPaAgentCapabilityToolExecutor(
             return options.registry.get(toolName)?.executionMode;
         },
         execute: async (input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult> => {
+            assertTaskSourceReadCurrent(input.taskSourceReadGuard);
             // SPEC-TCR-04: removed cross-cutting normalizeHostToolCallInput dispatch.
             // Per-tool prepareArguments hooks in chat-tools.ts now handle alias mapping;
             // CapabilityRegistry.prepareAndValidate runs prepareArguments + validateInput.
@@ -515,24 +526,30 @@ export function createPaAgentCapabilityToolExecutor(
                     },
                 };
             }
-            const executeCapability = (signal: AbortSignal, hidden = false) => options.registry.execute(
-                toolCall.name,
-                preparedResult.input,
-                {
-                    host: options.host,
-                    turnId: input.turnId,
-                    signal,
-                    outerToolDeadlineAt: input.outerToolDeadlineAt,
-                    providerRequestScope: options.providerRequestScope,
-                    platform: options.platform ?? "desktop",
-                    ...(!hidden && options.onBeforeVssSearch
-                        ? { onBeforeVssSearch: options.onBeforeVssSearch }
-                        : {}),
-                    ...(!hidden && options.onToolRunning
-                        ? { onToolRunning: options.onToolRunning }
-                        : {}),
-                },
-            );
+            const executeCapability = async (signal: AbortSignal, hidden = false) => {
+                assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+                const result = await options.registry.execute(
+                    toolCall.name,
+                    preparedResult.input,
+                    {
+                        taskSourceReadGuard: input.taskSourceReadGuard,
+                        host: options.host,
+                        turnId: input.turnId,
+                        signal,
+                        outerToolDeadlineAt: input.outerToolDeadlineAt,
+                        providerRequestScope: options.providerRequestScope,
+                        platform: options.platform ?? "desktop",
+                        ...(!hidden && options.onBeforeVssSearch
+                            ? { onBeforeVssSearch: options.onBeforeVssSearch }
+                            : {}),
+                        ...(!hidden && options.onToolRunning
+                            ? { onToolRunning: options.onToolRunning }
+                            : {}),
+                    },
+                );
+                assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+                return result;
+            };
             const memoryQuery = toolCall.name === "search_memory"
                 && preparedResult.input
                 && typeof preparedResult.input === "object"
@@ -559,6 +576,7 @@ export function createPaAgentCapabilityToolExecutor(
                                 runEpoch: attempt.runEpoch,
                                 absoluteDeadlineMs: attempt.absoluteDeadlineMs,
                                 providerRequestScope: options.providerRequestScope,
+                                providerRequestDiagnostic: options.getMemoryRequestDiagnostic?.(input.turnId),
                                 memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal,
                             })
                             : createRelaxedMemorySearchInvocation(attempt.seed, {
@@ -566,6 +584,7 @@ export function createPaAgentCapabilityToolExecutor(
                                 runEpoch: attempt.runEpoch,
                                 absoluteDeadlineMs: attempt.absoluteDeadlineMs,
                                 providerRequestScope: options.providerRequestScope,
+                                providerRequestDiagnostic: options.getMemoryRequestDiagnostic?.(input.turnId),
                                 memoryPreparationOwnerSignal: options.memoryPreparationOwnerSignal,
                             });
                         return runWithMemorySearchInvocation(
@@ -580,15 +599,18 @@ export function createPaAgentCapabilityToolExecutor(
                             signal,
                             temporalFilter,
                             temporalAudit,
+                            ...(input.taskSourceReadGuard ? [input.taskSourceReadGuard] : []),
                         )
                     ),
                 })
                 : await executeCapability(input.signal);
+            assertTaskSourceReadCurrent(input.taskSourceReadGuard);
             const memoryCapture = options.memoryEvidenceRegistry?.capture(
                 toolCall,
                 result,
                 input.turnId,
                 temporalFilterCapture.temporalFilter ?? null,
+                ...(input.taskSourceReadGuard ? [input.taskSourceReadGuard] : []),
             );
             const canonicalResult = chatToolResultToPaAgentToolExecutionResult(
                 toolCall,

@@ -1,4 +1,5 @@
 import { toolConstraintsFromAgentControlSnapshot } from "../pa-agent-control-policy";
+import { assertTaskSourceReadCurrent } from "../task-source-read-guard";
 import { isAllowedHostToolCall } from "../pa-agent-host-tools";
 import type {
     PaAgentToolBatchPreparationInput,
@@ -41,6 +42,7 @@ export function createOperationsStagingToolExecutor(
     options: OperationsStagingToolExecutorOptions,
 ): PaAgentToolExecutor {
     return {
+        preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
         getCanonicalToolCallKey: (toolCall, context) => (
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),
@@ -74,7 +76,21 @@ async function prepareOperationsBatch(
     options: OperationsStagingToolExecutorOptions,
     input: PaAgentToolBatchPreparationInput,
 ): Promise<PaAgentToolBatchPreparationResult> {
+    const scopeRejection = (): PaAgentToolBatchPreparationResult | undefined => {
+        try {
+            assertTaskSourceReadCurrent(input.taskSourceReadGuard);
+            return undefined;
+        } catch {
+            return { toolResults: new Map(input.toolCalls.map(call => [
+                call.id, rejectedResult(call.name, "task_source_scope_changed"),
+            ])) };
+        }
+    };
+    const rejectedBefore = scopeRejection();
+    if (rejectedBefore) return rejectedBefore;
     const baseResult = await options.baseExecutor.prepareBatch?.(input);
+    const rejectedAfter = scopeRejection();
+    if (rejectedAfter) return rejectedAfter;
     const toolResults = new Map(baseResult?.toolResults ?? []);
     const actionCalls = input.toolCalls.filter((toolCall) => {
         const capability = options.registry.get(toolCall.name);
@@ -162,6 +178,7 @@ async function prepareOperationsBatch(
                 runId: input.runId,
                 turnId: input.turnId,
                 operations: preparedOperations,
+                ...(input.taskSourceReadGuard ? { taskSourceReadGuard: input.taskSourceReadGuard } : {}),
             },
             input.signal,
         );

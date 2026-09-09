@@ -71,6 +71,7 @@ import { isNewWritingTopicPrompt, isWritingContinuationPrompt, isWritingRequestP
 import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal, newWritingActionId, type WritingModalHost } from './writing-modal';
 import { mergeWritingImages, type WritingVersion } from './writing-types';
 import { inferWritingScene } from './writing-style-service';
+import { ChatImageRequestError } from '../ai-services/image-capability';
 
 export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
@@ -118,6 +119,10 @@ function isShareCardEligibleAssistant(message: ChatMessage): boolean {
         && message.content.trim().length > 0
         && message.shareCardEligible !== false
         && isCompletedShareCardStatus(message.canonicalTurn?.status, message.runtimeWarnings);
+}
+
+function isInterruptedAssistant(message: ChatMessage): boolean {
+    return message.runtimeWarnings?.some((warning) => warning.type === 'partial_output_error' || warning.type === 'user_abort') ?? false;
 }
 
 function uniquePageletVaultSources(context: PageletChatHandoffContext): string[] {
@@ -2060,8 +2065,11 @@ export class LLMView extends ItemView {
             state.nextRenderAfterMs = undefined;
             const inFlightPromise = state.inFlightPromise;
             if (!inFlightPromise || state.inFlightContent !== finalContent) return true;
-            const renderedLive = await inFlightPromise;
-            return renderedLive && isLive();
+            await inFlightPromise;
+            // A cancelled live render may be discarded while recovery still
+            // owns this turn. Let the finalizer render again under its own
+            // currentness guard instead of treating the old result as failure.
+            return isLive();
         };
         const cancelPendingLiveMarkdownRender = (rendered?: RenderedMessage) => {
             if (!rendered) return;
@@ -2174,6 +2182,13 @@ export class LLMView extends ItemView {
         };
         const renderWritingActions = (rendered: RenderedMessage, message: ChatMessage) => {
             rendered.writingButton?.remove(); rendered.writingButton = undefined;
+            rendered.writingRecoveryNotice?.remove(); rendered.writingRecoveryNotice = undefined;
+            if (message.writingRecovery && !message.writingVersionId && message.content !== t('plugin.chat.writing.recoveryHint')) {
+                rendered.writingRecoveryNotice = rendered.messageDiv.createEl('p', {
+                    cls: 'pa-chat-writing-recovery-notice', text: t('plugin.chat.writing.recoveryHint'),
+                    attr: { role: 'status' },
+                });
+            }
             const host = writingModalHost();
             if (!host || (!message.writingVersionId && !message.writingRecovery)) return;
             const button = createMessageActionButton(rendered.actionDiv, {
@@ -2659,7 +2674,7 @@ export class LLMView extends ItemView {
                     createMessageElement(entry.assistant, {
                         forceScroll,
                         onDelete: () => deleteHistoryPair(pairStart + 1),
-                        onAddToEditor: (content) => addContentToEditor(content),
+                        onAddToEditor: isInterruptedAssistant(entry.assistant) ? undefined : (content) => addContentToEditor(content),
                         onShareAsCard: isShareCardEligibleAssistant(entry.assistant)
                             ? (content, sourcePath) => {
                                 new ShareCardModal(this.app, {
@@ -2682,7 +2697,7 @@ export class LLMView extends ItemView {
                 );
                 createTerminalRow(entry);
             });
-            const lastAssistant = [...this.chatHistory].reverse().find((message) => message.role === 'assistant');
+            const lastAssistant = [...this.chatHistory].reverse().find((message) => message.role === 'assistant' && !isInterruptedAssistant(message));
             this.result = lastAssistant?.content ?? '';
             renderEmptyState();
         };
@@ -3095,6 +3110,15 @@ export class LLMView extends ItemView {
         };
 
 
+        const recordUserCancellation = (turn: UiTurn, turnId = turn.canonicalLifecycle.currentTurnId) => {
+            turn.canonicalLifecycle.terminalStatus = 'aborted';
+            if (turnId) {
+                turn.canonicalLifecycle.turnStatuses.set(turnId, 'aborted');
+                turn.canonicalLifecycle.finalTurnId = turnId;
+            }
+            addCanonicalRuntimeWarnings(turn, [{ type: 'user_abort', message: t('plugin.chat.notice.generationCancelled') }]);
+        };
+
         const addCanonicalHostContextMetadata = (turn: UiTurn, hostContext: unknown, turnId: string) => {
             if (!hostContext || typeof hostContext !== 'object') return;
             const record = hostContext as Record<string, unknown>;
@@ -3407,6 +3431,15 @@ export class LLMView extends ItemView {
             const userRendered = turn.userMessage;
             const assistantRendered = turn.assistantMessage;
             if (!userRendered || !assistantRendered) return false;
+            // Persist the same interruption fact used by live actions so a
+            // resolved partial/recovery response cannot become complete on reopen.
+            if (sawLegacyPartialFailure && !isInterruptedAssistant({
+                role: 'assistant', content: responseContent, runtimeWarnings: turn.canonicalLifecycle.warnings,
+            })) {
+                addCanonicalRuntimeWarnings(turn, [{
+                    type: 'partial_output_error', message: t('plugin.chat.terminal.answerStoppedEarly'),
+                }]);
+            }
             const canonicalTurn = persistCanonicalTurnFromLifecycle(turn, responseContent);
             refreshTurnMetadataFromCanonical(turn, canonicalTurn);
 
@@ -3480,7 +3513,7 @@ export class LLMView extends ItemView {
                 providerReasoningObserved: turn.providerReasoningObserved,
             };
             timelineEntries.push(historyEntry);
-            this.result = responseContent;
+            if (!sawLegacyPartialFailure) this.result = responseContent;
             readConversationImageAnchor();
             const persisted = await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry,
                 turn.writingArtifact && this.host.writingVersions ? async (context) => {
@@ -3500,7 +3533,7 @@ export class LLMView extends ItemView {
                 } : undefined,
             );
             if (turn.writingRequestId && !persisted && isCurrentSession()) new Notice(t('plugin.chat.writing.historyUnavailable'), 12000);
-            if (!turn.writingRequestId) await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
+            if (!turn.writingRequestId && !sawLegacyPartialFailure) await maybeRenderOperationsSaveSuggestion(turn, prompt, responseContent);
             renderWritingActions(assistantRendered, assistantMessage);
 
             const deleteCompletedPair = () => deleteHistoryPairForMessages(userMessage, assistantMessage);
@@ -3510,7 +3543,7 @@ export class LLMView extends ItemView {
             });
             ensureCompletedMessageActions(assistantRendered, {
                 onDelete: deleteCompletedPair,
-                onAddToEditor: (content) => addContentToEditor(content),
+                onAddToEditor: sawLegacyPartialFailure ? undefined : (content) => addContentToEditor(content),
                 onShareAsCard: isShareCardEligibleAssistant(assistantMessage)
                     ? (content, sourcePath) => {
                         new ShareCardModal(this.app, {
@@ -3620,6 +3653,7 @@ export class LLMView extends ItemView {
             const controller = new AbortController();
             this.abortController = controller;
             this.renderPageletHandoffForOpenView?.();
+            let acceptingStreamEvents = true;
             const isLiveTurn = () => this.isCurrentTurn(sessionId, turnId, controller);
             const isSameTurn = () => this.isCurrentTurn(sessionId, turnId, controller, { includeCancelled: true });
             const modelHistory = this.chatHistory.map((message) => ({ ...message }));
@@ -3676,17 +3710,17 @@ export class LLMView extends ItemView {
                 );
 
                 const handleStatus = (status: ChatAgentStatus) => {
-                    if (!isLiveTurn()) return;
+                    if (!acceptingStreamEvents || !isLiveTurn()) return;
                     if (turn.canonicalLifecycle.active) return;
                     renderAgentStatus(turn, status);
                 };
                 const handleProviderReasoning = (chunk: string) => {
-                    if (!isLiveTurn()) return;
+                    if (!acceptingStreamEvents || !isLiveTurn()) return;
                     if (turn.canonicalLifecycle.active) return;
                     appendProviderReasoning(turn, chunk);
                 };
                 const handleTurnMetadata = (metadata: ChatTurnMemoryMetadata) => {
-                    if (!isLiveTurn()) return;
+                    if (!acceptingStreamEvents || !isLiveTurn()) return;
                     if (turn.canonicalLifecycle.active) return;
                     turn.memoryMetadata = metadata;
                     addContextUsedItems(turn, metadata.contextUsed ?? []);
@@ -3722,7 +3756,7 @@ export class LLMView extends ItemView {
                 await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
-                        if (!isLiveTurn()) return;
+                        if (!acceptingStreamEvents || !isLiveTurn()) return;
                         if (turn.canonicalLifecycle.active) return;
                         updateResponseContent(chunk);
                     },
@@ -3742,22 +3776,39 @@ export class LLMView extends ItemView {
                         writingMaterialContext: turn.writingMaterialContext,
                         pageletHandoff: turnPageletHandoff ?? undefined,
                         onOperationsIntentStaged: (intent) => {
-                            if (!isLiveTurn() || !turn.assistantMessage) return;
+                            if (!acceptingStreamEvents || !isLiveTurn() || !turn.assistantMessage) return;
                             const handle = renderOperationsIntentCard(turn.assistantMessage, intent);
                             if (handle) operationsCardHandles.push(handle);
                         },
                         onLifecycleEvent: (event) => {
+                            if (!acceptingStreamEvents) return;
+                            if (!isLiveTurn() && isSameTurn() && controller.signal.aborted
+                                && event.runId === turn.canonicalLifecycle.runId
+                                && (event.type === 'turn_end' || event.type === 'agent_end')) {
+                                // Retain terminal status only; cancelled callbacks
+                                // cannot append text, tool results or source metadata.
+                                recordUserCancellation(turn, event.type === 'turn_end' ? event.turnId : undefined);
+                                return;
+                            }
                             handleCanonicalLifecycleEvent(turn, event, writingRequest ? () => undefined : updateResponseContent, isLiveTurn);
                         },
                         onStatus: handleStatus,
                         onReasoningChunk: handleProviderReasoning,
                         onTurnMetadata: handleTurnMetadata,
                         onEvent: (event) => {
+                            if (!acceptingStreamEvents) return;
+                            if (event.kind === 'writing-preview') {
+                                if (!isLiveTurn() || event.requestId !== writingRequest?.requestId) return;
+                                updateResponseContent(event.text);
+                                return;
+                            }
                             if (event.kind === 'writing-artifact') {
                                 if (!isLiveTurn() || event.requestId !== writingRequest?.requestId) return;
                                 turn.writingMaterials = mergeChatImageMaterials(event.associatedImages ?? [], turn.writingMaterials ?? []);
                                 turn.writingArtifact = event;
-                                updateResponseContent(event.body);
+                                // The chat reply includes ordinary explanation;
+                                // version creation below still uses exact body only.
+                                updateResponseContent(event.preamble ? `${event.preamble}\n\n${event.body}` : event.body);
                                 return;
                             }
                             if (event.kind === 'writing-recovery') {
@@ -3765,7 +3816,11 @@ export class LLMView extends ItemView {
                                 turn.writingMaterials = mergeChatImageMaterials(event.associatedImages ?? [], turn.writingMaterials ?? []);
                                 turn.writingRecovery = { requestId: event.requestId, messageId: event.messageId,
                                     rawText: event.rawText, reason: event.reason };
-                                if (isLiveTurn()) updateResponseContent(t('plugin.chat.writing.recoveryHint'));
+                                turn.writingRecoveryText = event.reason !== 'source_changed' && event.previewText
+                                    ? event.previewText : t('plugin.chat.writing.recoveryHint');
+                                sawLegacyPartialFailure = true;
+                                delete turn.writingArtifact;
+                                if (isLiveTurn()) updateResponseContent(turn.writingRecoveryText);
                                 return;
                             }
                             if (event.kind === 'partial-output-error' || event.kind === 'aborted') {
@@ -3836,29 +3891,56 @@ export class LLMView extends ItemView {
             } catch (error) {
                 for (const handle of operationsCardHandles) handle.discard();
                 if (!isSameTurn()) return;
+                // Recovery may await rendering and persistence. Close callbacks
+                // now, while isSameTurn still permits that recovery to finish.
+                acceptingStreamEvents = false;
                 if (turn.writingRecovery) {
                     // A terminal failure may retain raw output for explicit recovery,
                     // but can never commit the earlier candidate as a writing version.
                     delete turn.writingArtifact;
+                    if (controller.signal.aborted) recordUserCancellation(turn);
                     isFinalizing = true;
                     syncComposerControls();
-                    await finalizeSuccessfulTurn(turn, prompt, t('plugin.chat.writing.recoveryHint'), isSameTurn, true);
+                    await finalizeSuccessfulTurn(turn, prompt, turn.writingRecoveryText ?? t('plugin.chat.writing.recoveryHint'), isSameTurn, true);
                 } else if (error instanceof DOMException && error.name === 'AbortError') {
-                    createTerminalEntry(turn, t("plugin.chat.notice.generationCancelled"), 'cancelled');
-                    this.result = previousResult;
+                    const receivedText = !turn.writingRequestId && controller.signal.aborted
+                        ? turn.assistantMessage?.copyContent : undefined;
+                    if (receivedText) {
+                        recordUserCancellation(turn);
+                        isFinalizing = true;
+                        syncComposerControls();
+                        await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
+                    } else {
+                        createTerminalEntry(turn, t("plugin.chat.notice.generationCancelled"), 'cancelled');
+                        this.result = previousResult;
+                    }
                 } else {
                     const localOverflow = error instanceof PaAgentContextOverflowError || turn.canonicalLifecycle.warnings.some(
                         (warning) => warning.type === 'context_local_overflow',
                     );
-                    createTerminalEntry(
-                        turn,
-                        localOverflow
-                            ? t('plugin.chat.formatter.warningContextTooLongDetail')
-                            : t("plugin.chat.terminal.answerDidNotFinish"),
-                        'error',
-                        localOverflow ? undefined : String(error),
-                    );
-                    this.result = previousResult;
+                    const failureMessage = localOverflow
+                        ? t('plugin.chat.formatter.warningContextTooLongDetail')
+                        : t("plugin.chat.terminal.answerDidNotFinish");
+                    // A transport/runtime failure does not erase text already
+                    // delivered. Keep explicit image/source invalidation fail-closed.
+                    const sourceInvalidated = error instanceof ChatImageRequestError && error.code !== 'provider_failed';
+                    const receivedText = !turn.writingRequestId && !sourceInvalidated
+                        ? turn.assistantMessage?.copyContent : undefined;
+                    if (receivedText) {
+                        turn.canonicalLifecycle.terminalStatus = 'error';
+                        const canonicalTurnId = turn.canonicalLifecycle.currentTurnId;
+                        if (canonicalTurnId) {
+                            turn.canonicalLifecycle.turnStatuses.set(canonicalTurnId, 'error');
+                            turn.canonicalLifecycle.finalTurnId = canonicalTurnId;
+                        }
+                        addCanonicalRuntimeWarnings(turn, [{ type: 'partial_output_error', message: failureMessage }]);
+                        isFinalizing = true;
+                        syncComposerControls();
+                        await finalizeSuccessfulTurn(turn, prompt, receivedText, isSameTurn, true);
+                    } else {
+                        createTerminalEntry(turn, failureMessage, 'error', localOverflow ? undefined : String(error));
+                        this.result = previousResult;
+                    }
                 }
                 if (sentDraft) {
                     const restoredText = composerDraft.restore(sentDraft, textArea.value);

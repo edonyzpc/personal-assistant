@@ -32,6 +32,7 @@ import type {
     VaultTagsOutput,
 } from "./chat-tool-types";
 import { OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS } from "./chat-tool-types";
+import { assertTaskSourceReadCurrent, isTaskSourcePathAllowed, type TaskSourceReadGuard } from "./task-source-read-guard";
 import {
     CANVAS_MAX_READ_BYTES,
     CURRENT_NOTE_CONTENT_BUDGET_CHARS,
@@ -345,7 +346,7 @@ function prepareReadCanvasSummaryArguments(raw: unknown, _ctx: PrepareToolArgume
 }
 
 export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteContextInput, CurrentNoteContextOutput> {
-    return {
+    return withTaskSourceReadBoundary({
         name: "get_current_note_context",
         description: "Read the active Markdown note title, path, selection, nearby text, or outline.",
         plannerGuidance: [
@@ -390,7 +391,30 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
             }
 
             const file = view.file;
-            const editor = view.editor;
+            if (!isTaskSourcePathAllowed(context.taskSourceReadGuard, file.path)) {
+                return createToolFailureResult("get_current_note_context", "excluded path",
+                    "The current note was not available in the permitted task scope.");
+            }
+            const editor = view.editor && context.taskSourceReadGuard
+                ? new Proxy(view.editor, {
+                    get(target, key, receiver) {
+                        const assertEditorCurrent = () => {
+                            assertTaskSourceReadCurrent(context.taskSourceReadGuard);
+                            if (view.file?.path !== file.path || !isTaskSourcePathAllowed(context.taskSourceReadGuard, file.path)) {
+                                throw new Error("Current editor is outside the permitted task scope.");
+                            }
+                        };
+                        assertEditorCurrent();
+                        const value = Reflect.get(target, key, receiver);
+                        if (typeof value !== "function") return value;
+                        return (...args: unknown[]) => {
+                            assertEditorCurrent();
+                            const result: unknown = value.apply(target, args);
+                            assertEditorCurrent();
+                            return result;
+                        };
+                    },
+                }) : view.editor;
             const output: CurrentNoteContextOutput = {
                 path: file.path,
                 title: getFileTitle(file),
@@ -433,13 +457,13 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
             applyOutline(output, extractHeadingsFromEditor(editor));
             return createCurrentNoteResult("nearby", output, source);
         },
-    };
+    });
 }
 
 export function createSearchVaultMetadataTool(
     options: VaultToolPathFilterOptions = {},
 ): ChatToolDefinition<SearchVaultMetadataInput, SearchVaultMetadataOutput> {
-    return {
+    return withTaskSourceReadBoundary({
         name: "search_vault_metadata",
         description: "Search Markdown note filenames, paths, tags, and frontmatter metadata.",
         plannerGuidance: [
@@ -492,13 +516,13 @@ export function createSearchVaultMetadataTool(
                 sources: matches.map((match) => ({ path: match.path })),
             };
         },
-    };
+    }, options);
 }
 
 export function createListRecentNotesTool(
     options: VaultToolPathFilterOptions = {},
 ): ChatToolDefinition<ListRecentNotesInput, ListRecentNotesOutput> {
-    return {
+    return withTaskSourceReadBoundary({
         name: "list_recent_notes",
         description: "List recently modified or created Markdown notes.",
         plannerGuidance: [
@@ -537,7 +561,13 @@ export function createListRecentNotesTool(
             const statKey = input.order === "created" ? "ctime" : "mtime";
             const notes = getMarkdownFiles(context.host)
                 .filter((file) => isAllowedPath(file.path, options.isPathAllowed))
-                .map(fileToRecentNote)
+                .map((file) => {
+                    assertTaskSourceReadCurrent(context.taskSourceReadGuard);
+                    if (!isTaskSourcePathAllowed(context.taskSourceReadGuard, file.path)) {
+                        throw new Error("Recent note is outside the permitted task scope.");
+                    }
+                    return fileToRecentNote(file);
+                })
                 .sort((a, b) => (b[statKey] ?? 0) - (a[statKey] ?? 0) || a.path.localeCompare(b.path))
                 .slice(0, input.limit);
 
@@ -549,13 +579,13 @@ export function createListRecentNotesTool(
                 sources: notes.map((note) => ({ path: note.path })),
             };
         },
-    };
+    }, options);
 }
 
 export function createReadNoteOutlineTool(
     options: VaultToolPathFilterOptions = {},
 ): ChatToolDefinition<ReadNoteOutlineInput, ReadNoteOutlineOutput> {
-    return {
+    return withTaskSourceReadBoundary({
         name: "read_note_outline",
         description: "Read the heading outline for a specific Markdown note path.",
         plannerGuidance: [
@@ -628,7 +658,7 @@ export function createReadNoteOutlineTool(
                 sources: [{ path: file.path }],
             };
         },
-    };
+    }, options);
 }
 
 export function createInspectObsidianNoteTool(
@@ -636,7 +666,7 @@ export function createInspectObsidianNoteTool(
 ): ChatToolDefinition<InspectObsidianNoteInput, InspectObsidianNoteOutput> {
     const allowActiveNoteFallback = options.allowActiveNoteFallback ?? true;
     const hasHostFallback = Boolean(options.fallbackPath);
-    return {
+    return withTaskSourceReadBoundary({
         name: "inspect_obsidian_note",
         description: "Read a bounded Obsidian Markdown note structure summary.",
         plannerGuidance: buildV1APlannerGuidance(["markdown", "safety"], [
@@ -685,7 +715,8 @@ export function createInspectObsidianNoteTool(
             const activeFile = !requestedPath && allowActiveNoteFallback
                 ? findCurrentMarkdownView(context.host.app.workspace)?.file ?? null
                 : null;
-            if (activeFile && !isAllowedPath(activeFile.path, options.isPathAllowed)) {
+            if (activeFile && (!isAllowedPath(activeFile.path, options.isPathAllowed)
+                || !isTaskSourcePathAllowed(context.taskSourceReadGuard, activeFile.path))) {
                 return createToolFailureResult(
                     "inspect_obsidian_note",
                     "excluded path",
@@ -733,11 +764,11 @@ export function createInspectObsidianNoteTool(
                 sources: [{ path: file.path }],
             };
         },
-    };
+    }, options);
 }
 
 export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSummaryInput, ReadCanvasSummaryOutput> {
-    return {
+    return withTaskSourceReadBoundary({
         name: "read_canvas_summary",
         description: "Read a bounded JSON Canvas structure summary.",
         plannerGuidance: buildV1APlannerGuidance(["canvas", "safety"], [
@@ -809,13 +840,13 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
                 sources: [{ path: file.path }],
             };
         },
-    };
+    });
 }
 
 export function createSearchVaultSnippetsTool(
     options: VaultToolPathFilterOptions = {},
 ): ChatToolDefinition<SearchVaultSnippetsInput, VaultSnippetSearchOutput> {
-    return {
+    return withTaskSourceReadBoundary({
         name: "search_vault_snippets",
         description: "Search bounded Markdown snippets in the vault.",
         plannerGuidance: buildV1APlannerGuidance(["markdown", "safety"], [
@@ -885,6 +916,40 @@ export function createSearchVaultSnippetsTool(
                 sources: result.matches.map((match) => ({ path: match.path })),
             };
         },
+    }, options);
+}
+
+/** Bind the tool's real read methods to this call's Host-owned source lifetime. */
+function withTaskSourceReadBoundary<Input, Output>(
+    definition: ChatToolDefinition<Input, Output>,
+    options: VaultToolPathFilterOptions = {},
+): ChatToolDefinition<Input, Output> {
+    const execute = definition.execute;
+    return {
+        ...definition,
+        execute: async (input, context) => {
+            const guard = context.taskSourceReadGuard;
+            if (!guard) return execute(input, context);
+            assertTaskSourceReadCurrent(guard);
+            const admittedPaths = new Set<string>();
+            const host = createPathFilteredHost(context.host,
+                (path) => {
+                    const allowed = isAllowedPath(path, options.isPathAllowed) && isTaskSourcePathAllowed(guard, path);
+                    if (allowed) admittedPaths.add(path);
+                    return allowed;
+                }, guard);
+            const result = await execute(input, { ...context, host });
+            assertTaskSourceReadCurrent(guard);
+            for (const path of admittedPaths) {
+                if (!isAllowedPath(path, options.isPathAllowed) || !isTaskSourcePathAllowed(guard, path)) {
+                    throw new Error("Task source path is no longer permitted.");
+                }
+            }
+            for (const source of result.sources ?? []) {
+                if (!isTaskSourcePathAllowed(guard, source.path)) throw new Error("Task source path is no longer permitted.");
+            }
+            return result;
+        },
     };
 }
 
@@ -923,7 +988,12 @@ function normalizeContentCharLimit(value: number | undefined): number {
 function createPathFilteredHost(
     host: ChatToolContext["host"],
     isPathAllowed: (path: string) => boolean,
+    guard?: TaskSourceReadGuard,
 ): ChatToolContext["host"] {
+    const assertAllowed = (path: string) => {
+        assertTaskSourceReadCurrent(guard);
+        if (!isAllowedPath(path, isPathAllowed)) throw new Error("Vault path is outside the permitted scope.");
+    };
     const sourceVault = host.app.vault as unknown as {
         getMarkdownFiles?: () => Array<{ path: string }>;
         getAbstractFileByPath?: (path: string) => unknown;
@@ -934,21 +1004,30 @@ function createPathFilteredHost(
         getAbstractFileByPath: (path: string) => unknown;
         cachedRead?: (file: { path: string }) => Promise<string>;
     } = {
-        getMarkdownFiles: () => (sourceVault.getMarkdownFiles?.() ?? [])
-            .filter((file) => isAllowedPath(file.path, isPathAllowed)),
+        getMarkdownFiles: () => {
+            assertTaskSourceReadCurrent(guard);
+            const files = (sourceVault.getMarkdownFiles?.() ?? [])
+                .filter((file) => isAllowedPath(file.path, isPathAllowed));
+            assertTaskSourceReadCurrent(guard);
+            return files;
+        },
         getAbstractFileByPath: (path: string) => {
+            assertTaskSourceReadCurrent(guard);
             const normalized = normalizeBoundaryPath(path);
-            return normalized && isAllowedPath(normalized, isPathAllowed)
+            const file = normalized && isAllowedPath(normalized, isPathAllowed)
                 ? sourceVault.getAbstractFileByPath?.(normalized) ?? null
                 : null;
+            assertTaskSourceReadCurrent(guard);
+            if (file && typeof file === "object" && "path" in file) assertAllowed(String(file.path));
+            return file;
         },
     };
     if (typeof sourceVault.cachedRead === "function") {
         filteredVault.cachedRead = async (file: { path: string }) => {
-            if (!isAllowedPath(file.path, isPathAllowed)) {
-                throw new Error("Vault path is outside the permitted scope.");
-            }
-            return await sourceVault.cachedRead?.(file) ?? "";
+            assertAllowed(file.path);
+            const content = await sourceVault.cachedRead?.(file) ?? "";
+            assertAllowed(file.path);
+            return content;
         };
     }
     const filteredApp = Object.create(host.app) as ChatToolContext["host"]["app"];
@@ -957,6 +1036,37 @@ function createPathFilteredHost(
         enumerable: true,
         value: filteredVault,
     });
+    if (guard) {
+        const metadata = getOptionalMetadataCache(host);
+        if (metadata) {
+            const filteredMetadata = Object.create(metadata) as typeof metadata;
+            if (typeof metadata.getFileCache === "function") {
+                Object.defineProperty(filteredMetadata, "getFileCache", { value: (file: Parameters<NonNullable<typeof metadata.getFileCache>>[0]) => {
+                    assertAllowed(file.path);
+                    const cache = metadata.getFileCache!(file);
+                    assertAllowed(file.path);
+                    return cache;
+                } });
+            }
+            for (const name of ["resolvedLinks", "unresolvedLinks"] as const) {
+                Object.defineProperty(filteredMetadata, name, { get: () => {
+                    assertTaskSourceReadCurrent(guard);
+                    const source = metadata[name];
+                    if (!source) return source;
+                    const links: Record<string, Record<string, number>> = Object.create(null);
+                    // Enumerate paths, but never inspect the link facts of an excluded source.
+                    for (const path of Object.keys(source)) {
+                        if (!isAllowedPath(path, isPathAllowed)) continue;
+                        assertAllowed(path);
+                        links[path] = source[path];
+                    }
+                    assertTaskSourceReadCurrent(guard);
+                    return links;
+                } });
+            }
+            Object.defineProperty(filteredApp, "metadataCache", { value: filteredMetadata });
+        }
+    }
     const filteredHost = Object.create(host) as ChatToolContext["host"];
     Object.defineProperty(filteredHost, "app", {
         configurable: true,
@@ -967,7 +1077,7 @@ function createPathFilteredHost(
 }
 
 export function createListVaultTagsTool(): ChatToolDefinition<ListVaultTagsInput, VaultTagsOutput> {
-    return {
+    return withTaskSourceReadBoundary({
         name: "list_vault_tags",
         description: "List vault tag counts and representative note paths.",
         plannerGuidance: buildV1APlannerGuidance(["markdown", "safety"], [
@@ -1006,5 +1116,5 @@ export function createListVaultTagsTool(): ChatToolDefinition<ListVaultTagsInput
                 sources: [],
             };
         },
-    };
+    });
 }

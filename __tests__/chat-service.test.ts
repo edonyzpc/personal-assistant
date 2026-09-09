@@ -104,6 +104,12 @@ function createInvokeModel(content: unknown, onInput?: (input: unknown) => void)
     return model;
 }
 
+/** Each caller supplies the current user's actual request and proposed boundary. */
+function scopeDeclarationChunk(instructionQuote: string, notes: 'vault' | 'current_note' | 'none', webAllowed = false) {
+    return { index: 1, id: 'scope-declaration', name: 'declare_source_scope',
+        args: JSON.stringify({ instructionQuote, notes, webAllowed }) };
+}
+
 function createNativeToolPlanningModel(
     response: unknown,
     callbacks: {
@@ -145,6 +151,23 @@ function createStreamChunksModel(chunks: unknown[], onInput?: (input: Record<str
             for (const chunk of chunks) {
                 yield chunk;
             }
+        }),
+    };
+    return model;
+}
+
+function createNoWebDeclarationModel(quote: string, notes: 'vault' | 'none', onInput?: (input: Record<string, string>) => void) {
+    let turn = 0;
+    const model = {
+        bindTools: jest.fn(() => model),
+        stream: jest.fn(async function* (input: Record<string, string>) {
+            onInput?.(input);
+            if (turn++ === 0) {
+                yield { tool_call_chunks: [
+                    { index: 0, id: 'forbidden-web', name: 'webSearch', args: JSON.stringify({ query: 'weather' }) },
+                    scopeDeclarationChunk(quote, notes, false),
+                ] };
+            } else yield { content: 'Answer without web access.' };
         }),
     };
     return model;
@@ -428,7 +451,7 @@ describe('retrieval diagnostics surface ownership', () => {
 });
 
 describe('run-scoped Provider transport ownership', () => {
-    it('shares one scope between capability classification and the main Chat model', async () => {
+    it('creates only the scoped main model when a policy helper model is configured', async () => {
         const requestOptions: Array<Record<string, unknown>> = [];
         mockCreateChatModel.mockImplementation(async (_temperature, options) => {
             const normalized = options as Record<string, unknown>;
@@ -449,10 +472,9 @@ describe('run-scoped Provider transport ownership', () => {
             onEvent: jest.fn(),
         });
 
-        expect(requestOptions).toHaveLength(2);
+        expect(requestOptions).toHaveLength(1);
         expect(requestOptions[0]?.providerRequestScope).toBeDefined();
-        expect(requestOptions[1]?.providerRequestScope)
-            .toBe(requestOptions[0]?.providerRequestScope);
+        expect(requestOptions[0]?.transport).toBe('native');
     });
 
     it('shares one scope between Chat model turns and Memory Provider work', async () => {
@@ -466,7 +488,7 @@ describe('run-scoped Provider transport ownership', () => {
                         id: 'scope-memory-call',
                         name: 'search_memory',
                         args: JSON.stringify({ query: 'launch' }),
-                    }],
+                    }, scopeDeclarationChunk('Use Memory for launch.', 'vault')],
                 };
             }),
             invoke: jest.fn(),
@@ -820,7 +842,7 @@ describe('ChatService.streamLLM integration', () => {
                 id: 'memory-first-use',
                 name: 'search_memory',
                 args: JSON.stringify({ query: 'launch' }),
-            }],
+            }, scopeDeclarationChunk('launch', 'vault')],
         }]);
         const finalModel = createStreamModel('Answer now.');
         mockCreateChatModel
@@ -1081,7 +1103,7 @@ describe('ChatService.streamLLM integration', () => {
         }
     });
 
-    it('keeps required-capability warnings when an Operations acknowledgement is empty', async () => {
+    it('offers Memory with permitted Operations and completes only the pending card without a predicted-search warning', async () => {
         let streamCall = 0;
         const model = {
             bindTools: jest.fn(() => model),
@@ -1091,7 +1113,7 @@ describe('ChatService.streamLLM integration', () => {
                     yield {
                         tool_call_chunks: [{
                             index: 0,
-                            id: 'operations-without-required-memory',
+                            id: 'operations-without-predicted-memory',
                             name: 'vault_create',
                             args: JSON.stringify({
                                 path: '0.unsorted/unverified.md',
@@ -1117,6 +1139,8 @@ describe('ChatService.streamLLM integration', () => {
         });
         const lifecycleEvents: CanonicalAgentEvent[] = [];
 
+        const createNote = jest.fn();
+        Object.assign(plugin.app.vault, { create: createNote });
         await runtime.streamTurn({
             prompt: 'Use Memory from my notes, then create a note for the verified result.',
             memoryMode: 'auto',
@@ -1127,14 +1151,14 @@ describe('ChatService.streamLLM integration', () => {
         expect(model.stream).toHaveBeenCalledTimes(2);
         expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
         expect(plugin.vss.searchHybrid).not.toHaveBeenCalled();
+        const schemas = (model.bindTools.mock.calls as unknown as Array<[Array<{ function?: { name?: string } }>]>)[0][0];
+        expect(schemas.map((schema) => schema.function?.name)).toEqual(expect.arrayContaining(['search_memory', 'vault_create']));
+        expect(await stageIntent.mock.results[0].value).toMatchObject({ state: 'pending' });
+        expect(createNote).not.toHaveBeenCalled();
         expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
-            status: 'incomplete',
+            status: 'completed',
             metadata: {
-                reason: 'required_capability_missing',
-                warnings: [expect.objectContaining({
-                    type: 'required_capability_missing',
-                    capability: 'search_memory',
-                })],
+                reason: 'operations_intent_staged_acknowledgement_empty',
                 diagnostics: expect.arrayContaining([
                     expect.objectContaining({
                         type: 'operations_intent_staged_acknowledgement_empty',
@@ -1408,7 +1432,8 @@ describe('ChatService.streamLLM integration', () => {
         const expanded = memoryResult(Array.from({ length: 4 }, (_, index) => `notes/${'source'.repeat(15)}-${index}.md`));
         let expandedAtFinalBoundary = false;
         const planningModel = createStreamChunksModel([{
-            tool_call_chunks: [{ index: 0, id: 'memory-before-growth', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+            tool_call_chunks: [{ index: 0, id: 'memory-before-growth', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
+                scopeDeclarationChunk('Use Memory for launch.', 'vault')],
         }]);
         const answerModel = {
             bindTools: jest.fn(() => answerModel),
@@ -1427,9 +1452,10 @@ describe('ChatService.streamLLM integration', () => {
         });
         const runtime = createRuntime(createPlugin(), false, {
             skillContextProvider: null,
-            // A single-source marker fits; a fresh four-source marker plus its
-            // wrapper cannot fit. The guard must refuse rather than corrupt it.
-            answerStreamMaxObservationChars: 300,
+            // The scope control receipt plus a single-source marker fit; a
+            // fresh four-source marker and its wrapper cannot. Recheck at the
+            // actual boundary rather than fail on the initial control receipt.
+            answerStreamMaxObservationChars: 600,
         });
         const memoryTool = (runtime as unknown as {
             memoryTool: {
@@ -1663,7 +1689,8 @@ describe('ChatService.streamLLM integration', () => {
             };
         });
         const planningModel = createStreamChunksModel([{
-            tool_call_chunks: [{ index: 0, id: 'memory-before-summary', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+            tool_call_chunks: [{ index: 0, id: 'memory-before-summary', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
+                scopeDeclarationChunk('Use Memory for launch.', 'vault')],
         }]);
         const answerInputs: unknown[] = [];
         const answerModel = createStreamModel('Memory evidence is unavailable.', (input) => answerInputs.push(input));
@@ -1704,7 +1731,8 @@ describe('ChatService.streamLLM integration', () => {
             retrievalGuidance: 'Memory evidence is currently unavailable.', operationalReason: 'final_source_changed',
         };
         const planningModel = createStreamChunksModel([{
-            tool_call_chunks: [{ index: 0, id: 'memory-before-summary-dispatch', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+            tool_call_chunks: [{ index: 0, id: 'memory-before-summary-dispatch', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
+                scopeDeclarationChunk('Use Memory for launch.', 'vault')],
         }]);
         const summaryModel = createInvokeModel(JSON.stringify({
             goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
@@ -1766,7 +1794,8 @@ describe('ChatService.streamLLM integration', () => {
             const fresh = memoryResult('CURRENT AUTHORITATIVE MEMORY');
             const late = memoryResult('LATE SUPERSEDED SUMMARY CURRENTNESS RESULT');
             const planningModel = createStreamChunksModel([{
-                tool_call_chunks: [{ index: 0, id: 'memory-summary-deadline', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) }],
+                tool_call_chunks: [{ index: 0, id: 'memory-summary-deadline', name: 'search_memory', args: JSON.stringify({ query: 'launch' }) },
+                    scopeDeclarationChunk('Use Memory for launch.', 'vault')],
             }]);
             const summaryModel = createInvokeModel('{}');
             let summaryConstructed = false;
@@ -1882,7 +1911,7 @@ describe('ChatService.streamLLM integration', () => {
                         id: 'memory-before-deferred-model',
                         name: 'search_memory',
                         args: JSON.stringify({ query: 'launch' }),
-                    }],
+                    }, scopeDeclarationChunk('Use Memory for launch.', 'vault')],
                 };
             }),
             invoke: jest.fn(),
@@ -1939,23 +1968,13 @@ describe('ChatService.streamLLM integration', () => {
         resolveFinalModel(finalModel);
         await run;
 
-        expect(providerInputs).toHaveLength(2);
+        expect(providerInputs).toHaveLength(1);
         expect(JSON.stringify(providerInputs)).not.toContain(stalePath);
         expect(JSON.stringify(providerInputs)).not.toContain(staleBody);
-        expect(JSON.stringify(providerInputs[1])).toContain(
-            'was already attempted but returned an unavailable or invalid tool result',
-        );
+        expect(JSON.stringify(providerInputs[0])).toContain('Memory evidence is currently unavailable.');
         expect(memoryTool.search).toHaveBeenCalledTimes(1);
-        expect(memoryTool.revalidateForProvider).toHaveBeenCalledTimes(4);
         expect(lifecycleEvents.find((event) => event.type === 'agent_end')).toMatchObject({
-            status: 'completed_with_warning',
-            metadata: {
-                reason: 'required_capability_failed',
-                warnings: [expect.objectContaining({
-                    type: 'required_capability_missing',
-                    capability: 'search_memory',
-                })],
-            },
+            status: 'completed',
         });
     });
 
@@ -2009,10 +2028,10 @@ describe('ChatService.streamLLM integration', () => {
         const boundToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(boundToolNames).toEqual(['get_current_note_context', 'load_skill', 'search_memory']);
+        expect(boundToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory']);
     });
 
-    it('injects complete Pagelet evidence as context-only while keeping Operations eligibility on the user prompt', async () => {
+    it('injects complete Pagelet evidence as context-only while Operations availability follows opt-in', async () => {
         const modelInputs: Record<string, string>[] = [];
         const model = createStreamModel('Discussed without writing.', (input) => modelInputs.push(input));
         mockCreateChatModel.mockResolvedValue(model);
@@ -2053,7 +2072,7 @@ describe('ChatService.streamLLM integration', () => {
         expect(modelInputs[0].input).toContain('https://example.com/b');
         const boundToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name);
-        expect(boundToolNames).not.toEqual(expect.arrayContaining([
+        expect(boundToolNames).toEqual(expect.arrayContaining([
             'vault_create',
             'vault_append',
             'vault_process',
@@ -2157,44 +2176,58 @@ describe('ChatService.streamLLM integration', () => {
     });
 
     it('honors explicit notes-only source scope when WebSearch is available', async () => {
-        const model = createStreamChunksModel([{ content: 'notes only' }]);
+        const model = createNoWebDeclarationModel('只从我的笔记里找周至擅长什么', 'vault');
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ webSearchEnabled: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
-        await service.streamLLM('只从我的笔记里找周至擅长什么', jest.fn());
+        const events: CanonicalAgentEvent[] = [];
+        await service.streamLLM('只从我的笔记里找周至擅长什么', jest.fn(), undefined, undefined,
+            { onLifecycleEvent: event => events.push(event) });
 
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['load_skill', 'search_memory']);
+        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
+            type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
+        })]));
+        expect(JSON.stringify(events)).toContain('source_read_outside_scope');
     });
 
-    it('keeps Operations actions absent from ordinary turns even after user opt-in', async () => {
+    it('exposes core proposals after opt-in without creating a card for an ordinary text answer', async () => {
         const model = createStreamChunksModel([{ content: 'ordinary answer' }]);
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ operationsAgentEnabled: true });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
-        await service.streamLLM('Summarize the current note', jest.fn());
+        const staged: OperationsIntent[] = [];
+        await service.streamLLM('Summarize the current note', jest.fn(), undefined, undefined, {
+            onOperationsIntentStaged: (intent) => staged.push(intent),
+        });
 
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name);
-        expect(exportedToolNames).not.toEqual(expect.arrayContaining([
+        expect(exportedToolNames).toEqual(expect.arrayContaining([
             'vault_create',
             'vault_append',
             'vault_process',
             'frontmatter_update',
         ]));
+        expect(staged).toEqual([]);
     });
 
-    it('rejects a hallucinated Operations action on an ordinary turn after opt-in', async () => {
+    it.each(['off', 'revoked'] as const)('rejects a model-proposed Operations action when opt-in is %s', async (mode) => {
         let modelTurn = 0;
         const model = {
             bindTools: jest.fn(() => model),
             stream: jest.fn(async function* () {
                 modelTurn += 1;
                 if (modelTurn === 1) {
+                    if (mode === 'revoked') {
+                        plugin.isOperationsAgentEnabled = false;
+                        plugin.settings.operationsAgentEnabled = false;
+                    }
                     yield {
                         tool_call_chunks: [{
                             index: 0,
@@ -2212,7 +2245,7 @@ describe('ChatService.streamLLM integration', () => {
             }),
         };
         mockCreateChatModel.mockResolvedValue(model);
-        const plugin = createPlugin({ operationsAgentEnabled: true });
+        const plugin = createPlugin({ operationsAgentEnabled: mode === 'revoked' });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const staged: OperationsIntent[] = [];
         const events: CanonicalAgentEvent[] = [];
@@ -2232,7 +2265,7 @@ describe('ChatService.streamLLM integration', () => {
         ]));
     });
 
-    it('exposes only the current note plus four Operations actions for a current-note-only save', async () => {
+    it('exposes source declaration and Operations without regex-narrowing a current-note-only save', async () => {
         const model = createStreamChunksModel([{ content: 'proposal ready' }]);
         mockCreateChatModel.mockResolvedValue(model);
         const plugin = createPlugin({ operationsAgentEnabled: true });
@@ -2244,16 +2277,25 @@ describe('ChatService.streamLLM integration', () => {
             .map((tool) => tool.function?.name)
             .sort();
         expect(exportedToolNames).toEqual([
+            'declare_source_scope',
             'frontmatter_update',
             'get_current_note_context',
+            'inspect_obsidian_note',
+            'list_recent_notes',
+            'list_vault_tags',
             'load_skill',
+            'read_note_outline',
+            'search_memory',
+            'search_vault_metadata',
+            'search_vault_snippets',
             'vault_append',
             'vault_create',
             'vault_process',
         ]);
     });
 
-    it('stages a structured Operations call without writing and executes only after explicit confirmation', async () => {
+    it.each(['Save this conclusion as a new note in my vault.', '就按刚才讨论的方案来。'])(
+        'stages a structured proposal for %s without writing until explicit confirmation', async (prompt) => {
         let modelTurn = 0;
         const model = {
             bindTools: jest.fn(() => model),
@@ -2313,7 +2355,7 @@ describe('ChatService.streamLLM integration', () => {
         const staged: OperationsIntent[] = [];
 
         await service.streamLLM(
-            'Save this conclusion as a new note in my vault.',
+            prompt,
             jest.fn(),
             undefined,
             undefined,
@@ -2427,7 +2469,7 @@ describe('ChatService.streamLLM integration', () => {
 
     it('honors Chinese explicit no-web when weather/current-info would otherwise route to WebSearch', async () => {
         const modelInputs: Record<string, string>[] = [];
-        const model = createStreamChunksModel([{ content: 'no web weather answer' }], (input) => {
+        const model = createNoWebDeclarationModel('不要联网，看一下杭州今天的天气', 'none', (input) => {
             modelInputs.push(input);
         });
         mockCreateChatModel.mockResolvedValue(model);
@@ -2456,12 +2498,15 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['get_current_note_context', 'load_skill', 'search_memory']);
-        expect(modelInputs[0]?.tool_definitions).not.toContain('webSearch');
+        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(modelInputs[0]?.input).toContain('Recent chat history');
         expect(modelInputs[0]?.input).toContain('我目前只有 webSearch');
-        expect(modelInputs[0]?.input).toContain('explicitly forbids web or internet access');
-        expect(modelInputs[0]?.input).toContain('Ignore any prior assistant message that described webSearch as available');
+        expect(modelInputs[0]?.input).toContain('不要联网，看一下杭州今天的天气');
+        expect(canonicalEvents).toEqual(expect.arrayContaining([expect.objectContaining({
+            type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
+        })]));
+        expect(JSON.stringify(canonicalEvents)).toContain('source_read_outside_scope');
         expect(canonicalEvents.find((event) => event.type === 'agent_end')).toMatchObject({
             status: 'completed',
             metadata: expect.not.objectContaining({
@@ -2493,7 +2538,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['load_skill', 'webSearch']);
+        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
         expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
         expect(modelInputs[0]?.input).not.toContain('不要联网');
         expect(modelInputs[0]?.input).not.toContain('杭州今天的天气。');
@@ -2503,7 +2548,7 @@ describe('ChatService.streamLLM integration', () => {
 
     it('lets current-turn no-web override profile content that mentions using WebSearch', async () => {
         const modelInputs: Record<string, string>[] = [];
-        const model = createStreamChunksModel([{ content: 'no web weather answer' }], (input) => {
+        const model = createNoWebDeclarationModel('不要联网，看一下杭州今天的天气', 'none', (input) => {
             modelInputs.push(input);
         });
         mockCreateChatModel.mockResolvedValue(model);
@@ -2519,14 +2564,19 @@ describe('ChatService.streamLLM integration', () => {
         });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
-        await service.streamLLM('不要联网，看一下杭州今天的天气', jest.fn());
+        const events: CanonicalAgentEvent[] = [];
+        await service.streamLLM('不要联网，看一下杭州今天的天气', jest.fn(), undefined, undefined,
+            { onLifecycleEvent: event => events.push(event) });
 
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['get_current_note_context', 'load_skill', 'search_memory']);
-        expect(modelInputs[0]?.tool_definitions).not.toContain('webSearch');
-        expect(modelInputs[0]?.input).toContain('explicitly forbids web or internet access');
+        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
+        expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
+        expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
+            type: 'tool_execution_end', toolName: 'webSearch', outcome: 'policy_rejected',
+        })]));
+        expect(JSON.stringify(events)).toContain('source_read_outside_scope');
         expect(modelInputs[0]?.input).toContain('I usually prefer web search for weather checks.');
     });
 
@@ -2549,7 +2599,7 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name)
             .sort();
-        expect(exportedToolNames).toEqual(['load_skill', 'webSearch']);
+        expect(exportedToolNames).toEqual(['declare_source_scope', 'get_current_note_context', 'load_skill', 'search_memory', 'webSearch']);
         expect(inputs[0].available_skills).toContain('obsidian-markdown');
         expect(inputs[0].available_skills).toContain('obsidian-bases');
         expect(inputs[0].available_skills).toContain('json-canvas');
