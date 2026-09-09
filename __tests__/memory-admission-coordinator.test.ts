@@ -11,9 +11,12 @@ import {
     createEmptyDeviceMemoryGovernanceStateV1,
     type MemoryGovernanceRepository,
     type MemoryGovernanceTransaction,
+    type MemoryGovernanceCommitGuard,
 } from "../src/pa/memory-governance-persistence";
 import { checksumLegacyRollbackValue } from "../src/pa/memory-governance-rollback-checksum";
 import { buildLegacyMemoryRollbackProjection } from "../src/pa/memory-governance-rollback";
+import { collectChatMemorySemanticSources } from "../src/pa/chat-memory-admission";
+import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint, createChatMemorySemanticReceipt } from "../src/pa/chat-memory-semantic-receipt";
 import {
     createTypeATargetSuppressionFingerprint,
     LEGACY_TYPE_A_ADOPTION_RULE_FINGERPRINT,
@@ -25,6 +28,245 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60_000;
 const VAULT_A_PARTITION = { kind: "vault" as const, key: "vault-a" };
 
 describe("MemoryAdmissionCoordinator", () => {
+    function semanticInput(review = false): GovernedMemoryAdmissionInput {
+        const input = typeAInput();
+        if (review) input.policy.conflict = 'present';
+        const [source] = collectChatMemorySemanticSources('conversation-a', [{ conversationId: 'conversation-a', turnIndex: 0,
+            user: { role: 'user', content: 'I prefer concise answers. This draft should be long.',
+                hostProvenance: { version: 1, messageId: 'user-a', kind: 'writing_request' } },
+            assistant: { role: 'assistant', content: '' } }]);
+        const projections = [{ source, presentedText: source.text }];
+        const candidate = { text: input.summary, meaning: 'independent_personal_statement', kind: 'user_explicit', confidence: 'high',
+            quotes: [{ messageId: source.messageId, quote: 'I prefer concise answers.' }] };
+        input.chatSemanticReceipt = createChatMemorySemanticReceipt(candidate, 'conversation-a', projections)!;
+        input.chatSemanticEvidence = { conversationId: 'conversation-a', candidate, projections };
+        input.ruleFingerprint = CHAT_MEMORY_SEMANTIC_RULE;
+        input.sourceFingerprintId = chatMemorySemanticSourceFingerprint(input.chatSemanticReceipt);
+        input.profileKey = 'semantic-1234abcd';
+        return input;
+    }
+
+    it.each([false, true])('atomically leaves compatibility while preserving legacy material for semantic admission (review=%s)', async (review) => {
+        const repository = repositoryForCompatibilityState();
+        const before = await repository.initialize();
+        const input = semanticInput(review);
+        await expect(createCoordinator(repository).admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: true });
+        const after = await repository.initialize();
+        expect(after.migrationStates['vault-a']).toEqual({ ...before.migrationStates['vault-a'], phase: 'governed_preserving_legacy' });
+        expect(after.rollbackPayloadEntries).toEqual(before.rollbackPayloadEntries);
+        expect(after.migrationDeltas).toEqual(before.migrationDeltas);
+        expect(after.memoryQueueItems.length + after.revisions.length).toBeGreaterThan(0);
+        input.expectedTargetState = readTypeATargetGeneration(after, input.profileRecordId!, VAULT_A_PARTITION);
+        await expect(createCoordinator(repository).admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: true });
+    });
+
+    it('rolls back the compatibility phase transition when final source admission fails', async () => {
+        const repository = repositoryForCompatibilityState();
+        const before = await repository.initialize();
+        const input = semanticInput();
+        const original = repository.transact.bind(repository);
+        repository.transact = async function<T>(operation: MemoryGovernanceTransaction<T>, guard?: MemoryGovernanceCommitGuard): Promise<T> {
+            return original(async (draft) => {
+                const result = await operation(draft);
+                input.chatSemanticEvidence!.projections[0].source.text = 'Changed before commit';
+                return result;
+            }, guard);
+        };
+        await expect(createCoordinator(repository).admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: false, reason: 'chat_semantic_source_invalid' });
+        expect(await repository.initialize()).toEqual(before);
+    });
+
+    it.each(['reject', 'ephemeral_only'] as const)('does not end legacy compatibility for a %s semantic decision', async (decision) => {
+        const repository = repositoryForCompatibilityState();
+        const before = await repository.initialize();
+        const input = semanticInput();
+        if (decision === 'reject') input.policy.dataBoundary = 'denied';
+        else { input.policy.persistenceIntent = 'ephemeral'; input.policy.effect = 'none'; input.effect = 'none'; }
+        await expect(createCoordinator(repository).admit(input, { isCurrent: () => true }))
+            .resolves.toMatchObject({ ok: true, value: { decision } });
+        const after = await repository.initialize();
+        expect(after.migrationStates).toEqual(before.migrationStates);
+        expect(after.rollbackPayloadEntries).toEqual(before.rollbackPayloadEntries);
+        expect(after.revisions).toEqual(before.revisions);
+        expect(after.memoryQueueItems).toEqual(before.memoryQueueItems);
+    });
+
+    it('retains semantic receipts in exact revisions and outbox-linked claims without fabricating legacy evidence', async () => {
+        const repository = repositoryForReadyState();
+        const input = semanticInput();
+        await expect(createCoordinator(repository).admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: true });
+        const state = await repository.initialize();
+        expect(state.revisions[0].chatSemanticReceipt).toEqual(input.chatSemanticReceipt);
+        expect(state.pendingOperations).toEqual(expect.arrayContaining([expect.objectContaining({
+            kind: 'profile_projection', claimId: state.revisions[0].claimId,
+            profileStore: 'governed', profileKey: input.profileKey,
+        })]));
+        expect(state.projectionLinks).toEqual(expect.arrayContaining([expect.objectContaining({
+            target: { kind: 'type_a_profile', profileRecordId: input.profileRecordId, store: 'governed', profileKey: input.profileKey },
+        })]));
+        expect(state.revisions[0]).not.toHaveProperty('chatEvidence');
+    });
+
+    it('preserves the legacy copy and stable governed identity through replay, Undo and correction', async () => {
+        const repository = repositoryForReadyState();
+        const admission = createCoordinator(repository);
+        await expect(admission.admit(typeAInput())).resolves.toMatchObject({ ok: true });
+        const applyProjection = jest.fn(async () => undefined);
+        const worker = new MemoryProfileProjectionWorker({ repository, opaqueVaultKey: 'vault-a', now: () => NOW, applyProjection });
+        await worker.resumePending();
+        const original = await repository.initialize();
+        const oldLink = original.projectionLinks.find((link) => link.target.kind === 'type_a_profile')!;
+        const input = semanticInput();
+        input.expectedTargetState = readTypeATargetGeneration(original, input.profileRecordId!, VAULT_A_PARTITION);
+        await expect(admission.admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: true });
+        const semantic = await repository.initialize();
+        expect(semantic.projectionLinks.find((link) => link.id === oldLink.id)).toEqual(oldLink);
+        expect(semantic.projectionLinks.filter((link) => link.target.kind === 'type_a_profile' && link.state === 'active')).toHaveLength(2);
+        applyProjection.mockClear();
+        await worker.resumePending();
+        expect(applyProjection).toHaveBeenCalledTimes(1);
+        expect(applyProjection).toHaveBeenCalledWith(expect.objectContaining({ profileRecordId: input.profileRecordId,
+            profileStore: 'governed', profileKey: input.profileKey }));
+        const beforeReplay = await repository.initialize();
+        input.expectedTargetState = readTypeATargetGeneration(beforeReplay, input.profileRecordId!, VAULT_A_PARTITION);
+        await expect(admission.admit(input, { isCurrent: () => true })).resolves.toMatchObject({ ok: true });
+        expect((await repository.initialize()).revisions).toEqual(beforeReplay.revisions);
+
+        let id = 0;
+        const governance = new MemoryGovernanceCoordinator({ repository, opaqueVaultKey: 'vault-a', now: () => NOW,
+            idFactory: () => `governed-store-${++id}` });
+        const replacement = semantic.changeEvents.find((event) => event.kind === 'replace')!;
+        await expect(governance.undoRecentChange({ eventId: replacement.id })).resolves.toMatchObject({ ok: true });
+        applyProjection.mockClear();
+        await worker.resumePending();
+        expect(applyProjection).toHaveBeenCalledTimes(1);
+        expect(applyProjection).toHaveBeenCalledWith(expect.objectContaining({ profileStore: 'governed', profileKey: input.profileKey }));
+        const restored = await repository.initialize();
+        expect(restored.projectionLinks.filter((link) => link.target.kind === 'type_a_profile' && link.state === 'active')).toHaveLength(2);
+        await expect(governance.correct({ claimId: restored.claims[0].id, summary: 'A user correction without a semantic receipt.',
+            scopeAllowed: true, dataBoundaryAllowed: true })).resolves.toMatchObject({ ok: true });
+        applyProjection.mockClear();
+        await worker.resumePending();
+        expect(applyProjection).toHaveBeenCalledTimes(1);
+        expect(applyProjection).toHaveBeenCalledWith(expect.objectContaining({ profileStore: 'governed', profileKey: input.profileKey }));
+    });
+
+    it.each(['missing-receipt', 'invalid-receipt', 'missing-evidence', 'missing-lifetime', 'changed-meaning', 'missing-key', 'raw-key'] as const)(
+        'rejects semantic admission with %s and never falls back to the legacy path', async (failure) => {
+            const repository = repositoryForReadyState();
+            const before = await repository.initialize();
+            const input = semanticInput();
+            if (failure === 'missing-receipt') delete input.chatSemanticReceipt;
+            if (failure === 'invalid-receipt') Object.assign(input.chatSemanticReceipt!, { version: 999 });
+            if (failure === 'missing-evidence') delete input.chatSemanticEvidence;
+            if (failure === 'changed-meaning') input.chatSemanticEvidence!.candidate.meaning = 'task_instruction';
+            if (failure === 'missing-key') delete input.profileKey;
+            if (failure === 'raw-key') input.profileKey = input.summary;
+            await expect(createCoordinator(repository).admit(input, failure === 'missing-lifetime' ? undefined : { isCurrent: () => true }))
+                .resolves.toMatchObject({ ok: false });
+            expect(await repository.initialize()).toEqual(before);
+        },
+    );
+
+    it('rechecks the host source immediately before committing a semantic admission', async () => {
+        const repository = repositoryForReadyState();
+        const before = await repository.initialize();
+        const input = semanticInput();
+        const original = repository.transact.bind(repository);
+        repository.transact = async function<T>(operation: MemoryGovernanceTransaction<T>, guard?: MemoryGovernanceCommitGuard): Promise<T> {
+            return original(async (draft) => {
+                const result = await operation(draft);
+                input.chatSemanticEvidence!.projections[0].source.text = 'Source changed after preparation';
+                return result;
+            }, guard);
+        };
+        await expect(createCoordinator(repository).admit(input, { isCurrent: () => true }))
+            .resolves.toEqual({ ok: false, reason: 'chat_semantic_source_invalid' });
+        expect(await repository.initialize()).toEqual(before);
+    });
+
+    it.each(['type_a', 'memory_candidate'] as const)('rejects extra conversation or note provenance for %s semantic evidence', async (origin) => {
+        for (const extra of ['conversation', 'note']) {
+            const repository = repositoryForReadyState();
+            const before = await repository.initialize();
+            const input = semanticInput();
+            input.policy.origin = origin;
+            if (origin === 'memory_candidate') { delete input.profileRecordId; delete input.profileKey; delete input.expectedTargetState; }
+            if (extra === 'conversation') input.provenance = [{ kind: 'conversation',
+                conversationIds: ['unproven-conversation', 'conversation-a'], observedAt: NOW.toISOString() }];
+            else input.provenance.push({ kind: 'note', sourceRef: { path: 'unproven.md' } });
+            await expect(createCoordinator(repository).admit(input, { isCurrent: () => true }))
+                .resolves.toEqual({ ok: false, reason: 'invalid_admission_envelope' });
+            expect(await repository.initialize()).toEqual(before);
+        }
+    });
+
+    it.each(['type_a', 'memory_candidate'] as const)('requires current host evidence at %s Queue confirmation and preserves the receipt in the resulting revision', async (origin) => {
+        const repository = repositoryForReadyState();
+        const coordinator = createCoordinator(repository);
+        const input = semanticInput(true);
+        input.policy.origin = origin;
+        if (origin === 'memory_candidate') { delete input.profileRecordId; delete input.profileKey; delete input.expectedTargetState; }
+        const queued = await coordinator.admit(input, { isCurrent: () => true });
+        if (!queued.ok || !queued.value.queueItem) throw new Error('semantic queue setup failed');
+        const before = await repository.initialize();
+        expect(before.memoryQueueItems[0].governanceAdmission?.chatSemanticReceipt).toEqual(input.chatSemanticReceipt);
+        const confirm = { queueItemId: queued.value.queueItem.id, dataBoundaryAllowed: true };
+        await expect(coordinator.confirmQueueItem(confirm)).resolves.toEqual({ ok: false, reason: 'chat_semantic_source_invalid' });
+        expect(await repository.initialize()).toEqual(before);
+        await expect(coordinator.confirmQueueItem({ ...confirm, chatSemanticEvidence: input.chatSemanticEvidence,
+            lifetime: { isCurrent: () => true } })).resolves.toMatchObject({ ok: true });
+        const after = await repository.initialize();
+        expect(after.memoryQueueItems[0].status).toBe('applied');
+        expect(after.revisions[0].chatSemanticReceipt).toEqual(input.chatSemanticReceipt);
+    });
+
+    it('rejects a source changed during semantic confirmation without applying the queue or creating a revision', async () => {
+        const repository = repositoryForReadyState();
+        const coordinator = createCoordinator(repository);
+        const input = semanticInput(true);
+        const queued = await coordinator.admit(input, { isCurrent: () => true });
+        if (!queued.ok || !queued.value.queueItem) throw new Error('semantic queue setup failed');
+        const before = await repository.initialize();
+        const original = repository.transact.bind(repository);
+        repository.transact = async function<T>(operation: MemoryGovernanceTransaction<T>, guard?: MemoryGovernanceCommitGuard): Promise<T> {
+            return original(async (draft) => {
+                const result = await operation(draft);
+                input.chatSemanticEvidence!.candidate.meaning = 'task_instruction';
+                return result;
+            }, guard);
+        };
+        await expect(coordinator.confirmQueueItem({ queueItemId: queued.value.queueItem.id, dataBoundaryAllowed: true,
+            chatSemanticEvidence: input.chatSemanticEvidence, lifetime: { isCurrent: () => true } }))
+            .resolves.toEqual({ ok: false, reason: 'chat_semantic_source_invalid' });
+        expect(await repository.initialize()).toEqual(before);
+    });
+
+    it.each(["before_operation", "before_commit"])("rejects expired producers at %s without a durable change", async (stage) => {
+        const repository = repositoryForReadyState();
+        const baseline = await repository.initialize();
+        let release!: () => void;
+        let reached!: () => void;
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const original = repository.transact.bind(repository);
+        repository.transact = async function<T>(operation: MemoryGovernanceTransaction<T>, guard?: MemoryGovernanceCommitGuard): Promise<T> {
+            return original(async (draft) => {
+                if (stage === "before_operation") { reached(); await waiting; }
+                const result = await operation(draft);
+                if (stage === "before_commit") { reached(); await waiting; }
+                return result;
+            }, guard);
+        };
+        let current = true;
+        const result = createCoordinator(repository).admit(typeAInput(), { isCurrent: () => current });
+        await entered;
+        current = false;
+        release();
+        await expect(result).resolves.toEqual({ ok: false, reason: "producer_not_current" });
+        expect(await repository.initialize()).toEqual(baseline);
+    });
+
     it("atomically admits a safe Type-A effect with event, exact links, and durable Profile outbox", async () => {
         const repository = repositoryForReadyState();
         const coordinator = createCoordinator(repository);

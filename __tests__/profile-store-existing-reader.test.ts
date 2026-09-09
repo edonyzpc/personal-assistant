@@ -3,6 +3,10 @@ import {
     IndexedDbExistingUserProfileReader,
     createExistingUserProfileReader,
     getUserProfileDbName,
+    createUserProfileStore,
+    createGovernedUserProfileStore,
+    createExistingGovernedUserProfileReader,
+    getGovernedUserProfileDbName,
 } from "../src/ai-services/memory-extraction/profile-store";
 import type { UserProfileSnapshot } from "../src/ai-services/memory-extraction/type-a-extractor";
 
@@ -25,6 +29,72 @@ const SNAPSHOT: UserProfileSnapshot = {
 };
 
 describe("IndexedDbExistingUserProfileReader", () => {
+    it("keeps governed writes and restart reads separate from the legacy database and reader", async () => {
+        const vault = createVault("/vaults/isolated");
+        const databases = new Map<string, FakeIndexedDbFactory>();
+        const factory = {
+            databases: async () => [...databases.keys()].map((name) => ({ name, version: 1 })),
+            open: (name: string, version?: number) => {
+                if (!databases.has(name)) databases.set(name, new FakeIndexedDbFactory({ dbName: name }));
+                return databases.get(name)!.open(name, version);
+            },
+        };
+        const originalIndexedDb = globalThis.indexedDB;
+        Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: factory });
+        try {
+            const legacy = createUserProfileStore(vault, "vault-id", "personal-assistant");
+            const governed = createGovernedUserProfileStore(vault, "vault-id", "personal-assistant");
+            const legacyReader = createExistingUserProfileReader(vault, "vault-id", "personal-assistant");
+            const governedReader = createExistingGovernedUserProfileReader(vault, "vault-id", "personal-assistant");
+            await governed.initialize();
+            const semantic = cloneValue(SNAPSHOT);
+            semantic.records[0].text = "New governed personal preference";
+            semantic.markdown = "- New governed personal preference";
+            await governed.setProfile(semantic);
+            await expect(legacyReader.read()).resolves.toEqual({ state: "not_present" });
+            expect(databases.size).toBe(1);
+
+            await legacy.initialize();
+            await legacy.setProfile(SNAPSHOT);
+            await expect(legacyReader.read()).resolves.toEqual({ state: "ready", snapshot: SNAPSHOT });
+            await expect(governedReader.read()).resolves.toEqual({ state: "ready", snapshot: semantic });
+            expect(databases.size).toBe(2);
+            expect([...databases.keys()]).toEqual([
+                getGovernedUserProfileDbName(vault, "vault-id", "personal-assistant"),
+                getUserProfileDbName(vault, "vault-id", "personal-assistant"),
+            ]);
+            await governed.dispose();
+            await legacy.dispose();
+            const reopened = createGovernedUserProfileStore(vault, "vault-id", "personal-assistant");
+            await reopened.initialize();
+            await expect(reopened.getProfile()).resolves.toEqual(semantic);
+            const revised = { ...semantic, markdown: "Updated governed projection" };
+            await reopened.setProfile(revised);
+            await expect(legacyReader.read()).resolves.toEqual({ state: "ready", snapshot: SNAPSHOT });
+            await expect(governedReader.read()).resolves.toEqual({ state: "ready", snapshot: revised });
+            await reopened.dispose();
+        } finally {
+            Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: originalIndexedDb });
+        }
+    });
+
+    it("retains per-factory ephemeral fallback and never exposes it through the existing reader", async () => {
+        const originalIndexedDb = globalThis.indexedDB;
+        Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: undefined });
+        try {
+            const vault = createVault("/vaults/fallback");
+            const first = createGovernedUserProfileStore(vault, "vault-id", "personal-assistant");
+            const second = createGovernedUserProfileStore(vault, "vault-id", "personal-assistant");
+            await first.setProfile(SNAPSHOT);
+            await expect(first.getProfile()).resolves.toEqual(SNAPSHOT);
+            await expect(second.getProfile()).resolves.toBeNull();
+            await expect(createExistingGovernedUserProfileReader(vault, "vault-id", "personal-assistant").read())
+                .resolves.toEqual({ state: "unavailable" });
+        } finally {
+            Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: originalIndexedDb });
+        }
+    });
+
     it("holds only a bounded existing readonly transaction across unrelated async work and releases it", async () => {
         const factory = new FakeIndexedDbFactory({ snapshot: SNAPSHOT });
         const lease = await createReader(factory).acquireReadLease();
@@ -287,7 +357,7 @@ class FakeDatabase {
     closeCalls = 0;
     lastTransaction?: FakeReadTransaction;
     onversionchange: ((event: IDBVersionChangeEvent) => void) | null = null;
-    private readonly entry: { key: string; value: UserProfileSnapshot } | undefined;
+    private entry: { key: string; value: UserProfileSnapshot } | undefined;
 
     constructor(
         private readonly readOutcome: ReadOutcome,
@@ -305,10 +375,11 @@ class FakeDatabase {
     }
 
     transaction(storeName: string, mode: IDBTransactionMode): IDBTransaction {
-        if (storeName !== "profile" || mode !== "readonly") {
+        if (storeName !== "profile" || (mode !== "readonly" && mode !== "readwrite")) {
             throw new Error(`Unexpected transaction: ${storeName}/${mode}`);
         }
-        this.lastTransaction = new FakeReadTransaction(this.readOutcome, this.entry);
+        this.lastTransaction = new FakeReadTransaction(this.readOutcome, this.entry,
+            mode === "readwrite" ? (entry) => { this.entry = cloneValue(entry); } : undefined);
         return this.lastTransaction as unknown as IDBTransaction;
     }
 
@@ -332,6 +403,7 @@ class FakeReadTransaction {
     constructor(
         private readonly readOutcome: ReadOutcome,
         private readonly entry: { key: string; value: UserProfileSnapshot } | undefined,
+        private readonly commit?: (entry: { key: string; value: UserProfileSnapshot }) => void,
     ) {}
 
     abort(): void {
@@ -344,6 +416,18 @@ class FakeReadTransaction {
     objectStore(name: string): IDBObjectStore {
         if (name !== "profile") throw new Error(`Unexpected store: ${name}`);
         return {
+            put: (entry: { key: string; value: UserProfileSnapshot }) => {
+                if (!this.commit || this.completed || this.aborted) throw new Error("Transaction not writable");
+                const staged = cloneValue(entry);
+                const request = new FakeReadRequest(entry.key);
+                queueMicrotask(() => {
+                    if (this.aborted) return;
+                    this.commit!(staged);
+                    request.onsuccess?.call(request as unknown as IDBRequest<string>, {} as Event);
+                    this.completeIfIdle();
+                });
+                return request;
+            },
             count: () => {
                 if (this.completed || this.aborted) throw new Error('Transaction inactive');
                 this.countCalls += 1;

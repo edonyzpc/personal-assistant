@@ -2,7 +2,7 @@ import {
     sanitizeUserProfileSnapshot,
     type UserProfileSnapshot,
 } from "./type-a-extractor";
-import type { UserProfileStore } from "./profile-store";
+import { assertProfileWriteCurrent, type ProfileWriteGuard, type UserProfileStore } from "./profile-store";
 import { cloneChatMemoryCandidateEvidence } from "../../pa/chat-memory-admission";
 
 export type ProfileGovernanceMutation = (
@@ -12,7 +12,7 @@ export type ProfileGovernanceMutation = (
 export interface ProfileGovernancePort {
     initialize(): Promise<UserProfileSnapshot | null>;
     readSnapshot(): UserProfileSnapshot | null;
-    mutate(operation: ProfileGovernanceMutation): Promise<UserProfileSnapshot>;
+    mutate(operation: ProfileGovernanceMutation, guard?: ProfileWriteGuard): Promise<UserProfileSnapshot>;
     dispose(): Promise<void>;
 }
 
@@ -49,19 +49,23 @@ export class SerializedProfileGovernancePort implements ProfileGovernancePort {
         return cloneSnapshotOrNull(this.snapshot);
     }
 
-    mutate(operation: ProfileGovernanceMutation): Promise<UserProfileSnapshot> {
+    mutate(operation: ProfileGovernanceMutation, guard?: ProfileWriteGuard): Promise<UserProfileSnapshot> {
         this.assertActive();
         const run = this.mutationTail.then(async () => {
             this.assertActive();
+            assertProfileWriteCurrent(guard);
             await this.initialize();
+            assertProfileWriteCurrent(guard);
             const current = cloneSnapshotOrNull(this.snapshot);
             const proposed = await operation(current);
             this.assertActive();
+            assertProfileWriteCurrent(guard);
             const next = sanitizeUserProfileSnapshot(proposed, this.now());
             if (!next) throw new Error("Profile governance mutation returned an empty snapshot.");
             assertImmutableProfileRecordIds(current, next);
-            await this.store.setProfile(cloneSnapshot(next));
+            await this.store.setProfile(cloneSnapshot(next), guard);
             this.assertActive();
+            assertProfileWriteCurrent(guard);
             this.snapshot = cloneSnapshot(next);
             return cloneSnapshot(next);
         });

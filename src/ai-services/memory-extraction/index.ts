@@ -2,6 +2,7 @@ export {
     TypeAUserProfileExtractor,
     extractCandidatesFromText,
     deriveUserProfileRecordId,
+    deriveSemanticProfileKey,
     getOrCreateUserProfileRecordId,
     isProfileTextEligibleForPromptInjection,
     isProfileTextEligibleForStorage,
@@ -15,6 +16,8 @@ export type {
     UserProfileEvidenceKind,
     UserProfileRecord,
     UserProfileSnapshot,
+    SemanticUserProfileCandidate,
+    SemanticTypeAExtractionResult,
 } from "./type-a-extractor";
 export {
     IndexedDbUserProfileStore,
@@ -23,11 +26,15 @@ export {
     createExistingUserProfileReader,
     createUserProfileStore,
     getUserProfileDbName,
+    createGovernedUserProfileStore,
+    createExistingGovernedUserProfileReader,
+    getGovernedUserProfileDbName,
 } from "./profile-store";
 export type {
     ExistingUserProfileReader,
     UserProfileReadResult,
     UserProfileStore,
+    ProfileWriteGuard,
 } from "./profile-store";
 export { SerializedProfileGovernancePort } from "./profile-governance-port";
 export type {

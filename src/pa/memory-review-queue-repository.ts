@@ -262,7 +262,7 @@ function requireWritableMigration(
     if (migration?.phase === "rolling_back") {
         throw new MemoryReviewQueueRepositoryError("memory_migration_rolling_back");
     }
-    if (migration?.phase === "finalized") {
+    if (migration?.phase === "finalized" || migration?.phase === "governed_preserving_legacy") {
         if (policy?.contextProjectionMode !== "governed") {
             throw new MemoryReviewQueueRepositoryError("memory_migration_not_writable");
         }

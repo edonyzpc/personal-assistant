@@ -105,7 +105,7 @@ export interface MemoryGovernanceMigrationCounts {
 export type MemoryGovernanceMigrationCoordinatorResult =
     | {
         ok: true;
-        phase: "compatibility" | "finalized";
+        phase: "compatibility" | "finalized" | "governed_preserving_legacy";
         sourceHash: string;
         migrationRunId: string;
         cutoverSequence: number;
@@ -173,6 +173,27 @@ export class MemoryGovernanceMigrationCoordinator {
         const currentLegacySourceHash = initialMigration?.legacySourceStateHash
             ?? initialMigration?.sourceHash;
 
+        if (initialMigration?.phase === "governed_preserving_legacy") {
+            if (!initialMigration.sourceHash) return this.failureResult("migration_readback_mismatch", "failed", parsed, migrationRunId);
+            const changed = currentLegacySourceHash !== sourceHash;
+            if ((changed ? sourceHash : undefined) !== initialMigration.pendingLegacySourceHash) {
+                await this.repository.transact((draft) => {
+                    const migration = draft.migrationStates[this.opaqueVaultKey];
+                    if (migration?.phase !== "governed_preserving_legacy"
+                        || migration.sourceHash !== initialMigration.sourceHash
+                        || (migration.legacySourceStateHash ?? migration.sourceHash) !== currentLegacySourceHash) {
+                        throw new MigrationCoordinatorError("migration_state_changed");
+                    }
+                    if (changed) migration.pendingLegacySourceHash = sourceHash;
+                    else delete migration.pendingLegacySourceHash;
+                });
+                snapshot = await this.repository.initialize();
+            }
+            return this.successResult({ sourceHash: initialMigration.sourceHash,
+                migrationRunId: initialMigration.migrationRunId, counts: getMigrationCounts(parsed, undefined) },
+                snapshot.migrationStates[this.opaqueVaultKey], true, "governed",
+                changed ? "legacy_source_changed" : undefined);
+        }
         if (initialMigration?.phase === "finalized") {
             if (!initialMigration.sourceHash) {
                 return this.failureResult(
@@ -540,7 +561,7 @@ export class MemoryGovernanceMigrationCoordinator {
         }
         return {
             ok: true,
-            phase: migration.phase === "finalized" ? "finalized" : "compatibility",
+            phase: migration.phase === "finalized" || migration.phase === "governed_preserving_legacy" ? migration.phase : "compatibility",
             sourceHash: plan.sourceHash,
             migrationRunId: plan.migrationRunId,
             cutoverSequence: migration.cutoverSequence,

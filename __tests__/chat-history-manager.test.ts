@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 import type {
     ChatContextUsedItem,
     ChatRuntimeWarning,
@@ -103,6 +103,132 @@ function makeHistoryEntry(overrides: Partial<HistoryTurnEntry> = {}): HistoryTur
 }
 
 describe("ChatHistoryManager", () => {
+    describe("source lifetime", () => {
+        function deferred() {
+            let resolve!: () => void;
+            let reject!: (error: Error) => void;
+            const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+            return { promise, resolve, reject };
+        }
+
+        it("never admits a lease captured before availability, including failed initialization", async () => {
+            const { manager } = makeManager();
+            const beforeInitialization = manager.captureSourceLifetime("conv-1");
+            expect(beforeInitialization()).toBe(false);
+            await manager.initialize();
+            expect(beforeInitialization()).toBe(false);
+            expect(manager.captureSourceLifetime("conv-1")()).toBe(true);
+
+            const failed = makeManager();
+            jest.spyOn(failed.store, "initialize").mockRejectedValueOnce(new Error("unavailable"));
+            await failed.manager.initialize();
+            expect(failed.manager.captureSourceLifetime("conv-1")()).toBe(false);
+        });
+
+        it.each(["record overwrite", "delete turn", "delete conversation", "remove turns"] as const)(
+            "%s invalidates immediately and leases captured while pending never revive",
+            async (operation) => {
+                for (const fail of [false, true]) {
+                    const { manager, store } = makeManager();
+                    await manager.initialize();
+                    const conversation = await manager.startConversation("original");
+                    const other = await manager.startConversation("other");
+                    const input = { conversationId: conversation.id, conversation, turnIndex: 0,
+                        entry: makeHistoryEntry(), userPrompt: "original" };
+                    await manager.recordTurn(input);
+                    const before = manager.captureSourceLifetime(conversation.id);
+                    const unrelated = manager.captureSourceLifetime(other.id);
+                    const gate = deferred();
+                    const delayed = <Args extends unknown[], Result>(action: (...args: Args) => Promise<Result>) =>
+                        async (...args: Args): Promise<Result> => { await gate.promise; return action(...args); };
+                    let mutation: Promise<unknown>;
+                    if (operation === "record overwrite") {
+                        jest.spyOn(store, "appendTurnAndUpdateConversation").mockImplementationOnce(
+                            delayed(store.appendTurnAndUpdateConversation.bind(store)));
+                        mutation = manager.recordTurn({ ...input, entry: makeHistoryEntry({
+                            user: { role: "user", content: "rewritten" },
+                        }) });
+                    } else if (operation === "delete turn") {
+                        jest.spyOn(store, "deleteTurn").mockImplementationOnce(delayed(store.deleteTurn.bind(store)));
+                        mutation = manager.deleteTurn(conversation.id, 0);
+                    } else if (operation === "delete conversation") {
+                        jest.spyOn(store, "deleteTurnsForConversation").mockImplementationOnce(
+                            delayed(store.deleteTurnsForConversation.bind(store)));
+                        mutation = manager.deleteConversation(conversation.id);
+                    } else {
+                        jest.spyOn(store, "getTurns").mockImplementationOnce(delayed(store.getTurns.bind(store)));
+                        mutation = manager.removeTurnsFromIndex(conversation.id, 0);
+                    }
+                    const pending = manager.captureSourceLifetime(conversation.id);
+                    expect(before()).toBe(false);
+                    expect(pending()).toBe(false);
+                    expect(unrelated()).toBe(true);
+                    if (fail) {
+                        const rejected = expect(mutation).rejects.toThrow("write failed");
+                        gate.reject(new Error("write failed"));
+                        await rejected;
+                    } else {
+                        gate.resolve();
+                        await mutation;
+                    }
+                    expect(before()).toBe(false);
+                    expect(pending()).toBe(false);
+                    expect(unrelated()).toBe(true);
+                    expect(manager.captureSourceLifetime(conversation.id)()).toBe(true);
+                    const turns = await manager.getTurns(conversation.id);
+                    if (fail) expect(turns[0].user.content).toBe("What is the meaning?");
+                    else if (operation === "record overwrite") expect(turns[0].user.content).toBe("rewritten");
+                    else expect(turns).toEqual([]);
+                }
+            },
+        );
+
+        it.each([false, true])("prune invalidates all conversations even when it fails: %s", async (fail) => {
+            const { manager, store } = makeManager({ maxConversations: 1 });
+            await manager.initialize();
+            const first = await manager.startConversation("first");
+            const second = await manager.startConversation("second");
+            const leases = [first, second].map(({ id }) => manager.captureSourceLifetime(id));
+            const gate = deferred();
+            const prune = store.pruneOldConversations.bind(store);
+            jest.spyOn(store, "pruneOldConversations").mockImplementationOnce(async (limit) => {
+                await gate.promise;
+                return prune(limit);
+            });
+            const mutation = manager.prune();
+            const pending = manager.captureSourceLifetime(second.id);
+            expect(leases.map((lease) => lease())).toEqual([false, false]);
+            expect(pending()).toBe(false);
+            if (fail) gate.reject(new Error("prune failed"));
+            else gate.resolve();
+            await mutation;
+            expect(leases.map((lease) => lease())).toEqual([false, false]);
+            expect(pending()).toBe(false);
+            expect(manager.captureSourceLifetime(second.id)()).toBe(true);
+            expect(await manager.listConversations()).toHaveLength(fail ? 2 : 1);
+        });
+
+        it("creation and appended turns revoke their conversation only; metadata and reads preserve leases", async () => {
+            const { manager } = makeManager();
+            await manager.initialize();
+            const beforeCreation = manager.captureSourceLifetime("conv-1");
+            const conversation = await manager.startConversation("first");
+            expect(beforeCreation()).toBe(false);
+            const lease = manager.captureSourceLifetime(conversation.id);
+            const other = await manager.startConversation("other");
+            await manager.setActiveConversationId(other.id);
+            await manager.updateOperationsSaveSuggestionState(conversation.id, "offered");
+            await manager.findConversation(conversation.id);
+            await manager.getTurns(conversation.id);
+            await manager.listConversations();
+            await manager.maybePrune();
+            expect(lease()).toBe(true);
+            await manager.recordTurn({ conversationId: conversation.id, conversation, turnIndex: 0,
+                entry: makeHistoryEntry(), userPrompt: "first" });
+            expect(lease()).toBe(false);
+        });
+    });
+
     it("preserves a zero-source reduction receipt through save and reload with whitelist copies", async () => {
         const { manager, store } = makeManager();
         await manager.initialize();

@@ -13,6 +13,7 @@ import {
 } from "../src/ai-services/memory-extraction";
 import type {
     AdmitTypeACandidates,
+    TypeAAdmissionBatch,
     UserProfileCandidate,
     UserProfileRecord,
     VaultMetacognitionSnapshot,
@@ -271,6 +272,37 @@ describe("TypeAUserProfileExtractor", () => {
 });
 
 describe("MemoryExtractionScheduler", () => {
+    it("carries a source guard through a pending Profile mutation without advancing its prompt cache", async () => {
+        const store = new MemoryUserProfileStore();
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as any,
+            chatHistoryManager: {} as any,
+            userProfileStore: store,
+        });
+        let release!: () => void;
+        let entered!: () => void;
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        const controller = new AbortController();
+        const guard = Object.assign(() => undefined, { signal: controller.signal });
+        const proposed = new TypeAUserProfileExtractor().mergeCandidates(null,
+            extractCandidatesFromText("Remember I prefer concise replies.", "conversation-1", "2026-06-16T08:00:00.000Z"),
+            new Date("2026-06-16T08:00:00.000Z"));
+        const mutation = scheduler.mutateUserProfile(async () => {
+            entered();
+            await pending;
+            return proposed;
+        }, guard);
+        await started;
+        controller.abort();
+        release();
+        await expect(mutation).rejects.toThrow("no longer current");
+        expect(await store.getProfile()).toBeNull();
+        expect(scheduler.getUserProfileSnapshot()).toBeNull();
+        expect(scheduler.getPromptContext().userProfile).toBeUndefined();
+        scheduler.dispose();
+    });
+
     it("updates the scheduler prompt cache through the serialized Profile governance port", async () => {
         const scheduler = new MemoryExtractionScheduler({
             app: {} as any,
@@ -820,6 +852,77 @@ describe("MemoryExtractionScheduler lifecycle", () => {
 
     afterEach(() => {
         jest.useRealTimers();
+    });
+
+    it.each(["cursor", "model", "response"] as const)("stops disposed extraction after awaiting %s", async (stage) => {
+        let release!: () => void;
+        let reached!: () => void;
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const pauseAt = async (point: typeof stage) => {
+            if (point !== stage) return;
+            reached();
+            await waiting;
+        };
+        const invoke = jest.fn(async () => { await pauseAt("response"); return "[]"; });
+        const createModel = jest.fn(async () => { await pauseAt("model"); return { invoke }; });
+        const admit = jest.fn<AdmitTypeACandidates>(async () => ({ status: "processed" }));
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(async () => ({ id: "c1", title: "Chat", turnCount: 1 })),
+                getTurns: jest.fn(async () => [{ conversationId: "c1", turnIndex: 1,
+                    user: { role: "user", content: "I prefer concise answers." },
+                    assistant: { role: "assistant", content: "Understood." } }]),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            createModelForExtraction: createModel,
+            getTypeAProcessedTurn: async () => { await pauseAt("cursor"); return undefined; },
+            admitTypeACandidates: admit,
+        });
+        const running = scheduler.runTypeAExtraction("c1");
+        await entered;
+        scheduler.dispose();
+        release();
+        await expect(running).resolves.toBeNull();
+        expect(invoke).toHaveBeenCalledTimes(stage === "response" ? 1 : 0);
+        expect(createModel).toHaveBeenCalledTimes(stage === "cursor" ? 0 : 1);
+        expect(admit).not.toHaveBeenCalled();
+        expect((scheduler as any).typeAProcessedTurnByConversation.size).toBe(0);
+    });
+
+    it("invalidates an admitted batch lifetime permanently when its scheduler stops", async () => {
+        let batch!: TypeAAdmissionBatch;
+        let reached!: () => void;
+        let release!: () => void;
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(async () => ({ id: "c1", title: "Chat", turnCount: 1 })),
+                getTurns: jest.fn(async () => [{ conversationId: "c1", turnIndex: 1,
+                    user: { role: "user", content: "Remember I prefer concise answers." },
+                    assistant: { role: "assistant", content: "Understood." } }]),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            admitTypeACandidates: async (input) => {
+                batch = input;
+                reached();
+                await waiting;
+                return { status: "processed" };
+            },
+        });
+        const running = scheduler.runTypeAExtraction("c1");
+        await entered;
+        expect(batch.isCurrent?.()).toBe(true);
+        expect(batch.signal?.aborted).toBe(false);
+        scheduler.dispose();
+        expect(batch.isCurrent?.()).toBe(false);
+        expect(batch.signal?.aborted).toBe(true);
+        release();
+        await expect(running).resolves.toBeNull();
+        expect((scheduler as any).typeAProcessedTurnByConversation.size).toBe(0);
     });
 
     it("handles an immediately rejected scheduled baseline before the timer fires", async () => {

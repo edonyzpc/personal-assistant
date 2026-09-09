@@ -12,6 +12,7 @@ const USER_PROFILE_DB_VERSION = 1;
 const PROFILE_STORE = "profile";
 const PROFILE_KEY = "latest";
 const PLUGIN_STORAGE_SCOPE = "personal-assistant-user-profile-v1";
+const GOVERNED_PROFILE_STORAGE_SCOPE = "personal-assistant-governed-user-profile-v1";
 
 const IDB_TIMEOUT_MS = 10_000;
 
@@ -25,10 +26,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     });
 }
 
+export type ProfileWriteGuard = (() => void) & { signal?: AbortSignal };
+
+export function assertProfileWriteCurrent(guard?: ProfileWriteGuard): void {
+    if (guard?.signal?.aborted) throw new Error("Profile write source is no longer current.");
+    guard?.();
+    if (guard?.signal?.aborted) throw new Error("Profile write source is no longer current.");
+}
+
 export interface UserProfileStore {
     initialize(): Promise<void>;
     getProfile(): Promise<UserProfileSnapshot | null>;
-    setProfile(snapshot: UserProfileSnapshot): Promise<void>;
+    setProfile(snapshot: UserProfileSnapshot, guard?: ProfileWriteGuard): Promise<void>;
     dispose(): Promise<void>;
 }
 
@@ -62,8 +71,11 @@ export class MemoryUserProfileStore implements UserProfileStore {
         return this.snapshot ? cloneSnapshot(this.snapshot) : null;
     }
 
-    async setProfile(snapshot: UserProfileSnapshot): Promise<void> {
-        this.snapshot = cloneSnapshot(snapshot);
+    async setProfile(snapshot: UserProfileSnapshot, guard?: ProfileWriteGuard): Promise<void> {
+        assertProfileWriteCurrent(guard);
+        const next = cloneSnapshot(snapshot);
+        assertProfileWriteCurrent(guard);
+        this.snapshot = next;
     }
 
     async dispose(): Promise<void> {
@@ -100,13 +112,27 @@ export class IndexedDbUserProfileStore implements UserProfileStore {
         return entry ? cloneSnapshot(entry.value) : null;
     }
 
-    async setProfile(snapshot: UserProfileSnapshot): Promise<void> {
+    async setProfile(snapshot: UserProfileSnapshot, guard?: ProfileWriteGuard): Promise<void> {
+        assertProfileWriteCurrent(guard);
         const transaction = this.getTransaction("readwrite");
-        transaction.objectStore(PROFILE_STORE).put({
-            key: PROFILE_KEY,
-            value: cloneSnapshot(snapshot),
-        });
-        await transactionDone(transaction);
+        const completion = transactionDone(transaction);
+        const abort = () => {
+            try { transaction.abort(); } catch { /* The transaction has already finished. */ }
+        };
+        guard?.signal?.addEventListener("abort", abort, { once: true });
+        try {
+            const value = cloneSnapshot(snapshot);
+            assertProfileWriteCurrent(guard);
+            transaction.objectStore(PROFILE_STORE).put({ key: PROFILE_KEY, value });
+            await completion;
+            assertProfileWriteCurrent(guard);
+        } catch (error) {
+            abort();
+            await completion.catch(() => undefined);
+            throw error;
+        } finally {
+            guard?.signal?.removeEventListener("abort", abort);
+        }
     }
 
     async dispose(): Promise<void> {
@@ -318,14 +344,39 @@ export function createExistingUserProfileReader(
     );
 }
 
+/** Governed projections never share a database with the legacy compatibility Profile. */
+export function createGovernedUserProfileStore(vault: Vault, vaultId: string, pluginId: string): UserProfileStore {
+    const indexedDb = getPlatformIndexedDB();
+    if (!indexedDb) return new MemoryUserProfileStore();
+    return new IndexedDbUserProfileStore(getGovernedUserProfileDbName(vault, vaultId, pluginId), indexedDb);
+}
+
+export function createExistingGovernedUserProfileReader(
+    vault: Vault,
+    vaultId: string,
+    pluginId: string,
+): ExistingUserProfileReader {
+    const indexedDb = getPlatformIndexedDB();
+    if (!indexedDb) return { read: async () => ({ state: "unavailable" }) };
+    return new IndexedDbExistingUserProfileReader(getGovernedUserProfileDbName(vault, vaultId, pluginId), indexedDb);
+}
+
+export function getGovernedUserProfileDbName(vault: Vault, vaultId: string, pluginId: string): string {
+    return `${GOVERNED_PROFILE_STORAGE_SCOPE}-${getProfileScopeHash(vault, vaultId, pluginId)}`;
+}
+
 export function getUserProfileDbName(vault: Vault, vaultId: string, pluginId: string): string {
+    return `${PLUGIN_STORAGE_SCOPE}-${getProfileScopeHash(vault, vaultId, pluginId)}`;
+}
+
+function getProfileScopeHash(vault: Vault, vaultId: string, pluginId: string): string {
     const scopeSource = [
         pluginId || "personal-assistant",
         vaultId || "default-vault",
         getVaultConfigDirStorageScope(vault),
         getVaultLocalPath(vault) ?? "",
     ].join("\n");
-    return `${PLUGIN_STORAGE_SCOPE}-${hashScope(scopeSource)}`;
+    return hashScope(scopeSource);
 }
 
 function getVaultLocalPath(vault: Vault): string | undefined {

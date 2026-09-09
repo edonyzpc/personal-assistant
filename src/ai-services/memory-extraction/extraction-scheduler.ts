@@ -2,7 +2,7 @@ import type { App, TAbstractFile } from "obsidian";
 import { TFile, normalizePath } from "obsidian";
 import type { ChatHistoryManager } from "../../chat/chat-history-manager";
 import { clearPlatformInterval, clearPlatformTimeout, setPlatformInterval, setPlatformTimeout, type PlatformIntervalHandle, type PlatformTimeoutHandle } from "../../platform-dom";
-import { MemoryUserProfileStore, type UserProfileStore } from "./profile-store";
+import { MemoryUserProfileStore, assertProfileWriteCurrent, type ProfileWriteGuard, type UserProfileStore } from "./profile-store";
 import {
     SerializedProfileGovernancePort,
     type ProfileGovernancePort,
@@ -12,6 +12,7 @@ import {
     TypeAUserProfileExtractor,
     type UserProfileCandidate,
     type UserProfileSnapshot,
+    type SemanticUserProfileCandidate,
 } from "./type-a-extractor";
 import type { PersistedConversation, PersistedTurn } from "../../chat/chat-history-store";
 import { getOptionalPlatformDocument } from "../../platform-dom";
@@ -19,19 +20,25 @@ import { TypeCVaultMetacognitionAnalyzer, type SemanticClusterProvider, type Vau
 import type { TypeAAdmissionBaseline } from "../../pa/memory-admission-coordinator";
 import {
     collectChatMemorySources,
+    collectChatMemorySemanticSources,
     cloneChatMemoryCandidateEvidence,
     isChatMemoryRecordAdmissible,
     type ChatMemoryAdmissionEvidence,
 } from "../../pa/chat-memory-admission";
+import { verifyChatMemorySemanticReceipt, type ChatMemorySemanticProjection } from "../../pa/chat-memory-semantic-receipt";
 
 export type CreateModelForExtraction = () => Promise<{ invoke: (prompt: string) => Promise<string> } | null>;
 
 export interface TypeAAdmissionBatch {
+    semanticProjections?: ChatMemorySemanticProjection[];
     current: UserProfileSnapshot | null;
     proposed: UserProfileSnapshot;
     candidates: UserProfileCandidate[];
     baseline?: TypeAAdmissionBaseline;
     evidence: ChatMemoryAdmissionEvidence;
+    /** Host-only lifetime; never serialized into candidate provenance. */
+    isCurrent?: () => boolean;
+    signal?: AbortSignal;
 }
 
 export type TypeAAdmissionResult = { status: "processed" | "retry" };
@@ -45,6 +52,7 @@ type TypeAAdmissionBaselineOutcome =
     | { status: "failed"; error: unknown };
 
 export interface MemoryExtractionSchedulerOptions {
+    semanticTypeA?: boolean;
     app: App;
     chatHistoryManager: ChatHistoryManager;
     userProfileStore?: UserProfileStore;
@@ -96,6 +104,7 @@ export class MemoryExtractionScheduler {
     private typeCInterval: PlatformIntervalHandle | null = null;
     private userProfileStoreReady: Promise<void> | null = null;
     private disposed = false;
+    private readonly admissionController = new AbortController();
     private userProfileSnapshot: UserProfileSnapshot | null = null;
     private vaultSnapshot: VaultMetacognitionSnapshot | null = null;
     private vaultSnapshotDataBoundaryFingerprint = "";
@@ -108,6 +117,7 @@ export class MemoryExtractionScheduler {
     private readonly shouldHandleVaultEvent: (file: TFile) => boolean;
     private readonly getDataBoundaryFingerprint: () => string;
     private readonly admitTypeACandidates: AdmitTypeACandidates | null;
+    private readonly semanticTypeA: boolean;
     private readonly captureTypeAAdmissionBaseline: MemoryExtractionSchedulerOptions["captureTypeAAdmissionBaseline"];
     private readonly getTypeAProcessedTurn: MemoryExtractionSchedulerOptions["getTypeAProcessedTurn"];
 
@@ -131,6 +141,7 @@ export class MemoryExtractionScheduler {
         this.shouldHandleVaultEvent = options.shouldHandleVaultEvent ?? (() => true);
         this.getDataBoundaryFingerprint = options.getDataBoundaryFingerprint ?? (() => "data_boundary:unknown");
         this.admitTypeACandidates = options.admitTypeACandidates ?? null;
+        this.semanticTypeA = options.semanticTypeA === true;
         this.captureTypeAAdmissionBaseline = options.captureTypeAAdmissionBaseline;
         this.getTypeAProcessedTurn = options.getTypeAProcessedTurn;
         this.typeCAnalyzer = new TypeCVaultMetacognitionAnalyzer(this.app, {
@@ -155,6 +166,7 @@ export class MemoryExtractionScheduler {
 
     dispose(): void {
         this.disposed = true;
+        this.admissionController.abort();
         if (this.typeATimer) clearPlatformTimeout(this.typeATimer);
         if (this.typeCTimer) clearPlatformTimeout(this.typeCTimer);
         if (this.typeCInterval) clearPlatformInterval(this.typeCInterval);
@@ -188,9 +200,12 @@ export class MemoryExtractionScheduler {
         return this.userProfileSnapshot ? cloneUserProfileSnapshot(this.userProfileSnapshot) : null;
     }
 
-    async mutateUserProfile(operation: ProfileGovernanceMutation): Promise<UserProfileSnapshot> {
+    async mutateUserProfile(operation: ProfileGovernanceMutation, guard?: ProfileWriteGuard): Promise<UserProfileSnapshot> {
+        assertProfileWriteCurrent(guard);
         await this.ensureUserProfileStoreReady();
-        const snapshot = await this.profileGovernancePort.mutate(operation);
+        assertProfileWriteCurrent(guard);
+        const snapshot = await this.profileGovernancePort.mutate(operation, guard);
+        assertProfileWriteCurrent(guard);
         this.userProfileSnapshot = cloneUserProfileSnapshot(snapshot);
         return cloneUserProfileSnapshot(snapshot);
     }
@@ -276,12 +291,14 @@ export class MemoryExtractionScheduler {
         conversationId: string,
         scheduledBaseline?: Promise<TypeAAdmissionBaselineOutcome>,
     ): Promise<UserProfileSnapshot | null> {
+        if (this.semanticTypeA) return this.runSemanticTypeAExtraction(conversationId, scheduledBaseline);
         if (this.disposed) return null;
         const baselineOutcome = this.admitTypeACandidates
             ? scheduledBaseline ?? this.captureTypeAAdmissionBaselineOutcome()
             : undefined;
         const capturedBaseline = baselineOutcome ? await baselineOutcome : undefined;
         if (capturedBaseline?.status === "failed") throw capturedBaseline.error;
+        if (this.disposed) return null;
         const baseline = capturedBaseline?.baseline;
         await this.ensureUserProfileStoreReady();
         if (this.disposed) return null;
@@ -293,6 +310,7 @@ export class MemoryExtractionScheduler {
         const durableProcessedTurn = this.getTypeAProcessedTurn
             ? await this.getTypeAProcessedTurn(conversationId)
             : undefined;
+        if (this.disposed) return null;
         const lastProcessedTurn = Math.max(
             this.typeAProcessedTurnByConversation.get(conversationId) ?? -1,
             durableProcessedTurn ?? -1,
@@ -315,6 +333,8 @@ export class MemoryExtractionScheduler {
                 : null;
             const proposed = this.typeAExtractor.mergeCandidates(current, candidates, this.now());
             const admitted = await this.admitTypeACandidates({
+                isCurrent: () => !this.disposed,
+                signal: this.admissionController.signal,
                 current,
                 proposed: cloneUserProfileSnapshot(proposed),
                 candidates: candidates.map((candidate) => ({ ...candidate,
@@ -329,11 +349,83 @@ export class MemoryExtractionScheduler {
                     candidates.filter((candidate) => isChatMemoryRecordAdmissible(candidate, evidence)), this.now())
             ));
         }
+        if (this.disposed) return null;
         this.typeAProcessedTurnByConversation.set(
             conversationId,
             Math.max(...newTurns.map((turn) => turn.turnIndex)),
         );
         return this.userProfileSnapshot;
+    }
+
+    private async runSemanticTypeAExtraction(conversationId: string, scheduledBaseline?: Promise<TypeAAdmissionBaselineOutcome>): Promise<UserProfileSnapshot | null> {
+        if (this.disposed || !this.admitTypeACandidates || !this.createModelForExtraction || this.isMobileHidden()) return null;
+        const manager = this.chatHistoryManager as ChatHistoryManager & { captureSourceLifetime?: (id: string) => () => boolean };
+        const lease = manager.captureSourceLifetime?.(conversationId);
+        const isCurrent = () => {
+            try { return !this.disposed && !this.admissionController.signal.aborted && lease?.() === true; }
+            catch { return false; }
+        };
+        if (!isCurrent()) return null;
+        try {
+            const captured = await (scheduledBaseline ?? this.captureTypeAAdmissionBaselineOutcome());
+            if (!isCurrent() || captured?.status === "failed") return null;
+            await this.ensureUserProfileStoreReady();
+            if (!isCurrent()) return null;
+            const conversation = await manager.findConversation(conversationId);
+            if (!isCurrent() || !conversation) return null;
+            const turns = await manager.getTurns(conversationId);
+            if (!isCurrent()) return null;
+            const durable = this.getTypeAProcessedTurn ? await this.getTypeAProcessedTurn(conversationId) : undefined;
+            if (!isCurrent()) return null;
+            const cursor = Math.max(durable ?? -1, this.typeAProcessedTurnByConversation.get(conversationId) ?? -1);
+            const newTurns = turns.filter((turn) => turn.turnIndex > cursor);
+            const sources = collectChatMemorySemanticSources(conversationId, newTurns);
+            if (sources.length === 0) return this.userProfileSnapshot;
+            const sourceIdentity = JSON.stringify(sources);
+            const model = await this.createModelForExtraction();
+            if (!isCurrent() || !model) return null;
+            const checkSources = async () => {
+                if (!isCurrent()) return false;
+                const currentTurns = await manager.getTurns(conversationId);
+                return isCurrent() && JSON.stringify(collectChatMemorySemanticSources(conversationId,
+                    currentTurns.filter((turn) => turn.turnIndex > cursor))) === sourceIdentity;
+            };
+            if (!await checkSources()) return null;
+            const extracted = await this.typeAExtractor.extractSemanticCandidatesWithLLM({ conversation, turns: newTurns, now: this.now }, async (prompt) => {
+                if (!isCurrent()) throw new Error("Semantic extraction source expired");
+                return model.invoke(prompt);
+            });
+            if (!isCurrent() || extracted.status !== "parsed" || extracted.projections.length === 0 || !await checkSources()) return null;
+            const candidates = extracted.candidates.filter((candidate) => verifyChatMemorySemanticReceipt(
+                candidate.chatSemanticReceipt, candidate, conversationId, extracted.projections,
+            )) as SemanticUserProfileCandidate[];
+            const current = this.userProfileSnapshot ? cloneUserProfileSnapshot(this.userProfileSnapshot) : null;
+            const proposed = this.typeAExtractor.mergeSemanticCandidates(current, candidates, this.now());
+            const canonicalIds = captured?.status === "ready" ? captured.baseline.profileRecordIdsByKey : undefined;
+            const candidateKeys = new Set(candidates.map((candidate) => candidate.key));
+            const proposedKeys = new Set<string>();
+            const proposedIds = new Set<string>();
+            for (const record of proposed.records) {
+                if (candidateKeys.has(record.key) && canonicalIds && Object.prototype.hasOwnProperty.call(canonicalIds, record.key)) {
+                    const canonicalId = canonicalIds[record.key];
+                    if (typeof canonicalId === "string" && canonicalId.trim()) record.profileRecordId = canonicalId;
+                }
+                if (!record.key?.trim() || !record.profileRecordId?.trim()
+                    || proposedKeys.has(record.key) || proposedIds.has(record.profileRecordId)) return null;
+                proposedKeys.add(record.key);
+                proposedIds.add(record.profileRecordId);
+            }
+            const throughTurnIndex = Math.max(...newTurns.map((turn) => turn.turnIndex));
+            const admitted = await this.admitTypeACandidates({ current, proposed, candidates,
+                semanticProjections: extracted.projections,
+                ...(captured?.status === "ready" ? { baseline: captured.baseline } : {}),
+                evidence: { conversationId, throughTurnIndex }, isCurrent, signal: this.admissionController.signal });
+            if (admitted.status === "processed" && isCurrent()) this.typeAProcessedTurnByConversation.set(conversationId, throughTurnIndex);
+            return this.userProfileSnapshot;
+        } catch (error) {
+            this.log("Semantic extraction will retry without legacy fallback", error);
+            return this.userProfileSnapshot;
+        }
     }
 
     private captureTypeAAdmissionBaselineOutcome(): Promise<TypeAAdmissionBaselineOutcome> | undefined {
@@ -359,6 +451,7 @@ export class MemoryExtractionScheduler {
         if (this.createModelForExtraction && !this.isMobileHidden()) {
             try {
                 const model = await this.createModelForExtraction();
+                if (this.disposed) return [];
                 if (model) {
                     return await this.typeAExtractor.extractCandidatesWithLLM(
                         input,

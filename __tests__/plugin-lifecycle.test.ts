@@ -26,7 +26,211 @@ jest.mock("../src/plugin-manifest", () => ({ PluginsUpdater: class {} }));
 jest.mock("../src/theme-manifest", () => ({ ThemeUpdater: class {} }));
 
 import { createPluginHarness } from "./helpers/plugin-harness";
-import { hasDeprecatedSimpleSettingsFields } from "../src/settings";
+import { hasDeprecatedSimpleSettingsFields, mergeLoadedSettings } from "../src/settings";
+import { MemoryUserProfileStore, type MemoryExtractionScheduler } from "../src/ai-services/memory-extraction";
+import type { QuietRecallCandidate, RetrievalHabitProfileRecordResult } from "../src/pa";
+
+describe("B-135 learning preferences migration", () => {
+    const base = { aiProvider: "openai", statisticsVaultId: "learning-test" };
+    type LearningInternals = {
+        migrateSettings(): Promise<void>;
+        pendingLearningPreferencesMigration: boolean;
+        canRunMemoryExtractionRuntime(): boolean;
+        notifySettingsChanged(): Promise<void>;
+    };
+
+    it.each([undefined, false, true, "invalid"])("adopts old %p without confirmation or losing local state", async (enabled) => {
+        const { plugin, readPersisted } = createPluginHarness({ initialData: {
+            ...base, memoryExtractionEnabled: enabled,
+            retrievalHabitProfile: { enabled, state: { aggregates: [], clearedAt: "2026-09-01T00:00:00.000Z" } },
+        } });
+        const state = plugin as unknown as LearningInternals;
+        await plugin.loadSettings();
+        expect(state.pendingLearningPreferencesMigration).toBe(true);
+        expect(state.canRunMemoryExtractionRuntime()).toBe(true);
+        await state.migrateSettings();
+        expect(state.pendingLearningPreferencesMigration).toBe(false);
+        expect(readPersisted()).toMatchObject({ memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: "unconfirmed", version: 1 },
+            memoryExtractionIncludeVaultInsights: false,
+            retrievalHabitProfile: { enabled: true, state: { clearedAt: "2026-09-01T00:00:00.000Z" } },
+            learningPreferences: { version: 1, memoryExtraction: "default", habitLearning: "default" } });
+        expect(plugin.settings.memoryExtractionConsent.confirmedAt).toBeUndefined();
+        plugin.settings.memoryEnabled = false;
+        expect(state.canRunMemoryExtractionRuntime()).toBe(false);
+    });
+
+    it.each([[true, true], [true, false], [false, true], [false, false]])(
+        "preserves independent saved choices extraction=%p habit=%p through unrelated save/reload",
+        async (extraction, habit) => {
+            const { plugin, readPersisted } = createPluginHarness({ initialData: base });
+            await plugin.loadSettings();
+            const state = plugin as unknown as LearningInternals;
+            await state.migrateSettings();
+            state.notifySettingsChanged = jest.fn(async () => undefined);
+            await Promise.all([
+                plugin.saveSettingsPermissions({ memoryExtractionEnabled: extraction }),
+                plugin.saveSettingsPermissions({ retrievalHabitProfile: { enabled: habit } }),
+            ]);
+            plugin.settings.author = "ordinary edit";
+            await plugin.saveSettings();
+            const reloaded = createPluginHarness({ initialData: readPersisted() });
+            await reloaded.plugin.loadSettings();
+            expect(reloaded.plugin.settings.memoryExtractionEnabled).toBe(extraction);
+            expect(reloaded.plugin.settings.retrievalHabitProfile.enabled).toBe(habit);
+            expect(reloaded.plugin.settings.memoryExtractionConsent.confirmedAt).toBeUndefined();
+            expect((reloaded.plugin as unknown as LearningInternals).canRunMemoryExtractionRuntime()).toBe(extraction);
+        },
+    );
+
+    it("keeps migration pending and preferences unchanged after failed persistence", async () => {
+        const { plugin, adapter, readPersisted } = createPluginHarness({ initialData: base });
+        await plugin.loadSettings();
+        const state = plugin as unknown as LearningInternals;
+        adapter.process.mockRejectedValueOnce(new Error("disk unavailable"));
+        await expect(state.migrateSettings()).rejects.toThrow("disk unavailable");
+        expect(state.pendingLearningPreferencesMigration).toBe(true);
+        expect(readPersisted()?.learningPreferences).toBeUndefined();
+        await state.migrateSettings();
+        expect(state.pendingLearningPreferencesMigration).toBe(false);
+        adapter.process.mockRejectedValueOnce(new Error("disk unavailable"));
+        await expect(plugin.saveSettingsPermissions({ memoryExtractionEnabled: false,
+            retrievalHabitProfile: { enabled: false } })).rejects.toThrow("disk unavailable");
+        expect(plugin.settings.learningPreferences).toEqual({ version: 1, memoryExtraction: "default", habitLearning: "default" });
+        expect(plugin.settings.memoryExtractionEnabled).toBe(true);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(true);
+    });
+
+    it("ignores a rewritten legacy false mirror while retaining real paused history", () => {
+        const migrated = mergeLoadedSettings({ memoryExtractionEnabled: false });
+        // The legacy reader preserves unknown top-level fields but forces the
+        // unconfirmed extraction mirror off. This is its persisted output shape.
+        const legacySaved = { ...migrated, memoryExtractionEnabled: false };
+        expect(mergeLoadedSettings(legacySaved).memoryExtractionEnabled).toBe(true);
+        const paused = mergeLoadedSettings({ ...legacySaved,
+            memoryExtractionConsent: { state: "paused", version: 1, confirmedAt: "2026-08-01T00:00:00.000Z" } });
+        expect(paused.memoryExtractionEnabled).toBe(false);
+        expect(paused.memoryExtractionConsent.confirmedAt).toBe("2026-08-01T00:00:00.000Z");
+        expect(paused.learningPreferences?.memoryExtraction).toBe("disabled");
+    });
+});
+
+describe("B-135 default learning runtime", () => {
+    type Runtime = {
+        migrateSettings(): Promise<void>;
+        syncMemoryExtractionRuntime(): void;
+        memoryExtractionScheduler: MemoryExtractionScheduler | null;
+        createUserProfileStore(): MemoryUserProfileStore;
+        getGovernedMemoryProjectionSnapshot(): null;
+        chatHistoryManager: unknown;
+        createChatModel: unknown;
+        pageletCostTracker: { record: jest.Mock };
+        notifySettingsChanged(): Promise<void>;
+        isDataBoundaryAllowedPath(path: string): boolean;
+        recordQuietRecallFeedback(candidate: QuietRecallCandidate, feedback: "view"): Promise<RetrievalHabitProfileRecordResult>;
+    };
+
+    it("starts without historical extraction, runs a new chat trigger, and cancels queued work on pause", async () => {
+        jest.useFakeTimers();
+        const { plugin } = createPluginHarness({ initialData: { aiProvider: "openai", statisticsVaultId: "learning-runtime" } });
+        const runtime = plugin as unknown as Runtime;
+        try {
+            await plugin.loadSettings();
+            await runtime.migrateSettings();
+            const store = new MemoryUserProfileStore();
+            runtime.createUserProfileStore = jest.fn(() => store);
+            runtime.getGovernedMemoryProjectionSnapshot = () => null;
+            const getTurns = jest.fn(async (_conversationId: string) => [{ conversationId: "fresh", turnIndex: 1,
+                user: { role: "user", content: "I prefer concise answers." },
+                assistant: { role: "assistant", content: "Understood." } }]);
+            const findConversation = jest.fn(async (_conversationId: string) => ({ id: "fresh", title: "Fresh chat", turnCount: 1 }));
+            runtime.chatHistoryManager = { findConversation, getTurns };
+            const invoke = jest.fn(async () => ({ content: "[]" }));
+            const createModel = jest.fn(async () => ({ invoke }));
+            runtime.createChatModel = createModel;
+            runtime.pageletCostTracker = { record: jest.fn() };
+            runtime.notifySettingsChanged = async () => runtime.syncMemoryExtractionRuntime();
+            runtime.syncMemoryExtractionRuntime();
+            expect(runtime.memoryExtractionScheduler).not.toBeNull();
+            await jest.advanceTimersByTimeAsync(48 * 60 * 60_000);
+            expect(findConversation).not.toHaveBeenCalled();
+            expect(createModel).not.toHaveBeenCalled();
+            expect(plugin.settings.memoryExtractionConsent.state).toBe("unconfirmed");
+            expect(plugin.settings.memoryExtractionIncludeVaultInsights).toBe(false);
+            plugin.scheduleMemoryExtractionAfterChatTurn("fresh", 1);
+            await jest.advanceTimersByTimeAsync(2_000);
+            expect(getTurns).toHaveBeenCalledWith("fresh");
+            expect(invoke).toHaveBeenCalledTimes(1);
+            plugin.scheduleMemoryExtractionAfterChatTurn("next", 1);
+            await plugin.saveSettingsPermissions({ memoryExtractionEnabled: false });
+            expect(runtime.memoryExtractionScheduler).toBeNull();
+            plugin.scheduleMemoryExtractionAfterChatTurn("paused", 1);
+            await jest.advanceTimersByTimeAsync(2_000);
+            expect(findConversation).toHaveBeenCalledTimes(1);
+            expect(invoke).toHaveBeenCalledTimes(1);
+        } finally {
+            runtime.memoryExtractionScheduler?.dispose();
+            jest.useRealTimers();
+        }
+    });
+
+    it("invalidates the old scheduler before delayed settings watchers allow a restart", async () => {
+        const { plugin } = createPluginHarness({ initialData: { aiProvider: "openai", statisticsVaultId: "learning-restart" } });
+        const runtime = plugin as unknown as Runtime;
+        await plugin.loadSettings();
+        await runtime.migrateSettings();
+        runtime.createUserProfileStore = () => new MemoryUserProfileStore();
+        runtime.getGovernedMemoryProjectionSnapshot = () => null;
+        runtime.chatHistoryManager = { findConversation: jest.fn(), getTurns: jest.fn() };
+        plugin.settings.memoryExtractionNoticeDismissed = true;
+        runtime.syncMemoryExtractionRuntime();
+        const original = runtime.memoryExtractionScheduler!;
+        let release!: () => void;
+        let reached!: () => void;
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        let first = true;
+        runtime.notifySettingsChanged = async () => {
+            if (first) { first = false; reached(); await waiting; }
+            runtime.syncMemoryExtractionRuntime();
+        };
+        const stopping = plugin.saveSettingsPermissions({ memoryExtractionEnabled: false });
+        try {
+            await entered;
+            expect(runtime.memoryExtractionScheduler).toBeNull();
+            await plugin.saveSettingsPermissions({ memoryExtractionEnabled: true });
+            expect(runtime.memoryExtractionScheduler).not.toBe(original);
+            expect(runtime.memoryExtractionScheduler).not.toBeNull();
+            await expect(original.runTypeAExtraction("expired")).resolves.toBeNull();
+        } finally {
+            release();
+            await stopping;
+            runtime.memoryExtractionScheduler?.dispose();
+        }
+    });
+
+    it("records default local feedback and stops after the independent preference is saved off", async () => {
+        const { plugin, readPersisted } = createPluginHarness({ initialData: { aiProvider: "openai", statisticsVaultId: "habit-runtime" } });
+        const runtime = plugin as unknown as Runtime;
+        await plugin.loadSettings();
+        await runtime.migrateSettings();
+        runtime.notifySettingsChanged = jest.fn(async () => undefined);
+        runtime.isDataBoundaryAllowedPath = () => true;
+        const candidate: QuietRecallCandidate = { id: "recall", title: "Recall", summary: "Related source",
+            sourceRefs: [{ path: "notes/source.md", evidenceStrength: "medium" }], whyNow: [],
+            nextAction: "", relation: "related", score: 48, generatedAt: new Date().toISOString() };
+        expect((await runtime.recordQuietRecallFeedback(candidate, "view")).ok).toBe(true);
+        expect(plugin.settings.retrievalHabitProfile.state.aggregates.length).toBeGreaterThan(0);
+        expect(readPersisted()?.retrievalHabitProfile).toEqual(plugin.settings.retrievalHabitProfile);
+        const previous = JSON.stringify(readPersisted()?.retrievalHabitProfile);
+        await plugin.saveSettingsPermissions({ retrievalHabitProfile: { enabled: false } });
+        const snapshot = JSON.stringify(plugin.settings.retrievalHabitProfile.state);
+        expect(await runtime.recordQuietRecallFeedback(candidate, "view")).toEqual({ ok: false, reason: "disabled" });
+        expect(JSON.stringify(plugin.settings.retrievalHabitProfile.state)).toBe(snapshot);
+        expect(JSON.stringify(readPersisted()?.retrievalHabitProfile)).not.toBe(previous);
+        expect(plugin.settings.memoryExtractionEnabled).toBe(true);
+    });
+});
 
 describe("B-106 settings lifecycle", () => {
     type Internals = {
@@ -83,26 +287,26 @@ describe("B-106 settings lifecycle", () => {
         expect(hasDeprecatedSimpleSettingsFields(readPersisted())).toBe(false);
     });
 
-    it.each(["paused", "unconfirmed", "invalid"])("does not reactivate explicit %s extraction consent", async (state) => {
+    it.each(["paused", "unconfirmed", "invalid"])("B-135 distinguishes a recorded pause from %s consent", async (state) => {
         const { plugin, readPersisted } = createPluginHarness({ initialData: {
             aiProvider: "openai", memoryExtractionEnabled: true,
             memoryExtractionConsent: { state, version: 1 },
         } });
         await plugin.loadSettings();
-        expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+        expect(plugin.settings.memoryExtractionEnabled).toBe(state !== "paused");
         await plugin.saveSettings();
         const reloaded = createPluginHarness({ initialData: readPersisted() });
         await reloaded.plugin.loadSettings();
-        expect(reloaded.plugin.settings.memoryExtractionEnabled).toBe(false);
-        expect(reloaded.plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+        expect(reloaded.plugin.settings.memoryExtractionEnabled).toBe(state !== "paused");
+        expect(reloaded.plugin.settings.retrievalHabitProfile.enabled).toBe(true);
     });
 
-    it("preserves a valid pre-consent extraction opt-in without enabling habit learning", async () => {
+    it("B-135 adopts learning defaults without manufacturing pre-consent confirmation", async () => {
         const { plugin } = createPluginHarness({ initialData: { memoryExtractionEnabled: true } });
         await plugin.loadSettings();
         expect(plugin.settings.memoryExtractionEnabled).toBe(true);
-        expect(plugin.settings.memoryExtractionConsent.state).toBe("confirmed");
-        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+        expect(plugin.settings.memoryExtractionConsent).toEqual({ state: "unconfirmed", version: 1 });
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(true);
     });
 
     it("publishes background changes only after persistence and preserves concurrent live edits", async () => {
@@ -280,6 +484,7 @@ describe('B-106 feature and permission Plugin integration', () => {
             chatModelName: 'qwen-plus', embeddingModelName: 'text-embedding-v4',
             webSearchEnabled: false, operationsAgentEnabled: false,
             statisticsSyncEnabled: false,
+            learningPreferences: { version: 1, memoryExtraction: 'default', habitLearning: 'disabled' },
         }, secretStorageValues: { 'pa-api-token': 'synthetic-token' } });
         await harness.plugin.loadSettings();
         const state = harness.plugin as unknown as State;

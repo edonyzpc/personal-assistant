@@ -1,3 +1,6 @@
+import { FakeGovernanceIndexedDbFactory, seedLegacyFactory, cloneStores } from "./helpers/fake-governance-indexeddb";
+import { stableHash } from '../src/pa/helpers';
+import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint, type ChatMemorySemanticReceipt } from '../src/pa/chat-memory-semantic-receipt';
 import {
     MEMORY_GOVERNANCE_LOGICAL_STORES,
     IndexedDbMemoryGovernanceRepository,
@@ -11,6 +14,102 @@ import {
 } from "../src/pa/memory-governance-persistence";
 
 describe("Memory governance V1 state", () => {
+    it.each(['valid', 'legacy-schema', 'missing-key', 'raw-key', 'unknown-store', 'wrong-outbox', 'undo-missing-key'] as const)(
+        'retains governed Profile routing and opaque identity or rejects %s before a whitelist can discard it', (variant) => {
+            const state = createCompleteState();
+            state.schemaVersion = 3;
+            const target = { kind: 'type_a_profile' as const, profileRecordId: 'profile-1',
+                store: 'governed' as const, profileKey: 'semantic-1234abcd' };
+            state.projectionLinks[0].target = target;
+            state.undoSnapshots[0].projectionLinks = [{ ...state.projectionLinks[0], target: { ...target } }];
+            Object.assign(state.pendingOperations[0], { profileStore: 'governed', profileKey: target.profileKey });
+            if (variant === 'legacy-schema') state.schemaVersion = 2;
+            if (variant === 'missing-key') Object.assign(target, { profileKey: undefined });
+            if (variant === 'raw-key') target.profileKey = 'A personal statement must not survive Forget';
+            if (variant === 'unknown-store') Object.assign(target, { store: 'legacy' });
+            if (variant === 'wrong-outbox') Object.assign(state.pendingOperations[0], { profileKey: 'semantic-ffffffff' });
+            if (variant === 'undo-missing-key') Object.assign(state.undoSnapshots[0].projectionLinks[0].target, { profileKey: undefined });
+            const parsed = normalizeDeviceMemoryGovernanceStateV1(state);
+            if (variant === 'valid') {
+                expect(parsed?.projectionLinks[0].target).toEqual(target);
+                expect(parsed?.undoSnapshots[0].projectionLinks[0].target).toEqual(target);
+                expect(parsed?.pendingOperations[0]).toMatchObject({ profileStore: 'governed', profileKey: target.profileKey });
+            } else expect(parsed).toBeNull();
+        },
+    );
+    it.each([1, 2, 3] as const)('only accepts the preserving migration phase in schema 3 (input %s)', (schemaVersion) => {
+        const state = createCompleteState();
+        state.schemaVersion = schemaVersion;
+        state.migrationStates.vault.phase = 'governed_preserving_legacy';
+        const parsed = normalizeDeviceMemoryGovernanceStateV1(state);
+        if (schemaVersion === 3) expect(parsed?.migrationStates.vault.phase).toBe('governed_preserving_legacy');
+        else expect(parsed).toBeNull();
+    });
+    it.each(['memory', 'indexeddb'] as const)('retains bound receipts in revisions, queue admission and Undo after %s readback', async (backend) => {
+        const source = createReceiptState();
+        const factory = new FakeGovernanceIndexedDbFactory();
+        const repository = backend === 'memory' ? new InMemoryMemoryGovernanceRepository() : createIndexedRepository(factory);
+        await repository.transact((draft) => { Object.assign(draft, source); });
+        const before = await repository.initialize();
+        const reader = backend === 'memory' ? repository : createIndexedRepository(factory);
+        const read = await reader.initialize();
+        expect(read).toEqual(before);
+        expect(read.revisions[0].chatSemanticReceipt).toEqual(source.revisions[0].chatSemanticReceipt);
+        expect(read.memoryQueueItems[0].governanceAdmission?.chatSemanticReceipt).toEqual(source.revisions[0].chatSemanticReceipt);
+        expect(read.undoSnapshots[0]).toMatchObject({ revisions: [expect.objectContaining({ chatSemanticReceipt: source.revisions[0].chatSemanticReceipt })] });
+        await reader.dispose();
+        if (reader !== repository) await repository.dispose();
+    });
+
+    it.each(['revision', 'queue', 'undo', 'misplaced', 'legacy1', 'legacy2', 'null', 'missing', 'rule', 'fingerprint', 'conversation', 'extra-conversation', 'extra-note'] as const)('rejects invalid or unsupported receipt placement: %s', (location) => {
+        const source = createReceiptState();
+        if (location === 'revision') source.revisions[0].summary = 'Different candidate';
+        if (location === 'queue') source.memoryQueueItems[0].claim = 'Different queue claim';
+        if (location === 'undo') Object.assign(source.undoSnapshots[0], { revisions: [{ ...source.revisions[0], chatSemanticReceipt: null }] });
+        if (location === 'misplaced') Object.assign(source.pendingOperations[0], { chatSemanticReceipt: source.revisions[0].chatSemanticReceipt });
+        if (location === 'legacy1') source.schemaVersion = 1;
+        if (location === 'legacy2') source.schemaVersion = 2;
+        if (location === 'null') Object.assign(source.revisions[0], { chatSemanticReceipt: null });
+        if (location === 'missing') delete source.memoryQueueItems[0].governanceAdmission!.chatSemanticReceipt;
+        if (location === 'rule') source.memoryQueueItems[0].governanceAdmission!.ruleFingerprint = 'other-rule';
+        if (location === 'fingerprint') source.memoryQueueItems[0].governanceAdmission!.sourceFingerprintId = 'other-source';
+        if (location === 'conversation') source.memoryQueueItems[0].governanceAdmission!.provenance = [{ kind: 'conversation', conversationIds: ['other-conversation'], observedAt: '2026-09-09T00:00:00Z' }];
+        if (location === 'extra-conversation') source.revisions[0].provenance = [{ kind: 'conversation', conversationIds: ['unproven', 'conversation'], observedAt: '2026-09-09T00:00:00Z' }];
+        if (location === 'extra-note') source.memoryQueueItems[0].governanceAdmission!.provenance.push({ kind: 'note', sourceRef: { path: 'unproven.md' } });
+        expect(normalizeDeviceMemoryGovernanceStateV1(source)).toBeNull();
+    });
+    it('does not make an unknown additive receipt a required admission condition', () => {
+        const source = createCompleteState();
+        const provenance = [{ kind: 'conversation' as const, conversationIds: ['conversation'], observedAt: '2026-09-09T00:00:00Z' }];
+        source.revisions[0].provenance = provenance;
+        Object.assign(source.revisions[0], { b135ProbeReceipt: { version: 1, candidateHash: 'bound-candidate' } });
+        source.memoryQueueItems.push({ id: 'queue-probe', type: 'memory_candidate', partition: { kind: 'vault', key: 'vault' },
+            title: 'Synthetic candidate', claim: 'Prefer concise replies', scope: { kind: 'selected_notes', paths: ['notes/source.md'] },
+            sourceRefs: [], originSurface: 'chat', priority: 'normal', status: 'suggested',
+            createdAt: '2026-09-09T00:00:00Z', updatedAt: '2026-09-09T00:00:00Z', whyShown: [], dataBoundarySnapshotId: 'boundary',
+            governanceAdmission: { version: 1, origin: 'type_a', memoryType: 'preference', sensitivity: 'low', authority: 'explicit_user',
+                effect: 'future_answers', applicability: { kind: 'selected_notes', paths: ['notes/source.md'] }, provenance,
+                sourceFingerprintId: 'source-probe', ruleFingerprint: 'b135-semantic-probe', admissionKey: 'probe' },
+        });
+        Object.assign(source.memoryQueueItems[0].governanceAdmission!, { b135ProbeReceipt: { version: 1, candidateHash: 'bound-candidate' } });
+        expect(validateDeviceMemoryGovernanceStateV1(source)).toEqual({ ok: true });
+        const read = normalizeDeviceMemoryGovernanceStateV1(source);
+        expect(read).not.toBeNull();
+        expect(read!.revisions[0]).not.toHaveProperty('b135ProbeReceipt');
+        expect(read!.revisions[0].summary).toBe('Prefer concise replies');
+        expect(read!.memoryQueueItems[0].governanceAdmission).not.toHaveProperty('b135ProbeReceipt');
+        expect(read!.memoryQueueItems[0].governanceAdmission?.ruleFingerprint).toBe('b135-semantic-probe');
+    });
+
+    it.each(['revision', 'schema'] as const)('rejects the whole state instead of discarding unsupported %s data', (boundary) => {
+        const source = createCompleteState();
+        if (boundary === 'revision') Object.assign(source.revisions[0].provenance[0], { kind: 'b135_unsupported_probe' });
+        else Object.assign(source, { schemaVersion: 99999 });
+        expect(normalizeDeviceMemoryGovernanceStateV1(source)).toBeNull();
+        expect(() => new InMemoryMemoryGovernanceBackend(source)).toThrow();
+        expect(source.claims[0].id).toBe('claim-1');
+        expect(source.revisions[0].summary).toBe('Prefer concise replies');
+    });
     it('rejects invalidation between the repository callback and the in-memory backend commit', async () => {
         const repository = new InMemoryMemoryGovernanceRepository();
         const before = await repository.initialize(); const controller = new AbortController();
@@ -43,7 +142,7 @@ describe("Memory governance V1 state", () => {
     it("creates a complete clone-safe empty schema", () => {
         const first = createEmptyDeviceMemoryGovernanceStateV1();
         expect(first).toEqual({
-            schemaVersion: 2,
+            schemaVersion: 3,
             commitSequence: 0,
             claims: [],
             revisions: [],
@@ -186,7 +285,7 @@ describe("InMemoryMemoryGovernanceRepository", () => {
             draft.policyStates.vault = createPolicyState(1);
         })).resolves.toBeUndefined();
         const first = await repository.initialize();
-        expect(first.schemaVersion).toBe(2);
+        expect(first.schemaVersion).toBe(3);
         expect(first.commitSequence).toBe(1);
         first.policyStates.vault.legacyBaseline!.confirmedCount = 99;
         expect((await repository.initialize()).policyStates.vault.legacyBaseline?.confirmedCount).toBe(1);
@@ -206,30 +305,79 @@ describe("InMemoryMemoryGovernanceRepository", () => {
 });
 
 describe("IndexedDbMemoryGovernanceRepository", () => {
-    it('upgrades a complete V1 transaction in place and prevents an old-version writer from reopening', async () => {
+    it.each([1, 2] as const)('does not strip an unsupported receipt during V%s upgrade', async (oldVersion) => {
+        const factory = new FakeGovernanceIndexedDbFactory();
+        seedLegacyFactory(factory, createReceiptState());
+        factory.backend.version = oldVersion;
+        factory.backend.getStore('meta').set('device-state-v1', { schemaVersion: oldVersion, commitSequence: 7 });
+        const before = cloneStores(factory.backend.stores);
+        const repository = createIndexedRepository(factory);
+        await expect(repository.initialize()).rejects.toMatchObject({ code: 'database_open_failed' });
+        expect(factory.backend.stores).toEqual(before);
+        expect(factory.backend.version).toBe(oldVersion);
+        await repository.dispose();
+    });
+    it.each([1, 2] as const)('upgrades a complete V%s transaction in place without inventing receipts and prevents old-version reopen', async (oldVersion) => {
         const factory = new FakeGovernanceIndexedDbFactory();
         const original = createCompleteState(); seedLegacyFactory(factory, original);
+        original.schemaVersion = oldVersion;
+        factory.backend.version = oldVersion;
+        factory.backend.getStore('meta').set('device-state-v1', { schemaVersion: oldVersion, commitSequence: original.commitSequence });
         const repository = createIndexedRepository(factory);
         const upgraded = await repository.initialize();
-        expect(upgraded).toEqual({ ...normalizeDeviceMemoryGovernanceStateV1(original), schemaVersion: 2 });
-        expect(factory.backend.version).toBe(2);
-        const oldOpen = factory.open('old-writer', 1);
+        expect(upgraded).toEqual({ ...normalizeDeviceMemoryGovernanceStateV1(original), schemaVersion: 3 });
+        expect(factory.backend.version).toBe(3);
+        expect(upgraded.revisions[0]).not.toHaveProperty('chatSemanticReceipt');
+        const oldOpen = factory.open('old-writer', oldVersion);
         await expect(new Promise((resolve, reject) => { oldOpen.onsuccess = resolve; oldOpen.onerror = () => reject(oldOpen.error); }))
             .rejects.toMatchObject({ name: 'VersionError' });
         expect(await repository.initialize()).toEqual(upgraded); await repository.dispose();
     });
 
-    it.each(['invalid-state', 'upgrade-commit-failed'])('aborts V1 upgrade without changing the original stores: %s', async (failure) => {
+    it.each([[1, 'invalid-state'], [1, 'upgrade-commit-failed'], [2, 'invalid-state'], [2, 'upgrade-commit-failed']] as const)('aborts V%s upgrade without changing the original stores: %s', async (oldVersion, failure) => {
         const factory = new FakeGovernanceIndexedDbFactory();
         const original = createCompleteState();
         if (failure === 'invalid-state') original.claims.push({ ...original.claims[0] });
         seedLegacyFactory(factory, original);
+        factory.backend.version = oldVersion;
+        factory.backend.getStore('meta').set('device-state-v1', { schemaVersion: oldVersion, commitSequence: original.commitSequence });
         if (failure === 'upgrade-commit-failed') factory.backend.failNextWriteCommit = true;
         const before = cloneStores(factory.backend.stores);
         const repository = createIndexedRepository(factory);
         await expect(repository.initialize()).rejects.toMatchObject({ code: 'database_open_failed' });
-        expect(factory.backend.version).toBe(1); expect(factory.backend.stores).toEqual(before); await repository.dispose();
+        expect(factory.backend.version).toBe(oldVersion); expect(factory.backend.stores).toEqual(before); await repository.dispose();
     });
+
+    it.each(['logical-schema', 'database-version'] as const)(
+        'preserves opaque future governance data when the current reader rejects %s, including write and reopen attempts',
+        async (boundary) => {
+            const factory = new FakeGovernanceIndexedDbFactory();
+            const source = createCompleteState();
+            seedLegacyFactory(factory, source);
+            factory.backend.version = boundary === 'database-version' ? 4 : 3;
+            factory.backend.getStore('meta').set('device-state-v1', {
+                schemaVersion: 4,
+                commitSequence: source.commitSequence,
+            });
+            const revision = factory.backend.getStore('revisions').get('0') as Record<string, unknown>;
+            revision.b135ProbeReceipt = { version: 1, candidateHash: 'future-source-bound-candidate' };
+            const before = cloneStores(factory.backend.stores);
+            const expectedError = { code: boundary === 'database-version' ? 'database_open_failed' : 'invalid_state' };
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const repository = createIndexedRepository(factory);
+                const changed = jest.fn();
+                const mutate = jest.fn();
+                repository.subscribe(changed);
+                await expect(repository.initialize()).rejects.toMatchObject(expectedError);
+                await expect(repository.transact(mutate)).rejects.toMatchObject(expectedError);
+                expect(mutate).not.toHaveBeenCalled();
+                expect(changed).not.toHaveBeenCalled();
+                await repository.dispose();
+                expect(factory.backend.stores).toEqual(before);
+                expect(factory.backend.version).toBe(boundary === 'database-version' ? 4 : 3);
+            }
+        },
+    );
 
     it("creates the complete logical schema under one device-shared database name", async () => {
         const factory = new FakeGovernanceIndexedDbFactory();
@@ -239,7 +387,7 @@ describe("IndexedDbMemoryGovernanceRepository", () => {
 
         expect(factory.openCalls).toEqual([{
             name: getMemoryGovernanceDeviceDbName("personal-assistant"),
-            version: 2,
+            version: 3,
         }]);
         expect([...factory.backend.stores.keys()].sort()).toEqual([
             "meta",
@@ -315,7 +463,7 @@ describe("IndexedDbMemoryGovernanceRepository", () => {
         const repository = createIndexedRepository(factory);
 
         await expect(repository.initialize()).rejects.toMatchObject({ code: "database_open_blocked" });
-        await expect(repository.initialize()).resolves.toMatchObject({ schemaVersion: 2, commitSequence: 0 });
+        await expect(repository.initialize()).resolves.toMatchObject({ schemaVersion: 3, commitSequence: 0 });
         expect(factory.openCalls).toHaveLength(2);
         await repository.dispose();
     });
@@ -371,6 +519,34 @@ describe("IndexedDbMemoryGovernanceRepository", () => {
         await repository.dispose();
     });
 });
+
+function createReceiptState(): DeviceMemoryGovernanceStateV1 {
+    const state = createCompleteState();
+    state.schemaVersion = 3;
+    const summary = state.revisions[0].summary;
+    const receipt: ChatMemorySemanticReceipt = {
+        version: 1, rule: CHAT_MEMORY_SEMANTIC_RULE, candidateTextHash: stableHash(summary.trim()),
+        meaning: 'independent_personal_statement', kind: 'user_explicit', confidence: 'high',
+        sources: [{ conversationId: 'conversation', messageId: 'message', hostKind: 'writing_request',
+            contentHash: stableHash(summary), projectionHash: stableHash(summary), quoteHash: stableHash(summary),
+            projectionChars: summary.length, start: 0, end: summary.length }],
+    };
+    state.revisions[0].chatSemanticReceipt = receipt;
+    state.revisions[0].provenance = [{ kind: 'conversation', conversationIds: ['conversation'], observedAt: '2026-09-09T00:00:00Z' }];
+    Object.assign(state.undoSnapshots[0], { revisions: [{ ...state.revisions[0], chatSemanticReceipt: receipt }] });
+    state.memoryQueueItems.push({ id: 'receipt-queue', type: 'memory_candidate', partition: { kind: 'vault', key: 'vault' },
+        title: 'Synthetic candidate', claim: summary, scope: { kind: 'whole_vault' }, sourceRefs: [],
+        originSurface: 'chat', priority: 'normal', status: 'suggested', createdAt: '2026-09-09T00:00:00Z',
+        updatedAt: '2026-09-09T00:00:00Z', whyShown: [], dataBoundarySnapshotId: 'boundary' });
+    state.memoryQueueItems[0].governanceAdmission = {
+        version: 1, origin: 'type_a', memoryType: 'preference', sensitivity: 'low', authority: 'explicit_user',
+        effect: 'future_answers', applicability: { kind: 'whole_vault' },
+        provenance: [{ kind: 'conversation', conversationIds: ['conversation'], observedAt: '2026-09-09T00:00:00Z' }],
+        sourceFingerprintId: chatMemorySemanticSourceFingerprint(receipt), ruleFingerprint: CHAT_MEMORY_SEMANTIC_RULE, admissionKey: 'admission',
+        chatSemanticReceipt: receipt,
+    };
+    return state;
+}
 
 function createPolicyState(confirmedCount: number) {
     return {
@@ -531,264 +707,4 @@ function createIndexedRepository(
         factory as unknown as IDBFactory,
         { ...options, broadcastChannelFactory: null },
     );
-}
-
-class FakeGovernanceIndexedDbFactory {
-    readonly backend = new FakeGovernanceIndexedDbBackend();
-    readonly openCalls: Array<{ name: string; version: number | undefined }> = [];
-    readonly connections: FakeGovernanceDatabase[] = [];
-    blockedOpenCount = 0;
-    silentOpenCount = 0;
-
-    open(name: string, version?: number): IDBOpenDBRequest {
-        this.openCalls.push({ name, version });
-        const connection = new FakeGovernanceDatabase(this.backend);
-        this.connections.push(connection);
-        const request = new FakeIdbRequest<FakeGovernanceDatabase>(connection) as unknown as IDBOpenDBRequest;
-        queueMicrotask(() => {
-            if (this.silentOpenCount > 0) {
-                this.silentOpenCount -= 1;
-                return;
-            }
-            if (this.blockedOpenCount > 0) {
-                this.blockedOpenCount -= 1;
-                request.onblocked?.call(request, {} as IDBVersionChangeEvent);
-                return;
-            }
-            if (version !== undefined && version < this.backend.version) {
-                Object.assign(request, { error: new DOMException('Old writer blocked', 'VersionError') });
-                request.onerror?.call(request, {} as Event); return;
-            }
-            if (this.backend.version === 1 && version === 2) {
-                const upgrade = new FakeGovernanceTransaction(this.backend, [...this.backend.stores.keys()], 'readwrite');
-                Object.assign(request, { transaction: upgrade });
-                upgrade.oncomplete = () => { this.backend.version = 2; request.onsuccess?.call(request, {} as Event); };
-                upgrade.onabort = () => {
-                    Object.assign(request, { error: upgrade.error }); request.onerror?.call(request, {} as Event);
-                };
-                request.onupgradeneeded?.call(request, { oldVersion: 1, newVersion: 2 } as IDBVersionChangeEvent);
-                this.backend.acquireWrite(upgrade); return;
-            }
-            if (!this.backend.upgraded) {
-                request.onupgradeneeded?.call(request, { oldVersion: 0, newVersion: version } as IDBVersionChangeEvent);
-                this.backend.upgraded = true;
-                this.backend.version = version ?? 1;
-            }
-            request.onsuccess?.call(request, {} as Event);
-        });
-        return request;
-    }
-}
-
-class FakeGovernanceIndexedDbBackend {
-    stores = new Map<string, Map<string, unknown>>();
-    upgraded = false;
-    version = 0;
-    failNextWriteCommit = false;
-    private writeTail: Promise<void> = Promise.resolve();
-
-    getStore(name: string): Map<string, unknown> {
-        let store = this.stores.get(name);
-        if (!store) {
-            store = new Map();
-            this.stores.set(name, store);
-        }
-        return store;
-    }
-
-    acquireWrite(transaction: FakeGovernanceTransaction): void {
-        let release: (() => void) | undefined;
-        const previous = this.writeTail;
-        this.writeTail = previous.then(() => new Promise<void>((resolve) => { release = resolve; }));
-        void previous.then(() => transaction.activate(() => release?.()));
-    }
-}
-
-// This transactional fake exercises production upgrade callbacks; host IndexedDB
-// durability/VersionError behavior still needs the real Obsidian acceptance run.
-function seedLegacyFactory(factory: FakeGovernanceIndexedDbFactory, state: DeviceMemoryGovernanceStateV1): void {
-    factory.backend.version = 1; factory.backend.upgraded = true;
-    factory.backend.getStore('meta').set('device-state-v1', { schemaVersion: 1, commitSequence: state.commitSequence });
-    for (const name of MEMORY_GOVERNANCE_LOGICAL_STORES) {
-        const store = factory.backend.getStore(name), value = state[name];
-        if (Array.isArray(value)) value.forEach((row, index) => store.set(String(index), cloneValue(row)));
-        else for (const [key, entry] of Object.entries(value)) store.set(key, { key, value: cloneValue(entry) });
-    }
-}
-
-class FakeGovernanceDatabase {
-    onversionchange: ((this: IDBDatabase, ev: IDBVersionChangeEvent) => unknown) | null = null;
-    closeCalls = 0;
-    private closed = false;
-
-    constructor(readonly backend: FakeGovernanceIndexedDbBackend) {}
-
-    readonly objectStoreNames = {
-        contains: (name: string) => this.backend.stores.has(name),
-    };
-
-    createObjectStore(name: string): IDBObjectStore {
-        this.backend.getStore(name);
-        return {} as IDBObjectStore;
-    }
-
-    transaction(storeNames: string | string[], mode: IDBTransactionMode = "readonly"): IDBTransaction {
-        if (this.closed) throw new DOMException("Connection is closed", "InvalidStateError");
-        const names = Array.isArray(storeNames) ? storeNames : [storeNames];
-        const transaction = new FakeGovernanceTransaction(this.backend, names, mode);
-        if (mode === "readwrite") this.backend.acquireWrite(transaction);
-        else queueMicrotask(() => transaction.activate());
-        return transaction as unknown as IDBTransaction;
-    }
-
-    close(): void {
-        if (this.closed) return;
-        this.closed = true;
-        this.closeCalls += 1;
-    }
-}
-
-type FakeIdbOperation = (stores: Map<string, Map<string, unknown>>) => void;
-
-class FakeGovernanceTransaction {
-    oncomplete: ((this: IDBTransaction, ev: Event) => unknown) | null = null;
-    onerror: ((this: IDBTransaction, ev: Event) => unknown) | null = null;
-    onabort: ((this: IDBTransaction, ev: Event) => unknown) | null = null;
-    error: DOMException | null = null;
-    private readonly operations: FakeIdbOperation[] = [];
-    private active = false;
-    private finishing = false;
-    private release: (() => void) | undefined;
-    private workingStores: Map<string, Map<string, unknown>> | null = null;
-
-    constructor(
-        private readonly backend: FakeGovernanceIndexedDbBackend,
-        private readonly storeNames: string[],
-        private readonly mode: IDBTransactionMode,
-    ) {}
-
-    objectStore(name: string): IDBObjectStore {
-        if (!this.storeNames.includes(name)) throw new DOMException("Store not in transaction", "NotFoundError");
-        return new FakeGovernanceObjectStore(this, name) as unknown as IDBObjectStore;
-    }
-
-    abort(): void {
-        if (!this.active) return;
-        this.fail(new DOMException("transaction aborted", "AbortError"));
-    }
-
-    activate(release?: () => void): void {
-        this.release = release;
-        this.workingStores = this.mode === "readwrite"
-            ? cloneStores(this.backend.stores)
-            : this.backend.stores;
-        this.active = true;
-        this.drain();
-    }
-
-    enqueue(operation: FakeIdbOperation): void {
-        this.operations.push(operation);
-        if (this.active && !this.finishing) queueMicrotask(() => this.drain());
-    }
-
-    private drain(): void {
-        if (!this.active || this.finishing) return;
-        const operation = this.operations.shift();
-        if (operation) {
-            try {
-                operation(this.workingStores!);
-            } catch (error) {
-                this.fail(error);
-                return;
-            }
-            queueMicrotask(() => this.drain());
-            return;
-        }
-        this.finishing = true;
-        queueMicrotask(() => {
-            this.finishing = false;
-            if (this.operations.length > 0) {
-                this.drain();
-                return;
-            }
-            if (this.mode === "readwrite" && this.backend.failNextWriteCommit) {
-                this.backend.failNextWriteCommit = false;
-                this.fail(new DOMException("write failed", "AbortError"));
-                return;
-            }
-            if (this.mode === "readwrite") this.backend.stores = this.workingStores!;
-            this.active = false;
-            this.oncomplete?.call(this as unknown as IDBTransaction, {} as Event);
-            this.release?.();
-        });
-    }
-
-    private fail(error: unknown): void {
-        this.active = false;
-        this.error = error instanceof DOMException ? error : new DOMException("transaction failed");
-        this.onabort?.call(this as unknown as IDBTransaction, {} as Event);
-        this.release?.();
-    }
-}
-
-class FakeGovernanceObjectStore {
-    constructor(private readonly transaction: FakeGovernanceTransaction, private readonly storeName: string) {}
-
-    get(key: IDBValidKey): IDBRequest<unknown | undefined> {
-        const request = new FakeIdbRequest<unknown | undefined>(undefined);
-        this.transaction.enqueue((stores) => {
-            request.result = cloneValue(stores.get(this.storeName)?.get(String(key)));
-            request.onsuccess?.call(request as unknown as IDBRequest, {} as Event);
-        });
-        return request as unknown as IDBRequest<unknown | undefined>;
-    }
-
-    getAll(): IDBRequest<unknown[]> {
-        const request = new FakeIdbRequest<unknown[]>([]);
-        this.transaction.enqueue((stores) => {
-            request.result = [...(stores.get(this.storeName)?.values() ?? [])].map(cloneValue);
-            request.onsuccess?.call(request as unknown as IDBRequest, {} as Event);
-        });
-        return request as unknown as IDBRequest<unknown[]>;
-    }
-
-    put(value: unknown, key?: IDBValidKey): IDBRequest<IDBValidKey> {
-        const request = new FakeIdbRequest<IDBValidKey>(key ?? "");
-        this.transaction.enqueue((stores) => {
-            if (key === undefined) throw new DOMException("Missing key", "DataError");
-            stores.get(this.storeName)?.set(String(key), cloneValue(value));
-            request.onsuccess?.call(request as unknown as IDBRequest, {} as Event);
-        });
-        return request as unknown as IDBRequest<IDBValidKey>;
-    }
-
-    clear(): IDBRequest<undefined> {
-        const request = new FakeIdbRequest<undefined>(undefined);
-        this.transaction.enqueue((stores) => {
-            stores.get(this.storeName)?.clear();
-            request.onsuccess?.call(request as unknown as IDBRequest, {} as Event);
-        });
-        return request as unknown as IDBRequest<undefined>;
-    }
-}
-
-class FakeIdbRequest<T> {
-    onsuccess: ((this: IDBRequest<T>, ev: Event) => unknown) | null = null;
-    onerror: ((this: IDBRequest<T>, ev: Event) => unknown) | null = null;
-    onblocked: ((this: IDBOpenDBRequest, ev: Event) => unknown) | null = null;
-    onupgradeneeded: ((this: IDBOpenDBRequest, ev: IDBVersionChangeEvent) => unknown) | null = null;
-    error: DOMException | null = null;
-
-    constructor(public result: T) {}
-}
-
-function cloneStores(source: Map<string, Map<string, unknown>>): Map<string, Map<string, unknown>> {
-    return new Map([...source].map(([name, records]) => [
-        name,
-        new Map([...records].map(([key, value]) => [key, cloneValue(value)])),
-    ]));
-}
-
-function cloneValue<T>(value: T): T {
-    return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T;
 }

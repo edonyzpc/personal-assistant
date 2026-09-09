@@ -26,6 +26,81 @@ export interface ChatMemoryAdmissionEvidence {
     chatMessages?: ChatMemoryMessageEvidence[];
 }
 
+/** Reviewable input is not an ordinary statement or a persistence permission. */
+export interface ChatMemorySemanticSource {
+    conversationId: string;
+    messageId: string;
+    hostKind: ChatHostProvenance["kind"] | "unclassified";
+    contentHash: string;
+    text: string;
+}
+
+export interface ChatMemoryQuotedSource {
+    conversationId: string;
+    messageId: string;
+    hostKind: ChatMemorySemanticSource["hostKind"];
+    contentHash: string;
+    projectionHash: string;
+    projectionChars: number;
+    start: number;
+    end: number;
+    quoteHash: string;
+}
+
+/** Separate Type-A review lane. Old semantic labels remain facts to review, never upgraded. */
+export function collectChatMemorySemanticSources(conversationId: string, turns: readonly PersistedTurn[]): ChatMemorySemanticSource[] {
+    const sources: ChatMemorySemanticSource[] = [];
+    const counts = new Map<string, number>();
+    for (const turn of turns) {
+        if (turn.conversationId !== conversationId || turn.user.role !== "user" || typeof turn.user.content !== "string") continue;
+        let messageId: string;
+        let hostKind: ChatMemorySemanticSource["hostKind"] = "unclassified";
+        if (Object.prototype.hasOwnProperty.call(turn.user, "hostProvenance")) {
+            try {
+                const provenance = cloneChatHostProvenance(turn.user.hostProvenance);
+                messageId = provenance.messageId;
+                hostKind = provenance.kind;
+            } catch { continue; }
+        } else {
+            if (!Number.isSafeInteger(turn.turnIndex) || turn.turnIndex < 0) continue;
+            messageId = `legacy-${stableHash(`${conversationId}\u0000${turn.turnIndex}\u0000user`)}`;
+        }
+        counts.set(messageId, (counts.get(messageId) ?? 0) + 1);
+        // A generated draft or explicit style action is not automatic Type-A input.
+        if (hostKind === "ai_draft" || hostKind === "explicit_style_action") continue;
+        sources.push({ conversationId, messageId, hostKind, text: turn.user.content, contentHash: stableHash(turn.user.content) });
+    }
+    return sources.filter((source) => counts.get(source.messageId) === 1);
+}
+
+/** The budgeted prefix is exact and never ends halfway through a surrogate pair. */
+export function projectChatMemorySemanticText(source: ChatMemorySemanticSource, maxChars: number): string {
+    if (!Number.isSafeInteger(maxChars) || maxChars <= 0 || stableHash(source.text) !== source.contentHash) return "";
+    let end = Math.min(source.text.length, maxChars);
+    if (end > 0 && end < source.text.length && isHighSurrogate(source.text.charCodeAt(end - 1))
+        && isLowSurrogate(source.text.charCodeAt(end))) end--;
+    return source.text.slice(0, end);
+}
+
+/** Model supplies a quote; the host alone computes its unique span in the text actually sent. */
+export function locateChatMemoryQuote(source: ChatMemorySemanticSource, presentedText: string, quote: string): ChatMemoryQuotedSource | undefined {
+    if (typeof quote !== "string" || !quote.trim() || stableHash(source.text) !== source.contentHash
+        || !source.text.startsWith(presentedText) || !presentedText) return undefined;
+    const start = presentedText.indexOf(quote);
+    const end = start + quote.length;
+    if (start < 0 || presentedText.indexOf(quote, start + 1) !== -1) return undefined;
+    for (const boundary of [start, end, presentedText.length]) {
+        if (boundary > 0 && boundary < source.text.length && isHighSurrogate(source.text.charCodeAt(boundary - 1))
+            && isLowSurrogate(source.text.charCodeAt(boundary))) return undefined;
+    }
+    return { conversationId: source.conversationId, messageId: source.messageId, hostKind: source.hostKind,
+        contentHash: source.contentHash, projectionHash: stableHash(presentedText), projectionChars: presentedText.length,
+        start, end, quoteHash: stableHash(quote) };
+}
+
+function isHighSurrogate(code: number): boolean { return code >= 0xd800 && code <= 0xdbff; }
+function isLowSurrogate(code: number): boolean { return code >= 0xdc00 && code <= 0xdfff; }
+
 /** Compatibility for old text turns, without treating missing new metadata as authorization. */
 function isLegacyWritingInteraction(text: string): boolean {
     return /(?:文案|配文|润色|改写|重写|这次.{0,12}(?:写|短|长|简洁)|(?:把|将).{0,30}(?:改成|改为))/.test(text)

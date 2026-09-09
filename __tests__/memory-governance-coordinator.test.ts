@@ -232,6 +232,74 @@ function useProjection(
 }
 
 describe("MemoryGovernanceCoordinator", () => {
+    it('keeps legacy recovery while ordinary governance and Undo expiry continue in the preserving phase', async () => {
+        const initial = createState({ compatibility: true });
+        initial.migrationStates['vault-a'].phase = 'governed_preserving_legacy';
+        const repo = repository(initial);
+        let now = NOW;
+        const coordinator = new MemoryGovernanceCoordinator({ repository: repo, opaqueVaultKey: 'vault-a', now: () => now, idFactory: ids('preserving') });
+        await expect(coordinator.correct({ claimId: 'claim-a', summary: 'Current governed correction', scopeAllowed: true, dataBoundaryAllowed: true })).resolves.toMatchObject({ ok: true });
+        const corrected = await repo.initialize();
+        expect(corrected.undoSnapshots).toHaveLength(1);
+        expect(corrected.migrationDeltas).toEqual(initial.migrationDeltas);
+        expect(corrected.rollbackPayloadEntries).toEqual(initial.rollbackPayloadEntries);
+        now = new Date('2026-07-20T00:00:00Z');
+        await expect(coordinator.collectGarbage()).resolves.toMatchObject({ ok: true });
+        const after = await repo.initialize();
+        expect(after.undoSnapshots).toHaveLength(0);
+        expect(after.rollbackPayloadEntries).toEqual(initial.rollbackPayloadEntries);
+        expect(after.migrationStates['vault-a']).toEqual(initial.migrationStates['vault-a']);
+    });
+
+    it('still commits exact legacy Forget cleanup when the legacy copy is preserved', async () => {
+        const initial = createState({ compatibility: true });
+        initial.migrationStates['vault-a'].phase = 'governed_preserving_legacy';
+        initial.claims[0].legacyCompatibility = { recordIdFingerprints: ['legacy-id-v1:' + 'a'.repeat(32)], memoryQueueItemIdFingerprints: [] };
+        initial.projectionLinks.push({ id: 'exact-prompt', claimId: 'claim-a', target: { kind: 'prompt_projection', projectionId: 'prompt-a' },
+            relation: 'origin', state: 'active', sourceFingerprintId: 'exact-source', ruleFingerprint: 'exact-rule', createdAt: NOW.toISOString() });
+        const repo = repository(initial);
+        const prepare = jest.fn(async () => ({ ok: true as const, expectedSourceHash: 'source-a', resultingSourceHash: 'redacted-source', preservePendingReconciliation: false }));
+        const commit = jest.fn(async () => ({ ok: true as const, sourceHash: 'redacted-source' }));
+        const coordinator = new MemoryGovernanceCoordinator({ repository: repo, opaqueVaultKey: 'vault-a', now: () => NOW, idFactory: ids('forget-preserved'),
+            projectionCleanupPort: { cleanupExactProjection: async () => undefined, prepareLegacyCompatibilityForget: prepare, commitLegacyCompatibilityForget: commit } });
+        const forgotten = await coordinator.forget({ claimId: 'claim-a' });
+        if (!forgotten.ok) throw new Error(JSON.stringify(forgotten));
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ trustedSourceHash: 'source-a', recordIdFingerprints: initial.claims[0].legacyCompatibility.recordIdFingerprints }));
+        const after = await repo.initialize();
+        expect(after.claims[0].lifecycle).toBe('forgotten_tombstone');
+        expect(after.migrationStates['vault-a']).toMatchObject({ phase: 'governed_preserving_legacy', legacySourceStateHash: 'redacted-source' });
+    });
+
+    it('retains failed Forget cleanup for both exact Profile stores without losing the untouched copy', async () => {
+        const initial = createState({ claims: [claim('claim-a'), claim('claim-b')] });
+        const legacy: MemoryProjectionLink = { id: 'legacy-profile', claimId: 'claim-a',
+            target: { kind: 'type_a_profile', profileRecordId: 'profile-a' }, relation: 'origin', state: 'active',
+            sourceFingerprintId: 'source-a', ruleFingerprint: 'rule-a', createdAt: NOW.toISOString() };
+        initial.projectionLinks.push(legacy, { ...legacy, id: 'governed-profile',
+            target: { kind: 'type_a_profile', profileRecordId: 'profile-a', store: 'governed', profileKey: 'semantic-1234abcd' } });
+        const repo = repository(initial);
+        const removed: string[] = [];
+        let fail = true;
+        const coordinator = new MemoryGovernanceCoordinator({ repository: repo, opaqueVaultKey: 'vault-a', now: () => NOW,
+            idFactory: ids('forget-stores'), projectionCleanupPort: { cleanupExactProjection: async ({ projectionLink }) => {
+                if (projectionLink.target.kind !== 'type_a_profile') throw new Error('Unexpected target');
+                if (projectionLink.target.store === 'governed' && fail) throw new Error('Governed cleanup unavailable');
+                removed.push(`${projectionLink.target.store ?? 'legacy'}:${projectionLink.target.profileRecordId}`);
+            } } });
+        await expect(coordinator.forget({ claimId: 'claim-a' })).resolves.toMatchObject({ ok: false });
+        expect(removed).toEqual(['legacy:profile-a']);
+        expect((await repo.initialize()).claims[0].lifecycle).toBe('forget_pending');
+        fail = false;
+        await expect(coordinator.resumePendingForgets()).resolves.toMatchObject({ ok: true });
+        expect(removed).toEqual(['legacy:profile-a', 'governed:profile-a']);
+        const after = await repo.initialize();
+        expect(after.claims[0].lifecycle).toBe('forgotten_tombstone');
+        expect(after.claims[1]).toEqual(initial.claims[1]);
+        expect(after.projectionLinks.every((link) => link.state === 'redacted')).toBe(true);
+    });
+
     it("writes user-authoritative Correct lineage, undo recovery, and normalized compatibility delta atomically", async () => {
         const initial = createState({ compatibility: true });
         initial.suppressionMarkers.push({

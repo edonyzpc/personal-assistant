@@ -8,6 +8,8 @@ export interface MemoryProfileProjectionApplyInput {
     operationId: string;
     claimId: string;
     profileRecordId: string;
+    profileStore?: "governed";
+    profileKey?: string;
     targetRevisionId: string;
     summary: string;
     occurredAt: string;
@@ -17,6 +19,8 @@ export interface MemoryProfileProjectionRemoveInput {
     operationId: string;
     claimId: string;
     profileRecordId: string;
+    profileStore?: "governed";
+    profileKey?: string;
     occurredAt: string;
 }
 
@@ -107,9 +111,16 @@ export class MemoryProfileProjectionWorker {
             && link.state === "active"
             && link.target.kind === "type_a_profile"
             && link.target.profileRecordId === operation.profileRecordId
+            && link.target.store === operation.profileStore
+            && link.target.profileKey === operation.profileKey
         ));
+        const legacyWriteSuperseded = operation.profileStore !== "governed"
+            && (Boolean(revision?.chatSemanticReceipt) || snapshot.projectionLinks.some((link) => (
+                link.claimId === operation.claimId && link.state === "active" && link.target.kind === "type_a_profile"
+                && link.target.profileRecordId === operation.profileRecordId && link.target.store === "governed"
+            )));
         if (!claim || claim.lifecycle === "forget_pending" || claim.lifecycle === "forgotten_tombstone"
-            || !revision || !exactLink || claim.activeRevisionId !== revision.id) {
+            || !revision || !exactLink || legacyWriteSuperseded || claim.activeRevisionId !== revision.id) {
             await this.recordFailure(operationId, "profile_projection_state_changed");
             return false;
         }
@@ -119,6 +130,7 @@ export class MemoryProfileProjectionWorker {
                 operationId,
                 claimId: claim.id,
                 profileRecordId: operation.profileRecordId,
+                ...(operation.profileStore ? { profileStore: operation.profileStore, profileKey: operation.profileKey } : {}),
                 targetRevisionId: revision.id,
                 summary: revision.summary,
                 occurredAt: this.now().toISOString(),
@@ -134,7 +146,12 @@ export class MemoryProfileProjectionWorker {
             ));
             if (!current || current.state === "applied" || current.action === "remove") return;
             const currentClaim = draft.claims.find((candidate) => candidate.id === current.claimId);
+            const currentLink = draft.projectionLinks.find((link) => link.claimId === current.claimId
+                && link.state === "active" && link.target.kind === "type_a_profile"
+                && link.target.profileRecordId === current.profileRecordId
+                && link.target.store === current.profileStore && link.target.profileKey === current.profileKey);
             if (!currentClaim || currentClaim.activeRevisionId !== current.targetRevisionId
+                || !currentLink || current.profileStore !== operation.profileStore || current.profileKey !== operation.profileKey
                 || currentClaim.lifecycle === "forget_pending"
                 || currentClaim.lifecycle === "forgotten_tombstone") {
                 current.attemptCount += 1;
@@ -169,6 +186,8 @@ export class MemoryProfileProjectionWorker {
             && link.claimId === operation.claimId
             && link.target.kind === "type_a_profile"
             && link.target.profileRecordId === operation.profileRecordId
+            && link.target.store === operation.profileStore
+            && link.target.profileKey === operation.profileKey
         ));
         if (!exactLink) {
             await this.recordFailure(operation.id, "profile_projection_remove_link_missing");
@@ -179,6 +198,7 @@ export class MemoryProfileProjectionWorker {
                 operationId: operation.id,
                 claimId: operation.claimId,
                 profileRecordId: operation.profileRecordId,
+                ...(operation.profileStore ? { profileStore: operation.profileStore, profileKey: operation.profileKey } : {}),
                 occurredAt: this.now().toISOString(),
             });
         } catch {
@@ -195,8 +215,12 @@ export class MemoryProfileProjectionWorker {
                 && link.claimId === current.claimId
                 && link.target.kind === "type_a_profile"
                 && link.target.profileRecordId === current.profileRecordId
+                && link.target.store === current.profileStore
+                && link.target.profileKey === current.profileKey
             ));
-            if (!currentLink) {
+            if (!currentLink || current.projectionLinkId !== operation.projectionLinkId
+                || current.profileRecordId !== operation.profileRecordId
+                || current.profileStore !== operation.profileStore || current.profileKey !== operation.profileKey) {
                 current.attemptCount += 1;
                 current.updatedAt = this.now().toISOString();
                 current.lastErrorCode = "profile_projection_remove_link_missing";

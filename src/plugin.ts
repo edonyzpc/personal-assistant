@@ -49,8 +49,9 @@ import {
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, hasDeprecatedSimpleSettingsFields, omitDeprecatedSimpleSettingsFields, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION, PROVIDER_PRESETS } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, hasDeprecatedSimpleSettingsFields, omitDeprecatedSimpleSettingsFields, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, PROVIDER_PRESETS } from './settings'
 import { LocalGraph } from './local-graph';
+import { LEARNING_DEFAULTS_VERSION, mergeLearningPreferences } from './settings';
 import { GraphOptionsModal, type GraphOptions } from './settings/graph-options-modal';
 import { FeaturedImageOptionsModal } from './settings/featured-image-options-modal';
 import type { FeaturedImageDefaults, FeaturedImageRunAdmission } from './ai-services/featured-image-options';
@@ -84,7 +85,10 @@ import { WritingStyleService, WritingStyleUnavailableError, inferWritingScene } 
 import { hashWritingText, type WritingScene } from './chat/writing-types';
 import type { ChatWritingStylePreparation, ChatWritingStyleResult } from './ai-services/chat-types';
 import { ImageProcessor } from './chat/image-processor';
-import { isChatMemoryRecordAdmissible } from './pa/chat-memory-admission';
+import { collectChatMemorySemanticSources, isChatMemoryRecordAdmissible, projectChatMemorySemanticText } from './pa/chat-memory-admission';
+import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint,
+    verifyChatMemorySemanticReceipt, type ChatMemorySemanticReceipt } from './pa/chat-memory-semantic-receipt';
+import type { ProfileWriteGuard } from './ai-services/memory-extraction/profile-store';
 import {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
@@ -183,7 +187,11 @@ import {
     MemoryExtractionScheduler,
     SerializedProfileGovernancePort,
     createExistingUserProfileReader,
+    createExistingGovernedUserProfileReader,
+    createGovernedUserProfileStore,
+    deriveSemanticProfileKey,
     createUserProfileStore,
+    getUserProfileDbName,
     renderUserProfileMarkdown,
     sanitizeUserProfileSnapshot,
     type ExistingUserProfileReader,
@@ -302,6 +310,7 @@ import {
     MemoryAdmissionCoordinator,
     readTypeATargetGeneration,
     type GovernedMemoryAdmissionInput,
+    type ChatSemanticAdmissionEvidence,
     type TypeAAdmissionBaseline,
 } from './pa/memory-admission-coordinator';
 import { LegacyMemoryCompatibilityBarrier } from './pa/memory-governance-compatibility';
@@ -961,7 +970,8 @@ function nextMemoryGovernanceGarbageCollectionAt(
         }
     }
     for (const [vaultKey, migration] of Object.entries(state.migrationStates)) {
-        if (migration.phase === "finalizing" || migration.phase === "rolling_back") continue;
+        if (migration.phase === "finalizing" || migration.phase === "rolling_back"
+            || migration.phase === "governed_preserving_legacy") continue;
         const policy = state.policyStates[vaultKey];
         if (migration.phase === "compatibility"
             && (!policy
@@ -1056,6 +1066,7 @@ function readCurrentLocalMemoryPolicy(
     if (!migration
         || (migration.phase !== "compatibility"
             && migration.phase !== "finalizing"
+            && migration.phase !== "governed_preserving_legacy"
             && migration.phase !== "finalized")
         || migration.sourceHash !== expectedSourceHash
         || (migration.phase !== "finalizing" && migration.lastErrorCode)
@@ -1096,7 +1107,8 @@ function writeCurrentLocalMemoryPolicy(
         && rollbackExpiresAt >= now.getTime();
     if (!rollbackJournalActive) {
         if (policy.contextProjectionMode !== "governed"
-            || (migration.phase !== "compatibility" && migration.phase !== "finalized")) {
+            || (migration.phase !== "compatibility" && migration.phase !== "finalized"
+                && migration.phase !== "governed_preserving_legacy")) {
             throw new MemoryGovernanceBootstrapError("policy_state_invalid");
         }
         baseline.confirmedCount = confirmedMemoryCount;
@@ -1319,6 +1331,7 @@ export class PluginManager extends Plugin {
     private writingStyleService: WritingStyleService | undefined;
     private writingStyleCoordinator: MemoryGovernanceCoordinator | undefined;
     private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
+    private memoryExtractionProfileStore: "legacy" | "governed" = "legacy";
     /**
      * Pagelet (Review Assistant) per-plugin runtime — lazy-constructed on
      * first review trigger so cold-start cost stays zero for users who never
@@ -1357,6 +1370,10 @@ export class PluginManager extends Plugin {
     private memoryGovernanceBootstrapErrorCode: string | null = null;
     private memoryGovernanceOpaqueVaultKey: string | null = null;
     private memoryGovernanceSourceHash: string | null = null;
+    private legacyProfileContext: { scope: string; snapshot: UserProfileSnapshot } | null = null;
+    private legacyProfileReadEpoch = 0;
+    private legacyProfileRead: { scope: string; promise: Promise<void> } | null = null;
+    private legacyProfileMutationCount = 0;
     private deviceMemoryGovernanceRepository: MemoryGovernanceRepository | null = null;
     private currentDeviceMemoryGovernanceState: DeviceMemoryGovernanceStateV1 | null = null;
     private memoryGovernanceCoordinator: MemoryGovernanceCoordinator | null = null;
@@ -1394,7 +1411,7 @@ export class PluginManager extends Plugin {
         input: string;
         error: PageletReviewsFolderError;
     } | null = null;
-    private pendingMemoryExtractionConsentMigration = false;
+    private pendingLearningPreferencesMigration = false;
     private pendingSimpleSettingsCanonicalization = false;
     private backgroundDiscoveryEpoch = 0;
     private backgroundDiscoveryPersistenceUncertain = false;
@@ -1564,13 +1581,13 @@ export class PluginManager extends Plugin {
         if (this.memoryGovernanceBootstrapState !== "failed") {
             await this.initializeMemoryGovernanceBootstrap();
         }
+        await this.refreshLegacyProfileContext();
 
         // Surface the one-time Pagelet reviewsFolder migration Notice, if
         // `loadSettings` flagged a coerced value. We fire here (not in
         // `loadSettings`) so the Notice is bound to plugin onload and respects
         // the user's installed locale.
         this.surfacePendingPageletReviewsFolderMigration();
-        this.surfacePendingMemoryExtractionConsentMigration();
 
         // showup notification of plugin starting when it is in debug mode
         if (this.settings.debug) {
@@ -2033,13 +2050,14 @@ export class PluginManager extends Plugin {
 
     private setupSettingsWatcher(): void {
         this.pageletSettingsUnsubscribe?.();
-        this.pageletSettingsUnsubscribe = this.onSettingsChanged(() => {
+        this.pageletSettingsUnsubscribe = this.onSettingsChanged(async () => {
             this.syncPageletRuntime();
             this.syncMemoryExtractionRuntime();
             void this.reconcileMemoryQueueAudit();
             if (!this.settings.memoryEnabled) {
                 this.memoryManager?.cancelActivePreparation();
             }
+            await this.refreshLegacyProfileContext();
         });
     }
 
@@ -2231,22 +2249,34 @@ export class PluginManager extends Plugin {
     private canRunMemoryExtractionRuntime(): boolean {
         return this.settings.memoryEnabled === true
             && this.settings.memoryExtractionEnabled
-            && this.hasConfirmedMemoryExtractionConsent();
+            && this.settings.memoryExtractionConsent?.state !== "paused"
+            && (this.settings.learningPreferences && this.settings.learningPreferences.version === LEARNING_DEFAULTS_VERSION
+                ? this.settings.learningPreferences.memoryExtraction !== "disabled"
+                : this.hasConfirmedMemoryExtractionConsent());
     }
 
     private syncMemoryExtractionRuntime(): void {
         if (this.canRunMemoryExtractionRuntime() && this.chatHistoryManager) {
-            const includeVaultInsights = this.settings.memoryExtractionIncludeVaultInsights === true;
+            const profileStore = this.getGovernedMemoryProjectionSnapshot() ? "governed" : "legacy";
+            if (this.memoryExtractionScheduler && (this.memoryExtractionProfileStore ?? "legacy") !== profileStore) {
+                this.memoryExtractionScheduler.dispose();
+                this.memoryExtractionScheduler = null;
+            }
+            const includeVaultInsights = this.settings.memoryExtractionIncludeVaultInsights === true
+                && this.hasConfirmedMemoryExtractionConsent();
             if (!this.memoryExtractionScheduler) {
+                this.memoryExtractionProfileStore = profileStore;
                 this.memoryExtractionScheduler = new MemoryExtractionScheduler({
                     app: this.app,
                     chatHistoryManager: this.chatHistoryManager,
-                    userProfileStore: this.createUserProfileStore(),
+                    userProfileStore: profileStore === "governed"
+                        ? this.createGovernedUserProfileStore() : this.createUserProfileStore(),
                     log: (message, error) => this.log(message, error),
                     includeVaultInsightsInPrompt: includeVaultInsights,
                     shouldHandleVaultEvent: (file) => this.isDataBoundaryAllowedFile(file),
                     getDataBoundaryFingerprint: () => this.getMemoryDataBoundaryFingerprint(),
                     ...(this.getGovernedMemoryProjectionSnapshot() ? {
+                        semanticTypeA: true,
                         admitTypeACandidates: (batch: TypeAAdmissionBatch) => (
                             this.admitGovernedTypeABatch(batch)
                         ),
@@ -2301,15 +2331,19 @@ export class PluginManager extends Plugin {
     private async admitGovernedTypeABatch(
         batch: TypeAAdmissionBatch,
     ): Promise<TypeAAdmissionResult> {
-        // A settings change may race an already-running extraction batch.
-        // Recheck the master switch at the durable admission boundary.
-        if (this.settings.memoryEnabled !== true) return { status: "retry" };
         const coordinator = this.memoryAdmissionCoordinator;
         const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        const isCurrent = () => !this.unloading && this.canRunMemoryExtractionRuntime()
+            && this.memoryAdmissionCoordinator === coordinator
+            && this.memoryGovernanceOpaqueVaultKey === vaultKey
+            && Boolean(this.getGovernedMemoryProjectionSnapshot())
+            && batch.isCurrent?.() !== false && !batch.signal?.aborted;
+        if (!isCurrent()) return { status: "retry" };
         if (!coordinator || !vaultKey || !batch.baseline || !this.getGovernedMemoryProjectionSnapshot()) {
             return { status: "retry" };
         }
         return this.serializeGovernedMemoryLifecycle(async () => {
+            if (!isCurrent()) return { status: "retry" };
             const currentById = new Map(
                 (batch.current?.records ?? [])
                     .filter((record) => Boolean(record.profileRecordId))
@@ -2323,13 +2357,24 @@ export class PluginManager extends Plugin {
             });
             let stateChanged = false;
             let shouldRetry = false;
+            const retryWithCommittedProjection = (): TypeAAdmissionResult => {
+                // This resumes only durable outbox entries, never the expired batch.
+                if (stateChanged) this.scheduleMemoryProfileProjectionRetry();
+                return { status: "retry" };
+            };
             for (const record of changed) {
-                if (!isChatMemoryRecordAdmissible(record, batch.evidence)) continue;
+                if (!isCurrent()) return retryWithCommittedProjection();
+                if (record.chatSemanticReceipt !== undefined || batch.semanticProjections !== undefined) {
+                    if (!batch.isCurrent || !batch.semanticProjections || !verifyChatMemorySemanticReceipt(
+                        record.chatSemanticReceipt, record, batch.evidence.conversationId, batch.semanticProjections,
+                    )) return retryWithCommittedProjection();
+                } else if (!isChatMemoryRecordAdmissible(record, batch.evidence)) continue;
                 const admission = this.buildGovernedTypeAAdmission(
                     vaultKey,
                     record,
                     batch.baseline!,
                     batch.evidence,
+                    batch.semanticProjections,
                 );
                 if (!admission) {
                     this.log("Type-A governed admission skipped", {
@@ -2337,7 +2382,7 @@ export class PluginManager extends Plugin {
                     });
                     continue;
                 }
-                const result = await coordinator.admit(admission);
+                const result = await coordinator.admit(admission, { isCurrent, signal: batch.signal });
                 if (!result.ok) {
                     this.log("Type-A governed admission failed", { reason: result.reason });
                     if (![
@@ -2354,7 +2399,7 @@ export class PluginManager extends Plugin {
                     stateChanged = true;
                 }
             }
-            if (shouldRetry) return { status: "retry" };
+            if (shouldRetry || !isCurrent()) return retryWithCommittedProjection();
 
             if (stateChanged) {
                 const projection = await this.memoryProfileProjectionWorker?.resumePending();
@@ -2364,12 +2409,13 @@ export class PluginManager extends Plugin {
                     });
                     await this.refreshGovernedMemoryActionState();
                     await this.notifySettingsChanged();
-                    return { status: "retry" };
+                    return retryWithCommittedProjection();
                 }
                 await this.refreshGovernedMemoryActionState();
                 await this.notifySettingsChanged();
             }
-            await this.persistGovernedTypeAProcessedTurn(vaultKey, batch.evidence);
+            if (!isCurrent()) return { status: "retry" };
+            await this.persistGovernedTypeAProcessedTurn(vaultKey, batch.evidence, { isCurrent, signal: batch.signal });
             return { status: "processed" };
         });
     }
@@ -2379,9 +2425,14 @@ export class PluginManager extends Plugin {
         record: UserProfileRecord,
         baseline: TypeAAdmissionBaseline,
         evidence: TypeAAdmissionBatch["evidence"],
+        semanticProjections?: TypeAAdmissionBatch["semanticProjections"],
     ): GovernedMemoryAdmissionInput | null {
+        const semanticReceipt = record.chatSemanticReceipt === undefined ? undefined
+            : verifyChatMemorySemanticReceipt(record.chatSemanticReceipt, record, evidence.conversationId,
+                semanticProjections ?? []) ? record.chatSemanticReceipt : undefined;
+        if ((record.chatSemanticReceipt !== undefined || semanticProjections !== undefined) && !semanticReceipt) return null;
         const profileRecordId = record.profileRecordId?.trim();
-        const conversationIds = [...new Set([
+        const conversationIds = semanticReceipt ? [evidence.conversationId] : [...new Set([
             record.conversationId,
             ...(record.conversationIds ?? []),
         ].map((id) => id?.trim()).filter((id): id is string => Boolean(id)))].sort();
@@ -2391,7 +2442,7 @@ export class PluginManager extends Plugin {
             opaqueVaultKey: vaultKey,
             record,
         });
-        const authority = classification.status === "adopt"
+        const authority = !semanticReceipt && classification.status === "adopt"
             ? classification.authority
             : record.kind === "user_correction"
                 ? "user_correction" as const
@@ -2401,21 +2452,21 @@ export class PluginManager extends Plugin {
         const sensitivity: MemorySensitivity = classification.status === "adopt"
             ? "low"
             : classification.reason === "unknown_sensitivity" ? "high" : "medium";
-        const provenance: PersistedMemoryProvenance[] = classification.status === "adopt"
+        const provenance: PersistedMemoryProvenance[] = !semanticReceipt && classification.status === "adopt"
             ? classification.provenance.map((entry) => cloneSerializable(entry))
             : [{
                 kind: "conversation",
                 conversationIds,
                 observedAt: record.observedAt,
             }];
-        const sourceFingerprintId = `memory-source-${stableHash(JSON.stringify([
+        const sourceFingerprintId = semanticReceipt ? chatMemorySemanticSourceFingerprint(semanticReceipt) : `memory-source-${stableHash(JSON.stringify([
             "type-a-source-v1",
             profileRecordId,
             conversationIds,
             evidence.conversationId,
             evidence.throughTurnIndex,
         ]))}`;
-        const ruleFingerprint = "type-a-effect-admission-v1";
+        const ruleFingerprint = semanticReceipt ? CHAT_MEMORY_SEMANTIC_RULE : "type-a-effect-admission-v1";
         const memoryType = "preference" as const;
         const effect = "future_answers" as const;
         return {
@@ -2447,6 +2498,11 @@ export class PluginManager extends Plugin {
             provenance,
             sourceFingerprintId,
             ruleFingerprint,
+            ...(semanticReceipt ? { chatSemanticReceipt: semanticReceipt,
+                profileKey: record.key,
+                chatSemanticEvidence: { conversationId: evidence.conversationId,
+                    candidate: { text: record.text, meaning: record.meaning, kind: record.kind, confidence: record.confidence },
+                    projections: semanticProjections! } } : {}),
             admissionKey: `type-a:${profileRecordId}`,
             profileRecordId,
             expectedTargetState: baseline.targets[profileRecordId] ?? {
@@ -2500,9 +2556,48 @@ export class PluginManager extends Plugin {
                     : []
             )));
             const partition = { kind: "vault" as const, key: vaultKey };
+            const profileRecordIdsByKey: Record<string, string> = Object.create(null);
+            const addIdentity = (key: string | undefined, id: string | undefined) => {
+                if (!key || !id) return;
+                if (profileRecordIdsByKey[key] && profileRecordIdsByKey[key] !== id) {
+                    throw new Error("Governed Profile key has conflicting target identities.");
+                }
+                profileRecordIdsByKey[key] = id;
+            };
+            for (const link of state.projectionLinks) {
+                if (currentVaultClaimIds.has(link.claimId) && link.target.kind === "type_a_profile"
+                    && link.target.store === "governed") addIdentity(link.target.profileKey, link.target.profileRecordId);
+            }
+            for (const item of state.memoryQueueItems) {
+                if (item.partition.kind === "vault" && item.partition.key === vaultKey
+                    && item.governanceAdmission?.chatSemanticReceipt) {
+                    addIdentity(item.governanceAdmission.profileKey, item.governanceAdmission.profileRecordId);
+                }
+            }
+            // Reuse an existing legacy target only when its exact current projection still
+            // matches canonical governance; a downgraded client cannot redefine that mapping.
+            const legacyTargets = state.projectionLinks.filter((link) => currentVaultClaimIds.has(link.claimId)
+                && link.state === "active" && link.target.kind === "type_a_profile" && link.target.store === undefined);
+            if (legacyTargets.length > 0) {
+                const legacy = await this.createExistingUserProfileReader().read();
+                if (legacy.state === "ready") {
+                    for (const link of legacyTargets) {
+                        if (link.target.kind !== "type_a_profile") continue;
+                        const id = link.target.profileRecordId;
+                        const row = legacy.snapshot?.records.find((candidate) => candidate.profileRecordId === id);
+                        const claim = state.claims.find((candidate) => candidate.id === link.claimId);
+                        const revision = state.revisions.find((candidate) => candidate.claimId === claim?.id
+                            && candidate.id === claim?.activeRevisionId);
+                        if (row && revision && row.text.trim() === revision.summary.trim()) {
+                            addIdentity(deriveSemanticProfileKey(row.text), id);
+                        }
+                    }
+                }
+            }
             return {
                 version: 1,
                 capturedCommitSequence: state.commitSequence,
+                profileRecordIdsByKey,
                 targets: Object.fromEntries([...profileRecordIds]
                     .sort()
                     .map((profileRecordId) => [
@@ -2526,11 +2621,16 @@ export class PluginManager extends Plugin {
     private async persistGovernedTypeAProcessedTurn(
         vaultKey: string,
         evidence: TypeAAdmissionBatch["evidence"],
+        lifetime: { isCurrent: () => boolean; signal?: AbortSignal },
     ): Promise<void> {
         const repository = this.deviceMemoryGovernanceRepository;
         if (!repository) throw new Error("Governed Type-A repository is unavailable.");
         const key = this.typeAConversationCursorKey(evidence.conversationId);
+        const assertCurrent = Object.assign(() => {
+            if (!lifetime.isCurrent() || lifetime.signal?.aborted) throw new Error("Type-A producer is no longer current.");
+        }, { signal: lifetime.signal });
         await repository.transact((draft) => {
+            assertCurrent();
             const policy = draft.policyStates[vaultKey];
             if (!policy || policy.mode !== "effect_based" || policy.contextProjectionMode !== "governed") {
                 throw new Error("Governed Type-A policy is unavailable.");
@@ -2540,7 +2640,7 @@ export class PluginManager extends Plugin {
                 ...(policy.typeAProcessedTurns ?? {}),
                 [key]: Math.max(previous, evidence.throughTurnIndex),
             };
-        });
+        }, assertCurrent);
     }
 
     private typeAConversationCursorKey(conversationId: string): string {
@@ -6911,10 +7011,25 @@ export class PluginManager extends Plugin {
             }
             const dataBoundaryAllowed = item.sourceRefs.length === 0
                 || item.sourceRefs.every((sourceRef) => this.isDataBoundaryAllowedPath(sourceRef.path));
-            const result = await coordinator.confirmQueueItem({
+            const stored = (await this.deviceMemoryGovernanceRepository?.initialize())?.memoryQueueItems.find(
+                (candidate) => candidate.id === item.id,
+            );
+            const receipt = stored?.governanceAdmission?.chatSemanticReceipt;
+            const source = receipt ? await this.prepareChatSemanticSourceEvidence(receipt, stored!.claim) : null;
+            if (receipt && !source) {
+                return { ok: false, message: pageletT("pagelet.tab.memory.actionUnavailable", this.getPageletLocale()) };
+            }
+            let result;
+            try {
+                result = await coordinator.confirmQueueItem({
                 queueItemId: item.id,
                 dataBoundaryAllowed,
-            });
+                    ...(source ? { chatSemanticEvidence: source.evidence,
+                        lifetime: { isCurrent: source.isCurrent, signal: source.guard.signal } } : {}),
+                });
+            } finally {
+                source?.release();
+            }
             if (!result.ok) {
                 this.log("Governed Memory candidate confirmation failed", {
                     id: item.id,
@@ -7218,8 +7333,8 @@ export class PluginManager extends Plugin {
             getMemoryExtractionPromptContext: () =>
                 this.getMemoryExtractionPromptContext() as unknown as Record<string, unknown>,
             memorySearch: {
-                ensureReadyForChat: (query, signal, preparationOwnerSignal) => (
-                    this.ensureMemoryReadyForChat(query, signal, preparationOwnerSignal)
+                ensureReadyForChat: (query, signal, preparationOwnerSignal, options) => (
+                    this.ensureMemoryReadyForChat(query, signal, preparationOwnerSignal, options)
                 ),
                 searchHybrid: (query, opts) =>
                     this.vss?.searchHybrid(query, opts) ?? Promise.resolve([]),
@@ -7258,6 +7373,7 @@ export class PluginManager extends Plugin {
         query?: string,
         signal?: AbortSignal,
         preparationOwnerSignal?: AbortSignal,
+        options?: { existingOnly?: boolean },
     ): Promise<MemoryDecisionResult> {
         // This bridge is reached only by an admitted AI run. Heal the same
         // retained-token reload state here as a defence in depth for direct
@@ -7269,7 +7385,7 @@ export class PluginManager extends Plugin {
         if (!this.getAIReadiness("memory").ready) {
             return Promise.resolve({ decision: "answer-now" });
         }
-        return this.memoryManager?.ensureReadyForChat(query, signal, preparationOwnerSignal)
+        return this.memoryManager?.ensureReadyForChat(query, signal, preparationOwnerSignal, ...(options ? [options] : []))
             ?? Promise.resolve({ decision: "answer-now" });
     }
 
@@ -7630,10 +7746,12 @@ export class PluginManager extends Plugin {
                 if (!source || await hashWritingText(source.markdown) !== ref.contentHash) return denied;
                 const file = this.app.vault.getAbstractFileByPath(source.path);
                 if (!(file instanceof TFile)) return denied;
-                const isCurrent = () => !this.unloading && !signal?.aborted && this.getMemoryGraphTopologyEpoch('chat') === epoch
+                // The receipt describes source validity after preparation; ending
+                // that model turn must not revoke already received readable text.
+                const isCurrent = () => !this.unloading && this.getMemoryGraphTopologyEpoch('chat') === epoch
                     && this.app.vault.getAbstractFileByPath(source.path) === file
                     && file.stat.mtime === source.mtime && file.stat.size === source.size && this.isMemoryProviderPathAllowed(file.path);
-                return { allowed: isCurrent(), isCurrent };
+                return { allowed: !signal?.aborted && isCurrent(), isCurrent };
             },
         });
         return this.writingStyleService;
@@ -9415,6 +9533,7 @@ export class PluginManager extends Plugin {
 
     private async unloadAsync(): Promise<void> {
         this.unloading = true;
+        this.invalidateLegacyProfileContext();
         this.activeFeatureOptionsModal?.close();
         this.activeFeatureOptionsModal = null;
         this.retrievalDiagnostics?.clear();
@@ -9537,16 +9656,18 @@ export class PluginManager extends Plugin {
     getMemoryExtractionPromptContext(): PaAgentInjectedContext {
         const governedSnapshot = this.getGovernedMemoryProjectionSnapshot();
         if (!governedSnapshot) return this.getLegacyMemoryExtractionPromptContext();
-        if (!this.canRunMemoryExtractionRuntime()) {
-            // Governed cutover must preserve the same master/extraction/consent
-            // boundary as the legacy reader. An empty explicit mode prevents
-            // the projector from reviving legacy context as a fallback.
+        if (this.settings.memoryEnabled !== true) {
+            // Stopping new extraction does not revoke existing Personal.
+            // Keep the master boundary and explicit mode so legacy fallback
+            // cannot revive disabled context.
             return { memoryContextMode: "governed" };
         }
 
         const { state, vaultScopeKey } = governedSnapshot;
         const currentDataBoundaryFingerprint = this.getMemoryDataBoundaryFingerprint();
-        const includeVaultInsights = this.settings.memoryExtractionIncludeVaultInsights === true;
+        const includeVaultInsights = this.canRunMemoryExtractionRuntime()
+            && this.hasConfirmedMemoryExtractionConsent()
+            && this.settings.memoryExtractionIncludeVaultInsights === true;
         try {
             const governed = selectGovernedMemoryUse({
                 vaultScopeKey,
@@ -9638,10 +9759,63 @@ export class PluginManager extends Plugin {
         };
     }
 
+    private getLegacyProfileScope(): string {
+        return getUserProfileDbName(this.app.vault, this.settings.statisticsVaultId || 'default-vault',
+            this.manifest?.id ?? 'personal-assistant');
+    }
+
+    private invalidateLegacyProfileContext(): void {
+        this.legacyProfileReadEpoch = (this.legacyProfileReadEpoch ?? 0) + 1;
+        this.legacyProfileContext = null;
+        this.legacyProfileRead = null;
+    }
+
+    private async refreshLegacyProfileContext(): Promise<void> {
+        if (this.unloading || this.settings.memoryEnabled !== true
+            || this.getMemoryGovernanceUiMode() !== 'legacy_threshold' || this.legacyProfileMutationCount > 0) {
+            this.invalidateLegacyProfileContext();
+            return;
+        }
+        const scope = this.getLegacyProfileScope();
+        if (this.legacyProfileRead?.scope === scope) return this.legacyProfileRead.promise;
+        this.invalidateLegacyProfileContext();
+        const epoch = this.legacyProfileReadEpoch;
+        const promise = (async () => {
+            try {
+                // This reader never creates or upgrades a database. Sanitizing
+                // for prompt use is in memory only, without rewriting history.
+                const result = await this.createExistingUserProfileReader().read();
+                if (epoch !== this.legacyProfileReadEpoch || this.unloading
+                    || this.settings.memoryEnabled !== true || this.legacyProfileMutationCount > 0
+                    || scope !== this.getLegacyProfileScope() || this.getMemoryGovernanceUiMode() !== 'legacy_threshold') return;
+                if (result.state !== 'ready') return;
+                const snapshot = sanitizeUserProfileSnapshot(result.snapshot);
+                if (snapshot?.records.length) this.legacyProfileContext = { scope, snapshot };
+            } catch {
+                // Unavailable or malformed storage supplies no prompt context.
+            }
+        })();
+        this.legacyProfileRead = { scope, promise };
+        await promise;
+        if (this.legacyProfileRead?.promise === promise) this.legacyProfileRead = null;
+    }
+
     private getLegacyMemoryExtractionPromptContext(): PaAgentInjectedContext {
-        if (!this.canRunMemoryExtractionRuntime()) return { memoryContextMode: "legacy" };
-        const context = this.memoryExtractionScheduler?.getPromptContext() ?? {};
-        if (this.settings.memoryExtractionIncludeVaultInsights
+        if (this.settings.memoryEnabled !== true || this.unloading || this.legacyProfileMutationCount > 0) {
+            return { memoryContextMode: "legacy" };
+        }
+        if (!this.canRunMemoryExtractionRuntime() && this.getMemoryGovernanceUiMode() !== 'legacy_threshold') {
+            // Do not turn unavailable governance into a new legacy fallback
+            // merely because existing Personal no longer requires extraction.
+            return { memoryContextMode: "legacy" };
+        }
+        const cachedProfile = this.legacyProfileContext
+            && this.getMemoryGovernanceUiMode() === 'legacy_threshold'
+            && this.legacyProfileContext.scope === this.getLegacyProfileScope()
+            ? this.legacyProfileContext.snapshot.markdown : undefined;
+        const context = this.memoryExtractionScheduler?.getPromptContext()
+            ?? (cachedProfile ? { userProfile: cachedProfile } : {});
+        if (this.canRunMemoryExtractionRuntime() && this.settings.memoryExtractionIncludeVaultInsights
             && this.hasConfirmedMemoryExtractionConsent()) {
             return { memoryContextMode: "legacy", ...context };
         }
@@ -9665,7 +9839,8 @@ export class PluginManager extends Plugin {
         const migration = state.migrationStates[vaultScopeKey];
         const policy = state.policyStates[vaultScopeKey];
         if (!migration
-            || (migration.phase !== "compatibility" && migration.phase !== "finalized")
+            || (migration.phase !== "compatibility" && migration.phase !== "finalized"
+                && migration.phase !== "governed_preserving_legacy")
             || migration.sourceHash !== sourceHash
             || migration.lastErrorCode
             || !policy
@@ -9728,9 +9903,7 @@ export class PluginManager extends Plugin {
         ));
         return projectGovernedMemoryUiState(entry, {
             runtimeUseEnabled: overrides.runtimeUseEnabled
-                ?? (entry.writingStyle
-                    ? this.settings.memoryEnabled === true && this.getMemoryGovernanceUiMode() === 'effect_based'
-                    : this.canRunMemoryExtractionRuntime()),
+                ?? (this.settings.memoryEnabled === true && this.getMemoryGovernanceUiMode() === 'effect_based'),
             sourceEligible,
             hasPendingOperation,
             coordinatorAvailable: Boolean(this.memoryGovernanceCoordinator),
@@ -10161,7 +10334,7 @@ export class PluginManager extends Plugin {
     private async readMemoryControlCenterProfile(
         sourceErrors: MemoryControlCenterSourceError[],
     ): Promise<MemoryControlCenterProfileInput> {
-        const featureEnabled = this.canRunMemoryExtractionRuntime();
+        const featureEnabled = this.settings.memoryEnabled === true;
         const loadedSnapshot = this.memoryExtractionScheduler?.getUserProfileSnapshot() ?? null;
         if (loadedSnapshot) {
             return { featureEnabled, storageState: "ready", snapshot: loadedSnapshot };
@@ -10310,7 +10483,15 @@ export class PluginManager extends Plugin {
                 );
                 return;
             }
-            if (existingMigration?.phase === "finalizing" && existingMigration.sourceHash) {
+            if (existingMigration?.phase === "governed_preserving_legacy") {
+                // This format retains old settings without importing them over current governance.
+                // The migration coordinator records changed legacy input separately.
+                const migration = await new MemoryGovernanceMigrationCoordinator({
+                    repository, opaqueVaultKey, payload,
+                }).run();
+                if (!migration.ok) throw new MemoryGovernanceBootstrapError("migration_failed");
+                sourceHash = migration.sourceHash;
+            } else if (existingMigration?.phase === "finalizing" && existingMigration.sourceHash) {
                 sourceHash = existingMigration.sourceHash;
             } else if (existingMigration?.phase === "compatibility"
                 && existingMigration.sourceHash
@@ -10419,12 +10600,14 @@ export class PluginManager extends Plugin {
                     input.summary,
                     input.occurredAt,
                     input.claimId,
+                    input.targetRevisionId,
+                    input.profileStore,
+                    input.profileKey,
                 ),
-                removeProjection: (input) => this.mutateExactProfileRecord(
-                    input.profileRecordId,
-                    () => null,
-                    true,
-                ),
+                removeProjection: (input) => input.profileStore === "governed"
+                    ? this.mutateExactProfileRecord(input.profileRecordId, () => null, true,
+                        undefined, undefined, "governed")
+                    : this.mutateExactProfileRecord(input.profileRecordId, () => null, true),
             });
             // Publish the repository/worker boundary before recovery so an
             // upsert that crashed before creating its Profile row can still
@@ -10444,13 +10627,6 @@ export class PluginManager extends Plugin {
                     this.log("Memory Forget recovery remains pending", forgetRecovery.ok
                         ? { ok: true, pendingCount: forgetRecovery.value.pending.length }
                         : { ok: false });
-                }
-                const profileRecovery = await profileProjectionWorker.resumePending();
-                if (profileRecovery.pending.length > 0) {
-                    profileRecoveryPending = true;
-                    this.log("Memory profile projection recovery remains pending", {
-                        count: profileRecovery.pending.length,
-                    });
                 }
                 state = await repository.initialize();
             }
@@ -10489,6 +10665,15 @@ export class PluginManager extends Plugin {
             this.memoryGovernanceRepositoryUnsubscribe = repository.subscribe((commitSequence) => {
                 this.scheduleDeviceMemoryCacheRefresh(commitSequence);
             });
+            if (state.policyStates[opaqueVaultKey]?.contextProjectionMode === "governed") {
+                await this.reconcileGovernedProfileCache();
+                const profileRecovery = await profileProjectionWorker.resumePending();
+                profileRecoveryPending = profileRecovery.pending.length > 0;
+                if (profileRecoveryPending) this.log("Memory profile projection recovery remains pending", {
+                    count: profileRecovery.pending.length,
+                });
+                await this.refreshDeviceMemoryCaches();
+            }
             if (forgetRecoveryPending) this.scheduleMemoryForgetRetry();
             if (profileRecoveryPending) this.scheduleMemoryProfileProjectionRetry();
             this.scheduleMemoryGovernanceGarbageCollection();
@@ -10507,6 +10692,71 @@ export class PluginManager extends Plugin {
     private createMemoryGovernanceDeviceRepository(): MemoryGovernanceRepository {
         const pluginId = (this.manifest as { id?: string } | undefined)?.id ?? "personal-assistant";
         return createDeviceMemoryGovernanceRepository(pluginId);
+    }
+
+    /** Rebuild a missing derived copy from canonical targets, never from the old Profile database. */
+    private async reconcileGovernedProfileCache(): Promise<void> {
+        const repository = this.deviceMemoryGovernanceRepository;
+        const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        if (!repository || !vaultKey) return;
+        const snapshot = await repository.initialize();
+        if (!snapshot.projectionLinks.some((link) => link.state === "active"
+            && link.target.kind === "type_a_profile" && link.target.store === "governed")) return;
+        const cache = await this.createExistingGovernedUserProfileReader().read();
+        if (cache.state !== "ready" && cache.state !== "not_present") return;
+        const rows = cache.state === "ready" ? cache.snapshot?.records ?? [] : [];
+        const repairs = snapshot.projectionLinks.flatMap((link) => {
+            if (link.state !== "active" || link.target.kind !== "type_a_profile" || link.target.store !== "governed") return [];
+            const target = link.target;
+            const claim = snapshot.claims.find((candidate) => candidate.id === link.claimId
+                && candidate.partition.kind === "vault" && candidate.partition.key === vaultKey);
+            if (!claim || claim.lifecycle === "forget_pending" || claim.lifecycle === "forgotten_tombstone") return [];
+            const revision = snapshot.revisions.find((candidate) => candidate.id === claim.activeRevisionId && candidate.claimId === claim.id);
+            if (!revision || !target.profileKey) return [];
+            const row = rows.find((candidate) => candidate.profileRecordId === target.profileRecordId);
+            const legacyPending = snapshot.pendingOperations.some((operation) => operation.kind === "profile_projection"
+                && operation.action !== "remove" && operation.state === "pending" && operation.profileStore === undefined
+                && operation.claimId === claim.id && operation.profileRecordId === target.profileRecordId
+                && operation.targetRevisionId === revision.id);
+            return row?.key === target.profileKey && row.text === revision.summary.trim() && !legacyPending ? []
+                : [{ linkId: link.id, claimId: claim.id, targetRevisionId: revision.id,
+                    profileRecordId: target.profileRecordId, profileKey: target.profileKey }];
+        });
+        if (repairs.length === 0) return;
+        await repository.transact((draft) => {
+            for (const repair of repairs) {
+                const claim = draft.claims.find((candidate) => candidate.id === repair.claimId);
+                const link = draft.projectionLinks.find((candidate) => candidate.id === repair.linkId);
+                if (!claim || claim.activeRevisionId !== repair.targetRevisionId || claim.lifecycle === "forget_pending"
+                    || claim.lifecycle === "forgotten_tombstone" || !link || link.state !== "active"
+                    || link.target.kind !== "type_a_profile" || link.target.store !== "governed"
+                    || link.target.profileRecordId !== repair.profileRecordId || link.target.profileKey !== repair.profileKey) continue;
+                for (const operation of draft.pendingOperations) {
+                    if (operation.kind === "profile_projection" && operation.action !== "remove"
+                        && operation.state === "pending" && operation.profileStore === undefined
+                        && operation.claimId === repair.claimId && operation.profileRecordId === repair.profileRecordId
+                        && operation.targetRevisionId === repair.targetRevisionId) {
+                        operation.profileStore = "governed";
+                        operation.profileKey = repair.profileKey;
+                    }
+                }
+                const current = draft.pendingOperations.find((operation) => operation.kind === "profile_projection"
+                    && operation.action !== "remove" && operation.claimId === repair.claimId
+                    && operation.targetRevisionId === repair.targetRevisionId && operation.profileStore === "governed"
+                    && operation.profileRecordId === repair.profileRecordId && operation.profileKey === repair.profileKey);
+                if (current?.kind === "profile_projection") {
+                    current.state = "pending";
+                    current.updatedAt = new Date().toISOString();
+                } else {
+                    const occurredAt = new Date().toISOString();
+                    draft.pendingOperations.push({ id: `profile-cache-repair:${repair.linkId}:${repair.targetRevisionId}`,
+                        kind: "profile_projection", action: "upsert", claimId: repair.claimId,
+                        targetRevisionId: repair.targetRevisionId, profileRecordId: repair.profileRecordId,
+                        profileKey: repair.profileKey, profileStore: "governed", state: "pending", attemptCount: 0,
+                        createdAt: occurredAt, updatedAt: occurredAt });
+                }
+            }
+        });
     }
 
     private async prepareLegacyTypeAAdoptions(
@@ -10644,7 +10894,50 @@ export class PluginManager extends Plugin {
             // the cleanup port is only the external derived-store boundary.
             return;
         }
-        await this.mutateExactProfileRecord(link.target.profileRecordId, () => null, true);
+        if (link.target.store === "governed") {
+            await this.mutateExactProfileRecord(link.target.profileRecordId, () => null, true,
+                undefined, undefined, "governed");
+        } else {
+            await this.mutateExactProfileRecord(link.target.profileRecordId, () => null, true);
+        }
+    }
+
+    private async prepareChatSemanticSourceEvidence(receipt: ChatMemorySemanticReceipt, text: string): Promise<{
+        evidence: ChatSemanticAdmissionEvidence;
+        isCurrent: () => boolean;
+        guard: ProfileWriteGuard;
+        release: () => void;
+    } | null> {
+        const manager = this.chatHistoryManager;
+        const repository = this.deviceMemoryGovernanceRepository;
+        const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        const conversationId = receipt.sources[0]?.conversationId;
+        if (!manager || !conversationId || typeof manager.observeSourceLifetime !== "function") return null;
+        const lease = manager.observeSourceLifetime(conversationId);
+        const isCurrent = () => lease.isCurrent() && !this.unloading && this.settings.memoryEnabled === true
+            && this.chatHistoryManager === manager && this.deviceMemoryGovernanceRepository === repository
+            && this.memoryGovernanceOpaqueVaultKey === vaultKey && Boolean(this.getGovernedMemoryProjectionSnapshot());
+        let handedOff = false;
+        try {
+            if (!isCurrent() || !await manager.findConversation(conversationId)) return null;
+            const sources = collectChatMemorySemanticSources(conversationId, await manager.getTurns(conversationId));
+            const projections = receipt.sources.flatMap((quoted) => {
+                const source = sources.find((candidate) => candidate.messageId === quoted.messageId);
+                return source ? [{ source, presentedText: projectChatMemorySemanticText(source, quoted.projectionChars) }] : [];
+            });
+            const evidence: ChatSemanticAdmissionEvidence = { conversationId, projections,
+                candidate: { text, meaning: receipt.meaning, kind: receipt.kind, confidence: receipt.confidence } };
+            if (!isCurrent() || !verifyChatMemorySemanticReceipt(receipt, evidence.candidate, conversationId, projections)) return null;
+            const guard: ProfileWriteGuard = () => {
+                if (!isCurrent()) throw new Error("Semantic Profile source is no longer current.");
+            };
+            guard.signal = lease.signal;
+            handedOff = true;
+            return { evidence, isCurrent, guard, release: lease.release };
+        } finally {
+            // Invalid snapshots never retain an observer; successful callers release after their write.
+            if (!handedOff) lease.release();
+        }
     }
 
     private async applyExactProfileProjection(
@@ -10652,52 +10945,122 @@ export class PluginManager extends Plugin {
         summary: string,
         occurredAt: string,
         claimId: string,
+        targetRevisionId: string,
+        profileStore?: "governed",
+        profileKey?: string,
     ): Promise<void> {
-        const normalizedSummary = summary.trim();
-        if (!profileRecordId.trim() || !normalizedSummary) {
+        if (!profileRecordId.trim() || !claimId.trim() || !targetRevisionId.trim() || !summary.trim()) {
             throw new Error("Invalid exact Profile projection input.");
         }
         const repository = this.deviceMemoryGovernanceRepository;
         const snapshot = repository ? await repository.initialize() : null;
         const claim = snapshot?.claims.find((candidate) => candidate.id === claimId);
-        const revision = claim?.activeRevisionId
-            ? snapshot?.revisions.find((candidate) => (
-                candidate.id === claim.activeRevisionId && candidate.claimId === claim.id
-            ))
-            : undefined;
-        const conversation = revision?.provenance.find((entry) => entry.kind === "conversation");
+        const revision = snapshot?.revisions.find((candidate) => (
+            candidate.id === targetRevisionId && candidate.claimId === claimId
+        ));
+        const exactLink = snapshot?.projectionLinks.some((link) => (
+            link.claimId === claimId && link.state === "active"
+            && link.target.kind === "type_a_profile" && link.target.profileRecordId === profileRecordId
+            && link.target.store === profileStore && link.target.profileKey === profileKey
+        ));
+        // The worker's snapshot can be superseded before this external write.
+        // Keep the outbox pending instead of combining an old body with newer evidence.
+        if (!claim || claim.activeRevisionId !== targetRevisionId
+            || claim.lifecycle === "forget_pending" || claim.lifecycle === "forgotten_tombstone"
+            || !revision || !exactLink || revision.summary !== summary) {
+            throw new Error("Exact Profile projection revision is no longer current.");
+        }
+        if (revision.chatSemanticReceipt && profileStore !== "governed") {
+            throw new Error("Semantic Profile requires an isolated governed target.");
+        }
+        if (profileStore === "governed" && !profileKey?.trim()) {
+            throw new Error("Governed Profile extraction key is missing.");
+        }
+        const normalizedSummary = revision.summary.trim();
+        const conversation = revision.provenance.find((entry) => entry.kind === "conversation");
         const conversationIds = conversation?.kind === "conversation"
             ? [...conversation.conversationIds]
             : [];
         const observedAt = conversation?.kind === "conversation"
             ? conversation.observedAt
             : occurredAt;
-        await this.mutateExactProfileRecord(profileRecordId, (record) => ({
-            ...record,
-            text: normalizedSummary,
-            kind: "user_correction",
-            confidence: "high",
-            confirmed: true,
-            observedAt: occurredAt,
-        }), false, () => {
-            if (conversationIds.length === 0) {
-                throw new Error("Exact Profile projection conversation evidence is missing.");
+        const source = revision.chatSemanticReceipt
+            ? await this.prepareChatSemanticSourceEvidence(revision.chatSemanticReceipt, normalizedSummary) : null;
+        if (revision.chatSemanticReceipt && !source) throw new Error("Semantic Profile source is unavailable.");
+        const semanticFields = revision.chatSemanticReceipt ? {
+            kind: revision.chatSemanticReceipt.kind,
+            confidence: revision.chatSemanticReceipt.confidence,
+            confirmed: false,
+            conversationId: conversationIds[0],
+            conversationIds,
+            occurrences: 1,
+            chatEvidence: undefined,
+            chatSemanticReceipt: undefined,
+            meaning: undefined,
+        } : {};
+        try {
+            if (profileStore === "governed") {
+                await this.repairGovernedProfileIdentity(profileRecordId, profileKey!, snapshot!, source?.guard);
             }
-            return {
-                profileRecordId,
-                key: `governed-${claimId}`,
+            await this.mutateExactProfileRecord(profileRecordId, (record) => ({
+                ...record,
+                ...(profileStore === "governed" ? { key: profileKey! } : {}),
                 text: normalizedSummary,
-                kind: revision?.authority === "user_correction"
-                    ? "user_correction"
-                    : "user_explicit",
+                kind: "user_correction",
                 confidence: "high",
-                conversationId: conversationIds[0],
-                observedAt,
-                occurrences: Math.max(1, conversationIds.length),
-                conversationIds,
                 confirmed: true,
-            };
-        });
+                observedAt: occurredAt,
+                ...semanticFields,
+            }), false, () => {
+                if (conversationIds.length === 0) {
+                    throw new Error("Exact Profile projection conversation evidence is missing.");
+                }
+                return {
+                    profileRecordId,
+                    key: profileKey ?? `governed-${claimId}`,
+                    text: normalizedSummary,
+                    kind: revision.authority === "user_correction"
+                        ? "user_correction"
+                        : "user_explicit",
+                    confidence: "high",
+                    conversationId: conversationIds[0],
+                    observedAt,
+                    occurrences: Math.max(1, conversationIds.length),
+                    conversationIds,
+                    confirmed: true,
+                    ...semanticFields,
+                };
+            }, source?.guard, profileStore);
+        } finally {
+            source?.release();
+        }
+    }
+
+    private async repairGovernedProfileIdentity(
+        profileRecordId: string,
+        profileKey: string,
+        canonical: DeviceMemoryGovernanceStateV1,
+        guard?: ProfileWriteGuard,
+    ): Promise<void> {
+        const cache = await this.createExistingGovernedUserProfileReader().read();
+        if (cache.state !== "ready" || !cache.snapshot) return;
+        const conflicting = cache.snapshot.records.filter((row) => row.key === profileKey
+            && row.profileRecordId && row.profileRecordId !== profileRecordId);
+        const vaultClaimIds = new Set(canonical.claims.filter((claim) => claim.partition.kind === "vault"
+            && claim.partition.key === this.memoryGovernanceOpaqueVaultKey).map((claim) => claim.id));
+        for (const row of conflicting) {
+            if (canonical.projectionLinks.some((link) => link.state === "active" && vaultClaimIds.has(link.claimId)
+                && link.target.kind === "type_a_profile" && link.target.store === "governed"
+                && link.target.profileRecordId === row.profileRecordId)) {
+                throw new Error("Governed Profile cache identity conflicts with another canonical target.");
+            }
+        }
+        // Remove only an unowned, corrupt derived identity. The legacy port's immutable
+        // ID rule stays intact; a failed subsequent upsert remains a real pending repair.
+        for (const row of conflicting) {
+            await this.mutateExactProfileRecord(row.profileRecordId!,
+                (current) => current.key === profileKey ? null : current, true, undefined, guard, "governed");
+        }
     }
 
     private async mutateExactProfileRecord(
@@ -10705,6 +11068,8 @@ export class PluginManager extends Plugin {
         transform: (record: UserProfileRecord) => UserProfileRecord | null,
         allowMissing: boolean,
         createMissing?: () => UserProfileRecord,
+        guard?: ProfileWriteGuard,
+        profileStore?: "governed",
     ): Promise<void> {
         const now = new Date();
         const mutation = (current: UserProfileSnapshot | null): UserProfileSnapshot => {
@@ -10743,16 +11108,27 @@ export class PluginManager extends Plugin {
             };
         };
 
-        if (this.memoryExtractionScheduler) {
-            await this.memoryExtractionScheduler.mutateUserProfile(mutation);
-            return;
-        }
-        const port = new SerializedProfileGovernancePort(this.createUserProfileStore(), () => now);
+        this.legacyProfileMutationCount = (this.legacyProfileMutationCount ?? 0) + 1;
+        this.invalidateLegacyProfileContext();
+        let committed = false;
         try {
-            await port.initialize();
-            await port.mutate(mutation);
+            if (this.memoryExtractionScheduler
+                && (this.memoryExtractionProfileStore ?? "legacy") === (profileStore ?? "legacy")) {
+                await this.memoryExtractionScheduler.mutateUserProfile(mutation, guard);
+            } else {
+                const store = profileStore === "governed" ? this.createGovernedUserProfileStore() : this.createUserProfileStore();
+                const port = new SerializedProfileGovernancePort(store, () => now);
+                try {
+                    await port.initialize();
+                    await port.mutate(mutation, guard);
+                } finally {
+                    await port.dispose().catch(() => undefined);
+                }
+            }
+            committed = true;
         } finally {
-            await port.dispose().catch(() => undefined);
+            this.legacyProfileMutationCount -= 1;
+            if (committed) await this.refreshLegacyProfileContext();
         }
     }
 
@@ -10852,6 +11228,13 @@ export class PluginManager extends Plugin {
 
         const state = await repository.initialize();
         const localPolicy = readCurrentLocalMemoryPolicy(state, opaqueVaultKey, sourceHash);
+        if (recordRepository && state.migrationStates[opaqueVaultKey]?.phase === "governed_preserving_legacy") {
+            recordRepository.dispose();
+            this.deviceMemoryRecordRepository = null;
+            this.memoryGovernanceRecordRepository = createFailClosedMemoryRecordRepository(
+                buildGovernedMemoryViewSnapshot(state, opaqueVaultKey).records.map((entry) => entry.record),
+            );
+        }
         if (recordRepository
             && state.migrationStates[opaqueVaultKey]?.phase === "compatibility"
             && buildLegacyMemoryRollbackProjection(state, opaqueVaultKey).ok) {
@@ -10912,24 +11295,14 @@ export class PluginManager extends Plugin {
         this.legacyMemoryPayload = this.legacyMemoryCompatibilityBarrier.snapshot();
         const fresh = isFreshInstall(loaded);
         this.legacyAiProviderMigration = classifyLegacyAiProviderMigration(loaded);
-        const rawMemoryExtractionEnabled = (typeof loaded === "object" && loaded !== null)
-            ? (loaded as Record<string, unknown>).memoryExtractionEnabled
-            : undefined;
-        const hasPersistedExtractionConsent = typeof loaded === "object" && loaded !== null
-            && Object.prototype.hasOwnProperty.call(loaded, "memoryExtractionConsent");
         this.pendingSimpleSettingsCanonicalization = hasDeprecatedSimpleSettingsFields(loaded);
         this.settings = mergeLoadedSettings(loaded);
+        const rawPreferences = loaded && typeof loaded === "object"
+            ? (loaded as Record<string, unknown>).learningPreferences : undefined;
+        this.pendingLearningPreferencesMigration = JSON.stringify(rawPreferences)
+            !== JSON.stringify(this.settings.learningPreferences);
         this.backgroundDiscoveryPersistenceUncertain = false;
         this.backgroundDiscoveryEpoch = (this.backgroundDiscoveryEpoch ?? 0) + 1;
-        if (rawMemoryExtractionEnabled === true && !hasPersistedExtractionConsent) {
-            this.settings.memoryExtractionConsent = {
-                state: "confirmed",
-                version: MEMORY_EXTRACTION_CONSENT_VERSION,
-                confirmedAt: new Date().toISOString(),
-            };
-            this.settings.memoryExtractionEnabled = true;
-            this.pendingMemoryExtractionConsentMigration = true;
-        }
         if (fresh) {
             // Force an explicit provider choice on first run instead of
             // defaulting to qwen. The Settings UI renders a "Choose your
@@ -11062,12 +11435,27 @@ export class PluginManager extends Plugin {
                 dataBoundary: { ...this.settings.dataBoundary, ...dataBoundary },
                 pagelet: { ...this.settings.pagelet, ...pagelet },
             };
+            const learningPreferences = mergeLearningPreferences(this.settings.learningPreferences);
+            if (typeof scalar.memoryExtractionEnabled === "boolean") {
+                learningPreferences.memoryExtraction = scalar.memoryExtractionEnabled ? "enabled" : "disabled";
+            }
+            if (typeof retrievalHabitProfile?.enabled === "boolean") {
+                learningPreferences.habitLearning = retrievalHabitProfile.enabled ? "enabled" : "disabled";
+            }
+            snapshot.learningPreferences = learningPreferences;
             await this.saveSettingsData(snapshot);
             Object.assign(this.settings, scalar);
+            this.settings.learningPreferences = learningPreferences;
             if (retrievalHabitProfile) Object.assign(this.settings.retrievalHabitProfile, retrievalHabitProfile);
             if (quickCapture) Object.assign(this.settings.quickCapture, quickCapture);
             if (dataBoundary) Object.assign(this.settings.dataBoundary, dataBoundary);
             if (pagelet) Object.assign(this.settings.pagelet, pagelet);
+            if (scalar.memoryEnabled === false || scalar.memoryExtractionEnabled === false
+                || scalar.memoryExtractionConsent?.state === "paused") {
+                // Invalidate this scheduler before another queued save can re-enable
+                // learning, even when settings watchers are still awaiting work.
+                this.syncMemoryExtractionRuntime();
+            }
         });
         await this.notifySettingsChanged();
     }
@@ -11387,18 +11775,6 @@ export class PluginManager extends Plugin {
             "Pagelet reviewsFolder coerced on load; emitted one-time Notice",
             { error: pending.error, input: pending.input },
         );
-    }
-
-    private surfacePendingMemoryExtractionConsentMigration(): void {
-        if (!this.pendingMemoryExtractionConsentMigration) return;
-        this.pendingMemoryExtractionConsentMigration = false;
-        const message = this.t("plugin.migration.memoryExtractionConsent");
-        try {
-            new Notice(message, 10000);
-        } catch (error) {
-            this.log("Failed to fire memory extraction consent migration Notice", error);
-        }
-        this.log("Memory extraction consent migration: feature was enabled but consent is unconfirmed; emitted one-time Notice");
     }
 
     log(...msg: unknown[]): void {
@@ -12050,6 +12426,16 @@ export class PluginManager extends Plugin {
         );
     }
 
+    createGovernedUserProfileStore(): UserProfileStore {
+        return createGovernedUserProfileStore(this.app.vault,
+            this.settings.statisticsVaultId || "default-vault", this.manifest?.id ?? "personal-assistant");
+    }
+
+    createExistingGovernedUserProfileReader(): ExistingUserProfileReader {
+        return createExistingGovernedUserProfileReader(this.app.vault,
+            this.settings.statisticsVaultId || "default-vault", this.manifest?.id ?? "personal-assistant");
+    }
+
     createExistingUserProfileReader(): ExistingUserProfileReader {
         const manifest = this.manifest as { id?: string } | undefined;
         return createExistingUserProfileReader(
@@ -12665,7 +13051,7 @@ export class PluginManager extends Plugin {
 
     private async migrateSettingsOnce(): Promise<void> {
         try {
-            let changed = this.pendingSimpleSettingsCanonicalization;
+            let changed = this.pendingSimpleSettingsCanonicalization || this.pendingLearningPreferencesMigration;
             const settingsWithLegacyModel = this.settings as PluginManagerSettings & { modelName?: unknown };
             const legacyModelName = typeof settingsWithLegacyModel.modelName === "string"
                 ? settingsWithLegacyModel.modelName.trim()
@@ -12833,6 +13219,7 @@ export class PluginManager extends Plugin {
             }
             if (changed) {
                 await this.saveSettings();
+                this.pendingLearningPreferencesMigration = false;
                 this.log("Settings migration completed");
             }
         } catch (error) {

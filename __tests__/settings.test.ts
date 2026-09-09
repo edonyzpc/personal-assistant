@@ -1609,12 +1609,13 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
         expect(merged.colorGroups).toEqual(DEFAULT_SETTINGS.colorGroups);
     });
 
-    it('force-disables memoryExtractionEnabled when consent is unconfirmed', () => {
+    it('adopts default learning without inventing confirmation', () => {
         const merged = mergeLoadedSettings({
             memoryExtractionEnabled: true,
         });
-        expect(merged.memoryExtractionEnabled).toBe(false);
+        expect(merged.memoryExtractionEnabled).toBe(true);
         expect(merged.memoryExtractionConsent.state).toBe("unconfirmed");
+        expect(merged.memoryExtractionConsent.confirmedAt).toBeUndefined();
     });
 
     it('preserves memoryExtractionEnabled when consent is confirmed', () => {
@@ -3660,7 +3661,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             quietRecallMode: "off",
         });
         expect(DEFAULT_SETTINGS.retrievalHabitProfile).toEqual({
-            enabled: false,
+            enabled: true,
             state: { aggregates: [] },
         });
         expect(mergeLoadedSettings({
@@ -3722,7 +3723,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
                 bubbleNudgesEnabled: false,
             },
             retrievalHabitProfile: {
-                enabled: false,
+                enabled: true,
                 state: { aggregates: [] },
             },
         });
@@ -5239,7 +5240,7 @@ describe('Phase 4 P1 UX', () => {
         ['toggle', true], ['toggle', false], ['scope', true], ['scope', false],
     ] as const)('keeps a pending %s disabled after reopening and synchronizes the current control on success=%p', async (kind, succeeds) => {
         (globalThis as typeof globalThis & { __paToggleSetValueEmitsChange?: boolean }).__paToggleSetValueEmitsChange = true;
-        const plugin = makePlugin();
+        const plugin = makePlugin({ retrievalHabitProfile: { enabled: false, state: { aggregates: [] } } });
         setMockConfirmDecision(true);
         let resolveSave!: () => void;
         let rejectSave!: (reason: unknown) => void;
@@ -5277,7 +5278,7 @@ describe('Phase 4 P1 UX', () => {
     });
 
     it('does not submit an opt-in after Settings closes while confirmation is pending', async () => {
-        const plugin = makePlugin();
+        const plugin = makePlugin({ retrievalHabitProfile: { enabled: false, state: { aggregates: [] } } });
         let resolveConfirmation!: (value: boolean) => void;
         (confirmUserAction as jest.Mock).mockImplementationOnce(() => new Promise<boolean>((resolve) => { resolveConfirmation = resolve; }));
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
@@ -5298,7 +5299,8 @@ describe('Phase 4 P1 UX', () => {
 
     it('keeps learning and recall opt-ins independently available while note Memory is off, without authorizing pending or failed saves', async () => {
         (globalThis as typeof globalThis & { __paToggleSetValueEmitsChange?: boolean }).__paToggleSetValueEmitsChange = true;
-        const plugin = makePlugin({ memoryEnabled: false, memoryExtractionEnabled: false });
+        const plugin = makePlugin({ memoryEnabled: false, memoryExtractionEnabled: false,
+            retrievalHabitProfile: { enabled: false, state: { aggregates: [] } } });
         setMockConfirmDecision(true);
         let rejectSave!: (reason: unknown) => void;
         plugin.saveSettings.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
@@ -5557,8 +5559,8 @@ describe('Phase 4 P1 UX', () => {
             expect(mergeLoadedSettings({ memoryAutoAcceptPaused: persistedPaused }).memoryAutoAcceptPaused).toBe(true);
         });
 
-        it('keeps AI Memory Extraction and Vault Insights context off until first-use confirmation', () => {
-            expect(DEFAULT_SETTINGS.memoryExtractionEnabled).toBe(false);
+        it('defaults learning on without enabling Vault Insights or inventing confirmation', () => {
+            expect(DEFAULT_SETTINGS.memoryExtractionEnabled).toBe(true);
             expect(DEFAULT_SETTINGS.memoryExtractionIncludeVaultInsights).toBe(false);
             expect(DEFAULT_SETTINGS.memoryExtractionConsent.state).toBe("unconfirmed");
             const plugin = makePlugin();
@@ -5568,8 +5570,28 @@ describe('Phase 4 P1 UX', () => {
 
             const records = getMockSettingRecords();
             expect(records.find((r) => r.name === 'AI Memory Extraction')?.toggles[0])
+                .toMatchObject({ value: true });
+            expect(records.find((r) => r.name === 'Include Vault Insights in AI Context')?.toggles[0])
                 .toMatchObject({ value: false });
-            expect(records.find((r) => r.name === 'Include Vault Insights in AI Context')).toBeUndefined();
+        });
+
+        it('persists an independently confirmed Vault Insights opt-in from default learning', async () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+            const toggle = getMockSettingRecords().find((r) => r.name === 'Include Vault Insights in AI Context')!.toggles[0];
+            setMockConfirmDecision(false);
+            await toggle.onChange!(true);
+            expect(plugin.settings.memoryExtractionIncludeVaultInsights).toBe(false);
+            expect(plugin.settings.memoryExtractionConsent.confirmedAt).toBeUndefined();
+            setMockConfirmDecision(true);
+            await toggle.onChange!(true);
+            expect(plugin.settings.memoryExtractionConsent).toMatchObject({ state: 'confirmed', confirmedAt: expect.any(String) });
+            const reloaded = mergeLoadedSettings(plugin.settings);
+            expect(reloaded.memoryExtractionIncludeVaultInsights).toBe(true);
+            expect(reloaded.learningPreferences?.memoryExtraction).toBe('default');
+            expect(reloaded.retrievalHabitProfile.enabled).toBe(true);
         });
 
         it('shows AI Insights entry point without enabling Advanced memory controls', () => {

@@ -337,7 +337,7 @@ export type AssistantMessagePart =
     | { type: "toolCall"; id?: string; name: string; input: unknown; index?: number };
 
 /** Provider evidence, independent of the loop's local EOF/cancellation state. */
-export type ProviderCompletion = "stop" | "length" | "content_filter" | "unknown";
+export type ProviderCompletion = "stop" | "tool_calls" | "length" | "content_filter" | "unknown";
 
 export interface ChatWritingRequest { requestId: string; }
 export interface ChatWritingContext { parentVersionId: string; text: string; textHash: string; associatedImages: MessageImage[]; }
@@ -345,6 +345,8 @@ export interface ChatWritingContext { parentVersionId: string; text: string; tex
 export interface ChatWritingMaterialContext { requestId: string; associatedImages: MessageImage[]; }
 export interface ChatWritingStyleResult {
     context: string; revisionIds: string[]; isCurrent: () => boolean;
+    /** Source validity independent of cancellation of the preparing model turn. */
+    isSourceCurrent?: () => boolean;
     skipped?: Array<{ revisionId: string; reason: "ineligible" | "budget" | "invalid_budget" }>;
 }
 export type ChatWritingStylePreparation = (input: { remainingTextChars: number; remainingMemoryChars: number; signal?: AbortSignal }) => Promise<ChatWritingStyleResult>;
@@ -424,6 +426,7 @@ export type ToolExecutionOutcome =
     | "policy_rejected"
     | "budget_exceeded"
     | "duplicate_skipped"
+    | "control_applied"
     | "aborted"
     | "abort_timeout";
 
@@ -587,8 +590,9 @@ export type LegacyAgentEvent =
     | LegacyAgentAnswerSnapshotEvent
     | LegacyAgentReasoningChunkEvent
     | LegacyAgentTurnMetadataEvent
-    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[] })
-    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; associatedImages?: MessageImage[] })
+    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[] })
+    | (LegacyAgentEventBase & { kind: "writing-preview"; runId: string; requestId: string; messageId: string; text: string })
+    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; previewText?: string; associatedImages?: MessageImage[] })
     | LegacyAgentTerminalEvent;
 
 export type VaultAdviceEvidenceKind =

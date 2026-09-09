@@ -41,7 +41,7 @@ function projectionInput(state: DeviceMemoryGovernanceStateV1) {
         scene, sourceAllowed: () => true, remainingMemoryChars: 6000, remainingTextChars: 6000 };
 }
 
-describe('typed style integrity and V1 to V2 normalization', () => {
+describe('typed style integrity and legacy normalization', () => {
     it.each(['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(63), 'a'.repeat(64), 'a'.repeat(65), '中文🙂\n'.repeat(700)])(
         'matches native SHA-256 across padding and UTF-8 boundaries', (text) => {
             expect(hashWritingStyleText(text)).toBe(createHash('sha256').update(text).digest('hex'));
@@ -58,7 +58,7 @@ describe('typed style integrity and V1 to V2 normalization', () => {
     it('upgrades plain V1 without generating style or changing ordinary scope', () => {
         const legacy = { ...createEmptyDeviceMemoryGovernanceStateV1(), schemaVersion: 1 };
         const upgraded = normalizeDeviceMemoryGovernanceStateV1(legacy);
-        expect(upgraded).toMatchObject({ schemaVersion: 2, revisions: [], claims: [] });
+        expect(upgraded).toMatchObject({ schemaVersion: 3, revisions: [], claims: [] });
         expect(legacy.schemaVersion).toBe(1);
     });
     it('preserves style and authorization across clone, and rejects misplaced/forged payloads', async () => {

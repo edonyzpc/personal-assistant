@@ -23,7 +23,7 @@ import {
     mergePageletSettings,
     PAGELET_DEFAULTS,
 } from "../src/settings/pagelet/index";
-import { mergeLoadedSettings, mergeQuietRecallSettings } from "../src/settings";
+import { LEARNING_DEFAULTS_VERSION, mergeLoadedSettings, mergeQuietRecallSettings } from "../src/settings";
 
 function getCssBlock(source: string, marker: string, fromIndex = 0): string {
     const markerIndex = source.indexOf(marker, fromIndex);
@@ -308,6 +308,11 @@ describe("F-07 quietRecallMode Settings", () => {
 
     it("keeps Quiet Recall independent from generic hints, Recap, and RHP", () => {
         const result = mergeLoadedSettings({
+            learningPreferences: {
+                version: LEARNING_DEFAULTS_VERSION,
+                memoryExtraction: "default",
+                habitLearning: "disabled",
+            },
             pagelet: {
                 quietRecallMode: "on",
                 proactiveHints: false,

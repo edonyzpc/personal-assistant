@@ -14,6 +14,7 @@ import {
     type MemoryAdmissionDecision,
     type MemoryAdmissionPolicyInput,
 } from "./memory-admission-policy";
+import { isGovernedProfileKey } from "./memory-governance-persistence";
 import type {
     MemoryControlCenterAuthority,
     MemoryControlCenterEffect,
@@ -25,6 +26,7 @@ import {
     type LegacyRollbackValue,
     type MemoryClaimRevision,
     type MemoryGovernanceRepository,
+    type MemoryGovernanceCommitGuard,
     type MemoryMigrationState,
     type MemoryPartitionKey,
     type MemoryProjectionLink,
@@ -38,6 +40,8 @@ import {
     TYPE_A_TARGET_SUPPRESSION_RULE_FINGERPRINT,
 } from "./memory-governance-migration-coordinator";
 import { checksumLegacyRollbackValue } from "./memory-governance-rollback-checksum";
+import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint, isChatSemanticConversationProvenance, parseChatMemorySemanticReceipt, verifyChatMemorySemanticReceipt,
+    type ChatMemorySemanticReceipt, type ChatMemorySemanticProjection } from "./chat-memory-semantic-receipt";
 import { buildLegacyMemoryRollbackProjection } from "./memory-governance-rollback";
 import {
     validateConfirmedMemoryRecord,
@@ -80,8 +84,18 @@ export interface GovernedMemoryAdmissionInput {
     admissionKey: string;
     queueInput: ReviewQueueCreateInput;
     profileRecordId?: string;
+    profileKey?: string;
+    chatSemanticReceipt?: ChatMemorySemanticReceipt;
+    /** Host-owned extraction snapshot. Never read from model output or Queue metadata. */
+    chatSemanticEvidence?: ChatSemanticAdmissionEvidence;
     /** Required for Type-A; compared transactionally before any durable write. */
     expectedTargetState?: TypeATargetGeneration;
+}
+
+export interface ChatSemanticAdmissionEvidence {
+    conversationId: string;
+    candidate: { text: string; meaning?: string; kind: string; confidence: string };
+    projections: readonly ChatMemorySemanticProjection[];
 }
 
 export type TypeATargetGeneration =
@@ -99,6 +113,8 @@ export interface TypeAAdmissionBaseline {
     version: 1;
     capturedCommitSequence: number;
     targets: Record<string, TypeATargetGeneration>;
+    /** Host snapshot of canonical targets and pending Queue identities; never model input. */
+    profileRecordIdsByKey?: Record<string, string>;
 }
 
 export interface GovernedMemoryAdmissionReceipt {
@@ -159,12 +175,25 @@ export class MemoryAdmissionCoordinator {
 
     admit(
         input: GovernedMemoryAdmissionInput,
+        lifetime?: { isCurrent: () => boolean; signal?: AbortSignal },
     ): Promise<MemoryAdmissionCoordinatorResult<GovernedMemoryAdmissionReceipt>> {
         const prepared = prepareAdmission(input, this.opaqueVaultKey, this.now(), this.idFactory);
         if (!prepared.ok) return Promise.resolve(prepared);
+        const summary = input.summary.trim();
+        const assertCurrent: MemoryGovernanceCommitGuard = () => {
+            if (lifetime && (!lifetime.isCurrent() || lifetime.signal?.aborted)) {
+                throw new AdmissionError("producer_not_current");
+            }
+            if (prepared.value.envelope.chatSemanticReceipt) {
+                assertChatSemanticEvidence(prepared.value.envelope.chatSemanticReceipt, summary,
+                    input.chatSemanticEvidence, Boolean(lifetime));
+            }
+        };
+        assertCurrent.signal = lifetime?.signal;
         return this.serialize(async () => this.runDomainMutation(async () => {
             return this.repository.transact((draft) => {
-                const journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, this.now());
+                assertCurrent();
+                let journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, this.now());
                 if (input.policy.origin === "type_a") {
                     if (!input.profileRecordId || !input.expectedTargetState) {
                         throw new AdmissionError("type_a_precondition_missing");
@@ -198,6 +227,9 @@ export class MemoryAdmissionCoordinator {
                 });
                 if (decision === "reject" || decision === "ephemeral_only") {
                     return { decision };
+                }
+                if (prepared.value.envelope.chatSemanticReceipt) {
+                    journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, this.now(), true);
                 }
 
                 const queueItem = cloneDeviceQueueItem({
@@ -267,24 +299,41 @@ export class MemoryAdmissionCoordinator {
                         ? { queueItem: toReviewQueueItem(persistedQueue) }
                         : {}),
                 };
-            });
+            }, assertCurrent);
         }));
     }
 
     confirmQueueItem(input: {
         queueItemId: string;
         dataBoundaryAllowed: boolean;
+        chatSemanticEvidence?: ChatSemanticAdmissionEvidence;
+        lifetime?: { isCurrent: () => boolean; signal?: AbortSignal };
     }): Promise<MemoryAdmissionCoordinatorResult<GovernedMemoryConfirmationReceipt>> {
         const occurredAt = this.now();
+        let semanticReceipt: ChatMemorySemanticReceipt | undefined;
+        let summary = "";
+        const assertCurrent: MemoryGovernanceCommitGuard = () => {
+            if (input.lifetime && (!input.lifetime.isCurrent() || input.lifetime.signal?.aborted)) {
+                throw new AdmissionError("producer_not_current");
+            }
+            if (semanticReceipt) assertChatSemanticEvidence(semanticReceipt, summary, input.chatSemanticEvidence, Boolean(input.lifetime));
+        };
+        assertCurrent.signal = input.lifetime?.signal;
         return this.serialize(async () => this.runDomainMutation(async () => {
             return this.repository.transact((draft) => {
-                const journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, occurredAt);
+                let journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, occurredAt);
                 const item = draft.memoryQueueItems.find((candidate) => (
                     candidate.id === input.queueItemId
                     && candidate.partition.kind === "vault"
                     && candidate.partition.key === this.opaqueVaultKey
                 ));
                 if (!item) throw new AdmissionError("queue_item_missing");
+                const boundEnvelope = readAdmissionEnvelope(item);
+                if (!boundEnvelope) throw new AdmissionError("admission_envelope_missing");
+                semanticReceipt = boundEnvelope.chatSemanticReceipt;
+                summary = item.claim.trim();
+                assertCurrent();
+                if (semanticReceipt) journal = requireAdmissionEnvelope(draft, this.opaqueVaultKey, occurredAt, true);
                 if (item.status === "applied") {
                     const envelope = readAdmissionEnvelope(item);
                     if (!envelope) throw new AdmissionError("admission_envelope_missing");
@@ -341,7 +390,7 @@ export class MemoryAdmissionCoordinator {
                     claimId: admitted.claimId,
                     queueItem: toReviewQueueItem(item),
                 };
-            });
+            }, assertCurrent);
         }));
     }
 
@@ -456,12 +505,26 @@ function prepareAdmission(
     if (!sourceFingerprintId || !ruleFingerprint || !admissionKey) {
         return failure("exact_fingerprint_required");
     }
+    const hasSemanticReceipt = Object.prototype.hasOwnProperty.call(input, "chatSemanticReceipt");
+    const semanticReceipt = hasSemanticReceipt ? parseChatMemorySemanticReceipt(input.chatSemanticReceipt) : undefined;
+    if ((hasSemanticReceipt && !semanticReceipt)
+        || (ruleFingerprint === CHAT_MEMORY_SEMANTIC_RULE && !semanticReceipt)
+        || (semanticReceipt && (ruleFingerprint !== semanticReceipt.rule
+            || sourceFingerprintId !== chatMemorySemanticSourceFingerprint(semanticReceipt)
+            || semanticReceipt.candidateTextHash !== stableHash(input.summary.trim())))) {
+        return failure("invalid_chat_semantic_receipt");
+    }
     if (input.policy.origin === "type_a") {
         const profileRecordId = input.profileRecordId?.trim();
         if (!profileRecordId || !input.expectedTargetState
             || input.expectedTargetState.profileRecordId !== profileRecordId) {
             return failure("type_a_precondition_missing");
         }
+    }
+    const profileKey = input.profileKey?.trim();
+    if ((input.profileKey !== undefined && (!isGovernedProfileKey(profileKey) || !input.profileRecordId?.trim()))
+        || (semanticReceipt && input.profileRecordId && !profileKey)) {
+        return failure("profile_identity_required");
     }
     const envelope: PersistedAdmissionEnvelope = {
         version: 1,
@@ -476,6 +539,8 @@ function prepareAdmission(
         ruleFingerprint,
         admissionKey,
         ...(input.profileRecordId?.trim() ? { profileRecordId: input.profileRecordId.trim() } : {}),
+        ...(profileKey ? { profileKey } : {}),
+        ...(semanticReceipt ? { chatSemanticReceipt: semanticReceipt } : {}),
     };
     if (!validateAdmissionEnvelope(envelope)) return failure("invalid_admission_envelope");
     const queueInput = input.queueInput;
@@ -518,6 +583,7 @@ function requireAdmissionEnvelope(
     state: DeviceMemoryGovernanceStateV1,
     opaqueVaultKey: string,
     now: Date,
+    requiresSemanticFormat = false,
 ): MemoryMigrationState | null {
     const policy = state.policyStates[opaqueVaultKey];
     if (!policy || policy.mode !== "effect_based" || policy.contextProjectionMode !== "governed") {
@@ -526,9 +592,23 @@ function requireAdmissionEnvelope(
     const migration = state.migrationStates[opaqueVaultKey];
     if (!migration) return null;
     if (migration.phase === "rolling_back") throw new AdmissionError("migration_rolling_back");
-    if (migration.phase === "finalized") return null;
+    if (migration.phase === "finalized" || migration.phase === "governed_preserving_legacy") return null;
     if (migration.phase !== "compatibility" || migration.lastErrorCode) {
         throw new AdmissionError("migration_not_writable");
+    }
+    if (requiresSemanticFormat) {
+        if (!migration.sourceHash || migration.cutoverSequence === undefined || migration.pendingLegacySourceHash) {
+            throw new AdmissionError("migration_not_writable");
+        }
+        const expiry = Date.parse(migration.rollbackExpiresAt ?? "");
+        if (Number.isFinite(expiry) && expiry >= now.getTime()
+            && !buildLegacyMemoryRollbackProjection(state, opaqueVaultKey, now).ok) {
+            throw new AdmissionError("rollback_projection_invalid");
+        }
+        // Same transaction as the candidate: preserve old material without
+        // exporting evidence that an older format cannot represent.
+        migration.phase = "governed_preserving_legacy";
+        return null;
     }
     const expiresAt = Date.parse(migration.rollbackExpiresAt ?? "");
     if (!Number.isFinite(expiresAt) || expiresAt < now.getTime()) return null;
@@ -597,6 +677,7 @@ function upsertGovernedClaim(input: {
         authority: input.envelope.authority,
         ...(currentRevision ? { supersedesRevisionId: currentRevision.id } : {}),
         createdAt: occurredAt,
+        ...(input.envelope.chatSemanticReceipt ? { chatSemanticReceipt: cloneJson(input.envelope.chatSemanticReceipt) } : {}),
     };
     input.draft.revisions.push(revision);
 
@@ -745,6 +826,7 @@ function upsertGovernedClaim(input: {
         });
     }
     if (input.envelope.profileRecordId) {
+        const target = resolveAdmissionProfileTarget(input.draft, claim.id, input.envelope)!;
         input.draft.pendingOperations = input.draft.pendingOperations.filter((operation) => (
             operation.kind !== "profile_projection"
             || operation.claimId !== claim.id
@@ -755,6 +837,7 @@ function upsertGovernedClaim(input: {
             kind: "profile_projection",
             claimId: claim.id,
             profileRecordId: input.envelope.profileRecordId,
+            ...(target.store ? { profileStore: target.store, profileKey: target.profileKey } : {}),
             targetRevisionId: revision.id,
             state: "pending",
             attemptCount: 0,
@@ -788,16 +871,16 @@ function syncAdmissionLinks(
     occurredAt: string,
     idFactory: () => string,
 ): MemoryProjectionLink[] {
+    const profileTarget = resolveAdmissionProfileTarget(state, claim.id, envelope);
     const desiredTargets: MemoryProjectionLink["target"][] = [
         { kind: "prompt_projection", projectionId: `prompt:${claim.id}` },
         ...(queueItemId ? [{ kind: "review_queue" as const, itemId: queueItemId }] : []),
-        ...(envelope.profileRecordId
-            ? [{ kind: "type_a_profile" as const, profileRecordId: envelope.profileRecordId }]
-            : []),
+        ...(profileTarget ? [profileTarget] : []),
     ];
     for (const link of state.projectionLinks) {
         if (link.claimId !== claim.id || link.state !== "active") continue;
-        if (!desiredTargets.some((target) => targetsEqual(target, link.target))) {
+        if (link.target.kind !== "type_a_profile"
+            && !desiredTargets.some((target) => targetsEqual(target, link.target))) {
             link.state = "redacted";
         }
     }
@@ -826,6 +909,25 @@ function syncAdmissionLinks(
         activeLinks.push(link);
     }
     return activeLinks;
+}
+
+function resolveAdmissionProfileTarget(
+    state: DeviceMemoryGovernanceStateV1,
+    claimId: string,
+    envelope: PersistedAdmissionEnvelope,
+): Extract<MemoryProjectionLink["target"], { kind: "type_a_profile" }> | undefined {
+    if (!envelope.profileRecordId) return undefined;
+    const previous = state.projectionLinks.find((link) => link.claimId === claimId
+        && link.target.kind === "type_a_profile" && link.target.profileRecordId === envelope.profileRecordId
+        && link.target.store === "governed")?.target;
+    if (previous?.kind === "type_a_profile") {
+        if (envelope.profileKey && envelope.profileKey !== previous.profileKey) {
+            throw new AdmissionError("profile_identity_conflict");
+        }
+        return { ...previous };
+    }
+    return { kind: "type_a_profile", profileRecordId: envelope.profileRecordId,
+        ...(envelope.profileKey ? { store: "governed", profileKey: envelope.profileKey } : {}) };
 }
 
 function invalidatePriorUndoSnapshots(state: DeviceMemoryGovernanceStateV1, claimId: string): void {
@@ -1033,7 +1135,16 @@ function collectNoteSourceRefs(provenance: readonly PersistedMemoryProvenance[])
 
 function readAdmissionEnvelope(item: DeviceMemoryQueueItem): PersistedAdmissionEnvelope | null {
     const value = item.governanceAdmission;
+    if (value?.chatSemanticReceipt && value.chatSemanticReceipt.candidateTextHash !== stableHash(item.claim.trim())) return null;
     return validateAdmissionEnvelope(value) ? cloneJson(value) : null;
+}
+
+function assertChatSemanticEvidence(receipt: ChatMemorySemanticReceipt, summary: string,
+    evidence: ChatSemanticAdmissionEvidence | undefined, hasLifetime: boolean): void {
+    if (!hasLifetime || !evidence || evidence.candidate.text.trim() !== summary
+        || !verifyChatMemorySemanticReceipt(receipt, evidence.candidate, evidence.conversationId, evidence.projections)) {
+        throw new AdmissionError("chat_semantic_source_invalid");
+    }
 }
 
 function validateAdmissionEnvelope(value: unknown): value is PersistedAdmissionEnvelope {
@@ -1053,6 +1164,14 @@ function validateAdmissionEnvelope(value: unknown): value is PersistedAdmissionE
     if (value.profileRecordId !== undefined && (
         typeof value.profileRecordId !== "string" || !value.profileRecordId.trim()
     )) return false;
+    if (value.profileKey !== undefined && (!isGovernedProfileKey(value.profileKey) || !value.profileRecordId)) return false;
+    if (Object.prototype.hasOwnProperty.call(value, "chatSemanticReceipt") || value.ruleFingerprint === CHAT_MEMORY_SEMANTIC_RULE) {
+        const receipt = parseChatMemorySemanticReceipt(value.chatSemanticReceipt);
+        if (!receipt || value.ruleFingerprint !== receipt.rule
+            || value.sourceFingerprintId !== chatMemorySemanticSourceFingerprint(receipt)) return false;
+        if (value.profileRecordId && !value.profileKey) return false;
+        if (!isChatSemanticConversationProvenance(receipt, value.provenance)) return false;
+    }
     return true;
 }
 
@@ -1116,7 +1235,8 @@ function targetsEqual(left: MemoryProjectionLink["target"], right: MemoryProject
     if (left.kind !== right.kind) return false;
     if (left.kind === "review_queue" && right.kind === "review_queue") return left.itemId === right.itemId;
     if (left.kind === "type_a_profile" && right.kind === "type_a_profile") {
-        return left.profileRecordId === right.profileRecordId;
+        return left.profileRecordId === right.profileRecordId && left.store === right.store
+            && left.profileKey === right.profileKey;
     }
     return left.kind === "prompt_projection" && right.kind === "prompt_projection"
         && left.projectionId === right.projectionId;
@@ -1178,6 +1298,7 @@ function cloneRevision(revision: MemoryClaimRevision): MemoryClaimRevision {
     return {
         ...revision,
         provenance: revision.provenance.map(cloneProvenance),
+        ...(revision.chatSemanticReceipt ? { chatSemanticReceipt: cloneJson(revision.chatSemanticReceipt) } : {}),
     };
 }
 
@@ -1213,22 +1334,23 @@ function admissionClaimIsCurrent(
     summary: string,
     queueItemId: string | undefined,
 ): boolean {
+    const profileTarget = resolveAdmissionProfileTarget(state, claim.id, envelope);
+    const currentLinks = state.projectionLinks.filter((link) => link.claimId === claim.id && link.state === "active"
+        && (link.target.kind !== "type_a_profile" || (profileTarget && targetsEqual(link.target, profileTarget))));
     const expectedTargets = [
         `prompt:prompt:${claim.id}`,
         ...(queueItemId ? [`queue:${queueItemId}`] : []),
-        ...(envelope.profileRecordId ? [`profile:${envelope.profileRecordId}`] : []),
+        ...(profileTarget ? [`profile:${JSON.stringify(profileTarget)}`] : []),
     ].sort();
-    const activeLinks = state.projectionLinks
-        .filter((link) => link.claimId === claim.id && link.state === "active")
+    const activeLinks = currentLinks
         .map((link) => {
             if (link.target.kind === "prompt_projection") return `prompt:${link.target.projectionId}`;
             if (link.target.kind === "review_queue") return `queue:${link.target.itemId}`;
-            return `profile:${link.target.profileRecordId}`;
+            return `profile:${JSON.stringify(link.target)}`;
         })
         .sort();
     const exactLineageIsCurrent = JSON.stringify(activeLinks) === JSON.stringify(expectedTargets)
-        && state.projectionLinks
-            .filter((link) => link.claimId === claim.id && link.state === "active")
+        && currentLinks
             .every((link) => (
                 link.sourceFingerprintId === envelope.sourceFingerprintId
                 && link.ruleFingerprint === envelope.ruleFingerprint

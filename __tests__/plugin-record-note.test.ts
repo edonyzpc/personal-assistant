@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { MarkdownRenderer, Platform, TFile } from 'obsidian';
 import type { App, MarkdownFileInfo } from 'obsidian';
+import { createChatMemorySemanticReceipt, chatMemorySemanticSourceFingerprint } from '../src/pa/chat-memory-semantic-receipt';
+import { stableHash as semanticSourceHash } from '../src/pa/helpers';
+import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
+import { MemoryUserProfileStore } from '../src/ai-services/memory-extraction/profile-store';
+import { deriveSemanticProfileKey } from '../src/ai-services/memory-extraction/type-a-extractor';
 
 const mockNoticeMessages: string[] = [];
 const mockOpenedModals: Array<{ contentEl: MockModalContentRecord; onOpen?: () => void; onClose?: () => void }> = [];
@@ -304,9 +310,14 @@ import type {
 import {
     InMemoryMemoryGovernanceBackend,
     InMemoryMemoryGovernanceRepository,
+    IndexedDbMemoryGovernanceRepository,
+    createEmptyDeviceMemoryGovernanceStateV1,
+    getMemoryGovernanceDeviceDbName,
     type DeviceMemoryGovernanceStateV1,
     type MemoryGovernanceTransaction,
+    type MemoryGovernanceCommitGuard,
 } from '../src/pa/memory-governance-persistence';
+import { FakeGovernanceIndexedDbFactory, seedLegacyFactory, cloneStores } from './helpers/fake-governance-indexeddb';
 import { LegacyMemoryCompatibilityBarrier } from '../src/pa/memory-governance-compatibility';
 import {
     MemoryGovernanceCoordinator,
@@ -323,7 +334,7 @@ import type { UserProfileSnapshot } from '../src/ai-services/memory-extraction';
 import { collectChatMemorySources, createChatMemoryCandidateEvidence } from '../src/pa/chat-memory-admission';
 import { hashWritingStyleText } from '../src/pa/writing-style';
 import type { WritingStyleService } from '../src/chat/writing-style-service';
-import type { WritingVersion } from '../src/chat/writing-types';
+import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
 
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
@@ -1185,6 +1196,44 @@ describe('Memory governance plugin bootstrap', () => {
         expect((await repository.initialize()).migrationStates).toEqual(before.migrationStates);
         expect(h.readPersisted()).toEqual(original); expect(plugin.saveData.mock.calls).toHaveLength(writes);
         expect(plugin.createUserProfileStore).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('resumes governed learning with preserved legacy copies without reimporting changed old data', async () => {
+        const first = createBootstrapHarness();
+        await first.plugin.initializeMemoryGovernanceBootstrap();
+        const key = first.plugin.memoryGovernanceOpaqueVaultKey as string;
+        await first.repository.transact((draft) => {
+            draft.migrationStates[key].phase = 'governed_preserving_legacy';
+            draft.policyStates[key].mode = 'effect_based';
+            draft.policyStates[key].contextProjectionMode = 'governed';
+        });
+        await first.plugin.refreshDeviceMemoryCaches();
+        expect(first.plugin.getMemoryGovernanceUiMode()).toBe('effect_based');
+        expect(first.plugin.deviceMemoryRecordRepository).toBeNull();
+        const before = await first.repository.initialize();
+        const legacy = first.readPersisted();
+        legacy.memoryGovernance.records[0].summary = 'Edited by an old client after upgrade';
+        const restarted = createBootstrapHarness(first.backend, legacy);
+        const finalize = jest.spyOn(restarted.plugin.legacyMemoryCompatibilityBarrier, 'finalize');
+        await restarted.plugin.initializeMemoryGovernanceBootstrap();
+        expect(restarted.plugin.memoryGovernanceBootstrapState).toBe('ready');
+        expect(restarted.plugin.getMemoryGovernanceUiMode()).toBe('effect_based');
+        expect(restarted.plugin.createExistingUserProfileReader).not.toHaveBeenCalled();
+        expect(restarted.plugin.createUserProfileStore).not.toHaveBeenCalled();
+        const resumed = await restarted.repository.initialize();
+        expect(resumed.migrationStates[key]).toMatchObject({ phase: 'governed_preserving_legacy',
+            sourceHash: before.migrationStates[key].sourceHash,
+            pendingLegacySourceHash: expect.any(String) });
+        expect(resumed.migrationStates[key].lastErrorCode).toBeUndefined();
+        expect(resumed.revisions).toEqual(before.revisions);
+        expect(resumed.rollbackPayloadEntries).toEqual(before.rollbackPayloadEntries);
+        await expect(restarted.plugin.getReviewQueueStore().create(nonMemoryQueueInput())).resolves.toMatchObject({ ok: true });
+        restarted.plugin.settings.focusMode = true;
+        await restarted.plugin.saveSettings();
+        expect(restarted.readPersisted().focusMode).toBe(true);
+        expect(restarted.readPersisted().memoryGovernance).toEqual(legacy.memoryGovernance);
+        expect(finalize).not.toHaveBeenCalled();
+        expect((await restarted.repository.initialize()).revisions).toEqual(before.revisions);
     });
 
     it('keeps an unreadable Profile and a legacy source changed by another writer untouched during explicit upgrade', async () => {
@@ -2645,7 +2694,11 @@ describe('Memory governance plugin bootstrap', () => {
     });
 
     it('keeps legacy reads and non-Memory saves available while Memory writes fail closed', async () => {
-        const { plugin, raw } = createBootstrapHarness();
+        const initialSettings = rawSettings();
+        const pendingCandidate = initialSettings.reviewQueue.items.find((item) => item.id === 'legacy-memory-queue')!;
+        pendingCandidate.status = 'suggested';
+        pendingCandidate.metadata = { memoryType: 'preference', sensitivity: 'low' };
+        const { plugin, raw } = createBootstrapHarness(undefined, initialSettings);
         const dispose = jest.fn(async () => undefined);
         plugin.createMemoryGovernanceDeviceRepository = jest.fn(() => ({
             initialize: jest.fn(async () => { throw new Error('device storage unavailable'); }),
@@ -2669,6 +2722,22 @@ describe('Memory governance plugin bootstrap', () => {
             type: 'memory_candidate',
             admissionReason: 'memory_confirmation_required',
         })).rejects.toMatchObject({ code: 'memory_mutation_blocked' });
+        const candidate = plugin.getReviewQueueItemById('legacy-memory-queue');
+        expect(candidate.status).toBe('suggested');
+        await expect(plugin.confirmMemoryCandidateFromQueueItem(candidate)).resolves.toMatchObject({
+            ok: false,
+            message: expect.stringContaining('queue_reserve_failed'),
+        });
+        expect(plugin.getReviewQueueItemById(candidate.id)).toEqual(candidate);
+        expect(plugin.deviceMemoryGovernanceRepository).toBeNull();
+        expect(plugin.memoryAdmissionCoordinator).toBeNull();
+        expect(plugin.memoryProfileProjectionWorker).toBeNull();
+        plugin.scheduleMemoryForgetRetry();
+        plugin.scheduleMemoryProfileProjectionRetry();
+        expect(plugin.memoryForgetRetryTimer).toBeNull();
+        expect(plugin.memoryProfileProjectionRetryTimer).toBeNull();
+        expect(plugin.createExistingUserProfileReader).not.toHaveBeenCalled();
+        expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
         plugin.settings.focusMode = true;
         await plugin.saveSettings();
 
@@ -2679,6 +2748,67 @@ describe('Memory governance plugin bootstrap', () => {
             expect.objectContaining({ type: 'evidence_insight' }),
         ]));
         expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['logical-schema', 'database-version'] as const)('preserves a future %s database through real reader rejection and plugin fallback actions', async (boundary) => {
+        const factory = new FakeGovernanceIndexedDbFactory();
+        seedLegacyFactory(factory, createEmptyDeviceMemoryGovernanceStateV1());
+        factory.backend.version = boundary === 'database-version' ? 4 : 3;
+        factory.backend.getStore('meta').set('device-state-v1', { schemaVersion: 4, commitSequence: 17 });
+        // Opaque future records in every logical store must survive unchanged.
+        for (const [name, store] of factory.backend.stores) {
+            if (name !== 'meta') store.set('future-record', { futureKind: name, receipt: { version: 3, text: 'Synthetic future evidence' } });
+        }
+        const before = cloneStores(factory.backend.stores);
+        const initialSettings = rawSettings();
+        const pending = initialSettings.reviewQueue.items.find((item) => item.id === 'legacy-memory-queue')!;
+        pending.status = 'suggested';
+        pending.metadata = { memoryType: 'preference', sensitivity: 'low' };
+        const { plugin, raw } = createBootstrapHarness(undefined, initialSettings);
+        const repository = new IndexedDbMemoryGovernanceRepository(
+            getMemoryGovernanceDeviceDbName('personal-assistant'), factory as unknown as IDBFactory,
+            { broadcastChannelFactory: null },
+        );
+        const initialize = jest.spyOn(repository, 'initialize');
+        const dispose = jest.spyOn(repository, 'dispose');
+        plugin.createMemoryGovernanceDeviceRepository = jest.fn(() => repository);
+        await plugin.initializeMemoryGovernanceBootstrap();
+        await expect(initialize.mock.results[0].value).rejects.toMatchObject({
+            code: boundary === 'database-version' ? 'database_open_failed' : 'invalid_state',
+        });
+        expect(plugin.memoryGovernanceBootstrapState).toBe('failed');
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(plugin.deviceMemoryGovernanceRepository).toBeNull();
+        expect(plugin.currentDeviceMemoryGovernanceState).toBeNull();
+        expect(plugin.memoryAdmissionCoordinator).toBeNull();
+        expect(plugin.memoryProfileProjectionWorker).toBeNull();
+
+        await expect(plugin.getReviewQueueStore().create(nonMemoryQueueInput())).resolves.toMatchObject({ ok: true });
+        plugin.settings.focusMode = true;
+        await plugin.saveSettings();
+        const candidate = plugin.getReviewQueueItemById(pending.id);
+        expect(candidate.status).toBe('suggested');
+        await expect(plugin.confirmMemoryCandidateFromQueueItem(candidate)).resolves.toMatchObject({
+            ok: false, message: expect.stringContaining('queue_reserve_failed'),
+        });
+        expect(plugin.getReviewQueueItemById(candidate.id)).toEqual(candidate);
+        plugin.scheduleMemoryForgetRetry();
+        plugin.scheduleMemoryProfileProjectionRetry();
+        plugin.scheduleMemoryGovernanceGarbageCollection();
+        expect(plugin.memoryForgetRetryTimer).toBeNull();
+        expect(plugin.memoryProfileProjectionRetryTimer).toBeNull();
+        expect(plugin.memoryGovernanceGarbageCollectionTimer == null).toBe(true);
+        expect(plugin.createExistingUserProfileReader).not.toHaveBeenCalled();
+        expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
+        const persisted = plugin.saveData.mock.calls.at(-1)?.[0];
+        expect(persisted.focusMode).toBe(true);
+        expect(persisted.memoryGovernance).toEqual(raw.memoryGovernance);
+        expect(persisted.reviewQueue.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: pending.id, status: 'suggested' }),
+            expect.objectContaining({ type: 'evidence_insight' }),
+        ]));
+        expect(factory.backend.stores).toEqual(before);
+        expect(factory.backend.version).toBe(boundary === 'database-version' ? 4 : 3);
     });
 
     it('fails a save before raw Memory and live non-Memory IDs can collide', async () => {
@@ -2872,6 +3002,69 @@ describe('Memory governance plugin bootstrap', () => {
             return { ...harness, service, version };
         }
 
+        async function setupNoteBackedStyle() {
+            const harness = await setup();
+            const { plugin, service, version } = harness;
+            const path = 'notes/travel-style.md';
+            const markdown = '# Travel style\n海风替我保存了这段旅行。';
+            const file = createTFileWithStat(path, { mtime: 100, size: markdown.length });
+            const boundary = { allowed: true };
+            plugin.app.vault.getAbstractFileByPath = jest.fn((candidatePath: string) => candidatePath === path ? file : null);
+            plugin.getMemoryGraphTopologyEpoch = jest.fn(() => 'note-style-source-epoch');
+            plugin.isMemoryProviderPathAllowed = jest.fn((candidatePath: string) => boundary.allowed && candidatePath === path);
+            plugin.captureLatestMemorySource = jest.fn(async (
+                candidatePath: string,
+                isAllowed: (sourcePath: string) => boolean,
+                _surface: string,
+                _signal?: AbortSignal,
+            ) => isAllowed(candidatePath) ? { path, markdown, mtime: 100, size: markdown.length } : null);
+            const receipt = await service.remember(version.id, scene, 'explicit-note-backed-style', {
+                path, contentHash: await hashWritingText(markdown),
+            });
+            await plugin.refreshDeviceMemoryCaches();
+            return { ...harness, path, file, boundary, receipt };
+        }
+
+        it('keeps a prepared note-backed style source valid after its model turn is cancelled', async () => {
+            const { plugin, service, version, path, receipt } = await setupNoteBackedStyle();
+            const controller = new AbortController();
+
+            const selected = await service.prepare(scene, { ...budget, signal: controller.signal });
+
+            expect(selected.context).toContain(version.text);
+            expect(selected.revisionIds).toEqual([receipt.revisionId]);
+            expect(plugin.captureLatestMemorySource).toHaveBeenLastCalledWith(path, expect.any(Function), 'chat', controller.signal);
+            expect(selected.isCurrent()).toBe(true);
+            expect(selected.isSourceCurrent?.()).toBe(true);
+            controller.abort();
+            expect(selected.isCurrent()).toBe(false);
+            expect(selected.isSourceCurrent?.()).toBe(true);
+            expect(plugin.createChatModel).not.toHaveBeenCalled();
+        });
+
+        it.each(['note edit', 'path exclusion', 'Forget'] as const)(
+            'still revokes a cancelled note-backed style receipt after %s',
+            async (revocation) => {
+                const { plugin, service, file, boundary, receipt } = await setupNoteBackedStyle();
+                const controller = new AbortController();
+                const selected = await service.prepare(scene, { ...budget, signal: controller.signal });
+                controller.abort();
+                expect(selected.isSourceCurrent?.()).toBe(true);
+
+                if (revocation === 'note edit') file.stat.mtime += 1;
+                else if (revocation === 'path exclusion') boundary.allowed = false;
+                else {
+                    await expect(plugin.memoryGovernanceCoordinator.forget({ claimId: receipt.claimId }))
+                        .resolves.toMatchObject({ ok: true });
+                    await plugin.refreshDeviceMemoryCaches();
+                }
+
+                expect(selected.isSourceCurrent?.()).toBe(false);
+                expect(selected.isCurrent()).toBe(false);
+                expect(plugin.createChatModel).not.toHaveBeenCalled();
+            },
+        );
+
         it('uses only explicitly saved matching samples with extraction disabled and leaves automatic consent unchanged', async () => {
             const { plugin, repository, service, version } = await setup();
             expect(plugin.getMemoryGovernanceUiMode()).toBe('effect_based');
@@ -2887,7 +3080,7 @@ describe('Memory governance plugin bootstrap', () => {
             expect(state.revisions.filter((revision) => revision.writingStyle)).toHaveLength(1);
             const entry = plugin.getGovernedMemoryViewSnapshot().records.find((item: { claimId: string }) => item.claimId === receipt.claimId);
             expect(plugin.projectGovernedMemoryUiEntry(entry, state)).toMatchObject({ useStatus: 'active', actionPolicy: { pause: true, forget: true } });
-            // Ordinary extracted Memory retains its original opt-in gate.
+            // A writing style alone does not manufacture ordinary Personal context.
             expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
             expect(plugin.settings.memoryExtractionEnabled).toBe(false);
             expect(plugin.settings.memoryExtractionConsent).toEqual({ state: 'unconfirmed', version: 1 });
@@ -4184,13 +4377,16 @@ describe('Memory governance plugin bootstrap', () => {
         expect(JSON.stringify(beforePause)).not.toContain('LEGACY PROFILE MUST NOT RETURN');
         expect(JSON.stringify(beforePause)).not.toContain('Prefers concise planning notes.');
 
+        plugin.settings.memoryEnabled = false;
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
         for (const disabled of [
-            { memoryEnabled: false, memoryExtractionEnabled: true, memoryExtractionConsent: { state: 'confirmed', version: 1 } },
             { memoryEnabled: true, memoryExtractionEnabled: false, memoryExtractionConsent: { state: 'confirmed', version: 1 } },
             { memoryEnabled: true, memoryExtractionEnabled: true, memoryExtractionConsent: { state: 'unconfirmed', version: 1 } },
+            { memoryEnabled: true, memoryExtractionEnabled: false, memoryExtractionConsent: { state: 'paused', version: 1 } },
         ]) {
             Object.assign(plugin.settings, disabled);
-            expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
+            expect(plugin.getMemoryExtractionPromptContext()).toEqual(beforePause);
+            expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
         }
         Object.assign(plugin.settings, {
             memoryEnabled: true,
@@ -4208,8 +4404,6 @@ describe('Memory governance plugin bootstrap', () => {
 
     it.each([
         ['Memory master switch', { memoryEnabled: false }],
-        ['Memory extraction switch', { memoryExtractionEnabled: false }],
-        ['Memory consent', { memoryExtractionConsent: { state: 'paused', version: 1 } }],
     ])('shows governed Memory as saved but unused when the %s gate is off', async (_label, disabled) => {
         const { plugin, record } = await createGovernedUseGateHarness();
         Object.assign(plugin.settings, disabled);
@@ -4254,6 +4448,31 @@ describe('Memory governance plugin bootstrap', () => {
                 },
             },
         });
+    });
+
+    it.each([
+        { memoryExtractionEnabled: false, memoryExtractionConsent: { state: 'confirmed', version: 1 } },
+        { memoryExtractionEnabled: true, memoryExtractionConsent: { state: 'unconfirmed', version: 1 } },
+        { memoryExtractionEnabled: false, memoryExtractionConsent: { state: 'paused', version: 1 } },
+    ])('keeps governed Personal in use without enabling new extraction: %j', async (settings) => {
+        const { plugin, record, isPathAllowed } = await createGovernedUseGateHarness();
+        plugin.getGovernedMemoryCurrentScope = jest.fn(() => ({
+            notePath: 'notes/use-gate.md', folderPath: 'notes', tags: [],
+        }));
+        const before = plugin.getMemoryExtractionPromptContext();
+        expect(before.governedMemoryContext).toContain('Use concise evidence-backed answers.');
+        Object.assign(plugin.settings, settings);
+        expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
+        const context = plugin.getMemoryExtractionPromptContext();
+        expect(context).toEqual(before);
+        const snapshot = await plugin.getMemoryControlCenterSnapshot();
+        expect(snapshot.items.find((item: { claimId?: string }) => item.claimId === record.id))
+            .toMatchObject({ lifecycle: 'active' });
+        expect(plugin.getMemoryGovernancePanelState().records.find((item: { id: string }) => item.id === record.id))
+            .toMatchObject({ useStatus: 'active', durableUseStatus: 'active' });
+        isPathAllowed.mockReturnValue(false);
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
+        expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
     });
 
     it('does not offer Resume use while a global governed-use gate is off', async () => {
@@ -4356,8 +4575,135 @@ describe('Memory governance plugin bootstrap', () => {
         expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
     });
 
+    it('rejects expired Type-A cursor updates at the final commit boundary', async () => {
+        const { plugin, repository } = createBootstrapHarness();
+        await plugin.initializeMemoryGovernanceBootstrap();
+        const before = await repository.initialize();
+        let release!: () => void;
+        let reached!: () => void;
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const original = repository.transact.bind(repository);
+        repository.transact = async function<T>(operation: MemoryGovernanceTransaction<T>, guard?: MemoryGovernanceCommitGuard): Promise<T> {
+            return original(async (draft) => {
+                const result = await operation(draft);
+                reached();
+                await waiting;
+                return result;
+            }, guard);
+        };
+        let current = true;
+        const evidence = ordinaryTypeAEvidence('I prefer concise answers.', 'late-cursor', 1).evidence;
+        const pending = plugin.persistGovernedTypeAProcessedTurn(plugin.memoryGovernanceOpaqueVaultKey,
+            evidence, { isCurrent: () => current });
+        const rejected = expect(pending).rejects.toThrow('Type-A producer is no longer current');
+        await entered;
+        current = false;
+        release();
+        await rejected;
+        expect(await repository.initialize()).toEqual(before);
+    });
+
+    it('rejects an expired Type-A batch after the lifecycle queue even if learning has restarted', async () => {
+        const { plugin, repository } = createBootstrapHarness();
+        Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 } });
+        await plugin.initializeMemoryGovernanceBootstrap();
+        const baseline = await plugin.captureGovernedTypeAAdmissionBaseline();
+        const before = await repository.initialize();
+        const admit = jest.spyOn(plugin.memoryAdmissionCoordinator, 'admit');
+        let release!: () => void;
+        plugin.memoryLifecycleMutationTail = new Promise<void>((resolve) => { release = resolve; });
+        let oldBatchCurrent = true;
+        const host = ordinaryTypeAEvidence('I prefer concise answers.', 'old-batch', 1);
+        const pending = plugin.admitGovernedTypeABatch({ current: null,
+            proposed: { updatedAt: createdAt, records: [], markdown: '# User Profile' },
+            candidates: [], baseline, evidence: host.evidence, isCurrent: () => oldBatchCurrent });
+        oldBatchCurrent = false;
+        plugin.settings.memoryExtractionEnabled = false;
+        plugin.settings.memoryExtractionEnabled = true;
+        release();
+        await expect(pending).resolves.toEqual({ status: 'retry' });
+        expect(admit).not.toHaveBeenCalled();
+        expect(await repository.initialize()).toEqual(before);
+    });
+
+    it('preserves a committed Type-A record and schedules projection recovery when its batch expires', async () => {
+        const { plugin, repository, backend } = createBootstrapHarness();
+        Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 } });
+        plugin.getPageletLocale = jest.fn(() => 'en');
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
+        await plugin.initializeMemoryGovernanceBootstrap();
+        const baseline = await plugin.captureGovernedTypeAAdmissionBaseline();
+        const before = await repository.initialize();
+        const conversationId = 'partial-type-a-batch';
+        const firstText = 'Please always answer with bullet points.';
+        const secondText = 'I prefer concise answers.';
+        const firstHost = ordinaryTypeAEvidence(firstText, conversationId, 1);
+        const secondHost = ordinaryTypeAEvidence(secondText, conversationId, 2);
+        const records: UserProfileSnapshot['records'] = [
+            { profileRecordId: 'profile-dddddddddddddddddddddddddddddddd', key: 'answer-structure',
+                text: firstText, chatEvidence: firstHost.chatEvidence },
+            { profileRecordId: 'profile-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', key: 'answer-length',
+                text: secondText, chatEvidence: secondHost.chatEvidence },
+        ].map((record) => ({ ...record, kind: 'user_explicit', confidence: 'high', conversationId,
+            observedAt: createdAt, occurrences: 1, conversationIds: [conversationId], confirmed: true }));
+        const controller = new AbortController();
+        let current = true;
+        let committed: DeviceMemoryGovernanceStateV1 | null = null;
+        const unsubscribe = repository.subscribe(() => {
+            const state = backend.read();
+            if (committed || !state.pendingOperations.some((operation) => (
+                operation.kind === 'profile_projection' && operation.profileRecordId === records[0].profileRecordId
+            ))) return;
+            // Invalidate only after the real backend publishes the first commit.
+            committed = state;
+            current = false;
+            controller.abort();
+            plugin.settings.memoryExtractionEnabled = false;
+        });
+        const admit = jest.spyOn(plugin.memoryAdmissionCoordinator, 'admit');
+        const scheduleRecovery = jest.spyOn(plugin, 'scheduleMemoryProfileProjectionRetry');
+        const resumeProjection = jest.spyOn(plugin.memoryProfileProjectionWorker, 'resumePending');
+        try {
+            await expect(plugin.admitGovernedTypeABatch({
+                current: null,
+                proposed: { updatedAt: createdAt, records, markdown: '# User Profile' },
+                candidates: records.map((record) => ({ ...record })),
+                baseline,
+                evidence: { conversationId, throughTurnIndex: 2,
+                    chatMessages: [...firstHost.evidence.chatMessages, ...secondHost.evidence.chatMessages] },
+                isCurrent: () => current,
+                signal: controller.signal,
+            })).resolves.toEqual({ status: 'retry' });
+            expect(committed).not.toBeNull();
+            expect(admit).toHaveBeenCalledTimes(1);
+            const after = await repository.initialize();
+            expect(after).toEqual(committed);
+            expect(after.claims).toHaveLength(before.claims.length + 1);
+            expect(after.pendingOperations).toContainEqual(expect.objectContaining({
+                kind: 'profile_projection', profileRecordId: records[0].profileRecordId, state: 'pending',
+            }));
+            expect(after.pendingOperations).not.toContainEqual(expect.objectContaining({
+                kind: 'profile_projection', profileRecordId: records[1].profileRecordId,
+            }));
+            const vaultKey = plugin.memoryGovernanceOpaqueVaultKey as string;
+            expect(after.policyStates[vaultKey].typeAProcessedTurns)
+                .toEqual(before.policyStates[vaultKey].typeAProcessedTurns);
+            expect(scheduleRecovery).toHaveBeenCalledTimes(1);
+            expect(plugin.memoryProfileProjectionRetryTimer).not.toBeNull();
+            expect(resumeProjection).not.toHaveBeenCalled();
+        } finally {
+            unsubscribe();
+            plugin.cancelMemoryProfileProjectionRetry();
+        }
+    });
+
     it('retries a pending Type-A claim operation without advancing the durable cursor', async () => {
         const { plugin, repository } = createBootstrapHarness();
+        Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 } });
         plugin.memoryLifecycleMutationTail = Promise.resolve();
         plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
         await plugin.initializeMemoryGovernanceBootstrap();
@@ -4409,6 +4755,8 @@ describe('Memory governance plugin bootstrap', () => {
     it.each(['missing_receipt', 'missing_host', 'ai_draft', 'user_local_edit', 'writing_request'] as const)(
         'does not admit a model-labelled explicit preference without eligible host evidence: %s', async (source) => {
             const { plugin, repository } = createBootstrapHarness();
+            Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+                memoryExtractionConsent: { state: 'confirmed', version: 1 } });
             plugin.memoryLifecycleMutationTail = Promise.resolve();
             plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
             await plugin.initializeMemoryGovernanceBootstrap();
@@ -4430,6 +4778,251 @@ describe('Memory governance plugin bootstrap', () => {
             })).resolves.toEqual({ status: 'processed' });
             expect(admit).not.toHaveBeenCalled();
             expect((await repository.initialize()).claims).toEqual(priorClaims);
+        },
+    );
+
+    it.each(['valid', 'changed_text', 'missing_projection', 'missing_lifetime'] as const)(
+        'routes semantic Type-A evidence through the plugin without legacy fallback: %s', async (mode) => {
+            const { plugin, repository } = createBootstrapHarness();
+            Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+                memoryExtractionConsent: { state: 'confirmed', version: 1 } });
+            plugin.getPageletLocale = jest.fn(() => 'en');
+            plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
+            await plugin.initializeMemoryGovernanceBootstrap();
+            const baseline = await plugin.captureGovernedTypeAAdmissionBaseline();
+            const text = 'I prefer concise answers.';
+            const sourceText = `${text} Rewrite this draft formally just this time.`;
+            const projections = [{ source: { conversationId: 'semantic-conv', messageId: 'mixed-message',
+                hostKind: 'writing_request' as const, text: sourceText, contentHash: semanticSourceHash(sourceText) },
+                presentedText: sourceText }];
+            const candidate = { text, meaning: 'independent_personal_statement' as const,
+                kind: 'inferred_behavior' as const, confidence: 'medium' as const,
+                quotes: [{ messageId: 'mixed-message', quote: text }] };
+            const receipt = createChatMemorySemanticReceipt(candidate, 'semantic-conv', projections)!;
+            expect(receipt).toBeDefined();
+            const record = { ...candidate, text: mode === 'changed_text' ? 'Invented personal fact.' : text,
+                profileRecordId: 'profile-dddddddddddddddddddddddddddddddd', key: deriveSemanticProfileKey(text),
+                conversationId: 'semantic-conv', conversationIds: ['unproven-old-conv', 'semantic-conv'],
+                observedAt: createdAt, occurrences: 1, confirmed: false, chatSemanticReceipt: receipt };
+            const admit = jest.spyOn(plugin.memoryAdmissionCoordinator, 'admit');
+            // Keep this test at the plugin/coordinator seam, without a Profile write.
+            admit.mockResolvedValue({ ok: true, value: { decision: 'reject' } });
+            const before = await repository.initialize();
+            const result = await plugin.admitGovernedTypeABatch({ current: null,
+                proposed: { updatedAt: createdAt, records: [record], markdown: '# User Profile' },
+                candidates: [record], baseline, evidence: { conversationId: 'semantic-conv', throughTurnIndex: 1 },
+                ...(mode === 'missing_projection' ? {} : { semanticProjections: projections }),
+                ...(mode === 'missing_lifetime' ? {} : { isCurrent: () => true }),
+            });
+            if (mode === 'valid') {
+                expect(result).toEqual({ status: 'processed' });
+                expect(admit).toHaveBeenCalledWith(expect.objectContaining({
+                    chatSemanticReceipt: receipt, ruleFingerprint: receipt.rule,
+                    sourceFingerprintId: chatMemorySemanticSourceFingerprint(receipt), authority: 'pa_inference',
+                    provenance: [{ kind: 'conversation', conversationIds: ['semantic-conv'], observedAt: createdAt }],
+                    chatSemanticEvidence: { conversationId: 'semantic-conv', projections,
+                        candidate: { text, meaning: candidate.meaning, kind: candidate.kind, confidence: candidate.confidence } },
+                }), expect.objectContaining({ isCurrent: expect.any(Function) }));
+            } else {
+                expect(result).toEqual({ status: 'retry' });
+                expect(admit).not.toHaveBeenCalled();
+                expect(await repository.initialize()).toEqual(before);
+            }
+        },
+    );
+
+    it.each(['valid', 'deleted', 'deleted_during_projection', 'restart_missing_cache', 'restart_missing_source',
+        'restart_wrong_key', 'restart_wrong_id', 'restart_late_history', 'restart_legacy_outbox',
+        'restart_wrong_id_write_failure', 'restart_owned_conflict', 'forget_two_copies', 'forget_second_copy_failure'] as const)(
+        'revalidates semantic Queue confirmation and Profile recovery from real history: %s', async (mode) => {
+            const { plugin, repository, backend, readPersisted } = createBootstrapHarness();
+            await plugin.initializeMemoryGovernanceBootstrap();
+            plugin.getPageletLocale = jest.fn(() => 'en');
+            plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
+            const history = new ChatHistoryManager({ store: new MemoryChatHistoryStore(), generateId: () => 'semantic-live' });
+            await history.initialize();
+            const conversation = await history.startConversation('A mixed request');
+            // Explicit but outside the low-risk allowlist: real policy requires review.
+            const text = 'I prefer morning meetings.';
+            const sourceText = `${text} Rewrite this draft formally just this time.`;
+            await history.recordTurn({ conversation, conversationId: conversation.id, turnIndex: 0, userPrompt: sourceText,
+                entry: { kind: 'history', user: { role: 'user', content: sourceText,
+                    hostProvenance: { version: 1, kind: 'writing_request', messageId: 'semantic-live-source' } },
+                    assistant: { role: 'assistant', content: 'Draft.' } } });
+            plugin.chatHistoryManager = history;
+            const profile = new MemoryUserProfileStore();
+            plugin.createGovernedUserProfileStore = jest.fn(() => profile);
+            const candidate = { text, meaning: 'independent_personal_statement' as const,
+                kind: 'user_explicit' as const, confidence: 'medium' as const,
+                quotes: [{ messageId: 'semantic-live-source', quote: text }] };
+            const projections = [{ source: { conversationId: conversation.id, messageId: 'semantic-live-source',
+                hostKind: 'writing_request' as const, text: sourceText, contentHash: semanticSourceHash(sourceText) },
+                presentedText: sourceText }];
+            const receipt = createChatMemorySemanticReceipt(candidate, conversation.id, projections)!;
+            const record = { ...candidate, chatSemanticReceipt: receipt,
+                profileRecordId: 'profile-dddddddddddddddddddddddddddddddd', key: deriveSemanticProfileKey(text),
+                conversationId: conversation.id, conversationIds: [conversation.id], observedAt: createdAt,
+                occurrences: 1, confirmed: false };
+            const input = plugin.buildGovernedTypeAAdmission(plugin.memoryGovernanceOpaqueVaultKey, record,
+                await plugin.captureGovernedTypeAAdmissionBaseline(),
+                { conversationId: conversation.id, throughTurnIndex: 0 }, projections);
+            expect(input).not.toBeNull();
+            const admitted = await plugin.memoryAdmissionCoordinator.admit(input,
+                { isCurrent: history.captureSourceLifetime(conversation.id) });
+            expect(admitted).toMatchObject({ ok: true, value: { decision: 'require_prior_review' } });
+            const queued = (await repository.initialize()).memoryQueueItems.find(
+                (item) => item.governanceAdmission?.chatSemanticReceipt?.rule === receipt.rule,
+            )!;
+            expect(queued).toBeDefined();
+            if (mode === 'deleted') await history.deleteConversation(conversation.id);
+            if (mode === 'deleted_during_projection') {
+                const getProfile = profile.getProfile.bind(profile);
+                jest.spyOn(profile, 'getProfile').mockImplementationOnce(async () => {
+                    await history.deleteConversation(conversation.id);
+                    return getProfile();
+                });
+            }
+            const confirmed = await plugin.confirmGovernedMemoryQueueItem(queued);
+            const final = await repository.initialize();
+            expect(confirmed.ok).toBe(mode !== 'deleted');
+            if (mode === 'valid' || mode.startsWith('restart_') || mode.startsWith('forget_')) {
+                expect((await profile.getProfile())?.records[0]).toMatchObject({ text,
+                    kind: 'user_explicit', confidence: 'medium', confirmed: false });
+                expect(final.pendingOperations.filter((operation) => operation.kind === 'profile_projection'))
+                    .toEqual([expect.objectContaining({ state: 'applied' })]);
+            } else {
+                expect(await profile.getProfile()).toBeNull();
+                if (mode === 'deleted') expect(final.memoryQueueItems.find((item) => item.id === queued.id)?.status).toBe('suggested');
+                else expect(final.pendingOperations.some((operation) => operation.kind === 'profile_projection'
+                    && operation.state === 'pending')).toBe(true);
+            }
+            expect((history as unknown as { sourceObservers: Map<string, unknown> }).sourceObservers.size).toBe(0);
+            expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
+            if (mode.startsWith('forget_')) {
+                const legacyProfile = new MemoryUserProfileStore();
+                const current = (await profile.getProfile())!;
+                const unrelated = { ...current.records[0], key: 'unrelated-old-row',
+                    profileRecordId: 'profile-ffffffffffffffffffffffffffffffff', text: 'Keep this legacy note preference.' };
+                await legacyProfile.setProfile({ ...current, records: [{ ...current.records[0], text: 'Old source wording.' }, unrelated] });
+                plugin.createUserProfileStore = jest.fn(() => legacyProfile);
+                const claimId = final.projectionLinks.find((link) => link.target.kind === 'type_a_profile'
+                    && link.target.store === 'governed' && link.target.profileRecordId === record.profileRecordId)!.claimId;
+                await repository.transact((draft) => {
+                    draft.projectionLinks.push({ id: 'zz-legacy-profile-copy', claimId,
+                        target: { kind: 'type_a_profile', profileRecordId: record.profileRecordId },
+                        sourceFingerprintId: 'legacy-profile-original-source', ruleFingerprint: 'legacy-profile-v1',
+                        relation: 'derived_copy', state: 'active', createdAt });
+                });
+                if (mode === 'forget_second_copy_failure') {
+                    jest.spyOn(legacyProfile, 'setProfile').mockRejectedValueOnce(new Error('Legacy copy deletion failed'));
+                }
+                const forgotten = await plugin.memoryGovernanceCoordinator.forget({ claimId });
+                if (mode === 'forget_second_copy_failure') {
+                    expect(forgotten).toEqual({ ok: false, reason: 'projection_cleanup_failed', pending: true });
+                    expect((await profile.getProfile())?.records).toEqual([]);
+                    expect((await legacyProfile.getProfile())?.records.some((row) => row.profileRecordId === record.profileRecordId)).toBe(true);
+                    await expect(plugin.memoryGovernanceCoordinator.resumePendingForgets()).resolves.toMatchObject({ ok: true });
+                } else expect(forgotten.ok).toBe(true);
+                expect((await profile.getProfile())?.records).toEqual([]);
+                expect((await legacyProfile.getProfile())?.records.map((row) => JSON.stringify(row))).toEqual([JSON.stringify(unrelated)]);
+                expect((await repository.initialize()).claims.find((claim) => claim.id === claimId)?.lifecycle).toBe('forgotten_tombstone');
+            }
+            if (mode.startsWith('restart_')) {
+                if (mode === 'restart_missing_source') await history.deleteConversation(conversation.id);
+                if (mode === 'restart_legacy_outbox') {
+                    await repository.transact((draft) => {
+                        const operation = draft.pendingOperations.find((entry) => entry.kind === 'profile_projection');
+                        if (operation?.kind !== 'profile_projection') throw new Error('Profile outbox missing');
+                        operation.state = 'pending';
+                        delete operation.profileStore;
+                        delete operation.profileKey;
+                    });
+                }
+                const restarted = createBootstrapHarness(backend, readPersisted());
+                const restoredProfile = new MemoryUserProfileStore();
+                if (mode !== 'restart_late_history') restarted.plugin.chatHistoryManager = history;
+                if (mode === 'restart_wrong_key' || mode === 'restart_wrong_id'
+                    || mode === 'restart_wrong_id_write_failure' || mode === 'restart_owned_conflict') {
+                    const existing = (await profile.getProfile())!;
+                    await restoredProfile.setProfile({ ...existing, records: existing.records.map((row) => ({ ...row,
+                        ...(mode === 'restart_wrong_key' ? { key: 'corrupt-cache-key' }
+                            : { profileRecordId: 'profile-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' }),
+                    })) });
+                }
+                restarted.plugin.createGovernedUserProfileStore = jest.fn(() => restoredProfile);
+                restarted.plugin.createExistingGovernedUserProfileReader = jest.fn(() => ({
+                    read: async () => ({ state: 'ready', snapshot: await restoredProfile.getProfile() }),
+                }));
+                if (mode === 'restart_owned_conflict') {
+                    const canonical = await repository.initialize();
+                    const semanticClaimId = canonical.projectionLinks.find((link) => link.target.kind === 'review_queue'
+                        && link.target.itemId === queued.id)?.claimId;
+                    const otherClaim = canonical.claims.find((claim) => claim.id !== semanticClaimId
+                        && claim.partition.kind === 'vault');
+                    if (!otherClaim) throw new Error('Other canonical claim missing');
+                    canonical.projectionLinks.push({ id: 'other-owned-profile', claimId: otherClaim.id,
+                        target: { kind: 'type_a_profile', store: 'governed',
+                            profileRecordId: 'profile-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                            profileKey: deriveSemanticProfileKey('A different canonical statement') },
+                        relation: 'derived_copy', state: 'active', createdAt });
+                    restarted.plugin.memoryGovernanceOpaqueVaultKey = plugin.memoryGovernanceOpaqueVaultKey;
+                    const beforeRepair = await restoredProfile.getProfile();
+                    await expect(restarted.plugin.repairGovernedProfileIdentity(record.profileRecordId,
+                        record.key, canonical)).rejects.toThrow('another canonical target');
+                    expect(await restoredProfile.getProfile()).toEqual(beforeRepair);
+                    expect(restarted.plugin.createUserProfileStore).not.toHaveBeenCalled();
+                    return;
+                }
+                if (mode === 'restart_wrong_id_write_failure') {
+                    const write = restoredProfile.setProfile.bind(restoredProfile);
+                    let fail = true;
+                    jest.spyOn(restoredProfile, 'setProfile').mockImplementation(async (next, guard) => {
+                        if (fail && next.records.some((row) => row.profileRecordId === record.profileRecordId)) {
+                            fail = false;
+                            throw new Error('Derived cache write temporarily failed');
+                        }
+                        return write(next, guard);
+                    });
+                }
+                await restarted.plugin.initializeMemoryGovernanceBootstrap();
+                if (mode === 'restart_wrong_id_write_failure') {
+                    expect((await restoredProfile.getProfile())?.records).toEqual([]);
+                    expect((await restarted.repository.initialize()).pendingOperations.some(
+                        (operation) => operation.kind === 'profile_projection' && operation.state === 'pending',
+                    )).toBe(true);
+                    await restarted.plugin.memoryProfileProjectionWorker.resumePending();
+                }
+                if (mode === 'restart_late_history') {
+                    expect(await restoredProfile.getProfile()).toBeNull();
+                    const worker = restarted.plugin.memoryProfileProjectionWorker;
+                    const resume = worker.resumePending.bind(worker);
+                    const recovered = new Promise<void>((resolve, reject) => {
+                        jest.spyOn(worker, 'resumePending').mockImplementationOnce(async () => {
+                            try { const result = await resume(); resolve(); return result; }
+                            catch (error) { reject(error); throw error; }
+                        });
+                    });
+                    restarted.plugin.chatHistoryManager = history;
+                    await recovered;
+                    await restarted.plugin.memoryLifecycleMutationTail;
+                }
+                const baseline = await restarted.plugin.captureGovernedTypeAAdmissionBaseline();
+                expect(baseline.profileRecordIdsByKey[record.key]).toBe(record.profileRecordId);
+                const restored = await restoredProfile.getProfile();
+                const restoredState = await restarted.repository.initialize();
+                if (mode !== 'restart_missing_source') {
+                    expect(restored?.records[0]).toMatchObject({ profileRecordId: record.profileRecordId,
+                        key: record.key, text });
+                    expect(restoredState.pendingOperations.filter((operation) => operation.kind === 'profile_projection'))
+                        .toEqual([expect.objectContaining({ state: 'applied', profileStore: 'governed', profileKey: record.key })]);
+                } else {
+                    expect(restored).toBeNull();
+                    expect(restoredState.pendingOperations.some((operation) => operation.kind === 'profile_projection'
+                        && operation.state === 'pending')).toBe(true);
+                }
+                expect(restarted.plugin.createUserProfileStore).not.toHaveBeenCalled();
+                expect((history as unknown as { sourceObservers: Map<string, unknown> }).sourceObservers.size).toBe(0);
+            }
         },
     );
 
@@ -4520,8 +5113,113 @@ describe('Memory governance plugin bootstrap', () => {
         );
     });
 
+    it.each(['missing', 'existing'] as const)(
+        'keeps a superseded exact Profile projection pending without changing a %s row', async (rowState) => {
+            const { plugin, repository } = createBootstrapHarness();
+            await plugin.initializeMemoryGovernanceBootstrap();
+            const vaultKey = plugin.memoryGovernanceOpaqueVaultKey as string;
+            const profileRecordId = 'profile-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+            const claimId = 'claim-exact-profile-race';
+            const targetRevisionId = 'revision-exact-profile-original';
+            const nextRevisionId = 'revision-exact-profile-corrected';
+            const operationId = 'operation-exact-profile-original';
+            const correctedSummary = 'Use the current evidence-first preference.';
+            await repository.transact((draft) => {
+                draft.claims.push({
+                    id: claimId, partition: { kind: 'vault', key: vaultKey },
+                    memoryType: 'preference', sensitivity: 'low', applicability: { kind: 'whole_vault' },
+                    activeRevisionId: targetRevisionId, effect: 'future_answers', lifecycle: 'active',
+                    createdAt, updatedAt: createdAt,
+                });
+                draft.revisions.push({
+                    id: targetRevisionId, claimId, summary: 'The old preference must not be projected.',
+                    provenance: [{ kind: 'conversation', conversationIds: ['conversation-original'], observedAt: createdAt }],
+                    authority: 'explicit_user', createdAt,
+                });
+                draft.projectionLinks.push({
+                    id: 'link-exact-profile-race', claimId,
+                    target: { kind: 'type_a_profile', profileRecordId }, relation: 'origin', state: 'active',
+                    sourceFingerprintId: 'source-exact-profile-race', ruleFingerprint: 'type-a-v1', createdAt,
+                });
+                draft.pendingOperations.push({
+                    id: operationId, kind: 'profile_projection', claimId, profileRecordId, targetRevisionId,
+                    state: 'pending', attemptCount: 0, createdAt, updatedAt: createdAt,
+                });
+            });
+            let profile: UserProfileSnapshot | null = rowState === 'missing' ? null : {
+                updatedAt: createdAt, markdown: '# User Profile', records: [{
+                    profileRecordId, key: 'existing-preference', text: 'Keep the existing Profile row unchanged.',
+                    kind: 'user_correction', confidence: 'high', conversationId: 'conversation-existing',
+                    observedAt: createdAt, occurrences: 1, conversationIds: ['conversation-existing'], confirmed: true,
+                }],
+            };
+            const originalProfile = JSON.parse(JSON.stringify(profile)) as UserProfileSnapshot | null;
+            const mutateUserProfile = jest.fn(async (
+                operation: (current: UserProfileSnapshot | null) => UserProfileSnapshot,
+            ) => {
+                profile = operation(profile);
+                return JSON.parse(JSON.stringify(profile));
+            });
+            plugin.memoryExtractionScheduler = { dispose: jest.fn(), mutateUserProfile };
+            const applyProjection = plugin.applyExactProfileProjection.bind(plugin) as (...args: unknown[]) => Promise<void>;
+            const apply = jest.spyOn(plugin, 'applyExactProfileProjection').mockImplementationOnce(async (...args: unknown[]) => {
+                // The real worker has selected the original outbox revision;
+                // a correction wins before the plugin reads projection evidence.
+                await repository.transact((draft) => {
+                    const claim = draft.claims.find((candidate) => candidate.id === claimId)!;
+                    draft.revisions.push({
+                        id: nextRevisionId, claimId, summary: correctedSummary,
+                        provenance: [{ kind: 'conversation', conversationIds: ['conversation-corrected'], observedAt: createdAt }],
+                        authority: 'user_correction', supersedesRevisionId: targetRevisionId, createdAt,
+                    });
+                    claim.activeRevisionId = nextRevisionId;
+                });
+                return applyProjection(...args);
+            });
+
+            await expect(plugin.memoryProfileProjectionWorker.resumePending()).resolves.toEqual({
+                completed: [], pending: [claimId],
+            });
+            expect(mutateUserProfile).not.toHaveBeenCalled();
+            expect(profile).toEqual(originalProfile);
+            expect((await repository.initialize()).pendingOperations).toContainEqual(expect.objectContaining({
+                id: operationId, targetRevisionId, state: 'pending', attemptCount: 1,
+                lastErrorCode: 'profile_projection_apply_failed',
+            }));
+
+            await repository.transact((draft) => {
+                draft.pendingOperations.push({
+                    id: 'operation-exact-profile-corrected', kind: 'profile_projection', claimId, profileRecordId,
+                    targetRevisionId: nextRevisionId, state: 'pending', attemptCount: 0, createdAt, updatedAt: createdAt,
+                });
+            });
+            await plugin.memoryProfileProjectionWorker.resumePending();
+
+            expect(apply).toHaveBeenCalledTimes(2);
+            expect(mutateUserProfile).toHaveBeenCalledTimes(1);
+            expect((profile as UserProfileSnapshot | null)?.records).toEqual([
+                expect.objectContaining({ profileRecordId, text: correctedSummary }),
+            ]);
+            if (rowState === 'missing') {
+                expect((profile as UserProfileSnapshot | null)?.records[0].conversationIds)
+                    .toEqual(['conversation-corrected']);
+            }
+            expect((await repository.initialize()).pendingOperations).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    id: operationId, targetRevisionId, state: 'pending', attemptCount: 2,
+                    lastErrorCode: 'profile_projection_state_changed',
+                }),
+                expect.objectContaining({
+                    id: 'operation-exact-profile-corrected', targetRevisionId: nextRevisionId, state: 'applied',
+                }),
+            ]));
+        },
+    );
+
     it('upserts a new governed Type-A Profile projection from authoritative conversation evidence', async () => {
         const { plugin, repository } = createBootstrapHarness();
+        Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 } });
         plugin.memoryLifecycleMutationTail = Promise.resolve();
         plugin.getPageletLocale = jest.fn(() => 'en');
         plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
@@ -8886,6 +9584,166 @@ describe('Quiet Recall user-safe feedback', () => {
             message: 'Could not save this recall as an insight. Try again.',
         });
         expect(result.message).not.toContain('private_internal_store_reason');
+    });
+});
+
+describe('B-135 legacy Personal without extraction', () => {
+    function createReaderHarness() {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { memoryEnabled: true, memoryExtractionEnabled: false,
+            memoryExtractionConsent: { state: 'paused', version: 1 }, statisticsVaultId: 'legacy-vault' };
+        plugin.app = { vault: { configDir: '.obsidian', adapter: {} } };
+        plugin.getGovernedMemoryProjectionSnapshot = jest.fn(() => null);
+        plugin.getMemoryGovernanceUiMode = jest.fn(() => plugin.getGovernedMemoryProjectionSnapshot()
+            ? 'effect_based' : 'legacy_threshold');
+        const snapshot = { updatedAt: '2026-07-10T08:00:00.000Z', markdown: 'UNTRUSTED STORED MARKDOWN', records: [{
+            profileRecordId: 'profile-existing', key: 'pref', text: 'Prefer concise Chinese replies.', kind: 'user_explicit' as const,
+            confidence: 'high' as const, conversationId: 'conversation-1', observedAt: '2026-07-10T08:00:00.000Z',
+            occurrences: 1, conversationIds: ['conversation-1'], confirmed: true,
+        }] };
+        const read = jest.fn<() => Promise<{ state: 'ready'; snapshot: typeof snapshot | null } | { state: 'unknown' | 'not_present' }>>()
+            .mockResolvedValue({ state: 'ready', snapshot });
+        plugin.createExistingUserProfileReader = jest.fn(() => ({ read }));
+        plugin.createUserProfileStore = jest.fn();
+        plugin.createChatModel = jest.fn();
+        return { plugin, read, snapshot };
+    }
+
+    it.each(['unconfirmed', 'paused'])('reads existing Personal with %s extraction and no writable store or model', async (state) => {
+        const { plugin, read } = createReaderHarness();
+        plugin.settings.memoryExtractionConsent.state = state;
+        await plugin.refreshLegacyProfileContext();
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(plugin.getMemoryExtractionPromptContext()).toMatchObject({ memoryContextMode: 'legacy',
+            userProfile: expect.stringContaining('Prefer concise Chinese replies.') });
+        expect(JSON.stringify(plugin.getMemoryExtractionPromptContext())).not.toContain('UNTRUSTED STORED MARKDOWN');
+        expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
+        expect(plugin.memoryExtractionScheduler).toBeUndefined();
+        expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
+        expect(plugin.createChatModel).not.toHaveBeenCalled();
+    });
+
+    it('loads retained Personal during cold onload before later startup work', async () => {
+        const { plugin, read } = createReaderHarness();
+        const order: string[] = [];
+        const startupReached = new Error('stop after profile initialization');
+        plugin.ensureLoadedPluginBuildIdentity = jest.fn(async () => undefined);
+        plugin.loadSettings = jest.fn(async () => { order.push('settings'); });
+        plugin.cleanupLegacyMobileDebugLog = jest.fn();
+        plugin.migrateSettings = jest.fn(async () => { order.push('migration'); });
+        plugin.initializeMemoryGovernanceBootstrap = jest.fn(async () => { order.push('governance'); });
+        plugin.surfacePendingPageletReviewsFolderMigration = jest.fn(() => {
+            expect(plugin.getMemoryExtractionPromptContext().userProfile).toContain('Prefer concise Chinese replies.');
+            order.push('subsequent-startup');
+            throw startupReached;
+        });
+        await expect(plugin.onload()).rejects.toBe(startupReached);
+        expect(order).toEqual(['settings', 'migration', 'governance', 'subsequent-startup']);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(plugin.memoryExtractionScheduler).toBeUndefined();
+        expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
+        expect(plugin.createChatModel).not.toHaveBeenCalled();
+    });
+
+    it.each(['unknown', 'not_present', 'empty', 'throw'] as const)('clears previous cached Personal when the next read is %s', async (state) => {
+        const { plugin, read } = createReaderHarness();
+        await plugin.refreshLegacyProfileContext();
+        if (state === 'throw') read.mockRejectedValueOnce(new Error('fixture storage failure'));
+        else if (state === 'empty') read.mockResolvedValueOnce({ state: 'ready', snapshot: null });
+        else read.mockResolvedValueOnce({ state });
+        await plugin.refreshLegacyProfileContext();
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'legacy' });
+        expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
+    });
+
+    it.each(['master-off', 'scope-change', 'unload', 'mutation'])('rejects a late legacy read after %s', async (change) => {
+        const { plugin, read, snapshot } = createReaderHarness();
+        let finish!: (value: { state: 'ready'; snapshot: typeof snapshot }) => void;
+        read.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+        const pending = plugin.refreshLegacyProfileContext();
+        if (change === 'master-off') plugin.settings.memoryEnabled = false;
+        if (change === 'scope-change') plugin.settings.statisticsVaultId = 'another-vault';
+        if (change === 'unload') plugin.unloading = true;
+        if (change === 'mutation') {
+            plugin.legacyProfileMutationCount = 1;
+            plugin.invalidateLegacyProfileContext();
+        }
+        finish({ state: 'ready', snapshot });
+        await pending;
+        plugin.legacyProfileMutationCount = 0;
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'legacy' });
+    });
+
+    it('awaits read-only loading after a settings change and clears it when Memory closes', async () => {
+        const { plugin, read } = createReaderHarness();
+        let changed!: () => Promise<void>;
+        plugin.onSettingsChanged = jest.fn((listener: () => Promise<void>) => { changed = listener; return jest.fn(); });
+        plugin.syncPageletRuntime = jest.fn();
+        plugin.syncMemoryExtractionRuntime = jest.fn();
+        plugin.reconcileMemoryQueueAudit = jest.fn();
+        plugin.setupSettingsWatcher();
+        await changed();
+        expect(plugin.getMemoryExtractionPromptContext().userProfile).toContain('Prefer concise Chinese replies.');
+        plugin.settings.memoryEnabled = false;
+        await changed();
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'legacy' });
+        expect(read).toHaveBeenCalledTimes(1);
+        plugin.settings.memoryEnabled = true;
+        await changed();
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(plugin.getMemoryExtractionPromptContext().userProfile).toContain('Prefer concise Chinese replies.');
+    });
+
+    it('does not revive a forgotten legacy record when a pre-mutation read finishes late', async () => {
+        const { plugin, read, snapshot } = createReaderHarness();
+        let stored = snapshot;
+        read.mockImplementation(async () => ({ state: 'ready', snapshot: stored }));
+        await plugin.refreshLegacyProfileContext();
+        const profileRecordId = plugin.legacyProfileContext.snapshot.records[0].profileRecordId;
+        let finishOldRead!: (value: { state: 'ready'; snapshot: typeof snapshot }) => void;
+        read.mockImplementationOnce(() => new Promise((resolve) => { finishOldRead = resolve; }));
+        const oldRead = plugin.refreshLegacyProfileContext();
+        const store = {
+            initialize: jest.fn(async () => undefined),
+            getProfile: jest.fn(async () => stored),
+            setProfile: jest.fn(async (value: typeof snapshot) => { stored = value; }),
+            dispose: jest.fn(async () => undefined),
+        };
+        plugin.createUserProfileStore.mockReturnValue(store);
+        const mutation = plugin.mutateExactProfileRecord(profileRecordId, () => null, false);
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'legacy' });
+        finishOldRead({ state: 'ready', snapshot });
+        await oldRead;
+        await mutation;
+        expect(stored.records).toEqual([]);
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'legacy' });
+        expect(store.dispose).toHaveBeenCalledTimes(1);
+        expect(plugin.createChatModel).not.toHaveBeenCalled();
+    });
+
+    it('shares an in-flight read without accepting its result after governed cutover', async () => {
+        const { plugin, read, snapshot } = createReaderHarness();
+        let finish!: (value: { state: 'ready'; snapshot: typeof snapshot }) => void;
+        read.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+        const first = plugin.refreshLegacyProfileContext();
+        const second = plugin.refreshLegacyProfileContext();
+        expect(read).toHaveBeenCalledTimes(1);
+        plugin.getGovernedMemoryProjectionSnapshot.mockReturnValue({ state: {}, vaultScopeKey: 'vault' });
+        finish({ state: 'ready', snapshot });
+        await Promise.all([first, second]);
+        expect(plugin.legacyProfileContext).toBeNull();
+    });
+
+    it.each([false, true])('does not read cached legacy Personal when governance becomes unavailable (extraction=%s)', async (enabled) => {
+        const { plugin, read } = createReaderHarness();
+        await plugin.refreshLegacyProfileContext();
+        plugin.settings.memoryExtractionEnabled = enabled;
+        plugin.settings.memoryExtractionConsent = { state: 'confirmed', version: 1 };
+        plugin.getMemoryGovernanceUiMode.mockReturnValue('unavailable');
+        expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'legacy' });
+        await plugin.refreshLegacyProfileContext();
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(plugin.legacyProfileContext).toBeNull();
     });
 });
 

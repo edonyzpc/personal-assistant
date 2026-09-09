@@ -97,15 +97,16 @@ export class WritingStyleService {
             includeVaultInsights: false, vaultInsights: null, currentDataBoundaryFingerprint: '', dataBoundaryAllowed: (revision) => allowed.has(revision.id),
             sourceAllowed: (revision) => allowed.has(revision.id), scene: normalized, ...budget });
         if (!selected.context) return { ...empty(), skipped: selected.skipped } as ChatWritingStyleResult;
-        const isCurrent = (): boolean => {
-            if (this.disposed || budget.signal?.aborted || !this.options.isRuntimeEnabled()) return false;
+        const isSourceCurrent = (): boolean => {
+            if (this.disposed || !this.options.isRuntimeEnabled()) return false;
             const latest = this.options.getStateSnapshot();
             return Boolean(latest && latest.vaultScopeKey === vaultScopeKey && latest.state.commitSequence === commitSequence
                 && latest.state.policyStates[vaultScopeKey]?.contextProjectionMode === 'governed'
                 && selected.revisionIds.every((id) => guards.get(id)?.() === true));
         };
+        const isCurrent = (): boolean => !budget.signal?.aborted && isSourceCurrent();
         if (!isCurrent()) throw new Error('Writing style changed while preparing');
-        return { context: selected.context, revisionIds: selected.revisionIds, isCurrent, skipped: selected.skipped } as ChatWritingStyleResult;
+        return { context: selected.context, revisionIds: selected.revisionIds, isCurrent, isSourceCurrent, skipped: selected.skipped } as ChatWritingStyleResult;
     }
 
     async correct(claimId: string, exactText: string, scene: WritingStyleScene, explicitActionId: string): Promise<void> {

@@ -584,7 +584,7 @@
     "plugin.settings.retrievalHabit.title": "本地召回偏好",
     "plugin.settings.retrievalHabit.desc": "PA 可以使用这个 vault 内的本地交互模式来微调召回。它只保存在此设备、只做弱影响，并且可以清除或关闭。",
     "plugin.settings.retrievalHabit.enabled.name": "在本地改进召回",
-    "plugin.settings.retrievalHabit.enabled.desc": "使用已保留的 recall、来源类型等聚合选择来轻微排序证据相近的结果。不会调用服务商、同步、导出或写入笔记。",
+    "plugin.settings.retrievalHabit.enabled.desc": "默认开启。使用本地保留的 recall、来源类型等聚合选择来轻微排序证据相近的结果，可随时关闭或清除偏好。不会调用服务商、同步、导出或写入笔记。",
     "plugin.settings.retrievalHabit.enableConfirm.title": "在本地改进召回？",
     "plugin.settings.retrievalHabit.enableConfirm.message": "PA 只会在此设备保留这个 vault 的本地聚合交互模式。你的笔记不会被修改，本地召回偏好不会发送给 AI 服务商，并且可以随时清除或关闭。",
     "plugin.settings.retrievalHabit.enableConfirm.confirm": "本地改进",
@@ -1099,7 +1099,7 @@
 
     "plugin.memoryExtraction.enabledNotice": "AI 记忆提取已启用。你的 AI 模型将在后台分析对话以学习你的偏好（会产生 API 费用）。可在设置中关闭此功能。",
     "plugin.memoryExtraction.settings.enabled.name": "AI 记忆提取",
-    "plugin.memoryExtraction.settings.enabled.desc": "在明确确认后，使用你配置的 AI 模型从对话中提取用户偏好，并准备知识库洞察。可能产生 API 费用，生成的记忆存储在本地。",
+    "plugin.memoryExtraction.settings.enabled.desc": "默认开启。使用你配置的 AI 模型从对话中学习偏好；内容可能发送给服务商，并产生 API 费用，学习结果存储在本地。关闭此项只停止新学习；Memory 开启时，已保存的个人信息仍可使用。关闭 Memory 或遗忘相应信息可停止使用。",
     "plugin.memoryExtraction.settings.enableConfirm.title": "启用 AI 记忆提取？",
     "plugin.memoryExtraction.settings.enableConfirm.message": "对话内容可能会发送给你配置的 AI 服务商。可能会使用 AI 额度或 API 调用。提取结果存储在本地，并用于后续 AI 上下文。",
     "plugin.memoryExtraction.settings.enableConfirm.confirm": "启用提取",
@@ -1108,6 +1108,8 @@
     "plugin.memoryExtraction.settings.viewInsights.button": "查看 AI 洞察",
     "plugin.memoryExtraction.settings.includeVaultInsights.name": "在 AI 上下文中包含知识库洞察",
     "plugin.memoryExtraction.settings.includeVaultInsights.desc": "将知识库结构概览（文件夹、标签、链接拓扑）分享给 AI，让回答更贴合你的知识库。",
+    "plugin.memoryExtraction.settings.includeVaultInsights.confirmMessage": "知识库结构概览（文件夹、标签和链接关系）将随请求发送给你配置的 AI 服务商。这会增加提示词用量，并可能产生 API 费用。笔记不会被修改，可随时关闭。",
+    "plugin.memoryExtraction.settings.includeVaultInsights.confirm": "加入概览",
     "plugin.memoryExtraction.vaultInsightsInjection.onboardingNotice": "PA 现在会将你的知识库结构概览分享给 AI 以改善回答质量。这会为每次对话增加少量 prompt 内容。你可以在设置 > 记忆中关闭此功能。",
 
     "plugin.settings.operationsAgent.name": "把对话和 Pagelet 建议保存到笔记（Beta）",

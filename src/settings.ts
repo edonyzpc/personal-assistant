@@ -200,6 +200,13 @@ export interface MemoryExtractionConsentSettings {
 }
 
 export const MEMORY_EXTRACTION_CONSENT_VERSION = 1;
+/** Product defaults migration, not evidence of a user confirmation. */
+export const LEARNING_DEFAULTS_VERSION = 1;
+export interface LearningPreferences {
+    version: 1;
+    memoryExtraction: "default" | "enabled" | "disabled";
+    habitLearning: "default" | "enabled" | "disabled";
+}
 
 export const MEMORY_EXTRACTION_CONSENT_DEFAULTS: Readonly<MemoryExtractionConsentSettings> = Object.freeze({
     state: "unconfirmed",
@@ -297,6 +304,7 @@ export interface PluginManagerSettings {
     featuredImageModel: FeaturedImageModel;
     numFeaturedImages: number;
     memoryExtractionEnabled: boolean;
+    learningPreferences?: LearningPreferences;
     memoryExtractionNoticeDismissed: boolean;
     memoryExtractionIncludeVaultInsights: boolean;
     memoryExtractionConsent: MemoryExtractionConsentSettings;
@@ -417,7 +425,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     featuredImagePath: "",
     featuredImageModel: "wan2.7-image",
     numFeaturedImages: 1,
-    memoryExtractionEnabled: false,
+    memoryExtractionEnabled: true,
+    learningPreferences: { version: LEARNING_DEFAULTS_VERSION, memoryExtraction: "default", habitLearning: "default" },
     memoryExtractionNoticeDismissed: false,
     memoryExtractionIncludeVaultInsights: false,
     memoryExtractionConsent: { ...MEMORY_EXTRACTION_CONSENT_DEFAULTS },
@@ -643,18 +652,27 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.noteTemplate = typeof loadedObject.noteTemplate === "string" ? loadedObject.noteTemplate.trim() : "";
     merged.retrievalHabitProfile = mergeRetrievalHabitProfileSettings(loadedObject.retrievalHabitProfile);
     merged.memoryExtractionConsent = mergeMemoryExtractionConsentSettings(loadedObject.memoryExtractionConsent);
-    if (!isMemoryExtractionConsentConfirmed(merged.memoryExtractionConsent)) {
-        merged.memoryExtractionEnabled = false;
-        merged.memoryExtractionIncludeVaultInsights = false;
-    } else {
-        merged.memoryExtractionEnabled = typeof loadedObject.memoryExtractionEnabled === "boolean"
-            ? loadedObject.memoryExtractionEnabled
-            : DEFAULT_SETTINGS.memoryExtractionEnabled;
-        merged.memoryExtractionIncludeVaultInsights = typeof loadedObject.memoryExtractionIncludeVaultInsights === "boolean"
-            ? loadedObject.memoryExtractionIncludeVaultInsights
-            : DEFAULT_SETTINGS.memoryExtractionIncludeVaultInsights;
+    merged.learningPreferences = mergeLearningPreferences(loadedObject.learningPreferences);
+    // A legacy pause is an action record. A false mirror alone is not: older
+    // readers force unconfirmed extraction off during ordinary saves.
+    if (merged.memoryExtractionConsent.state === "paused") {
+        merged.learningPreferences.memoryExtraction = "disabled";
     }
+    merged.memoryExtractionEnabled = merged.learningPreferences.memoryExtraction !== "disabled";
+    merged.retrievalHabitProfile.enabled = merged.learningPreferences.habitLearning !== "disabled";
+    merged.memoryExtractionIncludeVaultInsights = isMemoryExtractionConsentConfirmed(merged.memoryExtractionConsent)
+        && merged.memoryExtractionEnabled
+        && loadedObject.memoryExtractionIncludeVaultInsights === true;
     return merged;
+}
+
+export function mergeLearningPreferences(value: unknown): LearningPreferences {
+    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const choice = (input: unknown): LearningPreferences["memoryExtraction"] =>
+        raw.version === LEARNING_DEFAULTS_VERSION && (input === "enabled" || input === "disabled")
+            ? input : "default";
+    return { version: LEARNING_DEFAULTS_VERSION,
+        memoryExtraction: choice(raw.memoryExtraction), habitLearning: choice(raw.habitLearning) };
 }
 
 export interface ProviderPreset {
@@ -910,7 +928,7 @@ export function mergeMemoryExtractionConsentSettings(loaded: unknown): MemoryExt
         state,
         version: MEMORY_EXTRACTION_CONSENT_VERSION,
     };
-    if (state === "confirmed" && typeof loadedObject.confirmedAt === "string" && loadedObject.confirmedAt.trim()) {
+    if ((state === "confirmed" || state === "paused") && typeof loadedObject.confirmedAt === "string" && loadedObject.confirmedAt.trim()) {
         consent.confirmedAt = loadedObject.confirmedAt.trim();
     }
     return consent;
@@ -3917,7 +3935,17 @@ export class SettingTab extends PluginSettingTab {
                 .setDesc(this.t("plugin.memoryExtraction.settings.includeVaultInsights.desc"))
                 .addToggle((toggle) => this.configurePermissionToggle("memoryExtractionIncludeVaultInsights", toggle,
                     () => plugin.settings.memoryExtractionIncludeVaultInsights,
-                    (value) => plugin.saveSettingsPermissions({ memoryExtractionIncludeVaultInsights: value })));
+                    (value) => plugin.saveSettingsPermissions({ memoryExtractionIncludeVaultInsights: value,
+                        ...(value ? { memoryExtractionConsent: { state: "confirmed" as const,
+                            version: MEMORY_EXTRACTION_CONSENT_VERSION,
+                            confirmedAt: plugin.settings.memoryExtractionConsent.confirmedAt ?? new Date().toISOString() } } : {}),
+                    }),
+                    async (value) => !value || plugin.settings.memoryExtractionConsent.state === "confirmed"
+                        || confirmUserAction(this.app, {
+                            title: this.t("plugin.memoryExtraction.settings.includeVaultInsights.name"),
+                            message: this.t("plugin.memoryExtraction.settings.includeVaultInsights.confirmMessage"),
+                            confirmText: this.t("plugin.memoryExtraction.settings.includeVaultInsights.confirm"),
+                        })));
         }
 
         this.markFormControlSettings(container);
