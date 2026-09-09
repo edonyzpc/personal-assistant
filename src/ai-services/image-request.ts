@@ -98,7 +98,9 @@ export class ChatImageRequestScope {
         try {
             for (const [id, image] of this.selected) {
                 if (this.materialized.has(id)) continue;
-                const lease = await this.options.service.resolveVariant(image.ref, "provider", { signal });
+                const lease = await this.options.service.resolveVariant(image.ref, "provider", {
+                    signal, isCurrent: () => { this.assertSnapshot(); return true; },
+                });
                 try {
                     this.assertSnapshot(signal);
                     const totalBytes = [...this.materialized.values()].reduce((sum, value) => sum + value.lease.blob.size, 0) + lease.blob.size;
@@ -115,7 +117,9 @@ export class ChatImageRequestScope {
             // checks vault revision/path/stat and the live boundary synchronously.
             const guards: Array<() => boolean> = [];
             for (const image of this.selected.values()) {
-                const receipt = await this.options.service.verify(image.ref, "provider");
+                const receipt = await this.options.service.verify(image.ref, "provider", {
+                    signal, isCurrent: () => { this.assertSnapshot(); return true; },
+                });
                 this.assertSnapshot(signal);
                 guards.push(receipt.isCurrent);
             }
@@ -162,7 +166,9 @@ export class ChatImageRequestScope {
         for (const ref of unique) {
             try {
                 if (!this.options.service) throw new ChatImageRequestError("source_unavailable");
-                const receipt = await this.options.service.verify(ref, "provider");
+                const receipt = await this.options.service.verify(ref, "provider", {
+                    signal, isCurrent: () => { this.assertSnapshot(); return true; },
+                });
                 this.assertSnapshot(signal);
                 if (!receipt.isCurrent()) throw new ChatImageRequestError("request_changed");
                 this.selected.set(key(ref), this.authorized.get(key(ref))!);

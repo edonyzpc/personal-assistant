@@ -29,6 +29,11 @@ export interface ImportImageOptions {
 }
 export interface ImportedImage { asset: ImageAsset; ref: ImageRef; sync: ImageSyncReceipt; }
 export interface OriginalImage { asset: ImageAsset; bytes: ArrayBuffer; }
+/** Per-call read lifetime; never stored with an asset or shared with another request. */
+export interface ImageVerificationOptions {
+    signal?: AbortSignal;
+    isCurrent?: () => boolean;
+}
 interface ImagePromotion {
     operationId: string;
     sourcePath: string;
@@ -214,13 +219,21 @@ export class ImageAssetService {
         });
     }
 
-    verify(ref: ImageRef, purpose: ImagePurpose = 'provider'): Promise<{ asset: ImageAsset; isCurrent: () => boolean }> {
+    verify(ref: ImageRef, purpose: ImagePurpose = 'provider', options: ImageVerificationOptions = {}): Promise<{ asset: ImageAsset; isCurrent: () => boolean }> {
         ref = cloneImageRef(ref);
+        const { signal, isCurrent } = options;
+        const readLifetime: ImageVerificationOptions = { signal,
+            isCurrent: () => !this.disposed && (isCurrent === undefined || isCurrent()) };
         return this.enqueue(async () => {
-            await this.recoverPromotion(ref);
+            checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
+            await this.recoverPromotion(ref, readLifetime);
+            checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
             const revision = this.fileRevision;
-            const { asset } = await this.readVerified(ref, purpose);
+            const { asset } = await this.readVerified(ref, purpose, readLifetime);
+            checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
             const file = this.file(asset.originalPath), mtime = file?.stat.mtime, size = file?.stat.size;
+            // The request's temporary read signal does not become a durable
+            // source receipt: normal turn cleanup may abort it after completion.
             return { asset, isCurrent: () => {
                 if (this.disposed || this.fileRevision !== revision || !file || file.path !== asset.originalPath
                     || this.file(asset.originalPath) !== file || file.stat.mtime !== mtime || file.stat.size !== size) return false;
@@ -301,8 +314,10 @@ export class ImageAssetService {
         return value;
     }
 
-    private async recoverPromotion(ref: ImageRef): Promise<void> {
+    private async recoverPromotion(ref: ImageRef, options?: ImageVerificationOptions): Promise<void> {
+        checkImageOperation(options?.signal, options?.isCurrent);
         const promotion = await this.promotion(ref);
+        checkImageOperation(options?.signal, options?.isCurrent);
         if (!promotion || promotion.state === 'completed') return;
         this.assertAllowed(promotion.targetPath, 'note');
         const source = this.app.vault.getAbstractFileByPath(promotion.sourcePath);
@@ -314,35 +329,47 @@ export class ImageAssetService {
         }
         if (!(target instanceof TFile)) throw new ImageAssetError('source_missing');
         const revision = this.fileRevision, mtime = target.stat.mtime, size = target.stat.size;
-        const bytes = await this.readFileBytes(target);
-        if (bytes.byteLength !== promotion.byteLength || await imageSourceHash(bytes) !== promotion.contentHash
+        const bytes = await this.readFileBytes(target, options);
+        const matchesHash = bytes.byteLength === promotion.byteLength && await imageSourceHash(bytes) === promotion.contentHash;
+        checkImageOperation(options?.signal, options?.isCurrent);
+        if (!matchesHash
             || this.fileRevision !== revision || target.stat.mtime !== mtime || target.stat.size !== size
             || target.path !== promotion.targetPath || this.file(promotion.targetPath) !== target) throw new ImageAssetError('source_changed');
         this.assertAllowed(promotion.targetPath, 'note');
-        const aliases = (await this.store.listImageAssets()).filter((asset) => asset.originalHash === promotion.contentHash
+        const assets = await this.store.listImageAssets();
+        checkImageOperation(options?.signal, options?.isCurrent);
+        const aliases = assets.filter((asset) => asset.originalHash === promotion.contentHash
             && [promotion.sourcePath, promotion.targetPath].includes(asset.originalPath));
         for (const asset of aliases) {
+            checkImageOperation(options?.signal, options?.isCurrent);
             await this.store.putImageAsset({ ...asset, originalPath: promotion.targetPath, source: 'vault_reference',
                 state: 'available', recoveryReason: undefined });
+            checkImageOperation(options?.signal, options?.isCurrent);
         }
         // Mark complete only after all shared references have been repaired.
         for (const asset of aliases) {
             const previous = await this.promotion(this.ref(asset));
+            checkImageOperation(options?.signal, options?.isCurrent);
             if (previous?.operationId === promotion.operationId) {
                 await this.store.setImageSetting(this.promotionKey(this.ref(asset)), { ...promotion, state: 'completed' });
+                checkImageOperation(options?.signal, options?.isCurrent);
             }
         }
         this.fileRevision++;
     }
 
-    resolveVariant(input: ImageRef, purpose: ImagePurpose, options: { signal?: AbortSignal } = {}): Promise<ImageVariantLease> {
-        input = cloneImageRef(input); options = { ...options };
+    resolveVariant(input: ImageRef, purpose: ImagePurpose, options: ImageVerificationOptions = {}): Promise<ImageVariantLease> {
+        input = cloneImageRef(input);
+        const { signal, isCurrent } = options;
+        const readLifetime: ImageVerificationOptions = { signal,
+            isCurrent: () => !this.disposed && (isCurrent === undefined || isCurrent()) };
         return this.enqueue(async () => {
-            checkImageOperation(options.signal);
-            const ref = cloneImageRef(input), original = await this.readVerified(ref, purpose);
+            checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
+            const ref = cloneImageRef(input), original = await this.readVerified(ref, purpose, readLifetime);
             const id = `${ref.assetId}:${ref.contentHash}:${imagePolicyFingerprint(purpose)}`;
             let cached: ImageVariantRecord | null = null;
             try { cached = await this.store.getImageVariant(id); } catch { /* Cache is optional; original verification is not. */ }
+            checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
             if (cached && (cached.assetId !== ref.assetId || cached.contentHash !== ref.contentHash
                 || cached.purpose !== purpose || cached.processorVersion !== PROCESSOR_VERSION
                 || cached.policyFingerprint !== imagePolicyFingerprint(purpose))) cached = null;
@@ -351,42 +378,43 @@ export class ImageAssetService {
                 // bytes become unreadable. Only readable bytes authorize reuse.
                 let cachedBytes: ArrayBuffer | undefined;
                 try { cachedBytes = await cached.blob.arrayBuffer(); } catch { /* Rebuild this optional cache entry below. */ }
-                checkImageOperation(options.signal, () => !this.disposed);
+                checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
                 cached = cachedBytes?.byteLength === cached.byteLength
                     ? { ...cached, blob: new Blob([cachedBytes], { type: cached.mime }) }
                     : null;
             }
             let record: ImageVariantRecord;
             if (cached) {
-                await this.readVerified(ref, purpose);
-                checkImageOperation(options.signal, () => !this.disposed);
+                await this.readVerified(ref, purpose, readLifetime);
+                checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
                 record = { ...cached, lastUsedAt: Date.now() };
             }
             else {
                 const controller = new AbortController(); this.controllers.add(controller);
-                const abort = (): void => controller.abort(options.signal?.reason);
-                options.signal?.addEventListener('abort', abort, { once: true });
-                if (options.signal?.aborted) abort();
+                const abort = (): void => controller.abort(signal?.reason);
+                signal?.addEventListener('abort', abort, { once: true });
+                if (signal?.aborted) abort();
                 try {
+                    checkImageOperation(controller.signal, readLifetime.isCurrent);
                     assertNewChatImageSupported(original.bytes);
                     const processed = await this.processor.process(original.bytes, { purpose, signal: controller.signal,
-                        originalPath: original.asset.originalPath, isCurrent: () => !this.disposed });
-                    checkImageOperation(controller.signal);
+                        originalPath: original.asset.originalPath, isCurrent: readLifetime.isCurrent });
+                    checkImageOperation(controller.signal, readLifetime.isCurrent);
                     if (processed.sourceHash !== ref.contentHash || processed.processorVersion !== PROCESSOR_VERSION
                         || processed.policyFingerprint !== imagePolicyFingerprint(purpose)) throw new ImageAssetError('source_changed');
-                    await this.readVerified(ref, purpose);
+                    await this.readVerified(ref, purpose, readLifetime);
                     record = { id, assetId: ref.assetId, contentHash: ref.contentHash, purpose,
                         processorVersion: processed.processorVersion, policyFingerprint: processed.policyFingerprint,
                         blob: processed.blob, mime: processed.mime, width: processed.width, height: processed.height,
                         byteLength: processed.byteLength, lastUsedAt: Date.now() };
-                } finally { options.signal?.removeEventListener('abort', abort); this.controllers.delete(controller); }
+                } finally { signal?.removeEventListener('abort', abort); this.controllers.delete(controller); }
             }
             record = cloneImageVariant(record);
-            checkImageOperation(options.signal);
+            checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
             let persistent = true;
             try { await this.store.putImageVariant(record, IMAGE_POLICY.cacheMaxBytes, [...this.pins.keys()]); }
             catch { persistent = false; }
-            checkImageOperation(options.signal);
+            checkImageOperation(readLifetime.signal, readLifetime.isCurrent);
             return this.lease(record, persistent);
         });
     }
@@ -495,24 +523,31 @@ export class ImageAssetService {
         this.tail = run.then(() => undefined, () => undefined);
         return run;
     }
-    private async readVerified(input: ImageRef, purpose: ImagePurpose): Promise<OriginalImage> {
+    private async readVerified(input: ImageRef, purpose: ImagePurpose, options?: ImageVerificationOptions): Promise<OriginalImage> {
+        checkImageOperation(options?.signal, options?.isCurrent);
         const ref = cloneImageRef(input);
-        await this.recoverPromotion(ref);
+        await this.recoverPromotion(ref, options);
+        checkImageOperation(options?.signal, options?.isCurrent);
         const asset = await this.store.getImageAsset(ref.assetId);
+        checkImageOperation(options?.signal, options?.isCurrent);
         if (!asset || asset.originalHash !== ref.contentHash || asset.state === 'preserving') throw new ImageAssetError('source_unavailable', asset ?? undefined);
         this.assertAllowed(asset.originalPath, purpose);
         const file = this.file(asset.originalPath);
+        checkImageOperation(options?.signal, options?.isCurrent);
         if (!file) {
             await this.store.putImageAsset({ ...asset, state: 'missing' });
             throw new ImageAssetError('source_missing', asset);
         }
-        const bytes = await this.readFileBytes(file);
-        if (bytes.byteLength !== asset.byteLength || await imageSourceHash(bytes) !== ref.contentHash) {
+        const bytes = await this.readFileBytes(file, options);
+        const matchesHash = bytes.byteLength === asset.byteLength && await imageSourceHash(bytes) === ref.contentHash;
+        checkImageOperation(options?.signal, options?.isCurrent);
+        if (!matchesHash) {
             await this.store.putImageAsset({ ...asset, state: 'changed' });
             throw new ImageAssetError('source_changed', asset);
         }
         const current = { ...asset, state: 'available' as const, recoveryReason: undefined };
         if (asset.state !== 'available') await this.store.putImageAsset(current);
+        checkImageOperation(options?.signal, options?.isCurrent);
         return { asset: current, bytes };
     }
     private lease(record: ImageVariantRecord, persistent: boolean): ImageVariantLease {
@@ -543,11 +578,14 @@ export class ImageAssetService {
         if (!file || (expected && (file !== expected || expected.path !== path))) throw new ImageAssetError('anchor_unavailable');
         return file;
     }
-    private async readFileBytes(file: TFile): Promise<ArrayBuffer> {
+    private async readFileBytes(file: TFile, options?: ImageVerificationOptions): Promise<ArrayBuffer> {
+        checkImageOperation(options?.signal, options?.isCurrent);
         if (!Number.isSafeInteger(file.stat.size) || file.stat.size < 0 || file.stat.size > IMAGE_POLICY.maxOriginalBytes) {
             throw new ImageAssetError('original_byte_limit');
         }
+        checkImageOperation(options?.signal, options?.isCurrent);
         const bytes = await this.app.vault.readBinary(file);
+        checkImageOperation(options?.signal, options?.isCurrent);
         if (bytes.byteLength > IMAGE_POLICY.maxOriginalBytes) throw new ImageAssetError('original_byte_limit');
         return bytes;
     }
