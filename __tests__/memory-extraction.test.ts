@@ -272,6 +272,77 @@ describe("TypeAUserProfileExtractor", () => {
 });
 
 describe("MemoryExtractionScheduler", () => {
+    it("publishes source evidence that survives dispose but detects same-path replacement and explicit clearing", async () => {
+        const file = Object.assign(new TFile(), { path: 'notes/source.md', basename: 'source',
+            stat: { mtime: 1, ctime: 1, size: 10 } });
+        let current = file;
+        const changed = jest.fn();
+        const app = {
+            vault: { getMarkdownFiles: () => [current], getAbstractFileByPath: () => current },
+            metadataCache: { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} },
+        };
+        const scheduler = new MemoryExtractionScheduler({
+            app: app as any, chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: changed,
+        });
+        await scheduler.runTypeCRefresh('test');
+        const source = changed.mock.calls[0][0] as { isSourceCurrent: () => boolean; sourcePaths: string[] };
+        expect(source.sourcePaths).toEqual(['notes/source.md']);
+        expect(source.isSourceCurrent()).toBe(true);
+        scheduler.setIncludeVaultInsightsInPrompt(false);
+        expect(changed).toHaveBeenLastCalledWith(null);
+        expect(source.isSourceCurrent()).toBe(false);
+        scheduler.setIncludeVaultInsightsInPrompt(true);
+        await scheduler.runTypeCRefresh('again');
+        const next = changed.mock.calls.at(-1)![0] as typeof source;
+        scheduler.dispose();
+        expect(next.isSourceCurrent()).toBe(true);
+        current = Object.assign(new TFile(), { path: file.path, basename: file.basename, stat: { ...file.stat } });
+        expect(next.isSourceCurrent()).toBe(false);
+    });
+
+    it("does not publish source evidence when a source changes during asynchronous analysis", async () => {
+        const file = Object.assign(new TFile(), { path: 'notes/source.md', basename: 'source',
+            stat: { mtime: 1, ctime: 1, size: 10 } });
+        const changed = jest.fn();
+        const scheduler = new MemoryExtractionScheduler({
+            app: { vault: { getMarkdownFiles: () => [file], getAbstractFileByPath: () => file },
+                metadataCache: { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} } } as any,
+            chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: changed,
+        });
+        scheduler.setSemanticClusterProvider(async () => {
+            file.stat.mtime += 1;
+            return [];
+        });
+        await expect(scheduler.runTypeCRefresh('test')).resolves.toBeNull();
+        expect(changed).not.toHaveBeenCalled();
+        expect(scheduler.getVaultInsightsSnapshot()).toBeNull();
+        scheduler.dispose();
+    });
+
+    it("invalidates pending evidence when a folder rename adds eligible children without scheduling analysis", async () => {
+        const files: TFile[] = [];
+        const changed = jest.fn();
+        const scheduler = new MemoryExtractionScheduler({
+            app: { vault: { getMarkdownFiles: () => [...files], getAbstractFileByPath: () => null },
+                metadataCache: { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} } } as any,
+            chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: changed,
+        });
+        const schedule = jest.spyOn(scheduler, 'scheduleTypeCRefresh');
+        scheduler.setSemanticClusterProvider(async () => {
+            files.push(Object.assign(new TFile(), { path: 'notes/imported.md',
+                stat: { mtime: 1, ctime: 1, size: 10 } }));
+            scheduler.invalidateVaultInsightsSource({ path: 'notes' } as any);
+            return [];
+        });
+        await expect(scheduler.runTypeCRefresh('test')).resolves.toBeNull();
+        expect(changed).not.toHaveBeenCalled();
+        expect(schedule).not.toHaveBeenCalled();
+        scheduler.dispose();
+    });
+
     it("carries a source guard through a pending Profile mutation without advancing its prompt cache", async () => {
         const store = new MemoryUserProfileStore();
         const scheduler = new MemoryExtractionScheduler({

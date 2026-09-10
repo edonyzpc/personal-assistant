@@ -6,6 +6,7 @@ import { stableHash as semanticSourceHash } from '../src/pa/helpers';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { MemoryUserProfileStore } from '../src/ai-services/memory-extraction/profile-store';
+import { MemoryExtractionScheduler } from '../src/ai-services/memory-extraction/extraction-scheduler';
 import { deriveSemanticProfileKey } from '../src/ai-services/memory-extraction/type-a-extractor';
 
 const mockNoticeMessages: string[] = [];
@@ -2436,6 +2437,25 @@ describe('Memory governance plugin bootstrap', () => {
         expect(deviceCAfterFinalization.plugin.getMemoryGovernanceStore().list()).toEqual([]);
     });
 
+    it.each(['stale boundary', 'malformed'])('does not bind omitted %s Insights to a valid Personal source receipt', async (reason) => {
+        const { plugin } = await createGovernedUseGateHarness();
+        plugin.settings.memoryExtractionIncludeVaultInsights = true;
+        plugin.getGovernedMemoryCurrentScope = () => ({ notePath: 'notes/use-gate.md', folderPath: 'notes', tags: [] });
+        plugin.isGovernedMemoryRevisionAllowed = () => true;
+        plugin.memoryExtractionScheduler = {
+            dispose: jest.fn(),
+            getVaultInsightsSnapshot: () => ({
+                snapshot: { generatedAt: '2026-09-10T00:00:00Z', fileCount: 1 },
+                dataBoundaryFingerprint: reason === 'stale boundary' ? 'old-boundary' : plugin.getMemoryDataBoundaryFingerprint(),
+                representativePaths: [],
+            }),
+        };
+        const context = plugin.getMemoryExtractionPromptContext();
+        expect(context.governedMemoryContext).toContain('Use concise evidence-backed answers.');
+        expect(context.governedMemoryContext).not.toContain('"kind":"vault_insights"');
+        expect(context.isSourceCurrent()).toBe(true);
+    });
+
     it.each([
         ['before legacy clear', false],
         ['after legacy clear', true],
@@ -4384,6 +4404,8 @@ describe('Memory governance plugin bootstrap', () => {
         expect(created).toMatchObject({ ok: true, value: { status: 'applied' } });
 
         const beforePause = plugin.getMemoryExtractionPromptContext();
+        expect(beforePause.isSourceCurrent?.()).toBe(true);
+        expect(Object.keys(beforePause)).not.toContain('isSourceCurrent');
         expect(beforePause).toMatchObject({ memoryContextMode: 'governed' });
         expect(beforePause.governedMemoryContext).toContain('Use concise evidence lists for this note.');
         expect(beforePause.governedMemoryTrace).toEqual([expect.objectContaining({
@@ -4396,6 +4418,7 @@ describe('Memory governance plugin bootstrap', () => {
         expect(JSON.stringify(beforePause)).not.toContain('Prefers concise planning notes.');
 
         plugin.settings.memoryEnabled = false;
+        expect(beforePause.isSourceCurrent?.()).toBe(false);
         expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
         for (const disabled of [
             { memoryEnabled: true, memoryExtractionEnabled: false, memoryExtractionConsent: { state: 'confirmed', version: 1 } },
@@ -4404,6 +4427,7 @@ describe('Memory governance plugin bootstrap', () => {
         ]) {
             Object.assign(plugin.settings, disabled);
             expect(plugin.getMemoryExtractionPromptContext()).toEqual(beforePause);
+            expect(beforePause.isSourceCurrent?.()).toBe(true);
             expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
         }
         Object.assign(plugin.settings, {
@@ -4412,12 +4436,34 @@ describe('Memory governance plugin bootstrap', () => {
             memoryExtractionConsent: { state: 'confirmed', version: 1 },
         });
 
+        const sequenceBeforeUnrelatedLearning = plugin.getGovernedMemoryProjectionSnapshot().state.commitSequence;
+        await expect(plugin.createReviewQueueItem({
+            type: 'memory_candidate',
+            title: 'Another preference',
+            claim: 'Use diagrams for architecture discussions.',
+            scope: { kind: 'current_note', paths: ['notes/other.md'] },
+            sourceRefs: [{ path: 'notes/other.md', sourceId: 'source-unrelated' }],
+            originSurface: 'quick_capture',
+            dataBoundarySnapshotId: 'boundary-current',
+            admissionReason: 'memory_confirmation_required',
+            metadata: { memoryType: 'preference', sensitivity: 'low' },
+        })).resolves.toMatchObject({ ok: true, value: { status: 'applied' } });
+        expect(plugin.getGovernedMemoryProjectionSnapshot().state.commitSequence).toBeGreaterThan(sequenceBeforeUnrelatedLearning);
+        expect(beforePause.isSourceCurrent?.()).toBe(true);
+        const beforeSelectedPause = plugin.getMemoryExtractionPromptContext();
+
         const record = plugin.getMemoryGovernancePanelState().records.find(
             (candidate: ConfirmedMemoryRecord) => candidate.summary === 'Use concise evidence lists for this note.',
         );
         expect(record).toBeDefined();
         await expect(plugin.pauseGovernedMemory(record)).resolves.toMatchObject({ ok: true });
         expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
+        expect(beforePause.isSourceCurrent?.()).toBe(false);
+        await expect(plugin.resumeGovernedMemory(record)).resolves.toMatchObject({ ok: true });
+        const resumed = plugin.getMemoryExtractionPromptContext();
+        expect(resumed.governedMemoryContext).toBe(beforeSelectedPause.governedMemoryContext);
+        expect(resumed.isSourceCurrent?.()).toBe(true);
+        expect(beforePause.isSourceCurrent?.()).toBe(false);
     });
 
     it.each([
@@ -9606,6 +9652,170 @@ describe('Quiet Recall user-safe feedback', () => {
 });
 
 describe('B-135 legacy Personal without extraction', () => {
+    it('revokes existing Insights after extraction stops when folder rename introduces new eligible notes', async () => {
+        const { plugin } = createReaderHarness();
+        Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 }, memoryExtractionIncludeVaultInsights: true });
+        const files: TFile[] = [];
+        const listeners = new Map<string, (file: { path: string }, oldPath: string) => Promise<void>>();
+        plugin.app.vault.getMarkdownFiles = () => [...files];
+        plugin.app.vault.getAbstractFileByPath = (path: string) => files.find(file => file.path === path);
+        plugin.app.vault.on = (name: string, listener: (file: { path: string }, oldPath: string) => Promise<void>) => listeners.set(name, listener);
+        plugin.app.metadataCache = { on: jest.fn(), getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} };
+        plugin.app.workspace = { on: jest.fn() };
+        plugin.registerEvent = jest.fn();
+        plugin.invalidateMemoryGraphTopology = jest.fn();
+        plugin.isDataBoundaryAllowedFile = () => true;
+        const scheduler = new MemoryExtractionScheduler({
+            app: plugin.app, chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true,
+            onVaultInsightsSourceChanged: plugin.createVaultInsightsSourceListener(),
+        });
+        plugin.memoryExtractionScheduler = scheduler;
+        plugin.registerVaultEventDispatch();
+        await scheduler.runTypeCRefresh('test');
+        const receipt = plugin.getMemoryExtractionPromptContext();
+        expect(receipt.isSourceCurrent()).toBe(true);
+        plugin.settings.memoryExtractionEnabled = false;
+        plugin.syncMemoryExtractionRuntime();
+        expect(plugin.memoryExtractionScheduler).toBeNull();
+        expect(receipt.isSourceCurrent()).toBe(true);
+        await listeners.get('rename')!({ path: 'empty' }, 'old-empty');
+        expect(receipt.isSourceCurrent()).toBe(true);
+        files.push(Object.assign(createTFile('notes/imported.md'), {
+            basename: 'imported', stat: { mtime: 1, ctime: 1, size: 10 },
+        }));
+        await listeners.get('rename')!({ path: 'notes' }, 'previously-excluded');
+        expect(receipt.isSourceCurrent()).toBe(false);
+        expect(plugin.memoryExtractionScheduler).toBeNull();
+    });
+
+    it.each(['create', 'modify'])('invalidates pending Insights for a Pagelet self-write %s without scheduling refresh', async (event) => {
+        const { plugin } = createReaderHarness();
+        const files = [Object.assign(createTFile('notes/source.md'), {
+            basename: 'source', stat: { mtime: 1, ctime: 1, size: 10 },
+        })];
+        const listeners = new Map<string, (file: TFile) => Promise<void>>();
+        plugin.app.vault.getMarkdownFiles = () => [...files];
+        plugin.app.vault.getAbstractFileByPath = (path: string) => files.find(file => file.path === path);
+        plugin.app.vault.on = (name: string, listener: (file: TFile) => Promise<void>) => listeners.set(name, listener);
+        plugin.app.metadataCache = { on: jest.fn(), getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} };
+        plugin.app.workspace = { on: jest.fn() };
+        plugin.registerEvent = jest.fn();
+        plugin.invalidateMemoryGraphTopology = jest.fn();
+        plugin.pageletRuntime = { isRecentSelfWrite: jest.fn(() => true) };
+        plugin.isDataBoundaryAllowedFile = () => true;
+        const scheduler = new MemoryExtractionScheduler({
+            app: plugin.app, chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true,
+            onVaultInsightsSourceChanged: plugin.createVaultInsightsSourceListener(),
+        });
+        plugin.memoryExtractionScheduler = scheduler;
+        plugin.registerVaultEventDispatch();
+        let entered!: () => void;
+        let release!: () => void;
+        const waiting = new Promise<void>(resolve => { entered = resolve; });
+        const resume = new Promise<void>(resolve => { release = resolve; });
+        scheduler.setSemanticClusterProvider(async () => { entered(); await resume; return []; });
+        const refresh = jest.spyOn(scheduler, 'scheduleTypeCRefresh');
+        const pending = scheduler.runTypeCRefresh('test');
+        await waiting;
+        const changed = event === 'create' ? Object.assign(createTFile('notes/new.md'), {
+            basename: 'new', stat: { mtime: 1, ctime: 1, size: 10 },
+        }) : files[0];
+        if (event === 'create') files.push(changed);
+        // Keep stat equal for modify: the event itself revokes metadata evidence.
+        await listeners.get(event)!(changed);
+        expect(plugin.pageletRuntime.isRecentSelfWrite).toHaveBeenCalledWith(changed.path);
+        expect(refresh).not.toHaveBeenCalled();
+        release();
+        await expect(pending).resolves.toBeNull();
+        expect(scheduler.getVaultInsightsSnapshot()).toBeNull();
+        expect(plugin.vaultInsightsSource).toBeUndefined();
+        scheduler.dispose();
+    });
+
+    it.each(['legacy', 'governed'])('keeps an existing %s Insights receipt after extraction stops, but revokes it on source or owner publication changes', async (mode) => {
+        const { plugin } = createReaderHarness();
+        if (mode === 'governed') {
+            plugin.getGovernedMemoryProjectionSnapshot = () => ({
+                state: createEmptyDeviceMemoryGovernanceStateV1(), vaultScopeKey: 'vault-insights-test',
+            });
+            plugin.getGovernedMemoryCurrentScope = () => ({ tags: [] });
+        }
+        Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 }, memoryExtractionIncludeVaultInsights: true });
+        const FileCtor = TFile as unknown as { new(path: string): TFile };
+        const file = Object.assign(new FileCtor('notes/source.md'), { path: 'notes/source.md', extension: 'md',
+            basename: 'source', stat: { mtime: 1, ctime: 1, size: 10 } });
+        plugin.app.vault.getMarkdownFiles = () => [file];
+        plugin.app.vault.getAbstractFileByPath = () => file;
+        plugin.app.metadataCache = { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} };
+        plugin.isDataBoundaryAllowedFile = () => true;
+        const createScheduler = () => new MemoryExtractionScheduler({
+            app: plugin.app, chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, getDataBoundaryFingerprint: () => plugin.getMemoryDataBoundaryFingerprint(),
+            onVaultInsightsSourceChanged: plugin.createVaultInsightsSourceListener(),
+        });
+        const scheduler = createScheduler();
+        plugin.memoryExtractionScheduler = scheduler;
+        await scheduler.runTypeCRefresh('test');
+        const receipt = plugin.getMemoryExtractionPromptContext();
+        expect(receipt.vaultInsights ?? receipt.governedMemoryContext).toBeDefined();
+        expect(receipt.isSourceCurrent()).toBe(true);
+        plugin.settings.memoryExtractionEnabled = false;
+        plugin.syncMemoryExtractionRuntime();
+        expect(plugin.memoryExtractionScheduler).toBeNull();
+        expect(receipt.isSourceCurrent()).toBe(true);
+        expect(plugin.getMemoryExtractionPromptContext().vaultInsights).toBeUndefined();
+        const nextScheduler = createScheduler();
+        expect(receipt.isSourceCurrent()).toBe(true);
+        await nextScheduler.runTypeCRefresh('replacement');
+        expect(receipt.isSourceCurrent()).toBe(false);
+        plugin.memoryExtractionScheduler = nextScheduler;
+        plugin.settings.memoryExtractionEnabled = true;
+        const replacement = plugin.getMemoryExtractionPromptContext();
+        expect(replacement.isSourceCurrent()).toBe(true);
+        nextScheduler.dispose();
+        plugin.memoryExtractionScheduler = null;
+        plugin.invalidateVaultInsightsSourceForFile(file);
+        expect(replacement.isSourceCurrent()).toBe(false);
+    });
+
+    it('clears an Insights receipt on explicit disable and ignores a previous scheduler owner', async () => {
+        const { plugin } = createReaderHarness();
+        Object.assign(plugin.settings, { memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 }, memoryExtractionIncludeVaultInsights: true });
+        plugin.app.vault.getMarkdownFiles = () => [];
+        plugin.app.metadataCache = { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} };
+        const makeScheduler = () => new MemoryExtractionScheduler({
+            app: plugin.app, chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: plugin.createVaultInsightsSourceListener(),
+        });
+        const oldScheduler = makeScheduler();
+        await oldScheduler.runTypeCRefresh('first');
+        const scheduler = makeScheduler();
+        await scheduler.runTypeCRefresh('new-owner');
+        plugin.memoryExtractionScheduler = scheduler;
+        const receipt = plugin.getMemoryExtractionPromptContext();
+        expect(receipt.isSourceCurrent()).toBe(true);
+        await oldScheduler.runTypeCRefresh('late-old-owner');
+        expect(receipt.isSourceCurrent()).toBe(true);
+        scheduler.setIncludeVaultInsightsInPrompt(false);
+        expect(receipt.isSourceCurrent()).toBe(false);
+        scheduler.setIncludeVaultInsightsInPrompt(true);
+        await scheduler.runTypeCRefresh('reenable');
+        expect(receipt.isSourceCurrent()).toBe(false);
+        const next = plugin.getMemoryExtractionPromptContext();
+        expect(next.isSourceCurrent()).toBe(true);
+        plugin.settings.memoryEnabled = false;
+        plugin.syncMemoryExtractionRuntime();
+        plugin.settings.memoryEnabled = true;
+        expect(next.isSourceCurrent()).toBe(false);
+        oldScheduler.dispose();
+        scheduler.dispose();
+    });
+
     function createReaderHarness() {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = { memoryEnabled: true, memoryExtractionEnabled: false,
@@ -9614,6 +9824,7 @@ describe('B-135 legacy Personal without extraction', () => {
         plugin.getGovernedMemoryProjectionSnapshot = jest.fn(() => null);
         plugin.getMemoryGovernanceUiMode = jest.fn(() => plugin.getGovernedMemoryProjectionSnapshot()
             ? 'effect_based' : 'legacy_threshold');
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-current');
         const snapshot = { updatedAt: '2026-07-10T08:00:00.000Z', markdown: 'UNTRUSTED STORED MARKDOWN', records: [{
             profileRecordId: 'profile-existing', key: 'pref', text: 'Prefer concise Chinese replies.', kind: 'user_explicit' as const,
             confidence: 'high' as const, conversationId: 'conversation-1', observedAt: '2026-07-10T08:00:00.000Z',
@@ -9638,6 +9849,56 @@ describe('B-135 legacy Personal without extraction', () => {
         expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
         expect(plugin.memoryExtractionScheduler).toBeUndefined();
         expect(plugin.createUserProfileStore).not.toHaveBeenCalled();
+        expect(plugin.createChatModel).not.toHaveBeenCalled();
+    });
+
+    it('keeps a source receipt through ordinary refresh and learning shutdown but rejects replaced records and boundaries', async () => {
+        const { plugin, read, snapshot } = createReaderHarness();
+        plugin.getMemoryDataBoundaryFingerprint = jest.fn(() => 'boundary-one');
+        await plugin.refreshLegacyProfileContext();
+        const schedulerSnapshot = plugin.legacyProfileContext.snapshot;
+        plugin.memoryExtractionScheduler = { getPromptContext: () => ({ userProfile: schedulerSnapshot.markdown }),
+            getUserProfileSnapshot: () => schedulerSnapshot };
+        const context = plugin.getMemoryExtractionPromptContext();
+        expect(context.isSourceCurrent()).toBe(true);
+        expect(Object.keys(context)).not.toContain('isSourceCurrent');
+        plugin.settings.memoryExtractionEnabled = false;
+        plugin.settings.memoryExtractionConsent = { state: 'paused', version: 1 };
+        plugin.settings.retrievalHabitLearningEnabled = false;
+        plugin.memoryExtractionScheduler = null;
+        let finish!: (value: { state: 'ready'; snapshot: typeof snapshot }) => void;
+        read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        const refresh = plugin.refreshLegacyProfileContext();
+        expect(context.isSourceCurrent()).toBe(true);
+        finish({ state: 'ready', snapshot });
+        await refresh;
+        expect(context.isSourceCurrent()).toBe(true);
+        plugin.getMemoryDataBoundaryFingerprint.mockReturnValue('boundary-two');
+        expect(context.isSourceCurrent()).toBe(false);
+        plugin.getMemoryDataBoundaryFingerprint.mockReturnValue('boundary-one');
+        read.mockResolvedValue({ state: 'ready', snapshot: { ...snapshot, records: snapshot.records.map(row => ({ ...row, profileRecordId: `profile-${'a'.repeat(32)}` })) } });
+        await plugin.refreshLegacyProfileContext();
+        expect(context.isSourceCurrent()).toBe(false);
+        expect(plugin.getMemoryExtractionPromptContext().isSourceCurrent()).toBe(true);
+    });
+
+    it('invalidates a legacy receipt when a real profile mutation restores the same text and identity', async () => {
+        const { plugin, snapshot } = createReaderHarness();
+        snapshot.records[0].profileRecordId = `profile-${'b'.repeat(32)}`;
+        let stored = snapshot;
+        plugin.createExistingUserProfileReader.mockReturnValue({ read: async () => ({ state: 'ready', snapshot: stored }) });
+        plugin.createUserProfileStore.mockReturnValue({ initialize: async () => undefined,
+            getProfile: async () => stored, setProfile: async (value: typeof snapshot) => { stored = value; },
+            dispose: async () => undefined });
+        await plugin.refreshLegacyProfileContext();
+        const context = plugin.getMemoryExtractionPromptContext();
+        expect(context.isSourceCurrent()).toBe(true);
+        await plugin.mutateExactProfileRecord(plugin.legacyProfileContext.snapshot.records[0].profileRecordId, () => null, false);
+        stored = snapshot;
+        await plugin.refreshLegacyProfileContext();
+        expect(plugin.getMemoryExtractionPromptContext().userProfile).toBe(context.userProfile);
+        expect(plugin.getMemoryExtractionPromptContext().isSourceCurrent()).toBe(true);
+        expect(context.isSourceCurrent()).toBe(false);
         expect(plugin.createChatModel).not.toHaveBeenCalled();
     });
 

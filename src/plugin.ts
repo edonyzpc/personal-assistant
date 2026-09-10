@@ -89,6 +89,7 @@ import { collectChatMemorySemanticSources, isChatMemoryRecordAdmissible, project
 import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint,
     verifyChatMemorySemanticReceipt, type ChatMemorySemanticReceipt } from './pa/chat-memory-semantic-receipt';
 import type { ProfileWriteGuard } from './ai-services/memory-extraction/profile-store';
+import type { VaultInsightsSourceReceipt } from './ai-services/memory-extraction/extraction-scheduler';
 import {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
@@ -1331,6 +1332,8 @@ export class PluginManager extends Plugin {
     private writingStyleService: WritingStyleService | undefined;
     private writingStyleCoordinator: MemoryGovernanceCoordinator | undefined;
     private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
+    private vaultInsightsSourceOwner: object | undefined;
+    private vaultInsightsSource: VaultInsightsSourceReceipt | null = null;
     private memoryExtractionProfileStore: "legacy" | "governed" = "legacy";
     /**
      * Pagelet (Review Assistant) per-plugin runtime — lazy-constructed on
@@ -1374,6 +1377,8 @@ export class PluginManager extends Plugin {
     private legacyProfileReadEpoch = 0;
     private legacyProfileRead: { scope: string; promise: Promise<void> } | null = null;
     private legacyProfileMutationCount = 0;
+    /** In-memory source identity: ordinary cache refresh is not a source mutation. */
+    private legacyProfileSourceIdentity: object = {};
     private deviceMemoryGovernanceRepository: MemoryGovernanceRepository | null = null;
     private currentDeviceMemoryGovernanceState: DeviceMemoryGovernanceStateV1 | null = null;
     private memoryGovernanceCoordinator: MemoryGovernanceCoordinator | null = null;
@@ -2078,6 +2083,7 @@ export class PluginManager extends Plugin {
         // VSS lifecycle events observe possible local changes; approved Memory can then maintain itself in the background.
         this.registerEvent(
             this.app.vault.on("create", async (file) => {
+                this.invalidateVaultInsightsSourceForFile(file);
                 this.invalidateMemoryGraphTopology();
                 if (file instanceof TFile) {
                     // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
@@ -2095,6 +2101,7 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("modify", async (file) => {
+                this.invalidateVaultInsightsSourceForFile(file);
                 this.invalidateMemoryGraphTopology();
                 if (file instanceof TFile) {
                     // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
@@ -2112,6 +2119,7 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("rename", async (file, oldPath) => {
+                this.invalidateVaultInsightsSourceForFile(file, oldPath);
                 this.invalidateMemoryGraphTopology();
                 this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-rename");
                 if (file instanceof TFile && await this.vss?.handleRename(file, oldPath)) {
@@ -2122,6 +2130,7 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("delete", async (file) => {
+                this.invalidateVaultInsightsSourceForFile(file);
                 this.invalidateMemoryGraphTopology();
                 if (file instanceof TFile) {
                     this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-delete");
@@ -2256,6 +2265,9 @@ export class PluginManager extends Plugin {
     }
 
     private syncMemoryExtractionRuntime(): void {
+        if (this.settings.memoryEnabled !== true || this.settings.memoryExtractionIncludeVaultInsights !== true) {
+            this.vaultInsightsSource = null;
+        }
         if (this.canRunMemoryExtractionRuntime() && this.chatHistoryManager) {
             const profileStore = this.getGovernedMemoryProjectionSnapshot() ? "governed" : "legacy";
             if (this.memoryExtractionScheduler && (this.memoryExtractionProfileStore ?? "legacy") !== profileStore) {
@@ -2273,6 +2285,7 @@ export class PluginManager extends Plugin {
                         ? this.createGovernedUserProfileStore() : this.createUserProfileStore(),
                     log: (message, error) => this.log(message, error),
                     includeVaultInsightsInPrompt: includeVaultInsights,
+                    onVaultInsightsSourceChanged: this.createVaultInsightsSourceListener(),
                     shouldHandleVaultEvent: (file) => this.isDataBoundaryAllowedFile(file),
                     getDataBoundaryFingerprint: () => this.getMemoryDataBoundaryFingerprint(),
                     ...(this.getGovernedMemoryProjectionSnapshot() ? {
@@ -2325,6 +2338,41 @@ export class PluginManager extends Plugin {
                 this.memoryExtractionScheduler.dispose();
                 this.memoryExtractionScheduler = null;
             }
+        }
+    }
+
+    private createVaultInsightsSourceListener(): (source: VaultInsightsSourceReceipt | null) => void {
+        const owner = {};
+        this.vaultInsightsSourceOwner = owner;
+        return source => {
+            if (this.unloading || this.vaultInsightsSourceOwner !== owner) return;
+            this.vaultInsightsSource = source;
+        };
+    }
+
+    private captureVaultInsightsSourceValidity(): () => boolean {
+        const source = this.vaultInsightsSource;
+        const scope = this.getLegacyProfileScope();
+        const boundary = this.getMemoryDataBoundaryFingerprint();
+        return () => !!source && this.vaultInsightsSource === source && !this.unloading
+            && this.settings.memoryEnabled === true && this.settings.memoryExtractionIncludeVaultInsights === true
+            && this.getLegacyProfileScope() === scope && this.getMemoryDataBoundaryFingerprint() === boundary
+            && source.isSourceCurrent();
+    }
+
+    private invalidateVaultInsightsSourceForFile(file: TAbstractFile, oldPath?: string): void {
+        // This must run even before the first receipt is published, and before
+        // Pagelet's self-write shortcut suppresses background refresh work.
+        this.memoryExtractionScheduler?.invalidateVaultInsightsSource?.(file);
+        const source = this.vaultInsightsSource;
+        if (!source) return;
+        if (source.sourcePaths.some(path => path === file.path || path === oldPath
+            || path.startsWith(`${file.path}/`) || (oldPath && path.startsWith(`${oldPath}/`)))
+            || (file instanceof TFile && file.extension === 'md' && this.isDataBoundaryAllowedFile(file))
+            || (!(file instanceof TFile) && this.app.vault.getMarkdownFiles().some(candidate => (
+                candidate.path.startsWith(`${file.path}/`) && this.isDataBoundaryAllowedFile(candidate)
+            )))) {
+            this.vaultInsightsSource = null;
         }
     }
 
@@ -9675,6 +9723,7 @@ export class PluginManager extends Plugin {
             && this.hasConfirmedMemoryExtractionConsent()
             && this.settings.memoryExtractionIncludeVaultInsights === true;
         try {
+            const vaultInsights = this.readGovernedVaultInsightsSnapshot(includeVaultInsights);
             const governed = selectGovernedMemoryUse({
                 vaultScopeKey,
                 currentScope: this.getGovernedMemoryCurrentScope(),
@@ -9686,14 +9735,15 @@ export class PluginManager extends Plugin {
                     state.projectionLinks,
                 ),
                 includeVaultInsights,
-                vaultInsights: this.readGovernedVaultInsightsSnapshot(includeVaultInsights),
+                vaultInsights,
                 currentDataBoundaryFingerprint,
                 dataBoundaryAllowed: (revision) => this.isGovernedMemoryRevisionAllowed(
                     revision,
                     currentDataBoundaryFingerprint,
                 ),
             });
-            return {
+            const insightsCurrent = governed.usedVaultInsights ? this.captureVaultInsightsSourceValidity() : undefined;
+            const context: PaAgentInjectedContext = {
                 memoryContextMode: "governed",
                 ...(governed.boundedContext
                     ? { governedMemoryContext: governed.boundedContext }
@@ -9705,6 +9755,49 @@ export class PluginManager extends Plugin {
                     }),
                 } : {}),
             };
+            if (!governed.boundedContext) return context;
+            const selectedSourceIdentity = (snapshot: DeviceMemoryGovernanceStateV1, claimId: string): string => {
+                const claim = snapshot.claims.find(candidate => candidate.id === claimId);
+                const links = snapshot.projectionLinks.filter(link => link.claimId === claimId);
+                return JSON.stringify({
+                    claim,
+                    revision: snapshot.revisions.find(revision => revision.id === claim?.activeRevisionId && revision.claimId === claimId),
+                    links,
+                    pending: snapshot.pendingOperations.filter(operation => operation.claimId === claimId
+                        && !(operation.kind === 'profile_projection' && operation.state === 'applied')),
+                    suppressions: snapshot.suppressionMarkers.filter(marker => marker.partition.key === claim?.partition.key
+                        && links.some(link => link.sourceFingerprintId === marker.sourceFingerprintId
+                            && link.ruleFingerprint === marker.ruleFingerprint)),
+                });
+            };
+            const selectedRevisions = governed.usedClaimIds.map(claimId => {
+                const claim = state.claims.find(candidate => candidate.id === claimId);
+                return {
+                    claimId,
+                    revisionId: claim?.activeRevisionId,
+                    identity: selectedSourceIdentity(state, claimId),
+                    eventIds: new Set(state.changeEvents.filter(event => event.claimId === claimId).map(event => event.id)),
+                };
+            });
+            const scope = JSON.stringify(this.getGovernedMemoryCurrentScope());
+            return this.withMemoryContextSourceGuard(context, () => {
+                if (this.unloading || this.settings.memoryEnabled !== true
+                    || this.getMemoryDataBoundaryFingerprint() !== currentDataBoundaryFingerprint
+                    || JSON.stringify(this.getGovernedMemoryCurrentScope()) !== scope) return false;
+                const latest = this.getGovernedMemoryProjectionSnapshot();
+                if (!latest || latest.vaultScopeKey !== vaultScopeKey) return false;
+                if (insightsCurrent && !insightsCurrent()) return false;
+                return selectedRevisions.every(({ claimId, revisionId, identity, eventIds }) => {
+                    const claim = latest.state.claims.find(candidate => candidate.id === claimId);
+                    const revision = latest.state.revisions.find(candidate => candidate.id === revisionId && candidate.claimId === claimId);
+                    return selectedSourceIdentity(latest.state, claimId) === identity
+                        // New events distinguish same-text Pause/Resume or Undo,
+                        // including equal timestamps. Expiry of old history is harmless.
+                        && latest.state.changeEvents.every(event => event.claimId !== claimId || eventIds.has(event.id))
+                        && claim?.lifecycle === 'active' && claim.activeRevisionId === revisionId && !!revision
+                        && this.isGovernedMemoryRevisionAllowed(revision, currentDataBoundaryFingerprint);
+                });
+            });
         } catch {
             // Once cut over, selector failure must not revive a legacy source.
             // The explicit mode also prevents projector fallback on an empty result.
@@ -9770,6 +9863,15 @@ export class PluginManager extends Plugin {
             this.manifest?.id ?? 'personal-assistant');
     }
 
+    private withMemoryContextSourceGuard(context: PaAgentInjectedContext, guard: () => boolean): PaAgentInjectedContext {
+        // Keep a callable host receipt without copying it into ordinary metadata
+        // spreads or serializable prompt/history objects.
+        Object.defineProperty(context, 'isSourceCurrent', { value: () => {
+            try { return guard(); } catch { return false; }
+        } });
+        return context;
+    }
+
     private invalidateLegacyProfileContext(): void {
         this.legacyProfileReadEpoch = (this.legacyProfileReadEpoch ?? 0) + 1;
         this.legacyProfileContext = null;
@@ -9821,15 +9923,44 @@ export class PluginManager extends Plugin {
             ? this.legacyProfileContext.snapshot.markdown : undefined;
         const context = this.memoryExtractionScheduler?.getPromptContext()
             ?? (cachedProfile ? { userProfile: cachedProfile } : {});
+        const attachSourceGuard = (projected: PaAgentInjectedContext): PaAgentInjectedContext => {
+            if (!projected.userProfile && !projected.vaultInsights) return projected;
+            const sourceIdentity = this.legacyProfileSourceIdentity;
+            const scope = this.getLegacyProfileScope();
+            const boundary = this.getMemoryDataBoundaryFingerprint();
+            const readProfile = () => this.memoryExtractionScheduler?.getUserProfileSnapshot?.()
+                ?? this.legacyProfileContext?.snapshot;
+            const profileIdentity = (snapshot: UserProfileSnapshot | null | undefined) => snapshot
+                ? JSON.stringify(snapshot.records) : undefined;
+            const originalProfile = profileIdentity(readProfile());
+            const usesProfile = Boolean(projected.userProfile);
+            const insightsCurrent = projected.vaultInsights ? this.captureVaultInsightsSourceValidity() : undefined;
+            return this.withMemoryContextSourceGuard(projected, () => {
+                if (this.unloading || this.settings.memoryEnabled !== true || this.legacyProfileMutationCount > 0
+                    || this.legacyProfileSourceIdentity !== sourceIdentity || this.getLegacyProfileScope() !== scope
+                    || this.getMemoryDataBoundaryFingerprint() !== boundary
+                    || this.getGovernedMemoryProjectionSnapshot()
+                    || this.getMemoryGovernanceUiMode() !== 'legacy_threshold') return false;
+                if (usesProfile) {
+                    const latest = profileIdentity(readProfile());
+                    // Settings refresh may close the scheduler and briefly reload
+                    // the same read-only cache. The original verified rows remain
+                    // valid while no source mutation has occurred.
+                    if (!originalProfile || (latest !== originalProfile
+                        && !(latest === undefined && this.legacyProfileRead?.scope === scope))) return false;
+                }
+                return !insightsCurrent || insightsCurrent();
+            });
+        };
         if (this.canRunMemoryExtractionRuntime() && this.settings.memoryExtractionIncludeVaultInsights
             && this.hasConfirmedMemoryExtractionConsent()) {
-            return { memoryContextMode: "legacy", ...context };
+            return attachSourceGuard({ memoryContextMode: "legacy", ...context });
         }
         const { userProfile } = context;
-        return {
+        return attachSourceGuard({
             memoryContextMode: "legacy",
             ...(userProfile ? { userProfile } : {}),
-        };
+        });
     }
 
     private getGovernedMemoryProjectionSnapshot(): {
@@ -11115,6 +11246,7 @@ export class PluginManager extends Plugin {
         };
 
         this.legacyProfileMutationCount = (this.legacyProfileMutationCount ?? 0) + 1;
+        if (profileStore !== 'governed') this.legacyProfileSourceIdentity = {};
         this.invalidateLegacyProfileContext();
         let committed = false;
         try {

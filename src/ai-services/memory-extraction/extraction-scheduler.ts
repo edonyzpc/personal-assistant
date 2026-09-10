@@ -52,6 +52,7 @@ type TypeAAdmissionBaselineOutcome =
     | { status: "failed"; error: unknown };
 
 export interface MemoryExtractionSchedulerOptions {
+    onVaultInsightsSourceChanged?: (source: VaultInsightsSourceReceipt | null) => void;
     semanticTypeA?: boolean;
     app: App;
     chatHistoryManager: ChatHistoryManager;
@@ -69,6 +70,12 @@ export interface MemoryExtractionSchedulerOptions {
     admitTypeACandidates?: AdmitTypeACandidates;
     captureTypeAAdmissionBaseline?: () => Promise<TypeAAdmissionBaseline>;
     getTypeAProcessedTurn?: (conversationId: string) => Promise<number | undefined>;
+}
+
+/** Ephemeral host evidence for an already prepared aggregate; contains no text. */
+export interface VaultInsightsSourceReceipt {
+    sourcePaths: readonly string[];
+    isSourceCurrent: () => boolean;
 }
 
 export interface MemoryExtractionPromptContext {
@@ -120,6 +127,8 @@ export class MemoryExtractionScheduler {
     private readonly semanticTypeA: boolean;
     private readonly captureTypeAAdmissionBaseline: MemoryExtractionSchedulerOptions["captureTypeAAdmissionBaseline"];
     private readonly getTypeAProcessedTurn: MemoryExtractionSchedulerOptions["getTypeAProcessedTurn"];
+    private readonly onVaultInsightsSourceChanged: MemoryExtractionSchedulerOptions["onVaultInsightsSourceChanged"];
+    private vaultInsightsSourceIdentity: object = {};
 
     constructor(options: MemoryExtractionSchedulerOptions) {
         this.app = options.app;
@@ -144,6 +153,7 @@ export class MemoryExtractionScheduler {
         this.semanticTypeA = options.semanticTypeA === true;
         this.captureTypeAAdmissionBaseline = options.captureTypeAAdmissionBaseline;
         this.getTypeAProcessedTurn = options.getTypeAProcessedTurn;
+        this.onVaultInsightsSourceChanged = options.onVaultInsightsSourceChanged;
         this.typeCAnalyzer = new TypeCVaultMetacognitionAnalyzer(this.app, {
             shouldIncludeFile: (file) => this.shouldHandleVaultEvent(file),
         });
@@ -242,6 +252,8 @@ export class MemoryExtractionScheduler {
             this.vaultSnapshotDataBoundaryFingerprint = "";
             this.vaultInsightsRefreshFailed = false;
             this.vaultInsightsMarkdown = "";
+            this.vaultInsightsSourceIdentity = {};
+            this.onVaultInsightsSourceChanged?.(null);
         }
     }
 
@@ -265,6 +277,24 @@ export class MemoryExtractionScheduler {
         }, Math.max(0, delayMs));
     }
 
+    /** Revoke in-flight evidence without scheduling analysis (including self-writes). */
+    invalidateVaultInsightsSource(file: TAbstractFile | null): void {
+        if (this.disposed) return;
+        if (!this.includeVaultInsightsInPrompt) return;
+        if (!file) return;
+        if (!(file instanceof TFile)) {
+            // A folder rename can bring new eligible children into the aggregate
+            // without a separate file event. Empty/excluded folders add no input.
+            if (this.app.vault.getMarkdownFiles().some(candidate => candidate.path.startsWith(`${file.path}/`)
+                && this.shouldHandleVaultEvent(candidate))) this.vaultInsightsSourceIdentity = {};
+            return;
+        }
+        if (!file.path.endsWith(".md")) return;
+        if (this.typeCWritePath && normalizePath(file.path) === this.typeCWritePath) return;
+        if (!this.shouldHandleVaultEvent(file)) return;
+        this.vaultInsightsSourceIdentity = {};
+    }
+
     handleVaultEvent(file: TAbstractFile | null, reason: string): void {
         if (this.disposed) return;
         if (!this.includeVaultInsightsInPrompt) return;
@@ -272,6 +302,7 @@ export class MemoryExtractionScheduler {
         if (!file.path.endsWith(".md")) return;
         if (this.typeCWritePath && normalizePath(file.path) === this.typeCWritePath) return;
         if (!this.shouldHandleVaultEvent(file)) return;
+        this.invalidateVaultInsightsSource(file);
         this.scheduleTypeCRefresh(reason, DEFAULT_TYPE_C_VAULT_EVENT_DELAY_MS);
     }
 
@@ -503,6 +534,8 @@ export class MemoryExtractionScheduler {
     private async runTypeCRefreshUnlocked(): Promise<VaultMetacognitionSnapshot | null> {
         if (this.disposed) return null;
         const dataBoundaryFingerprint = this.getDataBoundaryFingerprint();
+        const source = this.onVaultInsightsSourceChanged
+            ? this.captureVaultInsightsSource(dataBoundaryFingerprint) : undefined;
         const snapshot = await this.typeCAnalyzer.analyze(this.now());
         const markdown = this.typeCAnalyzer.renderMarkdown(snapshot);
         if (this.disposed || !this.includeVaultInsightsInPrompt) return null;
@@ -518,10 +551,30 @@ export class MemoryExtractionScheduler {
                 return null;
             }
         }
+        if (source && !source.isSourceCurrent()) return null;
         this.vaultSnapshot = snapshot;
         this.vaultSnapshotDataBoundaryFingerprint = dataBoundaryFingerprint;
         this.vaultInsightsMarkdown = markdown;
+        if (source) this.onVaultInsightsSourceChanged?.(source);
         return snapshot;
+    }
+
+    private captureVaultInsightsSource(boundary: string): VaultInsightsSourceReceipt {
+        const identity = this.vaultInsightsSourceIdentity;
+        // Type C reads metadata for every eligible Markdown file, not just the
+        // representative paths shown in its output. Capture before its awaits.
+        const sources = this.app.vault.getMarkdownFiles().filter(file => this.shouldHandleVaultEvent(file))
+            .map(file => ({ file, path: file.path, mtime: file.stat.mtime, ctime: file.stat.ctime, size: file.stat.size }));
+        return {
+            sourcePaths: sources.map(source => source.path),
+            isSourceCurrent: () => this.vaultInsightsSourceIdentity === identity
+                && this.getDataBoundaryFingerprint() === boundary && sources.every(source => (
+                this.app.vault.getAbstractFileByPath(source.path) === source.file
+                && source.file.path === source.path && source.file.stat.mtime === source.mtime
+                && source.file.stat.ctime === source.ctime && source.file.stat.size === source.size
+                && this.shouldHandleVaultEvent(source.file)
+            )),
+        };
     }
 
     private startTypeCRefreshLoop(): void {

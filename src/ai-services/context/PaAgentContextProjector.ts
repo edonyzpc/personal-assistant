@@ -12,6 +12,8 @@ import { isCurrentHistorySummary, type PaAgentContextSummaries } from "./PaAgent
 export const MEMORY_CONTEXT_MAX_CHARS = 6_000;
 
 export interface PaAgentInjectedContext {
+    /** Host-only source receipt; never serialize into provider inputs or history. */
+    isSourceCurrent?: () => boolean;
     /** Host-rendered typed samples; admission counts their complete wrapper. */
     writingStyleContext?: string;
     /** Select exactly one Memory projection path for this prompt. */

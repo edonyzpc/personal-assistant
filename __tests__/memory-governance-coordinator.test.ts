@@ -466,7 +466,7 @@ describe("MemoryGovernanceCoordinator", () => {
         await expect(coordinator.pauseUse({ claimId: "claim-a" })).resolves.toMatchObject({ ok: true });
         let state = await repo.initialize();
         expect(state.claims[0].lifecycle).toBe("paused");
-        expect(useProjection(state)).toEqual({ boundedContext: "", usedClaimIds: [] });
+        expect(useProjection(state)).toEqual({ boundedContext: "", usedClaimIds: [], usedVaultInsights: false });
 
         await expect(coordinator.resumeUse({
             claimId: "claim-a",
@@ -527,7 +527,7 @@ describe("MemoryGovernanceCoordinator", () => {
             }),
         ]);
         expect(state.suppressionMarkers).toEqual([]);
-        expect(useProjection(state)).toEqual({ boundedContext: "", usedClaimIds: [] });
+        expect(useProjection(state)).toEqual({ boundedContext: "", usedClaimIds: [], usedVaultInsights: false });
 
         await expect(coordinator.undoRecentChange({ eventId: "auto-remove-1" }))
             .resolves.toMatchObject({ ok: true });
