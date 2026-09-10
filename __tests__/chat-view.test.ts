@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { readFileSync } from 'node:fs';
 import { Component, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, TFile, type App } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
-import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
+import type { AgentEvent, LegacyAgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
 import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
@@ -998,6 +998,70 @@ describe('LLMView turn lifecycle', () => {
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
     });
 
+    it('passes native candidates for an ordinary prompt and persists the host-selected parent and semantic scene', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'native-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const prepare = jest.fn<import('../src/chat/writing-style-service').WritingStyleService['prepare']>(async () => ({ context: '', revisionIds: [], isCurrent: () => true }));
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native', prepareWritingStyleForScene: prepare });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        let appended: (() => void) | undefined;
+        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            await append(...args); appended?.();
+        });
+        await view.onOpen();
+        const submit = async (prompt: string) => {
+            const invoked = new Promise<StreamCall>(notify => {
+                mockStreamLLM.mockImplementationOnce((text, onChunk, signal, chatHistory, options = {}) => new Promise<void>((resolve, reject) => {
+                    const call = { prompt: text, onChunk, signal, chatHistory, options, resolve, reject };
+                    streamCalls.push(call); notify(call);
+                }));
+            });
+            view.prefillComposer(prompt);
+            getElementByClass(containerEl, 'send-button-visible').click();
+            return invoked;
+        };
+        const deliver = async (call: StreamCall, messageId: string, writingContext: NonNullable<Extract<LegacyAgentEvent, { kind: 'writing-artifact' }>['writingContext']>) => {
+            const persisted = new Promise<void>(resolve => { appended = resolve; });
+            call.options.onEvent?.({ version: 1, turnId: 'turn', seq: 1, timestamp: 1, kind: 'writing-artifact',
+                runId: 'run', requestId: call.options.writingRequest!.requestId, messageId, body: messageId,
+                explanation: '', writingContext, associatedImages: [] });
+            call.resolve();
+            await persisted;
+            await flushPromises();
+        };
+        const first = await submit('我们先讨论一下安排');
+        expect(first.options.writingOutputProtocol).toBe('native');
+        expect(first.options.writingRequest).toBeDefined();
+        expect(first.options.writingContextHost?.candidates).toEqual([]);
+        expect(first.options.writingContext).toBeUndefined();
+        const firstScene = { writingTask: 'invitation', purpose: 'team_event', audience: 'colleagues', domain: 'work' };
+        await deliver(first, 'first-native', { scene: firstScene });
+        const firstVersion = (await versions.list('native-conversation'))[0];
+        expect(firstVersion.scene).toEqual(firstScene);
+
+        const second = await submit('保留第二句的意思');
+        const contextHost = second.options.writingContextHost!;
+        expect(contextHost.candidates.map(version => version.id)).toEqual([firstVersion.id]);
+        expect(contextHost.isParentCurrent(firstVersion)).toBe(true);
+        expect(second.options.writingContext).toBeUndefined();
+        const secondScene = { ...firstScene, audience: 'friends', domain: 'personal' };
+        await contextHost.styles.prepare(secondScene, { remainingTextChars: 3000, remainingMemoryChars: 2000 });
+        expect(prepare).toHaveBeenCalledWith(secondScene, expect.any(Object));
+        await deliver(second, 'second-native', { parentVersionId: firstVersion.id, scene: secondScene });
+        const secondVersion = (await versions.list('native-conversation')).find(version => version.messageId === 'second-native')!;
+        expect(secondVersion.parentVersionId).toBe(firstVersion.id);
+        expect(secondVersion.scene).toEqual(secondScene);
+
+        const third = await submit('接下来聊个新内容');
+        await deliver(third, 'third-native', {});
+        const thirdVersion = (await versions.list('native-conversation')).find(version => version.messageId === 'third-native')!;
+        expect(thirdVersion.parentVersionId).toBeUndefined();
+        expect(thirdVersion.scene).toBeUndefined();
+        expect(contextHost.isCurrent()).toBe(false);
+    });
+
     it.each([undefined, '先说明本次写作的取舍。'])('freezes a host-bound artifact independently of its preamble (%s)', async (preamble) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'writing-conversation' });
@@ -1114,6 +1178,92 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(restored.containerEl, 'pa-chat-writing-recovery-notice')).toHaveLength(1);
     });
 
+    it.each(['artifact', 'recovery', 'continue'] as const)('does not restore parent images after the host supplies an empty %s material snapshot', async (kind) => {
+        const store = new MemoryChatHistoryStore();
+        let appendedCount = 0;
+        let firstAppended!: () => void;
+        let secondAppended!: () => void;
+        const firstSaved = new Promise<void>((resolve) => { firstAppended = resolve; });
+        const secondSaved = new Promise<void>((resolve) => { secondAppended = resolve; });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            await append(...args);
+            if (++appendedCount === 1) firstAppended();
+            else if (appendedCount === 2) secondAppended();
+        });
+        const manager = new ChatHistoryManager({ store, generateId: () => 'subset-writing' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('帮我写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const first = streamCalls[0];
+        const material: MessageImage = { ordinal: 1, label: 'source.png', ref: { assetId: 'png', contentHash: 'a'.repeat(64) } };
+        await store.putImageAsset({ id: 'png', originalHash: material.ref.contentHash, source: 'vault_reference',
+            originalPath: 'source.png', detectedMime: 'image/png', byteLength: 3, acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
+        const envelope = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1' };
+        first.options.onEvent?.({ ...envelope, kind: 'writing-artifact', requestId: first.options.writingRequest!.requestId,
+            messageId: 'parent', body: 'Parent body', explanation: '', associatedImages: [material] });
+        first.resolve();
+        await firstSaved;
+        for (let i = 0; i < 8; i++) await flushPromises();
+        view.prefillComposer('短一点');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const next = streamCalls[1];
+        expect(next.options.writingContext?.associatedImages).toEqual([material]);
+        const shared = { ...envelope, requestId: next.options.writingRequest!.requestId, messageId: 'subset', associatedImages: [] };
+        next.options.onEvent?.(kind === 'artifact'
+            ? { ...shared, kind: 'writing-artifact', body: 'Text without images', explanation: '' }
+            : { ...shared, kind: 'writing-recovery', rawText: 'Candidate without images', reason: 'incomplete' });
+        next.resolve();
+        await secondSaved;
+        for (let i = 0; i < 8; i++) await flushPromises();
+        const turns = await store.getTurns('subset-writing');
+        expect(turns[1].assistant.images).toEqual([]);
+        const stored = await versions.list('subset-writing');
+        expect(stored.find((version) => version.messageId === 'parent')?.associatedImages).toEqual([material]);
+        if (kind === 'artifact') expect(stored.find((version) => version.messageId === 'subset')?.associatedImages).toEqual([]);
+        else if (kind === 'continue') {
+            view.prefillComposer('继续刚才的文案任务');
+            getElementByClass(containerEl, 'send-button-visible').click();
+            await flushPromises();
+            const continuation = streamCalls[2];
+            expect(continuation.options.writingMaterialContext).toEqual({
+                requestId: next.options.writingRequest!.requestId, associatedImages: [],
+            });
+            expect(continuation.options.writingContext).toMatchObject({
+                parentVersionId: next.options.writingContext!.parentVersionId,
+                text: 'Parent body', textHash: next.options.writingContext!.textHash,
+            });
+            continuation.resolve();
+            for (let i = 0; i < 8; i++) await flushPromises();
+        } else {
+            expect(stored).toHaveLength(1);
+            const opened: WritingRecoveryModal[] = [];
+            const open = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { opened.push(this); });
+            getElementsByClass(containerEl, 'pa-chat-writing-action').at(-1)!.click();
+            const modal = opened[0];
+            const root = new MockElement('div');
+            modal.contentEl = root as unknown as HTMLElement;
+            modal.onOpen();
+            const area = walkAll(root, (element) => element.tagName === 'textarea')[0];
+            const buttons = walkAll(root, (element) => element.tagName === 'button');
+            Object.assign(area, { selectionStart: 0, selectionEnd: 'Candidate without images'.length });
+            buttons[0].click(); await buttons[1].click();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const recovered = (await versions.list('subset-writing')).find((version) => version.messageId === 'subset');
+            expect(recovered?.text).toBe('Candidate without images');
+            expect(recovered?.associatedImages).toEqual([]);
+            modal.onClose();
+            open.mockRestore();
+        }
+        await view.onClose();
+    });
+
     it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'resolved-writing' });
@@ -1131,8 +1281,9 @@ describe('LLMView turn lifecycle', () => {
             anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
         const shared = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
             requestId: call.options.writingRequest!.requestId, messageId: 'writing_answer', associatedImages: [material] };
+        const semanticScene = { writingTask: 'caption', purpose: 'share', audience: 'friends', domain: 'travel' };
         call.options.onEvent?.(kind === 'artifact' ? { ...shared, kind: 'writing-artifact', body: 'BODY', explanation: '' }
-            : { ...shared, kind: 'writing-recovery', rawText: 'prefix BODY suffix', reason: 'invalid_output' });
+            : { ...shared, kind: 'writing-recovery', rawText: 'prefix BODY suffix', reason: 'invalid_output', writingContext: { scene: semanticScene } });
         call.resolve();
         for (let i = 0; i < 8; i++) await flushPromises();
         const turns = await store.getTurns('resolved-writing');
@@ -1140,6 +1291,7 @@ describe('LLMView turn lifecycle', () => {
         if (kind === 'artifact') expect((await versions.list('resolved-writing'))[0].associatedImages.map((image) => image.ref)).toEqual([material.ref]);
         else {
             expect(await versions.list('resolved-writing')).toEqual([]);
+            expect(turns[0].assistant.writingRecovery?.scene).toEqual(semanticScene);
             await view.onClose();
             const restored = createView({ chatHistoryManager: manager });
             Object.assign(restored.plugin, { writingVersions: versions });
@@ -1159,6 +1311,7 @@ describe('LLMView turn lifecycle', () => {
             for (let i = 0; i < 8; i++) await flushPromises();
             const recovered = (await versions.list('resolved-writing'))[0];
             expect(recovered.text).toBe('BODY');
+            expect(recovered.scene).toEqual(semanticScene);
             expect(recovered.associatedImages.map((image) => image.ref)).toEqual([material.ref]);
             expect((await store.getTurns('resolved-writing'))[0].assistant.writingVersionId).toBe(recovered.id);
             recoveryModal.onClose();
@@ -1172,7 +1325,10 @@ describe('LLMView turn lifecycle', () => {
         }
     });
 
-    it.each([false, true])('inherits only the immediately preceding failed writing material on explicit continuation, including reopen: %s', async (reopen) => {
+    it.each([
+        { reopen: false, empty: false }, { reopen: true, empty: false },
+        { reopen: false, empty: true }, { reopen: true, empty: true },
+    ])('inherits the failed writing material snapshot on continuation: %j', async ({ reopen, empty }) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'failed-material' });
         const versions = new WritingVersionService(store);
@@ -1194,7 +1350,7 @@ describe('LLMView turn lifecycle', () => {
         const failed = streamCalls[0];
         failed.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
             kind: 'writing-recovery', requestId: failed.options.writingRequest!.requestId,
-            rawText: '{"body":""}', reason: 'invalid_output' });
+            rawText: '{"body":""}', reason: 'invalid_output', ...(empty ? { associatedImages: [] } : {}) });
         failed.resolve();
         for (let i = 0; i < 8; i++) await flushPromises();
         if (reopen) {
@@ -1208,7 +1364,7 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(fixture.containerEl, 'send-button-visible').click();
         await flushPromises();
         expect(streamCalls[1].options).toMatchObject({ writingMaterialContext: {
-            requestId: failed.options.writingRequest!.requestId, associatedImages: [material],
+            requestId: failed.options.writingRequest!.requestId, associatedImages: empty ? [] : [material],
         } });
         expect(streamCalls[1].options.writingContext).toBeUndefined();
         streamCalls[1].resolve();
@@ -1306,7 +1462,12 @@ describe('LLMView turn lifecycle', () => {
     it('keeps the writing visible and discloses when its chat turn could not be persisted', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'history-failure-conversation' });
-        jest.spyOn(manager, 'recordTurn').mockRejectedValue(new Error('IDB quota'));
+        let recordAttempted!: () => void;
+        const attempted = new Promise<void>((resolve) => { recordAttempted = resolve; });
+        jest.spyOn(manager, 'recordTurn').mockImplementation(async () => {
+            recordAttempted();
+            throw new Error('IDB quota');
+        });
         const versions = new WritingVersionService(store);
         const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
         const previousNoticeCount = notices.length;
@@ -1321,6 +1482,7 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-artifact', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
             messageId: 'writing_answer', body: 'Keep this exact writing.', explanation: '' });
         call.resolve();
+        await attempted;
         for (let i = 0; i < 8; i++) await flushPromises();
         expect(view.chatHistory[1].content).toBe('Keep this exact writing.');
         expect(await store.getTurns('history-failure-conversation')).toEqual([]);

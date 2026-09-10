@@ -2205,13 +2205,14 @@ export class LLMView extends ItemView {
                     const entry = timelineEntries.find((entry) => entry.kind === 'history' && entry.assistant === message);
                     if (!entry || entry.kind !== 'history') throw new Error('Writing turn unavailable');
                     let version: WritingVersion | undefined;
-                    const persisted = await this.conversationPersistence.reviseFinalizedTurn(entry, async (context) => {
+                    const persisted = await this.conversationPersistence.reviseFinalizedTurn(entry, async (context, isCurrent) => {
                         version = await host.versions.create({ ...context, requestId: newWritingActionId(),
                             messageId: recovery.messageId ?? recovery.requestId, text, origin,
                             parentVersionId: recovery.parentVersionId,
+                            scene: recovery.scene,
                             backgroundSourceRefs: recovery.backgroundSourceRefs,
-                            images: mergeWritingImages(entry.user.images ?? [], message.images ?? []),
-                        });
+                            images: mergeWritingImages(message.images ?? entry.user.images ?? []),
+                        }, isCurrent);
                         message.writingVersionId = version.id;
                     });
                     if (!persisted || !version) { delete message.writingVersionId; throw new Error('Writing persistence unavailable'); }
@@ -3474,7 +3475,7 @@ export class LLMView extends ItemView {
                 content: responseContent,
                 hostProvenance: { version: 1, messageId: `${turn.userProvenance?.messageId ?? turn.id}-assistant`, kind: 'ai_draft' },
                 ...(turn.writingRecovery ? { writingRecovery: { ...turn.writingRecovery,
-                    parentVersionId: turn.writingParent?.id,
+                    parentVersionId: turn.writingRecovery.parentVersionId ?? turn.writingParent?.id,
                     backgroundSourceRefs: (turn.canonicalLifecycle.hostSourceRecords ?? [])
                         .filter((record) => record.path && record.citationEligible !== false && !record.redacted)
                         .map((record) => ({ path: record.path! })),
@@ -3516,20 +3517,23 @@ export class LLMView extends ItemView {
             if (!sawLegacyPartialFailure) this.result = responseContent;
             readConversationImageAnchor();
             const persisted = await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry,
-                turn.writingArtifact && this.host.writingVersions ? async (context) => {
+                turn.writingArtifact && this.host.writingVersions ? async (context, isCurrent) => {
                     const artifact = turn.writingArtifact!;
                     const version = await this.host.writingVersions!.create({ ...context,
                         requestId: artifact.requestId, messageId: artifact.messageId, text: artifact.body,
-                        explanation: artifact.explanation, parentVersionId: turn.writingParent?.id,
+                        explanation: artifact.explanation, parentVersionId: artifact.writingContext
+                            ? artifact.writingContext.parentVersionId : turn.writingParent?.id,
                         images: turn.writingMaterials ?? [], styleRevisionIds: artifact.styleRevisionIds,
-                        scene: inferWritingScene(prompt, turn.writingParent?.scene),
+                        scene: artifact.writingContext ? artifact.writingContext.scene : inferWritingScene(prompt, turn.writingParent?.scene),
                         backgroundSourceRefs: (turn.canonicalLifecycle.hostSourceRecords ?? [])
                             .filter((record) => record.path && record.citationEligible !== false && !record.redacted)
                             .map((record) => ({ path: record.path! })),
-                    });
+                    }, isCurrent);
                     assistantMessage.writingVersionId = version.id;
-                    selectedWritingVersion = version;
-                    selectedWritingParentExplicit = false;
+                    if (isCurrent() && isCurrentSession()) {
+                        selectedWritingVersion = version;
+                        selectedWritingParentExplicit = false;
+                    }
                 } : undefined,
             );
             if (turn.writingRequestId && !persisted && isCurrentSession()) new Notice(t('plugin.chat.writing.historyUnavailable'), 12000);
@@ -3633,15 +3637,17 @@ export class LLMView extends ItemView {
                 ? previousAssistant.writingRecovery : undefined;
             const continueFailedWriting = retryImages === undefined && !selectedWritingParentExplicit
                 && isWritingContinuationPrompt(prompt) && failedWriting;
-            const writingRequest = this.host.writingVersions && isWritingRequestPrompt(prompt,
-                !!(retryWritingParent ?? selectedWritingVersion ?? retryWritingMaterialContext ?? failedWriting))
+            const nativeWriting = this.host.writingOutputProtocol === 'native'
+                && !!this.host.writingVersions && !!this.host.prepareWritingStyleForScene;
+            const writingRequest = this.host.writingVersions && (nativeWriting || isWritingRequestPrompt(prompt,
+                !!(retryWritingParent ?? selectedWritingVersion ?? retryWritingMaterialContext ?? failedWriting)))
                 ? { requestId: newWritingActionId() } : undefined;
-            const writingParent = !writingRequest ? undefined : retryImages !== undefined ? retryWritingParent
+            const writingParent = !writingRequest || nativeWriting ? undefined : retryImages !== undefined ? retryWritingParent
                 : !isNewWritingTopicPrompt(prompt) && (selectedWritingParentExplicit || isWritingContinuationPrompt(prompt))
                     && (!continueFailedWriting || selectedWritingVersion?.id === failedWriting?.parentVersionId) ? selectedWritingVersion : undefined;
-            const writingMaterialContext = !writingRequest ? undefined : retryImages !== undefined ? retryWritingMaterialContext
+            const writingMaterialContext = !writingRequest || nativeWriting ? undefined : retryImages !== undefined ? retryWritingMaterialContext
                 : continueFailedWriting ? { requestId: continueFailedWriting.requestId,
-                    associatedImages: mergeChatImageMaterials(previousUser?.images ?? [], previousAssistant?.images ?? []) } : undefined;
+                    associatedImages: cloneMessageImages(previousAssistant?.images ?? previousUser?.images ?? []) } : undefined;
             isStopping = false;
             isFinalizing = false;
             removeElement(emptyStateEl);
@@ -3666,7 +3672,7 @@ export class LLMView extends ItemView {
                 writingRequestId: writingRequest?.requestId,
                 writingParent,
                 writingMaterialContext,
-                writingMaterials: mergeChatImageMaterials(writingMaterialContext?.associatedImages ?? [], writingParent?.associatedImages ?? [], turnImages),
+                writingMaterials: mergeChatImageMaterials(writingMaterialContext?.associatedImages ?? writingParent?.associatedImages ?? [], turnImages),
                 userProvenance: {
                     version: 1,
                     messageId: `chat-${sessionId}-${turnId}-${Date.now()}`,
@@ -3753,6 +3759,29 @@ export class LLMView extends ItemView {
                     await showImageProviderNotice(isLiveTurn);
                     if (!isLiveTurn()) throw new DOMException('Cancelled', 'AbortError');
                 }
+                let writingContextHost: import('../ai-services/pa-agent-runtime').PaAgentRunOptions['writingContextHost'];
+                if (nativeWriting) {
+                    const versions = this.host.writingVersions!;
+                    const getAllowedVersionIds = () => [...new Set([
+                        ...timelineEntries.flatMap(entry => entry.kind === 'history' && entry.assistant.writingVersionId
+                            ? [entry.assistant.writingVersionId] : []),
+                        ...(selectedWritingVersion ? [selectedWritingVersion.id] : []),
+                        ...(retryWritingParent ? [retryWritingParent.id] : []),
+                    ])];
+                    const candidates = await this.conversationPersistence.prepareWritingCandidates(versions, {
+                        getAllowedVersionIds, isCurrent: isSameTurn, signal: controller.signal,
+                    });
+                    if (!isLiveTurn()) throw new DOMException('Cancelled', 'AbortError');
+                    writingContextHost = {
+                        conversationId: candidates.conversationId ?? writingRequest!.requestId,
+                        candidates: candidates.candidates, versions,
+                        selectedParentVersionId: retryWritingParent?.id ?? (selectedWritingParentExplicit ? selectedWritingVersion?.id : undefined),
+                        styles: { prepare: (scene, budget) => this.host.prepareWritingStyleForScene!(scene, budget) },
+                        isParentCurrent: candidates.isParentCurrent,
+                        isCurrent: () => isSameTurn() && this.host.writingVersions === versions
+                            && this.conversationPersistence.activeConversationId === candidates.conversationId,
+                    };
+                }
                 await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
@@ -3767,6 +3796,8 @@ export class LLMView extends ItemView {
                         images: turnImages,
                         imageAssetService: this.host.imageAssetService,
                         writingRequest,
+                        writingContextHost,
+                        writingOutputProtocol: nativeWriting ? 'native' : undefined,
                         prepareWritingStyle: writingRequest && this.host.prepareWritingStyle
                             ? (budget) => this.host.prepareWritingStyle!(prompt, turn.writingParent?.scene, budget) : undefined,
                         writingContext: turn.writingParent ? {
@@ -3804,8 +3835,12 @@ export class LLMView extends ItemView {
                             }
                             if (event.kind === 'writing-artifact') {
                                 if (!isLiveTurn() || event.requestId !== writingRequest?.requestId) return;
-                                turn.writingMaterials = mergeChatImageMaterials(event.associatedImages ?? [], turn.writingMaterials ?? []);
-                                turn.writingArtifact = event;
+                                turn.writingMaterials = cloneMessageImages(event.associatedImages ?? turn.writingMaterials ?? []);
+                                turn.writingArtifact = { ...event,
+                                    styleRevisionIds: event.styleRevisionIds ? [...event.styleRevisionIds] : undefined,
+                                    ...(event.writingContext ? { writingContext: { ...event.writingContext,
+                                        ...(event.writingContext.scene ? { scene: { ...event.writingContext.scene } } : {}) } } : {}),
+                                };
                                 // The chat reply includes ordinary explanation;
                                 // version creation below still uses exact body only.
                                 updateResponseContent(event.preamble ? `${event.preamble}\n\n${event.body}` : event.body);
@@ -3813,8 +3848,10 @@ export class LLMView extends ItemView {
                             }
                             if (event.kind === 'writing-recovery') {
                                 if (!isSameTurn() || event.requestId !== writingRequest?.requestId) return;
-                                turn.writingMaterials = mergeChatImageMaterials(event.associatedImages ?? [], turn.writingMaterials ?? []);
+                                turn.writingMaterials = cloneMessageImages(event.associatedImages ?? turn.writingMaterials ?? []);
                                 turn.writingRecovery = { requestId: event.requestId, messageId: event.messageId,
+                                    ...(event.writingContext?.parentVersionId ? { parentVersionId: event.writingContext.parentVersionId } : {}),
+                                    ...(event.writingContext?.scene ? { scene: { ...event.writingContext.scene } } : {}),
                                     rawText: event.rawText, reason: event.reason };
                                 turn.writingRecoveryText = event.reason !== 'source_changed' && event.previewText
                                     ? event.previewText : t('plugin.chat.writing.recoveryHint');

@@ -61,6 +61,7 @@ export function createTaskSourceConstrainedExecutor(options: TaskSourceExecutorO
         execute: base.execute.bind(base),
         prepareBatch: base.prepareBatch?.bind(base),
         getCanonicalToolCallKey: base.getCanonicalToolCallKey?.bind(base),
+        canReuseWritingContext: base.canReuseWritingContext?.bind(base),
         getExecutionMode: base.getExecutionMode?.bind(base),
         preflightBatch: input => {
             if (!options.state.matchesRun(input.runId, input.userInput) || !options.isHostCurrent()) {

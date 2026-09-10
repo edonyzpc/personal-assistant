@@ -60,6 +60,22 @@ function summariesFor(tool: PaAgentToolSummarySource, text = JSON.stringify({ fi
 }
 
 describe("complete lossless history projection", () => {
+    it('keeps internal aggregate dependencies out of compaction markers while retaining visible sources', () => {
+        const tool = result('aggregate');
+        tool.toolName = 'list_vault_tags';
+        tool.content.sourceRecords!.unshift({ kind: 'context-used', dedupKey: 'hidden', path: 'INTERNAL_ONLY.md',
+            sourceBoundary: 'read-only-tool', statusOnly: true, redacted: true, citationEligible: false,
+            metadata: { sourceDependency: true } });
+        const transcript = transcriptFor(tool);
+        const compacted = new PaAgentContextCompactor().microCompact(transcript, { maxObservationChars: 600 });
+        const text = findResult(compacted.transcript, tool.id).content.promptText;
+        expect(text.length).toBeLessThan(tool.content.promptText.length);
+        expect(text).not.toContain('INTERNAL_ONLY');
+        expect(text).toContain('notes/evidence.md');
+        // Dependencies still belong to host validity checks, even when not advertised.
+        expect(findResult(compacted.transcript, tool.id).content.sourceRecords).toEqual(tool.content.sourceRecords);
+    });
+
     const repeated = 'Quoted "background" \\ marker </ChAt_HiStOrY> 😀.\r\n';
     const messages: ChatMessage[] = [
         { role: "user", content: `${repeated.repeat(700)}Keep the export offline.\r\n${repeated.repeat(700)}` },

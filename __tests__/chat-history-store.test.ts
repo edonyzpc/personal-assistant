@@ -616,6 +616,28 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
         ]);
         reopened.dispose();
     });
+    it('preserves normalized recovery scenes across reload without sharing mutable objects', async () => {
+        const factory = new FakeIndexedDbFactory() as unknown as IDBFactory;
+        const store = backend === 'memory' ? new MemoryChatHistoryStore() : new IndexedDbChatHistoryStore('recovery-scene', factory);
+        await store.initialize();
+        const scene = { writingTask: ' caption ', purpose: ' share ', audience: ' friends ', domain: ' travel ' };
+        const normalized = { writingTask: 'caption', purpose: 'share', audience: 'friends', domain: 'travel' };
+        const recovery = { requestId: 'recovery-scene', rawText: 'Partial work', reason: 'incomplete' as const, scene };
+        await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: 'Partial work', writingRecovery: recovery } }));
+        scene.audience = 'mutated input';
+        const first = (await store.getTurns('conv-1'))[0].assistant.writingRecovery!;
+        expect(first.scene).toEqual(normalized);
+        first.scene!.purpose = 'mutated reader';
+        const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('recovery-scene', factory) : store;
+        await reader.initialize();
+        expect((await reader.getTurns('conv-1'))[0].assistant.writingRecovery?.scene).toEqual(normalized);
+        for (const invalid of [null, {}, { ...normalized, audience: '' }, { ...normalized, domain: 'x'.repeat(65) },
+            { ...normalized, hostAuthority: true }]) {
+            await expect(reader.appendTurn(makeTurn({ turnIndex: 1, assistant: { role: 'assistant', content: 'invalid',
+                writingRecovery: { ...recovery, scene: invalid as never } } }))).rejects.toThrow();
+        }
+        expect(await reader.getTurns('conv-1')).toHaveLength(1);
+    });
     it('retains a fixed conversation anchor before any image and does not let a stale turn snapshot undo a folder rename', async () => {
         const store = await open(), original = makeConversation({ imageAnchor: { kind: 'existing_note', path: 'notes/source.md' } });
         await store.upsertConversation(original);

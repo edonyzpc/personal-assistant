@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
-import { decodeNativeWritingOutput } from "../src/ai-services/writing-output";
+import { decodeNativeWritingOutput, nativeWritingOutputSchema, nativeWritingOutputInstruction } from "../src/ai-services/writing-output";
 import protocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 
 const contextHandle = "b135-probe";
@@ -10,6 +10,19 @@ const raw = JSON.stringify(args);
 const decode = (text: string) => decodeNativeWritingOutput(text, contextHandle, 20_000);
 
 describe("native writing complete argument boundary", () => {
+    it("binds a separate bounded host context without broadening request IDs", () => {
+        const request = { requestId: "request" };
+        const handle = "run:writing:2";
+        expect(nativeWritingOutputSchema(request, handle).function.parameters).toMatchObject({
+            properties: { contextHandle: { enum: [handle] } },
+        });
+        expect(nativeWritingOutputInstruction(request, handle)).toContain(JSON.stringify(handle));
+        const text = JSON.stringify({ body, contextHandle: handle });
+        expect(decodeNativeWritingOutput(text, handle, 20_000)).toEqual({ body, explanation: "" });
+        expect(decodeNativeWritingOutput(text, request.requestId, 20_000)).toBeUndefined();
+        expect(() => nativeWritingOutputSchema({ requestId: handle })).toThrow("writing_request_invalid");
+        expect(() => nativeWritingOutputSchema(request, "a".repeat(257))).toThrow("writing_context_handle_invalid");
+    });
     it("accepts the actual provider result without changing characters or adding authority", () => {
         const trace = protocolTrace.results.find((result) => result.mode === "native")!;
         expect(decode(trace.rawArguments)).toEqual({ body: trace.expected, explanation: "" });

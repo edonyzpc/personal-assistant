@@ -50,6 +50,7 @@ const MAX_PREVIEW_CHARS = 1200;
 export interface PaAgentCapabilityToolExecutorOptions {
     registry: CapabilityRegistry;
     host: AiServiceHost;
+    canReuseWritingContext?: (input: unknown) => boolean;
     platform?: AgentRuntimePlatform;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
@@ -473,6 +474,11 @@ export function createPaAgentCapabilityToolExecutor(
     options: PaAgentCapabilityToolExecutorOptions,
 ): PaAgentToolExecutor {
     return {
+        canReuseWritingContext: options.canReuseWritingContext ? (toolCall, context) => {
+            if (toolCall.name !== "get_writing_context") return false;
+            const prepared = options.registry.prepareAndValidate(toolCall.name, toolCall.input, context);
+            return prepared.ok && options.canReuseWritingContext!(prepared.input);
+        } : undefined,
         getCanonicalToolCallKey: (toolCall, context) => {
             const prepared = options.registry.prepareAndValidate(
                 toolCall.name,

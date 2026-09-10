@@ -7,6 +7,16 @@ import {
 } from "../src/ai-services/source-store";
 
 describe("SourceStore", () => {
+    it("keeps host-only dependencies for lifetime checks without creating chips or citations", () => {
+        const store = new SourceStore([
+            { kind: "context-used", path: "hidden.md", statusOnly: true, redacted: true,
+                citationEligible: false, metadata: { sourceDependency: true } },
+            { kind: "context-used", path: "visible-status.md", statusOnly: true },
+        ]);
+        expect(store.all()).toHaveLength(2);
+        expect(store.getDisplayChips().map(chip => chip.label)).toEqual(["visible-status.md"]);
+        expect(store.getCitations()).toEqual([]);
+    });
     it("keeps web sources out of Memory references", () => {
         const store = new SourceStore([{
             kind: "web-source",

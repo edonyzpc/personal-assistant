@@ -28,7 +28,7 @@ interface FixtureScenario {
     imageMode?: 'valid' | 'revoke';
 }
 
-async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget', debug = false, native = false, toolBinding = true, scenario: FixtureScenario = {}) {
+async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget' | 'cancel-forget', debug = false, native = false, toolBinding = true, scenario: FixtureScenario = {}) {
     const { enterReserve, extraCall, imageMode } = scenario;
     let imageCurrent = true;
     const images: MessageImage[] = [1, 2].map((ordinal) => ({
@@ -110,15 +110,15 @@ async function fixture(outcome: 'complete' | 'cancel' | 'tail-error' | 'forget',
             if (extraCall) yield new AIMessageChunk({ content: '', tool_call_chunks: [
                 { id: 'forbidden-extra', index: 1, name: extraCall, args: '{}' },
             ] });
-            if (outcome === 'cancel') {
+            if (outcome === 'forget' || outcome === 'cancel-forget') {
+                await coordinator.forget({ claimId: remembered.claimId });
+                snapshot = await repository.initialize();
+            }
+            if (outcome === 'cancel' || outcome === 'cancel-forget') {
                 controller.abort();
                 const error = new Error('User cancelled generation');
                 error.name = 'AbortError';
                 throw error;
-            }
-            if (outcome === 'forget') {
-                await coordinator.forget({ claimId: remembered.claimId });
-                snapshot = await repository.initialize();
             }
             yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: native ? 'tool_calls' : 'stop' } });
             if (outcome === 'tail-error') throw new Error('Usage transport tail failed');
@@ -173,6 +173,18 @@ function expectGovernedStyleWasSent(f: Awaited<ReturnType<typeof fixture>>): voi
 }
 
 describe('writing preview with a governed style through the production runtime', () => {
+    it.each([false, true])('withdraws revoked style content even when cancellation interrupts completion (native=%s)', async (native) => {
+        const f = await fixture('cancel-forget', false, native);
+        await expect(f.run()).rejects.toMatchObject({ name: 'AbortError' });
+
+        expectGovernedStyleWasSent(f);
+        expect(f.prepared[0].isSourceCurrent?.()).toBe(false);
+        expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({
+            reason: 'source_changed', rawText: '', previewText: '',
+        });
+        expect(f.events.filter((event) => event.kind === 'writing-preview').at(-1)).toMatchObject({ text: '' });
+        expect(f.events.some((event) => event.kind === 'writing-artifact' || event.kind === 'answer-snapshot')).toBe(false);
+    });
     it.each(['valid', 'revoke'] as const)('native images keep ordered pixels and host source admission when %s', async (imageMode) => {
         const f = await fixture('complete', false, true, true, { imageMode });
         await f.run();
@@ -315,7 +327,7 @@ describe('writing preview with a governed style through the production runtime',
             expect.objectContaining({ text: body }), expect.objectContaining({ text: '' }),
         ]);
         expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({
-            requestId: 'writing-1', reason: 'source_changed', rawText, previewText: '',
+            requestId: 'writing-1', reason: 'source_changed', rawText: '', previewText: '',
         });
         expect(f.events.some((event) => event.kind === 'writing-artifact' || event.kind === 'answer-snapshot')).toBe(false);
     });

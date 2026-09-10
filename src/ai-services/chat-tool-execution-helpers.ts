@@ -542,7 +542,7 @@ export function buildNoteStructureSummary(
     content: string,
     metadataCache: MetadataCacheLike | undefined,
     unavailableSources: string[] = [],
-    options: { truncated?: boolean; skippedSources?: string[]; omittedCount?: number } = {},
+    options: { truncated?: boolean; skippedSources?: string[]; omittedCount?: number; onSourceRead?: (path: string) => void } = {},
 ): InspectObsidianNoteOutput {
     let omittedCount = options.omittedCount ?? 0;
     const countOmitted = (count: number) => {
@@ -569,7 +569,7 @@ export function buildNoteStructureSummary(
         ...embeds,
         ...Object.keys(metadataCache?.resolvedLinks?.[file.path] ?? {}),
     ]), INSPECT_NOTE_MAX_LINKS, countOmitted);
-    const backlinks = takeWithOmitted(findBacklinksForPath(file.path, metadataCache?.resolvedLinks), INSPECT_NOTE_MAX_LINKS, countOmitted);
+    const backlinks = takeWithOmitted(findBacklinksForPath(file.path, metadataCache?.resolvedLinks, options.onSourceRead), INSPECT_NOTE_MAX_LINKS, countOmitted);
     const unresolvedLinks = takeWithOmitted(Object.keys(metadataCache?.unresolvedLinks?.[file.path] ?? {}), INSPECT_NOTE_MAX_LINKS, countOmitted);
     const output: InspectObsidianNoteOutput = {
         kind: "note-structure",
@@ -761,10 +761,15 @@ export function parseOriginalWikiTarget(original: unknown, embedded: boolean): O
 export function findBacklinksForPath(
     targetPath: string,
     resolvedLinks: Record<string, Record<string, number>> | undefined,
+    onSourceRead?: (path: string) => void,
 ): string[] {
     if (!resolvedLinks) return [];
     return Object.entries(resolvedLinks)
-        .filter(([, targets]) => targets && typeof targets === "object" && targetPath in targets)
+        .filter(([sourcePath, targets]) => {
+            // Even a negative link fact contributes to the aggregate answer.
+            onSourceRead?.(sourcePath);
+            return targets && typeof targets === "object" && targetPath in targets;
+        })
         .map(([sourcePath]) => sourcePath)
         .sort((a, b) => a.localeCompare(b));
 }
@@ -1080,6 +1085,7 @@ export async function listVaultTags(
     host: AiServiceHost,
     limit: number,
     signal?: AbortSignal,
+    onSourceRead?: (path: string) => void,
 ): Promise<VaultTagsOutput> {
     const metadataCache = getOptionalMetadataCache(host);
     if (!metadataCache || typeof metadataCache.getFileCache !== "function") {
@@ -1104,7 +1110,9 @@ export async function listVaultTags(
             await Promise.resolve();
         }
         scannedFiles++;
-        const tags = collectCacheTags(metadataCache.getFileCache?.(file));
+        const cache = metadataCache.getFileCache(file);
+        onSourceRead?.(file.path);
+        const tags = collectCacheTags(cache);
         for (const tag of tags) {
             const displayTag = tag.startsWith("#") ? tag : `#${tag}`;
             const entry = byTag.get(displayTag) ?? { count: 0, representativePaths: [] };

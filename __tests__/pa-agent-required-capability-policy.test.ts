@@ -12,6 +12,32 @@ import { chatToolResultToPaAgentToolExecutionResult } from "../src/ai-services/p
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 
 describe("PA Agent required capability HostPolicy", () => {
+    it('allows one native context schema correction without opening a new tool scope', async () => {
+        const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
+            availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: true });
+        const summary = createSummary({ status: 'tool_results_ready', toolResults: [
+            createToolResult('get_writing_context', { isError: true, outcome: 'schema_invalid' }),
+        ] });
+        const first = await policy.hostPolicy.afterTurn(summary);
+        expect(first).toMatchObject({ action: 'continue', reason: 'tool_results_ready',
+            runtimeInstruction: expect.stringContaining('correct the arguments once') });
+        expect(first).not.toHaveProperty('controlSnapshot');
+        expect(first).not.toHaveProperty('toolMode');
+        expect(await policy.hostPolicy.afterTurn(summary)).toMatchObject({
+            action: 'continue', toolMode: 'final_answer_only',
+        });
+    });
+
+    it.each(['legacy', 'policy_rejected', 'mixed-failure'])('does not reopen tools for %s', async mode => {
+        const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
+            availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: mode !== 'legacy' });
+        const results = [createToolResult('get_writing_context', { isError: true,
+            outcome: mode === 'policy_rejected' ? 'policy_rejected' : 'schema_invalid' })];
+        if (mode === 'mixed-failure') results.push(createToolResult('webSearch', { isError: true, outcome: 'policy_rejected' }));
+        expect(await policy.hostPolicy.afterTurn(createSummary({ status: 'tool_results_ready', toolResults: results })))
+            .toMatchObject({ action: 'continue', toolMode: 'final_answer_only' });
+    });
+
     it("classifies strong and weak deterministic capability signals", () => {
         expect(classifyRequiredCapabilitiesDeterministic("Search the web for the latest docs.").items).toEqual([
             expect.objectContaining({

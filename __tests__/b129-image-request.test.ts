@@ -21,6 +21,83 @@ function assets(bytes = 3) {
 }
 
 describe("B-129 run-scoped image requests", () => {
+    it('narrows ready pixels and rejects reintroducing an excluded image before any read', async () => {
+        const source = assets();
+        const first = image(1), second = image(2);
+        const scope = new ChatImageRequestScope({ prompt: 'compare', images: [first, second], service: source.service });
+        await scope.prepare();
+        scope.selectWritingMaterials([second.ref]);
+        expect(() => scope.assertReady()).not.toThrow();
+        expect(scope.writingMaterials).toEqual([second]);
+        expect(source.release).toHaveBeenCalledTimes(1);
+        const reads = source.mocks.verify.mock.calls.length;
+        await expect(scope.resolve([first.ref])).rejects.toThrow();
+        expect(source.mocks.verify).toHaveBeenCalledTimes(reads);
+        expect(() => scope.selectWritingMaterials([image(3).ref])).toThrow();
+        expect(scope.writingMaterials).toEqual([second]);
+        scope.selectWritingMaterials([]);
+        expect(() => scope.assertReady()).not.toThrow();
+        expect(scope.hasSelectedImages).toBe(false);
+        expect(scope.writingMaterials).toEqual([]);
+        expect(source.release).toHaveBeenCalledTimes(2);
+        scope.dispose();
+        expect(source.release).toHaveBeenCalledTimes(2);
+    });
+
+    it('verifies complete linked writing material independently of selected provider pixels', async () => {
+        const source = assets();
+        const materials = Array.from({ length: 10 }, (_, i) => image(i + 1));
+        const scope = new ChatImageRequestScope({ prompt: 'continue', service: source.service,
+            history: [{ role: 'user', content: 'Registered photos', images: materials }] });
+        const selected = [materials[9], materials[0], ...materials.slice(1, 9)];
+        const receipt = await scope.verifyWritingMaterials(selected.map(value => value.ref));
+        expect(receipt.images).toEqual(selected);
+        expect(source.mocks.verify).toHaveBeenCalledTimes(10);
+        expect(source.mocks.resolveVariant).not.toHaveBeenCalled();
+        expect(scope.writingMaterials).toEqual([]);
+        expect(scope.hasSelectedImages).toBe(false);
+        expect(receipt.isCurrent()).toBe(true);
+        source.invalidate();
+        expect(receipt.isCurrent()).toBe(false);
+        scope.dispose();
+    });
+
+    it.each(['unknown', 'replaced', 'duplicate'] as const)('rejects invalid writing material %s before source reads', async kind => {
+        const source = assets();
+        const scope = new ChatImageRequestScope({ prompt: 'write', images: [image(1)], service: source.service });
+        const refs = kind === 'unknown' ? [image(2).ref] : kind === 'replaced'
+            ? [{ ...image(1).ref, contentHash: 'f'.repeat(64) }] : [image(1).ref, image(1).ref];
+        await expect(scope.verifyWritingMaterials(refs)).rejects.toThrow('source_unavailable');
+        expect(source.mocks.verify).not.toHaveBeenCalled();
+        scope.dispose();
+    });
+
+    it('stops material verification after cancellation without revoking an earlier successful source receipt', async () => {
+        const source = assets();
+        const scope = new ChatImageRequestScope({ prompt: 'write', images: [image(1), image(2)], service: source.service });
+        const controller = new AbortController();
+        const completed = await scope.verifyWritingMaterials([image(1).ref], controller.signal);
+        source.mocks.verify.mockImplementationOnce(async () => {
+            controller.abort(); return { asset: {}, isCurrent: () => true };
+        });
+        await expect(scope.verifyWritingMaterials([image(1).ref, image(2).ref], controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+        expect(source.mocks.verify).toHaveBeenCalledTimes(2);
+        expect(completed.isCurrent()).toBe(true);
+        scope.dispose();
+        expect(completed.isCurrent()).toBe(false);
+    });
+    it.each([{ materials: [] }, { materials: [image(2)] }])("uses the failed task material snapshot without restoring parent images: %j", async ({ materials }) => {
+        const source = assets();
+        const scope = new ChatImageRequestScope({
+            prompt: "continue writing", service: source.service,
+            writingContext: { parentVersionId: "parent", text: "Keep parent prose", textHash: "a".repeat(64), associatedImages: [image(1), image(2)] },
+            writingMaterialContext: { requestId: "failed", associatedImages: materials },
+        });
+        await scope.prepare();
+        expect(scope.writingMaterials).toEqual(materials);
+        expect(source.mocks.resolveVariant).toHaveBeenCalledTimes(materials.length);
+        scope.dispose();
+    });
     it("materializes only current pixels, resolves exact same-conversation old refs, and reuses immutable leases across retries", async () => {
         const source = assets();
         const old = image(1), current = image(2);

@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
+import { chatToolResultToPaAgentToolExecutionResult } from '../src/ai-services/pa-agent-host-tools';
 import {
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES,
@@ -101,6 +102,54 @@ function createRegistry(): CapabilityRegistry {
 }
 
 describe('Obsidian Operations v1A App API read tools', () => {
+    it('retains every scanned tag dependency without exposing hidden paths to the provider', async () => {
+        const files = Array.from({ length: 8 }, (_, index) => ({ path: `notes/source-${index}.md` }));
+        const plugin = createPlugin({
+            markdownFiles: files,
+            metadataByPath: Object.fromEntries(files.map((file, index) => [file.path,
+                index === 7 ? {} : { tags: [{ tag: '#shared' }] },
+            ])),
+        });
+        const result = await createRegistry().execute('list_vault_tags', { limit: 1 }, { host: plugin as never });
+        expect(result.sources).toEqual([]);
+        expect(result.sourceRecords?.map(record => record.path)).toEqual(files.map(file => file.path));
+        for (const record of result.sourceRecords ?? []) {
+            expect(record).toMatchObject({
+                providerId: 'test-v1a', sourceBoundary: 'read-only-tool',
+                statusOnly: true, redacted: true, citationEligible: false,
+                metadata: { sourceDependency: true },
+            });
+        }
+        const execution = chatToolResultToPaAgentToolExecutionResult(
+            { type: 'toolCall', index: 0, id: 'tags', name: 'list_vault_tags', input: { limit: 1 } }, result,
+        );
+        expect(execution.sourceRecords).toHaveLength(8);
+        expect(execution.promptText).not.toContain('source-6.md');
+        expect(execution.promptText).not.toContain('source-7.md');
+        expect(execution.promptText).not.toContain('sourceDependency');
+        expect(JSON.stringify(execution.contextUsed)).not.toContain('source-7.md');
+    });
+
+    it('retains backlinks metadata dependencies beyond the displayed backlink limit', async () => {
+        const target = 'notes/target.md';
+        const sources = Array.from({ length: 80 }, (_, index) => `notes/link-${index}.md`);
+        const plugin = createPlugin({
+            markdownFiles: [{ path: target }, ...sources.map(path => ({ path }))],
+            resolvedLinks: Object.fromEntries(sources.map((path, index): [string, Record<string, number>] => [path, index === 79 ? {} : { [target]: 1 }])),
+        });
+        const result = await createRegistry().execute('inspect_obsidian_note', { path: target }, { host: plugin as never });
+        expect(result.sources).toEqual([{ path: target }]);
+        const dependencies = result.sourceRecords?.filter(record => record.metadata?.sourceDependency === true);
+        expect(dependencies?.map(record => record.path)).toEqual(sources);
+        expect((result.content as InspectObsidianNoteOutput).backlinks?.length).toBe(60);
+        const execution = chatToolResultToPaAgentToolExecutionResult(
+            { type: 'toolCall', index: 0, id: 'inspect', name: 'inspect_obsidian_note', input: { path: target } }, result,
+        );
+        expect(execution.promptText).not.toContain('link-79.md');
+        expect(execution.promptText).not.toContain('link-78.md');
+        expect(JSON.stringify(execution.contextUsed)).not.toContain('link-79.md');
+        expect(execution.sourceRecords?.find(record => record.path === target)).toMatchObject({ kind: 'context-used' });
+    });
     it('registers v1A read tools with strict read-only metadata', () => {
         const registry = createRegistry();
 
@@ -708,6 +757,8 @@ describe('Obsidian Operations v1A App API read tools', () => {
             truncated: true,
         });
         expect((result.content as VaultTagsOutput).tags.map((entry) => entry.tag)).toEqual(['#even', '#odd']);
+        expect(result.sourceRecords).toHaveLength(3000);
+        expect(result.sourceRecords?.some(record => record.path === 'notes/tag-3000.md')).toBe(false);
     });
 
     it('handles missing, no-match, and oversized outputs as bounded recoverable results', async () => {

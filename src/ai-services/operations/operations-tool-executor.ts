@@ -43,6 +43,7 @@ export function createOperationsStagingToolExecutor(
 ): PaAgentToolExecutor {
     return {
         preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
+        canReuseWritingContext: options.baseExecutor.canReuseWritingContext?.bind(options.baseExecutor),
         getCanonicalToolCallKey: (toolCall, context) => (
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),

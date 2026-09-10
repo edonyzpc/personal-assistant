@@ -17,6 +17,90 @@ const input = () => ({ requestId: 'request1', messageId: 'message1', conversatio
     text: '  海边的风\n保留换行。🙂  ', explanation: '正文以外的说明', images: [photo('one')] });
 
 describe('immutable writing versions', () => {
+    test('rejects revoked host admission after the final lookup without writing', async () => {
+        const { service, store } = setup();
+        let current = true;
+        jest.spyOn(store, 'getWritingVersion').mockImplementation(async () => {
+            current = false;
+            return null;
+        });
+        await expect(service.create(input(), () => current)).rejects.toThrow('Writing conversation changed');
+        expect(store.putWritingVersion).not.toHaveBeenCalled();
+    });
+    test('checks queued host admission but preserves an already admitted write', async () => {
+        const { service, store, records } = setup();
+        let started!: () => void, release!: () => void;
+        const writing = new Promise<void>(resolve => { started = resolve; });
+        const held = new Promise<void>(resolve => { release = resolve; });
+        jest.spyOn(store, 'putWritingVersion').mockImplementation(async version => {
+            started(); await held; records.set(version.id, cloneWritingVersion(version));
+        });
+        let current = true;
+        const admitted = service.create(input(), () => current);
+        await writing;
+        const read = jest.spyOn(store, 'getWritingVersion');
+        const queued = service.create({ ...input(), requestId: 'queued' }, () => current);
+        const rejected = expect(queued).rejects.toThrow('Writing conversation changed');
+        current = false;
+        release();
+        expect((await admitted).text).toBe(input().text);
+        await rejected;
+        expect(read).not.toHaveBeenCalled();
+        expect(store.putWritingVersion).toHaveBeenCalledTimes(1);
+    });
+    test('lets an admitted write finish while rejecting queued work after disposal', async () => {
+        const { service, store, records } = setup();
+        let writeStarted!: () => void;
+        let releaseWrite!: () => void;
+        const started = new Promise<void>((resolve) => { writeStarted = resolve; });
+        const release = new Promise<void>((resolve) => { releaseWrite = resolve; });
+        jest.spyOn(store, 'putWritingVersion').mockImplementation(async (version) => {
+            writeStarted();
+            await release;
+            records.set(version.id, cloneWritingVersion(version));
+        });
+        const read = jest.spyOn(store, 'getWritingVersion');
+        const admitted = service.create(input());
+        await started;
+        const readsBeforeClose = read.mock.calls.length;
+        const queued = service.create({ ...input(), requestId: 'queued' });
+        const rejected = expect(queued).rejects.toThrow('Writing versions closed');
+        const closing = service.dispose();
+        releaseWrite();
+        expect((await admitted).text).toBe(input().text);
+        await rejected;
+        await closing;
+        expect(read).toHaveBeenCalledTimes(readsBeforeClose);
+        expect(store.putWritingVersion).toHaveBeenCalledTimes(1);
+    });
+    test('does not start persistence after disposal during the final existing-version lookup', async () => {
+        const { service, store } = setup();
+        let lookupStarted!: () => void;
+        let releaseLookup!: () => void;
+        const started = new Promise<void>((resolve) => { lookupStarted = resolve; });
+        const release = new Promise<void>((resolve) => { releaseLookup = resolve; });
+        jest.spyOn(store, 'getWritingVersion').mockImplementation(async () => {
+            lookupStarted();
+            await release;
+            return null;
+        });
+        const pending = service.create(input());
+        const rejected = expect(pending).rejects.toThrow('Writing versions closed');
+        await started;
+        const closing = service.dispose();
+        releaseLookup();
+        await rejected;
+        await closing;
+        expect(store.putWritingVersion).not.toHaveBeenCalled();
+    });
+    test.each([{ images: [] }, { images: [photo('two')] }])('does not restore parent material omitted from the current snapshot: %j', async ({ images }) => {
+        const { service } = setup();
+        const parent = await service.create({ ...input(), images: [photo('one'), photo('two')] });
+        const next = await service.create({ ...input(), requestId: 'subset', parentVersionId: parent.id, images });
+        expect(next.associatedImages.map((image) => image.ref)).toEqual(images.map((image) => image.ref));
+        expect((await service.get(parent.id))?.associatedImages).toHaveLength(2);
+        expect((await service.edit(next.id, 'Edited subset', 'edit-subset')).associatedImages).toEqual(next.associatedImages);
+    });
     test('records current request references without claiming parent samples were sent again', async () => {
         const { service, records } = setup();
         const first = await service.create({ ...input(), backgroundSourceRefs: [{ path: 'before.md' }], styleRevisionIds: ['old-style'] });

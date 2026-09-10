@@ -10,6 +10,8 @@ import { resolveB125RetrievalOptimizationFlags } from "../retrieval-optimization
 import type { PageletChatHandoffContext } from "./pagelet-handoff";
 import { MemorySearchTool } from "./memory-search-tool";
 import { TaskSourceRun } from "./task-source-run";
+import { WritingContextRun, type WritingContextRunHost } from "./writing-context-run";
+import { createWritingContextCapability, GET_WRITING_CONTEXT } from "./writing-context-tool";
 import { createTaskSourceConstrainedExecutor, createTaskSourceDeclarationSchema, DECLARE_SOURCE_SCOPE } from "./task-source-executor";
 import {
     captureExplicitTemporalIntent,
@@ -51,7 +53,10 @@ import {
 } from "./agent-runtime-primitives";
 import { PaAgentContextSummarizer, type PaAgentSummaryInvoke } from "./context/PaAgentContextSummarizer";
 import { cloneMessage } from "./context/clone-utils";
-import { isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
+import { isCurrentHistorySummary, isCurrentToolSummary, type PaAgentContextSummaries, type PaAgentToolSummarySource } from "./context/PaAgentContextSummaryTypes";
+import { chatHistoryImageMetadata } from "./chat-image-identity";
+import { readChatHistoryTurnMetadata } from "./pa-agent-history";
+import { cloneMessageImages, type MessageImage } from "../chat/image-types";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext } from "./writing-output";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
@@ -133,6 +138,7 @@ import type {
     LegacyAgentEvent,
     ChatAgentStatus,
     ChatMessage,
+    PaAgentMessage,
 } from "./chat-types";
 
 export type {
@@ -159,6 +165,8 @@ export interface PaAgentRunOptions {
     writingContext?: import("./chat-types").ChatWritingContext;
     writingMaterialContext?: import("./chat-types").ChatWritingMaterialContext;
     prepareWritingStyle?: import("./chat-types").ChatWritingStylePreparation;
+    /** Host-authorized candidates and semantic style reader; consumed only by the native candidate. */
+    writingContextHost?: Omit<WritingContextRunHost, "runId" | "verifyImages">;
     /** Host-owned model/conversation epoch; checked at physical dispatch. */
     isCurrent?: () => boolean;
     imageCapability?: { get: () => ChatImageCapability; onSuccess: () => void; onError: (error: unknown) => void };
@@ -172,6 +180,8 @@ export interface PaAgentRunOptions {
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
     /** Host-only compatibility candidate. Default switching requires B-135 P0 evidence. */
     writingOutputProtocol?: "native";
+    /** Internal projection value, resolved from the run receipt rather than model input. */
+    writingContextHandle?: string;
     /** Internal per-turn budget override. Never increases the normal history allowance. */
     historyBudgetChars?: number;
     qwenRequestOptions?: QwenRequestOptions;
@@ -573,6 +583,7 @@ export function createWriteActionAwareToolExecutor(
 ): PaAgentToolExecutor {
     return {
         preflightBatch: options.baseExecutor.preflightBatch?.bind(options.baseExecutor),
+        canReuseWritingContext: options.baseExecutor.canReuseWritingContext?.bind(options.baseExecutor),
         getCanonicalToolCallKey: (toolCall, context) => (
             options.baseExecutor.getCanonicalToolCallKey?.(toolCall, context)
         ),
@@ -822,11 +833,30 @@ export class PaAgentRuntime {
     private async streamPaAgentCanonicalTurn(options: PaAgentStreamOptions): Promise<void> {
         if (options.writingRequest) options = { ...options, writingRequest: cloneChatWritingRequest(options.writingRequest) };
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
+        const writingContextHost = nativeWritingRequest ? options.writingContextHost : undefined;
+        let writingContextRun: WritingContextRun | undefined;
+        let writingContextCapability: AgentCapability | undefined;
+        let writingContextBudget = { remainingTextChars: 0, remainingMemoryChars: 0 };
+        const currentWritingContext = () => {
+            try { return writingContextRun?.current(); } catch { return undefined; }
+        };
+        const currentWritingHandle = () => writingContextHost ? currentWritingContext()?.handle : nativeWritingRequest?.requestId;
+        const projectionOptions = () => ({ ...options,
+            ...(writingContextHost ? { writingContext: undefined, writingContextHandle: currentWritingHandle() } : {}),
+        });
         const imageScope = options.images?.length || options.chatHistory?.some((message) => message.images?.length) || options.writingContext || options.writingMaterialContext
             ? new ChatImageRequestScope({ images: options.images, history: options.chatHistory, writingContext: options.writingContext,
                 writingMaterialContext: options.writingMaterialContext,
                 prompt: options.prompt, service: options.imageAssetService, isCurrent: options.isCurrent }) : undefined;
         let writingStyle: import("./chat-types").ChatWritingStyleResult | undefined;
+        type WritingGenerationSnapshot = {
+            assertCurrent: () => void;
+            associatedImages: MessageImage[];
+            styleRevisionIds: string[];
+            context?: import('./chat-types').ChatWritingContextMetadata;
+        };
+        let preparedWritingGeneration: WritingGenerationSnapshot | undefined;
+        let writingGeneration: WritingGenerationSnapshot | undefined;
         const assertRequestSourcesCurrent = (signal?: AbortSignal): void => {
             if (options.isCurrent?.() === false) throw createAbortError();
             imageScope?.assertReady(signal);
@@ -842,7 +872,7 @@ export class PaAgentRuntime {
         // Reject an irreducibly large current request before optional startup classifier calls.
         // This lower bound does not replace the complete, revalidated per-attempt guard below.
         const minimumRequestChars = measurePaAgentRequestChars({
-            input: [options.prompt, selectedWritingContext(options.writingContext), options.writingRequest ? (nativeWritingRequest ? nativeWritingOutputInstruction(options.writingRequest) : writingOutputInstruction(options.writingRequest)) : ""].filter(Boolean).join("\n\n"),
+            input: [options.prompt, writingContextHost ? "" : selectedWritingContext(options.writingContext), options.writingRequest ? (nativeWritingRequest ? (writingContextHost ? "" : nativeWritingOutputInstruction(options.writingRequest)) : writingOutputInstruction(options.writingRequest)) : ""].filter(Boolean).join("\n\n"),
             available_skills: "",
             tool_definitions: "",
             tool_observations: "",
@@ -890,6 +920,8 @@ export class PaAgentRuntime {
             getFileByPath: path => this.host.isDataBoundaryAllowedPath?.(path) === false
                 ? undefined : this.host.app.vault.getAbstractFileByPath(path),
             isCurrent: () => sourceRunActive && !options.signal?.aborted && options.isCurrent?.() !== false,
+            areSourcesCurrent: () => sourceRunActive && options.isCurrent?.() !== false,
+            isMemoryAllowed: () => this.host.settings.memoryEnabled !== false,
         });
         const providerRequestScope = createProviderRequestScope();
         let physicalRequestSequence = 0;
@@ -978,13 +1010,24 @@ export class PaAgentRuntime {
         }
         const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent, options.writingRequest ? {
             request: options.writingRequest, maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
-            ...(nativeWritingRequest ? { nativeContextHandle: nativeWritingRequest.requestId } : {}),
-            isCurrent: () => { assertRequestCurrent(); return imageScope?.isUsable() ?? true; },
+            ...(nativeWritingRequest ? { nativeContextHandle: nativeWritingRequest.requestId,
+                ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}) } : {}),
+            isCurrent: () => {
+                assertRequestCurrent();
+                if (!writingGeneration) return false;
+                writingGeneration.assertCurrent();
+                return imageScope?.isUsable() ?? true;
+            },
             // Stopping generation does not revoke already received text. Source,
             // model, image and style changes still invalidate its visible preview.
-            isPreviewCurrent: () => { assertRequestSourcesCurrent(); return imageScope?.isUsable() ?? true; },
-            getStyleRevisionIds: () => writingStyle?.revisionIds ?? [],
-            getAssociatedImages: () => imageScope?.writingMaterials ?? [],
+            isPreviewCurrent: () => {
+                assertRequestSourcesCurrent();
+                writingGeneration?.assertCurrent();
+                return imageScope?.isUsable() ?? true;
+            },
+            getStyleRevisionIds: () => writingGeneration?.styleRevisionIds ?? [],
+            getAssociatedImages: () => writingGeneration?.associatedImages ?? imageScope?.writingMaterials ?? [],
+            getWritingContext: () => writingGeneration?.context,
             onDiagnostic: (diagnostic) => {
                 if (this.host.settings.debug) this.host.log("PA Agent writing delivery", diagnostic);
             },
@@ -995,6 +1038,24 @@ export class PaAgentRuntime {
             capability.executionMode = "sequential";
             this.toolRegistry.register(capability);
             imageCapability = capability;
+        }
+        if (writingContextHost) {
+            writingContextRun = new WritingContextRun({
+                ...writingContextHost, runId,
+                isCurrent: () => sourceRunActive && options.isCurrent?.() !== false && writingContextHost.isCurrent(),
+                verifyImages: async (refs, signal) => {
+                    throwIfAborted(signal);
+                    if (imageScope) return imageScope.verifyWritingMaterials(refs, signal);
+                    if (refs.length) throw new ChatImageRequestError("source_unavailable");
+                    return { images: [], isCurrent: () => sourceRunActive && options.isCurrent?.() !== false && writingContextHost.isCurrent() };
+                },
+            });
+            writingContextCapability = createWritingContextCapability(writingContextRun, {
+                outputBudgetChars: MAX_PA_AGENT_PROMPT_CHARS,
+                getBudget: () => ({ ...writingContextBudget }),
+                onPrepared: context => imageScope?.selectWritingMaterials(context.images.map(image => image.ref)),
+            });
+            if (!this.toolRegistry.register(writingContextCapability)) throw new Error("Writing context capability unavailable");
         }
         let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
@@ -1023,6 +1084,7 @@ export class PaAgentRuntime {
         }
         const availableMetaToolNames = new Set<string>();
         availableMetaToolNames.add(DECLARE_SOURCE_SCOPE);
+        if (writingContextCapability) availableMetaToolNames.add(GET_WRITING_CONTEXT);
         if (imageScope?.hasImages) availableMetaToolNames.add(RESOLVE_CHAT_IMAGES);
         if (this.toolRegistry.getDefinition(LOAD_SKILL_TOOL_NAME)) {
             availableMetaToolNames.add(LOAD_SKILL_TOOL_NAME);
@@ -1034,6 +1096,7 @@ export class PaAgentRuntime {
             // Keep observed-evidence completion checks without predicting a
             // mandatory tool list or invoking a separate intent model.
             classification: { items: [] },
+            allowWritingContextSchemaRepair: Boolean(writingContextRun),
         });
         // Structured host controls apply before dispatch. Natural-language task
         // boundaries are interpreted by the same main Agent and admitted below.
@@ -1058,18 +1121,41 @@ export class PaAgentRuntime {
         const contextManager = this.contextManager;
         const contextSummarizer = this.contextSummarizer;
         let runSummaries: PaAgentContextSummaries = {};
+        const snapshotHistory = (): ChatMessage[] => sourceRun.projectHistory(options.chatHistory ?? []).map(message => {
+            const metadata = readChatHistoryTurnMetadata(message);
+            return { role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
+                ...(metadata ? { memoryMetadata: metadata } : {}) };
+        });
+        const assertHistoryCurrent = (snapshot: readonly ChatMessage[]): void => {
+            const current = sourceRun.projectHistory(options.chatHistory ?? []);
+            if (snapshot.length !== current.length
+                || sourceRun.projectHistory(snapshot).length !== snapshot.length
+                || (snapshot.length > 0 && !isCurrentHistorySummary({ text: '', sourceMessages: snapshot }, current))) {
+                throw new Error('Chat history changed before provider dispatch');
+            }
+        };
+        const writingPreparationInstruction = (): string | undefined => {
+            if (!writingContextRun) return undefined;
+            const prepared = currentWritingContext();
+            if (prepared) {
+                return `Writing context preparation is complete. Use the current contextHandle ${JSON.stringify(prepared.handle)} to present the finished work when the task is ready. Rewording the same scene is not a reason to prepare again. Reprepare only for a user correction, new evidence that changes the selected parent, scene, conflicts or materials, or a host-reported invalid context. Necessary source work remains subject to the current permissions. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
+            }
+            return `Before presenting writing, call get_writing_context and wait for its result. Select the parent and scene from the conversation semantically; use parentHandle=null for a new topic and omit scene when unknown. Authorized parent handles (JSON data): ${JSON.stringify(writingContextRun.candidateDirectory())}`;
+        };
         const withImageContext = (input: PaAgentModelInput): PaAgentModelInput => ({
             ...input, runtimeInstruction: combineRuntimeInstructions([
                 input.runtimeInstruction, sourceRun.contextInstruction(), imageScope?.hasImages ? imageScope.contextText() : undefined,
+                writingPreparationInstruction(),
             ]),
         });
         const buildCanonicalModelInput = (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
             boundSchemas?: ChatToolProviderSchema[],
+            history: ChatMessage[] | undefined = sourceRun.projectHistory(options.chatHistory ?? []),
         ) =>
             this.buildPaAgentCanonicalModelInput(
-                options,
+                { ...projectionOptions(), chatHistory: history },
                 withImageContext(input),
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
@@ -1082,7 +1168,7 @@ export class PaAgentRuntime {
             toolDefinitions: ChatToolRegistryDefinition[],
             boundSchemas: ChatToolProviderSchema[],
         ) => this.projectPaAgentCanonicalModelInput(
-            options, withImageContext(input),
+            { ...projectionOptions(), chatHistory: sourceRun.projectHistory(options.chatHistory ?? []) }, withImageContext(input),
             toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
             toolDefinitions, injectedContext, boundSchemas,
         ).projection;
@@ -1104,10 +1190,16 @@ export class PaAgentRuntime {
         const availableStyleBudget = (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]) => {
             const baseline = previewCanonicalModelInput(input, definitions, schemas);
             return {
-                remainingTextChars: Math.max(0, MAX_PA_AGENT_PROMPT_CHARS - baseline.budget.promptChars - 2),
+                remainingTextChars: Math.max(0, Math.min(
+                    MAX_PA_AGENT_PROMPT_CHARS - baseline.budget.promptChars - 2,
+                    writingContextRun
+                        ? (this.options.answerStreamMaxObservationChars ?? 64_000) - baseline.budget.toolObservationChars
+                        : Infinity,
+                )),
                 remainingMemoryChars: Math.max(0, MEMORY_CONTEXT_MAX_CHARS - formatBackground(injectedContext).length - 2),
             };
         };
+        let assertTaskInputCurrent = (): void => {};
         const buildProviderInput = (input: PaAgentModelInput, definitions: ChatToolRegistryDefinition[], schemas: ChatToolProviderSchema[]): Record<string, unknown> => {
             assertRequestCurrent(input.signal);
             // All asynchronous preparation has finished. Even an absent result
@@ -1122,7 +1214,40 @@ export class PaAgentRuntime {
                     writingStyle = undefined;
                 }
             }
-            const result: Record<string, unknown> = buildCanonicalModelInput(input, definitions, schemas);
+            const history = isOperationsStagedAcknowledgement(input.runtimeInstruction) ? undefined : snapshotHistory();
+            const result: Record<string, unknown> = buildCanonicalModelInput(input, definitions, schemas, history);
+            const taskTranscript = input.transcript.map(cloneMessage);
+            const assertWritingInputCurrent = writingContextRun?.captureTranscriptValidity(taskTranscript);
+            assertTaskInputCurrent = () => {
+                sourceRun.assertTranscriptCurrent(taskTranscript);
+                assertWritingInputCurrent?.();
+                if (history) assertHistoryCurrent(history);
+            };
+            if (writingContextRun) writingContextBudget = availableStyleBudget(input, definitions, schemas);
+            if (options.writingRequest) {
+                const context = currentWritingContext();
+                const assertSourceValidity = sourceRun.captureSourceValidity(taskTranscript, history ?? []);
+                const background = preparedBackground;
+                const historyIdentity = JSON.stringify((options.chatHistory ?? []).map(message => ({
+                    role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
+                })));
+                preparedWritingGeneration = {
+                    associatedImages: cloneMessageImages(context?.images ?? imageScope?.writingMaterials ?? []),
+                    styleRevisionIds: [...(context?.styleRevisionIds ?? writingStyle?.revisionIds ?? [])],
+                    ...(context ? { context: { ...(context.parent ? { parentVersionId: context.parent.id } : {}),
+                        ...(context.scene ? { scene: { ...context.scene } } : {}) } } : {}),
+                    assertCurrent: () => {
+                        assertRequestSourcesCurrent();
+                        assertSourceValidity();
+                        assertWritingInputCurrent?.();
+                        if (context && currentWritingHandle() !== context.handle) throw new Error('Writing context changed');
+                        if (background !== formatBackground(readInjectedContext())
+                            || historyIdentity !== JSON.stringify((options.chatHistory ?? []).map(message => ({
+                                role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
+                            })))) throw new Error('Writing generation input changed');
+                    },
+                };
+            }
             if (imageScope?.hasImages) result.messages = [imageScope.message(result.input as string, input.signal)];
             assertProviderInputCurrent(input.signal);
             return result;
@@ -1133,7 +1258,7 @@ export class PaAgentRuntime {
             if (imageScope?.hasSelectedImages && options.imageCapability?.get() === "unsupported") throw new ChatImageRequestError("unsupported_model");
             if (imageScope?.hasSelectedImages) await imageScope.prepare(input.signal);
             let prepared = input.prepareForProviderRetry ? await input.prepareForProviderRetry() : input;
-            if (options.writingRequest && options.prepareWritingStyle) {
+            if (options.writingRequest && options.prepareWritingStyle && !writingContextRun) {
                 injectedContext = readInjectedContext();
                 writingStyle = undefined;
                 const { remainingTextChars, remainingMemoryChars } = availableStyleBudget(prepared, definitions, schemas);
@@ -1177,8 +1302,9 @@ export class PaAgentRuntime {
                     && isAllowedHostToolCall(DECLARE_SOURCE_SCOPE, activeToolUseConstraints?.allowedToolNames, activeToolUseConstraints?.blockedToolNames)) {
                     schemas.push(createTaskSourceDeclarationSchema());
                 }
-                if (nativeWritingRequest && input.controlSnapshot?.writingOutput === "present_writing") {
-                    schemas.push(toolRegistry.getWritingOutputSchema(nativeWritingRequest));
+                const nativeContextHandle = currentWritingHandle();
+                if (nativeWritingRequest && nativeContextHandle && input.controlSnapshot?.writingOutput === "present_writing") {
+                    schemas.push(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle));
                 }
                 const toolDefinitions = input.toolMode === "final_answer_only"
                     ? []
@@ -1187,7 +1313,12 @@ export class PaAgentRuntime {
                     transport: "native",
                     qwenRequestOptions: options.qwenRequestOptions,
                     providerRequestScope,
-                    onProviderRequestStart: () => { assertProviderInputCurrent(input.signal); input.notifyProviderRequestStarted?.(); },
+                    onProviderRequestStart: () => {
+                        assertProviderInputCurrent(input.signal);
+                        assertTaskInputCurrent();
+                        writingGeneration = preparedWritingGeneration;
+                        input.notifyProviderRequestStarted?.();
+                    },
                     onProviderRequestDiagnostic: requestDiagnostic("answer", input.turnId),
                 });
                 if (nativeWritingRequest && !asNativeToolBindableModel(llm)) {
@@ -1224,11 +1355,17 @@ export class PaAgentRuntime {
                     const tools = new Map(runSummaries.tools);
                     // Summary models are tool-free and share the run's provider request scope.
                     // Revalidate each tool source after model construction, immediately before dispatch.
-                    const invokeForSource = (source?: PaAgentToolSummarySource): PaAgentSummaryInvoke => async (payload, signal) => {
+                    const invokeForSource = (source?: PaAgentToolSummarySource, history?: readonly ChatMessage[]): PaAgentSummaryInvoke => async (payload, signal) => {
+                        const assertWritingSourceCurrent = source ? writingContextRun?.captureTranscriptValidity([source]) : undefined;
                         const summaryModel = await planner.createFinalAnswerModel(0, {
                             transport: "native", maxTokens: payload.maxOutputTokens,
                             qwenRequestOptions: { enableThinking: false }, providerRequestScope,
-                            onProviderRequestStart: () => assertRequestCurrent(signal),
+                            onProviderRequestStart: () => {
+                                assertRequestCurrent(signal);
+                                if (source) sourceRun.assertTranscriptCurrent([source]);
+                                assertWritingSourceCurrent?.();
+                                if (history) assertHistoryCurrent(history);
+                            },
                             onProviderRequestDiagnostic: requestDiagnostic("context_summary", input.turnId),
                         });
                         assertRequestCurrent(signal);
@@ -1236,7 +1373,10 @@ export class PaAgentRuntime {
                             // Optional summary work uses its own cancellation scope. Do not
                             // mutate the Loop's retry input or fail-close the entire run on
                             // a summary timeout. The registry rejects aborted/late projections.
-                            const refreshed = await memoryEvidenceRegistry.prepareTranscript([cloneMessage(source)], signal);
+                            let refreshed = sourceRun.projectTranscript(
+                                await memoryEvidenceRegistry.prepareTranscript([cloneMessage(source)], signal),
+                            );
+                            if (writingContextRun) refreshed = await writingContextRun.projectTranscript(refreshed, signal);
                             const current = refreshed.find((message) => message.id === source.id);
                             if (current?.role !== "toolResult" || !isCurrentToolSummary({ text: "", source }, current)) {
                                 throw new Error("Context summary source changed before dispatch");
@@ -1251,10 +1391,11 @@ export class PaAgentRuntime {
                         return stringifyChunkContent(response);
                     };
                     try {
+                        const historySources = isOperationsStagedAcknowledgement(input.runtimeInstruction) ? undefined : snapshotHistory();
                         const history = await contextSummarizer.prepareHistory({
-                            history: isOperationsStagedAcknowledgement(input.runtimeInstruction) ? [] : options.chatHistory ?? [],
+                            history: historySources ?? [],
                             historyBudgetChars: preview.historyBudgetChars,
-                            invoke: invokeForSource(), signal: preparation.signal,
+                            invoke: invokeForSource(undefined, historySources), signal: preparation.signal,
                         });
                         runSummaries = { history, tools };
                         for (const id of preview.reducedToolMessageIds) {
@@ -1349,6 +1490,7 @@ export class PaAgentRuntime {
         };
         const baseToolExecutor = createPaAgentCapabilityToolExecutor({
             registry: this.toolRegistry,
+            ...(writingContextRun ? { canReuseWritingContext: writingContextRun.matchesCurrentSelection.bind(writingContextRun) } : {}),
             host: this.host,
             platform: this.options.runtimePlatform ?? "desktop",
             memoryEvidenceRegistry,
@@ -1423,7 +1565,7 @@ export class PaAgentRuntime {
                 // generic meta/action exemption or a claim of zero I/O.
                 const independent = calls.filter(call => {
                     const capability = this.toolRegistry.get(call.name);
-                    return capability !== undefined && (capability === imageCapability
+                    return capability !== undefined && (capability === imageCapability || capability === writingContextCapability
                         || (call.name === LOAD_SKILL_TOOL_NAME && this.skillContextProvider?.ownsCapability(capability)));
                 });
                 const independentIds = new Set(independent.map(call => call.id));
@@ -1442,8 +1584,9 @@ export class PaAgentRuntime {
             writingRequest: options.writingRequest,
             ...(nativeWritingRequest ? { nativeWriting: {
                 contextHandle: nativeWritingRequest.requestId,
+                ...(writingContextHost ? { getContextHandle: currentWritingHandle } : {}),
                 maxTextChars: MAX_PA_AGENT_PROMPT_CHARS,
-                isCurrent: () => { assertRequestCurrent(); return imageScope?.isUsable() ?? true; },
+                isCurrent: () => { assertRequestCurrent(); return (!writingContextRun || !!currentWritingContext()) && (imageScope?.isUsable() ?? true); },
             } } : {}),
             model,
             prepareModelInput: async (input) => {
@@ -1451,10 +1594,11 @@ export class PaAgentRuntime {
                 input.signal?.addEventListener("abort", failClosedOnAbort, { once: true });
                 if (input.signal?.aborted) failClosedOnAbort();
                 try {
-                    const transcript = await memoryEvidenceRegistry.prepareTranscript(
+                    let transcript = sourceRun.projectTranscript(await memoryEvidenceRegistry.prepareTranscript(
                         input.transcript,
                         input.signal,
-                    );
+                    ));
+                    if (writingContextRun) transcript = await writingContextRun.projectTranscript(transcript, input.signal);
                     const constraint = sourceRun.state.snapshot();
                     if (constraint) {
                         for (const message of transcript) {
@@ -1656,6 +1800,8 @@ export class PaAgentRuntime {
         }
         } finally {
             sourceRunActive = false;
+            writingContextRun?.dispose();
+            if (writingContextCapability) this.toolRegistry.unregister(writingContextCapability);
             imageScope?.dispose();
             try {
                 const observedFinalizationOutcome = options.signal?.aborted
@@ -1785,6 +1931,10 @@ export class PaAgentRuntime {
         if (projection.outcome.admission === "local_overflow") {
             throw new PaAgentContextOverflowError(projection.budget.promptChars, projection.budget.maxPromptChars);
         }
+        if (options.writingContextHost && options.writingContextHandle) {
+            assertCompleteWritingContextProjection(input.transcript, projection.toolObservations,
+                input.turnIndex, options.writingContextHandle);
+        }
         return {
             input: projection.input,
             available_skills: projection.availableSkills,
@@ -1807,14 +1957,16 @@ export class PaAgentRuntime {
         const availableSkills = formatSkillCatalog(input.hostContext);
         const hostContext = formatCanonicalHostContext(input.hostContext);
         const nativeWritingRequest = options.writingOutputProtocol === "native" ? options.writingRequest : undefined;
+        const nativeContextHandle = nativeWritingRequest
+            ? (options.writingContextHost ? options.writingContextHandle : nativeWritingRequest.requestId) : undefined;
         let toolDefinitionsText = input.toolMode === "final_answer_only"
-            ? (nativeWritingRequest ? "Only present_writing (pure output) is available. No source, context or action tools are available in this finalization turn." : "No tools are available in this finalization turn.")
+            ? (nativeContextHandle ? "Only present_writing (pure output) is available. No source, context or action tools are available in this finalization turn." : "No tools are available in this finalization turn.")
             : formatPlannerToolDefinitions(toolDefinitions ?? filterToolDefinitionsByToolUseConstraints(
                 this.toolRegistry.listDefinitions(),
                 toolUseConstraints,
             ));
-        if (nativeWritingRequest && input.toolMode !== "final_answer_only") {
-            toolDefinitionsText += `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest).function)}`;
+        if (nativeWritingRequest && nativeContextHandle && input.toolMode !== "final_answer_only") {
+            toolDefinitionsText += `\nPure output declaration (not a source or action): ${JSON.stringify(nativeWritingOutputSchema(nativeWritingRequest, nativeContextHandle).function)}`;
         }
         const operationsGuidance = createOperationsPromptGuidance(toolDefinitions ?? []);
         const projection = this.contextManager.forPrompt({
@@ -1827,7 +1979,7 @@ export class PaAgentRuntime {
             hostContext,
             runtimeInstruction: combineRuntimeInstructions([input.runtimeInstruction,
                 selectedWritingContext(options.writingContext),
-                options.writingRequest ? (nativeWritingRequest ? nativeWritingOutputInstruction(options.writingRequest) : writingOutputInstruction(options.writingRequest)) : ""]),
+                options.writingRequest ? (nativeWritingRequest ? (nativeContextHandle ? nativeWritingOutputInstruction(options.writingRequest, nativeContextHandle) : "Reply with ordinary text, or prepare a writing context before delivering a finished work.") : writingOutputInstruction(options.writingRequest)) : ""]),
             injectedContext,
             summaries,
             availableSkills,
@@ -1861,6 +2013,30 @@ export class PaAgentRuntime {
     }
 
 
+}
+
+/** A valid receipt cannot authorize output if prompt compaction removed any of its actual context. */
+function assertCompleteWritingContextProjection(
+    transcript: readonly PaAgentMessage[], toolObservations: string, turnIndex: number, handle: string,
+): void {
+    const source = transcript.find(message => {
+        if (message.role !== "toolResult" || message.toolName !== GET_WRITING_CONTEXT
+            || message.isError || !message.content.includeInNextPrompt) return false;
+        try {
+            const payload = JSON.parse(message.content.promptText) as { observation?: { contextHandle?: unknown } };
+            return payload?.observation?.contextHandle === handle;
+        } catch { return false; }
+    });
+    if (!source) throw new Error("Complete writing context is missing from the provider input");
+    // Use the real formatter so escaping is identical. Projection may omit older
+    // tools and renumber blocks, so compare the complete body inside this tool's
+    // envelope rather than relying on an index or an unescaped substring.
+    const expected = formatToolObservations([source], turnIndex);
+    const expectedBody = expected.slice(expected.indexOf("\n"));
+    for (const match of toolObservations.matchAll(/<untrusted source="tool:get_writing_context"[^>]*>/g)) {
+        if (toolObservations.startsWith(expectedBody, match.index! + match[0].length)) return;
+    }
+    throw new Error("Complete writing context does not fit in the provider input");
 }
 
 class ChatPlanner {

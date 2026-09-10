@@ -1,6 +1,6 @@
 import { AgentEventEmitter } from "./agent-runtime-primitives";
 import { extractCanonicalTurnMetadata } from "./pa-agent-history";
-import { cloneChatWritingRequest, decodeNativeWritingOutput, decodeWritingOutput } from "./writing-output";
+import { cloneChatWritingRequest, decodeNativeWritingOutput, decodeWritingOutput, isValidWritingContextHandle } from "./writing-output";
 import { decodeNativeWritingPreview, decodeWritingPreview } from "./writing-preview";
 import { cloneMessageImages, type MessageImage } from "../chat/image-types";
 import type {
@@ -35,6 +35,8 @@ export interface WritingEventContext {
     request: ChatWritingRequest;
     /** Explicit host protocol selection; absent keeps the legacy envelope path. */
     nativeContextHandle?: string;
+    /** Presence selects native output even before a prepared handle exists. */
+    getContextHandle?: () => string | undefined;
     maxTextChars: number;
     /** Host-owned current source/run guard, never model evidence. */
     isCurrent: () => boolean;
@@ -43,6 +45,7 @@ export interface WritingEventContext {
     getStyleRevisionIds?: () => readonly string[];
     /** Frozen host provenance, independent of the model envelope and provider pixel subset. */
     getAssociatedImages?: () => readonly MessageImage[];
+    getWritingContext?: () => import('./chat-types').ChatWritingContextMetadata | undefined;
     onDiagnostic?: (diagnostic: WritingDeliveryDiagnostic) => void;
 }
 
@@ -68,6 +71,11 @@ export class CanonicalToLegacyEventAdapter {
     private writingTransportOutcome: WritingDeliveryDiagnostic["transportOutcome"] = "unknown";
     private nativeArguments = "";
     private nativeValidated = false;
+    private nativeContextHandle?: string;
+
+    private get usesNativeWriting(): boolean {
+        return this.writing?.getContextHandle !== undefined || this.writing?.nativeContextHandle !== undefined;
+    }
 
     constructor(
         private readonly legacyEvents: AgentEventEmitter,
@@ -75,7 +83,9 @@ export class CanonicalToLegacyEventAdapter {
         writing?: WritingEventContext,
     ) {
         this.writing = writing ? { ...writing, request: cloneChatWritingRequest(writing.request) } : undefined;
-        if (writing?.nativeContextHandle !== undefined) cloneChatWritingRequest({ requestId: writing.nativeContextHandle });
+        if (writing?.nativeContextHandle !== undefined && !isValidWritingContextHandle(writing.nativeContextHandle)) {
+            throw new Error("writing_context_handle_invalid");
+        }
     }
 
     handle(event: AgentEvent): void {
@@ -95,6 +105,12 @@ export class CanonicalToLegacyEventAdapter {
             case "message_start":
                 this.canonicalMessages.set(event.message.id, event.message);
                 if (event.message.role === "assistant") {
+                    this.nativeContextHandle = undefined;
+                    try {
+                        const handle = this.writing?.getContextHandle
+                            ? this.writing.getContextHandle() : this.writing?.nativeContextHandle;
+                        if (isValidWritingContextHandle(handle)) this.nativeContextHandle = handle;
+                    } catch { /* A failed host read cannot authorize delivery. */ }
                     this.writingCandidate = undefined;
                     this.writingTurnId = event.turnId;
                     this.writingTransportOutcome = "unknown";
@@ -108,8 +124,8 @@ export class CanonicalToLegacyEventAdapter {
                 return;
             case "message_update":
                 if (this.writing && event.messageId === this.writingMessageId) {
-                    if (this.writing.nativeContextHandle !== undefined && event.update.kind === "toolcall_delta"
-                        && event.metadata?.nativeWritingContextHandle === this.writing.nativeContextHandle
+                    if (this.usesNativeWriting && this.nativeContextHandle !== undefined && event.update.kind === "toolcall_delta"
+                        && event.metadata?.nativeWritingContextHandle === this.nativeContextHandle
                         && typeof event.metadata.nativeWritingArguments === "string") {
                         this.nativeArguments = event.metadata.nativeWritingArguments.slice(0, this.writing.maxTextChars + 1);
                         this.emitWritingPreview(event.runId, event.messageId, this.currentWritingPreview(this.nativeArguments));
@@ -119,7 +135,7 @@ export class CanonicalToLegacyEventAdapter {
                         // this candidate without retaining an unbounded preview buffer.
                         const capacity = Math.max(0, this.writing.maxTextChars + 1 - this.writingText.length);
                         this.writingText += event.update.text.slice(0, capacity);
-                        this.emitWritingPreview(event.runId, event.messageId, this.writing.nativeContextHandle !== undefined
+                        this.emitWritingPreview(event.runId, event.messageId, this.usesNativeWriting
                             ? (this.isWritingPreviewCurrent() ? this.writingText : "") : this.currentWritingPreview(this.writingText));
                     } else if (event.update.kind === "toolcall_start") {
                         this.writingHasTool = true;
@@ -138,9 +154,9 @@ export class CanonicalToLegacyEventAdapter {
                     this.writingTransportOutcome = transport === "done" || transport === "idle" || transport === "aborted"
                         || transport === "wall_clock_exceeded" || transport === "error" ? transport : "unknown";
                     this.writingCandidate = { ...event.message, content: event.message.content.map((part) => ({ ...part })) };
-                    if (this.writing.nativeContextHandle !== undefined) {
-                        this.nativeValidated = event.metadata?.nativeWritingValidated === true
-                            && event.metadata.nativeWritingContextHandle === this.writing.nativeContextHandle;
+                    if (this.usesNativeWriting) {
+                        this.nativeValidated = this.nativeContextHandle !== undefined && event.metadata?.nativeWritingValidated === true
+                            && event.metadata.nativeWritingContextHandle === this.nativeContextHandle;
                         const calls = event.message.content.filter((part) => part.type === "toolCall");
                         if (this.nativeValidated && calls.length === 1 && typeof calls[0].input === "string") {
                             this.nativeArguments = calls[0].input.slice(0, this.writing.maxTextChars + 1);
@@ -209,7 +225,7 @@ export class CanonicalToLegacyEventAdapter {
     private emitWritingResult(event: Extract<AgentEvent, { type: "agent_end" }>): void {
         const writing = this.writing!;
         const candidate = this.writingCandidate;
-        const native = writing.nativeContextHandle !== undefined;
+        const native = this.usesNativeWriting;
         const calls = candidate?.content.filter((part) => part.type === "toolCall") ?? [];
         if (native && candidate && calls.length === 0 && !this.nativeArguments) {
             if (this.isWritingPreviewCurrent()) this.appendAssistantText(candidate.content);
@@ -219,7 +235,7 @@ export class CanonicalToLegacyEventAdapter {
             : candidate?.content.filter((part) => part.type === "text").map((part) => part.text).join("") ?? "";
         let reason: WritingRecoveryReason | undefined;
         // A warning's impact is unknown here. It must not silently become a verified version.
-        if (native && !this.isWritingPreviewCurrent()) reason = "source_changed";
+        if (!this.isWritingPreviewCurrent()) reason = "source_changed";
         else if (event.status !== "completed" || !candidate
             || (native ? !this.nativeValidated || candidate.stopReason !== "tool_calls" || calls.length !== 1
                 || calls[0].name !== "present_writing" : candidate.stopReason !== "stop" || calls.length > 0)) reason = "incomplete";
@@ -230,7 +246,8 @@ export class CanonicalToLegacyEventAdapter {
         }
         // Structural validity is evidence independent of provider finish and
         // source permission. A valid envelope alone never authorizes an artifact.
-        const nativeDecoded = native ? decodeNativeWritingOutput(rawText, writing.nativeContextHandle!, writing.maxTextChars) : undefined;
+        const nativeDecoded = native && this.nativeContextHandle !== undefined
+            ? decodeNativeWritingOutput(rawText, this.nativeContextHandle, writing.maxTextChars) : undefined;
         const decoded = native ? (nativeDecoded ? { ...nativeDecoded, requestId: writing.request.requestId } : undefined)
             : decodeWritingOutput(rawText, writing.request, writing.maxTextChars);
         const output = reason ? undefined : decoded;
@@ -248,13 +265,17 @@ export class CanonicalToLegacyEventAdapter {
                 result: output ? "artifact" : reason ?? "invalid_output",
             });
         } catch { /* Debug sinks must not change delivery or recovery. */ }
-        const material = writing.getAssociatedImages ? { associatedImages: cloneMessageImages(writing.getAssociatedImages()) } : {};
+        const context = writing.getWritingContext?.();
+        const material = {
+            ...(writing.getAssociatedImages ? { associatedImages: cloneMessageImages(writing.getAssociatedImages()) } : {}),
+            ...(context ? { writingContext: { ...context, ...(context.scene ? { scene: { ...context.scene } } : {}) } } : {}),
+        };
         if (!output) {
             const previewText = this.currentWritingPreview(rawText);
             if (candidate) this.emitWritingPreview(event.runId, candidate.id, previewText);
             this.legacyEvents.writingRecovery({ runId: event.runId, requestId: writing.request.requestId,
                 ...(candidate ? { messageId: candidate.id } : {}),
-                rawText: native && reason === "source_changed" ? "" : rawText,
+                rawText: reason === "source_changed" ? "" : rawText,
                 reason: reason ?? "invalid_output", previewText, ...material });
             return;
         }
@@ -271,7 +292,7 @@ export class CanonicalToLegacyEventAdapter {
         if (!writing) return "";
         try {
             if (!this.isWritingPreviewCurrent()) return "";
-            return (writing.nativeContextHandle !== undefined
+            return (this.usesNativeWriting
                 ? decodeNativeWritingPreview(rawText, writing.maxTextChars)
                 : decodeWritingPreview(rawText, writing.request.requestId, writing.maxTextChars))?.text ?? "";
         } catch { return ""; }

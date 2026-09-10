@@ -75,7 +75,8 @@ export type UiTurn = {
     writingParent?: WritingVersion;
     writingMaterialContext?: ChatWritingMaterialContext;
     writingMaterials?: MessageImage[];
-    writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[] };
+    writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[];
+        writingContext?: import('../ai-services/chat-types').ChatWritingContextMetadata };
     writingRecovery?: ChatWritingRecovery;
     writingRecoveryText?: string;
     memoryMetadata?: ChatTurnMemoryMetadata;

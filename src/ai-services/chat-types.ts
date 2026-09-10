@@ -340,6 +340,8 @@ export type AssistantMessagePart =
 export type ProviderCompletion = "stop" | "tool_calls" | "length" | "content_filter" | "unknown";
 
 export interface ChatWritingRequest { requestId: string; }
+/** Host receipt metadata; absent means the legacy path, an empty object means a new work with unknown scene. */
+export interface ChatWritingContextMetadata { parentVersionId?: string; scene?: import('../chat/writing-types').WritingScene; }
 export interface ChatWritingContext { parentVersionId: string; text: string; textHash: string; associatedImages: MessageImage[]; }
 /** A failed writing task has material lineage without a validated parent body/version. Host-only. */
 export interface ChatWritingMaterialContext { requestId: string; associatedImages: MessageImage[]; }
@@ -355,6 +357,7 @@ export interface ChatWritingRecovery {
     requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason;
     /** Optional lineage populated by the host, never from the model envelope. */
     parentVersionId?: string;
+    scene?: import('../chat/writing-types').WritingScene;
     backgroundSourceRefs?: PersistedSourceRef[];
 }
 
@@ -590,9 +593,9 @@ export type LegacyAgentEvent =
     | LegacyAgentAnswerSnapshotEvent
     | LegacyAgentReasoningChunkEvent
     | LegacyAgentTurnMetadataEvent
-    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[] })
+    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata })
     | (LegacyAgentEventBase & { kind: "writing-preview"; runId: string; requestId: string; messageId: string; text: string })
-    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; previewText?: string; associatedImages?: MessageImage[] })
+    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; previewText?: string; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata })
     | LegacyAgentTerminalEvent;
 
 export type VaultAdviceEvidenceKind =
@@ -622,6 +625,7 @@ export interface AgentTurnPlan {
 export type ChatAgentIntent = "content-seeking" | "agent-control";
 
 export type ChatToolName =
+    | "get_writing_context"
     | "resolve_chat_images"
     | "search_memory"
     | "get_current_note_context"

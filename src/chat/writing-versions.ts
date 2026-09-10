@@ -13,18 +13,25 @@ export class WritingVersionService {
     private disposed = false;
     constructor(private readonly store: WritingVersionStore, private readonly now = Date.now) {}
 
-    async get(id: string): Promise<WritingVersion | null> {
+    private assertOpen(): void {
         if (this.disposed) throw new Error('Writing versions closed');
+    }
+
+    async get(id: string): Promise<WritingVersion | null> {
+        this.assertOpen();
         const stored = await this.store.getWritingVersion(id);
+        this.assertOpen();
         if (!stored) return null;
         const version = cloneWritingVersion(stored);
         if (await hashWritingText(version.text) !== version.textHash) throw new Error('Writing version changed');
+        this.assertOpen();
         return version;
     }
 
     async list(conversationId: string): Promise<WritingVersion[]> {
-        if (this.disposed) throw new Error('Writing versions closed');
+        this.assertOpen();
         const versions = await this.store.listWritingVersions(conversationId);
+        this.assertOpen();
         const verified = await Promise.all(versions.map(async (stored) => {
             const version = cloneWritingVersion(stored);
             if (version.conversationId !== conversationId || await hashWritingText(version.text) !== version.textHash) {
@@ -32,18 +39,25 @@ export class WritingVersionService {
             }
             return version;
         }));
+        this.assertOpen();
         return verified.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
     }
 
     create(input: {
         requestId: string; messageId: string; conversationId: string; turnIndex: number;
-        text: string; explanation?: string; parentVersionId?: string; images: readonly MessageImage[];
+        text: string; explanation?: string; parentVersionId?: string;
+        /** Complete host-approved material for this version, including any retained parent images. */
+        images: readonly MessageImage[];
         backgroundSourceRefs?: PersistedSourceRef[]; styleRevisionIds?: string[]; scene?: WritingScene;
         /** Only a host editing UI supplies this; a model envelope has no origin field. */
         origin?: WritingVersion['origin'];
         referenceScope?: WritingVersion['referenceScope'];
-    }): Promise<WritingVersion> {
+    }, isCurrent: () => boolean = () => true): Promise<WritingVersion> {
         if (this.disposed) return Promise.reject(new Error('Writing versions closed'));
+        const assertAdmission = () => {
+            this.assertOpen();
+            if (!isCurrent()) throw new Error('Writing conversation changed');
+        };
         // Snapshot before joining the queue: the composer may change while an
         // earlier version is being persisted. Host metadata is never model data.
         const snapshot = cloneWritingVersion({
@@ -57,6 +71,7 @@ export class WritingVersionService {
             ...(input.scene ? { scene: input.scene } : {}),
         });
         const task = this.chain.then(async () => {
+            assertAdmission();
             const textHash = await hashWritingText(snapshot.text);
             const versionId = `writing_${(await hashWritingText(`${snapshot.requestId}\0${snapshot.messageId}`)).slice(0, 48)}`;
             const parent = snapshot.parentVersionId ? await this.get(snapshot.parentVersionId) : null;
@@ -65,7 +80,7 @@ export class WritingVersionService {
             const sourceIdentities = new Set<string>();
             const version = cloneWritingVersion({
                 ...snapshot, id: versionId, textHash, createdAt: this.now(),
-                associatedImages: mergeWritingImages(parent?.associatedImages ?? [], snapshot.associatedImages),
+                associatedImages: mergeWritingImages(snapshot.associatedImages),
                 backgroundSourceRefs: sources.filter((source) => {
                     const key = JSON.stringify(source);
                     if (sourceIdentities.has(key)) return false;
@@ -75,6 +90,7 @@ export class WritingVersionService {
                 ...(snapshot.scene ? { scene: snapshot.scene } : {}),
             });
             const existing = await this.get(versionId);
+            assertAdmission();
             if (existing) {
                 if (JSON.stringify({ ...existing, createdAt: 0 }) !== JSON.stringify({ ...version, createdAt: 0 })) {
                     throw new Error('Writing event identity conflict');
@@ -94,7 +110,7 @@ export class WritingVersionService {
         if (text === parent.text) return parent;
         return this.create({
             requestId: actionId, messageId: actionId, conversationId: parent.conversationId, turnIndex: parent.turnIndex,
-            parentVersionId: parent.id, text, explanation: parent.explanation, images: [], origin: 'user_edited',
+            parentVersionId: parent.id, text, explanation: parent.explanation, images: parent.associatedImages, origin: 'user_edited',
             backgroundSourceRefs: parent.backgroundSourceRefs, styleRevisionIds: parent.styleRevisionIds, scene: parent.scene,
             referenceScope: parent.referenceScope,
         });

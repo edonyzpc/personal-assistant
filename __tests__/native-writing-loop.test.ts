@@ -33,6 +33,39 @@ async function run(chunks: unknown[], options: Partial<PaAgentLoopOptions> = {},
 }
 
 describe("host-enabled native writing loop", () => {
+    it("freezes a dynamic colon handle once for the response", async () => {
+        let handle = "run:writing:1";
+        const getContextHandle = jest.fn(() => handle);
+        const outcome = await run([tool(JSON.stringify({ body: "Work", contextHandle: handle })), finish()], {
+            nativeWriting: { ...nativeWriting, getContextHandle },
+            prepareModelInput: async (input) => { handle = "run:writing:2"; return input; },
+        });
+        expect(outcome.result.status).toBe("completed");
+        expect(getContextHandle).toHaveBeenCalledTimes(1);
+        expect(outcome.result.transcript.at(-1)).toMatchObject({ content: [
+            { input: JSON.stringify({ body: "Work", contextHandle: "run:writing:1" }) },
+        ] });
+    });
+
+    it.each([false, true])("rejects output mixed with preparation before any dispatch (prepare first: %s)", async (first) => {
+        const prepare = tool("{}", "prepare", 1, "get_writing_context");
+        const outcome = await run([...(first ? [prepare, tool()] : [tool(), prepare]), finish()], {
+            nativeWriting: { ...nativeWriting, getContextHandle: () => undefined },
+        });
+        expect(outcome.result.status).toBe("incomplete");
+        expect(outcome.modelInputs[0].controlSnapshot?.writingOutput).toBeUndefined();
+        expect(outcome.prepareBatch).not.toHaveBeenCalled();
+        expect(outcome.execute).not.toHaveBeenCalled();
+    });
+
+    it("does not fall back to the fixed handle when preparation is unavailable", async () => {
+        const outcome = await run([tool(), finish()], {
+            nativeWriting: { ...nativeWriting, getContextHandle: () => undefined },
+        });
+        expect(outcome.result.status).toBe("incomplete");
+        expect(outcome.modelInputs[0].controlSnapshot?.writingOutput).toBeUndefined();
+        expect(outcome.execute).not.toHaveBeenCalled();
+    });
     it("declares pure output separately from source/action allowances in the reserved final turn", async () => {
         const outcome = await run([tool(), finish()], {
             now: () => 75, runStartedAt: 0, maxWallClockMs: 100, finalizationReserveMs: 30,

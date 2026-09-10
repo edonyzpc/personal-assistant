@@ -33,13 +33,14 @@ export class ChatImageRequestScope {
     private readonly snapshot: string;
     private readonly parentImages: MessageImage[];
     private associatedImages: MessageImage[];
+    private writingMaterialKeys?: Set<string>;
     private selectionRequired = false;
     private resolutionFailed = false;
     private disposed = false;
 
     constructor(private readonly options: ImageRequestOptions) {
         const current = cloneMessageImages(options.images ?? []);
-        this.parentImages = mergeChatImageMaterials(options.writingMaterialContext?.associatedImages ?? [], options.writingContext?.associatedImages ?? []);
+        this.parentImages = cloneMessageImages(options.writingMaterialContext?.associatedImages ?? options.writingContext?.associatedImages ?? []);
         // A recovery's copy may have an older per-version ordinal. Prefer the
         // original user index over assistant material metadata for the same ref.
         for (const role of ["user", "assistant"] as const) for (const message of options.history ?? []) {
@@ -68,6 +69,57 @@ export class ChatImageRequestScope {
     get currentImages(): MessageImage[] { return cloneMessageImages(this.options.images ?? []); }
     /** Complete linked material, not a claim that every image was sent/viewed. Never includes the history inventory wholesale. */
     get writingMaterials(): MessageImage[] { return cloneMessageImages(this.associatedImages); }
+
+    /** A completed writing selection narrows future pixels; linked images are not automatically viewed. */
+    selectWritingMaterials(refs: readonly ImageRef[]): void {
+        this.assertSnapshot();
+        const identities = refs.map(ref => key(cloneImageRef(ref)));
+        if (new Set(identities).size !== identities.length || identities.some(id => !this.authorized.has(id))) {
+            throw new ChatImageRequestError('source_unavailable');
+        }
+        const allowed = new Set(identities);
+        const previousSelection = [...this.selected.keys()];
+        for (const id of this.selected.keys()) {
+            if (allowed.has(id)) continue;
+            this.selected.delete(id);
+            this.materialized.get(id)?.lease.release();
+            this.materialized.delete(id);
+        }
+        this.guards = this.guards.filter((_guard, index) => allowed.has(previousSelection[index]));
+        this.writingMaterialKeys = allowed;
+        this.associatedImages = cloneMessageImages(identities.map(id => this.authorized.get(id)!));
+        this.selectionRequired = false;
+        this.resolutionFailed = false;
+    }
+
+    /** Verify linked writing material without claiming it was sent as pixels or changing the active selection. */
+    async verifyWritingMaterials(refs: readonly ImageRef[], signal?: AbortSignal): Promise<{
+        images: MessageImage[]; isCurrent(): boolean;
+    }> {
+        this.assertSnapshot(signal);
+        const requested = refs.map(cloneImageRef);
+        if (new Set(requested.map(key)).size !== requested.length || requested.some(ref => !this.authorized.has(key(ref)))) {
+            throw new ChatImageRequestError("source_unavailable");
+        }
+        const images = cloneMessageImages(requested.map(ref => this.authorized.get(key(ref))!));
+        const guards: Array<() => boolean> = [];
+        if (images.length && !this.options.service) throw new ChatImageRequestError("source_unavailable");
+        for (const image of images) {
+            const receipt = await this.options.service!.verify(image.ref, "provider", {
+                signal, isCurrent: () => { this.assertSnapshot(); return true; },
+            }).catch(error => { this.assertSnapshot(signal); throw error; });
+            this.assertSnapshot(signal);
+            if (!receipt.isCurrent()) throw new ChatImageRequestError("request_changed");
+            guards.push(receipt.isCurrent);
+        }
+        const isCurrent = () => {
+            try { this.assertSnapshot(); return guards.every(guard => guard()); }
+            catch { return false; }
+        };
+        this.assertSnapshot(signal);
+        if (!isCurrent()) throw new ChatImageRequestError("request_changed");
+        return { images: cloneMessageImages(images), isCurrent };
+    }
     diagnostics(): Record<string, unknown> {
         return { type: "image_request_budget", count: this.selected.size,
             encodedImageBytes: [...this.materialized.values()].reduce((sum, value) => sum + value.lease.blob.size, 0),
@@ -157,6 +209,9 @@ export class ChatImageRequestScope {
         const unique = [...new Map(refs.map((ref) => [key(ref), cloneImageRef(ref)])).values()];
         if (!unique.length || unique.length > IMAGE_POLICY.maxImagesPerTurn || unique.some((ref) => !this.authorized.has(key(ref)))) {
             throw new ChatImageRequestError("source_unavailable");
+        }
+        if (this.writingMaterialKeys && unique.some(ref => !this.writingMaterialKeys!.has(key(ref)))) {
+            throw new ChatImageRequestError('source_unavailable');
         }
         if (new Set([...this.selected.keys(), ...unique.map(key)]).size > IMAGE_POLICY.maxImagesPerTurn) {
             this.resolutionFailed = true;

@@ -3088,6 +3088,24 @@ describe('Memory governance plugin bootstrap', () => {
             expect(plugin.memoryExtractionScheduler).toBeUndefined();
         });
 
+        it('prepares the model supplied writing scene through ChatHost while preserving conflicts and governance', async () => {
+            const { plugin, service, version } = await setup();
+            const receipt = await service.remember(version.id, scene, 'semantic-style-action');
+            await plugin.refreshDeviceMemoryCaches();
+            const host = plugin.createChatHost();
+            const selected = await host.prepareWritingStyleForScene(scene, budget);
+            expect(selected.revisionIds).toEqual([receipt.revisionId]);
+            expect(selected.context).toContain(version.text);
+            expect((await host.prepareWritingStyleForScene(undefined, budget)).context).toBe('');
+            expect((await host.prepareWritingStyleForScene(scene, { ...budget, currentInstructionConflicts: true })).context).toBe('');
+            expect((await host.prepareWritingStyleForScene(scene, { ...budget, remainingTextChars: 0 })).context).toBe('');
+            await plugin.memoryGovernanceCoordinator.forget({ claimId: receipt.claimId });
+            await plugin.refreshDeviceMemoryCaches();
+            expect(selected.isSourceCurrent()).toBe(false);
+            expect((await host.prepareWritingStyleForScene(scene, budget)).context).toBe('');
+            expect(plugin.createChatModel).not.toHaveBeenCalled();
+        });
+
         it('stops style use at the master switch, Pause and Forget while preserving static management', async () => {
             const { plugin, repository, service, version } = await setup();
             const receipt = await service.remember(version.id, scene, 'explicit-style-lifecycle');

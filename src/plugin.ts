@@ -7774,10 +7774,15 @@ export class PluginManager extends Plugin {
 
     private async prepareWritingStyle(prompt: string, parentScene: WritingScene | undefined,
         budget: Parameters<ChatWritingStylePreparation>[0]): Promise<ChatWritingStyleResult> {
+        return this.prepareWritingStyleForScene(inferWritingScene(prompt, parentScene), budget);
+    }
+
+    private async prepareWritingStyleForScene(scene: Parameters<WritingStyleService['prepare']>[0],
+        budget: Parameters<WritingStyleService['prepare']>[1]): Promise<ChatWritingStyleResult> {
         if (this.deviceMemoryCacheRefreshPromise) await this.deviceMemoryCacheRefreshPromise;
         const service = this.getWritingStyleService();
         if (!service) return { context: '', revisionIds: [], isCurrent: () => true };
-        return service.prepare(inferWritingScene(prompt, parentScene), budget);
+        return service.prepare(scene, budget);
     }
 
     private openQuickCaptureModal(): void {
@@ -7899,6 +7904,7 @@ export class PluginManager extends Plugin {
                 return () => { active = false; settings(); repository?.(); };
             },
             prepareWritingStyle: (prompt, parentScene, budget) => this.prepareWritingStyle(prompt, parentScene, budget),
+            prepareWritingStyleForScene: (scene, budget) => this.prepareWritingStyleForScene(scene, budget),
             onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 this.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),

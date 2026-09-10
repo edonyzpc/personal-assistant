@@ -184,7 +184,7 @@ describe('B-135 queued provider image verification', () => {
         } finally { held.release(); await held.finished; await h.service.dispose(); }
     });
 
-    it.each(['prepare', 'verify_prepared', 'resolve'] as const)
+    it.each(['prepare', 'verify_prepared', 'resolve', 'writing_materials'] as const)
     ('passes the actual request snapshot and cancellation through %s to the queued reader', async operation => {
         for (const change of ['abort', 'stale', 'input_changed'] as const) {
             const h = setup(), imported = await h.service.importFile(fileInput(), { acquisition: 'original_file' });
@@ -195,7 +195,9 @@ describe('B-135 queued provider image verification', () => {
             if (operation === 'verify_prepared') await scope.prepare();
             const held = await holdImageQueue(h), controller = new AbortController();
             h.vault.readBinary.mockClear();
-            const task = operation === 'resolve' ? scope.resolve([imported.ref], controller.signal) : scope.prepare(controller.signal);
+            const task = operation === 'resolve' ? scope.resolve([imported.ref], controller.signal)
+                : operation === 'writing_materials' ? scope.verifyWritingMaterials([imported.ref], controller.signal)
+                    : scope.prepare(controller.signal);
             const result = task.then(value => ({ value }), (error: unknown) => ({ error }));
             try {
                 if (change === 'abort') controller.abort();

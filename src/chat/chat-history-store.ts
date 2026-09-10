@@ -3,7 +3,7 @@ import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import { getPlatformIDBKeyRange, getPlatformIndexedDB } from "../platform-dom";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import { cloneChatHostProvenance, type ChatHostProvenance } from "../ai-services/chat-provenance";
-import { cloneWritingVersion, hashWritingText, type WritingVersion } from "./writing-types";
+import { cloneWritingVersion, hashWritingText, writingSceneSchema, type WritingVersion } from "./writing-types";
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape, type PersistedSourceRef } from '../pa/contracts/source-ref';
 import { cloneImageAsset, cloneImageRef, cloneImageVariant, cloneMessageImages, imageTurnOwnerId, validateImagePath,
@@ -983,6 +983,7 @@ function cloneWritingRecovery(value: unknown): ChatWritingRecovery {
         || !['incomplete', 'provider_incomplete', 'invalid_output', 'source_changed'].includes(String(recovery.reason))) throw new Error('Invalid writing recovery');
     return { requestId: validateWritingVersionId(recovery.requestId), rawText: recovery.rawText,
         reason: recovery.reason as ChatWritingRecovery['reason'],
+        ...(recovery.scene !== undefined ? { scene: writingSceneSchema.parse(recovery.scene) } : {}),
         ...(recovery.parentVersionId !== undefined ? { parentVersionId: validateWritingVersionId(recovery.parentVersionId) } : {}),
         ...(recovery.backgroundSourceRefs !== undefined ? { backgroundSourceRefs: cloneWritingRecoverySources(recovery.backgroundSourceRefs) } : {}),
         ...(recovery.messageId !== undefined ? { messageId: validateWritingVersionId(recovery.messageId) } : {}) };

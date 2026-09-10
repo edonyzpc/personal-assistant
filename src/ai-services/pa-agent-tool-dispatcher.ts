@@ -81,6 +81,7 @@ export interface ToolDispatcherConfig {
 
 export class ToolExecutionDispatcher {
     private readonly seenToolCallKeys = new Set<string>();
+    private lastSuccessfulWritingContextKey?: string;
     private _toolCallCount = 0;
 
     get toolCallCount(): number { return this._toolCallCount; }
@@ -302,7 +303,7 @@ export class ToolExecutionDispatcher {
             if (control) { projectedCount += 1; continue; }
             const key = this.normalizeToolCallKey(toolCall);
             assertTaskSourceReadCurrent(readGuard);
-            if (projectedSeen.has(key)) continue;
+            if (this.isDuplicateToolCall(toolCall, key, projectedSeen)) continue;
             projectedSeen.add(key);
             projectedCount += 1;
             eligible.push(toolCall);
@@ -441,6 +442,7 @@ export class ToolExecutionDispatcher {
             if (skipResult) {
                 executionResult = skipResult;
             } else {
+                if (toolCall.name === "get_writing_context") this.lastSuccessfulWritingContextKey = undefined;
                 if (!control) this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
                 this._toolCallCount += 1;
                 executionResult = !isReadGuardCurrent(readGuard) ? sourceGuardRejection()
@@ -449,6 +451,7 @@ export class ToolExecutionDispatcher {
             }
 
             const toolResult = this.config.emitToolResult(turnId, toolCall, executionResult);
+            this.rememberSuccessfulWritingContext(toolCall, executionResult, toolResult);
             toolResults.push(toolResult);
 
             if (executionResult.metadata?.stoppedBy === "wall_clock_exceeded") {
@@ -496,6 +499,7 @@ export class ToolExecutionDispatcher {
                 entries.push({ toolCall, skipResult });
                 continue;
             }
+            if (toolCall.name === "get_writing_context") this.lastSuccessfulWritingContextKey = undefined;
             if (!control) this.seenToolCallKeys.add(this.normalizeToolCallKey(toolCall));
             this._toolCallCount += 1;
             entries.push({ toolCall, ...(control ? { skipResult: control } : {}) });
@@ -526,6 +530,7 @@ export class ToolExecutionDispatcher {
         for (let i = 0; i < entries.length; i++) {
             const executionResult = results[i];
             const toolResult = this.config.emitToolResult(turnId, entries[i].toolCall, executionResult);
+            this.rememberSuccessfulWritingContext(entries[i].toolCall, executionResult, toolResult);
             toolResults.push(toolResult);
             if (stoppedBy === undefined) {
                 if (executionResult.metadata?.stoppedBy === "wall_clock_exceeded") {
@@ -616,7 +621,7 @@ export class ToolExecutionDispatcher {
         }
         if (consumedControl) return null;
         const toolCallKey = this.normalizeToolCallKey(toolCall);
-        if (this.seenToolCallKeys.has(toolCallKey)) {
+        if (this.isDuplicateToolCall(toolCall, toolCallKey, this.seenToolCallKeys)) {
             return {
                 outcome: "duplicate_skipped",
                 promptText: "",
@@ -629,6 +634,29 @@ export class ToolExecutionDispatcher {
             };
         }
         return null;
+    }
+
+    private isDuplicateToolCall(toolCall: ParsedBufferedToolCall, key: string, seen: ReadonlySet<string>): boolean {
+        const canReuse = this.config.toolExecutor?.canReuseWritingContext;
+        if (toolCall.name === "get_writing_context" && canReuse) {
+            // A prior attempt is not a reusable receipt: it may have failed,
+            // lost its sources, or been replaced by another successful selection.
+            // Normal admission, schema and execution budgets still apply.
+            if (key !== this.lastSuccessfulWritingContextKey) return false;
+            try { return canReuse.call(this.config.toolExecutor, toolCall, { userInput: this.config.userInput }); }
+            catch { return false; }
+        }
+        return seen.has(key);
+    }
+
+    private rememberSuccessfulWritingContext(
+        call: ParsedBufferedToolCall, result: PaAgentToolExecutionResult,
+        message: Extract<PaAgentMessage, { role: "toolResult" }>,
+    ): void {
+        if (call.name === "get_writing_context" && result.outcome === "success"
+            && !message.isError && message.content.includeInNextPrompt && message.content.promptText.trim()) {
+            this.lastSuccessfulWritingContextKey = this.normalizeToolCallKey(call);
+        }
     }
 
     private normalizeToolCallKey(toolCall: ParsedBufferedToolCall): string {

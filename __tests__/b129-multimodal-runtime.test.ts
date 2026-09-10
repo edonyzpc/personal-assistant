@@ -6,7 +6,7 @@ import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
 import type { MemorySearchPort } from "../src/memory/MemorySearchPort";
 import { PaAgentRuntime, type PaAgentRuntimeOptions, type PaAgentStreamOptions } from "../src/ai-services/pa-agent-runtime";
 import { ChatService } from "../src/ai-services/chat-service";
-import type { AgentEvent, LegacyAgentEvent } from "../src/ai-services/chat-types";
+import type { AgentEvent, LegacyAgentEvent, ChatMessage } from "../src/ai-services/chat-types";
 import type { ImageAssetService } from "../src/chat/image-assets";
 import type { MessageImage } from "../src/chat/image-types";
 import { createPaAgentPersistedTurn } from "../src/ai-services/pa-agent-history";
@@ -58,7 +58,7 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
             searchHybrid: async (..._args: Parameters<MemorySearchPort['searchHybrid']>) => [],
             getChunksByPath: async () => [],
         },
-        getAPIToken: async () => "synthetic-fixture-token", log: jest.fn(), isOperationsAgentEnabled: false,
+        getAPIToken: async () => "synthetic-fixture-token", log: jest.fn(), isOperationsAgentEnabled: Boolean(runtimeOptions.operationsIntentController),
         getMemoryExtractionPromptContext: jest.fn(() => undefined as Record<string, unknown> | undefined),
     };
     const originalCreate = AIUtils.prototype.createChatModel;
@@ -111,6 +111,234 @@ const pixels = (request: RequestBody) => request.messages.flatMap((message) => A
 const requestText = (request: RequestBody) => request.messages.map((message) => typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("")).join("\n");
 
 describe('B-135 production source declaration', () => {
+    it('does not create a writing artifact when a supplied note disappears after the final request', async () => {
+        const prompt = '根据当前笔记写一段文字';
+        let live = true;
+        const f = fixture([
+            { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } },
+                { name: 'get_current_note_context', input: { mode: 'full' } },
+            ] },
+            { text: envelope('SOURCE_BASED_WRITING'), onEnd: () => { live = false; } },
+        ]);
+        const file = { path: 'source.md', extension: 'md' };
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file,
+            editor: { getValue: () => 'NOTE_USED_FOR_WRITING', getSelection: () => '', lineCount: () => 1,
+                getLine: () => 'NOTE_USED_FOR_WRITING', getCursor: () => ({ line: 0, ch: 0 }) } } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation(() => live ? file as never : null);
+        await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' } });
+        expect(f.requests).toHaveLength(2);
+        expect(requestText(f.requests[1])).toContain('NOTE_USED_FOR_WRITING');
+        expect(f.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+        expect(f.events.find(event => event.kind === 'writing-recovery')).toMatchObject({ reason: 'source_changed', rawText: '', previewText: '' });
+    });
+
+    it.each(['answer', 'summary'] as const)('revalidates historical Memory revocation at the %s SDK retry', async stage => {
+        const history: ChatMessage[] = [
+            { role: 'assistant', content: 'REVOKED_HISTORY_MEMORY ' + (stage === 'summary' ? 'earlier '.repeat(900) : ''),
+                memoryMetadata: { hasMemoryContent: true, allowedMemorySourcePaths: ['A.md'] } },
+            { role: 'assistant', content: 'KEEP_INDEPENDENT_CHOICES' },
+            { role: 'user', content: '保留第二个方案' },
+        ];
+        const original = JSON.stringify(history);
+        const f = fixture((_body, index) => {
+            if (index === 0) {
+                f.host.settings.memoryEnabled = false;
+                return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+            }
+            return { text: '继续方案' };
+        }, {}, 1);
+        f.host.settings.memoryEnabled = true;
+        const file = { path: 'A.md', extension: 'md' };
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockReturnValue(file as never);
+        await f.run({ images: undefined, prompt: '继续', chatHistory: history,
+            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+        expect(f.requests[0].stream).toBe(stage === 'answer');
+        expect(requestText(f.requests[0])).toContain('REVOKED_HISTORY_MEMORY');
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
+            { stream: stage === 'answer', retryCount: '1' },
+        ]);
+        expect(f.requests.length).toBeGreaterThan(1);
+        for (const request of f.requests.slice(1)) {
+            expect(requestText(request)).not.toContain('REVOKED_HISTORY_MEMORY');
+            expect(requestText(request)).toContain('KEEP_INDEPENDENT_CHOICES');
+        }
+        expect(JSON.stringify(history)).toBe(original);
+    });
+
+    it.each(['tags', 'backlinks'] as const)('withdraws %s aggregate evidence when its hidden source is excluded', async kind => {
+        const prompt = '先查全库再只用B';
+        const f = fixture((body, index) => {
+            if (index === 0) return { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: '先查全库', notes: 'vault', webAllowed: false } },
+                kind === 'tags' ? { name: 'list_vault_tags', input: {} }
+                    : { name: 'inspect_obsidian_note', input: { path: 'B.md' } },
+                { name: 'read_note_outline', input: { path: 'B.md' } },
+            ] };
+            if (index === 1) {
+                const match = requestText(body).match(/\{"handle":"([^"]+)","path":"B.md"\}/);
+                expect(match).not.toBeNull();
+                return { tool: { name: 'declare_source_scope', input: { instructionQuote: '只用B',
+                    notes: 'selected', noteHandles: [match![1]], webAllowed: false } } };
+            }
+            return { text: '按B继续' };
+        }, { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write'); } } as never });
+        const files = ['HIDDEN_SOURCE_A', 'B'].map(name => ({ path: `${name}.md`, name: `${name}.md`, basename: name,
+            extension: 'md', stat: { ctime: 1, mtime: 1, size: 0 } }));
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue(files as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => files.find(file => file.path === args[0]) as never);
+        jest.spyOn(f.host.app.metadataCache, 'getFileCache').mockImplementation((...args: unknown[]) => ({
+            tags: [{ tag: (args[0] as typeof files[0]).basename === 'B' ? '#B' : '#PRIVATE_AGGREGATE_A' }],
+            headings: [{ level: 1, heading: 'B_ALLOWED_OUTLINE' }],
+        }) as never);
+        Object.assign(f.host.app.metadataCache, { resolvedLinks: { 'HIDDEN_SOURCE_A.md': { 'B.md': 1 }, 'B.md': {} }, unresolvedLinks: {} });
+        await f.run({ images: undefined, prompt });
+        expect(f.requests).toHaveLength(3);
+        expect(requestText(f.requests[1])).toContain('HIDDEN_SOURCE_A');
+        expect(requestText(f.requests[2])).not.toContain('HIDDEN_SOURCE_A');
+        expect(requestText(f.requests[2])).not.toContain('PRIVATE_AGGREGATE_A');
+        expect(requestText(f.requests[2])).toContain('B_ALLOWED_OUTLINE');
+    });
+
+    it('does not promote a canonical status-only Memory reference into a revoked history dependency', async () => {
+        const f = fixture([{ text: 'Continue' }]);
+        await f.run({ images: undefined, prompt: '继续', chatHistory: [{ role: 'assistant', content: 'VALID_OLD_CHOICES',
+            canonicalTurn: { schemaVersion: 1, runId: 'prior', turnId: 'prior-turn', messages: [], sourceRecords: [
+                { kind: 'memory-reference', dedupKey: 'status', path: 'missing.md', statusOnly: true },
+            ] },
+        }] });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).toContain('VALID_OLD_CHOICES');
+    });
+
+    it.each(['answer', 'summary'] as const)('excludes only a revoked historical assistant reply from %s input', async stage => {
+        const history: ChatMessage[] = [
+            { role: 'user', content: '保留我的原始要求 ' + (stage === 'summary' ? 'context '.repeat(900) : '') },
+            { role: 'assistant', content: 'REVOKED_MIXED_REPLY with facts and proposals', memoryMetadata: {
+                hasMemoryContent: false, allowedMemorySourcePaths: [], sourceRecords: [
+                    { kind: 'context-used', dedupKey: 'A', path: 'A.md', sourceBoundary: 'read-only-tool' },
+                ],
+            } },
+            { role: 'assistant', content: 'KEPT_ALTERNATIVES 方案一；方案二' },
+            { role: 'user', content: '采用第二个方案' },
+        ];
+        const original = JSON.stringify(history);
+        const f = fixture(body => ({ text: body.stream ? '继续第二个方案' : JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [],
+        }) }));
+        // A is absent. Legacy messages without source metadata retain continuity.
+        await f.run({ images: undefined, prompt: '继续', chatHistory: history,
+            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+        expect(f.requests.length).toBeGreaterThan(0);
+        expect(f.requests.some(request => !request.stream)).toBe(stage === 'summary');
+        for (const request of f.requests) expect(requestText(request)).not.toContain('REVOKED_MIXED_REPLY');
+        const provided = f.requests.map(requestText).join('\n');
+        expect(provided).toContain('保留我的原始要求');
+        expect(provided).toContain('KEPT_ALTERNATIVES');
+        expect(provided).toContain('采用第二个方案');
+        expect(JSON.stringify(history)).toBe(original);
+    });
+
+    it.each(['answer', 'summary'] as const)('does not resend replaced history on a %s SDK retry', async stage => {
+        const history: ChatMessage[] = [
+            { role: 'user', content: 'OLD_HISTORY_TEXT ' + (stage === 'summary' ? 'earlier '.repeat(900) : '') },
+            { role: 'assistant', content: '方案一；方案二' },
+        ];
+        const f = fixture((_body, index) => {
+            if (index === 0) {
+                history[0].content = 'CORRECTED_HISTORY_TEXT';
+                return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+            }
+            return { text: '采用第二个方案' };
+        }, {}, 1);
+        await f.run({ images: undefined, prompt: '采用第二个', chatHistory: history,
+            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+        expect(requestText(f.requests[0])).toContain('OLD_HISTORY_TEXT');
+        expect(f.requests[0].stream).toBe(stage === 'answer');
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
+            { stream: stage === 'answer', retryCount: '1' },
+        ]);
+        expect(f.requests.length).toBeGreaterThan(1);
+        for (const request of f.requests.slice(1)) {
+            expect(requestText(request)).not.toContain('OLD_HISTORY_TEXT');
+            expect(requestText(request)).toContain('CORRECTED_HISTORY_TEXT');
+            expect(requestText(request)).toContain('方案一；方案二');
+        }
+    });
+
+    it.each(['answer', 'summary'] as const)('rejects a %s SDK retry containing a Vault result after same-path replacement', async stage => {
+        const prompt = '读取当前笔记';
+        let liveFile = { path: 'A.md', extension: 'md' };
+        let revokedAt = -1;
+        const f = fixture((body, index) => {
+            if (index === 0) return { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } },
+                { name: 'get_current_note_context', input: { mode: 'full' } },
+            ] };
+            if (revokedAt === -1 && requestText(body).includes('SERIALIZED_VAULT_SECRET')
+                && Boolean(body.stream) === (stage === 'answer')) {
+                revokedAt = index;
+                liveFile = { ...liveFile };
+                return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+            }
+            return { text: body.stream ? 'Source unavailable' : JSON.stringify({
+                goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [],
+            }) };
+        }, stage === 'summary' ? { answerStreamMaxObservationChars: 1200 } : {}, 1);
+        const captured = liveFile;
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file: captured,
+            editor: { getValue: () => 'SERIALIZED_VAULT_SECRET ' + 'material '.repeat(900), getSelection: () => '', lineCount: () => 1,
+                getLine: () => 'SERIALIZED_VAULT_SECRET', getCursor: () => ({ line: 0, ch: 0 }) } } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation(() => liveFile as never);
+        await f.run({ images: undefined, prompt });
+        expect(revokedAt).toBeGreaterThan(0);
+        expect(requestText(f.requests[revokedAt])).toContain('SERIALIZED_VAULT_SECRET');
+        expect(f.requests[revokedAt].stream).toBe(stage === 'answer');
+        // The SDK retry is blocked; the runtime may prepare a fresh invoke
+        // fallback. That request must contain no material from the old file.
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
+            { stream: stage === 'answer', retryCount: '1' },
+        ]);
+        expect(f.requests.length).toBeGreaterThan(revokedAt + 1);
+        for (const request of f.requests.slice(revokedAt + 1)) {
+            expect(requestText(request)).not.toContain('SERIALIZED_VAULT_SECRET');
+        }
+    });
+
+    it('removes earlier Vault material after narrowing to B while preserving B and Personal', async () => {
+        const prompt = '先读取两篇笔记，再只用B整理';
+        const f = fixture((body, index) => {
+            if (index === 0) return { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: '先读取两篇笔记', notes: 'vault', webAllowed: false } },
+                { name: 'read_note_outline', input: { path: 'A.md' } },
+                { name: 'read_note_outline', input: { path: 'B.md' } },
+            ] };
+            if (index === 1) {
+                const match = requestText(body).match(/\{"handle":"([^"]+)","path":"B.md"\}/);
+                expect(match).not.toBeNull();
+                return { tool: { name: 'declare_source_scope', input: {
+                    instructionQuote: '只用B整理', notes: 'selected', noteHandles: [match![1]], webAllowed: false,
+                } } };
+            }
+            return { text: '按B整理' };
+        }, { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write in read-only fixture'); } } as never });
+        const files = ['A', 'B'].map(name => ({ path: `${name}.md`, name: `${name}.md`, basename: name, extension: 'md' }));
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => files.find(file => file.path === args[0]) as never);
+        jest.spyOn(f.host.app.metadataCache, 'getFileCache').mockImplementation((...args: unknown[]) => ({
+            headings: [{ level: 1, heading: (args[0] as typeof files[0]).basename === 'A' ? 'A_PRIVATE_MATERIAL' : 'B_ALLOWED_MATERIAL' }],
+        }) as never);
+        f.host.settings.memoryEnabled = true;
+        f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: 'VALID_PERSONAL_BACKGROUND' });
+        await f.run({ images: undefined, prompt });
+        expect(f.lifecycle.filter(event => event.type === 'message_end' && event.message.role === 'toolResult').map(event => event.type === 'message_end' ? event.message : null)).not.toEqual(expect.arrayContaining([expect.objectContaining({ isError: true })]));
+        expect(f.requests).toHaveLength(3);
+        expect(requestText(f.requests[1])).toContain('A_PRIVATE_MATERIAL');
+        expect(requestText(f.requests[1])).toContain('B_ALLOWED_MATERIAL');
+        expect(requestText(f.requests[2])).not.toContain('A_PRIVATE_MATERIAL');
+        expect(requestText(f.requests[2])).toContain('B_ALLOWED_MATERIAL');
+        expect(requestText(f.requests[2])).toContain('VALID_PERSONAL_BACKGROUND');
+    });
+
     it('does not publish internal Memory path enumeration as a source directory', async () => {
         const prompt = 'Search my notes for a matching idea';
         const f = fixture([{ tools: [
@@ -477,7 +705,7 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
             expect(f.events.some((event) => event.kind === 'writing-recovery')).toBe(false);
         } else {
             expect(f.events.some((event) => event.kind === 'writing-artifact' || event.kind === 'answer-snapshot')).toBe(false);
-            expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({ rawText, reason: state });
+            expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({ rawText: state === 'source_changed' ? '' : rawText, reason: state });
         }
     });
 

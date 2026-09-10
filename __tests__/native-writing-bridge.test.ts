@@ -14,7 +14,9 @@ const raw = trace.deltas.map((delta) => delta.args).join("");
 const body = JSON.parse(raw).body as string;
 
 async function run(options: { truncate?: boolean; revoke?: boolean; mixed?: boolean; ordinary?: boolean; denyProof?: boolean; cancel?: boolean; preamble?: string;
-    cancelClosesCurrent?: boolean; previewCurrent?: () => boolean; deltas?: unknown[]; contextHandle?: string } = {}) {
+    cancelClosesCurrent?: boolean; previewCurrent?: () => boolean; deltas?: unknown[]; contextHandle?: string;
+    getContextHandle?: () => string | undefined; bridgeGetContextHandle?: () => string | undefined;
+    afterMessageStart?: () => void } = {}) {
     const contextHandle = options.contextHandle ?? handle;
     const events: LegacyAgentEvent[] = [];
     const lifecycle: AgentEvent[] = [];
@@ -23,10 +25,11 @@ async function run(options: { truncate?: boolean; revoke?: boolean; mixed?: bool
     const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter((event) => events.push(event)), undefined, {
         request, nativeContextHandle: contextHandle, maxTextChars: 20_000, isCurrent: () => current,
         isPreviewCurrent: options.previewCurrent,
+        getContextHandle: options.bridgeGetContextHandle ?? options.getContextHandle,
     });
     const loop = new PaAgentLoop({
         runId: "native-bridge", userInput: "Synthetic writing", signal: controller.signal,
-        nativeWriting: { contextHandle, maxTextChars: 20_000, isCurrent: () => current },
+        nativeWriting: { contextHandle, getContextHandle: options.getContextHandle, maxTextChars: 20_000, isCurrent: () => current },
         model: { stream: () => streamWithInvokeFallback({ input: {}, captureToolIdentity: true, chain: {
             stream: async function* () {
                 if (options.ordinary) {
@@ -54,6 +57,7 @@ async function run(options: { truncate?: boolean; revoke?: boolean; mixed?: bool
             lifecycle.push(event);
             adapter.handle(options.denyProof && event.type === "message_end"
                 ? { ...event, metadata: {} } : event);
+            if (event.type === "message_start" && event.message.role === "assistant") options.afterMessageStart?.();
         },
     });
     const result = await loop.run();
@@ -62,6 +66,37 @@ async function run(options: { truncate?: boolean; revoke?: boolean; mixed?: bool
 }
 
 describe("native writing bridge host gates", () => {
+    it("keeps the assistant-start handle after the host prepares a later context", async () => {
+        let selected: string | undefined = "run:writing:1";
+        const { result, events } = await run({ getContextHandle: () => selected,
+            afterMessageStart: () => { selected = "run:writing:2"; },
+            deltas: [{ id: "output", index: 0, name: "present_writing",
+                args: JSON.stringify({ body: "Prepared work", contextHandle: selected }) }],
+        });
+        expect(result.status).toBe("completed");
+        expect(events.filter((event) => event.kind === "writing-artifact")).toEqual([
+            expect.objectContaining({ requestId: request.requestId, body: "Prepared work" }),
+        ]);
+    });
+
+    it("does not retroactively authorize a response that began without a context", async () => {
+        let selected: string | undefined;
+        const { result, events } = await run({ getContextHandle: () => selected,
+            afterMessageStart: () => { selected = handle; },
+        });
+        expect(result.status).toBe("incomplete");
+        expect(events.some((event) => event.kind === "writing-artifact")).toBe(false);
+        expect(events.some((event) => event.kind === "writing-preview" && event.text.length > 0)).toBe(false);
+    });
+
+    it("requires a frozen bridge handle even when canonical output proof is valid", async () => {
+        const { result, events } = await run({ bridgeGetContextHandle: () => undefined });
+        expect(result.status).toBe("completed");
+        expect(events.some((event) => event.kind === "writing-artifact")).toBe(false);
+        expect(events.filter((event) => event.kind === "writing-recovery")).toEqual([
+            expect.objectContaining({ rawText: "", previewText: "" }),
+        ]);
+    });
     it("replays the real current-schema response through adapter, loop, preview and one artifact", async () => {
         const currentRequest = { requestId: 'b135-current-schema' };
         expect(currentSchemaTrace.declaration.schema).toEqual(nativeWritingOutputSchema(currentRequest));

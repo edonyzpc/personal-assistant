@@ -91,7 +91,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
         const { events } = await runWritingTail({ revokeAfterContent: true, omitFinish: true });
         expect(events.filter((event) => event.kind === "writing-preview").map((event) => event.text)).toEqual([body, ""]);
         expect(events.filter((event) => event.kind === "writing-recovery")).toEqual([
-            expect.objectContaining({ previewText: "" }),
+            expect.objectContaining({ previewText: "", rawText: "", reason: "source_changed" }),
         ]);
         expect(events.filter((event) => event.kind === "writing-artifact")).toEqual([]);
     });
@@ -114,7 +114,7 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
         const { events } = await runWritingTail(input);
         expect(events.filter((event) => event.kind === "writing-artifact")).toEqual([]);
         expect(events.filter((event) => event.kind === "writing-recovery")).toEqual([
-            expect.objectContaining({ rawText: input.raw ?? envelope, reason }),
+            expect.objectContaining({ rawText: reason === "source_changed" ? "" : input.raw ?? envelope, reason }),
         ]);
     });
 });

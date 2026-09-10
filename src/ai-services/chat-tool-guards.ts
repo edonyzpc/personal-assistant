@@ -158,6 +158,7 @@ export function isVaultTagsResult(content: unknown): content is VaultTagsOutput 
 }
 
 export function isChatToolName(name: string): name is ChatToolName {
+    if (name === "get_writing_context") return true;
     return name === "search_memory"
         || name === "resolve_chat_images"
         || name === "get_current_note_context"

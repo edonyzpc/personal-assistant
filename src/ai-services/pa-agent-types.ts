@@ -123,6 +123,11 @@ export interface PaAgentToolExecutor {
         toolCall: PaAgentToolCall,
         context: { userInput: string },
     ): string | undefined;
+    /** Only get_writing_context: true means this exact selection has a still-valid current receipt. */
+    canReuseWritingContext?(
+        toolCall: PaAgentToolCall,
+        context: { userInput: string },
+    ): boolean;
     prepareBatch?(
         input: PaAgentToolBatchPreparationInput,
     ): Promise<PaAgentToolBatchPreparationResult | void>;

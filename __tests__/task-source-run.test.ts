@@ -2,6 +2,7 @@ import type { Workspace } from 'obsidian';
 import type { MarkdownViewLike, VaultFileLike } from '../src/ai-services/chat-tool-execution-helpers';
 import type { ParsedBufferedToolCall } from '../src/ai-services/pa-agent-types';
 import type { TaskSourceConstraint } from '../src/ai-services/task-source-constraint';
+import type { ChatMessage, PaAgentMessage } from '../src/ai-services/chat-types';
 import { createTaskSourceConstrainedExecutor, DECLARE_SOURCE_SCOPE } from '../src/ai-services/task-source-executor';
 import {
     MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS,
@@ -68,6 +69,81 @@ function executorFor(run: TaskSourceRun) {
 }
 
 describe('Task source run host', () => {
+    it('projects known historical sources, retains legacy choices, and restores reauthorized history in a later run', () => {
+        const h = fixture();
+        const fromNote = (path: string): ChatMessage => ({ role: 'assistant', content: path === h.a.path ? 'A_FACT_AND_PROPOSAL' : 'B_FACT',
+            memoryMetadata: { hasMemoryContent: false, allowedMemorySourcePaths: [], sourceRecords: [
+                { kind: 'context-used', dedupKey: path, path, sourceBoundary: 'read-only-tool' },
+            ] } });
+        const history: ChatMessage[] = [fromNote(h.a.path), fromNote(h.b.path),
+            { role: 'assistant', content: 'legacy first and second choices' }, { role: 'user', content: 'use the second' }];
+        const run = h.create();
+        expect(run.projectHistory(history)).toEqual(history);
+        commit(run, { notes: 'selected', noteHandles: ['note_2'] });
+        expect(run.projectHistory(history)).toEqual(history.slice(1));
+        expect(history[0].content).toBe('A_FACT_AND_PROPOSAL');
+        // The next real request may authorize A again; no persisted history is deleted.
+        expect(h.create().projectHistory(history)).toEqual(history);
+    });
+
+    it('honors Memory off for legacy retrieval history without removing ordinary conversation', () => {
+        const h = fixture();
+        let enabled = true;
+        const run = new TaskSourceRun({ ...h.host, isMemoryAllowed: () => enabled });
+        const history: ChatMessage[] = [
+            { role: 'assistant', content: 'MEMORY_FACT', memoryMetadata: { hasMemoryContent: true,
+                allowedMemorySourcePaths: [h.a.path] } },
+            { role: 'assistant', content: 'ordinary alternatives' },
+        ];
+        expect(run.projectHistory(history)).toEqual(history);
+        enabled = false;
+        expect(run.projectHistory(history)).toEqual(history.slice(1));
+        enabled = true;
+        expect(run.projectHistory(history)).toEqual(history);
+    });
+
+    it.each(['disabled', 'deleted'] as const)('uses canonical Memory identity without a boundary field when %s', reason => {
+        const h = fixture();
+        if (reason === 'deleted') h.files.delete(h.a.path);
+        const run = new TaskSourceRun({ ...h.host, isMemoryAllowed: () => reason !== 'disabled' });
+        const history: ChatMessage[] = [{ role: 'assistant', content: 'OLD_CANONICAL_MEMORY',
+            canonicalTurn: { schemaVersion: 1, runId: 'old-run', turnId: 'old-turn', messages: [],
+                sourceRecords: [{ kind: 'memory-reference', dedupKey: 'memory-a', path: h.a.path }] },
+            // Canonical metadata owns this record; a stale empty fallback cannot clear it.
+            memoryMetadata: { hasMemoryContent: false, allowedMemorySourcePaths: [] },
+        }, { role: 'assistant', content: 'still-valid alternatives' }];
+        expect(run.projectHistory(history)).toEqual(history.slice(1));
+    });
+
+    it.each(['deleted', 'replaced', 'excluded'] as const)('removes %s evidence and its metadata without editing conversation history', reason => {
+        const h = fixture();
+        const run = h.create();
+        run.resolveNoteId(h.b.path);
+        commit(run, { notes: 'vault' });
+        const result: PaAgentMessage = {
+            role: 'toolResult', id: 'result-a', toolCallId: 'call-a', toolName: 'read_note_outline',
+            timestamp: 1, isError: false, content: {
+                promptText: 'OLD_BODY', previewText: 'OLD_PREVIEW', includeInNextPrompt: true,
+                metadata: { secret: 'OLD_METADATA' }, contextUsed: [{ category: 'current-note', label: 'OLD_LABEL' }],
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'a', sourceBoundary: 'read-only-tool', path: h.a.path }],
+            },
+        };
+        const user: PaAgentMessage = { role: 'user', id: 'user', timestamp: 0, content: '采用第二个方案' };
+        const assistant: PaAgentMessage = { role: 'assistant', id: 'assistant', timestamp: 0,
+            content: [{ type: 'text', text: '方案一；方案二' }] };
+        expect(run.projectTranscript([result])[0]).toBe(result);
+        if (reason === 'deleted') h.files.delete(h.a.path);
+        if (reason === 'replaced') h.files.set(h.a.path, { path: h.a.path });
+        if (reason === 'excluded') commit(run, { notes: 'selected', noteHandles: ['note_2'] });
+        const projected = run.projectTranscript([user, assistant, result]);
+        expect(projected[0]).toBe(user);
+        expect(projected[1]).toBe(assistant);
+        expect(JSON.stringify(projected)).not.toContain('OLD_');
+        expect(result.content.promptText).toBe('OLD_BODY');
+        expect(projected[2]).toMatchObject({ role: 'toolResult', toolCallId: 'call-a',
+            content: { metadata: { statusOnly: true } } });
+    });
+
     it('captures only current identity and path, without body, metadata or vault enumeration', () => {
         const h = fixture();
         const forbiddenRead = jest.fn(() => { throw new Error('No source contents or enumeration'); });

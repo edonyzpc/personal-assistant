@@ -164,6 +164,12 @@ export class CapabilityRegistry {
         return this.capabilities.get(name);
     }
 
+    /** A run may release only the exact capability instance it registered. */
+    unregister(capability: AgentCapability): boolean {
+        if (this.capabilities.get(capability.name) !== capability) return false;
+        return this.capabilities.delete(capability.name);
+    }
+
     getDefinition(name: string): ChatToolRegistryDefinition | undefined {
         return this.get(name)?.toRegistryDefinition();
     }

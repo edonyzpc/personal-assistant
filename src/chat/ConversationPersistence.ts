@@ -2,6 +2,15 @@ import type { ChatMessage } from "../ai-services/chat-service";
 import type { TimelineEntry } from "./types";
 import type { ChatHistoryManager } from "./chat-history-manager";
 import type { PersistedConversation, PersistedTurn } from "./chat-history-store";
+import type { WritingVersionService } from './writing-versions';
+import { cloneWritingVersion, type WritingVersion } from './writing-types';
+import { throwIfAborted } from '../ai-services/chat-utils';
+
+export interface WritingCandidateSnapshot {
+    conversationId: string | null;
+    candidates: WritingVersion[];
+    isParentCurrent(parent: WritingVersion): boolean;
+}
 
 export interface HydratedConversation {
     chatHistory: ChatMessage[];
@@ -32,6 +41,49 @@ export class ConversationPersistence {
 
     get activeConversationId(): string | null {
         return this.activeId;
+    }
+
+    async prepareWritingCandidates(versions: Pick<WritingVersionService, 'get'>, input: {
+        getAllowedVersionIds(): readonly string[];
+        isCurrent(): boolean;
+        signal?: AbortSignal;
+    }): Promise<WritingCandidateSnapshot> {
+        const conversationId = this.activeId;
+        const assertCurrent = () => {
+            throwIfAborted(input.signal);
+            if (!input.isCurrent() || this.activeId !== conversationId) throw new Error('Writing conversation changed');
+        };
+        assertCurrent();
+        if (!conversationId) return { conversationId: null, candidates: [], isParentCurrent: () => false };
+        const manager = await this.getReadyManager();
+        assertCurrent();
+        if (!manager) throw new Error('Writing history unavailable');
+        const sourceCurrent = manager.captureSourceLifetime(conversationId);
+        const capturedIds = new Set(input.getAllowedVersionIds());
+        const stillAllowed = (id: string) => input.isCurrent() && this.activeId === conversationId
+            && this.options.getManager() === manager && sourceCurrent()
+            && capturedIds.has(id) && input.getAllowedVersionIds().includes(id);
+        const candidates: WritingVersion[] = [];
+        for (const id of capturedIds) {
+            assertCurrent();
+            if (!stillAllowed(id)) throw new Error('Writing candidate scope changed');
+            const version = await versions.get(id);
+            assertCurrent();
+            if (!stillAllowed(id)) throw new Error('Writing candidate scope changed');
+            if (version && version.conversationId === conversationId) candidates.push(cloneWritingVersion(version));
+        }
+        assertCurrent();
+        if (!sourceCurrent() || this.options.getManager() !== manager || candidates.some(version => !stillAllowed(version.id))) {
+            throw new Error('Writing candidate scope changed');
+        }
+        const identities = new Map(candidates.map(version => [version.id, JSON.stringify(version)]));
+        return {
+            conversationId, candidates: candidates.map(cloneWritingVersion),
+            isParentCurrent: parent => {
+                try { return stillAllowed(parent.id) && identities.get(parent.id) === JSON.stringify(cloneWritingVersion(parent)); }
+                catch { return false; }
+            },
+        };
     }
 
     get imageAnchor(): PersistedConversation['imageAnchor'] {
@@ -259,15 +311,18 @@ export class ConversationPersistence {
     persistFinalizedTurn(
         prompt: string,
         entry: TimelineEntry,
-        beforeRecord?: (context: { conversationId: string; turnIndex: number }) => Promise<void>,
+        beforeRecord?: (context: { conversationId: string; turnIndex: number }, isCurrent: () => boolean) => Promise<void>,
     ): Promise<boolean> {
         if (entry.kind !== 'history') return Promise.resolve(true);
         this.unpersistedFinalizedEntries.add(entry);
+        const entryIndices = this.persistedTurnIndexByEntry;
+        const manager = this.options.getManager();
+        const isCurrent = () => this.persistedTurnIndexByEntry === entryIndices && this.options.getManager() === manager;
         let persisted = false;
         const next = this.persistChain
             .catch(() => undefined)
             .then(async () => {
-                persisted = await this.runPersistFinalizedTurn(prompt, entry, beforeRecord);
+                persisted = await this.runPersistFinalizedTurn(prompt, entry, entryIndices, isCurrent, beforeRecord);
             });
         this.persistChain = next;
         return next.then(() => persisted);
@@ -276,11 +331,14 @@ export class ConversationPersistence {
     private async runPersistFinalizedTurn(
         prompt: string,
         entry: TimelineEntry,
-        beforeRecord?: (context: { conversationId: string; turnIndex: number }) => Promise<void>,
+        entryIndices: WeakMap<TimelineEntry, number>,
+        isCurrent: () => boolean,
+        beforeRecord?: (context: { conversationId: string; turnIndex: number }, isCurrent: () => boolean) => Promise<void>,
     ): Promise<boolean> {
         if (entry.kind !== 'history') return true;
+        if (!isCurrent()) return false;
         const manager = await this.getReadyManager();
-        if (!manager) return false;
+        if (!manager || !isCurrent()) return false;
 
         try {
             let conversation = this.activeConversation;
@@ -288,6 +346,7 @@ export class ConversationPersistence {
             if (!conversation || !conversationId) {
                 const created = this.initialImageAnchor
                     ? await manager.startConversation(prompt, this.initialImageAnchor) : await manager.startConversation(prompt);
+                if (!isCurrent()) return false;
                 conversation = created;
                 conversationId = created.id;
                 this.activeConversation = conversation;
@@ -295,7 +354,8 @@ export class ConversationPersistence {
                 this.nextTurnIndex = 0;
             }
             const turnIndex = this.nextTurnIndex;
-            if (beforeRecord) await beforeRecord({ conversationId, turnIndex });
+            if (beforeRecord) await beforeRecord({ conversationId, turnIndex }, isCurrent);
+            if (!isCurrent()) return false;
             const updated = await manager.recordTurn({
                 conversationId,
                 turnIndex,
@@ -303,9 +363,20 @@ export class ConversationPersistence {
                 userPrompt: prompt,
                 conversation,
             });
-            this.activeConversation = updated;
-            this.nextTurnIndex = turnIndex + 1;
-            this.persistedTurnIndexByEntry.set(entry, turnIndex);
+            // A write already admitted may finish after a view reopens. Keep its
+            // durable result without moving the newly hydrated conversation cursor.
+            if (isCurrent()) {
+                this.activeConversation = updated;
+                this.nextTurnIndex = turnIndex + 1;
+            } else if (this.options.getManager() === manager && this.activeId === conversationId && this.activeConversation) {
+                // Reopening this same conversation can hydrate before the admitted
+                // write finishes. Reserve its committed index without replacing
+                // the reopened view's metadata with the older snapshot.
+                this.nextTurnIndex = Math.max(this.nextTurnIndex, turnIndex + 1);
+                this.activeConversation = { ...this.activeConversation,
+                    turnCount: Math.max(this.activeConversation.turnCount, updated.turnCount) };
+            }
+            entryIndices.set(entry, turnIndex);
             this.unpersistedFinalizedEntries.delete(entry);
             try {
                 this.options.scheduleMemoryExtractionAfterChatTurn?.(conversationId, updated.turnCount);
@@ -343,23 +414,29 @@ export class ConversationPersistence {
     /** Attach an explicitly recovered version to the existing turn, without a new chat or extraction event. */
     reviseFinalizedTurn(
         entry: TimelineEntry,
-        prepare: (context: { conversationId: string; turnIndex: number }) => Promise<void>,
+        prepare: (context: { conversationId: string; turnIndex: number }, isCurrent: () => boolean) => Promise<void>,
     ): Promise<boolean> {
         if (entry.kind !== 'history') return Promise.resolve(false);
         const conversationId = this.activeId;
+        const entryIndices = this.persistedTurnIndexByEntry;
+        const originalManager = this.options.getManager();
         const turnIndex = this.persistedTurnIndexByEntry.get(entry);
         if (!conversationId || turnIndex === undefined) return Promise.resolve(false);
+        const isCurrent = () => this.persistedTurnIndexByEntry === entryIndices
+            && this.activeId === conversationId && this.options.getManager() === originalManager
+            && entryIndices.get(entry) === turnIndex;
         let persisted = false;
         const next = this.persistChain.catch(() => undefined).then(async () => {
+            if (!isCurrent()) return;
             const manager = await this.getReadyManager();
-            if (!manager || this.activeId !== conversationId) return;
+            if (!manager || !isCurrent()) return;
             const conversation = await manager.findConversation(conversationId);
-            if (!conversation || this.activeId !== conversationId) return;
-            await prepare({ conversationId, turnIndex });
-            if (this.activeId !== conversationId) return;
+            if (!conversation || !isCurrent()) return;
+            await prepare({ conversationId, turnIndex }, isCurrent);
+            if (!isCurrent()) return;
             const updated = await manager.recordTurn({ conversationId, turnIndex, entry,
                 userPrompt: entry.user.content, conversation });
-            if (this.activeId === conversationId) this.activeConversation = updated;
+            if (isCurrent()) this.activeConversation = updated;
             persisted = true;
         }).catch((error) => this.options.log('Failed to attach recovered writing version', error));
         this.persistChain = next;

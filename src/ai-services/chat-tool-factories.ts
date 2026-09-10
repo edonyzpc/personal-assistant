@@ -32,6 +32,8 @@ import type {
     VaultTagsOutput,
 } from "./chat-tool-types";
 import { OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS } from "./chat-tool-types";
+import type { SourceRecord } from "./chat-types";
+import { createSourceDedupKey } from "./source-store";
 import { assertTaskSourceReadCurrent, isTaskSourcePathAllowed, type TaskSourceReadGuard } from "./task-source-read-guard";
 import {
     CANVAS_MAX_READ_BYTES,
@@ -743,10 +745,12 @@ export function createInspectObsidianNoteTool(
             const readResult = await readVaultFileWithBudget(context.host, file, INSPECT_NOTE_MAX_READ_BYTES);
             throwIfAborted(context.signal);
             const unavailableSources = getUnavailableNoteStructureSources(context.host, metadataCache);
+            const dependencyPaths = new Set<string>();
             const structure = buildNoteStructureSummary(file, cache, readResult.content, metadataCache, unavailableSources, {
                 truncated: readResult.truncated,
                 skippedSources: readResult.skippedForSize ? [VAULT_FILE_READ_SKIPPED_SIZE_SOURCE] : [],
                 omittedCount: readResult.truncated ? 1 : 0,
+                onSourceRead: path => dependencyPaths.add(path),
             });
             const includeContentChars = normalizeContentCharLimit(options.includeContentChars);
             const content = includeContentChars > 0
@@ -762,6 +766,7 @@ export function createInspectObsidianNoteTool(
                 inputSummary: file.path,
                 content,
                 sources: [{ path: file.path }],
+                sourceRecords: createMetadataDependencyRecords("inspect_obsidian_note", dependencyPaths),
             };
         },
     }, options);
@@ -1107,14 +1112,31 @@ export function createListVaultTagsTool(): ChatToolDefinition<ListVaultTagsInput
         validateInput: validateListVaultTagsInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const result = await listVaultTags(context.host, input.limit, context.signal);
+            const dependencyPaths = new Set<string>();
+            const result = await listVaultTags(context.host, input.limit, context.signal, path => dependencyPaths.add(path));
             return {
                 ok: true,
                 tool: "list_vault_tags",
                 inputSummary: `limit:${input.limit}`,
                 content: result,
                 sources: [],
+                sourceRecords: createMetadataDependencyRecords("list_vault_tags", dependencyPaths),
             };
         },
     });
+}
+
+/** Host-only lifetime dependencies; never add these paths to the visible source list. */
+function createMetadataDependencyRecords(capabilityName: string, paths: ReadonlySet<string>): SourceRecord[] {
+    return [...paths].map(path => ({
+        kind: "context-used",
+        dedupKey: createSourceDedupKey(path),
+        capabilityName,
+        sourceBoundary: "read-only-tool",
+        path,
+        statusOnly: true,
+        redacted: true,
+        citationEligible: false,
+        metadata: { sourceDependency: true },
+    }));
 }

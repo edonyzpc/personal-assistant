@@ -24,7 +24,7 @@ import type {
 } from "./chat-types";
 import { ModelChunkConsumer, appendTextPart } from "./pa-agent-chunk-consumer";
 import { NativeWritingCallCollector } from "./native-writing-call";
-import type { NativeWritingOutput } from "./writing-output";
+import { isValidWritingContextHandle, type NativeWritingOutput } from "./writing-output";
 import {
     ToolExecutionDispatcher,
     defaultIncludeInNextPrompt,
@@ -197,7 +197,7 @@ export interface PaAgentLoopOptions {
     userImages?: import("../chat/image-types").MessageImage[];
     writingRequest?: import("./chat-types").ChatWritingRequest;
     /** Host opt-in only. Pagelet and existing text output retain their own protocol. */
-    nativeWriting?: { contextHandle: string; maxTextChars: number; isCurrent: () => boolean };
+    nativeWriting?: { contextHandle: string; getContextHandle?: () => string | undefined; maxTextChars: number; isCurrent: () => boolean };
     userMessageContent?: UserMessageContent;
     model: PaAgentModel;
     /** Request-local projection hook invoked before every logical model request. */
@@ -733,9 +733,16 @@ export class PaAgentLoop {
         toolMode?: PaAgentToolMode,
         controlSnapshot?: AgentControlSnapshot,
     ): Promise<PaAgentTurnSummary> {
+        // A handle prepared during this response cannot authorize its own output.
+        let nativeContextHandle: string | undefined;
+        try {
+            const writing = this.options.nativeWriting;
+            nativeContextHandle = writing?.getContextHandle ? writing.getContextHandle() : writing?.contextHandle;
+        } catch { /* Unavailable host context grants no output authority. */ }
+        if (!isValidWritingContextHandle(nativeContextHandle)) nativeContextHandle = undefined;
         // Recompute from the host run contract on each turn rather than inheriting
         // model data or treating a source-tool allowlist as output authority.
-        if (this.options.nativeWriting) {
+        if (this.options.nativeWriting && nativeContextHandle !== undefined) {
             controlSnapshot = {
                 ...(controlSnapshot ?? createAgentControlSnapshot()),
                 writingOutput: "present_writing",
@@ -819,7 +826,7 @@ export class PaAgentLoop {
         const diagnostics: Array<Record<string, unknown>> = [];
         const metrics: Array<Record<string, unknown>> = [];
         const nativeCollector = this.options.nativeWriting
-            ? new NativeWritingCallCollector(this.options.nativeWriting.contextHandle, this.options.nativeWriting.maxTextChars)
+            ? new NativeWritingCallCollector(nativeContextHandle ?? "", this.options.nativeWriting.maxTextChars)
             : undefined;
 
         let iterator: AsyncIterator<PaAgentModelStreamChunk> | undefined;
@@ -1007,7 +1014,7 @@ export class PaAgentLoop {
                 nativeCollector.consume(chunk);
                 if (nativeCollector.hasWritingCall && !nativeCollector.isCandidate) {
                     this.events.messageUpdate(turnId, assistantMessage.id, { kind: "toolcall_delta", text: "" }, {
-                        nativeWritingContextHandle: this.options.nativeWriting!.contextHandle,
+                        nativeWritingContextHandle: nativeContextHandle,
                         nativeWritingArguments: "",
                     });
                     terminalStatus = "incomplete";
@@ -1093,7 +1100,7 @@ export class PaAgentLoop {
                         toolCallId: buffer.id,
                         index: buffer.index,
                     }, nativeCollector?.isCandidate ? {
-                        nativeWritingContextHandle: this.options.nativeWriting!.contextHandle,
+                        nativeWritingContextHandle: nativeContextHandle,
                         nativeWritingArguments: nativeCollector.rawArguments,
                     } : undefined);
                     break;
@@ -1182,7 +1189,7 @@ export class PaAgentLoop {
         const modelElapsedMs = elapsedSince(modelStartedAt, this.now());
         this.events.messageEnd(turnId, assistantMessage, {
             transportOutcome,
-            ...(nativeWriting ? { nativeWritingContextHandle: this.options.nativeWriting!.contextHandle,
+            ...(nativeWriting ? { nativeWritingContextHandle: nativeContextHandle,
                 nativeWritingValidated: true } : {}),
             timing: {
                 elapsedMs: modelElapsedMs,

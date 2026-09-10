@@ -1,5 +1,5 @@
 import type { PaAgentModelStreamChunk } from "./pa-agent-types";
-import { decodeNativeWritingOutput, type NativeWritingOutput } from "./writing-output";
+import { decodeNativeWritingOutput, isValidWritingContextHandle, type NativeWritingOutput } from "./writing-output";
 
 type ToolCallDelta = Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }>;
 const WRITING_TOOL_NAME = "present_writing";
@@ -22,7 +22,7 @@ export class NativeWritingCallCollector {
     private structuredOutput?: NativeWritingOutput;
 
     constructor(private readonly contextHandle: string, private readonly maxTextChars: number) {
-        if (!/^[A-Za-z0-9_-]{1,128}$/.test(contextHandle)
+        if (!isValidWritingContextHandle(contextHandle)
             || !Number.isSafeInteger(maxTextChars) || maxTextChars <= 0) this.reject();
     }
 

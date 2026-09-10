@@ -263,7 +263,7 @@ describe("NativeWritingCallCollector", () => {
         expectRejected(collector);
     });
 
-    it.each(["", "invalid handle", "a".repeat(129)])("rejects invalid context handles: %s", (contextHandle) => {
+    it.each(["", "invalid handle", "a".repeat(257)])("rejects invalid context handles: %s", (contextHandle) => {
         const collector = new NativeWritingCallCollector(contextHandle, budget);
         collector.consume(delta({ argsText: raw }));
         expectRejected(collector);
