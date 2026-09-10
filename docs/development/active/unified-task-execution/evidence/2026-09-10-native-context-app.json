@@ -1,0 +1,429 @@
+{
+  "scope": "B-135/T-03,T-16: deployed Obsidian ChatService native compatibility candidate; synthetic text only; no UI interaction acceptance",
+  "artifactSha256": "970133f248bc37a07ec505a1f2ab57885758898a598e3eb94ae00f98bb6dec92",
+  "vault": "/mnt/code/personal-assistant/test",
+  "provider": "qwen",
+  "model": "qwen3.8-max",
+  "startedAt": 1789018015535,
+  "elapsedMs": 38285,
+  "prompt": "这是 B-135 兼容验证，以下均为合成材料。不要读取笔记、Memory、网页或其他来源。请先调用 get_writing_context：parentHandle=null、scene=null、currentInstructionConflicts=false、imageRefs=[]；收到结果后用 present_writing 原样交付下面 JSON 字符串的解码内容，explanation 为空，不添加前言或确认回复。正文 JSON 字符串：\"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\"",
+  "expected": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂\n",
+  "status": "completed",
+  "physicalRequests": 3,
+  "modelConstructions": 3,
+  "stylePreparations": [
+    {
+      "scene": null,
+      "currentInstructionConflicts": false
+    }
+  ],
+  "artifactCount": 1,
+  "bodyExact": true,
+  "assistantCalls": [
+    {
+      "messageId": "message_assistant_2",
+      "stopReason": "tool_calls",
+      "providerCompletion": "tool_calls",
+      "calls": [
+        {
+          "type": "toolCall",
+          "id": "call_cdba386eaa5c4419810641a2",
+          "name": "declare_source_scope",
+          "input": "{\"instructionQuote\": \"不要读取笔记、Memory、网页或其他来源。\", \"notes\": \"none\", \"webAllowed\": false}",
+          "index": 0
+        },
+        {
+          "type": "toolCall",
+          "id": "call_facd2cf9abba4ec08b046ce7",
+          "name": "get_writing_context",
+          "input": "{\"parentHandle\": null, \"scene\": null, \"currentInstructionConflicts\": false, \"imageRefs\": \n[]\n\n}",
+          "index": 1
+        }
+      ]
+    },
+    {
+      "messageId": "message_assistant_6",
+      "stopReason": "tool_calls",
+      "providerCompletion": "tool_calls",
+      "calls": [
+        {
+          "type": "toolCall",
+          "id": "call_1dd0f813dbf0426585826476",
+          "name": "declare_source_scope",
+          "input": "{\"instructionQuote\": \"不要读取笔记、Memory、网页或其他来源。\", \"notes\": \"none\", \"webAllowed\": false}",
+          "index": 0
+        },
+        {
+          "type": "toolCall",
+          "id": "call_e0633ad254c24e9e89650f0f",
+          "name": "get_writing_context",
+          "input": "{\"parentHandle\": null, \"scene\": null, \"currentInstructionConflicts\": false, \"imageRefs\": \n[]\n\n}",
+          "index": 1
+        }
+      ]
+    },
+    {
+      "messageId": "message_assistant_10",
+      "stopReason": "tool_calls",
+      "providerCompletion": "tool_calls",
+      "calls": [
+        {
+          "type": "toolCall",
+          "id": "call_32bbe948a5ee468e8e3c6171",
+          "name": "present_writing",
+          "input": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1\", \"explanation\": \"\"}",
+          "index": 0
+        }
+      ]
+    }
+  ],
+  "toolResults": [
+    {
+      "tool": "declare_source_scope",
+      "error": false,
+      "content": {
+        "promptText": "Task-material scope accepted. Personalization, Memory controls, source exclusions and write confirmation remain independently enforced.",
+        "includeInNextPrompt": true,
+        "metadata": {
+          "outcome": "control_applied",
+          "sourceScopeControl": true,
+          "preflightOnly": true,
+          "scopeRevision": 1,
+          "originalLength": 135,
+          "observationChars": 135
+        }
+      }
+    },
+    {
+      "tool": "get_writing_context",
+      "error": false,
+      "content": {
+        "promptText": "{\n  \"tool\": \"get_writing_context\",\n  \"status\": \"ok\",\n  \"input\": \"Requested writing context\",\n  \"observation\": {\n    \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1\",\n    \"parent\": null,\n    \"images\": [],\n    \"style\": {\n      \"context\": \"\",\n      \"revisionIds\": []\n    }\n  }\n}",
+        "previewText": "{\n  \"tool\": \"get_writing_context\",\n  \"status\": \"ok\",\n  \"input\": \"Requested writing context\",\n  \"observation\": {\n    \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1\",\n    \"parent\": null,\n    \"images\": [],\n    \"style\": {\n      \"context\": \"\",\n      \"revisionIds\": []\n    }\n  }\n}",
+        "includeInNextPrompt": true,
+        "sourceRecords": [],
+        "contextUsed": [
+          {
+            "category": "read-only-tool",
+            "label": "Read-only tool",
+            "detail": "get_writing_context output",
+            "sources": [],
+            "citationEligible": false
+          }
+        ],
+        "metadata": {
+          "outcome": "success",
+          "tool": "get_writing_context",
+          "toolCallId": "call_facd2cf9abba4ec08b046ce7",
+          "inputSummary": "Requested writing context",
+          "ok": true,
+          "sourceRecordCount": 0,
+          "contextUsedCount": 1,
+          "executionElapsedMs": 2,
+          "originalLength": 277,
+          "observationChars": 277
+        }
+      }
+    },
+    {
+      "tool": "declare_source_scope",
+      "error": false,
+      "content": {
+        "promptText": "Task-material scope accepted. Personalization, Memory controls, source exclusions and write confirmation remain independently enforced.",
+        "includeInNextPrompt": true,
+        "metadata": {
+          "outcome": "control_applied",
+          "sourceScopeControl": true,
+          "preflightOnly": true,
+          "scopeRevision": 2,
+          "originalLength": 135,
+          "observationChars": 135
+        }
+      }
+    },
+    {
+      "tool": "get_writing_context",
+      "error": false,
+      "content": {
+        "promptText": "",
+        "previewText": "Skipped duplicate tool call get_writing_context.",
+        "includeInNextPrompt": false,
+        "metadata": {
+          "outcome": "duplicate_skipped",
+          "reason": "duplicate_tool_call",
+          "originalLength": 0,
+          "observationChars": 0
+        }
+      }
+    }
+  ],
+  "nativeArgumentUpdates": [
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": ""
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "{\"body\": ",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": "
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "\"第一",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "行：“安静且",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "可信。”\\n第二",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "行：保留 ",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留 "
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": " 两个空格。",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "🙂\\n",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "\"",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\""
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": ", \"contextHandle\": ",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": "
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "\"run_mtv3",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv3"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "4vg4_",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "1qbsd2",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd2"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "4f:writing",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": ":1",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1"
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "\"",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1\""
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": ", \"explanation\": \"",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1\", \"explanation\": \""
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "\"",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1\", \"explanation\": \"\""
+      }
+    },
+    {
+      "messageId": "message_assistant_10",
+      "update": {
+        "kind": "toolcall_delta",
+        "text": "}",
+        "toolCallId": "call_32bbe948a5ee468e8e3c6171",
+        "index": 0
+      },
+      "metadata": {
+        "nativeWritingContextHandle": "run_mtv34vg4_1qbsd24f:writing:1",
+        "nativeWritingArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：保留  两个空格。🙂\\n\", \"contextHandle\": \"run_mtv34vg4_1qbsd24f:writing:1\", \"explanation\": \"\"}"
+      }
+    }
+  ],
+  "artifact": {
+    "version": 1,
+    "turnId": "turn_mtv34vg9_ijvex4b2",
+    "seq": 394,
+    "timestamp": 1789018053820,
+    "kind": "writing-artifact",
+    "runId": "run_mtv34vg4_1qbsd24f",
+    "requestId": "b135-live-context-20260910",
+    "messageId": "message_assistant_10",
+    "body": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂\n",
+    "explanation": "",
+    "associatedImages": [],
+    "writingContext": {},
+    "styleRevisionIds": []
+  },
+  "limits": [
+    "Host read sources and personalization were isolated for this protocol fixture; no real notes or governed sample content sent.",
+    "One duplicate preparation proposal occurred; the host executed style preparation once. No post-artifact acknowledgement request.",
+    "No real UI/device interaction proof, no default native rollout, no aggregate model quality or cost acceptance."
+  ]
+}

@@ -2,7 +2,7 @@
 
 Document status: Current
 Delivery status: Implementing
-Updated: 2026-09-09
+Updated: 2026-09-10
 Work item: B-135
 Authority: 本 track 全部新增工作的唯一执行状态、finding、验证证据与 closeout readiness。
 Product spec: [Unified Agent Task Execution](../../../product/specs/pa-unified-task-execution-product-spec.md)
@@ -12,10 +12,12 @@ SDD: [Software Design Document](./sdd.md)
 ## Current Snapshot
 
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: T-13已将真实用户消息ID、scope控制schema、完整读计划、真实文件身份/动态句柄及Memory范围快照连入生产run；独立控制轮和图片队列调用级读门已修复并定向验证。下一片从T-14实际runtime读取A/B→收窄仅B反例开始，补普通Vault结果、完整历史/派生来源及每次物理输入；自然语言质量、真实模型及完整App门仍未通过，不能把生产接线等同整项交付。
+- Next action: T-16真实自然语言准备循环已有定向修复及同案例复验；继续处理T-03逐字复写语义质量、T-14完整用途/历史、T-18来源/治理到最终存储准入与多版本失败继续。完整兼容和App/device退出门通过前不切默认native。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 本片冻结组合15 suites/589 tests PASS（12.64s，自然exit0），覆盖生产scope/独立控制轮、动态句柄、Memory/Operations/skill/图片、completion与SDK transport；最终tsc及定向lint自然exit0。具体命令、docs/diff/DOM检查见Work。此前T-14摘要当前性及Personal/Memory刷新4 suites/161 tests等仅按未变输入复用，当前修改后未重新build/部署。此前D11冻结输入完整lint/build、254 suites/6974 tests PASS自然exit0；test库仍加载历史main.js（SHA256 `898fed3a1f9910194e83487b641c8300e5e4f795de5c3c597fd71afb64d763dd`），旧App证据不证明新增范围检索或请求刷新运行。Qwen合成语义fixture仍仅是provider组件证据。
-- Workspace: `/tmp/pa-b135-docs`，开发分支 `codex/b135-discussion-followup`，本次累计改动基线 `c923ee22089ef3e669b275718bce6052e98d7749`。Owner 2026-09-09 已授权将当前修改分组提交并推送同名远程开发分支；接手时以该分支实际HEAD/tree核验交付，不把这里的基线当最新提交。基线与main工作区master `8be89c4c` 仅发布治理/工具规则不同；构建/测试复用仍以实际输入为准。main工作区本轮核对干净。
+- Last verified behavior: 冻结门273 suites/7432 tests自然PASS后，scene schema及准备状态提示窄改动分别以聚焦测试/定向lint/生产build验证；最新6 suites/104 tests自然PASS。当前构建`1e474479ad21079d7f188b8ae2e8fed50da012998ad8ab7420812f34c2e5d8ed`已部署重载，同自然语言案例由14请求/12准备变为2请求/1准备，57505ms、一个版本、无ack；原文标签/引号仍丢失，逐字要求FAIL。上一构建真实手工编辑与唯一测试笔记保存通过、零新模型请求。全门不冒充在最新提示上重跑；DOM驱动仅app-runtime，full-ui/iOS未验收。
+- Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
+- Execution hold: Owner 2026-09-10因接近weekly limit要求完成正在执行的工作、提交推送开发分支后立即暂停Goal。当前检查已自然结束，后续不启动新开发/测试/provider工作；恢复须Owner明确继续。Goal控件暂停由用户操作，工具不支持该状态，不将目标误标Complete或Blocked。
+- Workspace: `/tmp/pa-b135-completion`，开发分支 `codex/b135-completion`，从已推送的`4591434f7df1499b11f0143240d38b99165fc9bc`恢复；原`/tmp/pa-b135-docs`临时目录已不存在。本次累计增量按runtime/tests与docs/evidence两部分提交，交付目标为`origin/codex/b135-completion`；最终SHA及live远程核对以本次交付回执为准。旧远程`codex/b135-discussion-followup`保留前次检查点。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
 - Authorization: 既有全量实施授权继续适用；此前逐项讨论轮记录真实产品答复，随后按已确认方案持续实施。Owner 于2026-09-09明确要求“为当前修改创建commits并推送到远程开发分支”，授权本次累计B-135代码/测试/方案提交到origin的同名开发分支；不包含PR、master合并、tag、release或closeout。新产品偏差仍须单独决定。
 
@@ -35,8 +37,129 @@ SDD: [Software Design Document](./sdd.md)
 | D9 | Confirmed — Owner 本次请求 | 旧 track 已交付或 closeout 的相关接缝不重开；本次所有增量与组合验收都在 B-135，必要的稳定契约修订保留有日期来源 | T-01/T-22；旧过程文件无本次新增 diff，历史证据不改写为新默认 PASS |
 | D10 | Confirmed — Owner 2026-09-09 对拆开新提取与已有画像使用答复“同意” | 关闭/暂停长期提取只停止新学习；已有有效 Personal 可继续用于后续模型输入，仍受 Memory 主开关、来源有效性、治理、排除、遗忘与预算控制。显式 style 保留独立授权/撤销规则；设置说明明确停止学习不等于停止使用已有背景 | T-11 联同 T-08/T-09：停提取零新学习但已有画像可用；关闭 Memory、删除/遗忘、来源失效即禁止相应读取/投影；覆盖保存失败、重载和实际 provider 输入，不以字段解耦冒充验收 |
 | D11 | Confirmed — Owner 2026-09-09 对明确版本边界建议答复“同意” | 新语义凭据采用明确格式版本；降级旧版时保留治理库数据并停止该库的读取/确认/恢复，升级回来再恢复使用。接受旧版暂不能操作该治理库的代价；原笔记不修改 | T-04/T-10/T-19 全量跟踪：旧 parser 拒绝未知版本仅是局部证据；必须验证旧插件 bootstrap、普通保存、确认、恢复、legacy 画像路径及重新升级的数据保真。不得清空、覆盖或绕过治理库拒绝结果；产品批准不代表安全降级已验证 |
+| D12 | Confirmed — Owner 2026-09-10“接受，仅排除受影响的旧回复” | 旧助手回复含已撤销材料且无可靠段落级拆分时，仅暂时排除该条模型输入；界面原文及其他消息保留，来源重新获准有效后可恢复 | T-14原文/摘要/SDK同门，未知legacy不整体删除；已实现定向验证，不替代完整历史/作品快照及App门 |
 
 ## Work
+
+2026-09-10准备状态修复结果：[修复前循环及编辑保存](evidence/2026-09-10-native-context-loop-and-save.json)保留14请求/170140ms、12个不同scene、正文标签/引号丢失；实际版本面板手工编辑产生第二版及正确parent，预览后确认唯一合成笔记，正文/hash/user_edited provenance/完成receipt一致，模型请求保持14。[同输入修复后](evidence/2026-09-10-native-preparation-state.json)为2请求/57505ms、1准备、1作品版本，无后置ack；正文仍漏标签/引号，逐字FAIL不隐去，单样例不推断固定提速比例。隔离host禁笔记/网页/背景/提取，结果不覆盖Personal/style/图片组合；视图与服务已释放，用户原视图恢复，合成笔记保留为回执。
+
+状态提示先以实际runtime provider输入断言RED，再按有效receipt切换已准备/需准备指导；保留父候选目录和get_writing_context可用性，不模糊scene去重、不放宽来源/权限。逐字指导补充标签/引号仍未使上述模型样例通过。最终6 suites/104 tests自然PASS（2.455s），生产build（含tsc）、三源文件ESLint、diff自然exit0；独立只读复核无新增具体P1/P2。当前构建与test部署hash均为`1e474479ad21079d7f188b8ae2e8fed50da012998ad8ab7420812f34c2e5d8ed`。此次不重复完整273套门，不将前次全门当最新提示的完整重跑，也不关闭T-03/T-16/T-18/T-20或任何阶段。
+
+2026-09-10 T-16/T-20准备状态提示映射：同一自然语言案例已能接收object scene并成版，但14次物理请求/170140ms，12次不同措辞scene均真实重准备，随后deadline预留轮成版；输出还删除原文行标签/中文引号，不计精确复写PASS。AC-08/12 → runtime按当前有效receipt报告已准备/未准备，禁止将同义改写当新的准备理由，同时保留真实改选与失效重准备 → 实际provider输入状态断言先RED、A→B→A/撤销/失败聚焦回归及同案例App复验 → 有效时不再无条件要求先准备，权限和工具可用性不变；prompt/receipt失效逻辑变化复验。手工编辑及唯一合成笔记保存已完成、正文与receipt核对一致，零额外模型请求；这是DOM驱动app-runtime，不是full-ui或整个T-18通过。
+
+2026-09-10场景协议诊断：[相同自然语言复验](evidence/2026-09-10-native-natural-language-repair-failure.json)3次物理请求/69549ms，两次scene参数仍为字符串，零version；绑定schema已直接留证为object/null，未观察到本地改为string。按同因第二次失败原则停止重复原探针。[最小固定参数对照](evidence/2026-09-10-scene-schema-comparison.json)同模型/temp0.8/maxTokens1200/同prompt：anyOf联合2970ms、type数组联合3093ms均返回string，普通object3604ms返回object，各1次请求；不据单次推断速度/费用或所有Qwen模型兼容。模型侧改可选object，未知省略；宿主继续兼容null并canonical归一未知，strict拒绝字符串/缺字段/多字段，parentnull不变，不改产品能力或额外授权。独立复核确认此为未启用工具的兼容表达修复，真实生产prompt仍须复验。官方[工具调用说明](https://help.aliyun.com/zh/model-studio/qwen-function-calling)用于核对工具声明与参数解码方式，不作为联合类型支持或本地实现正确性的证明。
+
+2026-09-10自然语言修复冻结门：首轮[真实ChatView失败样例](evidence/2026-09-10-native-natural-language-failure.json)已持久保留。schema纠正链RED确认原runtime仅2轮且没有作品；修复后真实runtime scope成功+scene字符串拒绝→object纠正→唯一作品通过，重复错误只给一次特殊纠正、legacy/权限拒绝/混合失败不重开。真实dispatcher A→B→A、首次准备失败、风格失效三例RED；修复后当前有效同参不重复，回选/失效/prepare或onPrepared失败可重做，普通tool去重保留。完整runtime A→scene B→A亦通过。独立复核无具体P1/P2。最终7 suites/115 tests（2.649s）及独立6 suites/136 tests（2.306s）自然通过；TypeScript初次发现可选run闭包收窄问题，改为绑定已存在实例后通过，未弱化断言。
+
+冻结source/tests/config/dependencies后`npm run lint`通过，`npm run build && npm run test:all -- --runInBand`自然exit0：273 suites/7432 tests全部PASS，Jest报告312.658s。末尾有一次短暂open-handles提示，随后自然退出，未forceExit/kill。构建与实际test库部署main.js SHA256均为`9f3dccca0019cfeee3e46e5cf9a5a4d4fbdcfe2d37a58ec7ebcb76ef538ad62d`；使用deploy-current复用上述门并重载。App自然语言复验随后记录，源码通过不等于默认切换或App/device已验收。
+
+2026-09-10 T-03/T-16/T-20自然语言App反例与修复映射：当前冻结构建`230ea4fe8b9e92330297f7c90fb2c1586865f7e529b4a2e636759e0033c45161`部署重载后，真实ChatView/ChatService/Qwen/独立IDB合成案例（禁笔记/网页/背景/提取，宿主仅显式native）不点名工具步骤，模型把scene传为JSON字符串，strict校验拒绝；host随后final-only，2物理请求/22279ms，普通文字入Chat但零作品版本。该失败保留，不以先前指定步骤样例宣称自然语义通过。改动映射：AC-06/08/12 → 场景schema/guidance保持真实object或null；对已由模型选择的native上下文仅允许一次schema纠正，继续原权限/来源/总预算，失败不能宣称成版；必要的A→B→A重准备不能永久seen去重 → 实际runtime错误参数→纠正→唯一作品、重复错误有界、dispatcher当前receipt有效重复跳过/失效回选重做、真实同案例复验 → 聚焦source/类型/审查后冻结构建复验，不扩大其他工具重试或接受string充当scene。当前环境无可用原生UI交互工具，DOM驱动仅记app-runtime，不记full-ui；原会话保留，隔离tab已detach，原factory已恢复。
+
+2026-09-10 T-18会话成版准入：新增真实manager/store反例首轮6项中5项RED，确认reset/同ID重开/切换期间等待manager仍写入、恢复prepare期间重开仍附版，以及旧写入改变另一会话cursor。复用已有entry WeakMap身份并绑定manager，在排队及各异步准备返回后重验；WritingVersion.create接受不持久化的宿主guard，最终lookup之后put之前再次检查，Chat两条自动/人工成版入口传递guard并保护选版状态。已开始put保留真实完成结果。独立复核新增P1同ID重开覆盖旧index0，专门RED确认后修复：同manager+同会话才单调同步已提交索引及turnCount，不覆盖新hydrate其它metadata，不影响另一会话；复核无剩余具体P1/P2。
+
+该片最终`npm test -- --runInBand __tests__/conversation-writing-admission.test.ts __tests__/conversation-persistence.test.ts __tests__/writing-versions.test.ts __tests__/chat-view.test.ts`4 suites/284 tests PASS（2.629s，自然exit0）；随后tsc、三个变更源文件ESLint及diff自然exit0。真实App尚未重新部署本片，之前构建证据不能证明新增异步准入行为；完整来源/治理到最终成版及App/device门仍待验证，T-18不标完成。
+
+2026-09-10 T-04/T-19实际发布reader边界：[原始报告、输入hash与复现脚本](evidence/2026-09-10-published-reader.json)隔离提取tag `2.9.2`（commit `22c192b84ebdeb14e3808f57a63da0a7d4efbca7`）真实旧源码，以fake-indexeddb 6.2.4执行版本准入；旧IDB v1打开当前v2得到VersionError，旧版不存在作品/图片/SaveReceipt APIs，独立旧内存投影仅留正文并丢弃新metadata。当前reader重新打开后turn/version/recovery scene/image/receipt深等保持；旧v1文字升级v2保留。probe自然exit0断言的是上述不兼容边界，不是降级兼容PASS；没有真实App降级/升级，也不将该既有schema能力差异归因于本轮scene增量。依Plan保留“不宣称可降级”的边界，T-04/T-19整体门仍未通过。证据绑定本轮会话准入修复前WritingVersionService hash；此后create可选宿主准入参数不改变该样例默认路径或存储格式，兼容结论按上述输入范围保留。
+
+2026-09-10 T-18异步成版准入映射：AC-07/08/11 → 用已有会话entry索引的身份捕获持久化会话代次，队列/manager准备/版本准备后重验；版本服务在最终异步读取后、put前验证宿主准入，已开始put允许如实完成 → reset或重新hydrate同ID的ABA、等待队列/prepare后失效零新写入、已开始原会话写入不更新新会话状态、正常连续首轮及人工恢复回归 → ConversationPersistence/WritingVersion/Chat定向tests、tsc/lint/review；不新建锁或持久化epoch。source/治理到最终成版的完整凭据仍另需验收，本片先封闭会话写入准入。
+
+2026-09-10冻结门与App协议证据：`npm run lint && npm run build && npm run test:all -- --runInBand`完成，lint/build通过（build含tsc）；全量Jest335.307s自然exit1，270 suites通过/1失败，7410 tests通过/1失败。唯一失败为旧pa-agent-stream-bridge断言期待source_changed仍保留rawText，与已确认撤销边界及前片修复不一致；改为强制rawText/preview清空，其他中断仍保留合法正文。仅该测试文件变化，`npm run test:all -- --runInBand __tests__/pa-agent-stream-bridge.test.ts`11 tests PASS（1.097s，自然exit0），全部已知失败关闭；未重跑完整命令，不混写为原命令PASS。源代码/其余tests/fixtures/config/dependencies在冻结门期间未改变，其余通过证据复用；DOM扫描无匹配（exit1），diff与docs通过。
+
+App验证映射：当前runtime/interaction-state → 部署当前已验构建到CLI实际确认的`/mnt/code/personal-assistant/test`，重载并确认新接口已加载、native默认未开 → 只用合成文字且隔离笔记/画像/Memory/网页读取的真实ChatService+Qwen native样例 → 完整正文、动态句柄、provider完成、调用次数/重复步骤记录；不以CLI协议验证当可见UI或iOS验收。使用deploy-current底层同一身份校验脚本指定实际test库，避免错误复制到临时工作树test路径；dist/目标main.js SHA256均为`970133f248bc37a07ec505a1f2ab57885758898a598e3eb94ae00f98bb6dec92`。sandbox内Obsidian查询因桌面目录只读/GL失败已明确停止exit130；同一只读查询获自动审查允许后sandbox外自然通过，未把失败重启当成功。
+
+[当前native上下文App证据](evidence/2026-09-10-native-context-app.json)：当前provider=qwen、model=qwen3.8-max，38,285ms；实际3次物理请求/3次model构造，第一次已准备成功，第二次重复提议相同scope/context，宿主去重且style准备仅1次；第三次present_writing完成后无ack请求，输出中文引号/换行/双空格/emoji逐字一致。T-20须分析重复准备，不能把3次记成理想2次或宣称成本改善。该合成协议样例无笔记/持久化写入，无可见UI交互或iOS证据，P0完整对照及默认切换仍未完成。
+
+2026-09-10 T-16 runtime与Chat候选接通：get_writing_context按exact capability独立来源准入、sequential执行，run结束dispose并按实例注销；普通Chat在显式native宿主入口中可自行准备/交付。loop每轮与bridge每助手冻结handle，未准备不导出output，混批两种顺序零prepare；合法两轮工具→输出无ack。Chat候选来自当前UI允许版本及真实manager来源凭据，输出父版/scene取物理请求快照；新topic/unknown不回退本地infer，显式选版标记为候选数据。默认plugin未启用，P0未完成，不提前关闭T-16。
+
+独立复核发现并修复：完整材料refs曾只影响关联、不排除provider旧pixels（P1）→成功准备后同步收窄selected/leases/guards，后续resolve在读取前拒绝排除refs；真实runtime A/B→仅B与空集的第二次provider图片块反例通过。预算P2经RED确认：600字符observation下较长父版曾被截断发送→准备额度受observation剩余量限制，最终实际投影缺失/摘要/截断完整canonical context时dispatch前拒绝；prepare后16k→600变化反例仅首轮实发，无artifact。人工恢复补scene持久化/reopen/create传递，旧无scene记录兼容，scene深拷贝与格式拒绝使用原版本schema。
+
+统一门前定向证据：实际runtime/预算/图片/Chat/native四边界共8 suites/440 tests PASS（6.955s，自然exit0）；其后补了人工恢复scene断言和显式选版目录断言，store并行子片31 tests自然通过，最终输入以随后统一lint/build/test:all为准。首次Chat候选测试过早读到了前一stream，改等待实际stream调用；tsc指出测试缺LegacyAgentEvent import及零参数mock类型，已按实际签名修正。没有提高timeout或削弱产品断言。
+
+2026-09-10 T-16实际runtime接线映射：AC-06/08/09 → native兼容候选中注册本run的get_writing_context，候选/语义style来自宿主，材料复用图片验证；准备前不授予作品输出，准备后绑定动态handle，answer/summary/物理SDK与最终作品共用receipt → 真实runtime两轮工具→输出、普通回答、未准备/混批拒绝、来源撤销及固定native/legacy回归 → focused runtime/loop/bridge/context测试、tsc、定向lint、独立复核。默认切换、ChatView候选及版本落库接线、完整图文用途和provider/App/device仍须单独验收；不以兼容候选通过宣布T-16完成。
+
+2026-09-10 T-16材料图片host：ImageRequestScope.verifyWritingMaterials按本run注册身份验证完整refs（含空集），重复/未知/替换先拒绝，复用原service.verify的队列signal/currentness；验证结束重验全部receipt，返回有序元数据与同步来源闭包。关联10张材料不变成10张像素，不改变selected/associated，不调用resolveVariant。旧成功receipt不因另一操作取消失效，来源变更/dispose仍失效。独立只读复核无具体P1/P2；像素选择与runtime绑定仍未完成。
+
+材料图片冻结验证：`npm test -- --runInBand __tests__/chat-image-assets.test.ts __tests__/b129-image-request.test.ts __tests__/writing-context-run.test.ts __tests__/writing-context-tool.test.ts`4 suites/110 tests PASS，3.654s自然exit0。真实图片队列扩展writing_materials入口，取消/请求stale/input改变均在readBinary前拒绝；其余原图片/保存回归同套通过。最终tsc、源文件定向ESLint及diff通过；docs:check通过206 Markdown/1802 links（4项既有episodic advisory），检查均自然exit0。无build/provider/App/device，不以验证关联声称像素已发送或工具生产可用，不关闭T-16。
+
+2026-09-10 T-16图片验证host接缝：AC-08/09 → ImageRequestScope验证模型完整材料refs只接受本run登记身份、按原ImageAssetService.verify及队列guard验证、返回有序元数据/来源current回调 → 多于像素上限的关联材料不伪装为像素读取、unknown/ref替换零读取、晚到撤销/取消及普通prepare/resolve回归 → focused source tests/tsc/review；不改当前像素选择或把material关联说成已查看，完整用途和最终选择接线仍需后续。
+
+2026-09-10 T-16 Chat宿主准备：ConversationPersistence.prepareWritingCandidates复用manager已有来源epoch，捕获活动会话和界面允许ID后逐个读取，跨会话/缺失不发布，异步前后与返回前重验。返回克隆候选及同步parent检查；真实manager/store/version→WritingContextRun组合证明删除开始即失效、删除等待/读取期间变更、会话重置/撤回候选/取消及输入克隆。ChatHost新增prepareWritingStyleForScene，直接复用现有cache刷新与WritingStyleService，旧prompt入口infer后转发，未新增模型调用。独立只读复核两部分均无具体P1/P2。仍待ChatView/runtime实际调用。
+
+宿主准备冻结验证：`npm test -- --runInBand __tests__/writing-candidates.test.ts __tests__/conversation-persistence.test.ts __tests__/writing-context-run.test.ts __tests__/writing-context-tool.test.ts`4 suites/46 tests PASS，1.757s自然exit0；`npm test -- --runInBand __tests__/plugin-record-note.test.ts -t 'explicit writing style plugin gates'`8 tests PASS/359 skipped，3.7s自然exit0。真实createChatHost治理组合覆盖匹配/unknown/冲突/零预算/Forget和零模型调用，不将359 skipped当通过。三个变更源文件定向ESLint、diff通过；无build/provider/App/device，不关闭T-16。
+
+Chat宿主片最终静态门：`npx tsc -noEmit -skipLibCheck`自然exit0；docs:check通过206 Markdown/1802链接、4条既有advisory；diff检查通过。未改DOM。
+
+T-16语义风格host桥映射：同一准备任务还需允许主Agent解释scene → ChatHost.prepareWritingStyleForScene直接调用现有WritingStyleService.prepare，旧prompt入口转发保留兼容 → plugin真实治理fixture经实际createChatHost验证匹配、unknown、当前冲突、预算不足和Forget → 不另调用classifier、不绕过治理，不重写模型scene → focused plugin writing style gates/tsc；Chat/runtime消费随后接入。
+
+2026-09-10 T-16 Chat候选宿主映射：AC-08/09 → ConversationPersistence以活动会话+界面允许version IDs+既有ChatHistoryManager.captureSourceLifetime建立候选，异步get前后核验；同步isParentCurrent检查同一会话/来源凭据/候选身份 → 真实manager/store/version服务组合，删除等待即失效、切换/选项撤回、跨会话和未知id、异步取消 → 定向tests/tsc/review；复用已有来源epoch，不另造持久化通知/缓存。runtime消费另接，不以此方法存在当生产工具可用。
+
+2026-09-10 T-16上下文证据层：projectTranscript按完整canonical工具JSON与已发布receipt匹配，clone后验证并返回同一快照；失效工具内容清除prompt/preview/metadata，不改独立消息和原记录。captureTranscriptValidity捕获精确receipt，调用时同步检查当前run、父版host admission、材料/style及替换；host新增必需isParentCurrent，不以早期异步get成功代替。真实converter组合验证撤销/新handle替换/正文篡改及取消。独立审查发现仅匹配内层observation而转发完整外层的P2及等待期间原消息可变窗口，已改完整JSON核对和克隆；input/额外字段篡改及await时修改反例通过，复核关闭该P2。
+
+证据层最终冻结：`npm test -- --runInBand __tests__/writing-context-run.test.ts __tests__/writing-context-tool.test.ts __tests__/pa-agent-host-tools.test.ts __tests__/pa-agent-context-summary-projection.test.ts`4 suites/128 tests PASS，2.152s自然exit0。首次tsc指出新converter fixture缺toolCall.index，已补实际必需字段；两源文件定向ESLint自然exit0、diff通过。上述是helper+真实转换器和相关既有suite证据，尚未runtime注册或调用新投影/回调，不声称真实SDK重试或生产摘要已接通，不关闭T-16。
+
+证据层最终静态门：补齐fixture后`npx tsc -noEmit -skipLibCheck`自然exit0；docs:check通过206 Markdown/1802链接、4条既有advisory；diff检查通过。无DOM变更。
+
+2026-09-10 T-16上下文证据映射：AC-04/08/09 → WritingContextRun按已发布receipt精确验证实际canonical工具observation，失效清除prompt/preview/metadata；生成快照同步闭包检查receipt/材料/style/父版本host epoch → 真实工具转换器产物、撤销/替换/篡改/旧handle、独立会话保留、异步取消及重试前变更 → 定向tests/tsc/review；同步父版currentness必须由宿主实际会话/版本状态提供，不以早期get替代。尚未production注册，不以helper测试冒充runtime重试证据。
+
+2026-09-10 T-16工具适配：新增严格schema及顺序执行capability工厂；仅接受语义parentHandle/scene/conflicts/完整refs，budget和权限留宿主。observation只投影parent正文/hash、材料和style，不输出版本完整记录。预算在prepare内扣结构/父文/材料，再调用style；最终JSON转义膨胀也检查，失败不发布新handle且保持旧成功context。不截断正文。首次adapter异常分支测试缺host.log，补齐真实host接口后通过，未调整生产错误处理。独立只读复核无具体P1/P2；生产注册和上下文来源重验仍未完成，sources空集不能被解释为无来源依赖。
+
+工具适配最终冻结：`npm test -- --runInBand __tests__/writing-context-tool.test.ts __tests__/writing-context-run.test.ts __tests__/capability-registry.test.ts __tests__/chat-tools.test.ts __tests__/chat-writing-style-service.test.ts`5 suites/73 tests PASS，1.718s自然exit0。四个变更源文件定向ESLint自然exit0，diff检查通过。provider schema是适配器导出检查，无实际provider调用/生产运行时或App/device证据，不关闭T-16。
+
+工具适配最终静态门：`npx tsc -noEmit -skipLibCheck`自然exit0；docs:check通过206 Markdown/1802链接、4条既有advisory；diff检查通过。无DOM变更。
+
+2026-09-10 T-16工具入口映射：AC-08/09 → get_writing_context严格schema、host预算回调及上下文最小模型投影，复用ChatToolCapability adapter → 实际provider schema/prepareAndValidate/execute组合，拒绝伪造version/source/预算字段、输入复制、超预算无新handle、取消与失败保留旧context → 定向tests/tsc/lint/review；仅工具适配层，不将type/name登记当runtime生产注册或语义效果证明。预算先扣父版/图片/结构开销，再交给style服务，最终序列化大小超限拒绝，不截断已绑定正文。
+
+2026-09-10 T-16宿主准备层：新增WritingContextRun，将当前会话候选克隆并映射run句柄；模型选择父句柄/scene/冲突/完整图片refs，host供应预算、versions.get、原图片验证和WritingStyleService.prepare。等待前复制输入，前后验证父版、图片及style；只发布最近成功context handle，旧异步prepare不能覆盖新结果，validate重验并克隆返回，dispose清理。新话题不携带parent，空图片不union父图。独立只读复核无具体P1/P2；本层尚未生产登记/接入，T-16仅部分实现，后续仍须主Agent语义质量和真实输入/输出组合证明。
+
+准备层冻结测试：`npm test -- --runInBand __tests__/writing-context-run.test.ts __tests__/chat-writing-style-service.test.ts __tests__/writing-versions.test.ts`3 suites/45 tests PASS（1.379s，自然exit0）；随后只追加取消/会话在image等待后失效及验证结果偷偷补父图的测试，`npm test -- --runInBand __tests__/writing-context-run.test.ts`13 tests PASS（0.86s，自然exit0），另两套输入未变复用，合计覆盖48 tests。host使用真实版本服务验证hash；style在新组合测试中为受控替身，既有治理service suite独立通过，不冒充新工具已有真实治理端到端证据。无build/provider/App/device，不关闭P4。
+
+T-16准备层最终静态门：追加测试后`npx tsc -noEmit -skipLibCheck`自然exit0；新源文件定向ESLint自然exit0；docs:check通过206 Markdown/1802链接、4条既有advisory，diff检查通过。未改变DOM。
+
+2026-09-10 T-16准备层映射：AC-08/09 → per-run候选句柄与父版hash绑定、完整材料选择、既有style治理prepare、最近成功context handle及消费前重验 → 错误会话/未知句柄零读取、父版更改、异步撤销、风格冲突/预算、空材料、新话题及旧handle拒绝 → host准备层定向tests/tsc/lint/review；生产tool/runtime/Chat接线与真实语义质量另外验证，不以helper作为T-16完成。
+
+2026-09-10版本关闭片：最后existing-version查找等待期间dispose的反例先RED（0.878s自然exit1），现于队列入口、get/list的store/hash等待后和最终existing查询后复验服务状态。已开始put仍等待并返回成功；未入场队列拒绝且零额外查询。独立只读复核未发现具体P1/P2，重复事件和冲突规则不变。首次已开始put测试误用对同一jest mock的bound调用造成递归，该运行主动终止exit130；改为fixture内实际Map存储后自然通过，未改运行时断言或延长timeout。
+
+冻结验证：`npm test -- --runInBand __tests__/writing-versions.test.ts __tests__/writing-save-action.test.ts __tests__/writing-save-modal.test.ts __tests__/chat-view.test.ts`，4 suites/303 tests PASS，2.883s自然exit0。仅覆盖版本服务关闭及相关保存/Chat源码路径，未验证完整生成来源/session快照、provider或App/device；不关闭T-18或阶段门。
+
+版本关闭片最终静态门：`npx tsc -noEmit -skipLibCheck`、`npx eslint src/chat/writing-versions.ts`自然exit0；docs:check通过206 Markdown/1802链接、4条既有advisory；diff检查通过。无DOM变更。
+
+2026-09-10 T-18版本服务关闭映射：AC-08/11生命周期晚到 → dispose后不启动新版本存储、队列入场及异步查询后检查服务状态 → 延迟最后existing查找期间dispose的RED（仍put并返回成功）、已开始put允许自然完成及待排队零读取 → source tests/tsc/lint → 不追溯撤销已开始存储，不把关闭后的晚到查找变新写入 → version队列/store await/dispose变化复验。独立的source/session生成快照门仍待后续，不能以服务关闭门代替。
+
+2026-09-10材料保存片实现：create以完整images快照为准，edit显式继承；Chat artifact/recovery采用宿主快照（含空集）并复制，旧事件缺字段保留原材料。手动恢复、失败继续、turn初始化和图片scope均尊重完整快照，失败材料优先父图但保留父正文/id/hash。本轮用户新附图片仍正常加入。两项版本子集/空集反例先RED；首次测试表格写法错误导致Jest把参数当done，修正fixture后才得到真实union错误，未计为产品证据。独立审查发现失败继续及parent二次union的P2，修复后复核关闭；三个生产create入口均核对，无新增具体P1/P2。
+
+冻结验证：`npm test -- --runInBand __tests__/writing-versions.test.ts __tests__/chat-view.test.ts __tests__/writing-save-action.test.ts __tests__/writing-save-modal.test.ts __tests__/b129-image-request.test.ts __tests__/b129-multimodal-runtime.test.ts __tests__/pa-agent-writing-preview.test.ts`：共431 tests，组合6 suites PASS，Chat原有保存失败提示用例过早断言（9.307s自然exit1，不记整组PASS）。该用例改为等待实际recordTurn尝试，最终`npm test -- --runInBand __tests__/chat-view.test.ts`255 tests PASS，3.018s自然exit0；其余6套源/测试/配置/依赖未变复用。新增Chat用例也等待真实append完成，不增加固定timeout；覆盖空集成版、手动恢复、有parent失败继续、无parent附图失败继续及重开。scope空集/子集prepare只读取相应图片；原版及普通edit保留。三个变更源文件定向ESLint、diff及DOM检查通过。不代替完整语义排除、持久化队列currentness、真实provider/App/device，不关闭任务或阶段门。
+
+材料保存片最终静态门：修正最后一项Chat fixture后，`npx tsc -noEmit -skipLibCheck`自然exit0；docs:check通过206 Markdown/1802链接、4条既有advisory，diff检查通过。测试修复仅等待实际存储调用，不改变产品断言或运行时代码。
+
+2026-09-10 T-14/T-18材料保存映射：AC-08明确排除不被父版本union恢复 → 版本create使用调用方完整材料快照，手工edit显式继承；Chat接受宿主提供的材料快照（含空集），仅旧事件缺字段时保留legacy材料 → 版本子集/空集RED、Chat实际持久化与恢复/后续续写回归 → 不复活父图，原版和合法继承保留 → source snapshot、事件消费、恢复和版本create调用方变化复验。本片不代替T-16语义图片选择或完整生成用途快照。
+
+2026-09-10 T-14/T-17成版接缝实现：每次实际answer物理发送绑定准备时的来源检查、材料lineage和style revision副本；preview/成版再检查笔记真实身份、范围、Memory控制、背景及历史。独立source lifetime不因执行取消而失效，保留普通取消的候选；来源撤销则两个协议都先拒绝、清空preview及recovery.rawText。真实SDK离线反例先RED：最终响应期间删除刚提供的笔记仍成版；修复后不成版且无可恢复正文。独立审查发现legacy恢复及cancel/incomplete分支能保留失效内容的P1，修复后native/legacy cancel-forget反例通过，复核确认P1关闭、指定改动无新增P1/P2。
+
+本片冻结组合：`npm test -- --runInBand __tests__/b129-multimodal-runtime.test.ts __tests__/pa-agent-writing-preview.test.ts __tests__/pa-agent-loop.test.ts __tests__/task-source-run.test.ts __tests__/pa-agent-context-summarizer.test.ts __tests__/pa-agent-context-summary-projection.test.ts __tests__/pa-agent-runtime-chat-history.test.ts`：7 suites/311 tests PASS，4.301s自然exit0。三个变更源文件定向ESLint及diff检查自然exit0；DOM扫描无匹配。该回调保守检查已保留的工具/历史来源，尚非精确记录每项实际用途的完整GenerationInputSnapshot，也未处理父版本图片union及持久化队列，不关闭T-14/T-17或阶段门。
+
+本片最终静态门：`npx tsc -noEmit -skipLibCheck`自然exit0；docs:check通过206 Markdown/1802链接，仅4条既有episodic advisory；diff检查通过。未执行build/full suite/provider/App/device，不将上述源测试升级为这些证据。
+
+2026-09-10 T-14/T-17成版接缝映射：REQ/AC-04/06来源有效性 → 写作生成请求的实际dispatch冻结材料/风格及来源有效性回调，在preview/成版时重验 → 真实SDK取当前笔记后最终响应期间删除来源的RED反例（旧代码仍发writing-artifact），及取消/有效来源回归 → 失效不成版；取消不冒充来源撤销；失败保留原材料lineage → 来源生命周期/SDK回调/bridge变化复验。该片是生成请求与交付门的接线，不宣称已实现完整GenerationInputSnapshot用途、父版本/图片排除与版本队列边界。
+
+2026-09-10 D12与聚合来源片：历史原文、摘要准备及物理发送共同按宿主metadata/真实文件身份/Memory主控制投影；保留用户与无撤销证据的legacy助手，排除已证明受影响的助手回复，原记录不写回。SDK429期间历史文本更正、Memory关闭分别覆盖answer与history-summary；旧payload阻断，新准备请求保留有效方案。helper验证下一run重新授权可恢复。审查发现canonical无boundary或statusOnly引用在快照降格时产生不一致，已统一readChatHistoryTurnMetadata及typed/path-only判定，禁止statusOnly凭path inventory提升为正文依赖。
+
+标签聚合和反向链接在实际metadata读取处记录隐藏sourceDependency：标签含无标签、非representative及扫描上限内的实际文件；backlinks含负事实与显示截断外依赖。adapter保留依赖但不升级引用，SourceStore和压缩标记不展示它们，动态目录也不发布。真实runtime两种聚合先vault后仅B：撤回A聚合材料而保留独立B outline。定向测试另覆盖3005文件只记实际3000、79反链截断、provider/contextUsed/chips不泄漏。审查发现压缩marker绕过隐藏标记，已补过滤并通过实际microCompact回归；完整结构化结果按来源重建仍未关闭。
+
+本片最终源码/测试/配置/依赖冻结：`npm test -- --runInBand __tests__/b129-multimodal-runtime.test.ts __tests__/task-source-run.test.ts __tests__/operations-agent-runtime.test.ts __tests__/pa-agent-host-tools.test.ts __tests__/pa-agent-context-summarizer.test.ts __tests__/pa-agent-context-summary-projection.test.ts __tests__/pa-agent-runtime-chat-history.test.ts __tests__/chat-service.test.ts __tests__/obsidian-operations-tools.test.ts __tests__/source-store.test.ts __tests__/capability-registry.test.ts __tests__/chat-tools.test.ts __tests__/chat-tools-task-source.test.ts __tests__/pa-agent-context.test.ts __tests__/pa-agent-context-admission.test.ts __tests__/pa-agent-context-continuity.test.ts`：16 suites/476 tests PASS，5.787s自然exit0。7个变更源文件定向ESLint自然exit0；未build/full/App/device，不关闭T-14或P3。
+
+静态门补充：首次tsc指出新增backlink fixture的空对象联合推断不满足Record类型；仅给构造tuple补准确类型后，该suite19 tests重新PASS（1.467s自然exit0），最终`npx tsc -noEmit -skipLibCheck`自然exit0。其余15套件及全部运行时代码/配置/依赖未变，复用上述组合证据。最终docs:check通过206 Markdown/1802链接、4条既有advisory；diff检查通过，DOM扫描无匹配。独立只读复核确认canonical/legacy一致性及压缩marker两个P2均已闭合，本片无新增未处置P1/P2；不宣称全任务/设备验收完成。
+
+D12 Owner 2026-09-10确认“接受，仅排除受影响的旧回复”：DEC-034、Spec和SDD已同步。T-14追加映射：宿主可证撤销的旧助手混合回复 → 原文/摘要共用投影及物理请求重验 → 两种输入路径排除该条、保留用户/其他助手/legacy，原记录不变、重新获准恢复 → SDK真实请求回归、history/helper单测及定向门；来源/历史序列化与治理变化复验。上条历史输入片所记待答复为早期状态，现已决策。
+
+2026-09-10 T-14历史输入片验证映射：REQ/AC-04每次物理输入当前性 → 历史role/content/images快照绑定answer和history-summary实际发送 → SDK429后替换历史文本、验证旧payload不重发且fresh fallback可携带更正 → runtime定向测试/tsc/lint → history序列化、摘要准备及provider回调变化复验。旧助手混合来源如何保留仍待Owner答复；本片只保护已变化的实际历史输入，不擅自制定旧回复整体排除策略。
+
+2026-09-10恢复执行：原临时checkout已不存在；从已推送`4591434`恢复至`/tmp/pa-b135-completion`、`codex/b135-completion`，未改master。T-14/AC-04当前映射：普通Vault结果后续投影 → 真实runtime先读A/B后收窄B的物理SDK请求反例，检查A退出而B及Personal保留 → 定向runtime/source测试、类型检查和diff/docs门；来源删除/同路径替换、摘要调用前来源变化需回归。完整历史派生与最终GenerationInputSnapshot仍按原任务跟踪，不以此片关闭T-14。
+
+2026-09-10 T-14普通工具来源片：真实SDK离线fixture先确认scope目录只剩B而第三次请求仍含A，RED自然exit1；在TaskSourceRun沿真实文件身份、当前范围和Data Boundary重新投影普通sourceRecords。移除失效结果的正文/preview/metadata，保留canonical记录、B及Personal、用户/助手会话。无法可靠按来源拆分的自由文本结果整条撤回，结构化多源精确重建仍待后续，不能声称完整AC-04。
+
+独立只读审查指出一次投影未覆盖SDK等待后的重试；已补answer实际序列化transcript副本和tool-summary独立source副本的发送前同步校验。真实SDK429分别在answer与tool-summary首次发送后替换同路径文件：旧SDK重试被阻断，重新投影的fallback/answer可继续且无旧正文；helper覆盖删除、替换、收窄及原会话不变。初始fixture未启用Operations而outline被拒，修正为实际已有启用条件后才作为RED证据；summary按真实tool_result内容定位被撤销请求，不把控制回执摘要误作资料摘要。独立复核无新增P1/P2，完整历史与通用输入快照仍待实现。
+
+冻结验证：`npm test -- --runInBand __tests__/b129-multimodal-runtime.test.ts __tests__/task-source-run.test.ts __tests__/operations-agent-runtime.test.ts __tests__/pa-agent-host-tools.test.ts __tests__/pa-agent-context-summarizer.test.ts __tests__/pa-agent-context-summary-projection.test.ts __tests__/chat-service.test.ts`，7 suites/330 tests PASS，4.872s自然exit0。`npx tsc -noEmit -skipLibCheck`及`npx eslint src/ai-services/task-source-run.ts src/ai-services/pa-agent-runtime.ts`均自然exit0。`npm run docs:check`通过206 Markdown/1802链接，4条既有episodic advisory；diff检查通过，DOM注入扫描无匹配。源/测试/config/lock在最终运行期间冻结，仅后补此证据；未build/full/App/device，T-14保持部分完成。
 
 2026-09-09开发分支交付：提交前核对tracked/untracked全量路径、模块依赖及合成模型fixture；按Memory/default/governance、图片队列、Agent/source/native/Operations、文档四个职责分组。已有源码验证输入保持不变；只修DEC-033和Brief仍停留早期“未批准”的表述，按D8及其他真实后续决定对齐，并更新本Snapshot交付授权。本次是开发检查点，T-13/T-14等未完成项与真实模型/App/iOS门保持待验，不以提交或远程同步代替完成证据。
 
@@ -185,14 +308,14 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed 与 legacy 无 scheduler 读取已分别实现，设置说明已补；只读加载/设置通知/存储范围/失败/Forget迟到读取已有定向证据。仍需默认迁移组合、实际物理输入与 App/device 验收 |
 | T-12 | B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 主 prompt/工具指导承接语义；去关键词路由、预测必调/隐藏与参数强制覆盖 | [~] | runtime已移除独立分类调用和预测required名单；policyModelName的rewrite/rerank保留。自然语言工具范围、writing识别、prompt与语义场景对照仍未完成；schema、真实证据、dedup和取消保留 |
 | T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [~] | 生产run已接声明/有序读计划/真实身份及受限Memory，Vault/Ops读门保持；动态句柄、独立控制轮和图片队列读门已有定向证据。完整来源投影及真实模型/App门仍待完成。profile/Memory/style与任务事实分开，不默认空背景 |
-| T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 已有摘要、背景刷新及物理SDK发送/retry guard；普通Vault结果、完整历史/派生summary来源投影与GenerationInputSnapshot未完成。保留assistant建议和“采用第二个”，不合并union复活被排除图片 |
+| T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 已补普通Vault结果、标签/backlinks隐藏依赖、D12已知撤销旧助手回复及answer/history/tool-summary物理SDK重验；原记录保留、未知legacy与合法建议可用。GenerationInputSnapshot与作品/父版本/多图/风格用途、其余来源治理和完整App/provider门仍待完成，不以union复活排除图片 |
 | T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [~] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。生产source预检下create→append及越界混合批次已有定向证据；真实语义质量、完整来源投影及App门未完成 |
-| T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [ ] | 多版本、失败继续、新话题、selected image 和授权撤销 |
-| T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | host opt-in loop 单输出与严格 provider 身份累计已接入；无 dispatcher/ack，保留 host 最终门。runtime schema/bridge/生成快照/幂等成版与 App 仍待补；T-03/T-13/T-16 依赖未解除 |
-| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | native bridge 已接预览/来源重验/恢复和单作品事件；普通说明与精确版本正文拆开。完整 runtime、图片style/旧reader/保存动作组合及 App 尚待验证 |
-| T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3拒绝/保留、governed缓存隔离与source abort/reopen已有证据；完整旧插件降级/重新升级及native/media/版本矩阵仍待T-10/T-17/T-18，不批量改历史或媒体，Desktop/iOS分别验证 |
-| T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [ ] | 身份/输入相同，记录调用序列、耗时、可得 usage；不把未知写 0，不推断模型净耗时 |
-| T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [ ] | focused PASS 不是 full/app/device PASS；检查自然退出 |
+| T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [~] | 显式native候选已接Chat→runtime工具/来源/动态handle/完整输入/图片收窄及成版parent/scene；新topic与恢复scene回归、真实Qwen合成协议通过。默认切换、真实UI、多版本失败继续及完整治理组合仍待验 |
+| T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | native候选的runtime schema/loop/bridge动态handle与物理请求快照已贯通，保留单输出、严格provider身份、无ack及host最终门；真实Qwen合成样例成功。默认切换、完整用途/成版保存生命周期与实际UI门仍待补；T-03/T-13/T-16依赖未解除 |
+| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | native预览/恢复、精确正文及会话成版准入已接；异步reset/同ID重开/切换、已开始写入及连续首轮回归通过。完整来源/治理到最终成版、图片style/保存组合及App门仍待验证 |
+| T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3隔离和source reopen已有证据；真实2.9.2 reader拒绝当前v2库，当前重开全数据保留、旧文字升级通过，不宣称可降级。完整旧插件bootstrap/重新升级、native/media/版本及Desktop/iOS门仍待验证 |
+| T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [~] | 当前Qwen同案例schema失败及重复scene均有实际序列/耗时/usage；准备状态修复后2请求1准备，逐字要求仍FAIL。完整语义/质量对照未完，不推断模型净耗时或固定提速 |
+| T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [~] | 已有273 suites/7432 tests自然全门PASS，之后窄改动有相关聚焦/build/lint与独立复核；最终全部AC、full-ui/iOS及全量review未完成。各证据输入边界见Work |
 | T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [ ] | 本次开发分支提交/推送已获授权；closeout/release未授权，不先删除Brief独有故障证据 |
 
 ## Confirmed Discussion To Delivery Mapping
@@ -231,6 +354,8 @@ UI/runtime 的阶段验证使用 `make deploy` 或符合复用条件的 current-
 
 | ID | Severity | Finding | Decision / fix | Verification | State |
 | --- | --- | --- | --- | --- | --- |
+| F-19 | P2 implementation | 有效context后仍无条件提示先准备，模型12次改写scene并重复准备至deadline | T-16/T-20按有效receipt切换指导；语义同义改写不构成准备理由，仍保留真实更正/新证据/失效改选 | runtime状态输入先RED后PASS；同自然语言App案例2请求/1准备/无ack，独立复核 | Closed — bounded app-runtime sample; broader semantic quality pending |
+| F-20 | P2 model quality | 逐字两行任务被模型删除行标签和中文引号，explanation却声称逐字；artifact到版本本身一致 | T-03/T-20保留失败原文/结果，不靠说明自证；补明确正文边界的固定语义对照，native不推广 | 修复准备状态前后均保留双空格/Emoji但不满足完整字符等式；尚未解决 | Open — native compatibility/quality |
 | F-17 | P2 implementation | 异常后的异步渲染/保存期间仍接收迟到正文，现场与已捕获的历史内容可能不同 | T-07：异常结算关闭流回调，渲染与恢复身份独立；旧 render 被取消不阻止有效恢复重渲染 | deferred save 迟到 legacy/canonical、deferred render 异常/取消回归；249 Chat tests 与独立复核通过，关闭/切会话身份保护保留 | Closed — automated scope only |
 | F-18 | P2 implementation | typed partial-output-error 后正常 resolve 或 writingRecovery 缺少持久化中断标记，重开可能恢复完成操作 | T-07：所有部分结果在持久化前统一中断 warning，现场与 reload 共同使用 | typed partial/writingRecovery 保存重开，正文/result/Add to Editor/用户取消 warning；249 Chat tests 与独立复核通过 | Closed — automated scope only |
 | F-01 | P1 design | 新默认仍可能被旧 consent 门压回关闭，旧 true 迁移还会制造当前 confirmedAt | T-08/T-09 同步默认、实际准入和历史事实 | settings/load/runtime/collector fixtures | Open — planned |

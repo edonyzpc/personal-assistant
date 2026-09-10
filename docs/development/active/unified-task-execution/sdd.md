@@ -1,7 +1,7 @@
 # Unified Task Execution Software Design Document
 
 Document status: Approved
-Updated: 2026-09-09
+Updated: 2026-09-10
 Work item: B-135
 Authority: 本 track 的源码核实设计、接口、来源与交付生命周期、兼容性、迁移及验证映射；不代表运行时已实现或验证通过。
 Approval scope: Owner 全量实施目标批准已确认需求的兼容实现；D2/D3 于 2026-09-09 明确选择专用作品通道，兼容验证通过后切换；D5 同日确认语义提议及保留执行保护，D8 确认无明确用户关闭证据的旧 false 迁移为开启，D10 确认停止新提取与使用已有画像解耦。接口与迁移表示仍须通过工程验证；新产品偏差另行决定。
@@ -184,6 +184,12 @@ DEC-032 的历史策略继续有效：能容纳时完整原文优先，超限时
 必须能追溯上轮助手的候选，不能只保留用户轮或丢失旧会话无 scope metadata 的上下文。
 原始记录和源快照是依据，摘要不是新的权限来源。
 
+2026-09-10 D12已获Owner批准：有宿主来源记录的旧助手回复若含已撤销材料，且
+没有可信段落级来源，暂时整体排除该条模型输入；不修改界面/持久化原文，也不删除
+其他用户或助手消息。来源重新获准且有效后可恢复。无来源metadata的旧普通会话
+仍保留，不将缺少新字段当成有证据的撤销。原文投影、摘要准备/缓存以及物理重试
+必须使用相同获准历史；不能对摘要使用未过滤原文或以旧summary替代已排除回复。
+
 `PaAgentContextManager.forPrompt` 和 runtime 的 provider 准备接缝承接下列顺序：
 
 1. 核对当前 user/run/session、有效 Memory 控制、来源排除、治理 pause/Forget 和实际配置。
@@ -211,11 +217,79 @@ Proposed `get_writing_context` 接收主 Agent 解释的场景、本次风格要
 返回宿主验证过的短期 context handle、父版本正文/hash、获准材料和实际风格 revision。
 已有有效背景可复用，不能因“只用当前笔记”排除风格；也不强制每轮读取相同样例。
 
+T-16准备层使用单run的`WritingContextRun`：宿主登记当前会话允许的候选版本及短期
+句柄，模型只能选择该目录内句柄，不能传任意持久化version id。prepare接收语义scene、
+当前指令是否冲突及完整图片ref选择；预算和会话/currentness由宿主传入，不属模型schema。
+依次验证父版本正文/hash、调用既有图片验证、调用WritingStyleService.prepare，等待后
+复验；失败不发布新handle。仅保留最近一次成功准备的上下文，后续成功准备使旧handle
+失效。消费前validate重读父版本并检查材料/风格/source epoch，不使用输出参数追认来源。
+本层不读取任意路径、不写入版本；生产工具登记、主Agent路由和物理发送接线单独验证。
+
+工具工厂`createWritingContextCapability`复用现有ChatToolCapability适配器并标记sequential，
+因为成功准备会替换当前context。schema只接受parentHandle、scene、指令冲突和完整imageRefs；
+不接受model-supplied持久化id、路径、来源、风格revision、预算或权限。模型投影仅包含
+contextHandle、父正文/hash、图片元数据和风格context/revision，不输出完整版本存储记录。
+宿主预算先扣父文/材料及JSON结构，再准备style；最终序列化超限拒绝，不截断绑定正文，
+不发布该次handle。2026-09-10已在显式native兼容候选中注册该工具，并接入同run来源
+投影、摘要/物理请求重验及output handle消费。准备额度同时受observation剩余预算
+约束；最终实际投影必须包含完整canonical上下文，不能因摘要/截断仍保留有效handle。
+
+2026-09-10自然语言App反例后的兼容修正：当前Qwen对两种object/null联合声明均返回
+JSON字符串，普通object对照返回正确对象。因此模型侧scene使用可选object，未知时省略；
+宿主兼容旧null并将两者归一为未知，不继承父scene、不解析JSON字符串来代替模型参数。
+对象存在时仍严格要求四个短字段，parentHandle的null含义不变。显式native宿主仅对模型已选择的get_writing_context schema错误提供一次
+纠正机会；其他失败、已有final-only、权限/来源限制及总预算不放宽。去重仅复用最后成功
+交付且当前仍有效的同参数准备结果；回选、来源失效或准备/结果交付失败允许重新准备，
+不重播旧handle。普通工具保持原去重策略。真实模型自然语义及应用验证仍记录于Tracker。
+
+运行时指导按当前有效receipt切换：未准备或失效时要求先准备；有效时明确准备已完成并
+提供当前handle及父版候选目录。同一scene的措辞改写不是再次准备的理由；用户更正、
+新证据导致真实选择变化或宿主报告失效时仍可重新准备。此指导不隐藏仍合法的来源工具，
+不代替来源校验，不用模糊scene比较复用旧handle。用户要求逐字复写时保留正文中的标签、
+引号、空白及Unicode；模型遵循效果须由真实字符对照证明，不能以explanation自证。
+
+WritingContextRun提供projectTranscript及captureTranscriptValidity：按实际canonical
+工具结果完整JSON验证已发布receipt，先clone再异步验证父版，失效替换同时去掉正文、
+preview及metadata，保留独立消息和原记录。捕获同步闭包拒绝receipt替换、材料/style
+撤销及父版失效；host.isParentCurrent必须绑定实际会话/版本的同步有效状态，不能
+以先前get成功或默认true代替。异步validate仍重读版本；取消继续抛出，不能冒充撤销。
+runtime已在answer、summary及SDK物理回调使用这些API；真实运行时配脚本provider的
+两轮测试覆盖准备→输出、来源撤销和重试。它不是当前模型兼容验证或App/设备证据。
+
+Chat候选宿主复用ConversationPersistence.prepareWritingCandidates与现有
+ChatHistoryManager.captureSourceLifetime：只读取界面允许的version IDs，验证同一
+活动会话并克隆完整版本身份；删除/历史修改开始即撤销旧来源凭据，无需新增通知系统。
+isParentCurrent同时检查会话、manager、来源凭据、当前允许ID和捕获身份；新的父版
+读取仍走WritingVersionService.get的hash校验。ChatHost.prepareWritingStyleForScene
+把模型scene和当前冲突直接交给原治理service；旧prompt入口保留兼容。两个宿主入口
+已接ChatView→ChatService→runtime候选调用链。ChatHost显式native兼容入口存在时，
+普通提问也交主Agent决定是否准备/交付作品；默认plugin尚未启用，必须先完成P0。
+显式UI选版以候选目录selected字段传递，父版正文只在选择后读取并投影。
+输出使用每物理请求冻结的父版/scene元数据；空上下文表示新作品/未知scene，不回退
+本地关键词推断。中断恢复可选scene经原历史存储校验和深拷贝，重新打开人工恢复时
+传给版本服务；旧无scene恢复记录继续可读。
+
+图片host验证使用ChatImageRequestScope.verifyWritingMaterials：只接受本run注册的
+完整refs，拒绝重复/未知/替换身份，按原ImageAssetService.verify和队列currentness验证，
+返回有序材料与同步来源检查。它不改变selected pixels或现有材料关联，不调用像素
+物化；超过单次像素上限的合法材料清单仍可验证关联，不宣称全部已查看。实际像素
+仍由原prepare/resolve及数量/字节/模型能力门控制。成功准备上下文后，runtime调用
+selectWritingMaterials同步移除被排除的pixels/lease/guard并替换完整关联清单；后续
+resolve不能重新读取排除项，需先重新准备包含它的新上下文。关联本身不新增像素读取。
+
+native候选的loop每轮、bridge每助手消息冻结一次宿主handle；尚无handle时不导出
+present_writing，仍识别并拒绝伪造输出。get_writing_context与作品同批出现时，两种
+顺序均不执行准备工具，不能事后补句柄追认。独立contextHandle支持宿主run标识及
+冒号，长度有界；原requestId仍用原校验规则。最终输出保留requestId作为幂等成版身份。
+
 - parent 必须属于当前允许的 conversation/session，正文 hash 与选中版本一致；
   “上一版/第二段/另一个问题”由模型解释，显式 UI 选版是宿主事实。
 - failed task 仅有材料 lineage，不伪装为完成父版本；回选旧版、失败继续、新话题、
-  图片子集和重放分别验证。当前 `WritingVersionService.create` 会 union parent 图片，
-  本次明确排除的图片不能被该 union 加回，应以获准 material snapshot 验证输出。
+  图片子集和重放分别验证。`WritingVersionService.create` 使用调用方的完整材料快照，
+  不再 union parent 图片；手工 edit 显式继承父版材料。Chat事件、手动恢复与失败继续
+  保留宿主明确给出的空集/子集，只有旧记录缺字段时才回退已有材料；失败任务快照
+  优先于父版图片，同时保留父版正文/id/hash。本次明确排除不能在这些继承接缝复活；
+  语义选材及完整生成用途快照仍待实现，不能把较少的实际像素等同于材料排除。
 - 样例必须实际授权、场景匹配、来源 current、未暂停/Forget，并在预算内；currentness
   在每次物理 dispatch 前重验。当前要求优先于既有风格，unknown 不冒充已参考。
 - 先得到写作上下文再生成；context 与 output 不能同批追认“已参考”。用户明确要求
