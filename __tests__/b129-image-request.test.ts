@@ -21,6 +21,45 @@ function assets(bytes = 3) {
 }
 
 describe("B-129 run-scoped image requests", () => {
+    it('keeps a source-only receipt after request cleanup without retaining excluded pixels', async () => {
+        const first = image(1), second = image(2);
+        const source = assets();
+        const valid = new Set([first.ref.assetId, second.ref.assetId]);
+        source.mocks.verify.mockImplementation(async (...args: unknown[]) => {
+            const ref = args[0] as MessageImage['ref'];
+            return { asset: {}, isCurrent: () => valid.has(ref.assetId) };
+        });
+        let current = true;
+        const controller = new AbortController();
+        const scope = new ChatImageRequestScope({ prompt: 'Compare', images: [first, second],
+            service: source.service, isCurrent: () => current });
+        await scope.prepare(controller.signal);
+        scope.selectWritingMaterials([second.ref]);
+        const guard = scope.captureSourceValidity();
+        controller.abort(); current = false; scope.dispose();
+        expect(source.release).toHaveBeenCalledTimes(2);
+        expect(scope.diagnostics().encodedImageBytes).toBe(0);
+        expect(() => guard()).not.toThrow();
+        valid.delete(first.ref.assetId);
+        expect(() => guard()).not.toThrow();
+        valid.delete(second.ref.assetId);
+        expect(() => guard()).toThrow('request_changed');
+        expect(() => scope.captureSourceValidity()).toThrow();
+    });
+
+    it('separates linked material source validity from temporary request validity', async () => {
+        const source = assets();
+        const scope = new ChatImageRequestScope({ prompt: 'Use', images: [image(1)], service: source.service });
+        const controller = new AbortController();
+        const receipt = await scope.verifyWritingMaterials([image(1).ref], controller.signal);
+        controller.abort(); scope.dispose();
+        expect(receipt.isCurrent()).toBe(false);
+        expect(receipt.isSourceCurrent()).toBe(true);
+        expect(source.mocks.resolveVariant).not.toHaveBeenCalled();
+        source.invalidate();
+        expect(receipt.isSourceCurrent()).toBe(false);
+    });
+
     it('narrows ready pixels and rejects reintroducing an excluded image before any read', async () => {
         const source = assets();
         const first = image(1), second = image(2);

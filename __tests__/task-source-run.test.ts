@@ -69,6 +69,23 @@ function executorFor(run: TaskSourceRun) {
 }
 
 describe('Task source run host', () => {
+    it.each(['delete', 'replace', 'modify', 'boundary', 'memory'] as const)('retains frozen sources after cleanup and rejects later %s', change => {
+        const h = fixture();
+        h.a.stat = { mtime: 1, size: 12 };
+        let memoryAllowed = true;
+        const run = new TaskSourceRun({ ...h.host, isMemoryAllowed: () => memoryAllowed });
+        const history: ChatMessage[] = [{ role: 'assistant', content: 'Source-backed previous work',
+            memoryMetadata: { hasMemoryContent: true, allowedMemorySourcePaths: [h.a.path] } }];
+        const assertSources = run.capturePersistenceSourceValidity([], history);
+        h.setCurrent(false);
+        expect(assertSources).not.toThrow();
+        if (change === 'delete') h.files.delete(h.a.path);
+        if (change === 'replace') h.files.set(h.a.path, { path: h.a.path, stat: { mtime: 1, size: 12 } });
+        if (change === 'modify') h.a.stat.mtime = 2;
+        if (change === 'boundary') h.getFileByPath.mockReturnValue(undefined);
+        if (change === 'memory') memoryAllowed = false;
+        expect(assertSources).toThrow(/source/);
+    });
     it('projects known historical sources, retains legacy choices, and restores reauthorized history in a later run', () => {
         const h = fixture();
         const fromNote = (path: string): ChatMessage => ({ role: 'assistant', content: path === h.a.path ? 'A_FACT_AND_PROPOSAL' : 'B_FACT',

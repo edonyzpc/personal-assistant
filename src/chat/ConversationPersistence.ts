@@ -10,6 +10,7 @@ export interface WritingCandidateSnapshot {
     conversationId: string | null;
     candidates: WritingVersion[];
     isParentCurrent(parent: WritingVersion): boolean;
+    isParentSourceCurrent(parent: WritingVersion): boolean;
 }
 
 export interface HydratedConversation {
@@ -54,12 +55,13 @@ export class ConversationPersistence {
             if (!input.isCurrent() || this.activeId !== conversationId) throw new Error('Writing conversation changed');
         };
         assertCurrent();
-        if (!conversationId) return { conversationId: null, candidates: [], isParentCurrent: () => false };
+        if (!conversationId) return { conversationId: null, candidates: [], isParentCurrent: () => false, isParentSourceCurrent: () => false };
         const manager = await this.getReadyManager();
         assertCurrent();
         if (!manager) throw new Error('Writing history unavailable');
         const sourceCurrent = manager.captureSourceLifetime(conversationId);
         const capturedIds = new Set(input.getAllowedVersionIds());
+        const entryIndices = this.persistedTurnIndexByEntry;
         const stillAllowed = (id: string) => input.isCurrent() && this.activeId === conversationId
             && this.options.getManager() === manager && sourceCurrent()
             && capturedIds.has(id) && input.getAllowedVersionIds().includes(id);
@@ -77,8 +79,16 @@ export class ConversationPersistence {
             throw new Error('Writing candidate scope changed');
         }
         const identities = new Map(candidates.map(version => [version.id, JSON.stringify(version)]));
+        const isParentSourceCurrent = (parent: WritingVersion): boolean => {
+            try { return this.persistedTurnIndexByEntry === entryIndices && this.activeId === conversationId
+                && this.options.getManager() === manager && sourceCurrent()
+                && capturedIds.has(parent.id) && input.getAllowedVersionIds().includes(parent.id)
+                && identities.get(parent.id) === JSON.stringify(cloneWritingVersion(parent)); }
+            catch { return false; }
+        };
         return {
             conversationId, candidates: candidates.map(cloneWritingVersion),
+            isParentSourceCurrent,
             isParentCurrent: parent => {
                 try { return stillAllowed(parent.id) && identities.get(parent.id) === JSON.stringify(cloneWritingVersion(parent)); }
                 catch { return false; }

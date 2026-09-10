@@ -48,6 +48,7 @@ interface ContextReceipt {
     value: PreparedWritingContext;
     selectionIdentity: string;
     isMaterialCurrent(): boolean;
+    isMaterialSourceCurrent?: () => boolean;
     style: ChatWritingStyleResult;
 }
 
@@ -63,9 +64,13 @@ export interface WritingContextRunHost {
     isCurrent(): boolean;
     /** Synchronous live parent admission for physical SDK retries; an earlier get is insufficient. */
     isParentCurrent(parent: WritingVersion): boolean;
+    /** Optional independent parent lifetime for persistence after request cleanup. */
+    isParentSourceCurrent?(parent: WritingVersion): boolean;
     verifyImages(refs: readonly ImageRef[], signal?: AbortSignal): Promise<{
         images: MessageImage[];
         isCurrent(): boolean;
+        /** Pure source lifetime, independent of run cleanup and the temporary read signal. */
+        isSourceCurrent?(): boolean;
     }>;
 }
 
@@ -145,7 +150,8 @@ export class WritingContextRun {
         }
         const receipt = { value, selectionIdentity: selectionIdentity({ parentHandle: selection.parentHandle,
             scene, currentInstructionConflicts: conflicts, imageRefs: refs }),
-            isMaterialCurrent: materials.isCurrent.bind(materials), style };
+            isMaterialCurrent: materials.isCurrent.bind(materials),
+            ...(materials.isSourceCurrent ? { isMaterialSourceCurrent: materials.isSourceCurrent } : {}), style };
         this.assertReceiptCurrent(receipt, requestBudget.signal);
         if (preparation !== this.preparation) throw new Error('Writing preparation superseded');
         this.receipt = receipt;
@@ -160,6 +166,29 @@ export class WritingContextRun {
         if (this.receipt !== receipt) throw new Error('Writing context replaced');
         this.assertReceiptCurrent(receipt, signal);
         return cloneContext(receipt.value);
+    }
+
+    /** Capture while the request is live; thereafter only real source changes invalidate it. */
+    captureSourceValidity(): () => void {
+        const receipt = this.receipt;
+        if (!receipt) throw new Error('Writing context unavailable');
+        this.assertReceiptCurrent(receipt);
+        if (receipt.value.images.length && !receipt.isMaterialSourceCurrent) {
+            throw new Error('Writing image source receipt unavailable');
+        }
+        const usesStyle = Boolean(receipt.value.styleContext || receipt.value.styleRevisionIds.length);
+        if (usesStyle && !receipt.style.isSourceCurrent) throw new Error('Writing style source receipt unavailable');
+        const parent = receipt.value.parent ? cloneWritingVersion(receipt.value.parent) : undefined;
+        const checks: Array<() => boolean> = [];
+        if (parent) {
+            const isParentCurrent = this.host.isParentSourceCurrent ?? this.host.isParentCurrent;
+            checks.push(() => isParentCurrent(cloneWritingVersion(parent)));
+        }
+        if (receipt.value.images.length) checks.push(receipt.isMaterialSourceCurrent!);
+        if (usesStyle) checks.push(receipt.style.isSourceCurrent!);
+        const assertSourcesCurrent = writingSourceValidityGuard(checks);
+        assertSourcesCurrent();
+        return assertSourcesCurrent;
     }
 
     async projectTranscript(transcript: readonly PaAgentMessage[], signal?: AbortSignal): Promise<PaAgentMessage[]> {
@@ -247,6 +276,17 @@ export class WritingContextRun {
         this.assertReceiptCurrent(receipt);
         return receipt;
     }
+}
+
+function writingSourceValidityGuard(checks: readonly (() => boolean)[]): () => void {
+    const captured = [...checks];
+    return () => {
+        for (const check of captured) {
+            let current = false;
+            try { current = check(); } catch { /* An unavailable source cannot authorize persistence. */ }
+            if (!current) throw new Error('Writing context sources changed');
+        }
+    };
 }
 
 function cloneContext(value: PreparedWritingContext): PreparedWritingContext {

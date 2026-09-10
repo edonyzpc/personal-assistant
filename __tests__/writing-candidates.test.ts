@@ -20,6 +20,16 @@ async function setup() {
 }
 
 describe('Chat writing candidate source lifetime', () => {
+    it('keeps the parent source valid after request cleanup but rejects a same-id conversation reopen', async () => {
+        const f = await setup();
+        const snapshot = await f.persistence.prepareWritingCandidates(f.versions, f.input);
+        f.state.current = false;
+        expect(snapshot.isParentCurrent(f.parent)).toBe(false);
+        expect(snapshot.isParentSourceCurrent(f.parent)).toBe(true);
+        const conversation = await f.manager.findConversation('chat');
+        f.persistence.hydrateConversation(conversation!, []);
+        expect(snapshot.isParentSourceCurrent(f.parent)).toBe(false);
+    });
     it('captures only allowed versions and supplies a live parent guard to the writing context run', async () => {
         const f = await setup();
         await f.versions.create({ requestId: 'hidden', messageId: 'hidden', conversationId: 'chat', turnIndex: 1, text: 'Not offered', images: [] });

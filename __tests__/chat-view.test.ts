@@ -1264,6 +1264,52 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
+    it.each([true, false])('checks the generating sources when manually recovering in the same view: current=%s', async (sourceCurrent) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'guarded-recovery' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('请起草一段文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        let allowed = true;
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'guarded_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
+            isSourceCurrent: () => allowed });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        allowed = sourceCurrent;
+        const openedRecoveries: WritingRecoveryModal[] = [];
+        const openRecovery = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { openedRecoveries.push(this); });
+        try {
+            getElementByClass(containerEl, 'pa-chat-writing-action').click();
+            const recoveryModal = openedRecoveries[0];
+            const modalRoot = new MockElement('div');
+            recoveryModal.contentEl = modalRoot as unknown as HTMLElement;
+            recoveryModal.onOpen();
+            const areas = walkAll(modalRoot, (element) => element.tagName === 'textarea');
+            const buttons = walkAll(modalRoot, (element) => element.tagName === 'button');
+            Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+            buttons[0].click(); await buttons[1].click();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const recovered = await versions.list('guarded-recovery');
+            expect(recovered).toHaveLength(sourceCurrent ? 1 : 0);
+            if (sourceCurrent) expect(recovered[0].text).toBe('BODY');
+            const saved = (await store.getTurns('guarded-recovery'))[0].assistant;
+            expect(saved.writingVersionId).toBe(recovered[0]?.id);
+            expect(saved.writingRecovery).not.toHaveProperty('isSourceCurrent');
+            expect(saved.writingRecovery?.rawText).toBe('prefix BODY suffix');
+            recoveryModal.onClose();
+        } finally {
+            openRecovery.mockRestore();
+            await view.onClose();
+        }
+    });
+
     it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'resolved-writing' });
@@ -1457,6 +1503,38 @@ describe('LLMView turn lifecycle', () => {
         }
         expect(short.options.writingMaterialContext).toBeUndefined();
         await settle(short);
+    });
+
+    it('rejects a writing source revoked while the final version lookup is pending', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'source-admission' });
+        const versions = new WritingVersionService(store);
+        let release!: () => void;
+        let started!: () => void;
+        const waiting = new Promise<void>(resolve => { started = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        jest.spyOn(store, 'getWritingVersion').mockImplementationOnce(async () => { started(); await pending; return null; });
+        const put = jest.spyOn(store, 'putWritingVersion');
+        let sourceCurrent = true;
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-artifact', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'writing_answer', body: 'Source-backed writing.', explanation: '',
+            isSourceCurrent: () => sourceCurrent });
+        call.resolve();
+        await waiting;
+        sourceCurrent = false;
+        release();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(put).not.toHaveBeenCalled();
+        expect(await versions.list('source-admission')).toEqual([]);
+        expect(view.chatHistory[1].writingVersionId).toBeUndefined();
     });
 
     it('keeps the writing visible and discloses when its chat turn could not be persisted', async () => {

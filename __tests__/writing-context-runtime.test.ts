@@ -14,7 +14,7 @@ afterEach(() => jest.restoreAllMocks());
 
 const scene = { writingTask: 'email', purpose: 'invitation', audience: 'colleagues', domain: 'work' };
 const body = '  请来参加周五的分享。\n🌱\n';
-type Scenario = 'complete' | 'ordinary' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect';
+type Scenario = 'complete' | 'ordinary' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'personal-source' | 'personal-retry' | 'incomplete';
 
 async function runScenario(scenario: Scenario) {
     const records = new Map<string, WritingVersion>();
@@ -26,6 +26,7 @@ async function runScenario(scenario: Scenario) {
     const parent = await versions.create({ requestId: 'earlier', conversationId: 'conversation', messageId: 'earlier-message',
         turnIndex: 1, text: 'Authorized parent draft', images: [] });
     let styleCurrent = true;
+    let personalCurrent = true;
     const images: MessageImage[] = [1, 2].map(ordinal => ({ ref: { assetId: `photo-${ordinal}`, contentHash: String(ordinal).repeat(64) }, ordinal, label: `Photo ${ordinal}` }));
     const imageMode = scenario === 'image-subset' || scenario === 'image-empty';
     const release = jest.fn();
@@ -48,7 +49,11 @@ async function runScenario(scenario: Scenario) {
             metadataCache: { getFileCache: () => null } },
         memorySearch: { ensureReadyForChat: async () => ({ decision: 'answer-now' }), searchHybrid: async () => [], getChunksByPath: async () => [] },
         getAPIToken: async () => 'fixture', log: jest.fn(), isOperationsAgentEnabled: false,
-        getMemoryExtractionPromptContext: () => undefined,
+        getMemoryExtractionPromptContext: () => {
+            if (scenario !== 'personal-source' && scenario !== 'personal-retry') return undefined;
+            return Object.defineProperty({ memoryContextMode: 'governed', governedMemoryContext: 'Authorized personal background' },
+                'isSourceCurrent', { value: () => personalCurrent });
+        },
     } as unknown as AiServiceHost;
     const ai = new AIUtils(host);
     const events: LegacyAgentEvent[] = [];
@@ -88,11 +93,15 @@ async function runScenario(scenario: Scenario) {
                     styleCurrent = false;
                     try { options?.onProviderRequestStart?.(); } catch (error) { retryErrors.push(error); }
                 }
+                if (scenario === 'personal-retry') {
+                    personalCurrent = false;
+                    try { options?.onProviderRequestStart?.(); } catch (error) { retryErrors.push(error); }
+                }
                 yield new AIMessageChunk({ content: '', tool_call_chunks: [{ id: 'output', index: 0,
                     name: 'present_writing', args: JSON.stringify({ contextHandle: handle, body, explanation: '' }) }] });
                 if (scenario === 'revoked') styleCurrent = false;
             }
-            yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: 'tool_calls' } });
+            yield new AIMessageChunk({ content: '', response_metadata: { finish_reason: scenario === 'incomplete' && turn === 2 ? 'length' : 'tool_calls' } });
         });
         Object.assign(model, { bindTools: (bound: typeof schemas[number]) => { schemas.push(bound); return model; } });
         return model as unknown as Awaited<ReturnType<AIUtils['createChatModel']>>;
@@ -110,10 +119,34 @@ async function runScenario(scenario: Scenario) {
             onEvent: event => events.push(event) });
     } catch (caught) { error = caught; }
     finally { runtime.dispose(); versions.dispose(); }
-    return { events, inputs, serializedInputs, images, schemas, prepareStyle, createModel, error, retryErrors };
+    return { events, inputs, serializedInputs, images, schemas, prepareStyle, createModel, error, retryErrors,
+        revokeStyle: () => { styleCurrent = false; }, revokePersonal: () => { personalCurrent = false; } };
 }
 
 describe('native writing context runtime integration', () => {
+    it('keeps a non-enumerable Personal source receipt across style projection and runtime cleanup', async () => {
+        const result = await runScenario('personal-source');
+        const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> => event.kind === 'writing-artifact');
+        expect(result.inputs[1]).toContain('Authorized personal background');
+        expect(result.inputs.join('')).not.toContain('isSourceCurrent');
+        expect(artifact?.isSourceCurrent?.()).toBe(true);
+        result.revokePersonal();
+        expect(artifact?.isSourceCurrent?.()).toBe(false);
+    });
+
+    it('rejects a physical retry after Personal authority changes even with identical background text', async () => {
+        const result = await runScenario('personal-retry');
+        expect(result.retryErrors).toHaveLength(1);
+        expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+    });
+    it('delivers a source receipt that survives runtime cleanup but rejects a later style revocation', async () => {
+        const result = await runScenario('complete');
+        const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> => event.kind === 'writing-artifact');
+        expect(artifact?.isSourceCurrent?.()).toBe(true);
+        expect(JSON.stringify(artifact)).not.toContain('isSourceCurrent');
+        result.revokeStyle();
+        expect(artifact?.isSourceCurrent?.()).toBe(false);
+    });
     it('reprepares an earlier selection through the runtime wrappers after another context replaces it', async () => {
         const result = await runScenario('reselect');
         expect(result.error).toBeUndefined();
@@ -169,6 +202,17 @@ describe('native writing context runtime integration', () => {
         expect(result.events.find(event => event.kind === 'writing-artifact')).toMatchObject({
             associatedImages: scenario === 'image-subset' ? [result.images[1]] : [],
         });
+    });
+
+    it('keeps the incomplete output source receipt after cleanup and rejects later revocation', async () => {
+        const result = await runScenario('incomplete');
+        expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+        const recovery = result.events.find(event => event.kind === 'writing-recovery');
+        expect(recovery?.rawText).toContain('请来参加周五的分享');
+        expect(recovery?.isSourceCurrent?.()).toBe(true);
+        expect(JSON.stringify(recovery)).not.toContain('isSourceCurrent');
+        result.revokeStyle();
+        expect(recovery?.isSourceCurrent?.()).toBe(false);
     });
 
     it('allows ordinary discussion without preparing a context or creating a version', async () => {

@@ -851,6 +851,7 @@ export class PaAgentRuntime {
         let writingStyle: import("./chat-types").ChatWritingStyleResult | undefined;
         type WritingGenerationSnapshot = {
             assertCurrent: () => void;
+            isSourceCurrent: () => boolean;
             associatedImages: MessageImage[];
             styleRevisionIds: string[];
             context?: import('./chat-types').ChatWritingContextMetadata;
@@ -1016,6 +1017,7 @@ export class PaAgentRuntime {
                 assertRequestCurrent();
                 if (!writingGeneration) return false;
                 writingGeneration.assertCurrent();
+                if (!writingGeneration.isSourceCurrent()) return false;
                 return imageScope?.isUsable() ?? true;
             },
             // Stopping generation does not revoke already received text. Source,
@@ -1023,11 +1025,13 @@ export class PaAgentRuntime {
             isPreviewCurrent: () => {
                 assertRequestSourcesCurrent();
                 writingGeneration?.assertCurrent();
+                if (writingGeneration && !writingGeneration.isSourceCurrent()) return false;
                 return imageScope?.isUsable() ?? true;
             },
             getStyleRevisionIds: () => writingGeneration?.styleRevisionIds ?? [],
             getAssociatedImages: () => writingGeneration?.associatedImages ?? imageScope?.writingMaterials ?? [],
             getWritingContext: () => writingGeneration?.context,
+            getSourceValidity: () => writingGeneration?.isSourceCurrent,
             onDiagnostic: (diagnostic) => {
                 if (this.host.settings.debug) this.host.log("PA Agent writing delivery", diagnostic);
             },
@@ -1205,6 +1209,7 @@ export class PaAgentRuntime {
             // All asynchronous preparation has finished. Even an absent result
             // replaces the previous background; it must never revive old Memory.
             injectedContext = readInjectedContext();
+            const backgroundSourceCurrent = injectedContext?.isSourceCurrent;
             preparedBackground = formatBackground(injectedContext);
             if (writingStyle) {
                 const budget = availableStyleBudget(input, definitions, schemas);
@@ -1227,11 +1232,28 @@ export class PaAgentRuntime {
             if (options.writingRequest) {
                 const context = currentWritingContext();
                 const assertSourceValidity = sourceRun.captureSourceValidity(taskTranscript, history ?? []);
+                const assertStoredSources = sourceRun.capturePersistenceSourceValidity(taskTranscript, history ?? []);
+                const assertContextSources = context ? writingContextRun?.captureSourceValidity() : undefined;
+                const assertImageSources = imageScope?.captureSourceValidity();
+                const styleSourceCurrent = writingStyle?.isSourceCurrent ?? writingStyle?.isCurrent;
                 const background = preparedBackground;
                 const historyIdentity = JSON.stringify((options.chatHistory ?? []).map(message => ({
                     role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
                 })));
                 preparedWritingGeneration = {
+                    isSourceCurrent: () => {
+                        try {
+                            assertStoredSources();
+                            assertContextSources?.();
+                            assertImageSources?.();
+                            if (styleSourceCurrent?.() === false) return false;
+                            if (backgroundSourceCurrent ? !backgroundSourceCurrent()
+                                : background && background !== formatBackground(readInjectedContext())) return false;
+                            return historyIdentity === JSON.stringify((options.chatHistory ?? []).map(message => ({
+                                role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
+                            })));
+                        } catch { return false; }
+                    },
                     associatedImages: cloneMessageImages(context?.images ?? imageScope?.writingMaterials ?? []),
                     styleRevisionIds: [...(context?.styleRevisionIds ?? writingStyle?.revisionIds ?? [])],
                     ...(context ? { context: { ...(context.parent ? { parentVersionId: context.parent.id } : {}),
@@ -1316,6 +1338,9 @@ export class PaAgentRuntime {
                     onProviderRequestStart: () => {
                         assertProviderInputCurrent(input.signal);
                         assertTaskInputCurrent();
+                        if (preparedWritingGeneration && !preparedWritingGeneration.isSourceCurrent()) {
+                            throw new Error('Writing generation sources changed before provider dispatch');
+                        }
                         writingGeneration = preparedWritingGeneration;
                         input.notifyProviderRequestStarted?.();
                     },
@@ -2006,10 +2031,12 @@ export class PaAgentRuntime {
     ): PaAgentInjectedContext | undefined {
         const memoryContext = this.host.getMemoryExtractionPromptContext();
         if (!pageletHandoff) return memoryContext;
-        return {
+        const result: PaAgentInjectedContext = {
             ...(memoryContext ?? {}),
             pageletHandoff,
         };
+        if (memoryContext?.isSourceCurrent) Object.defineProperty(result, 'isSourceCurrent', { value: memoryContext.isSourceCurrent });
+        return result;
     }
 
 

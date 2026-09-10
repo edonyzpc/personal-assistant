@@ -767,6 +767,8 @@ export class LLMView extends ItemView {
 
         let uiTurnId = 0;
         let selectedWritingVersion: WritingVersion | undefined;
+        // Host callbacks live only in this view; history contains data alone.
+        const writingRecoverySources = new WeakMap<ChatMessage, () => boolean>();
         let selectedWritingParentExplicit = false;
         let restoredTerminalDraft: { turnId: number; snapshot: ComposerSnapshot<MessageImage> } | undefined;
         let thinkingStatusId = 0;
@@ -2212,7 +2214,7 @@ export class LLMView extends ItemView {
                             scene: recovery.scene,
                             backgroundSourceRefs: recovery.backgroundSourceRefs,
                             images: mergeWritingImages(message.images ?? entry.user.images ?? []),
-                        }, isCurrent);
+                        }, () => isCurrent() && writingRecoverySources.get(message)?.() !== false);
                         message.writingVersionId = version.id;
                     });
                     if (!persisted || !version) { delete message.writingVersionId; throw new Error('Writing persistence unavailable'); }
@@ -3503,6 +3505,7 @@ export class LLMView extends ItemView {
                     ? { runtimeWarnings: turn.canonicalLifecycle.warnings.map((warning) => ({ ...warning })) }
                     : {}),
             };
+            if (turn.writingRecoverySourceCurrent) writingRecoverySources.set(assistantMessage, turn.writingRecoverySourceCurrent);
             this.chatHistory.push(userMessage, assistantMessage);
             const historyEntry: TimelineEntry = {
                 kind: 'history',
@@ -3528,7 +3531,7 @@ export class LLMView extends ItemView {
                         backgroundSourceRefs: (turn.canonicalLifecycle.hostSourceRecords ?? [])
                             .filter((record) => record.path && record.citationEligible !== false && !record.redacted)
                             .map((record) => ({ path: record.path! })),
-                    }, isCurrent);
+                    }, () => isCurrent() && artifact.isSourceCurrent?.() !== false);
                     assistantMessage.writingVersionId = version.id;
                     if (isCurrent() && isCurrentSession()) {
                         selectedWritingVersion = version;
@@ -3778,6 +3781,7 @@ export class LLMView extends ItemView {
                         selectedParentVersionId: retryWritingParent?.id ?? (selectedWritingParentExplicit ? selectedWritingVersion?.id : undefined),
                         styles: { prepare: (scene, budget) => this.host.prepareWritingStyleForScene!(scene, budget) },
                         isParentCurrent: candidates.isParentCurrent,
+                        isParentSourceCurrent: candidates.isParentSourceCurrent,
                         isCurrent: () => isSameTurn() && this.host.writingVersions === versions
                             && this.conversationPersistence.activeConversationId === candidates.conversationId,
                     };
@@ -3848,6 +3852,7 @@ export class LLMView extends ItemView {
                             }
                             if (event.kind === 'writing-recovery') {
                                 if (!isSameTurn() || event.requestId !== writingRequest?.requestId) return;
+                                turn.writingRecoverySourceCurrent = event.isSourceCurrent;
                                 turn.writingMaterials = cloneMessageImages(event.associatedImages ?? turn.writingMaterials ?? []);
                                 turn.writingRecovery = { requestId: event.requestId, messageId: event.messageId,
                                     ...(event.writingContext?.parentVersionId ? { parentVersionId: event.writingContext.parentVersionId } : {}),

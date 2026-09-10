@@ -161,29 +161,45 @@ export class TaskSourceRun {
 
     /** Freeze source identities for delivery, independently of an execution abort. */
     readonly captureSourceValidity = (transcript: readonly PaAgentMessage[], history: readonly ChatMessage[]): (() => void) => {
+        const assertSources = this.capturePersistenceSourceValidity(transcript, history);
+        return () => {
+            if (!this.hostSourcesAreCurrent()) throw new Error('Generation source session changed');
+            assertSources();
+        };
+    };
+
+    /** Source-only receipt for the storage queue; run cleanup is checked separately from source revocation. */
+    readonly capturePersistenceSourceValidity = (transcript: readonly PaAgentMessage[], history: readonly ChatMessage[]): (() => void) => {
+        if (!this.isCurrent()) throw new Error('Cannot capture inactive generation sources');
         const records = [
             ...transcript.flatMap(message => message.role === 'toolResult' && message.content.includeInNextPrompt
                 ? message.content.sourceRecords ?? [] : []),
             ...history.flatMap(message => message.role === 'assistant' ? historySourceRecords(message) : []),
         ].filter(isMaterialSourceRecord);
-        const captured = records.map(record => ({
-            record,
-            noteId: record.path ? this.resolveNoteId(record.path) : undefined,
-        }));
+        const captured = records.map(record => {
+            const path = record.path;
+            const file = path ? this.getFileByPath(path) as VaultFileLike | undefined : undefined;
+            return { path, file, mtime: file?.stat?.mtime, size: file?.stat?.size,
+                web: record.sourceBoundary === 'web', memory: record.sourceBoundary === 'memory' || record.kind === 'memory-reference',
+                noteId: path ? this.resolveNoteId(path) : undefined };
+        });
+        const state = this.state;
+        const getFileByPath = this.getFileByPath;
+        const isMemoryAllowed = this.isMemoryAllowed;
         return () => {
-            if (!this.hostSourcesAreCurrent()) throw new Error('Generation source session changed');
-            const constraint = this.state.snapshot();
-            for (const { record, noteId } of captured) {
-                if ((record.sourceBoundary === 'memory' || record.kind === 'memory-reference') && !this.isMemoryAllowed()) {
+            const constraint = state.snapshot();
+            for (const source of captured) {
+                if (source.memory && !isMemoryAllowed()) {
                     throw new Error('Generation Memory source revoked');
                 }
-                const allowed = record.sourceBoundary === 'web'
-                    ? !constraint || this.state.allows({ kind: 'web' }, constraint)
-                    : noteId !== undefined && this.identities.pathForNoteId(noteId) === record.path
-                        && (!constraint || this.state.allows({ kind: 'note', noteId }, constraint));
+                const allowed = source.web ? !constraint || state.allows({ kind: 'web' }, constraint)
+                    : source.noteId !== undefined && !!source.path && !!source.file
+                        && getFileByPath(source.path) === source.file && source.file.path === source.path
+                        && source.file.stat?.mtime === source.mtime && source.file.stat?.size === source.size
+                        && (!constraint || state.allows({ kind: 'note', noteId: source.noteId }, constraint));
                 if (!allowed) throw new Error('Generation material source changed');
             }
-            if (!this.hostSourcesAreCurrent() || this.state.snapshot() !== constraint) throw new Error('Generation source scope changed');
+            if (state.snapshot() !== constraint) throw new Error('Generation source scope changed');
         };
     };
 

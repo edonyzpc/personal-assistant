@@ -42,6 +42,46 @@ async function setup() {
 }
 
 describe('host writing context preparation', () => {
+    it.each(['parent', 'images', 'style'] as const)('checks real %s sources after run cleanup', async kind => {
+        const f = await setup();
+        f.host.verifyImages = async refs => ({ images: refs.map((value, ordinal) => ({ ref: value, ordinal, label: 'photo' })),
+            isCurrent: () => f.state.current && f.state.images, isSourceCurrent: () => f.state.images });
+        const controller = new AbortController();
+        await f.run.prepare(f.selection, { ...budget, signal: controller.signal });
+        const guard = f.run.captureSourceValidity();
+        controller.abort(); f.state.current = false; f.run.dispose();
+        expect(() => guard()).not.toThrow();
+        if (kind === 'parent') f.records.delete(f.parent.id);
+        if (kind === 'images') f.state.images = false;
+        if (kind === 'style') f.state.style = false;
+        expect(() => guard()).toThrow('sources changed');
+        expect(() => f.run.captureSourceValidity()).toThrow();
+    });
+
+    it('does not bind an empty image/style selection to old host request callbacks', async () => {
+        const f = await setup();
+        f.host.styles = { prepare: async () => ({ context: '', revisionIds: [], isCurrent: () => f.state.current }) };
+        await f.run.prepare({ currentInstructionConflicts: false, imageRefs: [] }, budget);
+        const guard = f.run.captureSourceValidity();
+        f.state.current = false; f.state.images = false; f.state.style = false; f.run.dispose();
+        expect(() => guard()).not.toThrow();
+    });
+
+    it('preserves old host preparation but refuses to invent a pure image receipt', async () => {
+        const f = await setup();
+        await f.run.prepare(f.selection, budget);
+        expect(f.run.current()).toBeDefined();
+        expect(() => f.run.captureSourceValidity()).toThrow('image source receipt unavailable');
+    });
+
+    it('does not substitute a possibly run-bound legacy style callback for a source receipt', async () => {
+        const f = await setup();
+        f.host.styles = { prepare: async () => ({ context: 'Legacy style', revisionIds: ['old'], isCurrent: () => f.state.current }) };
+        await f.run.prepare({ currentInstructionConflicts: false, imageRefs: [] }, budget);
+        expect(f.run.current()).toBeDefined();
+        expect(() => f.run.captureSourceValidity()).toThrow('style source receipt unavailable');
+    });
+
     it('marks an explicitly selected authorized candidate without exposing the persistent ID', async () => {
         const f = await setup();
         const run = new WritingContextRun({ ...f.host, selectedParentVersionId: f.parent.id });

@@ -94,7 +94,7 @@ export class ChatImageRequestScope {
 
     /** Verify linked writing material without claiming it was sent as pixels or changing the active selection. */
     async verifyWritingMaterials(refs: readonly ImageRef[], signal?: AbortSignal): Promise<{
-        images: MessageImage[]; isCurrent(): boolean;
+        images: MessageImage[]; isCurrent(): boolean; isSourceCurrent(): boolean;
     }> {
         this.assertSnapshot(signal);
         const requested = refs.map(cloneImageRef);
@@ -118,7 +118,7 @@ export class ChatImageRequestScope {
         };
         this.assertSnapshot(signal);
         if (!isCurrent()) throw new ChatImageRequestError("request_changed");
-        return { images: cloneMessageImages(images), isCurrent };
+        return { images: cloneMessageImages(images), isCurrent, isSourceCurrent: sourceChecksCurrent(guards) };
     }
     diagnostics(): Record<string, unknown> {
         return { type: "image_request_budget", count: this.selected.size,
@@ -191,6 +191,12 @@ export class ChatImageRequestScope {
         }
     }
 
+    /** Snapshot only the sources actually selected for the prepared physical request. */
+    captureSourceValidity(): () => void {
+        this.assertReady();
+        return assertImageSourcesCurrent([...this.guards]);
+    }
+
     isUsable(): boolean {
         try { this.assertReady(); return !this.resolutionFailed && (!this.selectionRequired || this.selected.size > 0); }
         catch { return false; }
@@ -257,6 +263,21 @@ export class ChatImageRequestScope {
             throw new ChatImageRequestError("request_changed");
         }
     }
+}
+
+// These closures own only immutable verification functions, never the request
+// scope, its pixels/leases, its abort signal or its temporary selection state.
+function sourceChecksCurrent(checks: readonly (() => boolean)[]): () => boolean {
+    const captured = [...checks];
+    return () => {
+        try { return captured.every(check => check()); }
+        catch { return false; }
+    };
+}
+
+function assertImageSourcesCurrent(checks: readonly (() => boolean)[]): () => void {
+    const isCurrent = sourceChecksCurrent(checks);
+    return () => { if (!isCurrent()) throw new ChatImageRequestError("request_changed"); };
 }
 
 function explicitSingleImageOrdinal(text: string): number | undefined {

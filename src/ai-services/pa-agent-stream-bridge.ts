@@ -46,6 +46,8 @@ export interface WritingEventContext {
     /** Frozen host provenance, independent of the model envelope and provider pixel subset. */
     getAssociatedImages?: () => readonly MessageImage[];
     getWritingContext?: () => import('./chat-types').ChatWritingContextMetadata | undefined;
+    /** Return the receipt already frozen at physical generation, not a fresh source snapshot. */
+    getSourceValidity?: () => (() => boolean) | undefined;
     onDiagnostic?: (diagnostic: WritingDeliveryDiagnostic) => void;
 }
 
@@ -276,12 +278,14 @@ export class CanonicalToLegacyEventAdapter {
             this.legacyEvents.writingRecovery({ runId: event.runId, requestId: writing.request.requestId,
                 ...(candidate ? { messageId: candidate.id } : {}),
                 rawText: reason === "source_changed" ? "" : rawText,
-                reason: reason ?? "invalid_output", previewText, ...material });
+                reason: reason ?? "invalid_output", previewText, ...material,
+                ...(writing.getSourceValidity ? { isSourceCurrent: writing.getSourceValidity() } : {}) });
             return;
         }
         const preamble = native ? candidate!.content.filter((part) => part.type === "text").map((part) => part.text).join("") : "";
         this.legacyEvents.writingArtifact({ runId: event.runId, requestId: output.requestId,
             messageId: candidate!.id, body: output.body, explanation: output.explanation, ...material,
+            ...(writing.getSourceValidity ? { isSourceCurrent: writing.getSourceValidity() } : {}),
             ...(preamble ? { preamble } : {}),
             ...(writing.getStyleRevisionIds ? { styleRevisionIds: [...writing.getStyleRevisionIds()] } : {}) });
         this.appendAssistantText([{ type: "text", text: preamble ? `${preamble}\n\n${output.body}` : output.body }]);

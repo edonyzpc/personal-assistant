@@ -583,6 +583,80 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
             : new IndexedDbChatHistoryStore('images', new FakeIndexedDbFactory() as unknown as IDBFactory);
         await store.initialize(); return store;
     };
+    it('rejects source revocation during the store hash without persisting a version or image owner', async () => {
+        const store = await open();
+        await store.putImageAsset(asset());
+        const originalPut = store.putWritingVersion.bind(store);
+        let current = true;
+        jest.spyOn(store, 'putWritingVersion').mockImplementation((version: WritingVersion, assertSourceCurrent?: () => void) => {
+            const pending = originalPut(version, assertSourceCurrent);
+            // Real store execution is now suspended on its asynchronous hash.
+            current = false;
+            return pending;
+        });
+        const service = new WritingVersionService(store);
+        try {
+            await expect(service.create({ requestId: 'revoked', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Source-backed body', images: [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }],
+            }, () => current)).rejects.toThrow('Writing conversation changed');
+            expect(await store.listWritingVersions('conv-1')).toEqual([]);
+            expect((await store.getImageAsset('image_one'))?.owners).toEqual([]);
+        } finally { await service.dispose(); await store.dispose(); }
+    });
+    it('preserves a committed write when the source is revoked before its promise returns', async () => {
+        const store = await open();
+        const originalPut = store.putWritingVersion.bind(store);
+        let current = true;
+        jest.spyOn(store, 'putWritingVersion').mockImplementation(async (version: WritingVersion, assertSourceCurrent?: () => void) => {
+            await originalPut(version, assertSourceCurrent);
+            current = false;
+        });
+        const service = new WritingVersionService(store);
+        try {
+            const version = await service.create({ requestId: 'committed', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Committed body', images: [],
+            }, () => current);
+            expect(await store.getWritingVersion(version.id)).toEqual(version);
+        } finally { await service.dispose(); await store.dispose(); }
+    });
+    it('drains a source-valid write already inside the store when the version service is disposed', async () => {
+        const store = await open();
+        const originalPut = store.putWritingVersion.bind(store);
+        const service = new WritingVersionService(store);
+        let closing: Promise<void> | undefined;
+        jest.spyOn(store, 'putWritingVersion').mockImplementation((version: WritingVersion, assertSourceCurrent?: () => void) => {
+            const pending = originalPut(version, assertSourceCurrent);
+            closing = service.dispose();
+            return pending;
+        });
+        try {
+            const version = await service.create({ requestId: 'draining', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Valid admitted body', images: [],
+            });
+            await closing;
+            expect(await store.getWritingVersion(version.id)).toEqual(version);
+        } finally { await service.dispose(); await store.dispose(); }
+    });
+    if (backend === 'indexeddb') it('aborts ownership changes when a source is revoked inside the writing transaction', async () => {
+        const store = await open();
+        await store.putImageAsset(asset());
+        let current = true;
+        const originalPut = FakeObjectStore.prototype.put;
+        const mutation = jest.spyOn(FakeObjectStore.prototype, 'put').mockImplementation(function (this: FakeObjectStore, record) {
+            const request = originalPut.call(this, record);
+            if (record.id === 'image_one' && (record as ImageAsset).owners.some(owner => owner.kind === 'writing')) current = false;
+            return request;
+        });
+        const service = new WritingVersionService(store);
+        try {
+            await expect(service.create({ requestId: 'transaction', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Source-backed body', images: [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }],
+            }, () => current)).rejects.toThrow('Writing conversation changed');
+            expect(current).toBe(false);
+            expect(await store.listWritingVersions('conv-1')).toEqual([]);
+            expect((await store.getImageAsset('image_one'))?.owners).toEqual([]);
+        } finally { mutation.mockRestore(); await service.dispose(); await store.dispose(); }
+    });
     it('reads native output through existing version/history readers alongside old recovery records', async () => {
         const factory = new FakeIndexedDbFactory() as unknown as IDBFactory;
         const store = backend === 'memory' ? new MemoryChatHistoryStore() : new IndexedDbChatHistoryStore('native-reader', factory);

@@ -4,7 +4,7 @@ import { cloneWritingVersion, hashWritingText, mergeWritingImages, type WritingS
 
 export interface WritingVersionStore {
     getWritingVersion(id: string): Promise<WritingVersion | null>;
-    putWritingVersion(version: WritingVersion): Promise<void>;
+    putWritingVersion(version: WritingVersion, assertSourceCurrent?: () => void): Promise<void>;
     listWritingVersions(conversationId: string): Promise<WritingVersion[]>;
 }
 
@@ -97,7 +97,11 @@ export class WritingVersionService {
                 }
                 return existing;
             }
-            await this.store.putWritingVersion(version);
+            // Disposal drains an admitted write, but its sources must remain
+            // authorized through the store's final mutation after async reads.
+            await this.store.putWritingVersion(version, () => {
+                if (!isCurrent()) throw new Error('Writing conversation changed');
+            });
             return cloneWritingVersion(version);
         });
         this.chain = task.catch(() => undefined);
