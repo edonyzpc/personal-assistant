@@ -17,7 +17,7 @@ SDD: [Software Design Document](./sdd.md)
 - Last verified behavior: 冻结门273 suites/7432 tests自然PASS后，scene schema及准备状态提示窄改动分别以聚焦测试/定向lint/生产build验证；最新6 suites/104 tests自然PASS。当前构建`1e474479ad21079d7f188b8ae2e8fed50da012998ad8ab7420812f34c2e5d8ed`已部署重载，同自然语言案例由14请求/12准备变为2请求/1准备，57505ms、一个版本、无ack；原文标签/引号仍丢失，逐字要求FAIL。上一构建真实手工编辑与唯一测试笔记保存通过、零新模型请求。全门不冒充在最新提示上重跑；DOM驱动仅app-runtime，full-ui/iOS未验收。
 - Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
 - Execution hold: Owner 2026-09-10因接近weekly limit要求完成正在执行的工作、提交推送开发分支后立即暂停Goal。当前检查已自然结束，后续不启动新开发/测试/provider工作；恢复须Owner明确继续。Goal控件暂停由用户操作，工具不支持该状态，不将目标误标Complete或Blocked。
-- Workspace: `/tmp/pa-b135-completion`，开发分支 `codex/b135-completion`，从已推送的`4591434f7df1499b11f0143240d38b99165fc9bc`恢复；原`/tmp/pa-b135-docs`临时目录已不存在。本次累计增量按runtime/tests与docs/evidence两部分提交，交付目标为`origin/codex/b135-completion`；最终SHA及live远程核对以本次交付回执为准。旧远程`codex/b135-discussion-followup`保留前次检查点。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
+- Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
 - Authorization: 既有全量实施授权继续适用；此前逐项讨论轮记录真实产品答复，随后按已确认方案持续实施。Owner 于2026-09-09明确要求“为当前修改创建commits并推送到远程开发分支”，授权本次累计B-135代码/测试/方案提交到origin的同名开发分支；不包含PR、master合并、tag、release或closeout。新产品偏差仍须单独决定。
 
