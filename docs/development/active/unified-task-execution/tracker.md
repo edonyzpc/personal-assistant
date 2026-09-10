@@ -12,7 +12,7 @@ SDD: [Software Design Document](./sdd.md)
 ## Current Snapshot
 
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: T-16真实自然语言准备循环已有定向修复及同案例复验；继续处理T-03逐字复写语义质量、T-14完整用途/历史、T-18来源/治理到最终存储准入与多版本失败继续。完整兼容和App/device退出门通过前不切默认native。
+- Next action: Owner 2026-09-10因weekly limit要求当前检查收尾并commit后暂停；停止新增实施。恢复时先处理D13旧recovery来源无法完整核验的产品选择，再继续T-18重载恢复；T-03逐字复写质量、T-14完整用途/历史及完整兼容和App/device退出门仍未通过，不切默认native。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
 - Last verified behavior: 本片完整基线274 suites/7529 tests自然PASS；最后unused Insights窄修后76套源码依赖图/2746 tests及全部artifact 2套/61 tests自然PASS，未变输入的其它基线证据复用。最终构建`9d020fca47f94ec19e8c51d3e1ddeb6283f3b07c6592963acb13b665106a49bb`已部署重载；真实Obsidian IndexedDB在hash后、事务内写入前撤销均零版本，有效正文含空格/CRLF/引号/Unicode逐字保留，已提交结果保留。Chat挂载成功、零捕获错误，无provider调用。先前T-16自然案例2请求/1准备但逐字要求仍FAIL；本片不改此结论，不将app-runtime当full-ui/iOS或整体T-18通过。
 - Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
@@ -38,8 +38,13 @@ SDD: [Software Design Document](./sdd.md)
 | D10 | Confirmed — Owner 2026-09-09 对拆开新提取与已有画像使用答复“同意” | 关闭/暂停长期提取只停止新学习；已有有效 Personal 可继续用于后续模型输入，仍受 Memory 主开关、来源有效性、治理、排除、遗忘与预算控制。显式 style 保留独立授权/撤销规则；设置说明明确停止学习不等于停止使用已有背景 | T-11 联同 T-08/T-09：停提取零新学习但已有画像可用；关闭 Memory、删除/遗忘、来源失效即禁止相应读取/投影；覆盖保存失败、重载和实际 provider 输入，不以字段解耦冒充验收 |
 | D11 | Confirmed — Owner 2026-09-09 对明确版本边界建议答复“同意” | 新语义凭据采用明确格式版本；降级旧版时保留治理库数据并停止该库的读取/确认/恢复，升级回来再恢复使用。接受旧版暂不能操作该治理库的代价；原笔记不修改 | T-04/T-10/T-19 全量跟踪：旧 parser 拒绝未知版本仅是局部证据；必须验证旧插件 bootstrap、普通保存、确认、恢复、legacy 画像路径及重新升级的数据保真。不得清空、覆盖或绕过治理库拒绝结果；产品批准不代表安全降级已验证 |
 | D12 | Confirmed — Owner 2026-09-10“接受，仅排除受影响的旧回复” | 旧助手回复含已撤销材料且无可靠段落级拆分时，仅暂时排除该条模型输入；界面原文及其他消息保留，来源重新获准有效后可恢复 | T-14原文/摘要/SDK同门，未知legacy不整体删除；已实现定向验证，不替代完整历史/作品快照及App门 |
+| D13 | Pending — 2026-09-10已提问，暂停前未收到答复 | 重开后无法完整核验来源的旧作品：建议在现有恢复窗口提示“旧来源记录不完整”，由用户点击“确认并恢复为 AI 草稿”，不增加第二个弹窗；已确认撤销或失效仍拒绝，AI来源与学习限制保持。备选为来源无法完整核验时暂停成版、仅保留原文 | T-18：区分有效、已知失效、无法核验；未答复前不实现未知来源放行或全禁，不把提问当授权。新持久字段设计还须证明旧reader兼容与最终事务准入 |
 
 ## Work
+
+2026-09-10再次暂停交接：Owner明确“达到weekly limit，完成当前运行的任务之后提交commit，然后暂停goal”。当前T-18重载恢复片仅完成只读调查，未修改runtime/tests或持久格式；本次只提交此Tracker检查点。上一片代码和验证已随`02b5092`、`aa16fc4`、`fd3ceae`、`34133c9`提交并推送统一分支。所有子审查均已结束，不启动后续开发、provider调用或广泛测试；任务计数保持2 done/19 partial/1 pending，B-135不标完成。Goal暂停为执行控制请求，不把未完成目标伪标complete或blocked。
+
+T-18重载恢复调查（输入`34133c968a10abfcb17d6ad93b6a55bb03592993`）：同页面WeakMap来源闭包不会持久化，重载缺失闭包时当前恢复路径没有等价来源重验。旧`ChatWritingRecovery`仅有正文、parent/scene及有限background refs，没有实际生成时的完整Personal/style/Insights身份；store的`cloneWritingRecovery`显式字段白名单也会剥离未知增量，新增字段不能直接宣称降级保存保真。可复用精确claim/revision、style授权与笔记hash，但style详情读取允许paused，不能直接当成版准入；Governed Undo可恢复原身份且事件保留7天，legacy同文同ID可重建，Insights没有持久发布身份，现有记录不能永久证明生成后从未撤销。该调查不批准新增持久代次或通用receipt库。恢复时先决D13，再设计实际物理请求来源记录与异步重验后的同步最终写入guard，并验证旧reader；保持AC-06来源有效与AC-11旧恢复兼容约束，不以当前selector或相同正文猜测历史来源。
 
 2026-09-10恢复后的T-18准入映射：AC-04/07/08/11 → 在实际生成请求绑定纯来源receipt，贯穿bridge作品/恢复事件、版本队列和底层store实际写入前；独立检查实际材料/parent/style/Personal/历史，正常run清理不撤销来源，会话代次继续单独验证 → 图片/风格/父版cleanup后有效与撤销反例、Personal关闭新提取仍有效及Forget同文重建、真实runtime事件到Chat持久化队列、同页面人工恢复及底层异步窗口反例 → 有效内容正常成版、晚到撤销零新版本/图片ownership，已经提交的结果真实保留（进入异步put函数不等于已提交）；receipt不进模型或IDB、图片lease释放 → 聚焦tests/类型/独立review后再冻结统一门，source/session/bridge/storage变化使对应证据失效。重载后人工恢复的持久来源重验与完整App/device验收仍单独跟踪。
 
