@@ -6,7 +6,7 @@ import { CanonicalToLegacyEventAdapter } from "../src/ai-services/pa-agent-strea
 import type { AgentEvent, LegacyAgentEvent } from "../src/ai-services/chat-types";
 import trace from "./fixtures/b135-native-identity-trace.json";
 import currentSchemaTrace from "./fixtures/b135-current-schema-trace.json";
-import { nativeWritingOutputSchema, nativeWritingOutputInstruction } from "../src/ai-services/writing-output";
+import { nativeWritingOutputSchema } from "../src/ai-services/writing-output";
 
 const request = { requestId: "bridge-request" };
 const handle = "b135-identity";
@@ -97,10 +97,11 @@ describe("native writing bridge host gates", () => {
             expect.objectContaining({ rawText: "", previewText: "" }),
         ]);
     });
-    it("replays the real current-schema response through adapter, loop, preview and one artifact", async () => {
+    it("replays the recorded provider response with the compatible schema through adapter, loop, preview and one artifact", async () => {
         const currentRequest = { requestId: 'b135-current-schema' };
         expect(currentSchemaTrace.declaration.schema).toEqual(nativeWritingOutputSchema(currentRequest));
-        expect(currentSchemaTrace.declaration.instruction).toBe(nativeWritingOutputInstruction(currentRequest));
+        // The captured prompt predates the verbatim-copy guidance. Preserve that
+        // evidence; replay proves decoding compatibility, not current prompt quality.
         expect(currentSchemaTrace.finishes).toEqual(['tool_calls']);
         const { result, events } = await run({ contextHandle: currentRequest.requestId,
             deltas: currentSchemaTrace.deltas, preamble: currentSchemaTrace.text || undefined,
