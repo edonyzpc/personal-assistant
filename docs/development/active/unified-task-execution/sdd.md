@@ -407,6 +407,23 @@ request/message 幂等身份和正文 hash 建版，验证 parent 及会话；�
 模型采用。之后无关清理 warning 不删除合法版本，持久化失败仍保留正文并允许本地
 重试，不再调用模型。
 
+T-18的最终存储准入使用宿主内存回调：在生成正文的实际物理请求上冻结已提供来源的
+有效性receipt，经bridge的作品/恢复事件传给Chat，再与当前会话代次一起交给版本服务
+及底层store的最终写入门；异步hash、parent与asset读取后仍须复验，IndexedDB拒绝时
+中止同一事务，不能留下新增图片ownership。同一页面的人工恢复在视图WeakMap持有该
+回调，不把函数加入持久化recovery。
+来源receipt只依赖实际文件身份/修改状态、Memory治理、parent及风格版本，不依赖临时
+AbortSignal或run清理；不保留pixels/lease、不写入模型参数或持久化记录。图片只包含实际
+选择，关闭新提取不撤销已有Personal，Forget同文重建也不能复用旧revision；无关claim
+新增或过期历史清理不撤销本次实际选中的来源。已提交写入的真实成功不追溯改成失败，
+调用异步put函数不代表已经提交。此回调不代替重载后恢复所需的持久来源重验。
+
+Vault Insights作为聚合来源，在分析开始前捕获全部合规Markdown身份，发布前重验，
+宿主仅保留临时来源凭据；普通停止调度不撤销已生成作品，新请求仍遵循原有注入门。
+来源失效与安排刷新分开，Pagelet自写跳过刷新和文件夹移动均不能绕过来源失效。
+selector以`usedVaultInsights`明确报告是否实际采用；被过滤的过期或异常Insights
+不能撤销仍有效的Personal-only作品，不通过解析输出文本猜测来源使用。
+
 中断、截断、格式失败保留获准可读候选和原因；显式选择/编辑恢复沿
 `WritingRecoveryModal`，原文来源仍是 AI，局部编辑不伪造成独立用户原作。
 真正删除/Forget/来源排除的内容按原治理处理，不能借“保留预览”重曝撤销原文。

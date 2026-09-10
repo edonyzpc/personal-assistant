@@ -14,9 +14,9 @@ SDD: [Software Design Document](./sdd.md)
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
 - Next action: T-16真实自然语言准备循环已有定向修复及同案例复验；继续处理T-03逐字复写语义质量、T-14完整用途/历史、T-18来源/治理到最终存储准入与多版本失败继续。完整兼容和App/device退出门通过前不切默认native。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 冻结门273 suites/7432 tests自然PASS后，scene schema及准备状态提示窄改动分别以聚焦测试/定向lint/生产build验证；最新6 suites/104 tests自然PASS。当前构建`1e474479ad21079d7f188b8ae2e8fed50da012998ad8ab7420812f34c2e5d8ed`已部署重载，同自然语言案例由14请求/12准备变为2请求/1准备，57505ms、一个版本、无ack；原文标签/引号仍丢失，逐字要求FAIL。上一构建真实手工编辑与唯一测试笔记保存通过、零新模型请求。全门不冒充在最新提示上重跑；DOM驱动仅app-runtime，full-ui/iOS未验收。
+- Last verified behavior: 本片完整基线274 suites/7529 tests自然PASS；最后unused Insights窄修后76套源码依赖图/2746 tests及全部artifact 2套/61 tests自然PASS，未变输入的其它基线证据复用。最终构建`9d020fca47f94ec19e8c51d3e1ddeb6283f3b07c6592963acb13b665106a49bb`已部署重载；真实Obsidian IndexedDB在hash后、事务内写入前撤销均零版本，有效正文含空格/CRLF/引号/Unicode逐字保留，已提交结果保留。Chat挂载成功、零捕获错误，无provider调用。先前T-16自然案例2请求/1准备但逐字要求仍FAIL；本片不改此结论，不将app-runtime当full-ui/iOS或整体T-18通过。
 - Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
-- Execution hold: Owner 2026-09-10因接近weekly limit要求完成正在执行的工作、提交推送开发分支后立即暂停Goal。当前检查已自然结束，后续不启动新开发/测试/provider工作；恢复须Owner明确继续。Goal控件暂停由用户操作，工具不支持该状态，不将目标误标Complete或Blocked。
+- Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
 - Authorization: 既有全量实施授权继续适用；此前逐项讨论轮记录真实产品答复，随后按已确认方案持续实施。Owner 于2026-09-09明确要求“为当前修改创建commits并推送到远程开发分支”，授权本次累计B-135代码/测试/方案提交到origin的同名开发分支；不包含PR、master合并、tag、release或closeout。新产品偏差仍须单独决定。
@@ -40,6 +40,22 @@ SDD: [Software Design Document](./sdd.md)
 | D12 | Confirmed — Owner 2026-09-10“接受，仅排除受影响的旧回复” | 旧助手回复含已撤销材料且无可靠段落级拆分时，仅暂时排除该条模型输入；界面原文及其他消息保留，来源重新获准有效后可恢复 | T-14原文/摘要/SDK同门，未知legacy不整体删除；已实现定向验证，不替代完整历史/作品快照及App门 |
 
 ## Work
+
+2026-09-10恢复后的T-18准入映射：AC-04/07/08/11 → 在实际生成请求绑定纯来源receipt，贯穿bridge作品/恢复事件、版本队列和底层store实际写入前；独立检查实际材料/parent/style/Personal/历史，正常run清理不撤销来源，会话代次继续单独验证 → 图片/风格/父版cleanup后有效与撤销反例、Personal关闭新提取仍有效及Forget同文重建、真实runtime事件到Chat持久化队列、同页面人工恢复及底层异步窗口反例 → 有效内容正常成版、晚到撤销零新版本/图片ownership，已经提交的结果真实保留（进入异步put函数不等于已提交）；receipt不进模型或IDB、图片lease释放 → 聚焦tests/类型/独立review后再冻结统一门，source/session/bridge/storage变化使对应证据失效。重载后人工恢复的持久来源重验与完整App/device验收仍单独跟踪。
+
+本片review/fix：独立复核发现无关Memory提交导致旧凭据误失效，已改为实际claim/revision/关联治理身份及新增事件，真实Pause→Resume同文不复活，过期历史清理不误拒绝；底层store在异步hash/parent/asset读取后缺准入的3个反例先RED，现传入同步guard并在IndexedDB事务内失败回滚。对应store/version 2 suites/51 tests自然PASS（1.191s）。同页面人工恢复以WeakMap保留生成凭据，正/反两例确认流结束后有效成版、撤销零成版且history无函数；Chat/native bridge/context runtime 3 suites/287 tests自然PASS（4.671s），补真实runtime不完整输出cleanup后有效/撤销反例后runtime 14/14 PASS（1.668s）。这批source证据不等于App验证。
+
+Insights来源组合：scheduler只向宿主发布临时sourcePaths及同步验证闭包，不建正文cache或持久epoch；普通dispose保留已有作品凭据，新snapshot/明确Memory或Insights关闭/源对象或stat/边界变化撤销，owner防旧scheduler迟到覆盖。分析前捕获全部eligible Markdown，发布前重验；每次校验O(n)身份/stat、不读正文或全库JSON。新请求保持原scheduler注入政策，不从该凭据重新发送背景。独立review确认Pagelet self-write shortcut会漏掉分析期间新增文件，统一门在build阶段主动中止exit130后修复：四类vault事件在shortcut前单独失效、零额外调度；另补运行中和停止后的folder rename引入新合规后代，空目录保持有效。真实Pagelet create/同stat modify及停止后folder rename均有RED→GREEN；两suite424 PASS（23.778s），最后停止组合增量后相关23/23 PASS（3.209s）。源/测试已冻结，正在统一静态、构建、全量门；前次中止不记PASS。
+
+完整基线门：platform guard与全源ESLint自然通过；build的TS2556/TS2345定位为新增store测试的union mock未完整声明可选参数，改成显式真实接口后独立tsc及生产build自然PASS（未改运行时/断言）。构建`16ab57b314686e4c3f834ff8b06fe37e5694f23d2a8dcf4dbeae234b272c386a`对应`npm run test:all -- --runInBand`274 suites/7529 tests PASS，340.476s自然exit0，运行期间源/测试/fixture/config/deps未变。
+
+基线门后只读确认unused Insights P2：selector已省略过期/异常Insights、仍保留合法Personal时，host guard误绑未用Insights。最后窄修仅selector明确`usedVaultInsights`、compat透传及plugin按实际使用绑定，更新三份相关tests；三suite428 tests PASS（22.512s）。复验映射：相同source/fixture/config/deps的未受影响基线证据复用；Jest `--findRelatedTests src/plugin.ts src/pa/memory-use-projection.ts`列出的76套源码依赖图重验，两个变更源文件ESLint、生产build及全部artifact组重新执行。此前完整基线不标成窄修后的全量重跑，不关闭阶段或T-18。
+
+本片最终证据：`npm test -- --runInBand --findRelatedTests src/plugin.ts src/pa/memory-use-projection.ts`76 suites/2746 tests PASS（59.514s，自然exit0）；`npm run build`自然PASS；`npm run test:artifacts -- --runInBand`2 suites/61 tests PASS（68.715s，自然exit0）。源扫描无runtime style/HTML注入匹配，diff检查PASS；docs:check为206 Markdown/1810链接及4条原有advisory。最后五文件窄修后没有其它source/test/fixture/config/dependency修改，不重复未受影响tooling门。
+
+App-runtime：Obsidian 1.14.1（installer 1.11.7）、已核验vault `/mnt/code/personal-assistant/test`。从本worktree运行既有`deploy-current.mjs`向该test插件路径复制，部署guard验证当前产物身份，dist与部署main.js SHA256均为`9d020fca47f94ec19e8c51d3e1ddeb6283f3b07c6592963acb13b665106a49bb`，随后CLI重载。真实plugin WritingVersionService与原生IDBDatabase上分别在第3次（hash后）、第4次（事务最终put前）来源检查撤销，均拒绝且零版本；正向保存正文精确、回调未入记录、提交后撤销不改已成功结果。仅随机ID合成记录，finally按该ID清理并确认零残留；未发送模型请求或用户资料。Chat容器数1、无捕获errors/error console，debug与mobile模拟均已关闭。CLI初次沙箱内因应用日志只读失败，终止该失败进程后通过获准的沙箱外CLI完成；不冒充原失败为PASS。这是DOM/CLI app-runtime，来源治理到整个Chat及reload恢复的真实组合、full-ui/iOS仍待验收。
+
+历史native回放边界修正：`b135-current-schema-trace.json`的真实提示早于上轮逐字指导，原始fixture保持不变；移除历史prompt必须与当前prompt逐字相同的错误身份断言，保留schema一致、实际delta解码、loop/preview和单一artifact断言。该回放仅证明历史响应可兼容解码，当前prompt的真实模型质量及F-20仍未通过；独立只读复核确认未将旧记录冒充新证据。
 
 2026-09-10准备状态修复结果：[修复前循环及编辑保存](evidence/2026-09-10-native-context-loop-and-save.json)保留14请求/170140ms、12个不同scene、正文标签/引号丢失；实际版本面板手工编辑产生第二版及正确parent，预览后确认唯一合成笔记，正文/hash/user_edited provenance/完成receipt一致，模型请求保持14。[同输入修复后](evidence/2026-09-10-native-preparation-state.json)为2请求/57505ms、1准备、1作品版本，无后置ack；正文仍漏标签/引号，逐字FAIL不隐去，单样例不推断固定提速比例。隔离host禁笔记/网页/背景/提取，结果不覆盖Personal/style/图片组合；视图与服务已释放，用户原视图恢复，合成笔记保留为回执。
 
@@ -312,7 +328,7 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [~] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。生产source预检下create→append及越界混合批次已有定向证据；真实语义质量、完整来源投影及App门未完成 |
 | T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [~] | 显式native候选已接Chat→runtime工具/来源/动态handle/完整输入/图片收窄及成版parent/scene；新topic与恢复scene回归、真实Qwen合成协议通过。默认切换、真实UI、多版本失败继续及完整治理组合仍待验 |
 | T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | native候选的runtime schema/loop/bridge动态handle与物理请求快照已贯通，保留单输出、严格provider身份、无ack及host最终门；真实Qwen合成样例成功。默认切换、完整用途/成版保存生命周期与实际UI门仍待补；T-03/T-13/T-16依赖未解除 |
-| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | native预览/恢复、精确正文及会话成版准入已接；异步reset/同ID重开/切换、已开始写入及连续首轮回归通过。完整来源/治理到最终成版、图片style/保存组合及App门仍待验证 |
+| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | 生成来源receipt贯穿实际请求、自动作品/同页人工恢复和底层存储；正常清理/停新学习不误撤销，实际来源/治理变化拒绝；源码与真实App IndexedDB晚到准入已验。reload恢复的持久来源重验、完整图片style/多版保存和Chat/App/device组合仍待验收 |
 | T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3隔离和source reopen已有证据；真实2.9.2 reader拒绝当前v2库，当前重开全数据保留、旧文字升级通过，不宣称可降级。完整旧插件bootstrap/重新升级、native/media/版本及Desktop/iOS门仍待验证 |
 | T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [~] | 当前Qwen同案例schema失败及重复scene均有实际序列/耗时/usage；准备状态修复后2请求1准备，逐字要求仍FAIL。完整语义/质量对照未完，不推断模型净耗时或固定提速 |
 | T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [~] | 已有273 suites/7432 tests自然全门PASS，之后窄改动有相关聚焦/build/lint与独立复核；最终全部AC、full-ui/iOS及全量review未完成。各证据输入边界见Work |
