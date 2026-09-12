@@ -2,6 +2,7 @@ import type { PersistedContextTrace } from "../pa/contracts";
 import type { MessageImage } from "../chat/image-types";
 import type { ChatHostProvenance } from "./chat-provenance";
 import type { PersistedSourceRef } from "../pa/contracts/source-ref";
+import type { GenerationInputSnapshot } from "./generation-input-snapshot";
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -593,11 +594,11 @@ export type LegacyAgentEvent =
     | LegacyAgentAnswerSnapshotEvent
     | LegacyAgentReasoningChunkEvent
     | LegacyAgentTurnMetadataEvent
-    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata;
+    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot;
         /** Ephemeral host receipt from the generating request; never a persisted/model field. */
         isSourceCurrent?: () => boolean })
     | (LegacyAgentEventBase & { kind: "writing-preview"; runId: string; requestId: string; messageId: string; text: string })
-    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; previewText?: string; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata; isSourceCurrent?: () => boolean })
+    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; previewText?: string; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot; isSourceCurrent?: () => boolean })
     | LegacyAgentTerminalEvent;
 
 export type VaultAdviceEvidenceKind =

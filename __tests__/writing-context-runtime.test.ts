@@ -8,13 +8,14 @@ import { WritingVersionService } from '../src/chat/writing-versions';
 import { cloneWritingVersion, type WritingVersion } from '../src/chat/writing-types';
 import type { ImageAssetService } from '../src/chat/image-assets';
 import type { MessageImage } from '../src/chat/image-types';
+import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 
 jest.mock('obsidian');
 afterEach(() => jest.restoreAllMocks());
 
 const scene = { writingTask: 'email', purpose: 'invitation', audience: 'colleagues', domain: 'work' };
 const body = '  请来参加周五的分享。\n🌱\n';
-type Scenario = 'complete' | 'ordinary' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'personal-source' | 'personal-retry' | 'incomplete';
+type Scenario = 'complete' | 'ordinary' | 'premature' | 'mixed' | 'revoked' | 'physical-retry' | 'image-subset' | 'image-empty' | 'schema-repair' | 'reselect' | 'new-topic' | 'personal-source' | 'personal-retry' | 'pagelet' | 'incomplete';
 
 async function runScenario(scenario: Scenario) {
     const records = new Map<string, WritingVersion>();
@@ -28,6 +29,11 @@ async function runScenario(scenario: Scenario) {
     let styleCurrent = true;
     let personalCurrent = true;
     const images: MessageImage[] = [1, 2].map(ordinal => ({ ref: { assetId: `photo-${ordinal}`, contentHash: String(ordinal).repeat(64) }, ordinal, label: `Photo ${ordinal}` }));
+    const pagelet: PageletChatHandoffContext = { version: 1, id: 'pagelet-1', body: 'Source-backed handoff',
+        anchor: { path: 'notes/anchor.md', mtime: 10, size: 20, contentHash: 'a'.repeat(64) },
+        sources: [{ path: 'notes/source.md', mtime: 30, size: 40, contentHash: 'b'.repeat(64) }],
+        sourceRefs: [{ path: 'notes/source.md' }], webUrls: [], whyNow: ['Relevant now'],
+        triggerReason: 'manual', preparedAt: 1, pipelineVersion: 'pagelet-v1' };
     const imageMode = scenario === 'image-subset' || scenario === 'image-empty';
     const release = jest.fn();
     const imageService = {
@@ -51,8 +57,13 @@ async function runScenario(scenario: Scenario) {
         getAPIToken: async () => 'fixture', log: jest.fn(), isOperationsAgentEnabled: false,
         getMemoryExtractionPromptContext: () => {
             if (scenario !== 'personal-source' && scenario !== 'personal-retry') return undefined;
-            return Object.defineProperty({ memoryContextMode: 'governed', governedMemoryContext: 'Authorized personal background' },
-                'isSourceCurrent', { value: () => personalCurrent });
+            const context = { memoryContextMode: 'governed', governedMemoryContext: 'Authorized personal background' };
+            Object.defineProperties(context, {
+                isSourceCurrent: { value: () => personalCurrent },
+                generationInputSources: { value: { personal: { state: 'identified', mode: 'governed',
+                    revisions: [{ claimId: 'claim-1', revisionId: 'revision-1' }] }, insights: { state: 'none' } } },
+            });
+            return context;
         },
     } as unknown as AiServiceHost;
     const ai = new AIUtils(host);
@@ -77,7 +88,8 @@ async function runScenario(scenario: Scenario) {
                 const parentHandle = text.match(/"handle":"([^"]+:parent:1)"/)?.[1];
                 if (!parentHandle) throw new Error('Missing authorized parent directory');
                 const selectedScene = scenario === 'reselect' && turn === 2 ? { ...scene, purpose: 'reminder' } : scene;
-                const selection = { parentHandle, scene: scenario === 'schema-repair' && turn === 1 ? JSON.stringify(scene) : selectedScene, currentInstructionConflicts: false,
+                const selection = { parentHandle: scenario === 'new-topic' ? null : parentHandle,
+                    scene: scenario === 'schema-repair' && turn === 1 ? JSON.stringify(scene) : selectedScene, currentInstructionConflicts: false,
                     imageRefs: scenario === 'image-subset' ? [images[1].ref] : [] };
                 yield new AIMessageChunk({ content: '', tool_call_chunks: [
                     ...(scenario === 'schema-repair' && turn === 1 ? [{ id: 'scope', index: 0, name: 'declare_source_scope',
@@ -111,6 +123,9 @@ async function runScenario(scenario: Scenario) {
     try {
         await runtime.streamTurn({ prompt: 'Use the earlier proposal for an invitation', memoryMode: 'auto',
             writingRequest: { requestId: 'request' }, writingOutputProtocol: 'native',
+            ...(scenario === 'pagelet' ? { pageletHandoff: pagelet } : {}),
+            ...(scenario === 'new-topic' ? { writingContext: { parentVersionId: parent.id, text: parent.text,
+                textHash: parent.textHash, associatedImages: [] } } : {}),
             ...(imageMode ? { images, imageAssetService: imageService as unknown as ImageAssetService,
                 imageCapability: { get: () => 'supported' as const, onSuccess: jest.fn(), onError: jest.fn() } } : {}),
             writingContextHost: { conversationId: 'conversation', candidates: [parent], versions,
@@ -119,7 +134,7 @@ async function runScenario(scenario: Scenario) {
             onEvent: event => events.push(event) });
     } catch (caught) { error = caught; }
     finally { runtime.dispose(); versions.dispose(); }
-    return { events, inputs, serializedInputs, images, schemas, prepareStyle, createModel, error, retryErrors,
+    return { events, inputs, serializedInputs, images, pagelet, parent, schemas, prepareStyle, createModel, error, retryErrors,
         revokeStyle: () => { styleCurrent = false; }, revokePersonal: () => { personalCurrent = false; } };
 }
 
@@ -129,6 +144,12 @@ describe('native writing context runtime integration', () => {
         const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> => event.kind === 'writing-artifact');
         expect(result.inputs[1]).toContain('Authorized personal background');
         expect(result.inputs.join('')).not.toContain('isSourceCurrent');
+        expect(result.inputs.join('')).not.toContain('revision-1');
+        expect(artifact?.generationInput).toMatchObject({
+            personal: { state: 'identified', mode: 'governed',
+                revisions: [{ claimId: 'claim-1', revisionId: 'revision-1' }] },
+            insights: { state: 'none' },
+        });
         expect(artifact?.isSourceCurrent?.()).toBe(true);
         result.revokePersonal();
         expect(artifact?.isSourceCurrent?.()).toBe(false);
@@ -138,6 +159,19 @@ describe('native writing context runtime integration', () => {
         const result = await runScenario('personal-retry');
         expect(result.retryErrors).toHaveLength(1);
         expect(result.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+    });
+
+    it('records Pagelet backing hashes without claiming its rendered body is reload-verifiable', async () => {
+        const result = await runScenario('pagelet');
+        const artifact = result.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> => event.kind === 'writing-artifact');
+        expect(result.inputs[1]).toContain('Source-backed handoff');
+        expect(artifact?.generationInput?.pagelet).toEqual({
+            state: 'unknown', id: result.pagelet.id, pipelineVersion: result.pagelet.pipelineVersion,
+            anchor: { path: result.pagelet.anchor.path, mtime: 10, size: 20,
+                contentHash: { algorithm: 'unspecified', value: 'a'.repeat(64) } },
+            sources: [{ path: result.pagelet.sources[0].path, mtime: 30, size: 40,
+                contentHash: { algorithm: 'unspecified', value: 'b'.repeat(64) } }],
+        });
     });
     it('delivers a source receipt that survives runtime cleanup but rejects a later style revocation', async () => {
         const result = await runScenario('complete');
@@ -190,9 +224,25 @@ describe('native writing context runtime integration', () => {
         expect(result.prepareStyle.mock.calls[0]).toEqual([scene, expect.objectContaining({ currentInstructionConflicts: false })]);
         expect(result.events.filter(event => event.kind === 'writing-artifact')).toEqual([
             expect.objectContaining({ body, requestId: 'request', styleRevisionIds: ['style-1'], associatedImages: [],
-                writingContext: { parentVersionId: expect.any(String), scene } }),
+                writingContext: { parentVersionId: expect.any(String), scene }, generationInput: {
+                    schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
+                    personal: { state: 'none' }, insights: { state: 'none' },
+                    style: { state: 'identified', revisionIds: ['style-1'] }, images: [],
+                    parent: { state: 'identified', versionId: result.parent.id,
+                        textHash: { algorithm: 'sha256', value: result.parent.textHash } },
+                    pagelet: { state: 'none' },
+                } }),
         ]);
         expect(result.events.some(event => event.kind === 'writing-recovery')).toBe(false);
+    });
+
+    it('does not revive a legacy parent when native context explicitly selects a new topic', async () => {
+        const result = await runScenario('new-topic');
+        expect(result.error).toBeUndefined();
+        expect(result.inputs[1]).not.toContain('<selected_writing_version');
+        expect(result.events.find(event => event.kind === 'writing-artifact')).toMatchObject({
+            writingContext: { scene }, generationInput: { parent: { state: 'none' } },
+        });
     });
 
     it.each(['image-subset', 'image-empty'] as const)('removes excluded pixels from the actual generation input for %s', async scenario => {
@@ -206,6 +256,9 @@ describe('native writing context runtime integration', () => {
         else expect(result.serializedInputs[1]).not.toContain('data:image/jpeg;base64,');
         expect(result.events.find(event => event.kind === 'writing-artifact')).toMatchObject({
             associatedImages: scenario === 'image-subset' ? [result.images[1]] : [],
+            generationInput: { images: scenario === 'image-subset'
+                ? [{ ref: result.images[1].ref, hashAlgorithm: 'sha256' }]
+                : [] },
         });
     });
 
@@ -215,6 +268,10 @@ describe('native writing context runtime integration', () => {
         const recovery = result.events.find(event => event.kind === 'writing-recovery');
         expect(recovery?.rawText).toContain('请来参加周五的分享');
         expect(recovery?.isSourceCurrent?.()).toBe(true);
+        expect(recovery?.generationInput).toMatchObject({
+            style: { state: 'identified', revisionIds: ['style-1'] },
+            parent: { state: 'identified', versionId: result.parent.id },
+        });
         expect(JSON.stringify(recovery)).not.toContain('isSourceCurrent');
         result.revokeStyle();
         expect(recovery?.isSourceCurrent?.()).toBe(false);

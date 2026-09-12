@@ -12,9 +12,9 @@ SDD: [Software Design Document](./sdd.md)
 ## Current Snapshot
 
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: D13/D14已交付；F-21/F-22修复和Owner指定DeepSeek第二模型最小对照完成，F-20/F-23模型质量继续跟踪。继续T-14/T-18实际物理生成来源与跨重载、图文多版组合，以及真实Desktop流式中断/恢复与受影响iOS门；默认native尚未启用。
+- Next action: D13/D14已交付；F-21/F-22修复和Owner指定DeepSeek第二模型最小对照完成，F-20/F-23模型质量继续跟踪。T-18已先贯通最后物理生成请求的内存来源快照；下一片补持久schema、旧reader对照、跨重载重验和最终store事务，再做图文多版组合、真实Desktop流式中断/恢复与受影响iOS门；默认native尚未启用。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 2026-09-12本片完整275 suites/7577 tests自然PASS，生产/test构建`208ae6fcdbe972a61f2e7276b198aab6d20b954cdeb67984c5e6d1a2f653b914`重载后DeepSeek native/旧协议各2物理请求、唯一artifact、正常独立finish且provider正文保真。native中文引号改写仍为质量FAIL。D13恢复片先前App证据保留；本次隔离ChatService不替代ChatView/保存/full-ui/iOS。
+- Last verified behavior: 2026-09-12本片完整275 suites/7577 tests自然PASS，生产/test构建`208ae6fcdbe972a61f2e7276b198aab6d20b954cdeb67984c5e6d1a2f653b914`重载后DeepSeek native/旧协议各2物理请求、唯一artifact、正常独立finish且provider正文保真。其后物理生成输入快照源码在冻结状态下聚焦7 suites/500 tests及plugin-record-note 391 tests、tsc、完整lint、diff/社区DOM扫描通过；未重复完整build/full tests。native中文引号改写仍为质量FAIL。D13恢复片先前App证据保留；本次隔离ChatService不替代ChatView/保存/full-ui/iOS。
 - Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
@@ -42,6 +42,38 @@ SDD: [Software Design Document](./sdd.md)
 | D14 | Confirmed — Owner 2026-09-12“接受分开评估，F-20 继续跟踪（推荐）” | 新旧协议共现的F-20保留为模型质量问题，不再单独否决专用通道兼容评估 | T-03/T-20仍保留原FAIL；协议、来源、预览、finish与App门通过后才切默认，非立即切换批准 |
 
 ## Work
+
+2026-09-12 T-18物理生成输入快照首片映射：AC-04/06/08/09 → `prepareProviderInput`
+按最终投影构造有界、无正文的`GenerationInputSnapshot`，显式记录任务来源用途与
+文件revision、Personal/Insights的`none/identified/unknown`、实际风格revision、完整
+图片SHA-256 identity、parent正文SHA-256及Pagelet原契约未声明算法的backing hash；仅由`onProviderRequestStart`选择实际派发
+版本，经bridge同时透传作品与恢复事件 → TaskSourceRun同路径不同用途/未知revision、
+runtime多次准备但未派发/物理重试/空图片与无parent、governed与legacy背景三态、bridge
+克隆隔离测试；focused suites、tsc、lint、diff及社区DOM扫描 → 事件快照只对应最后一次
+真实物理生成请求，未发送的prepare和run末来源union均不能覆盖，未知不冒充可跨重载
+核验。来源registry、provider start hook、背景selector、图片/parent/style或bridge事件变化
+须复跑；新增持久字段、旧reader兼容、异步重验及最终store事务留在T-18后续片，不以本片
+关闭跨重载恢复或阶段门。
+
+实现结果：Context投影额外保留仅宿主可见的实际tool observations和history依据；语义摘要按
+结构化source index映射回当前完整历史对象，不能使用会丢metadata的摘要缓存对象。task快照
+只枚举最终投影内的来源；旧非canonical助手正文或已知取材工具观察缺来源记录时为`unknown`，
+当前完整canonical空回执、纯用户输入及status-only观察才可为`none`。文件仅记录本进程
+path/mtime/size revision，Web、skill及不能稳定识别者保持`unknown`。父版按实际投影入口记录：
+native选中的parent优先，只有hostless路径才回退legacy `writingContext`；native显式选新话题
+不会复活旧父版。图片记录完整选中关联列表，Personal只记录实际采用claim/revision，Insights与
+Pagelet缺少可跨重载发布身份时不冒充已核验。快照保持非模型输入、非诊断输出，经bridge深拷贝
+到artifact/recovery及Chat turn；当前仍未写入版本或恢复持久格式。
+
+冻结验证：`task-source-run`、Context投影/摘要、stream bridge、writing runtime、B-129实际SDK及
+ChatView共7 suites/500 tests PASS（6.025s）；`plugin-record-note` 1 suite/391 tests PASS
+（26.032s），均自然exit0。`npx tsc -noEmit -skipLibCheck`、完整`npm run lint`、
+`git diff --check`通过；社区DOM扫描无匹配，exit1按契约为PASS。独立只读复核先发现并驱动修正
+3项P2：摘要缓存来源metadata丢失、legacy父版漏记、缺记录误标none；复核后再发现native
+`parentHandle:null`可能错误回退旧父版，新增反例修正后确认全部关闭且无新增P2+。本证据不包含
+`docs:check`通过（206 Markdown/1818链接，4条既有advisory），文档契约2 suites/58 tests
+PASS（5.996s）。本证据不包含持久schema、跨重载重验、底层最终写入、完整build/full tests或
+App/device门，T-18及阶段状态保持部分完成。
 
 2026-09-12 F-21/F-22收敛：DeepSeek[首次结果](evidence/2026-09-12-deepseek-initial.json)及[真实SDK拒绝前帧](evidence/2026-09-12-deepseek-native-raw.json)区分两问题。第一次观察hook被LangChain withConfig克隆及pipe.transform绕过，未作为raw证据；修正为克隆模型generator后抓到合法header后`id:""/index:0/args:"{"`，collector误拒绝导致停止，后续finish未知不是provider自行结束。来源状态片RED为3失败/63通过（报告证明失败，shell外层因读日志为0），GREEN4 suites/103 tests自然PASS（2.145s）；身份片RED1失败/75通过自然exit1，GREEN3 suites/123 tests自然PASS（1.502s），含同index续帧、反例及adapter→loop→bridge。独立只读审查无可确认P1/P2。
 

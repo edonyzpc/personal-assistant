@@ -2453,6 +2453,12 @@ describe('Memory governance plugin bootstrap', () => {
         const context = plugin.getMemoryExtractionPromptContext();
         expect(context.governedMemoryContext).toContain('Use concise evidence-backed answers.');
         expect(context.governedMemoryContext).not.toContain('"kind":"vault_insights"');
+        expect(context.generationInputSources).toMatchObject({
+            personal: { state: 'identified', mode: 'governed', revisions: [expect.objectContaining({
+                claimId: expect.any(String), revisionId: expect.any(String),
+            })] },
+            insights: { state: 'none' },
+        });
         expect(context.isSourceCurrent()).toBe(true);
     });
 
@@ -2701,6 +2707,10 @@ describe('Memory governance plugin bootstrap', () => {
             userProfile: expect.stringContaining('Always answer with bullet points.'),
             vaultInsights: expect.stringContaining('fileCount=1'),
         });
+        expect(legacy.generationInputSources).toEqual({
+            personal: { state: 'unknown', mode: 'legacy' },
+            insights: { state: 'unknown', mode: 'legacy' },
+        });
         expect(governed).toMatchObject({ memoryContextMode: 'governed' });
         expect(governed.governedMemoryContext).toContain('Always answer with bullet points.');
         expect(governed.governedMemoryContext).toContain('"kind":"vault_insights"');
@@ -2711,6 +2721,13 @@ describe('Memory governance plugin bootstrap', () => {
             scope: 'current_vault',
             sourcePaths: [],
         })]);
+        expect(governed.generationInputSources).toMatchObject({
+            personal: { state: 'identified', mode: 'governed', revisions: [expect.objectContaining({
+                claimId: expect.any(String), revisionId: expect.any(String),
+            })] },
+            insights: { state: 'unknown', mode: 'governed' },
+        });
+        expect(Object.keys(governed)).not.toContain('generationInputSources');
     });
 
     it('keeps legacy reads and non-Memory saves available while Memory writes fail closed', async () => {
@@ -9964,6 +9981,9 @@ describe('B-135 legacy Personal without extraction', () => {
         expect(read).toHaveBeenCalledTimes(1);
         expect(plugin.getMemoryExtractionPromptContext()).toMatchObject({ memoryContextMode: 'legacy',
             userProfile: expect.stringContaining('Prefer concise Chinese replies.') });
+        expect(plugin.getMemoryExtractionPromptContext().generationInputSources).toEqual({
+            personal: { state: 'unknown', mode: 'legacy' }, insights: { state: 'none' },
+        });
         expect(JSON.stringify(plugin.getMemoryExtractionPromptContext())).not.toContain('UNTRUSTED STORED MARKDOWN');
         expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
         expect(plugin.memoryExtractionScheduler).toBeUndefined();

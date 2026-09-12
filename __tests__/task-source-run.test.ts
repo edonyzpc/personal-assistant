@@ -119,6 +119,95 @@ describe('Task source run host', () => {
         if (change === 'memory') memoryAllowed = false;
         expect(assertSources).toThrow(/source/);
     });
+
+    it('captures exact projected task-source purposes without merging equal paths', () => {
+        const h = fixture();
+        h.a.stat = { mtime: 17, size: 29 };
+        const run = h.create();
+        const messages: PaAgentMessage[] = [
+            { role: 'toolResult', id: 'outline-result', toolCallId: 'outline-call', toolName: 'read_note_outline',
+                timestamp: 1, isError: false, content: { promptText: 'OUTLINE_BODY', includeInNextPrompt: true,
+                    sourceRecords: [{ kind: 'context-used', dedupKey: 'outline:a', sourceBoundary: 'read-only-tool',
+                        capabilityName: 'read_note_outline', path: h.a.path }] } },
+            { role: 'toolResult', id: 'memory-result', toolCallId: 'memory-call', toolName: 'search_memory',
+                timestamp: 2, isError: false, content: { promptText: 'MEMORY_BODY', includeInNextPrompt: true,
+                    sourceRecords: [{ kind: 'memory-reference', dedupKey: 'memory:a', sourceBoundary: 'memory',
+                        capabilityName: 'search_memory', path: h.a.path }] } },
+        ];
+
+        const captured = run.captureGenerationInputTaskSources(messages, []);
+
+        expect(captured).toEqual({
+            state: 'identified',
+            sources: [
+                expect.objectContaining({ purpose: 'task_material', boundary: 'read-only-tool', dedupKey: 'outline:a',
+                    capabilityName: 'read_note_outline', revision: { state: 'identified', scope: 'current_process',
+                        path: h.a.path, mtime: 17, size: 29 } }),
+                expect.objectContaining({ purpose: 'task_material', boundary: 'memory', dedupKey: 'memory:a',
+                    capabilityName: 'search_memory', revision: { state: 'identified', scope: 'current_process',
+                        path: h.a.path, mtime: 17, size: 29 } }),
+            ],
+        });
+        expect(JSON.stringify(captured)).not.toContain('OUTLINE_BODY');
+        expect(JSON.stringify(captured)).not.toContain('MEMORY_BODY');
+    });
+
+    it('marks a represented source without a stable revision as unknown and omits unrepresented history', () => {
+        const run = fixture().create();
+        const web: PaAgentMessage = { role: 'toolResult', id: 'web-result', toolCallId: 'web-call', toolName: 'webSearch',
+            timestamp: 1, isError: false, content: { promptText: 'WEB_BODY', includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'web-source', dedupKey: 'web:one', sourceBoundary: 'web',
+                    url: 'https://example.invalid/source' }] } };
+        const omittedHistory: ChatMessage[] = [{ role: 'assistant', content: 'OMITTED_HISTORY', memoryMetadata: {
+            hasMemoryContent: true, allowedMemorySourcePaths: ['notes/omitted.md'],
+        } }];
+
+        const actual = run.captureGenerationInputTaskSources([web], []);
+        expect(actual).toEqual({
+            state: 'unknown',
+            sources: [expect.objectContaining({ dedupKey: 'web:one',
+                revision: { state: 'unknown', url: 'https://example.invalid/source' } })],
+        });
+        expect(JSON.stringify(actual)).not.toContain('omitted.md');
+        expect(JSON.stringify(run.captureGenerationInputTaskSources([web], omittedHistory))).toContain('omitted.md');
+    });
+
+    it('records a loaded skill from the represented provider input without treating it as Vault evidence', () => {
+        const run = fixture().create();
+        const skill: PaAgentMessage = { role: 'toolResult', id: 'skill-result', toolCallId: 'skill-call',
+            toolName: 'load_skill', timestamp: 1, isError: false, content: {
+                promptText: '<skill_body>GUIDANCE</skill_body>', includeInNextPrompt: true,
+                sourceRecords: [{ kind: 'skill-guide', dedupKey: 'skill:writing', sourceBoundary: 'skill-context',
+                    providerId: 'skill-context', capabilityName: 'skill-context', statusOnly: true,
+                    citationEligible: false, metadata: { sourcePath: 'bundled/writing/SKILL.md' } }],
+            } };
+
+        expect(run.captureGenerationInputTaskSources([skill], [])).toEqual({
+            state: 'unknown',
+            sources: [expect.objectContaining({ kind: 'skill-guide', boundary: 'skill-context',
+                revision: { state: 'unknown', path: 'bundled/writing/SKILL.md' } })],
+        });
+    });
+
+    it('distinguishes missing receipts on represented legacy content from a proven empty source set', () => {
+        const run = fixture().create();
+        const legacyHistory: ChatMessage[] = [{ role: 'assistant', content: 'An older source-backed proposal without a receipt.' }];
+        const unrecordedTool: PaAgentMessage = { role: 'toolResult', id: 'unknown-result', toolCallId: 'unknown-call',
+            toolName: 'read_note_outline', timestamp: 1, isError: false, content: {
+                promptText: 'A represented observation without source records.', includeInNextPrompt: true,
+            } };
+        const statusOnly: PaAgentMessage = { ...unrecordedTool, id: 'status-result', content: {
+            promptText: 'Scope declaration accepted.', includeInNextPrompt: true, metadata: { statusOnly: true },
+        } };
+        const canonicalHistory: ChatMessage[] = [{ role: 'assistant', content: 'A current reply with a complete empty receipt.',
+            canonicalTurn: { schemaVersion: 1, runId: 'run', turnId: 'turn', messages: [] } }];
+
+        expect(run.captureGenerationInputTaskSources([], legacyHistory)).toEqual({ state: 'unknown', sources: [] });
+        expect(run.captureGenerationInputTaskSources([unrecordedTool], [])).toEqual({ state: 'unknown', sources: [] });
+        expect(run.captureGenerationInputTaskSources([statusOnly], canonicalHistory)).toEqual({ state: 'none', sources: [] });
+        expect(run.captureGenerationInputTaskSources([], [{ role: 'user', content: 'Only this instruction.' }]))
+            .toEqual({ state: 'none', sources: [] });
+    });
     it('projects known historical sources, retains legacy choices, and restores reauthorized history in a later run', () => {
         const h = fixture();
         const fromNote = (path: string): ChatMessage => ({ role: 'assistant', content: path === h.a.path ? 'A_FACT_AND_PROPOSAL' : 'B_FACT',

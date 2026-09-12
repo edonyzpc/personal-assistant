@@ -57,6 +57,13 @@ import { isCurrentHistorySummary, isCurrentToolSummary, type PaAgentContextSumma
 import { chatHistoryImageMetadata } from "./chat-image-identity";
 import { readChatHistoryTurnMetadata } from "./pa-agent-history";
 import { cloneMessageImages, type MessageImage } from "../chat/image-types";
+import {
+    cloneGenerationInputBackgroundSources,
+    cloneGenerationInputSnapshot,
+    type GenerationInputBackgroundSources,
+    type GenerationInputPageletSource,
+    type GenerationInputSnapshot,
+} from "./generation-input-snapshot";
 import { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 import { readProviderCompletion, writingOutputInstruction, nativeWritingOutputInstruction, nativeWritingOutputSchema, cloneChatWritingRequest, selectedWritingContext } from "./writing-output";
 import { ChatImageRequestScope, createResolveChatImagesTool, RESOLVE_CHAT_IMAGES } from "./image-request";
@@ -855,6 +862,7 @@ export class PaAgentRuntime {
             associatedImages: MessageImage[];
             styleRevisionIds: string[];
             context?: import('./chat-types').ChatWritingContextMetadata;
+            generationInput: GenerationInputSnapshot;
         };
         let preparedWritingGeneration: WritingGenerationSnapshot | undefined;
         let writingGeneration: WritingGenerationSnapshot | undefined;
@@ -1032,6 +1040,8 @@ export class PaAgentRuntime {
             getAssociatedImages: () => writingGeneration?.associatedImages ?? imageScope?.writingMaterials ?? [],
             getWritingContext: () => writingGeneration?.context,
             getSourceValidity: () => writingGeneration?.isSourceCurrent,
+            getGenerationInputSnapshot: () => writingGeneration
+                ? cloneGenerationInputSnapshot(writingGeneration.generationInput) : undefined,
             onDiagnostic: (diagnostic) => {
                 if (this.host.settings.debug) this.host.log("PA Agent writing delivery", diagnostic);
             },
@@ -1210,6 +1220,7 @@ export class PaAgentRuntime {
             // replaces the previous background; it must never revive old Memory.
             injectedContext = readInjectedContext();
             const backgroundSourceCurrent = injectedContext?.isSourceCurrent;
+            const backgroundGenerationSources = generationInputBackgroundSources(injectedContext);
             preparedBackground = formatBackground(injectedContext);
             if (writingStyle) {
                 const budget = availableStyleBudget(input, definitions, schemas);
@@ -1220,7 +1231,7 @@ export class PaAgentRuntime {
                 }
             }
             const history = isOperationsStagedAcknowledgement(input.runtimeInstruction) ? undefined : snapshotHistory();
-            const result: Record<string, unknown> = buildCanonicalModelInput(input, definitions, schemas, history);
+            const { providerInput: result, projection } = buildCanonicalModelInput(input, definitions, schemas, history);
             const taskTranscript = input.transcript.map(cloneMessage);
             const assertWritingInputCurrent = writingContextRun?.captureTranscriptValidity(taskTranscript);
             assertTaskInputCurrent = () => {
@@ -1231,8 +1242,11 @@ export class PaAgentRuntime {
             if (writingContextRun) writingContextBudget = availableStyleBudget(input, definitions, schemas);
             if (options.writingRequest) {
                 const context = currentWritingContext();
-                const assertSourceValidity = sourceRun.captureSourceValidity(taskTranscript, history ?? []);
-                const assertStoredSources = sourceRun.capturePersistenceSourceValidity(taskTranscript, history ?? []);
+                const actualToolSources = projection.sourceToolMessages;
+                const actualHistorySources = projection.history.sourceMessages;
+                const assertSourceValidity = sourceRun.captureSourceValidity(actualToolSources, actualHistorySources);
+                const assertStoredSources = sourceRun.capturePersistenceSourceValidity(actualToolSources, actualHistorySources);
+                const taskSources = sourceRun.captureGenerationInputTaskSources(actualToolSources, actualHistorySources);
                 const assertContextSources = context ? writingContextRun?.captureSourceValidity() : undefined;
                 const assertImageSources = imageScope?.captureSourceValidity();
                 const styleSourceCurrent = writingStyle?.isSourceCurrent ?? writingStyle?.isCurrent;
@@ -1240,6 +1254,14 @@ export class PaAgentRuntime {
                 const historyIdentity = JSON.stringify((options.chatHistory ?? []).map(message => ({
                     role: message.role, content: message.content, ...chatHistoryImageMetadata(message),
                 })));
+                const selectedImages = cloneMessageImages(context?.images ?? imageScope?.writingMaterials ?? []);
+                const styleRevisionIds = [...(context?.styleRevisionIds ?? writingStyle?.revisionIds ?? [])];
+                const usesStyle = Boolean(context?.styleContext || writingStyle?.context || styleRevisionIds.length);
+                const parent = context?.parent
+                    ? { versionId: context.parent.id, textHash: context.parent.textHash }
+                    : !writingContextHost && options.writingContext
+                        ? { versionId: options.writingContext.parentVersionId, textHash: options.writingContext.textHash }
+                        : undefined;
                 preparedWritingGeneration = {
                     isSourceCurrent: () => {
                         try {
@@ -1254,8 +1276,26 @@ export class PaAgentRuntime {
                             })));
                         } catch { return false; }
                     },
-                    associatedImages: cloneMessageImages(context?.images ?? imageScope?.writingMaterials ?? []),
-                    styleRevisionIds: [...(context?.styleRevisionIds ?? writingStyle?.revisionIds ?? [])],
+                    associatedImages: selectedImages,
+                    styleRevisionIds,
+                    generationInput: {
+                        schemaVersion: 1,
+                        inputPurpose: 'writing',
+                        task: taskSources,
+                        ...cloneGenerationInputBackgroundSources(backgroundGenerationSources),
+                        style: !usesStyle ? { state: 'none' }
+                            : styleRevisionIds.length > 0
+                                ? { state: 'identified', revisionIds: [...styleRevisionIds] }
+                                : { state: 'unknown' },
+                        images: selectedImages.map(image => ({
+                            ref: { ...image.ref }, hashAlgorithm: 'sha256',
+                        })),
+                        parent: parent
+                            ? { state: 'identified', versionId: parent.versionId,
+                                textHash: { algorithm: 'sha256', value: parent.textHash } }
+                            : { state: 'none' },
+                        pagelet: generationInputPageletSource(options.pageletHandoff),
+                    },
                     ...(context ? { context: { ...(context.parent ? { parentVersionId: context.parent.id } : {}),
                         ...(context.scene ? { scene: { ...context.scene } } : {}) } } : {}),
                     assertCurrent: () => {
@@ -1949,7 +1989,7 @@ export class PaAgentRuntime {
         injectedContext?: PaAgentInjectedContext,
         boundSchemas: ChatToolProviderSchema[] = [],
         summaries?: PaAgentContextSummaries,
-    ): Record<string, string> {
+    ) {
         const { projection, operationsGuidance } = this.projectPaAgentCanonicalModelInput(
             options, input, toolUseConstraints, toolDefinitions, injectedContext, boundSchemas, summaries,
         );
@@ -1961,12 +2001,15 @@ export class PaAgentRuntime {
                 input.turnIndex, options.writingContextHandle);
         }
         return {
-            input: projection.input,
-            available_skills: projection.availableSkills,
-            tool_definitions: projection.toolDefinitions,
-            tool_observations: projection.toolObservations,
-            operations_guidance: operationsGuidance,
-            __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
+            providerInput: {
+                input: projection.input,
+                available_skills: projection.availableSkills,
+                tool_definitions: projection.toolDefinitions,
+                tool_observations: projection.toolObservations,
+                operations_guidance: operationsGuidance,
+                __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
+            } as Record<string, unknown>,
+            projection,
         };
     }
 
@@ -2029,17 +2072,70 @@ export class PaAgentRuntime {
     private readInjectedContext(
         pageletHandoff?: PageletChatHandoffContext,
     ): PaAgentInjectedContext | undefined {
-        const memoryContext = this.host.getMemoryExtractionPromptContext();
+        const memoryContext = this.host.getMemoryExtractionPromptContext() as PaAgentInjectedContext | undefined;
         if (!pageletHandoff) return memoryContext;
         const result: PaAgentInjectedContext = {
             ...(memoryContext ?? {}),
             pageletHandoff,
         };
         if (memoryContext?.isSourceCurrent) Object.defineProperty(result, 'isSourceCurrent', { value: memoryContext.isSourceCurrent });
+        if (memoryContext?.generationInputSources) {
+            Object.defineProperty(result, 'generationInputSources', {
+                value: cloneGenerationInputBackgroundSources(memoryContext.generationInputSources),
+            });
+        }
         return result;
     }
 
 
+}
+
+function generationInputBackgroundSources(
+    context: PaAgentInjectedContext | undefined,
+): GenerationInputBackgroundSources {
+    if (context?.generationInputSources) {
+        return cloneGenerationInputBackgroundSources(context.generationInputSources);
+    }
+    if (context?.memoryContextMode === 'governed' || context?.governedMemoryContext) {
+        if (!context.governedMemoryContext?.trim()) {
+            return { personal: { state: 'none' }, insights: { state: 'none' } };
+        }
+        // Older/custom hosts expose one opaque governed block. Its Personal and
+        // Insights portions cannot be separated without host-owned identities.
+        return {
+            personal: { state: 'unknown', mode: 'governed' },
+            insights: { state: 'unknown', mode: 'governed' },
+        };
+    }
+    return {
+        personal: context?.userProfile
+            ? { state: 'unknown', mode: 'legacy' }
+            : { state: 'none' },
+        insights: context?.vaultInsights
+            ? { state: 'unknown', mode: 'legacy' }
+            : { state: 'none' },
+    };
+}
+
+function generationInputPageletSource(
+    pagelet: PageletChatHandoffContext | undefined,
+): GenerationInputPageletSource {
+    if (!pagelet) return { state: 'none' };
+    // The handoff lacks a hash for its rendered body. Preserve its exact backing
+    // revisions while marking reload verification unknown instead of inferring it.
+    return {
+        state: 'unknown',
+        id: pagelet.id,
+        pipelineVersion: pagelet.pipelineVersion,
+        anchor: {
+            path: pagelet.anchor.path, mtime: pagelet.anchor.mtime, size: pagelet.anchor.size,
+            contentHash: { algorithm: 'unspecified', value: pagelet.anchor.contentHash },
+        },
+        sources: pagelet.sources.map(source => ({
+            path: source.path, mtime: source.mtime, size: source.size,
+            contentHash: { algorithm: 'unspecified', value: source.contentHash },
+        })),
+    };
 }
 
 /** A valid receipt cannot authorize output if prompt compaction removed any of its actual context. */

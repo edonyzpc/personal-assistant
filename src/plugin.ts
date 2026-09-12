@@ -9801,6 +9801,20 @@ export class PluginManager extends Plugin {
                 } : {}),
             };
             if (!governed.boundedContext) return context;
+            const selectedRevisionRefs = governed.usedClaimIds.flatMap(claimId => {
+                const claim = state.claims.find(candidate => candidate.id === claimId);
+                return claim?.activeRevisionId ? [{ claimId, revisionId: claim.activeRevisionId }] : [];
+            });
+            this.withGenerationInputSources(context, {
+                personal: governed.usedClaimIds.length === 0
+                    ? { state: 'none' }
+                    : selectedRevisionRefs.length === governed.usedClaimIds.length
+                        ? { state: 'identified', mode: 'governed', revisions: selectedRevisionRefs }
+                        : { state: 'unknown', mode: 'governed' },
+                insights: governed.usedVaultInsights
+                    ? { state: 'unknown', mode: 'governed' }
+                    : { state: 'none' },
+            });
             const selectedSourceIdentity = (snapshot: DeviceMemoryGovernanceStateV1, claimId: string): string => {
                 const claim = snapshot.claims.find(candidate => candidate.id === claimId);
                 const links = snapshot.projectionLinks.filter(link => link.claimId === claimId);
@@ -9917,6 +9931,14 @@ export class PluginManager extends Plugin {
         return context;
     }
 
+    private withGenerationInputSources(
+        context: PaAgentInjectedContext,
+        sources: NonNullable<PaAgentInjectedContext['generationInputSources']>,
+    ): PaAgentInjectedContext {
+        Object.defineProperty(context, 'generationInputSources', { value: sources });
+        return context;
+    }
+
     private invalidateLegacyProfileContext(): void {
         this.legacyProfileReadEpoch = (this.legacyProfileReadEpoch ?? 0) + 1;
         this.legacyProfileContext = null;
@@ -9969,6 +9991,14 @@ export class PluginManager extends Plugin {
         const context = this.memoryExtractionScheduler?.getPromptContext()
             ?? (cachedProfile ? { userProfile: cachedProfile } : {});
         const attachSourceGuard = (projected: PaAgentInjectedContext): PaAgentInjectedContext => {
+            this.withGenerationInputSources(projected, {
+                personal: projected.userProfile
+                    ? { state: 'unknown', mode: 'legacy' }
+                    : { state: 'none' },
+                insights: projected.vaultInsights
+                    ? { state: 'unknown', mode: 'legacy' }
+                    : { state: 'none' },
+            });
             if (!projected.userProfile && !projected.vaultInsights) return projected;
             const sourceIdentity = this.legacyProfileSourceIdentity;
             const scope = this.getLegacyProfileScope();

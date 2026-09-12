@@ -3,6 +3,7 @@ import { extractCanonicalTurnMetadata } from "./pa-agent-history";
 import { cloneChatWritingRequest, decodeNativeWritingOutput, decodeWritingOutput, isValidWritingContextHandle } from "./writing-output";
 import { decodeNativeWritingPreview, decodeWritingPreview } from "./writing-preview";
 import { cloneMessageImages, type MessageImage } from "../chat/image-types";
+import { cloneGenerationInputSnapshot, type GenerationInputSnapshot } from "./generation-input-snapshot";
 import type {
     AgentEvent,
     AssistantMessagePart,
@@ -48,6 +49,8 @@ export interface WritingEventContext {
     getWritingContext?: () => import('./chat-types').ChatWritingContextMetadata | undefined;
     /** Return the receipt already frozen at physical generation, not a fresh source snapshot. */
     getSourceValidity?: () => (() => boolean) | undefined;
+    /** Return the host facts selected by the actual physical generation request. */
+    getGenerationInputSnapshot?: () => GenerationInputSnapshot | undefined;
     onDiagnostic?: (diagnostic: WritingDeliveryDiagnostic) => void;
 }
 
@@ -268,9 +271,15 @@ export class CanonicalToLegacyEventAdapter {
             });
         } catch { /* Debug sinks must not change delivery or recovery. */ }
         const context = writing.getWritingContext?.();
+        let generationInput: GenerationInputSnapshot | undefined;
+        try {
+            const snapshot = writing.getGenerationInputSnapshot?.();
+            if (snapshot) generationInput = cloneGenerationInputSnapshot(snapshot);
+        } catch { /* Missing host facts cannot be replaced with model or run-end claims. */ }
         const material = {
             ...(writing.getAssociatedImages ? { associatedImages: cloneMessageImages(writing.getAssociatedImages()) } : {}),
             ...(context ? { writingContext: { ...context, ...(context.scene ? { scene: { ...context.scene } } : {}) } } : {}),
+            ...(generationInput ? { generationInput } : {}),
         };
         if (!output) {
             const previewText = this.currentWritingPreview(rawText);

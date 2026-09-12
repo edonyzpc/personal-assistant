@@ -320,16 +320,17 @@ describe('B-135 production source declaration', () => {
                     instructionQuote: '只用B整理', notes: 'selected', noteHandles: [match![1]], webAllowed: false,
                 } } };
             }
-            return { text: '按B整理' };
+            return { text: envelope('按B整理') };
         }, { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write in read-only fixture'); } } as never });
-        const files = ['A', 'B'].map(name => ({ path: `${name}.md`, name: `${name}.md`, basename: name, extension: 'md' }));
+        const files = ['A', 'B'].map(name => ({ path: `${name}.md`, name: `${name}.md`, basename: name,
+            extension: 'md', stat: { ctime: 1, mtime: name === 'A' ? 11 : 22, size: name === 'A' ? 31 : 42 } }));
         jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => files.find(file => file.path === args[0]) as never);
         jest.spyOn(f.host.app.metadataCache, 'getFileCache').mockImplementation((...args: unknown[]) => ({
             headings: [{ level: 1, heading: (args[0] as typeof files[0]).basename === 'A' ? 'A_PRIVATE_MATERIAL' : 'B_ALLOWED_MATERIAL' }],
         }) as never);
         f.host.settings.memoryEnabled = true;
         f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: 'VALID_PERSONAL_BACKGROUND' });
-        await f.run({ images: undefined, prompt });
+        await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' } });
         expect(f.lifecycle.filter(event => event.type === 'message_end' && event.message.role === 'toolResult').map(event => event.type === 'message_end' ? event.message : null)).not.toEqual(expect.arrayContaining([expect.objectContaining({ isError: true })]));
         expect(f.requests).toHaveLength(3);
         expect(requestText(f.requests[1])).toContain('A_PRIVATE_MATERIAL');
@@ -337,6 +338,14 @@ describe('B-135 production source declaration', () => {
         expect(requestText(f.requests[2])).not.toContain('A_PRIVATE_MATERIAL');
         expect(requestText(f.requests[2])).toContain('B_ALLOWED_MATERIAL');
         expect(requestText(f.requests[2])).toContain('VALID_PERSONAL_BACKGROUND');
+        const artifact = f.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
+            event.kind === 'writing-artifact');
+        expect(artifact?.generationInput?.task).toEqual({
+            state: 'identified',
+            sources: [expect.objectContaining({ boundary: 'read-only-tool',
+                revision: { state: 'identified', scope: 'current_process', path: 'B.md', mtime: 22, size: 42 } })],
+        });
+        expect(JSON.stringify(artifact?.generationInput)).not.toContain('A.md');
     });
 
     it('does not publish internal Memory path enumeration as a source directory', async () => {
@@ -757,7 +766,11 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
         await f.run({ writingRequest: { requestId: "writing-1" }, writingContext: { parentVersionId: "v2", text: "本地修改的 V2，不能退回 V1", textHash: "a".repeat(64), associatedImages: [image(1)] }, prepareWritingStyle });
         expect(requestText(f.requests[0])).toContain("本地修改的 V2"); expect(requestText(f.requests[0])).toContain("<writing_style");
         expect(prepareWritingStyle.mock.calls[0][0].remainingMemoryChars).toBeLessThan(6000);
-        expect(f.events.find((event) => event.kind === "writing-artifact")).toMatchObject({ styleRevisionIds: ["style-1"] });
+        expect(f.events.find((event) => event.kind === "writing-artifact")).toMatchObject({
+            styleRevisionIds: ["style-1"],
+            generationInput: { parent: { state: 'identified', versionId: 'v2',
+                textHash: { algorithm: 'sha256', value: 'a'.repeat(64) } } },
+        });
         current = false;
         const canonical = f.lifecycle.filter((event) => event.type === "message_end").map((event) => (event as Extract<AgentEvent, { type: "message_end" }>).message);
         const persisted = createPaAgentPersistedTurn({ runId: "r", turnId: "t", messages: canonical, committedFinalText: '正文："海风"\n🌊' });

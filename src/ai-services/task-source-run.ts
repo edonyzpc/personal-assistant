@@ -8,6 +8,7 @@ import { TaskSourceNoteIdentities, type TaskSourceNoteIdentity } from './task-so
 import { resolveTaskSourceReadPlans } from './task-source-read-plans';
 import type { ChatMessage, PaAgentMessage, SourceRecord } from './chat-types';
 import { readChatHistoryTurnMetadata } from './pa-agent-history';
+import type { GenerationInputTaskSource, GenerationInputIdentityState } from './generation-input-snapshot';
 
 export const MAX_TASK_SOURCE_NOTE_HANDLES = 32;
 export const MAX_TASK_SOURCE_NOTE_DIRECTORY_CHARS = 8000;
@@ -171,11 +172,7 @@ export class TaskSourceRun {
     /** Source-only receipt for the storage queue; run cleanup is checked separately from source revocation. */
     readonly capturePersistenceSourceValidity = (transcript: readonly PaAgentMessage[], history: readonly ChatMessage[]): (() => void) => {
         if (!this.isCurrent()) throw new Error('Cannot capture inactive generation sources');
-        const records = [
-            ...transcript.flatMap(message => message.role === 'toolResult' && message.content.includeInNextPrompt
-                ? message.content.sourceRecords ?? [] : []),
-            ...history.flatMap(message => message.role === 'assistant' ? historySourceRecords(message) : []),
-        ].filter(isMaterialSourceRecord);
+        const records = this.materialSourceRecords(transcript, history);
         const captured = records.map(record => {
             const path = record.path;
             const file = path ? this.getFileByPath(path) as VaultFileLike | undefined : undefined;
@@ -200,6 +197,57 @@ export class TaskSourceRun {
                 if (!allowed) throw new Error('Generation material source changed');
             }
             if (state.snapshot() !== constraint) throw new Error('Generation source scope changed');
+        };
+    };
+
+    /** Content-free facts from the exact provider projection, never the run's accumulated source union. */
+    readonly captureGenerationInputTaskSources = (
+        transcript: readonly PaAgentMessage[],
+        history: readonly ChatMessage[],
+    ): { state: GenerationInputIdentityState; sources: GenerationInputTaskSource[] } => {
+        if (!this.isCurrent()) throw new Error('Cannot capture inactive generation sources');
+        const sources = this.generationInputSourceRecords(transcript, history).map((record): GenerationInputTaskSource => {
+            const sourcePath = record.kind === 'skill-guide' && typeof record.metadata?.sourcePath === 'string'
+                ? record.metadata.sourcePath : undefined;
+            const path = record.path ?? sourcePath;
+            const file = path ? this.getFileByPath(path) as VaultFileLike | undefined : undefined;
+            const mtime = file?.stat?.mtime;
+            const size = file?.stat?.size;
+            const revision = path && file?.path === path
+                && typeof mtime === 'number' && Number.isFinite(mtime)
+                && typeof size === 'number' && Number.isFinite(size)
+                ? { state: 'identified' as const, scope: 'current_process' as const, path, mtime, size }
+                : { state: 'unknown' as const,
+                    ...(path ? { path } : {}),
+                    ...(record.url ? { url: record.url } : {}) };
+            return {
+                purpose: 'task_material',
+                kind: record.kind,
+                boundary: record.sourceBoundary ?? (record.kind === 'memory-reference' ? 'memory' : 'unknown'),
+                dedupKey: record.dedupKey,
+                ...(record.turnId ? { turnId: record.turnId } : {}),
+                ...(record.providerId ? { providerId: record.providerId } : {}),
+                ...(record.capabilityName ? { capabilityName: record.capabilityName } : {}),
+                revision,
+            };
+        });
+        const hasUnknownSourceReceipt = transcript.some(message =>
+            message.role === 'toolResult'
+            && isTaskSourceProducingTool(message.toolName)
+            && message.content.includeInNextPrompt
+            && message.content.promptText.trim().length > 0
+            && message.content.metadata?.statusOnly !== true
+            && !(message.content.sourceRecords ?? []).some(record =>
+                isMaterialSourceRecord(record) || record.kind === 'skill-guide'))
+            || history.some(message => message.role === 'assistant'
+                && message.content.trim().length > 0
+                && !message.canonicalTurn
+                && historySourceRecords(message).length === 0);
+        return {
+            state: hasUnknownSourceReceipt ? 'unknown'
+                : sources.length === 0 ? 'none'
+                    : sources.every(source => source.revision.state === 'identified') ? 'identified' : 'unknown',
+            sources,
         };
     };
 
@@ -304,6 +352,28 @@ export class TaskSourceRun {
             throw new Error('Task source scope is no longer current.');
         }
     }
+
+    private materialSourceRecords(
+        transcript: readonly PaAgentMessage[],
+        history: readonly ChatMessage[],
+    ): SourceRecord[] {
+        return [
+            ...transcript.flatMap(message => message.role === 'toolResult' && message.content.includeInNextPrompt
+                ? message.content.sourceRecords ?? [] : []),
+            ...history.flatMap(message => message.role === 'assistant' ? historySourceRecords(message) : []),
+        ].filter(isMaterialSourceRecord);
+    }
+
+    private generationInputSourceRecords(
+        transcript: readonly PaAgentMessage[],
+        history: readonly ChatMessage[],
+    ): SourceRecord[] {
+        return [
+            ...transcript.flatMap(message => message.role === 'toolResult' && message.content.includeInNextPrompt
+                ? message.content.sourceRecords ?? [] : []),
+            ...history.flatMap(message => message.role === 'assistant' ? historySourceRecords(message) : []),
+        ].filter(record => isMaterialSourceRecord(record) || record.kind === 'skill-guide');
+    }
 }
 
 function isMaterialSourceRecord(record: SourceRecord): boolean {
@@ -311,6 +381,20 @@ function isMaterialSourceRecord(record: SourceRecord): boolean {
         record.sourceBoundary === 'current-note' || record.sourceBoundary === 'read-only-tool'
         || record.sourceBoundary === 'vault' || record.sourceBoundary === 'memory'
         || record.sourceBoundary === 'web' || record.kind === 'memory-reference');
+}
+
+function isTaskSourceProducingTool(toolName: string): boolean {
+    return toolName === 'get_current_note_context'
+        || toolName === 'read_note_outline'
+        || toolName === 'inspect_obsidian_note'
+        || toolName === 'read_canvas_summary'
+        || toolName === 'search_vault_snippets'
+        || toolName === 'search_memory'
+        || toolName === 'search_vault_metadata'
+        || toolName === 'list_recent_notes'
+        || toolName === 'list_vault_tags'
+        || toolName === 'webSearch'
+        || toolName === 'load_skill';
 }
 
 function historySourceRecords(message: ChatMessage): SourceRecord[] {

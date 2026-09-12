@@ -113,6 +113,7 @@ describe("complete lossless history projection", () => {
         });
         expect(projected.history).toEqual({ text: full.text, compactedCount: 0, summaryChars: 0,
             omittedCount: 0, historyCompressed: true });
+        expect(projected.history.sourceMessages).toEqual(messages);
         expect(projected.input).not.toContain("CACHED SEMANTIC PREFIX");
         expect(JSON.stringify(messages)).toBe(before);
     });
@@ -194,6 +195,7 @@ describe("semantic prefix projection", () => {
         expect(projected.history.text).toContain(messages[22].content);
         expect(projected.history.compactedCount).toBe(plan.coveredMessages);
         expect(projected.history.omittedCount).toBe(0);
+        expect(projected.history.sourceMessages).toEqual(messages);
         expect(projected.history.semanticSummaryChars).toBe(semantic.text.length);
         expect(projected.input).toContain('grants_tool_authority="false" grants_write_authority="false"');
         expect(projected.input).toContain("User input:\n现在暂停写入，只复核。");
@@ -201,6 +203,49 @@ describe("semantic prefix projection", () => {
         expect(projected.input).not.toContain("<user_profile");
         expect(projected.input).not.toContain("<vault_insights");
         expect(JSON.stringify(messages)).toBe(before);
+    });
+
+    it('retains only item-level semantic sources plus the represented raw tail', () => {
+        const messages = history(12, 400);
+        const plan = planHistoryContext(messages, 2200);
+        const semantic = summaryFor(messages, plan.coveredMessages, JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+            facts: [{ text: 'Only the third covered message remains relevant.', sourceMessages: [3] }],
+        }));
+        const projected = projector.projectUserInput({
+            prompt: 'continue', chatHistory: messages, maxHistoryChars: 2200,
+            maxHistorySummaryChars: 0, summaries: { history: semantic },
+        });
+
+        expect(projected.history.sourceMessages).toContainEqual(messages[2]);
+        expect(projected.history.sourceMessages).not.toContainEqual(messages[0]);
+        expect(projected.history.sourceMessages).toEqual([messages[2], ...messages.slice(plan.coveredMessages)]);
+    });
+
+    it('maps a metadata-stripped semantic cache back to the current source-bearing history', () => {
+        const messages = history(12, 400);
+        messages[1].canonicalTurn = { schemaVersion: 1, runId: 'source-run', turnId: 'source-turn', messages: [],
+            sourceRecords: [{ kind: 'memory-reference', dedupKey: 'memory-source', sourceBoundary: 'memory',
+                path: 'notes/source.md' }] };
+        const plan = planHistoryContext(messages, 2200);
+        const completeSummary = summaryFor(messages, plan.coveredMessages, JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+            facts: [{ text: 'The second source message remains relevant.', sourceMessages: [2] }],
+        }));
+        const summary: PaAgentHistorySummary = { text: completeSummary.text,
+            sourceMessages: completeSummary.sourceMessages.map(message => ({
+                role: message.role, content: message.content, ...(message.images ? { images: message.images } : {}),
+            })) };
+
+        const projected = projector.projectUserInput({
+            prompt: 'continue', chatHistory: messages, maxHistoryChars: 2200,
+            maxHistorySummaryChars: 0, summaries: { history: summary },
+        });
+
+        expect(projected.history.sourceMessages[0]).toBe(messages[1]);
+        expect(projected.history.sourceMessages[0].canonicalTurn?.sourceRecords).toEqual(
+            messages[1].canonicalTurn?.sourceRecords,
+        );
     });
 
     it.each(["edit", "delete"])("rejects a cached summary after prefix %s", (change) => {

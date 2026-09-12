@@ -4,18 +4,20 @@ import type { LegacyAgentEvent, ProviderCompletion } from "../src/ai-services/ch
 import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
 import { streamWithInvokeFallback } from "../src/ai-services/pa-agent-runtime";
 import { CanonicalToLegacyEventAdapter, type WritingDeliveryDiagnostic } from "../src/ai-services/pa-agent-stream-bridge";
+import type { GenerationInputSnapshot } from "../src/ai-services/generation-input-snapshot";
 
 const request = { requestId: "b135-writing-tail" };
 const body = "  原样正文：海风 🌊\r\n\t";
 const envelope = JSON.stringify({ kind: "pa.writing", version: 1, requestId: request.requestId, body, explanation: "说明" });
 
-async function runWritingTail(input: { raw?: string; completion?: ProviderCompletion; current?: boolean; omitFinish?: boolean; revokeAfterContent?: boolean; failDiagnostic?: boolean }) {
+async function runWritingTail(input: { raw?: string; completion?: ProviderCompletion; current?: boolean; omitFinish?: boolean; revokeAfterContent?: boolean; failDiagnostic?: boolean; generationInput?: GenerationInputSnapshot }) {
     const events: LegacyAgentEvent[] = [];
     const diagnostics: WritingDeliveryDiagnostic[] = [];
     const adapter = new CanonicalToLegacyEventAdapter(new AgentEventEmitter((event) => events.push(event)), undefined, {
         request,
         maxTextChars: 10_000,
         isCurrent: () => input.current !== false,
+        ...(input.generationInput ? { getGenerationInputSnapshot: () => input.generationInput } : {}),
         onDiagnostic: (diagnostic) => {
             expect(events.some((event) => event.kind === "writing-recovery" || event.kind === "writing-artifact")).toBe(false);
             diagnostics.push(diagnostic);
@@ -86,6 +88,25 @@ describe("B-135 writing completion across adapter, loop and legacy bridge", () =
             type: "provider_transport_end", outcome: "error",
         }));
     });
+
+    it.each([{ omitFinish: false, kind: 'writing-artifact' }, { omitFinish: true, kind: 'writing-recovery' }] as const)(
+        'clones the physical input snapshot before emitting $kind',
+        async ({ omitFinish, kind }) => {
+            const generationInput: GenerationInputSnapshot = {
+                schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
+                personal: { state: 'none' }, insights: { state: 'none' },
+                style: { state: 'identified', revisionIds: ['style-1'] }, images: [],
+                parent: { state: 'none' }, pagelet: { state: 'none' },
+            };
+            const { events } = await runWritingTail({ omitFinish, generationInput });
+            const delivered = events.find(event => event.kind === kind);
+            expect(delivered).toMatchObject({ generationInput });
+            generationInput.style = { state: 'identified', revisionIds: ['mutated'] };
+            expect(delivered).toMatchObject({ generationInput: {
+                style: { state: 'identified', revisionIds: ['style-1'] },
+            } });
+        },
+    );
 
     it("withdraws a preview when the host source guard changes before recovery", async () => {
         const { events } = await runWritingTail({ revokeAfterContent: true, omitFinish: true });

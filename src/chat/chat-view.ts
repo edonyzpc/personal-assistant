@@ -72,6 +72,7 @@ import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal
 import { mergeWritingImages, type WritingVersion } from './writing-types';
 import { inferWritingScene } from './writing-style-service';
 import { ChatImageRequestError } from '../ai-services/image-capability';
+import { cloneGenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
 
 export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
@@ -3855,6 +3856,8 @@ export class LLMView extends ItemView {
                                 turn.writingMaterials = cloneMessageImages(event.associatedImages ?? turn.writingMaterials ?? []);
                                 turn.writingArtifact = { ...event,
                                     styleRevisionIds: event.styleRevisionIds ? [...event.styleRevisionIds] : undefined,
+                                    ...(event.generationInput
+                                        ? { generationInput: cloneGenerationInputSnapshot(event.generationInput) } : {}),
                                     ...(event.writingContext ? { writingContext: { ...event.writingContext,
                                         ...(event.writingContext.scene ? { scene: { ...event.writingContext.scene } } : {}) } } : {}),
                                 };
@@ -3866,6 +3869,8 @@ export class LLMView extends ItemView {
                             if (event.kind === 'writing-recovery') {
                                 if (!isSameTurn() || event.requestId !== writingRequest?.requestId) return;
                                 turn.writingRecoverySourceCurrent = event.isSourceCurrent;
+                                turn.writingRecoveryGenerationInput = event.generationInput
+                                    ? cloneGenerationInputSnapshot(event.generationInput) : undefined;
                                 turn.writingMaterials = cloneMessageImages(event.associatedImages ?? turn.writingMaterials ?? []);
                                 turn.writingRecovery = { requestId: event.requestId, messageId: event.messageId,
                                     ...(event.writingContext?.parentVersionId ? { parentVersionId: event.writingContext.parentVersionId } : {}),
