@@ -11,11 +11,11 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: P1 已收口；P2 的默认迁移、实际 scheduler/collector、Personal/style 组合及 Desktop 设置/独立退出/遗忘已按 Plan/SDD 通过，T-10 语义质量与当前 Linux 主机不可执行的受影响 iOS 实机门仍保留。继续不依赖设备的 P3 T-12–T-15，T-03及后续阶段退出门尚未通过。
-- Next action: 仅补 P3 现有出口尚缺的自然语言工具范围/取材语义对照与 Desktop Chat/Operations smoke，复用已通过的物理输入、来源准入及 provider 回执；不重跑既有矩阵，不新增框架。F-20/F-23模型质量继续由 T-20 跟踪，默认native尚未启用。
+- Current phase: P1 已收口；P2 的默认迁移、实际 scheduler/collector、Personal/style 组合及 Desktop 设置/独立退出/遗忘已按 Plan/SDD 通过，T-10 语义质量与当前 Linux 主机不可执行的受影响 iOS 实机门仍保留。P3 的 T-12、T-13、T-15 已完成，现仅补 T-14 明确要求的跨轮更正与第二张图片组合语义；T-03及后续阶段退出门尚未通过。
+- Next action: 只执行一个当前 Qwen 的 T-14 组合案例，复用已通过的完整历史、图片身份、retry/summary/rewrite 与每次物理输入重验；不新增语义矩阵、第二服务对照、构建或全量测试。F-20/F-23模型质量继续由 T-20 跟踪，默认native尚未启用。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，真实current→old→current矩阵见T-19证据。剩余D4语义质量、完整native/media/Desktop/iOS兼容为工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 2026-09-12当前修复输入经`make deploy`的platform guard、lint、production build及276 suites/7620 tests全部PASS（308.785s，自然exit 0），构建与test vault的`main.js`同为`561a30161e3a2fa0017ecf4e39140a1bede9939576a6d47c458af1011898fc52`。同一已加载Desktop中，实际设置控件分别关闭长期提取与本地习惯：scheduler停止而既有授权style继续投影；关闭Memory后旧receipt立即失效但记录仍可管理；经明确Forget确认后正文及有效投影消失，仅留无效果/无操作的防重建标记。合成治理状态、会话、版本与设置已精确清理，重启后默认11、原活动会话及`data.json`哈希恢复。前述Qwen legacy完成/中断、真实降级/升级、默认学习宿主矩阵及Qwen native中断→人工恢复证据仍按各自输入有效；native中文引号改写仍为质量FAIL，iOS未由Desktop/CLI证据替代。
-- Task count: 22项中8项完成、13项部分实现/验证、1项待最终汇总。8/22只表示完整验收任务占比，不是代码完成度；P1已通过，其他阶段退出门尚未全部通过。
+- Last verified behavior: 2026-09-12当前部署的Qwen `qwen3.8-max`/native候选完成4个固定P3案例：引用并否定写作指令保持普通咨询，建议+短草稿同次交付唯一作品，只用实际当前笔记且禁网时返回精确代号，明确保存只生成一个待确认`vault_create`。8次获准物理请求均符合范围；两个错误fixture由宿主正确拒绝并仅定向重跑。实际Desktop提议卡显示目标和正文，点击Cancel后状态为`Cancelled. Nothing was written.`，全程零写入；临时笔记、脚本及隔离数据库清理后`data.json`仍为`f8cfd5b…2dcbc`。前述`make deploy`的276 suites/7620 tests与构建哈希`561a301…fc52`仍按未变运行时输入有效；native中文引号改写仍为质量FAIL，iOS未由Desktop/CLI证据替代。
+- Task count: 22项中11项完成、10项部分实现/验证、1项待最终汇总。11/22只表示完整验收任务占比，不是代码完成度；P1已通过，其他阶段退出门尚未全部通过。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
@@ -42,6 +42,22 @@ SDD: [Software Design Document](./sdd.md)
 | D14 | Confirmed — Owner 2026-09-12“接受分开评估，F-20 继续跟踪（推荐）” | 新旧协议共现的F-20保留为模型质量问题，不再单独否决专用通道兼容评估 | T-03/T-20仍保留原FAIL；协议、来源、预览、finish与App门通过后才切默认，非立即切换批准 |
 
 ## Work
+
+2026-09-12 P3 最小语义/Desktop映射：AC-01/02/03/04/13 → 复用已通过的整批scope
+预检、逐物理输入投影、当前笔记身份与Operations staging/确认门，只用当前Qwen跑四个固定
+真实案例：引用+否定仍普通咨询、建议并起草同一任务、只用当前笔记且禁网、明确保存仅产生
+待确认提议 → 当前native候选的真实schema/工具调用、临时合成当前笔记、零越界读取与零实际
+写入、Desktop可见提议卡 → [`模型与Desktop回执`](evidence/2026-09-12-p3-semantic-and-operations.json)、
+[`语义探针`](evidence/2026-09-12-p3-semantic-app-probe.js)、[`Operations UI探针`](evidence/2026-09-12-p3-operations-ui-probe.js)
+及[`可见卡片`](evidence/2026-09-12-p3-operations-pending-card.png)。四案4/4通过：普通咨询零
+作品/零提议；混合任务唯一短作品；当前笔记准确返回`B135-P3-CURRENT-7K2M`且无Web；保存请求
+为单一pending intent且目标未创建。获准案例共8次物理请求；两个首版fixture分别因非真实
+MarkdownView和不存在父目录被宿主正确拒绝，排除后只定向重跑对应案例，总计13次物理请求。
+实际卡片显示`Nothing has been written yet.`及目标正文，点击Cancel后按钮隐藏、目标仍不存在、
+provider与写入调用均为0。临时笔记、脚本和隔离数据库已清理，主test vault恢复，插件
+`data.json`哈希仍为`f8cfd5b…2dcbc`。本结果关闭T-12/T-13/T-15；模型/prompt/schema/
+source/Operations接缝变化才重跑，不重复来源矩阵、全量测试或第二服务对照。T-14仍只补设计
+明确列出的跨轮更正+第二张图片组合语义，后续iOS门保持独立。
 
 2026-09-12 P2 Desktop 退出/遗忘映射：REQ/AC-04/09/10/17 → 复用默认迁移、真实
 scheduler/collector、非空Personal/style物理输入与最终准入证据，仅在当前冻结bundle中以实际设置
@@ -512,10 +528,10 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-09 | B-135/REQ-17 / B-135/AC-17 | 默认实际准入、scheduler/collector、独立关闭暂停/恢复、首次说明与设置 UI | [x] | 默认 11 的真实 scheduler/collector、零启动回填、新 Chat 调度、独立关闭零新增、Personal/style 解耦及实际设置 DOM/说明通过；模型质量、T-10/T-11 与 P2 iOS 阶段门不由本任务代替 |
 | T-10 | B-135/REQ-10 / B-135/AC-10 | Chat 来源、Type A 语义候选与两条最终准入；混合真实事实/任务要求，默认开启也不学成长期风格 | [~] | semantic lane、最终保存/确认/恢复、稳定ID及source lifetime已实现；当前Qwen合成混合事实/纯任务/双事实1/0/2候选可回放，Desktop设置/关闭组合通过。剩余语义质量门由T-20跟踪；关闭时不另跑提取模型分类 |
 | T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed与legacy无scheduler读取、设置说明、失败/Forget迟到、默认迁移、真实宿主关闭组合及非空Personal/style实际SDK输入通过；Desktop实际开关、Memory主门及Forget闭环通过，剩余受影响iOS实机门 |
-| T-12 | B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 主 prompt/工具指导承接语义；去关键词路由、预测必调/隐藏与参数强制覆盖 | [~] | runtime已移除独立分类调用和预测required名单；policyModelName的rewrite/rerank保留。自然语言工具范围、writing识别、prompt与语义场景对照仍未完成；schema、真实证据、dedup和取消保留 |
-| T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [~] | 生产run已接声明/有序读计划/真实身份及受限Memory，Vault/Ops读门保持；动态句柄、独立控制轮、图片队列读门和完整物理来源投影已有定向证据。profile/Memory/style与任务事实分开，不默认空背景；真实模型语义/App门仍待完成 |
+| T-12 | B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 主 prompt/工具指导承接语义；去关键词路由、预测必调/隐藏与参数强制覆盖 | [x] | runtime已移除独立分类调用和预测required名单，schema/dedup/取消保留；当前Qwen中引用+否定仍普通咨询、建议+短草稿同次唯一成版，实际工具调用由模型按目标选择。F-20/F-23属于T-20质量跟踪，不重新打开本任务 |
+| T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [x] | 声明/有序读计划/真实身份、受限Memory、Vault/Ops/图片读门及逐物理输入已有定向证据；当前Qwen在真实MarkdownView只读当前笔记且禁网，准确返回唯一代号。profile/Memory/style与任务事实仍分栏，不以清空获准背景换取通过 |
 | T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 普通Vault结果、标签/backlinks隐藏依赖、D12撤销旧回复及answer/history/tool-summary/rewrite/rerank物理重验通过；GenerationInputSnapshot已覆盖任务、Personal/Insights、风格、parent、Pagelet和完整图片身份。剩余多图指代真实语义、App/provider/device门，不以union复活排除图片 |
-| T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [~] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。生产source预检下create→append及越界混合批次已有定向证据；真实语义质量、完整来源投影及App门未完成 |
+| T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [x] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。当前Qwen普通咨询无卡、明确保存仅产生一个pending create；实际Desktop卡片点击Cancel后零写入，既有关闭/未确认/stale/execute/Undo回归继续覆盖执行保护 |
 | T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [~] | 显式native候选已接Chat→runtime工具/来源/动态handle/完整输入/图片收窄及成版parent/scene；新topic与恢复scene回归、真实Qwen合成协议通过。实际宿主弹窗已按同一scene显示父子版、关联图和获准style原文并经重载恢复；默认切换、多版本失败继续、视觉Desktop/iOS及完整语义组合仍待验 |
 | T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | native候选的runtime schema/loop/bridge动态handle与物理请求快照已贯通，保留单输出、严格provider身份、无ack及host最终门；真实Qwen合成样例成功。实际宿主的版本→人工编辑→预览→completed receipt→插件重载链已通过；默认切换、完整provider语义与视觉App/device门仍待补，T-03/T-13/T-16依赖未解除 |
 | T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | 生成来源receipt贯穿实际请求、自动作品/同页人工恢复和底层存储；最后物理请求的完整无正文输入身份现已保存、重载并按各用途逐项重验。实际宿主已验证四版选择、style/图片详情、编辑复制、预览不写、精确保存与重载；Desktop真实鼠标视觉、iOS及失败继续组合仍待验收 |

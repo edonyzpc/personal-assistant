@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "workItem": "B-135",
+  "scope": "P3 fixed-model semantic cases and Desktop Operations proposal/cancel smoke",
+  "observedAt": "2026-09-12T21:22:00+08:00",
+  "environment": {
+    "platform": "Linux",
+    "host": "Obsidian Desktop with the repo-local test vault",
+    "sourceCommit": "4951cd7dff01f99cbd51190ea25f084531da2f28",
+    "deployedBundleSha256": "561a30161e3a2fa0017ecf4e39140a1bede9939576a6d47c458af1011898fc52",
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "writingOutputProtocol": "native",
+    "memoryMode": "skip-memory"
+  },
+  "validationBoundary": {
+    "fixedCases": 4,
+    "acceptedCasePhysicalRequests": 8,
+    "excludedFixtureDiagnosticRequests": 5,
+    "targetedRetryRequests": 5,
+    "totalPhysicalRequests": 13,
+    "reused": [
+      "existing task-source whole-batch preflight and every-physical-input projection tests",
+      "existing source revocation, retry, summary, rewrite and rerank tests",
+      "existing Operations off, unconfirmed, stale-safe, execute and Undo tests"
+    ],
+    "notRepeated": [
+      "DeepSeek comparison",
+      "source permutation matrix",
+      "full test suite",
+      "build and deploy"
+    ]
+  },
+  "acceptedCases": [
+    {
+      "name": "quoted-negated-consultation",
+      "physicalRequests": 1,
+      "toolNames": [],
+      "artifactCount": 0,
+      "intentCount": 0,
+      "result": "PASS: quoted write instruction remained an ordinary explanation; no note proposal or finished work"
+    },
+    {
+      "name": "advice-and-draft",
+      "physicalRequests": 2,
+      "toolNames": [
+        "get_writing_context"
+      ],
+      "artifactCount": 1,
+      "intentCount": 0,
+      "artifactBody": "明早出门记得带伞，可能有雨，别淋湿啦。",
+      "result": "PASS: one response carried advice and one native writing artifact within the requested 40-character limit"
+    },
+    {
+      "name": "current-note-only-no-web",
+      "physicalRequests": 2,
+      "toolNames": [
+        "declare_source_scope",
+        "get_current_note_context"
+      ],
+      "sourcePaths": [
+        "B135-P3-Current.md"
+      ],
+      "answerContainedMarker": "B135-P3-CURRENT-7K2M",
+      "webToolCalled": false,
+      "artifactCount": 0,
+      "intentCount": 0,
+      "result": "PASS: the model declared current-note scope, read the actual active Markdown view, returned the exact marker, and used no Web or other note"
+    },
+    {
+      "name": "operations-proposal-only",
+      "physicalRequests": 3,
+      "toolNames": [
+        "declare_source_scope",
+        "search_vault_metadata",
+        "get_writing_context",
+        "vault_create"
+      ],
+      "intentCount": 1,
+      "pendingOperation": {
+        "name": "vault_create",
+        "path": "B135-P3-Probe.md"
+      },
+      "targetExistedBeforeOrAfter": false,
+      "proxyWriteCalls": 0,
+      "result": "PASS: the explicit save request produced one pending intent and no execution"
+    }
+  ],
+  "excludedFixtureAttempts": [
+    {
+      "case": "current-note-only-no-web",
+      "reason": "the first probe supplied a plain object instead of a real Obsidian MarkdownView, so the host correctly exposed no current-note handle",
+      "disposition": "excluded as fixture evidence; reran only this case with a real temporary MarkdownView"
+    },
+    {
+      "case": "operations-proposal-only",
+      "reason": "the first target used a parent directory absent from the test vault, so staging correctly rejected it",
+      "disposition": "excluded as fixture evidence; reran only this case at a valid vault-root target"
+    }
+  ],
+  "desktopOperationsUi": {
+    "probeProviderRequests": 0,
+    "cardVisible": true,
+    "cardTitle": "Review note changes",
+    "pendingCopy": "Nothing has been written yet.",
+    "pathVisible": "B135-P3-Probe.md",
+    "bodyVisible": "P3 最小语义验证通过。",
+    "enabledButtons": [
+      "Confirm changes",
+      "Cancel"
+    ],
+    "targetExistedBeforeCancel": false,
+    "cancelledThroughRenderedButton": true,
+    "cancelledStatus": "Cancelled. Nothing was written.",
+    "decisionButtonsHiddenAfterCancel": true,
+    "targetExistedAfterCancel": false,
+    "writeCalls": 0,
+    "isolatedIndexedDbCleanup": "deleted",
+    "screenshot": "2026-09-12-p3-operations-pending-card.png"
+  },
+  "cleanup": {
+    "temporaryCurrentNoteRemoved": true,
+    "operationsTargetRemovedOrNeverCreated": true,
+    "markdownTreeRestored": true,
+    "semanticProbeProxyReads": [],
+    "semanticProbeProxyWrites": [],
+    "temporaryScriptsRemovedFromTestVault": true
+  },
+  "result": "PASS for the bounded T-12, T-13 and T-15 P3 model and Desktop gates",
+  "remainingP3Gate": "T-14 still requires the designed cross-turn correction and second-image semantic case; iOS remains an external later-stage gate"
+}
