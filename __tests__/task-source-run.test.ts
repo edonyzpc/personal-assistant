@@ -69,6 +69,39 @@ function executorFor(run: TaskSourceRun) {
 }
 
 describe('Task source run host', () => {
+    it('distinguishes an uncommitted declaration from the accepted scope while preserving read gates', () => {
+        const run = fixture().create();
+        const initial = run.contextInstruction();
+        expect(initial).toContain('No task-material scope has been accepted');
+        expect(initial).toContain('Without new task-material reads, answer or deliver the work directly');
+        const candidate = prepare(run, { notes: 'none' });
+        expect(run.contextInstruction()).toBe(initial);
+        expect(run.state.allows({ kind: 'web' })).toBe(false);
+        expect(run.state.commit(candidate)).toBe(true);
+        const accepted = run.contextInstruction();
+        expect(accepted).toContain('Task-material scope is already accepted');
+        expect(accepted).toContain('Do not repeat the declaration for an unchanged scope');
+        expect(accepted).not.toContain('No task-material scope has been accepted');
+        expect(accepted).toContain('"notes":"none","webAllowed":false');
+        expect(run.state.allows({ kind: 'web' })).toBe(false);
+        expect(run.state.allows({ kind: 'vault_search' })).toBe(false);
+    });
+
+    it('reports genuine committed narrowing without accepting a failed or wider declaration', () => {
+        const run = fixture().create();
+        expect(run.state.prepareDeclaration({ instructionQuote: 'absent quote', notes: 'vault', webAllowed: true }).ok).toBe(false);
+        expect(run.contextInstruction()).toContain('No task-material scope has been accepted');
+        commit(run, { notes: 'vault', webAllowed: true });
+        expect(run.contextInstruction()).toContain('"notes":"vault","webAllowed":true');
+        commit(run, { notes: 'none', webAllowed: false });
+        const narrowed = run.contextInstruction();
+        expect(narrowed).toContain('"notes":"none","webAllowed":false');
+        expect(narrowed).toContain('A user correction or new evidence may require a narrower declaration');
+        expect(run.state.prepareDeclaration({ instructionQuote: '只用当前笔记', notes: 'vault', webAllowed: true }))
+            .toMatchObject({ ok: false, reason: 'scope_widening' });
+        expect(run.contextInstruction()).toBe(narrowed);
+    });
+
     it.each(['delete', 'replace', 'modify', 'boundary', 'memory'] as const)('retains frozen sources after cleanup and rejects later %s', change => {
         const h = fixture();
         h.a.stat = { mtime: 1, size: 12 };

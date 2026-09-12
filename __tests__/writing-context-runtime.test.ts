@@ -160,6 +160,11 @@ describe('native writing context runtime integration', () => {
         const result = await runScenario('schema-repair');
         expect(result.error).toBeUndefined();
         expect(result.inputs).toHaveLength(3);
+        expect(result.inputs[0]).toContain('No task-material scope has been accepted');
+        expect(result.inputs[1]).toContain('Task-material scope is already accepted');
+        expect(result.inputs[1]).toContain('Do not repeat the declaration for an unchanged scope');
+        expect(result.inputs[1]).not.toContain('No task-material scope has been accepted');
+        expect(result.inputs[2]).toContain('Task-material scope is already accepted');
         expect(result.schemas[1].map(schema => schema.function.name)).toContain('get_writing_context');
         expect(result.prepareStyle).toHaveBeenCalledTimes(1);
         expect(result.events.filter(event => event.kind === 'writing-artifact')).toEqual([
