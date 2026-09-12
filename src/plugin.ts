@@ -8160,6 +8160,7 @@ export class PluginManager extends Plugin {
             createChatService: () => this.createChatService(),
             imageAssetService: this.imageAssetService,
             writingVersions: this.writingVersions,
+            writingOutputProtocol: 'native',
             writingSave: this.writingSave,
             rememberWritingStyle: (versionId, scene) => this.rememberWritingStyle(versionId, scene),
             readWritingStyleReferences: (revisionIds, signal) => this.getWritingStyleService()?.readReferences(revisionIds, signal) ?? Promise.resolve([]),

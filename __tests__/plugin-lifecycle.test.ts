@@ -30,6 +30,17 @@ import { hasDeprecatedSimpleSettingsFields, mergeLoadedSettings } from "../src/s
 import { MemoryUserProfileStore, type MemoryExtractionScheduler } from "../src/ai-services/memory-extraction";
 import type { QuietRecallCandidate, RetrievalHabitProfileRecordResult } from "../src/pa";
 
+describe("B-135 native writing rollout", () => {
+    it("exports the validated native protocol from the production Chat host", () => {
+        const { plugin } = createPluginHarness({ initialData: { aiProvider: "openai", statisticsVaultId: "native-writing" } });
+        const host = (plugin as unknown as {
+            createChatHost(): import("../src/chat/ChatHost").ChatHost;
+        }).createChatHost();
+
+        expect(host.writingOutputProtocol).toBe("native");
+    });
+});
+
 describe("B-135 learning preferences migration", () => {
     const base = { aiProvider: "openai", statisticsVaultId: "learning-test" };
     type LearningInternals = {
@@ -794,8 +805,8 @@ describe('B-106 feature and permission Plugin integration', () => {
         expect(nodes(modal, 'select')[1].value).toBe('3');
     });
 
-    it.each(['provider', 'token', 'file', 'editor', 'detached', 'credential-transition'] as const)
-    ('captures %s identity before saving and prevents a later mixed featured-image run', async (change) => {
+    it.each(['provider', 'token', 'file', 'editor', 'detached', 'credential-transition'] as const)(
+        'captures %s identity before saving and prevents a later mixed featured-image run', async (change) => {
         const { plugin, state, adapter } = await fixture();
         modalDom();
         const { editor, view, file, lookup } = bindNote(plugin);
