@@ -310,9 +310,9 @@ present_writing，仍识别并拒绝伪造输出。get_writing_context与作品�
 资产/缓存或来源receipt；receipt继续按真实文件身份/revision/stat及边界验证，正常turn
 清理不应使已完成的有效读取失效。
 
-### 5. Native 作品和 Chat 终局（D2/D3 已选择，切换待兼容验证）
+### 5. Native 作品和 Chat 终局（开发分支已切换，D15质量处置待决）
 
-Proposed `present_writing` 使用现有 native tool-call 参数承载 `body`、可选
+`present_writing` 使用现有 native tool-call 参数承载 `body`、可选
 `explanation` 和宿主已提供的 writing context handle。schema 不接受保存路径、权限、
 origin、任意来源清单、图片路径或宿主版本 id；宿主生成 run/message/version/hash。
 它是 Chat 内部精确登记的纯输出能力，无来源读取或写入副作用，不建设通用 action
@@ -346,14 +346,14 @@ terminal policy 使用原剩余 hard budget，随后再验来源和取消；cont
 仅当续帧重复已经建立的同一index时，空id视为省略，保留原id；无锚点、缺少或不同index、
 真实id冲突及混批继续拒绝。该解释不制造provider完成事实，仍等真实finish且完整解码。
 
-生产 runtime 已有仅供兼容候选验证的显式 `writingOutputProtocol: "native"`，并且
-必须同时存在宿主 writingRequest 才生效。该入口同步使用固定 schema/native 指令、
-原始身份捕获及 loop/bridge handle；缺少模型 bindTools 时在物理请求前拒绝。
-schema 只允许 body、可选 explanation 和精确 handle，不注册普通可执行工具。
-默认仍未切换，Pagelet 缺省不启用。runtime final-only 的
-旧 reader 组合仍需验证；普通
-来源/动作规则不得放宽，不能绕过宿主策略直接 agent_end。局部 loop 验证不代表
-完整 Chat 成版、默认切换或旧 reader/App 兼容门通过。
+生产Chat宿主已在兼容、来源、预览、完成与Desktop门通过后将
+`writingOutputProtocol: "native"`设为默认，并且必须同时存在宿主writingRequest才
+生效。该入口同步使用固定schema/native指令、原始身份捕获及loop/bridge handle；
+缺少模型bindTools时在物理请求前拒绝。schema只允许body、可选explanation和精确
+handle，不注册普通可执行工具。Pagelet缺省不启用；普通来源/动作规则不得放宽，
+不能绕过宿主策略直接agent_end。旧reader组合与当前Qwen Desktop已验证，受影响iOS
+仍由T-18/T-21承担。D15只处置DeepSeek单样例引号质量差异：未决定前不增加自动
+双协议、fallback或provider特判，也不把传输保真冒充模型逐字质量通过。
 
 静态输出登记放在现有 CapabilityRegistry：`getWritingOutputSchema` 只返回固定
 present_writing 声明，动态 provider 不能注册同名执行能力；它不进入普通工具

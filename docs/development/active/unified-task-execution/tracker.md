@@ -595,7 +595,33 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [x] | schema3隔离、source reopen及真实当前→旧2.9.2→当前矩阵通过：旧版失败关闭但普通保存/legacy Profile可用，v3业务store完整保留，升级后真实来源Queue可确认和投影。当前App重载后四版、media/style/receipt与Chat入口精确恢复，本次默认native可见版本/保存再验证当前reader；整体iOS出口继续由T-18/T-21承担 |
 | T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [~] | 同输入重复准备前后、Qwen四案及DeepSeek两案已汇总实际序列、自然结束、耗时与可得usage；Qwen缺值为unknown，不推断净耗时或固定提速。F-20已有D14处置；T-20只待D15决定DeepSeek native单样例弯引号变直引号的质量边界，不新增模型运行 |
 | T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [~] | 已有273 suites/7432 tests自然全门PASS，之后窄改动有相关聚焦/build/lint与独立复核；最终全部AC、full-ui/iOS及全量review未完成。各证据输入边界见Work |
-| T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [~] | Settings与PA Agent当前架构已同步默认学习、来源范围、同一Agent选工具及Operations语义提议；native默认的最终Product Spec/多模态Architecture措辞等待D15后一次同步。closeout/release未授权，不先删除Brief独有故障证据 |
+| T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [~] | Settings、PA Agent架构、Product Spec与SDD已同步已交付行为及D15真实待决状态，17项AC完成审计见下表；多模态Architecture与最终处置等待D15后一次同步。closeout/release未授权，不先删除Brief独有故障证据 |
+
+## Acceptance Completion Audit
+
+下表核对当前开发分支已有直接证据与B-135完成前的额外门。所有行仍共同等待T-21
+对最终冻结输入执行一次统一broad gate与跨模块复核；表中只重复列出除此之外的特定
+缺口，不用窄测试或Desktop证据替代受影响iOS。
+
+| AC | Current direct evidence | Additional gate before B-135 completion |
+| --- | --- | --- |
+| AC-01 | 当前Qwen原句/引用否定保持咨询，混合建议与短稿同轮交付；关键词分类已移除 | D15处置模型质量结果 |
+| AC-02 | 同一主Agent按实际缺口选择工具；无独立分类请求或预测required名单，重复准备修复后有实际调用序列 | D15关闭T-20最终处置 |
+| AC-03 | 当前笔记、禁网、跨轮更正及Personal/Memory/style分栏通过批次、物理输入和Desktop组合 | 无独立缺口 |
+| AC-04 | answer/fallback/history/summary/rewrite/rerank、图片及旧回复均按当前来源重验；获准背景保留 | 受影响iOS |
+| AC-05 | native与legacy中断正文在Desktop可读、重载不冒充完成，协议失败不成版 | 受影响iOS |
+| AC-06 | 完整身份/finish/来源才成版，provider正文到artifact/hash精确；人工恢复保留AI来源 | 受影响iOS |
+| AC-07 | 当前Qwen默认native交付一个作品，无来源/动作混批或额外ack模型轮 | D15决定是否保持默认；受影响iOS |
+| AC-08 | parent/session/hash、失败继续、新话题、图片子集及实际自然语言续写已验证 | 受影响iOS |
+| AC-09 | 场景、授权style、撤销/Forget/预算重验与关闭提取后继续使用已有style已贯通 | 受影响iOS |
+| AC-10 | 精确版本编辑/复制/保存和SaveReceipt通过；Type A候选及两条最终准入阻止临时任务自动变长期偏好 | D15关闭T-10语义质量门；受影响iOS |
+| AC-11 | 旧Chat/JSON/版本/图片/receipt可读，当前→旧2.9.2→当前真实矩阵保留新治理库并可恢复 | 受影响iOS |
+| AC-12 | Qwen/DeepSeek同输入序列、结束、耗时及可得usage已审计，缺值保持unknown | D15质量处置 |
+| AC-13 | 同一Agent在既有opt-in/四工具内提议；普通咨询无卡、明确保存仅pending，取消零写入 | 无独立缺口 |
+| AC-14 | deadline/length/stop/schema/tail/usage缺失分轴，Qwen与DeepSeek实际完成形状已记录 | 无独立缺口 |
+| AC-15 | 单一绝对期限、正文跨softAt、原hardAt/取消及late工具零执行已有确定性回归 | 无独立缺口 |
+| AC-16 | 投影前最小三轴诊断、实际序列化限额与host attempt覆盖answer/summary/rewrite/rerank，默认无正文日志 | 无独立缺口 |
+| AC-17 | 新默认、旧值迁移、首次说明、scheduler/collector、独立退出及load/save/reload已在Desktop宿主验证 | 受影响iOS |
 
 ## Confirmed Discussion To Delivery Mapping
 
@@ -933,6 +959,12 @@ T-22 当前契约同步首片（2026-09-12）：
 - `docs/architecture/settings-status.md`按已交付实现改为两项学习分别默认开启、无明确关闭证据的旧`false`迁移开启、明确关闭/暂停保留；停止新增提取与已有有效Personal使用继续分门治理，所有增量和受影响iOS门仍只归B-135。
 - `docs/architecture/pa-agent-architecture-plan.md`移除独立启动分类和本地write-intent门的过时描述，记录同一主Agent选工具、Host来源批次/物理输入校验、Operations原确认保护，以及`get_writing_context`/`present_writing`、版本和旧reader兼容边界。未把D15写成已决定，也未改最终默认推广契约。
 - 仅运行本Validation Plan规定的文档门：`npm run docs:check` PASS（206 Markdown、1840 links，4项既有episodic advisory）；`npm run test:docs -- --runInBand` 2 suites/58 tests PASS，5.896 s，自然exit0；`git diff --check` PASS。没有重复build、full Jest、provider或App/device验证；本片使T-22进入部分完成，最终同步等待D15及全量AC汇总。
+
+T-22 全量AC与待决状态审计（2026-09-12）：
+
+- 逐项对照Product Spec的AC-01–17、SDD Test Matrix、T-01–22状态及Tracker现有真实证据，新增`Acceptance Completion Audit`。没有发现需要新实现或新测试矩阵的缺口；所有AC共同只待T-21对D15后的冻结输入执行一次既定统一gate，特定剩余项收敛为D15与受影响iOS。
+- Product Spec和SDD不再声称“选择队列已完成”“本轮仅设计”“native仍未切换”；它们现在如实记录开发分支已切native、D15的两种处置及未覆盖iOS。未替Owner选择D15，也未把Desktop、传输保真或单样例冒充模型质量/iOS通过。
+- 本片仅变更三份B-135文档。`npm run docs:check` PASS（206 Markdown、1840 links，4项既有episodic advisory）；`npm run test:docs -- --runInBand` 2 suites/58 tests PASS，6.204 s，自然exit0；`git diff --check` PASS。未运行build、full Jest、provider或App/device验证。
 
 ## Closeout Readiness
 

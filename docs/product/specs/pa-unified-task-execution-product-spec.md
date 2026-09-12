@@ -71,14 +71,16 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 
 ## Open Decisions
 
-2026-09-12已确认D14：Owner接受将F-20的新旧协议共同模型质量问题与专用通道兼容性分开评估；F-20继续在B-135跟踪，不以明确正文范围的新样例覆盖原提示失败。协议、来源、增量预览、完成证据与App验证仍须通过后才切换默认；本决定不等于逐字生成验收通过，也不批准立即切换。
+2026-09-12已确认D14：Owner接受将F-20的新旧协议共同模型质量问题与专用通道兼容性分开评估；F-20继续在B-135跟踪，不以明确正文范围的新样例覆盖原提示失败。协议、来源、增量预览、完成证据与Desktop验证随后通过，开发分支已切换默认；本决定本身不等于逐字生成验收通过，受影响iOS仍单独验收。
 
 2026-09-12已确认D13：重载旧作品的来源记录不足时，在现有恢复窗口明确说明并以“确认并恢复为 AI 草稿”承接人工选择；已确认撤销或失效仍拒绝。此确认不证明旧来源完整有效、不授予重新使用来源或风格学习权限，原有AI/局部编辑归属保留。该边界共同适用于AC-06与AC-11，工程验证仍由T-18跟踪。
 
-已确认的模型语义、个性化边界、默认开启及 B-135 全量归属不重复询问。Owner 于 2026-09-09 选择专用作品通道及直接终局交付，兼容验证通过后切换；同日确认 Operations 语义提议及保留执行保护、无明确关闭证据的旧 false 迁移为开启，以及停止新提取与已有画像读取解耦。本轮产品选择队列已完成，答复及工程验证依赖集中在 [Tracker Decisions](../../development/active/unified-task-execution/tracker.md#decisions)。首请求发送限制仍须验证其支持边界；技术验证若引出新产品取舍再讨论，不得用 Approved 标签替代 P0 技术证据。
+2026-09-12的D15仍待Owner决定：DeepSeek `deepseek-v4-pro`在同一明确正文样例中通过native输出时把中文弯引号改为ASCII直引号，旧协议保留弯引号；两条传输都把provider正文逐字交付为artifact。当前建议将它记录为单样例模型质量限制，保持native默认，不增加自动fallback或provider特判；若不接受，则恢复全局legacy默认并重新定义切换门。
+
+已确认的模型语义、个性化边界、默认开启及 B-135 全量归属不重复询问。Owner 于 2026-09-09 选择专用作品通道及直接终局交付，兼容验证通过后切换；同日确认 Operations 语义提议及保留执行保护、无明确关闭证据的旧 false 迁移为开启，以及停止新提取与已有画像读取解耦。除D15外，本轮产品选择均已完成；答复及工程验证依赖集中在 [Tracker Decisions](../../development/active/unified-task-execution/tracker.md#decisions)。首请求发送限制的已支持边界及物理输入证据由Tracker记录；新的产品取舍仍不得用Approved标签替代真实答复。
 
 ## Delivery Handoff
 
 - Active Package: [B-135](../../development/active/unified-task-execution/README.md)
 - Architecture contracts: [Multimodal Chat](../../architecture/multimodal-chat-architecture.md)、[Settings current status](../../architecture/settings-status.md)、[Write Action Framework](../../architecture/write-action-framework-sdd.md)
-- Release / rollout boundary: 本轮仅设计。后续实现、真实 provider/App/device 验证、Git 交付及 release 分别记录；工作分支不是 Beta 源。
+- Release / rollout boundary: 实现与现有provider/Desktop证据已进入B-135开发分支；D15、最终统一gate及受影响iOS仍由Tracker跟踪。工作分支不是Beta源，master、Beta、tag和release仍各自需要独立授权。
