@@ -418,6 +418,73 @@ describe('B-135 production source declaration', () => {
             expect(ready).not.toHaveBeenCalled();
         }
     });
+
+    it('keeps current-note task material, Personal, existing Memory and authorized style in one physical writing input', async () => {
+        const prompt = '只用当前笔记整理一段邀请，保持我的表达习惯';
+        const f = fixture([
+            { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false } },
+                { name: 'get_current_note_context', input: { mode: 'full' } },
+            ] },
+            { text: envelope('COMBINED_SOURCE_WRITING') },
+        ]);
+        const current = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md',
+            stat: { ctime: 1, mtime: 23, size: 41 } };
+        const other = { path: 'notes/other.md', name: 'other.md', basename: 'other', extension: 'md',
+            stat: { ctime: 1, mtime: 29, size: 53 } };
+        const editor = { getValue: jest.fn(() => 'CURRENT_NOTE_TASK_MATERIAL'), getSelection: () => '',
+            lineCount: () => 1, getLine: () => 'CURRENT_NOTE_TASK_MATERIAL', getCursor: () => ({ line: 0, ch: 0 }) };
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file: current, editor } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => {
+            const found = [current, other].find(file => file.path === args[0]);
+            return (found ?? null) as never;
+        });
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue([current, other] as never);
+        const memoryContext = {
+            memoryContextMode: 'governed' as const,
+            governedMemoryContext: 'PERSONAL_PROFILE_SENTINEL\nEXISTING_MEMORY_SENTINEL',
+        };
+        Object.defineProperties(memoryContext, {
+            isSourceCurrent: { value: () => true },
+            generationInputSources: { value: {
+                personal: { state: 'identified', mode: 'governed',
+                    revisions: [{ claimId: 'personal-claim', revisionId: 'personal-revision' }] },
+                insights: { state: 'unknown', mode: 'governed' },
+            } },
+        });
+        f.host.settings.memoryEnabled = true;
+        f.host.getMemoryExtractionPromptContext.mockReturnValue(memoryContext);
+        const styleText = '<writing_style context_only="true">AUTHORIZED_STYLE_SAMPLE_SENTINEL</writing_style>';
+        const prepareWritingStyle = jest.fn(async () => ({
+            context: styleText,
+            revisionIds: ['authorized-style-revision'],
+            isCurrent: () => true,
+            isSourceCurrent: () => true,
+        }));
+
+        await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' }, prepareWritingStyle });
+
+        expect(f.requests).toHaveLength(2);
+        const finalInput = requestText(f.requests[1]);
+        expect(finalInput).toContain('CURRENT_NOTE_TASK_MATERIAL');
+        expect(finalInput).toContain('PERSONAL_PROFILE_SENTINEL');
+        expect(finalInput).toContain('EXISTING_MEMORY_SENTINEL');
+        expect(finalInput).toContain('AUTHORIZED_STYLE_SAMPLE_SENTINEL');
+        expect(finalInput).not.toContain(other.path);
+        const artifact = f.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
+            event.kind === 'writing-artifact');
+        expect(artifact?.generationInput).toMatchObject({
+            task: { state: 'identified', sources: [expect.objectContaining({
+                purpose: 'task_material',
+                revision: { state: 'identified', scope: 'current_process', path: current.path, mtime: 23, size: 41 },
+            })] },
+            personal: { state: 'identified', mode: 'governed',
+                revisions: [{ claimId: 'personal-claim', revisionId: 'personal-revision' }] },
+            insights: { state: 'unknown', mode: 'governed' },
+            style: { state: 'identified', revisionIds: ['authorized-style-revision'] },
+        });
+        expect(JSON.stringify(artifact?.generationInput)).not.toContain(other.path);
+    });
 });
 
 describe.each([

@@ -111,9 +111,10 @@ T-13 当前实现采用 `declare_source_scope` 承接新增任务取材范围：
 纠正结果，复用现有无进展和截止预算。当前生产接线及定向测试不替代 P0 的真实模型
 协议兼容与质量验收；这些门仍由 Tracker 跟踪。
 
-已实现的 `TaskSourceConstraint` 与待完整实现的 `GenerationInputSnapshot` 是当前 run 内的小型
-记录，分别持有约束 revision/用户消息依据/真实 note identity，以及当前物理请求
-实际提供的来源 revision、图片 identity、父版本 hash、风格 revision 和输入用途。
+已实现的 `TaskSourceConstraint` 与作品路径 `GenerationInputSnapshot` 是当前 run 内的小型
+记录，分别持有约束 revision/用户消息依据/真实 note identity，以及最后物理作品请求
+实际提供的来源 revision、图片 identity、父版本 hash、风格 revision 和输入用途。普通回答
+不持久化作品快照，但由同一 transient source/history/background guard 在每次物理发送前重验。
 模型可解释用途，不能自报可信来源、权限或持久化授权；宿主只承认已登记事实。
 记录复用现有 request/run 身份和源快照，不另建持久化审计数据库。
 
@@ -671,10 +672,10 @@ Chat 新回合触发、关闭取消排队和拒收后续调度、本地反馈持
 
 | Interface / record | Status and owner | Invariant |
 | --- | --- | --- |
-| `declare_source_scope` / `TaskSourceConstraint` | 已有生产run接线；runtime/dispatcher维护，P0真实模型协议门见Tracker | 只承接用户约束；不授予权限，不强制检索，不阻止正常获准背景 |
-| `get_writing_context` / context handle | Proposed；Chat host + WritingStyleService + image scope | parent/session/hash/scene/materials 均由宿主校验；先准备后生成 |
-| `present_writing` | Proposed 接口，D2/D3 方向已选择；Chat registry 静态登记 + loop/bridge，P0 验证后切换 | 唯一纯输出，零新来源/动作，完整 provider 结束与参数才提交 |
-| `GenerationInputSnapshot` | Proposed；复用物理 request scope 和现有 source registry | 实际提供的来源，不接受模型伪造，不使用 run 末尾 union |
+| `declare_source_scope` / `TaskSourceConstraint` | Implemented；runtime/dispatcher维护，真实模型语义与App门见Tracker | 只承接用户约束；不授予权限，不强制检索，不阻止正常获准背景 |
+| `get_writing_context` / context handle | Implemented candidate；Chat host + WritingStyleService + image scope；默认协议切换仍待阶段门 | parent/session/hash/scene/materials 均由宿主校验；先准备后生成 |
+| `present_writing` | Implemented candidate；Chat registry + loop/bridge；D2/D3已选择，兼容阶段门后切换默认 | 唯一纯输出，零新来源/动作，完整 provider 结束与参数才提交 |
+| `GenerationInputSnapshot` | Implemented for writing；复用物理 request scope 和现有 source registry，已接持久化/恢复 | 实际提供的来源，不接受模型伪造，不使用 run 末尾 union |
 | `RunDeadline` | Proposed；runtime 创建、loop/工具/准备共同消费 | 单一绝对起点，fallback/收尾不续期 |
 | completion/preview typed events | Existing event 通道的 Proposed 增量；adapter/consumer/bridge | 已获内容完成与 EOF 分开，预览不等于成版，不暴露正文诊断 |
 | WritingVersion / SaveReceipt | Existing；WritingVersionService/HistoryStore/SaveAction | 确切 hash、幂等、旧 reader/部分恢复不退化 |

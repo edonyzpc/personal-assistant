@@ -11,11 +11,11 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: T-08/T-09真实宿主默认学习已收口；下一片优先补 D1 完整物理输入/来源边界，再做图文多版组合、真实 Desktop 流式中断/恢复及受影响 iOS 门。F-20/F-23模型质量继续跟踪，默认native尚未启用。
-- Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，真实current→old→current矩阵见T-19证据。剩余D1物理请求、D4语义质量、完整native/media/Desktop/iOS兼容为工程验收项；不把当前局部App证明当整项完成。
+- Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现。T-04 的 P0 来源/准入/reader 可行性已完成，T-03及各阶段退出门仍未通过。
+- Next action: D1完整物理输入/来源自动化矩阵已收口；下一片优先做图文多版组合、真实 Desktop 流式中断/恢复及受影响 iOS 门。F-20/F-23模型质量继续跟踪，默认native尚未启用。
+- Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，真实current→old→current矩阵见T-19证据。剩余D4语义质量、完整native/media/Desktop/iOS兼容为工程验收项；不把当前局部App证明当整项完成。
 - Last verified behavior: 2026-09-12当前冻结源码经`make deploy`完整276 suites/7618 tests、lint和production build自然PASS，构建`0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684`。同一Obsidian 1.14.1/test vault/Chromium origin真实部署当前HEAD→旧`c923ee2`→当前HEAD：旧版以`MemoryGovernancePersistenceError`失败关闭，普通settings保存成功而v3全库摘要逐项不变；重新升级后12个业务store完全一致，版本化语义Queue可从真实Chat History重验、确认并精确投影到隔离Profile，原Markdown树hash不变。随后同一当前构建的默认学习真实宿主矩阵通过，旧缺失/false、paused、版本化独立选择、scheduler/collector、设置DOM、退出零新增及Personal/style解耦均有回执且清理完成。native中文引号改写仍为质量FAIL；完整ChatView/full-ui/iOS仍未由CLI runtime eval替代。
-- Task count: 22项中4项完成、17项部分实现/验证、1项待最终汇总。4/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
+- Task count: 22项中5项完成、16项部分实现/验证、1项待最终汇总。5/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
@@ -27,7 +27,7 @@ SDD: [Software Design Document](./sdd.md)
 
 | ID | State / evidence | Choice, recommendation and tradeoff | Gate / rollback |
 | --- | --- | --- | --- |
-| D1 | 产品边界已确认；执行设计待 P0 | 当前笔记限定保留个性化、已有 Memory、风格及获准历史；同一 Agent 解释新增取材约束，宿主验证结构化边界/真实权限。已有设置、排除、撤销可在首请求前执行；任意新增自然语言“不要发送背景”不能在已经发送后补救，也不能声称普遍支持 | T-04/T-13：明确首请求输入、历史/摘要及每次物理调用；未覆盖的严格发送能力不纳入已实现承诺，若需新增 UI/前置机制再提交具体方案；禁止统一空背景或独立 classifier fallback |
+| D1 | Confirmed — implementation and automated physical-input matrix complete 2026-09-12 | 当前笔记限定保留个性化、已有 Memory、风格及获准历史；同一 Agent 解释新增取材约束，宿主验证结构化边界/真实权限。已有设置、排除、撤销可在首请求前执行；任意新增自然语言“不要发送背景”不能在已经发送后补救，也不能声称普遍支持 | T-04已完成组合输入及各物理发送点自动化；T-13/T-21继续真实模型/App/device。未覆盖的严格发送能力不纳入已实现承诺；禁止统一空背景或独立 classifier fallback |
 | D2/D3 | Confirmed — Owner 2026-09-09 答复“采用专用作品通道，兼容验证通过后切换（推荐）” | 采用主 Agent 纯作品输出通道，Chat 收尾可文字或一个作品；无新取材/动作，无额外 acknowledgement 模型轮 | T-03 当前模型 native/预览/finish/旧 reader 兼容通过后才切换；产品选择不是验证 PASS，失败停止推广并重新讨论，不自动双协议 |
 | D4 | Engineering candidate — P0 需证据 | 复用 Type A 理解用户语义；宿主事实与模型候选分开；未知不默认 ordinary；真实个人陈述与本次写作要求混合时分别处理，不丢掉独立事实 | T-04/T-10：提取输入准入和两条最终持久化准入分别证明；保留旧 hostProvenance/reader，失败不写不兼容字段 |
 | D5 | Confirmed — Owner 2026-09-09 对语义提议及保留执行保护答复“同意” | 主 Agent 在现有 per-vault opt-in 和四个 core tools 内按目标提出 Operations 建议，替代本地操作意图规则；不明确时澄清，实际执行仍确认、stale-safe、Undo、审计，准备读取仍受来源约束 | T-15：schema、canExport/canExecute、提议、执行一并适配与验证；关闭/未确认/取消/目标 stale 均零写入。产品批准不代表已实现或验收通过 |
@@ -42,6 +42,29 @@ SDD: [Software Design Document](./sdd.md)
 | D14 | Confirmed — Owner 2026-09-12“接受分开评估，F-20 继续跟踪（推荐）” | 新旧协议共现的F-20保留为模型质量问题，不再单独否决专用通道兼容评估 | T-03/T-20仍保留原FAIL；协议、来源、预览、finish与App门通过后才切默认，非立即切换批准 |
 
 ## Work
+
+2026-09-12 D1完整物理输入组合映射：AC-03/04/09 → 复用现有生产
+`PaAgentRuntime`→`AIUtils`→`ChatOpenAI`→SDK离线transport fixture，在同一“只用当前笔记”
+写作run中提交`current_note`范围并读取当前笔记，同时提供有稳定身份的Personal、已有Memory
+背景及有效授权style；再检查最后真实请求正文和`GenerationInputSnapshot` →
+`b129-multimodal-runtime`单一组合回归，连同既有answer/invoke fallback、history/tool summary、
+query rewrite/rerank逐次重验用例 → 当前笔记正文、Personal、已有Memory和style同时进入最后物理
+请求，任务来源快照只记录当前笔记且个性化身份分栏保留；其它Vault材料/Web不得混入，任何
+来源或SDK准入实现变化须重跑。本片只补未覆盖的组合证明；若反例暴露产品缺陷再改runtime，
+不通过统一清空背景或放宽来源断言取得PASS。真实provider、Desktop可见交互和iOS仍是独立门。
+
+本片结果：新增组合用例从真实生产runtime经AIUtils、ChatOpenAI及SDK离线transport完成两次
+物理请求；最后请求同时含当前笔记正文、稳定Personal、已有Memory和授权style，另一笔记路径
+及内容均未进入，作品`GenerationInputSnapshot`只登记当前笔记任务来源，并分别保留Personal、
+Insights和style身份。结合既有answer SDK retry、stream→invoke重建、history/tool summary、
+query rewrite/rerank物理准入及来源撤销反例，10 suites / 335 tests PASS，10.414 s，均自然
+exit 0。没有修改runtime源码、配置、依赖或构建输入；本结果关闭D1/T-04自动化可行性，
+不替代真实模型语义、可见Desktop/iOS操作或最终冻结全门。
+最终仅整理新增fixture的可读返回表达，当前`b129-multimodal-runtime` 90 tests复验PASS，
+2.481 s自然exit 0；其余9 suites的源码、fixture、配置及依赖均未改变。
+本片最终`npx tsc -noEmit -skipLibCheck`与`npm run lint`自然exit 0；`docs:check`通过
+206 Markdown/1820链接并保留4项既有episodic advisory，文档契约2 suites/58 tests PASS；
+diff和社区DOM源码扫描通过。后续只补写本验证记录，不改变测试、checker、链接、配置或依赖。
 
 2026-09-12 T-19真实降级/升级矩阵映射：AC-10/11 + D11 → 在同一repo-local test vault与
 同一Chromium origin先由当前HEAD打开合法v3治理库并冻结DB version、各store记录与
@@ -467,19 +490,19 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | ID | Requirement / AC | Slice | Status | Evidence / dependency |
 | --- | --- | --- | --- | --- |
 | T-01 | B-135/REQ-11 / B-135/AC-11 | 建立 L3 Decision/Spec/SDD/Plan/Tracker，旧任务新增工作转归 B-135 | [x] | 文档 gate、2 suites/58 docs tests 及独立设计复核见下方日志；不代表 P0 已完成 |
-| T-02 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-17 / B-135/AC-17 | 记录真实产品答复，冻结范围及迁移，不重问已确认边界 | [x] | D2/D3、D5、D8、D10 已按真实答复同步 DEC-034/Spec/SDD；仅产品选择及文档任务完成，T-03/T-04 可行性和 P0 退出门未通过 |
+| T-02 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-17 / B-135/AC-17 | 记录真实产品答复，冻结范围及迁移，不重问已确认边界 | [x] | D2/D3、D5、D8、D10 已按真实答复同步 DEC-034/Spec/SDD；仅产品选择及文档任务完成，后续技术验收由各实现任务承担 |
 | T-03 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07；B-135/REQ-14 / B-135/AC-14 | native 输出与旧协议独立兼容对照：当前 qwen 配置、转义/Unicode、增量预览、正常工具结束、tail 异常 | [~] | native schema/真实历史delta经当前adapter→loop→bridge、终局/混批与无ack已有自动化及275套全门证据；当前Qwen四案按D14区分生成质量。Owner指定同网关DeepSeek最小协议对照已通过，F-23新质量偏差仍Open；完整App/device门待补 |
-| T-04 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04；B-135/REQ-10 / B-135/AC-10 | P0 来源声明/物理输入、混合消息两段准入、旧新 reader 最小可行性 | [~] | D4 TypeA/plugin两门已贯穿，D11新库隔离及真实降级/升级矩阵通过；D1完整来源声明/物理请求仍未完成 |
+| T-04 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04；B-135/REQ-10 / B-135/AC-10 | P0 来源声明/物理输入、混合消息两段准入、旧新 reader 最小可行性 | [x] | D1当前笔记+Personal+已有Memory+style的真实SDK输入及answer/fallback/summary/rewrite/rerank重验通过；D4 TypeA/plugin两门、D11新库隔离与真实降级/升级矩阵均已贯穿。真实语义/App/device仍由后续任务和阶段门承担 |
 | T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | tool_calls独立完成类型、finish/格式分离、tail异常/挂起及无重复invoke已有当前测试和全门证据；Owner指定DeepSeek已有实际SDK帧与tool_calls/stop；剩余真实App中断/完成组合及设备验收 |
 | T-06 | B-135/REQ-15 / B-135/AC-15；B-135/REQ-16 / B-135/AC-16 | 单一绝对期限、软收尾过渡、投影前无正文诊断 | [~] | 共同runStartedAt与startup零dispatch已有证据；本轮实现incremental已开始正文延续至原hardAt，softAt后走terminal policy而不再请求，工具仍受soft准入。新增正常完成/异常/取消/late tool及hardAt反例；完整诊断与App门仍待完成 |
 | T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [~] | 预览与最终成版分离、来源撤销、取消迟到、持久化/reload已有回归；D13真实旧记录恢复已验。仍缺生成过程中实际Desktop预览/中断/恢复及受影响iOS，不能由静态恢复样例替代 |
 | T-08 | B-135/REQ-17 / B-135/AC-17 | 原始旧值分类、默认策略/用户动作分离、版本迁移与 load/save/reload | [x] | D8 raw missing/false、有效 paused、版本化 10/01 及普通保存/重载在真实 Obsidian 宿主通过；不伪造 consent/confirmedAt，原 plugin data 摘要恢复 |
 | T-09 | B-135/REQ-17 / B-135/AC-17 | 默认实际准入、scheduler/collector、独立关闭暂停/恢复、首次说明与设置 UI | [x] | 默认 11 的真实 scheduler/collector、零启动回填、新 Chat 调度、独立关闭零新增、Personal/style 解耦及实际设置 DOM/说明通过；模型质量、T-10/T-11 与 P2 iOS 阶段门不由本任务代替 |
 | T-10 | B-135/REQ-10 / B-135/AC-10 | Chat 来源、Type A 语义候选与两条最终准入；混合真实事实/任务要求，默认开启也不学成长期风格 | [~] | semantic lane、最终保存/确认/恢复、稳定ID及source lifetime已实现；当前Qwen合成混合事实/纯任务/双事实1/0/2候选可回放。完整Chat/设置组合及语义质量门仍待验收；关闭时不另跑提取模型分类 |
-| T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed 与 legacy 无 scheduler 读取、设置说明、失败/Forget迟到、默认迁移与真实宿主关闭组合已通过；仍需非空 Personal/style 的实际物理 provider 输入及 App/device 验收 |
+| T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed 与 legacy 无 scheduler 读取、设置说明、失败/Forget迟到、默认迁移、真实宿主关闭组合及非空Personal/style实际SDK输入已通过；剩余App/device验收 |
 | T-12 | B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 主 prompt/工具指导承接语义；去关键词路由、预测必调/隐藏与参数强制覆盖 | [~] | runtime已移除独立分类调用和预测required名单；policyModelName的rewrite/rerank保留。自然语言工具范围、writing识别、prompt与语义场景对照仍未完成；schema、真实证据、dedup和取消保留 |
-| T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [~] | 生产run已接声明/有序读计划/真实身份及受限Memory，Vault/Ops读门保持；动态句柄、独立控制轮和图片队列读门已有定向证据。完整来源投影及真实模型/App门仍待完成。profile/Memory/style与任务事实分开，不默认空背景 |
-| T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 已补普通Vault结果、标签/backlinks隐藏依赖、D12已知撤销旧助手回复及answer/history/tool-summary物理SDK重验；原记录保留、未知legacy与合法建议可用。GenerationInputSnapshot与作品/父版本/多图/风格用途、其余来源治理和完整App/provider门仍待完成，不以union复活排除图片 |
+| T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [~] | 生产run已接声明/有序读计划/真实身份及受限Memory，Vault/Ops读门保持；动态句柄、独立控制轮、图片队列读门和完整物理来源投影已有定向证据。profile/Memory/style与任务事实分开，不默认空背景；真实模型语义/App门仍待完成 |
+| T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 普通Vault结果、标签/backlinks隐藏依赖、D12撤销旧回复及answer/history/tool-summary/rewrite/rerank物理重验通过；GenerationInputSnapshot已覆盖任务、Personal/Insights、风格、parent、Pagelet和完整图片身份。剩余多图指代真实语义、App/provider/device门，不以union复活排除图片 |
 | T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [~] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。生产source预检下create→append及越界混合批次已有定向证据；真实语义质量、完整来源投影及App门未完成 |
 | T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [~] | 显式native候选已接Chat→runtime工具/来源/动态handle/完整输入/图片收窄及成版parent/scene；新topic与恢复scene回归、真实Qwen合成协议通过。默认切换、真实UI、多版本失败继续及完整治理组合仍待验 |
 | T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | native候选的runtime schema/loop/bridge动态handle与物理请求快照已贯通，保留单输出、严格provider身份、无ack及host最终门；真实Qwen合成样例成功。默认切换、完整用途/成版保存生命周期与实际UI门仍待补；T-03/T-13/T-16依赖未解除 |
@@ -534,11 +557,11 @@ UI/runtime 的阶段验证使用 `make deploy` 或符合复用条件的 current-
 | F-18 | P2 implementation | typed partial-output-error 后正常 resolve 或 writingRecovery 缺少持久化中断标记，重开可能恢复完成操作 | T-07：所有部分结果在持久化前统一中断 warning，现场与 reload 共同使用 | typed partial/writingRecovery 保存重开，正文/result/Add to Editor/用户取消 warning；249 Chat tests 与独立复核通过 | Closed — automated scope only |
 | F-01 | P1 design | 新默认仍可能被旧 consent 门压回关闭，旧 true 迁移还会制造当前 confirmedAt | T-08/T-09 同步默认、实际准入和历史事实 | settings/load/runtime/collector fixtures + 真实宿主回执 | Closed — 默认/旧值不要求 confirmed，未制造 confirmedAt；显式 paused 保留 |
 | F-02 | P1 design | 来源不明旧 false 无法从持久化值可靠判断是否人为关闭 | D8 已选择：无明确关闭证据即按新默认开启，不声称推断出用户历史意愿 | T-08 raw settings matrix，明确关闭/暂停优先，迁移只运行一次 | Closed — D8 已实现并经真实宿主 load/save/reload 通过 |
-| F-03 | P1 design | 首请求带背景后，不能再实现任意自然语言“不发送”的前置承诺 | D1 只承诺可证实准入，P0 明确支持边界 | 物理输入 fixture，不靠回答自证 | Open — P0 |
-| F-04 | P1 design | native 工具结束目前会落 unknown；参数完整不等于真实完成 | T-03/T-05/T-17 | native/finish/tail/format 对照 | Open — P0 |
-| F-05 | P1 design | non-ordinary 在 Type A 前被滤除，单改 prompt 无法实现语义分层 | T-04/T-10 分开输入/最终候选两条准入 | 混合事实+任务、旧新 reader | Open — P0 |
+| F-03 | P1 design | 首请求带背景后，不能再实现任意自然语言“不发送”的前置承诺 | D1将承诺限定为首发前可证实结构化准入；更严格自然语言发送限制不纳入现有能力 | 当前笔记+背景组合及每次物理发送重验，不靠回答自证 | Closed — explicit product boundary and automated physical matrix |
+| F-04 | P1 design | native 工具结束曾落 unknown；参数完整不等于真实完成 | adapter保留provider `tool_calls`/`stop`，loop/bridge分别记录完成、schema和transport | 自动finish/tail/format矩阵及真实DeepSeek SDK帧；App门仍归T-03/T-05 | Closed — implementation and bounded provider compatibility |
+| F-05 | P1 design | non-ordinary 在 Type A 前被滤除，单改 prompt 无法实现语义分层 | Type A语义候选与宿主来源事实分层，提取输入及两条最终准入均接通 | 混合事实+任务、旧新reader和当前Qwen 1/0/2候选；更广质量归T-10/T-20 | Closed — implementation; broader semantic quality remains |
 | F-06 | P2 design | 新增任务曾误归 B-106，并将其 Validated 改 Planned；稳定文档也有旧归属残留 | 本轮恢复旧包，全部新增任务归本 Tracker，Brief/DEC005/021/Habit/Pagelet 的新工作入口全部修正 | 旧三文件 diff 为空；独立复核及新 owner 引用检查 | Closed — docs only |
-| F-07 | P1 design | 普通 Personal 已有读取受 extraction 门影响，直接拆门会改变发送行为 | D10 已获明确同意；已有画像可继续发送，仍受 Memory/来源/遗忘控制 | T-11 plugin-record-note 与实际输入对照、停用/撤销/重载反例 | Decision resolved — implementation pending |
+| F-07 | P1 design | 普通 Personal 已有读取受 extraction 门影响，直接拆门会改变发送行为 | D10已获明确同意并按Memory/来源/遗忘门拆开新增提取与已有画像读取 | plugin、真实宿主停用/撤销/重载及非空Personal+style实际SDK输入 | Closed — implementation and host/runtime evidence; device gate remains |
 | F-08 | P2 implementation | T-05初稿将所有buffered完成都豁免overrun，softAt后才完成可能再触发模型请求 | 按实际completedTextAt与softAt比较；早完成仅tail拖延才豁免，晚完成保留原有界overrun；buffered fixture实际通知dispatch | with/without finish、单次model调用、tail-hang的buffered真实路径；独立复核确认关闭 | Closed — source scope only |
 | F-09 | P2 implementation | T-06初稿正文转工具后仍用hardAt，late tool可在execute前进入有副作用的prepareBatch | early tool恢复softAt；late tool在入buffer前拒绝并保留正文/警告，不申请第二请求 | early tool收尾额度、late prepareBatch/execute双spy；独立复核 | Closed — source scope only |
 | F-10 | P2 implementation | 新正文终局分支可能绕过没有finalizeAfterTurn的Pagelet来源验证，导致合法结果最终被清空 | 本分支保留旧host afterTurn验证，并将continue约束成terminal incomplete，不能再dispatch | 真实Pagelet policy的接受/拒绝及continue回归；独立复核 | Closed — source scope only |
