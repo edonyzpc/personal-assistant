@@ -122,6 +122,9 @@ scope 不能打开真正关闭的 Memory、解除 Data Boundary、撤销 Forget 
 检索按实际数据范围约束，不再以“只能用 search_memory”替代“只能取 vault 笔记”。
 保证是执行符合有效约束及宿主权限，不宣称自然语言语义判断永远正确。
 
+宿主按已提交scope切换模型指导：无新任务材料读取可直接使用获准输入交付；已接受范围
+不重复声明，同轮真正收窄仍走原准入。未提交候选或失败声明不能显示accepted状态。
+
 T-13工程接缝冻结：executor提供同步`preflightBatch`，dispatcher先解析全部调用，
 再交给预检；此时不得已运行过滤、canonical key、prepareArguments、prepareBatch或
 任何执行。回调只能验证已持有的host事实，返回纠正结果或抛错均整批拒绝；不把异步
@@ -337,6 +340,10 @@ tool 额度，但仍受文本/请求上限、唯一输出次数、原 hard deadl
 terminal policy 使用原剩余 hard budget，随后再验来源和取消；continue 不追加生成轮。
 未观察到的尾部/usage 保持未知。分块名称完成前延迟对普通说明的重分类，只有真实
 单调用通过后才补全 canonical 工具名和原参数；真实 provider index 保留稳定归并。
+
+2026-09-12 DeepSeek续帧兼容：首帧建立合法id/index后，SDK参数续帧可能携带空id/name。
+仅当续帧重复已经建立的同一index时，空id视为省略，保留原id；无锚点、缺少或不同index、
+真实id冲突及混批继续拒绝。该解释不制造provider完成事实，仍等真实finish且完整解码。
 
 生产 runtime 已有仅供兼容候选验证的显式 `writingOutputProtocol: "native"`，并且
 必须同时存在宿主 writingRequest 才生效。该入口同步使用固定 schema/native 指令、

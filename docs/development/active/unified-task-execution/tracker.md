@@ -12,9 +12,9 @@ SDD: [Software Design Document](./sdd.md)
 ## Current Snapshot
 
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: D13恢复片已交付，D14已确认。保留四案质量对照；补齐真实Desktop流式中断/恢复与另一provider最小对照，另一服务环境已向Owner询问。继续T-14/T-18完整生成来源及多版图文组合；默认native尚未启用，环境门缺失不记阶段完成。
+- Next action: D13/D14已交付；F-21/F-22修复和Owner指定DeepSeek第二模型最小对照完成，F-20/F-23模型质量继续跟踪。继续T-14/T-18实际物理生成来源与跨重载、图文多版组合，以及真实Desktop流式中断/恢复与受影响iOS门；默认native尚未启用。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 2026-09-12冻结输入后lint/build及完整275 suites/7570 tests自然PASS（328.043s），构建`5f8fda2cf69480e9fed9f5571222e61ce9e0a8b607eb0ed2aab7d190a9161661`已部署重载。真实Obsidian Chat恢复窗口/宿主/IndexedDB：明确确认后1个AI版本、提交正文与旧参考范围保留；已知缺失来源零版本；provider/学习调用均0，临时库/窗口已清理。无捕获错误，缺来源反例的预期拒绝日志保留。本片不改变T-03/F-20失败结论，不将App-runtime当full-ui/iOS或整体T-18通过。
+- Last verified behavior: 2026-09-12本片完整275 suites/7577 tests自然PASS，生产/test构建`208ae6fcdbe972a61f2e7276b198aab6d20b954cdeb67984c5e6d1a2f653b914`重载后DeepSeek native/旧协议各2物理请求、唯一artifact、正常独立finish且provider正文保真。native中文引号改写仍为质量FAIL。D13恢复片先前App证据保留；本次隔离ChatService不替代ChatView/保存/full-ui/iOS。
 - Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
@@ -42,6 +42,22 @@ SDD: [Software Design Document](./sdd.md)
 | D14 | Confirmed — Owner 2026-09-12“接受分开评估，F-20 继续跟踪（推荐）” | 新旧协议共现的F-20保留为模型质量问题，不再单独否决专用通道兼容评估 | T-03/T-20仍保留原FAIL；协议、来源、预览、finish与App门通过后才切默认，非立即切换批准 |
 
 ## Work
+
+2026-09-12 F-21/F-22收敛：DeepSeek[首次结果](evidence/2026-09-12-deepseek-initial.json)及[真实SDK拒绝前帧](evidence/2026-09-12-deepseek-native-raw.json)区分两问题。第一次观察hook被LangChain withConfig克隆及pipe.transform绕过，未作为raw证据；修正为克隆模型generator后抓到合法header后`id:""/index:0/args:"{"`，collector误拒绝导致停止，后续finish未知不是provider自行结束。来源状态片RED为3失败/63通过（报告证明失败，shell外层因读日志为0），GREEN4 suites/103 tests自然PASS（2.145s）；身份片RED1失败/75通过自然exit1，GREEN3 suites/123 tests自然PASS（1.502s），含同index续帧、反例及adapter→loop→bridge。独立只读审查无可确认P1/P2。
+
+冻结本片756个source/test/script/config/dependency文件，前后hash相同；tsc、完整lint/build、DOM扫描/diff自然通过；完整275 suites/7577 tests PASS（297.5s）。Jest报告延迟退出提示后，同一session继续等待最终自然exit0，无forceExit或重启。新构建及test部署SHA256均`208ae6fcdbe972a61f2e7276b198aab6d20b954cdeb67984c5e6d1a2f653b914`，deploy-current校验身份后复制、实际Obsidian重载。此后仅证据/文档变化，源测试输入未再改变。
+
+[修复后真实DeepSeek结果](evidence/2026-09-12-deepseek-post-fix.json)及[可复现探针](evidence/2026-09-12-deepseek-probe.js)：Owner指定同百炼网关deepseek-v4-pro，0.8/thinking=true，禁止笔记/Memory/网页/历史/动作。native2请求/1准备、377个SDK generation帧、唯一artifact、真实tool_calls；旧协议2请求（一次声明）/0准备、408帧、唯一artifact、真实stop。两者provider参数/JSON正文到artifact字符精确一致，无后置ack，无禁止调用；一次样例不证明重复声明永远消失或比较成本因果。native将中文弯引号改为ASCII直引号，用户原文等式仍FAIL；旧协议该次等式PASS，记F-23而不套用D14宣称该新差异已获质量豁免。SDK帧不等于完整HTTP/实际UI；未经过ChatView/版本保存，full-ui/iOS仍NOT TESTED。句柄已清理，真实设置仍Qwen qwen3.8-max/default legacy。
+
+Qwen证据复用审计：9月10日runtime记录hash精确匹配`148d7e3`；该提交到本片之前的runtime仅来源receipt/guard/event传递变化，schema、decoder、preview、loop、factory/fetch及SDK lock未变。历史Qwen接受schema/tool_calls及参数回放结论可复用，来源新增由专门测试与本轮实际artifact补证，不为统一日志形式重跑模型。本片collector兼容及scope指导已有定向/完整门，后续Qwen组合App验证仍按自己的范围验收。
+
+2026-09-12来源后续只读收敛：T-18不能把结束时累计hostSourceRecords当成最后物理生成来源。下一实现先补内存中的有界类型化事实（实际用途/明确算法hash、style revisions、完整images、parent identity、实际Personal/Insights使用三态），由prepareProviderInput形成、physical-start选择，经bridge透传；不从父版或当前selector倒推。旧WritingVersion严格schema会拒新增顶层字段；旧cloneWritingRecovery白名单会丢新字段，须先reader对照再writer。Insights实际还读metadata tags、resolved/unresolved links及可选semantic clusters，仅存文件stat不足。该结论未批准新持久代次/通用receipt库，完整跨重载语义设计与必要产品判断仍由T-18承担，当前F-21/F-22冻结验证期间不并行改这些源码。
+
+2026-09-12 T-03/T-17 DeepSeek空ID增量映射：AC-06/07/14 → 实际SDK首帧有合法id/index/name，下一参数帧保留index但id/name为空字符串；NativeWritingCallCollector把该空id当非法身份而提前拒绝，截断读取造成后续finish未知 → 以捕获形状先RED；只在已经建立的同一index续帧中将空id视为省略，不凭空建立身份、不放行换index/换id/混批 → collector与adapter→loop→bridge定向正反例、独立审查、静态和必要构建/App复验；保留原始失败帧，不以修复代码当真实模型通过。此修复不影响来源声明状态片的文件所有权。
+
+2026-09-12 T-12/T-14来源声明状态映射：AC-01/02/03 → DeepSeek旧协议三次相同declare反例后，源码确认TaskSourceRun每次只注入首次声明指导，没有呈现已接受状态 → 以当前实际provider输入先RED，未声明且不读取新材料可直接交付，已声明时说明沿用当前边界，真实用户更正/范围变化仍能重声明 → 状态指导和scope/批次准入回归、独立审查、类型/静态检查；不做字符串去重、不放宽来源门或延长期限。模型重复原因可能不止一个，源码修复不冒充真实模型行为已通过。
+
+2026-09-12第二模型验证映射：AC-06/07/14 → Owner指定同一密钥/服务地址，模型改为`deepseek-v4-pro`；仅隔离host改名，真实Chat设置不变，源码已列为受支持native模型 → 明确正文范围的native/旧协议最小对照，保留0.8/thinking并在实际bindTools返回runnable.stream抓取SDK参数/finish帧 → 唯一artifact、正文等式、完成证据、物理调用数/准备数；相同禁止笔记/Memory/网页/动作/历史边界 → gateway仍是百炼兼容配置，此证据不冒充另一HTTP网关/设备。模型/SDK/schema/finish相关输入变化重验；无效模型请求先分类环境，不靠改生产准入强行通过。
 
 2026-09-12 D14文档与证据验证：docs:check通过（206 Markdown/1814链接，4条既有advisory），文档契约2 suites/58 tests PASS（5.899s，自然exit0），探针JS语法、四案证据结构/字符等式及diff检查通过。独立只读审计确认T-03/T-05/T-07部分旧待办措辞已被现有实现/回放覆盖，任务行已改写为实际剩余环境门，状态仍为部分完成。
 
@@ -335,9 +351,9 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | --- | --- | --- | --- | --- |
 | T-01 | B-135/REQ-11 / B-135/AC-11 | 建立 L3 Decision/Spec/SDD/Plan/Tracker，旧任务新增工作转归 B-135 | [x] | 文档 gate、2 suites/58 docs tests 及独立设计复核见下方日志；不代表 P0 已完成 |
 | T-02 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-17 / B-135/AC-17 | 记录真实产品答复，冻结范围及迁移，不重问已确认边界 | [x] | D2/D3、D5、D8、D10 已按真实答复同步 DEC-034/Spec/SDD；仅产品选择及文档任务完成，T-03/T-04 可行性和 P0 退出门未通过 |
-| T-03 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07；B-135/REQ-14 / B-135/AC-14 | native 输出与旧协议独立兼容对照：当前 qwen 配置、转义/Unicode、增量预览、正常工具结束、tail 异常 | [~] | native schema/真实历史delta经当前adapter→loop→bridge、终局/混批与无ack已有自动化及275套全门证据；当前Qwen四案按D14区分生成质量。仍缺另一受支持provider最小对照与完整App/device门，不重复实现既有链 |
+| T-03 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07；B-135/REQ-14 / B-135/AC-14 | native 输出与旧协议独立兼容对照：当前 qwen 配置、转义/Unicode、增量预览、正常工具结束、tail 异常 | [~] | native schema/真实历史delta经当前adapter→loop→bridge、终局/混批与无ack已有自动化及275套全门证据；当前Qwen四案按D14区分生成质量。Owner指定同网关DeepSeek最小协议对照已通过，F-23新质量偏差仍Open；完整App/device门待补 |
 | T-04 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04；B-135/REQ-10 / B-135/AC-10 | P0 来源声明/物理输入、混合消息两段准入、旧新 reader 最小可行性 | [~] | D4 TypeA/plugin两门已贯穿，D11新库隔离有当前App证据；D1完整来源声明/物理请求及完整兼容矩阵未完成 |
-| T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | tool_calls独立完成类型、finish/格式分离、tail异常/挂起及无重复invoke已有当前测试和全门证据；剩余另一provider及真实App中断/完成组合验收 |
+| T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | tool_calls独立完成类型、finish/格式分离、tail异常/挂起及无重复invoke已有当前测试和全门证据；Owner指定DeepSeek已有实际SDK帧与tool_calls/stop；剩余真实App中断/完成组合及设备验收 |
 | T-06 | B-135/REQ-15 / B-135/AC-15；B-135/REQ-16 / B-135/AC-16 | 单一绝对期限、软收尾过渡、投影前无正文诊断 | [~] | 共同runStartedAt与startup零dispatch已有证据；本轮实现incremental已开始正文延续至原hardAt，softAt后走terminal policy而不再请求，工具仍受soft准入。新增正常完成/异常/取消/late tool及hardAt反例；完整诊断与App门仍待完成 |
 | T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [~] | 预览与最终成版分离、来源撤销、取消迟到、持久化/reload已有回归；D13真实旧记录恢复已验。仍缺生成过程中实际Desktop预览/中断/恢复及受影响iOS，不能由静态恢复样例替代 |
 | T-08 | B-135/REQ-17 / B-135/AC-17 | 原始旧值分类、默认策略/用户动作分离、版本迁移与 load/save/reload | [~] | D8 已确认；新增默认版本区分旧 false 与迁移后明确偏好，不伪造 consent/confirmedAt、不清空治理数据 |
@@ -392,6 +408,9 @@ UI/runtime 的阶段验证使用 `make deploy` 或符合复用条件的 current-
 
 | ID | Severity | Finding | Decision / fix | Verification | State |
 | --- | --- | --- | --- | --- | --- |
+| F-23 | P2 model quality | 修复空ID后DeepSeek native把中文弯引号改成ASCII直引号；旧协议同明确边界样例保留正确 | T-03/T-20保留两侧原参数与用户正文等式；D14不自动豁免新的单侧差异，不改decoder掩盖模型输出 | provider正文到artifact两者精确，native对用户原文FAIL、旧协议PASS；单案不足率估计，后续质量验收继续 | Open — DeepSeek quote fidelity |
+| F-21 | P2 implementation | 来源范围已提交后仍只提示首次声明；DeepSeek旧协议连续重复三次相同声明 | T-12/T-14按真实host snapshot区分未声明/已接受，允许无新取材直接输出；真实收窄仍原门 | provider输入及candidate/reject/narrow先RED；4 suites/103 tests PASS。三次上限截断不是完整旧协议失败；新构建旧协议一次声明后交付，native准备后直接交付 | Closed — implementation and bounded App-runtime |
+| F-22 | P2 compatibility | DeepSeek首帧有id/index，续帧空id+同index被误拒绝，提前停止导致正文空和finish未知 | T-03/T-17只在已有同index锚点下解释空id为省略；无锚点/异index/冲突/混批仍拒绝 | 真实SDK帧定位；collector先RED，3 suites/123 tests含adapter-loop-bridge PASS；新构建真实DeepSeek完整参数及tool_calls、唯一artifact与provider正文精确相等 | Closed — compatibility shape and bounded App-runtime |
 | F-19 | P2 implementation | 有效context后仍无条件提示先准备，模型12次改写scene并重复准备至deadline | T-16/T-20按有效receipt切换指导；语义同义改写不构成准备理由，仍保留真实更正/新证据/失效改选 | runtime状态输入先RED后PASS；同自然语言App案例2请求/1准备/无ack，独立复核 | Closed — bounded app-runtime sample; broader semantic quality pending |
 | F-20 | P2 model quality | 原逐字提示在新旧协议均删除行标签/引号并错误声称逐字；明确正文范围后两者正确 | T-03/T-20保留失败及四案对照；D14允许与协议兼容性分开评估，其它切换门不变 | 原提示仍失败；非已证明的native专属退化，不能以明确边界案例覆盖 | Open — shared model quality |
 | F-17 | P2 implementation | 异常后的异步渲染/保存期间仍接收迟到正文，现场与已捕获的历史内容可能不同 | T-07：异常结算关闭流回调，渲染与恢复身份独立；旧 render 被取消不阻止有效恢复重渲染 | deferred save 迟到 legacy/canonical、deferred render 异常/取消回归；249 Chat tests 与独立复核通过，关闭/切会话身份保护保留 | Closed — automated scope only |
