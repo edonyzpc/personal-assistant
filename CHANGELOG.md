@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.7](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.6...2.10.0-beta.7) (2026-09-13)
+
+### Features
+- memory: enable governed learning and preserve source lifetimes
+- agent: unify scoped source execution and writing delivery
+- agent: bind writing output to current sources and conversation
+- agent: capture physical writing input sources
+- writing: persist generation input snapshots
+- writing: revalidate persisted generation sources
+- chat: enable native writing output
+
+### Fix
+- chat: guard queued image reads against revocation
+- memory: preserve selected writing source validity
+- chat: validate writing sources through final storage
+- chat: verify sources when recovering legacy writing
+- agent: accept anchored empty-id writing continuations
+- agent: reflect accepted source scope in model guidance
+- chat: preserve legacy cancellation status
+
+### Improvements
+- release: reuse verified master CI for beta preparation
+- integrate B-135 unified task execution
+
+### Docs
+- release: align beta validation and asset verification
+- agent: record B135 decisions and delivery evidence
+- agent: record B135 validation and paused handoff
+- agent: consolidate B135 development branch
+- agent: record B135 source admission validation
+- agent: checkpoint B135 reload recovery before pause
+- agent: record B135 recovery decision and validation
+- agent: separate B135 model quality and protocol validation
+- agent: record B135 DeepSeek compatibility validation
+- memory: record real downgrade matrix
+- memory: close default learning host validation
+- agent: record B-135 writing host evidence
+- agent: record Qwen interruption recovery
+- agent: close B-135 reliability phase
+- agent: record B-135 learning exit smoke
+- agent: record B-135 semantic task smoke
+- agent: close B-135 semantic phase
+- agent: record B-135 native desktop rollout
+- agent: audit B-135 quality and cost evidence
+- agent: close B-135 continuation task
+- agent: sync B-135 current architecture
+- agent: audit B-135 acceptance completion
+- agent: finalize B-135 local acceptance
+- agent: validate B-135 platform evidence
+- agent: close out B-135
+
+### Tests
+- chat: clarify historical native replay evidence
+- agent: close physical input source matrix
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
