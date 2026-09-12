@@ -294,6 +294,10 @@ export class ChatHistoryManager {
         turnIndex: number,
     ): PersistedTurn {
         const assistantCanonical = entry.assistant.canonicalTurn;
+        const assistantTurnStatus = assistantCanonical?.status
+            ?? (entry.assistant.runtimeWarnings?.some((warning) => warning.type === "user_abort")
+                ? "aborted"
+                : undefined);
         const userMessage: PersistedChatMessage = {
             role: "user",
             content: entry.user.content,
@@ -323,7 +327,7 @@ export class ChatHistoryManager {
             ...(entry.assistant.runtimeWarnings && entry.assistant.runtimeWarnings.length > 0
                 ? { runtimeWarnings: entry.assistant.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
-            ...(assistantCanonical?.status ? { turnStatus: assistantCanonical.status } : {}),
+            ...(assistantTurnStatus ? { turnStatus: assistantTurnStatus } : {}),
         };
         const memoryMetadata = entry.assistant.memoryMetadata ?? entry.memoryMetadata;
         return {
@@ -355,7 +359,10 @@ export class ChatHistoryManager {
                 : {}),
         };
         const memoryMetadata = turn.memoryMetadata ? cloneMemoryMetadata(turn.memoryMetadata) : undefined;
-        const status = turn.assistant.turnStatus ?? "completed";
+        const status = turn.assistant.turnStatus
+            ?? (turn.assistant.runtimeWarnings?.some((warning) => warning.type === "user_abort")
+                ? "aborted"
+                : "completed");
         const canonicalTurn = rebuildCanonicalTurn({
             conversationId: turn.conversationId,
             turnIndex: turn.turnIndex,

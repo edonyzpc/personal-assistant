@@ -287,6 +287,25 @@ describe("ChatHistoryManager", () => {
         expect((turn.assistant as unknown as { messages?: unknown }).messages).toBeUndefined();
     });
 
+    it("keeps a cancelled legacy partial aborted across new writes and old records without turnStatus", async () => {
+        const { manager } = makeManager();
+        await manager.initialize();
+        const turn = manager.serializeTurn(makeHistoryEntry({
+            assistant: {
+                role: "assistant",
+                content: "partial answer",
+                shareCardEligible: false,
+                runtimeWarnings: [{ type: "user_abort", message: "Generation cancelled" }],
+            },
+        }), "conv-cancelled", 0);
+        expect(turn.assistant.turnStatus).toBe("aborted");
+        expect(manager.deserializeTurn(turn).assistantMessage.canonicalTurn?.status).toBe("aborted");
+
+        const oldRecord: PersistedTurn = { ...turn, assistant: { ...turn.assistant } };
+        delete oldRecord.assistant.turnStatus;
+        expect(manager.deserializeTurn(oldRecord).assistantMessage.canonicalTurn?.status).toBe("aborted");
+    });
+
     it("deserializes a turn and DOUBLE-WRITES memoryMetadata onto both assistantMessage and historyEntry", async () => {
         const { manager } = makeManager();
         await manager.initialize();
