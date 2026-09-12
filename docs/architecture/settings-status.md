@@ -34,7 +34,9 @@ Settings 简化的产品目标和旧选项失效规则见
 该修订及其scheduler/collector、设置页和Desktop退出证据全部由
 [B-135 Tracker](../development/active/unified-task-execution/tracker.md)承接，产品修订见
 [DEC-034](../product/decisions/dec-034-unified-agent-task-execution.md)。旧B-106不新增任务；
-尚未完成的受影响iOS验收也只保留在B-135。
+B-135已复用共享Linux/Desktop证据，并以390×844 Obsidian mobile simulator验证设置
+可达性。改动面没有macOS/iOS专属路径，因此没有B-135设置真机缺口；Keychain等其它
+功能实际拥有的平台门不由本修订取消。
 
 Highest-risk Settings issues are no longer open:
 
@@ -69,8 +71,8 @@ Ordinary field saves and statistics choices expose failure/retry feedback.
 
 The [B-106 Tracker](../development/active/simple-settings/tracker.md) retains
 only its historical delivery evidence. B-135 owns the later default-on,
-migration, independent-exit, and remaining affected-device evidence described
-above.
+migration, independent-exit, platform-risk audit, and mobile-simulator evidence
+described above.
 
 ## Navigation Rule
 

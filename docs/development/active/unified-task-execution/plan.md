@@ -1,7 +1,7 @@
 # Unified Agent Task Execution Delivery Plan
 
 Document status: Approved
-Updated: 2026-09-09
+Updated: 2026-09-12
 Work item: B-135
 Authority: 本 track 的交付顺序、依赖、风险、验证策略与 stop point。
 Approval scope: Owner 全量实施目标授权已确认范围按本计划执行；Tracker 的 Pending 产品选项不在批准范围内，其依赖任务仍须先取得真实答复。
@@ -35,9 +35,9 @@ Tracker: [Development Tracker](./tracker.md)
 | --- | --- | --- | --- | --- |
 | P0 设计冻结与可行性 | 未决产品取舍解决，执行接口可验证 | T-01–T-04；native/provider、来源、混合消息与 reader 最小对照分别记录 | 产品选择有真实依据；source-verified SDD；无未处置 P0/P1/P2；native 兼容失败则重新决定路线 | Pending路径未批准不实现；已确认且不依赖该选择的可靠性/恢复工作继续 |
 | P1 可靠结束与可读恢复 | 完成事实不丢、期限可解释、中断正文可读 | T-05–T-07；不依赖 native 被采纳 | finish/EOF/length/deadline/格式/array chunks 自动化对照；真实旧协议 Desktop 中断与恢复 smoke；最小 gate、review/fix | 未过关不标该阶段完成，不用新协议掩盖旧故障 |
-| P2 学习默认与治理 | 默认真正可运行，关闭可靠，语义来源不污染长期风格 | T-08–T-11；依赖迁移选择、混合消息两条最终准入验证 | 新旧 settings 和实际 scheduler/collector/Personal/style 组合测试；Desktop 与受影响 iOS 设置/退出/遗忘 smoke；review/fix | 字段或准入不明时不写新迁移标记；未通过旧 reader 不写不兼容格式 |
+| P2 学习默认与治理 | 默认真正可运行，关闭可靠，语义来源不污染长期风格 | T-08–T-11；依赖迁移选择、混合消息两条最终准入验证 | 新旧settings和实际scheduler/collector/Personal/style组合测试；Desktop共享行为及390×844 mobile simulator设置可达性；仅实际改动macOS/iOS专属路径时追加真机；review/fix | 字段或准入不明时不写新迁移标记；未通过旧reader不写不兼容格式 |
 | P3 统一语义与取材 | 主 Agent 根据目标取材，个性化/历史/权限保真 | T-12–T-15；依赖 D1 执行设计和已确认 Operations 范围 | 原句/否定/引用/混合任务真实模型对照；物理请求与整批准入测试；Desktop Chat/Operations smoke；review/fix | 权限或来源保障缺口未闭合不进入作品协议迁移 |
-| P4 作品完整交付 | 单一主 Agent 完成创作/续写与确切保存 | T-16–T-19；native P0 通过，P3 接缝稳定 | 普通/作品终局、增量预览、版本/来源/图片/旧 reader 自动化；当前 provider、Desktop 和受影响 iOS 全流程 smoke；review/fix | 无兼容证明不切换默认协议，不静默 text-only 降级 |
+| P4 作品完整交付 | 单一主 Agent 完成创作/续写与确切保存 | T-16–T-19；native P0 通过，P3 接缝稳定 | 普通/作品终局、增量预览、版本/来源/图片/旧reader自动化；当前provider与Desktop共享全流、390×844 mobile simulator受影响模态；仅平台专属行为追加真机；review/fix | 无兼容证明不切换默认协议，不静默text-only降级 |
 | P5 全量验收与契约吸收准备 | 全部 17 项 AC 有证据、旧边界无回归 | T-20–T-22；输入冻结后统一 broad gate | lint/build/full test、docs/community source check、未覆盖 App/device/provider；同输入质量/成本对照；跨模块 review/fix | Validated 后等待明确 closeout/Git/release 授权；不以文档 PASS 标功能完成 |
 
 P1/P2 在边界不重叠时可安排独立人员取证，但单一 Tracker 管理状态；共同 `plugin.ts`/runtime 输入不得并发写。每阶段按 implement → focused validation → independent review → fix → verify；审查的文件所有权明确，昂贵 gate 只由一个执行者运行。
@@ -56,11 +56,13 @@ P1/P2 在边界不重叠时可安排独立人员取证，但单一 Tracker 管�
 
 ## Validation Strategy
 
-- 自动化检查证明宿主不变量；真实模型证明语义和当前 provider 输出能力；App/device 证明可操作性，各自不能互相代替。
+- 自动化检查证明宿主不变量；真实模型证明语义和当前provider输出能力；App证明可操作性。平台无关行为可复用同一冻结输入的Linux/Desktop证据，移动呈现优先使用Obsidian CLI mobile simulator；只有macOS/iOS系统集成、真实触摸/键盘、Keychain、iCloud/文件提供器、HEIC或WKWebView专属行为才保留对应真机门。
 - 当前文档 slice 仅运行 `npm run docs:check`、`npm run test:docs -- --runInBand`、`git diff --check`。
 - 实现的最小命令、通过条件与扩大触发维护于 Tracker；相关测试由实际模块选择，不盲目全跑。阶段所需 App/device 门不得拖到最终再补。
 - broad 共享改动最终运行 `npm run lint`、`npm run build`、`npm run test:all -- --runInBand`。`make deploy` 若已覆盖相同输入则复用；合格 production build 使用 `deploy-current` 需满足 AGENTS 证据条件。
-- UI/DOM 使用 AGENTS Local Validation Gate 的社区源扫描；真实 iOS 和 live provider 需对应环境/授权，无法执行即记录 NOT TESTED，不能标为通过。发布与安装验证不是本次设计已完成事项。
+- UI/DOM 使用 AGENTS Local Validation Gate 的社区源扫描；live provider及实际受影响的平台专属行为需对应环境/授权。mobile simulator不冒充真机，但未改动、无已知平台分叉的共享行为不因可取得更多设备而重复验收。发布与安装验证不是本次设计已完成事项。
+
+2026-09-12 Owner再次明确高成本设备证据原则：macOS/iOS真机只用于与该平台本身强相关的改动；其余优先复用Linux证据或用Obsidian CLI mobile simulator回答移动呈现。本计划据此重新审计T-11/T-18/T-21，不能因旧表笼统写“受影响iOS”而制造没有源码风险对应的完成阻塞。真正由B-129、Keychain、软键盘或WKWebView等任务拥有的设备门保持各自归属。
 
 ## Approval
 

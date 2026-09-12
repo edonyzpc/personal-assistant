@@ -16,8 +16,9 @@ Authority: B-129 用户已确认的图片理解、个性化文案、显式保存
 REQ-09的作品传输：生产Chat在完成兼容、来源、预览、结束和Desktop验证后默认使用
 宿主专用`present_writing`通道，旧JSON/recovery reader继续保留。Owner按D15接受
 DeepSeek单样例引号差异作为模型质量限制，不增加自动fallback、双协议或provider特判。
-B-129其余图片、版本、保存和风格边界不变；全部新增实现与剩余iOS验收只由B-135跟踪，
-不重开B-129。
+B-129其余图片、版本、保存和风格边界不变。B-135的共享作品接缝、移动模态和平台风险
+审计均由B-135跟踪完成；未发现B-135专属真机风险。B-129自身的iCloud、HEIC、真实触控、
+设备输入和WKWebView等平台专属验收仍归B-129，不由本修订重开、代替或关闭。
 
 2026-09-08 图片管理修订已落实于当前源码，输入、迁出和兼容边界见
 [Architecture](../../architecture/multimodal-chat-architecture.md#图片管理与保存恢复)。

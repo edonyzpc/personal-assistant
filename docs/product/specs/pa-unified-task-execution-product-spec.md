@@ -4,7 +4,7 @@ Document status: Current
 Updated: 2026-09-12
 Work item: B-135
 Decision: [DEC-034](../decisions/dec-034-unified-agent-task-execution.md)
-Authority: B-135 已确认产品边界的当前记录与目标验收索引；未决产品变化在 Open Decisions 隔离，不属于已批准实施范围，也不代表当前运行时已实现。
+Authority: B-135 已确认产品边界的当前记录与目标验收索引；未决产品变化在下方隔离，不属于已批准实施范围，当前实现与验收状态只以Tracker为准。
 
 ## Problem And Product Outcome
 
@@ -60,7 +60,7 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 3. 只有完整、身份和来源有效的作品成为版本。截断、取消、格式错误或来源失效不得显示为已成版；人工恢复仍保留 AI 来源，不能自动转换为用户原始资料。
 4. 用户选择历史版本、继续修改、复制或显式保存；保存精确所选正文和图片，不为保存再次生成。保存失败保留版本与恢复入口，完成/部分完成按真实 receipt 显示。
 5. 两项学习正常按需运行；用户可分别停止新收集，管理/遗忘已有数据。显式授权风格与一次性表达要求各自有效，不把每次改稿变成习惯。
-6. Desktop 与 iOS 的预览、选择、取消、恢复、保存及设置退出均须验证。无图/有图、旧会话/新会话和载入失败分别处理；不以 Desktop 证明 iOS。
+6. 预览、选择、取消、恢复、保存及设置退出按实际改动面验证。共享逻辑复用同一冻结输入的Linux/Desktop证据，移动呈现优先使用Obsidian CLI mobile simulator；只有改动涉及macOS/iOS系统集成、真实触控/软键盘、Keychain、iCloud/文件提供器、HEIC、WKWebView专属生命周期或明确平台分支时，才要求对应真机证据。无图/有图、旧会话/新会话和载入失败仍分别处理，simulator不冒充真机专属事实。
 
 ## Trust, Data And Authority
 
@@ -69,9 +69,11 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 - User disclosure / confirmation: 默认学习提供首次说明和独立退出；生成/复制/保存/风格授权分别处理。Operations 实际执行仍需原有 opt-in 和逐次确认。
 - Reversibility / recovery: 保留已读文本、旧 recovery、版本、SaveReceipt、Undo、排除和遗忘。取消/撤销在下一次物理调用或成版前重验，不复活已失效上下文。
 
-## Open Decisions
+## Confirmed Decisions And Delivery Limits
 
-2026-09-12已确认D14：Owner接受将F-20的新旧协议共同模型质量问题与专用通道兼容性分开评估；F-20继续在B-135跟踪，不以明确正文范围的新样例覆盖原提示失败。协议、来源、增量预览、完成证据与Desktop验证随后通过，开发分支已切换默认；本决定本身不等于逐字生成验收通过，受影响iOS仍单独验收。
+2026-09-12已确认D16：Owner要求macOS/iOS真机只用于与平台本身强相关的改动；平台无关行为复用Linux/Desktop，移动呈现优先使用Obsidian CLI mobile simulator。B-135相对基线未新增macOS系统调用、iCloud/文件提供器、HEIC、Keychain、真实触控/软键盘、WKWebView专属生命周期、mobile writing CSS或其它平台分支；共享设置和恢复模态已在390×844 mobile simulator补证。因此B-135没有剩余真机门，T-11/T-18/T-21按适用证据完成。该结论不关闭B-129等功能自身的iCloud、HEIC、触控或设备验收，也不允许用simulator声称真机行为通过。
+
+2026-09-12已确认D14：Owner接受将F-20的新旧协议共同模型质量问题与专用通道兼容性分开评估；F-20继续在B-135跟踪，不以明确正文范围的新样例覆盖原提示失败。协议、来源、增量预览、完成证据与Desktop验证随后通过，开发分支已切换默认；本决定本身不等于逐字生成验收通过。D16后续按实际改动面完成平台审计和mobile simulator门。
 
 2026-09-12已确认D13：重载旧作品的来源记录不足时，在现有恢复窗口明确说明并以“确认并恢复为 AI 草稿”承接人工选择；已确认撤销或失效仍拒绝。此确认不证明旧来源完整有效、不授予重新使用来源或风格学习权限，原有AI/局部编辑归属保留。该边界共同适用于AC-06与AC-11，工程验证仍由T-18跟踪。
 
@@ -83,4 +85,4 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 
 - Active Package: [B-135](../../development/active/unified-task-execution/README.md)
 - Architecture contracts: [Multimodal Chat](../../architecture/multimodal-chat-architecture.md)、[Settings current status](../../architecture/settings-status.md)、[Write Action Framework](../../architecture/write-action-framework-sdd.md)
-- Release / rollout boundary: 实现与现有provider/Desktop证据已进入B-135开发分支；最终统一gate及受影响iOS仍由Tracker跟踪。工作分支不是Beta源，master、Beta、tag和release仍各自需要独立授权。
+- Release / rollout boundary: 实现、provider/Desktop、390×844 mobile simulator、平台风险审计及最终统一gate均已进入B-135开发分支，Tracker状态为Validated。工作分支不是Beta源；closeout、master、Beta、tag和release仍各自需要独立授权。

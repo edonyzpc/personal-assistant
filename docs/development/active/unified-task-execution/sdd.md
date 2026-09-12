@@ -256,6 +256,8 @@ JSON字符串，普通object对照返回正确对象。因此模型侧scene使�
 
 2026-09-12 D15：Owner接受把DeepSeek明确正文单样例中的弯引号转直引号记录为模型质量限制，保持native默认，不增加自动fallback、运行时双协议或DeepSeek特判。两条协议的provider正文到artifact仍逐字一致；该事实不证明模型逐字遵循用户原文，原始失败样例继续作为质量基线保存。
 
+2026-09-12 D16：Owner明确高成本平台验证只用于macOS/iOS本身强相关的改动；平台无关行为复用同一冻结输入的Linux/Desktop证据，移动呈现优先使用Obsidian CLI mobile simulator。只有Keychain、iCloud/文件提供器、HEIC、真实触摸/软键盘、WKWebView专属生命周期或明确平台分支等实际受影响风险才保留真机门。mobile simulator不能冒充这些真机事实，但也不能因笼统“受影响iOS”重复整套共享功能。
+
 WritingContextRun提供projectTranscript及captureTranscriptValidity：按实际canonical
 工具结果完整JSON验证已发布receipt，先clone再异步验证父版，失效替换同时去掉正文、
 preview及metadata，保留独立消息和原记录。捕获同步闭包拒绝receipt替换、材料/style
@@ -353,8 +355,9 @@ terminal policy 使用原剩余 hard budget，随后再验来源和取消；cont
 生效。该入口同步使用固定schema/native指令、原始身份捕获及loop/bridge handle；
 缺少模型bindTools时在物理请求前拒绝。schema只允许body、可选explanation和精确
 handle，不注册普通可执行工具。Pagelet缺省不启用；普通来源/动作规则不得放宽，
-不能绕过宿主策略直接agent_end。旧reader组合与当前Qwen Desktop已验证，受影响iOS
-仍由T-18/T-21承担。D15已将DeepSeek单样例引号差异处置为模型质量限制；不增加
+不能绕过宿主策略直接agent_end。旧reader组合、当前Qwen Desktop、390×844 mobile
+simulator及D16平台风险审计已完成；没有B-135专属真机缺口。D15已将DeepSeek单样例
+引号差异处置为模型质量限制；不增加
 自动双协议、fallback或provider特判，也不把传输保真冒充模型逐字质量通过。
 
 静态输出登记放在现有 CapabilityRegistry：`getWritingOutputSchema` 只返回固定
@@ -720,7 +723,8 @@ timer/listener/lease，不以 `--forceExit`、无限 timeout 或重试隐藏泄�
 可回滚。优先补兼容 reader 再写新格式；否则回滚须保留合法作品/笔记并禁用不兼容
 新写入，不能清空治理记录、复活 Forget 或把 user edit 变 AI/反向改写来源。
 
-现有支持的 provider/model、Desktop/mobile、图片与 native 工具能力需实际矩阵核对。
+现有支持的provider/model及实际受影响的App能力需按风险矩阵核对；平台无关的同一
+TypeScript/DOM路径不为每个OS重复执行相同案例，平台专属transport或系统集成单独取证。
 不静默换模型、关闭 thinking、缩小媒体格式或以手选恢复替代自动作品能力。
 native 不满足原能力时停止推广，带可执行备选重新决策；不加隐形 regex fallback、
 常驻双路由开关或多套自动协议。旧 JSON reader 保留不等于继续维护第二套自动生成主线。
@@ -732,7 +736,7 @@ Pagelet final-only、Operations 真正写入、VSS 算法/维护和 B-129 图片
 
 ## Test Matrix
 
-以下为实施证据目标，尚未运行。完整命令、输入身份、结果与重跑触发只记 Tracker。
+以下为实施证据矩阵。完整命令、输入身份、结果与重跑触发只记Tracker。
 source 使用 `npm test`，tooling 使用 `test:tooling`，artifact 先当前 production build；
 不因选错组或缺构建直接扩大全套。旧 source PASS 不能证明新准入或原生作品兼容。
 
@@ -748,7 +752,7 @@ source 使用 `npm test`，tooling 使用 `test:tooling`，artifact 先当前 pr
 | B-135/REQ-08 / B-135/AC-08 | `writing-versions`、`chat-view`、`b129-multimodal-runtime`、history suites | 回选旧版、失败继续、新话题、多图指代/子集 | parent/session/hash 和明确排除不被 union 绕过 | Tracker：续写与图片 |
 | B-135/REQ-09 / B-135/AC-09 | `chat-writing-style-service`、`memory-writing-style`、实际 input revision | 当前笔记仍可用已授权风格；当前不用/撤销/Forget | 先取后写、物理 dispatch 重验、关闭提取不误停既有风格 | Tracker：风格组合 |
 | B-135/REQ-10 / B-135/AC-10 | `writing-save-action`、`writing-save-modal`、history store/manager、Memory admission | 编辑/复制/保存确切版本、部分保存重试、混合事实与本次要求 | 零再生成；两个候选准入路径一致；AI/本次要求不自动学长期风格 | Tracker：保存与来源 |
-| B-135/REQ-11 / B-135/AC-11 | 旧 Chat/version/receipt/provenance reader fixtures；现有 native transport/图片 suite | 当前支持的 Desktop/受影响 mobile 模型与旧记录重开 | 旧 reader 实测后才宣称回滚；不静默降级媒体/作品 | Tracker：兼容矩阵 |
+| B-135/REQ-11 / B-135/AC-11 | 旧Chat/version/receipt/provenance reader fixtures；现有native transport/图片suite | Desktop共享路径、390×844 mobile simulator受影响模态；仅平台专属改动追加真机 | 旧reader实测后才宣称回滚；不静默降级媒体/作品 | Tracker：兼容矩阵与D16平台审计 |
 | B-135/REQ-12 / B-135/AC-12 | 现有 diagnostics/request scope；固定输入与 provider 配置 | 同口径真实样例记录序列、自然结束、耗时和可得 usage | 缺值 unknown；额外准备轮如实记录，不推断因果 | Tracker：质量/成本对照 |
 | B-135/REQ-13 / B-135/AC-13 | `operations-agent-runtime`、`operations-intent-controller`、`operations-service`、PolicyEngine | 普通咨询无卡片，明确要求可 staging，确认/取消 | opt-in 关闭不暴露/执行；准备读也受来源约束；零未经确认写入 | Tracker：D5 与操作提议 |
 | B-135/REQ-14 / B-135/AC-14 | `pa-agent-stream-fallback`、`pa-agent-loop`、`chat-writing-output`；可控尾帧离线对照 | 百炼及另一受支持 native provider 的最小对照 | length、stop+非法格式、stop后tail挂起/报错、finish同chunk正文、usage-only、missing/unknown 分开 | Tracker：独立结束证据 |
@@ -756,17 +760,21 @@ source 使用 `npm test`，tooling 使用 `test:tooling`，artifact 先当前 pr
 | B-135/REQ-16 / B-135/AC-16 | 现有 lifecycle/debug 白名单、history 投影与事件测试 | 原 run 与实际物理请求匹配后的原因展示 | 历史恢复提示改写不覆盖原阶段证据；无正文/思考/敏感配置 | Tracker：故障定位 |
 | B-135/REQ-17 / B-135/AC-17 | `settings`、`plugin-lifecycle`、`memory-extraction`、`retrieval-habit-profile`、Personal/治理/风格 suites | 新默认实际触发、独立关闭/暂停/恢复和 reload；Personal 按 D10 最终选择验证 | 新默认不被旧consent关回；真实退出不复活；未知false按已选迁移，零假确认/额外回填 | Tracker：T-08/T-09；Personal 独立读取另依 D10 |
 
-共享 runtime/DOM 完整行为阶段遵守 Local Validation Gate；冻结后 `make deploy`
-覆盖 lint/build/full Jest，符合复用条件才用 deploy-current。真实 provider、Desktop、
-移动模拟器和 iOS 证据分别记录；iOS 特有风险以真实设备回答，模拟器不冒充真机。
-只按受影响结果选设备门；未改动的设备实现不因本 SDD 重新验证整套旧功能。
+共享runtime/DOM完整行为阶段遵守Local Validation Gate；冻结后`make deploy`
+覆盖lint/build/full Jest，符合复用条件才用deploy-current。真实provider、Desktop、
+移动模拟器和真机证据按各自能证明的风险分别记录：Linux/Desktop可证明共享逻辑，
+390×844 simulator证明受影响移动呈现，真机只证明实际改变的macOS/iOS专属行为。
+模拟器不冒充Keychain、iCloud、HEIC、触摸/软键盘或WKWebView，但未改动的这些路径和
+平台无关实现不因本SDD重复验证。B-135平台审计只发现既有requestUrl的host-only诊断/
+取消接缝，iOS/非iOS及retry/runtime测试已覆盖；T-11/T-18没有平台专属实现。
 
 ## Open Design Findings
 
 | ID / scope | Finding and required closure | Boundary until closed |
 | --- | --- | --- |
 | D1/P0 来源表达 | 冻结是否保留 `declare_source_scope`、同批预检与用途投影；验证常规保留个性化、完整历史及真实关闭/排除 | 不能把旧整类 bootstrap 当默认/fallback；任意自然语言首发发送限制不虚报已解决，新 UI/调用或能力边界需用户选择 |
-| D2/D3/D15 | 用户已选择native作品和Chat final-only纯输出主线；provider/preview/终态/旧reader与Desktop门通过后开发分支已切默认，DeepSeek单样例引号差异按D15作为质量限制 | 保留旧reader与原始质量失败；不增加自动fallback、双协议或provider特判，受影响iOS仍按阶段门验证 |
+| D2/D3/D15 | 用户已选择native作品和Chat final-only纯输出主线；provider/preview/终态/旧reader与Desktop门通过后开发分支已切默认，DeepSeek单样例引号差异按D15作为质量限制 | 保留旧reader与原始质量失败；不增加自动fallback、双协议或provider特判 |
+| D16 平台证据 | 用户确认平台无关行为复用Linux/Desktop，移动呈现优先simulator，只有macOS/iOS强相关改动才用真机 | 每个设备门须映射实际平台分支/系统能力；无对应风险不得阻塞，simulator也不得冒充真机专属事实 |
 | D4/P0 来源准入 | collector 可审阅输入、模型语义与两条候选持久化之间需可运行混合样例及 reader 对照 | 不全改ordinary、不丢独立真实事实、不让模型赋予长期授权 |
 | D5 | 用户 2026-09-09 已确认 Operations 的主 Agent 语义提议 | 保留真实 opt-in/core tools/确认与来源准入；T-15 同步验证 canExport/canExecute 和提议/执行路径，不扩大动作权限 |
 | D6/P0 完成与预算 | 原生 protocol、finish/EOF 修复、单一截止和软过渡分别离线对照，覆盖 incremental 与 buffered | 不加总超时、不重置fallback、不把text_delta当最终性证明 |
@@ -783,8 +791,9 @@ source 使用 `npm test`，tooling 使用 `test:tooling`，artifact 先当前 pr
 - Approved on: 2026-09-09，依据Owner后续全量实施目标；仅批准已确认需求与兼容实现，Pending设计不得凭本文状态获准。D2/D3、D5、D10和旧值处置按实际用户回复更新，不能倒填批准日期。
 - Authorized implementation scope: 已确认范围的实现与必要验证，执行状态及证据见Tracker；Git commit/push/merge、发布与显式closeout保留各自授权边界。
 
-2026-09-09 后续授权：Owner 已要求完成全部 B-135 任务，实施与必要验证现由 Tracker
-承接。D2/D3、D5、D8、D10 已完成真实产品答复，技术与阶段验证仍未完成。
+2026-09-09 后续授权：Owner 已要求完成全部 B-135 任务，实施与必要验证由Tracker
+承接。D2/D3、D5、D8、D10及后续D12–D16均有真实答复；2026-09-12最终技术与
+阶段验证已按D16平台证据原则完成，状态和回执以Tracker为准。
 T-05 中数组文本保真与已有完成事实不丢失属于已确认契约的独立恢复，先补
 反例并修复；T-06/T-07按已确认的共同硬截止、可读中断与来源治理推进，不将这些
 局部实现视为native/来源/权限新方案已经冻结。
