@@ -1,0 +1,168 @@
+{
+  "workItem": "B-135",
+  "task": "T-20",
+  "result": "EVIDENCE_COMPLETE_DECISION_PENDING",
+  "auditCommit": "619cb8e2dc7d700d88ae0ca933e426b6eb4ed800",
+  "additionalProviderRuns": 0,
+  "requirementsCovered": [
+    "fixed input and provider configuration",
+    "actual physical request sequence",
+    "natural completion evidence when captured",
+    "wall-clock duration",
+    "available usage with missing values recorded as unknown",
+    "extra preparation rounds recorded without causal speed claims",
+    "no independent classification model"
+  ],
+  "repeatedPreparationComparison": {
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "temperature": 0.8,
+    "sameNaturalLanguageInput": true,
+    "before": {
+      "source": "2026-09-10-native-context-loop-and-save.json",
+      "physicalRequests": 14,
+      "writingContextPreparations": 12,
+      "elapsedMs": 170140,
+      "artifactCount": 1,
+      "exactUserBody": false
+    },
+    "after": {
+      "source": "2026-09-10-native-preparation-state.json",
+      "physicalRequests": 2,
+      "writingContextPreparations": 1,
+      "elapsedMs": 57505,
+      "artifactCount": 1,
+      "exactUserBody": false
+    },
+    "interpretation": "The accepted preparation receipt removed repeated re-preparation in this fixed sample. The wall-clock difference is observed only; it is not a fixed speedup or model-causality claim."
+  },
+  "qwenProtocolComparison": {
+    "source": "2026-09-12-verbatim-comparison.json",
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "temperature": 0.8,
+    "thinking": true,
+    "cases": [
+      {
+        "name": "original-native",
+        "physicalRequests": 2,
+        "writingContextPreparations": 1,
+        "elapsedMs": 51095,
+        "artifactCount": 1,
+        "exactUserBody": false,
+        "usage": "unknown",
+        "finish": "unknown in this capture"
+      },
+      {
+        "name": "original-legacy",
+        "physicalRequests": 1,
+        "writingContextPreparations": 0,
+        "elapsedMs": 12911,
+        "artifactCount": 1,
+        "exactUserBody": false,
+        "usage": "unknown",
+        "finish": "unknown in this capture"
+      },
+      {
+        "name": "delimited-native",
+        "physicalRequests": 2,
+        "writingContextPreparations": 1,
+        "elapsedMs": 18459,
+        "artifactCount": 1,
+        "exactUserBody": true,
+        "usage": "unknown",
+        "finish": "unknown in this capture"
+      },
+      {
+        "name": "delimited-legacy",
+        "physicalRequests": 1,
+        "writingContextPreparations": 0,
+        "elapsedMs": 11364,
+        "artifactCount": 1,
+        "exactUserBody": true,
+        "usage": "unknown",
+        "finish": "unknown in this capture"
+      }
+    ],
+    "qualityFinding": "The original wording lost the same line labels and curly quotes in native and legacy. Explicit body delimiters produced an exact artifact in both protocols.",
+    "captureLimit": "The runnable stream hook was not reached, so raw finish and usage were not captured and remain unknown."
+  },
+  "deepseekProtocolComparison": {
+    "source": "2026-09-12-deepseek-post-fix.json",
+    "gatewayProvider": "qwen",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.8,
+    "thinking": true,
+    "sameDelimitedInputAsQwen": true,
+    "cases": [
+      {
+        "name": "deepseek-native-post-fix",
+        "physicalRequests": 2,
+        "writingContextPreparations": 1,
+        "sequence": [
+          "get_writing_context -> tool_calls",
+          "present_writing -> tool_calls"
+        ],
+        "elapsedMs": 15275,
+        "artifactCount": 1,
+        "providerBodyEqualsArtifact": true,
+        "exactUserBody": false,
+        "difference": "Chinese curly quotes became ASCII straight quotes",
+        "usageTotals": {
+          "promptTokens": 6646,
+          "completionTokens": 839,
+          "totalTokens": 7485,
+          "reasoningTokens": 603,
+          "cachedPromptTokens": 3072
+        }
+      },
+      {
+        "name": "deepseek-legacy-post-fix",
+        "physicalRequests": 2,
+        "writingContextPreparations": 0,
+        "sequence": [
+          "declare_source_scope -> tool_calls",
+          "legacy writing envelope -> stop"
+        ],
+        "elapsedMs": 15877,
+        "artifactCount": 1,
+        "providerBodyEqualsArtifact": true,
+        "exactUserBody": true,
+        "usageTotals": {
+          "promptTokens": 5172,
+          "completionTokens": 817,
+          "totalTokens": 5989,
+          "reasoningTokens": 665,
+          "cachedPromptTokens": 3072
+        }
+      }
+    ],
+    "qualityFinding": "The native transport preserved the provider body exactly, but the model generated straight quotes only in the native sample. This is a one-sample model-quality difference, not transport corruption."
+  },
+  "currentDefaultConfirmation": {
+    "source": "2026-09-12-p4-default-native-desktop.json",
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "physicalRequests": 2,
+    "writingContextPreparations": 1,
+    "additionalAcknowledgementRequests": 0,
+    "artifactCount": 1,
+    "saveReceipt": "completed"
+  },
+  "classification": {
+    "independentTaskClassifierRequests": 0,
+    "evidence": "Production runtime removed the independent task-classification call; captured writing sequences contain only the main Agent, source/context tools and final output."
+  },
+  "disposition": {
+    "F-19": "closed by the bounded repeated-preparation fix and same-input evidence",
+    "F-20": "retained as the D14 shared model-quality baseline",
+    "F-23": "owner decision required: keep native as the default despite the one-sample DeepSeek exact-copy variance, or hold the rollout"
+  },
+  "limits": [
+    "Single samples are not quality rates or speed guarantees.",
+    "Wall-clock values include model and tool turns and do not isolate protocol overhead.",
+    "The DeepSeek model used the existing Bailian-compatible gateway and credentials; no second HTTP gateway was tested.",
+    "Historical captures retain their recorded source/build identity. The current default Qwen Desktop flow is recorded separately instead of rerunning the entire matrix.",
+    "No missing usage value was inferred as zero."
+  ]
+}
