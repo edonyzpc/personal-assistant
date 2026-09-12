@@ -11,11 +11,11 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: P1/P3 已收口；P2 的默认迁移、实际 scheduler/collector、Personal/style 组合及 Desktop 设置/独立退出/遗忘已通过，T-10 语义质量与受影响 iOS 实机门保留。P4 已完成 native 兼容判断、生产默认切换、当前Qwen可见Desktop成版/版本/精确保存及新旧reader矩阵；T-16自然语言续写组合、T-18受影响iOS/失败继续和最终阶段门尚未通过。
-- Next action: T-20已有同输入重复准备、Qwen四案、DeepSeek两案、请求序列/耗时与可得usage的完整审计，不新增模型运行；先取得D15对DeepSeek单样例引号质量差异的处置，再同步T-20/F-23。随后完成T-16/T-18的设计内最小剩余组合；冻结最终输入后只执行一次T-21统一broad gate。
+- Current phase: P1/P3 已收口；P2 的默认迁移、实际 scheduler/collector、Personal/style 组合及 Desktop 设置/独立退出/遗忘已通过，T-10 语义质量与受影响 iOS 实机门保留。P4 已完成 native 兼容判断、生产默认切换、当前Qwen可见Desktop成版/版本/精确保存、新旧reader及自然语言续写；T-18仅保留受影响iOS，最终阶段门尚未通过。
+- Next action: T-20已有同输入重复准备、Qwen四案、DeepSeek两案、请求序列/耗时与可得usage的完整审计，不新增模型运行；先取得D15对DeepSeek单样例引号质量差异的处置，再同步T-10/T-20/F-23。当前源码随该决定冻结后只执行一次T-21统一broad gate；T-11/T-18的受影响iOS等待可用设备环境，不扩展Desktop替代验证。
 - Blocker / decision needed: D15需要Owner判断DeepSeek native单样例将中文弯引号改为ASCII直引号是否作为模型质量差异接受并继续默认native；provider正文到artifact逐字一致，旧协议同案保留弯引号。旧Profile读取绕过及其它产品答复已完成，无需重问。受影响iOS仍是当前Linux主机外部环境门，不以Desktop替代。
-- Last verified behavior: 2026-09-12生产Chat host已显式默认`writingOutputProtocol: native`；当前部署的Qwen `qwen3.8-max`在真实Desktop Chat用2次物理请求生成唯一57字会议通知，产生17次增量preview、1个AI版本、零recovery/Operations，并在可见版本与保存预览中保持精确正文。最终明确确认得到completed SaveReceipt和完全一致的笔记正文，无额外模型确认轮；合成笔记、隔离IDB及探针均已清理，主工作树干净且`data.json`仍为`f8cfd5b…2dcbc`。既有Qwen/DeepSeek、来源、图片、finish、版本及current→old→current证据按未变输入复用；F-20/F-23和iOS边界保持独立。
-- Task count: 22项中15项完成、6项部分实现/验证、1项待最终汇总。15/22只表示完整验收任务占比，不是代码完成度；P1/P3已通过，P2/P4的iOS及P4续写组合、P5质量/全门/汇总仍未完成。
+- Last verified behavior: 2026-09-12当前默认native/Qwen真实Desktop自然语言续写只提供一个宿主父版候选；模型用2次物理请求依次调用`get_writing_context`和`present_writing`，唯一子版及artifact均绑定正确父ID，保留“明早九点开会”、移除携带材料/提前到场并加入“请准时参加”，零恢复/动作/额外ack。实际版本弹窗列出父子两个AI draft；首探针误点历史入口后超时，但模型结果、两版及DOM选项已先完成并留证，隔离IDB和临时脚本随后清理，`data.json`仍为`f8cfd5b…2dcbc`且Obsidian零新错误，不为探针选择器重跑模型。
+- Task count: 22项中16项完成、5项部分实现/验证、1项待最终汇总。16/22只表示完整验收任务占比，不是代码完成度；剩余内部任务为D15后的T-10/T-20、最终T-21/T-22，T-11/T-18及阶段门还受iOS环境约束。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
@@ -43,6 +43,22 @@ SDD: [Software Design Document](./sdd.md)
 | D15 | Pending — T-20现有证据，无新增模型运行 | DeepSeek `deepseek-v4-pro`同一明确正文样例中，native由模型把中文弯引号改为ASCII直引号，旧协议精确保留；两条传输均把provider正文逐字交付成artifact。建议把单样例差异作为模型质量基线继续跟踪，保持已验证native默认，不增加自动fallback或provider特判 | Owner接受后将F-23记为已处置质量限制并关闭T-20；若拒绝，则恢复全局legacy默认并重新定义切换门，不静默双协议或只对DeepSeek加例外 |
 
 ## Work
+
+2026-09-12 T-16/T-18最小剩余映射：AC-08/09/10 → 复用现有Chat回归对回选旧版、
+失败继续的空/子集材料、重开、会话/hash失效及新话题清空的正反例，只补一条当前默认native、
+当前Qwen、实际Desktop自然语言“继续修改上一版” → 隔离真实IDB中预置无来源/图片的父版本，模型
+只能从单一宿主候选目录选择，交付后核对物理请求、artifact父身份、两版父子关系、要求的保留/
+删除/新增文字及可见版本弹窗 → 唯一子版、零恢复/动作、无额外ack，父版正文不被改写；candidate/
+context/runtime/Chat/version接缝变化才重跑。此片不重复保存、图片、style、失败矩阵、第二模型或
+全量测试，受影响iOS保持单独环境门。
+
+结果PASS（T-16/Desktop范围）：[`当前Qwen回执`](evidence/2026-09-12-t16-natural-continuation.json)
+及[`可复现探针`](evidence/2026-09-12-t16-natural-continuation-probe.js)。唯一候选父版由模型在首个
+请求选择，第二请求交付唯一子版；artifact/child父ID一致，正文精确满足保留、删除和新增要求，
+零recovery/Operations/后置ack。真实版本弹窗已列出父子两个AI draft；探针误点首个历史入口导致
+初始textarea显示父版并在等待期间超时，明确归为探针selector失败，保留脚本已改选最后入口，不重跑
+provider。既有自动化覆盖失败继续、重开、材料空/子集、新话题和失效反例，T-16关闭；T-18的
+Desktop保存/恢复/失败路径已有证据，状态仅因受影响iOS保持部分完成。
 
 2026-09-12 T-20质量/成本审计：AC-01/02/12 → 复用相同自然语言样例修复前14请求/12次准备/
 170140ms与修复后2请求/1次准备/57505ms，Qwen原提示和明确正文边界的新旧协议四案，以及Owner指定
@@ -573,9 +589,9 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [x] | 声明/有序读计划/真实身份、受限Memory、Vault/Ops/图片读门及逐物理输入已有定向证据；当前Qwen在真实MarkdownView只读当前笔记且禁网，准确返回唯一代号。profile/Memory/style与任务事实仍分栏，不以清空获准背景换取通过 |
 | T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [x] | 普通Vault结果、隐藏依赖、D12撤销旧回复及answer/history/tool-summary/rewrite/rerank物理重验通过；完整输入快照覆盖全部用途。当前Qwen/Obsidian组合案例中后续更正覆盖先前选择，只解析并发送第二张且返回精确标题；共享runtime无设备分叉，不以图片union复活排除项 |
 | T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [x] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。当前Qwen普通咨询无卡、明确保存仅产生一个pending create；实际Desktop卡片点击Cancel后零写入，既有关闭/未确认/stale/execute/Undo回归继续覆盖执行保护 |
-| T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [~] | native候选已接Chat→runtime工具/来源/动态handle/完整输入/图片收窄及成版parent/scene；新topic与恢复scene回归、真实Qwen协议及生产默认Desktop新作品通过。实际宿主按同一scene显示父子版、关联图和获准style原文并经重载恢复；自然语言续写、多版本失败继续和受影响iOS组合仍待验 |
+| T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [x] | native候选、动态handle、完整输入、图片收窄及成版parent/scene已贯通；失败继续、重开、空/子集材料、新话题和失效反例由既有Chat回归覆盖。当前默认native/Qwen真实Desktop从唯一候选自然选择上一版，2请求生成正确父子版并显示两个AI draft；受影响iOS由T-18/T-21承担 |
 | T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [x] | native runtime schema/loop/bridge动态handle与物理请求快照已贯通，保留单输出、严格provider身份、无ack及host最终门；生产默认切换后当前Qwen真实Desktop产生17次preview、唯一作品/版本、零恢复/动作，明确确认保存完成且正文精确。来源失效与失败路径继续由既有回归保护，受影响iOS门由T-18/T-21承担 |
-| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | 生成来源receipt贯穿实际请求、自动作品/同页人工恢复和底层存储；最后物理请求的完整无正文输入身份现已保存、重载并按各用途逐项重验。实际宿主已验证四版选择、style/图片详情、编辑复制、可见preview零写入、明确确认后的精确保存与重载；受影响iOS及失败继续组合仍待验收 |
+| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | 生成来源receipt贯穿实际请求、自动作品/同页人工恢复和底层存储；最后物理请求完整身份已保存、重载并逐用途重验。实际宿主已验证失败继续、四版选择、style/图片详情、编辑复制、可见preview零写入、明确确认后的精确保存与重载；仅受影响iOS仍待验收 |
 | T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [x] | schema3隔离、source reopen及真实当前→旧2.9.2→当前矩阵通过：旧版失败关闭但普通保存/legacy Profile可用，v3业务store完整保留，升级后真实来源Queue可确认和投影。当前App重载后四版、media/style/receipt与Chat入口精确恢复，本次默认native可见版本/保存再验证当前reader；整体iOS出口继续由T-18/T-21承担 |
 | T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [~] | 同输入重复准备前后、Qwen四案及DeepSeek两案已汇总实际序列、自然结束、耗时与可得usage；Qwen缺值为unknown，不推断净耗时或固定提速。F-20已有D14处置；T-20只待D15决定DeepSeek native单样例弯引号变直引号的质量边界，不新增模型运行 |
 | T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [~] | 已有273 suites/7432 tests自然全门PASS，之后窄改动有相关聚焦/build/lint与独立复核；最终全部AC、full-ui/iOS及全量review未完成。各证据输入边界见Work |

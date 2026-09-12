@@ -1,0 +1,92 @@
+{
+  "workItem": "B-135",
+  "task": "T-16",
+  "result": "PASS",
+  "environment": {
+    "host": "Obsidian Desktop with repo-local test vault",
+    "pluginVersion": "2.9.2",
+    "sourceCommit": "cc84bc2",
+    "deployedBundleSha256": "54cd8cd97b77dc38885557f965339e9594a56429bfd40610abc97a37c0cb8b37",
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "writingOutputProtocol": "native"
+  },
+  "input": {
+    "parentBody": "会议通知：明早九点开会，请项目成员携带材料并提前十分钟到场。",
+    "parentScene": {
+      "writingTask": "撰写会议通知",
+      "purpose": "通知会议安排",
+      "audience": "项目成员",
+      "domain": "工作"
+    },
+    "prompt": "请继续修改上一版会议通知：保留“明早九点开会”，删掉携带材料和提前到场的要求，并在结尾添加“请准时参加”。不要读取笔记、Memory或网页，直接交付修改后的完整成品。",
+    "candidateCount": 1,
+    "explicitUiParentSelection": false
+  },
+  "providerResult": {
+    "physicalRequests": 2,
+    "turns": [
+      {
+        "tool": "get_writing_context",
+        "finish": "tool_calls"
+      },
+      {
+        "tool": "present_writing",
+        "finish": "tool_calls"
+      }
+    ],
+    "additionalAcknowledgementRequest": false,
+    "artifactCount": 1,
+    "recoveryCount": 0,
+    "operationsIntentCount": 0
+  },
+  "versionResult": {
+    "versionCount": 2,
+    "parentId": "writing_450d0bccfd6310e463706193432fecf3f658e43c0c5081cd",
+    "childId": "writing_f22980d7ce7ceb100fc41c7bd3c61b71b3aa46fe1e518ba1",
+    "childParentIdMatched": true,
+    "artifactParentIdMatched": true,
+    "childBody": "会议通知：明早九点开会，请项目成员参加。请准时参加。",
+    "retainedRequiredText": true,
+    "removedMaterialRequirement": true,
+    "removedEarlyArrivalRequirement": true,
+    "addedRequiredEnding": true,
+    "childScene": {
+      "writingTask": "修改会议通知",
+      "purpose": "通知成员明早九点开会",
+      "audience": "项目成员",
+      "domain": "行政办公通知"
+    },
+    "associatedImageCount": 0
+  },
+  "desktopVersionUi": {
+    "actualOptions": [
+      "1 · AI draft",
+      "2 · AI draft"
+    ],
+    "parentOptionIdMatched": true,
+    "childOptionIdMatched": true,
+    "initialProbeSelection": "parent",
+    "reason": "The first probe clicked the first historical writing action instead of the latest action.",
+    "disposition": "Excluded as a probe-selector failure. The real model result, both persisted versions and both actual DOM options were already observed; no provider rerun was performed. The retained probe now selects the latest writing action."
+  },
+  "reusedAutomatedEvidence": [
+    "Chat passes a single allowed parent candidate and persists the model-selected parent and semantic scene",
+    "failed continuation retains an explicit empty or selected material snapshot across reopen",
+    "new topic clears failed material and parent lineage",
+    "parent conversation, hash, source lifetime and session changes fail closed"
+  ],
+  "cleanup": {
+    "isolatedIndexedDbDeleted": true,
+    "temporaryProbeRemovedFromTestVault": true,
+    "providerSettingsUnchanged": true,
+    "testVaultDataSha256": "f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc",
+    "mainWorkspaceClean": true,
+    "obsidianErrors": 0
+  },
+  "limits": [
+    "This is one real current-Qwen continuation sample, not a quality rate.",
+    "The parent intentionally had no notes, images or style references because those combinations already have separate unchanged evidence.",
+    "The affected iOS device gate remains separate."
+  ]
+}
