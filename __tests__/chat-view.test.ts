@@ -24,6 +24,7 @@ import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import type { ComposerDraft } from '../src/chat/composer-draft';
 import type { MessageImage } from '../src/chat/image-types';
+import type { GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
 import type {
     OperationsExecutionResult,
     OperationsIntent,
@@ -629,6 +630,25 @@ function canonicalEvent(overrides: Partial<AgentEvent> & { type: AgentEvent['typ
     } as AgentEvent;
 }
 
+function writingGenerationInput(path?: string): GenerationInputSnapshot {
+    return {
+        schemaVersion: 1,
+        inputPurpose: 'writing',
+        task: path ? { state: 'identified', sources: [{
+            purpose: 'task_material', kind: 'context-used', boundary: 'read-only-tool',
+            dedupKey: `note:${path}`, revision: {
+                state: 'identified', scope: 'current_process', path, mtime: 10, size: 20,
+            },
+        }] } : { state: 'none', sources: [] },
+        personal: { state: 'none' },
+        insights: { state: 'none' },
+        style: { state: 'none' },
+        images: [],
+        parent: { state: 'none' },
+        pagelet: { state: 'none' },
+    };
+}
+
 function assistantMessage(
     id: string,
     content: Extract<PaAgentMessage, { role: 'assistant' }>['content'],
@@ -1078,12 +1098,17 @@ describe('LLMView turn lifecycle', () => {
         expect(call.options.writingRequest?.requestId).toBeTruthy();
         const raw = '{"body":"不直接展示整个 envelope"}';
         emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
-        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', metadata: { hostContext: { sourceRecords: [
+            { kind: 'context-used', dedupKey: 'note:A.md', path: 'A.md', sourceBoundary: 'read-only-tool', citationEligible: true },
+            { kind: 'context-used', dedupKey: 'note:B.md', path: 'B.md', sourceBoundary: 'read-only-tool', citationEligible: true },
+        ] } } }));
         emitCanonical(call, canonicalEvent({ type: 'message_end', message: assistantMessage('writing_answer', [{ type: 'text', text: raw }]) }));
         expect(allText(containerEl)).not.toContain(raw);
+        const generationInput = writingGenerationInput('B.md');
         const artifact = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1,
             kind: 'writing-artifact' as const, runId: 'run_1', requestId: call.options.writingRequest!.requestId,
-            messageId: 'writing_answer', body: '  海边的风。\n带着盐味。🙂', explanation: '辅助说明单独保留', preamble };
+            messageId: 'writing_answer', body: '  海边的风。\n带着盐味。🙂', explanation: '辅助说明单独保留',
+            preamble, generationInput };
         call.options.onEvent?.(artifact);
         call.options.onEvent?.(artifact);
         call.resolve();
@@ -1092,6 +1117,10 @@ describe('LLMView turn lifecycle', () => {
         expect(stored).toHaveLength(1);
         expect(stored[0].text).toBe(artifact.body);
         expect(stored[0].explanation).toBe(artifact.explanation);
+        expect(stored[0].generationInput).toEqual(writingGenerationInput('B.md'));
+        expect(stored[0].backgroundSourceRefs).toEqual([{ path: 'B.md' }]);
+        generationInput.task.state = 'unknown';
+        expect((await versions.list('writing-conversation'))[0].generationInput).toEqual(writingGenerationInput('B.md'));
         expect(view.chatHistory[1].content).toBe(preamble ? `${preamble}\n\n${artifact.body}` : artifact.body);
         expect((await store.getTurns('writing-conversation'))[0].assistant.content)
             .toBe(preamble ? `${preamble}\n\n${artifact.body}` : artifact.body);
@@ -1328,11 +1357,14 @@ describe('LLMView turn lifecycle', () => {
             const call = streamCalls[0];
             emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
             emitCanonical(call, canonicalEvent({ type: 'turn_start', metadata: { hostContext: {
-                sourceRecords: [{ kind: 'context-used', dedupKey: 'note:Source.md', path: 'Source.md', citationEligible: true }],
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'note:Source.md', path: 'Source.md',
+                    sourceBoundary: 'read-only-tool', citationEligible: true }],
             } } }));
+            const generationInput = writingGenerationInput('Source.md');
             call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
                 kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
                 messageId: 'old_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
+                generationInput,
                 isSourceCurrent: () => true });
             emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'completed_with_warning' }));
             call.resolve();
@@ -1341,6 +1373,10 @@ describe('LLMView turn lifecycle', () => {
             const before = (await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery;
             if (!before) throw new Error('Expected persisted recovery fixture');
             expect(before).not.toHaveProperty('isSourceCurrent');
+            expect(before.generationInput).toEqual(writingGenerationInput('Source.md'));
+            generationInput.task.state = 'unknown';
+            expect((await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery?.generationInput)
+                .toEqual(writingGenerationInput('Source.md'));
             const restored = createView({ chatHistoryManager: manager });
             Object.assign(restored.plugin, { writingVersions: versions });
             let allowed = true;
@@ -1403,7 +1439,8 @@ describe('LLMView turn lifecycle', () => {
                         ]) }));
                     expect(result[0]).toMatchObject({ text: outcome === 'edited' ? 'MY BODY' : 'BODY',
                         origin: outcome === 'edited' ? 'user_edited' : 'ai_generated',
-                        backgroundSourceRefs: [{ path: 'Source.md' }], styleRevisionIds: [] });
+                        backgroundSourceRefs: [{ path: 'Source.md' }], styleRevisionIds: [],
+                        generationInput: writingGenerationInput('Source.md') });
                     expect(result[0].referenceScope).toBeUndefined();
                     expect(result[0]).not.toHaveProperty('referenceScopeUnverified');
                     const edited = await versions.edit(result[0].id, 'Later edit', 'edit-recovery');

@@ -20,6 +20,7 @@ import {
 import { getPlatformCrypto } from "../platform-dom";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
+import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneMessageImages } from "./image-types";
 
 const TITLE_MAX_LENGTH = 60;
@@ -308,7 +309,9 @@ export class ChatHistoryManager {
             role: "assistant",
             content: entry.assistant.content,
             ...(entry.assistant.writingVersionId !== undefined ? { writingVersionId: entry.assistant.writingVersionId } : {}),
-            ...(entry.assistant.writingRecovery !== undefined ? { writingRecovery: { ...entry.assistant.writingRecovery } } : {}),
+            ...(entry.assistant.writingRecovery !== undefined ? { writingRecovery: { ...entry.assistant.writingRecovery,
+                ...(entry.assistant.writingRecovery.generationInput
+                    ? { generationInput: cloneGenerationInputSnapshot(entry.assistant.writingRecovery.generationInput) } : {}) } } : {}),
             ...(entry.assistant.images ? { images: cloneMessageImages(entry.assistant.images) } : {}),
             ...(entry.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.assistant.hostProvenance) } : {}),
             ...(entry.assistant.shareCardEligible !== undefined
@@ -364,7 +367,9 @@ export class ChatHistoryManager {
             role: "assistant",
             content: turn.assistant.content,
             ...(turn.assistant.writingVersionId !== undefined ? { writingVersionId: turn.assistant.writingVersionId } : {}),
-            ...(turn.assistant.writingRecovery !== undefined ? { writingRecovery: { ...turn.assistant.writingRecovery } } : {}),
+            ...(turn.assistant.writingRecovery !== undefined ? { writingRecovery: { ...turn.assistant.writingRecovery,
+                ...(turn.assistant.writingRecovery.generationInput
+                    ? { generationInput: cloneGenerationInputSnapshot(turn.assistant.writingRecovery.generationInput) } : {}) } } : {}),
             ...(turn.assistant.images ? { images: cloneMessageImages(turn.assistant.images) } : {}),
             ...(turn.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.assistant.hostProvenance) } : {}),
             canonicalTurn,

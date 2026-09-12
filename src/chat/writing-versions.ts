@@ -1,6 +1,7 @@
 import type { PersistedSourceRef } from '../pa/contracts/source-ref';
 import type { MessageImage } from './image-types';
 import { cloneWritingVersion, hashWritingText, mergeWritingImages, type WritingScene, type WritingVersion } from './writing-types';
+import type { GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
 
 export interface WritingVersionStore {
     getWritingVersion(id: string): Promise<WritingVersion | null>;
@@ -49,6 +50,7 @@ export class WritingVersionService {
         /** Complete host-approved material for this version, including any retained parent images. */
         images: readonly MessageImage[];
         backgroundSourceRefs?: PersistedSourceRef[]; styleRevisionIds?: string[]; scene?: WritingScene;
+        generationInput?: GenerationInputSnapshot;
         /** Only a host editing UI supplies this; a model envelope has no origin field. */
         origin?: WritingVersion['origin'];
         referenceScope?: WritingVersion['referenceScope'];
@@ -68,6 +70,7 @@ export class WritingVersionService {
             turnIndex: input.turnIndex, text: input.text, explanation: input.explanation ?? '',
             origin: input.origin ?? 'ai_generated', associatedImages: input.images,
             backgroundSourceRefs: input.backgroundSourceRefs ?? [], styleRevisionIds: input.styleRevisionIds ?? [],
+            ...(input.generationInput ? { generationInput: input.generationInput } : {}),
             referenceScope: input.referenceScopeUnverified ? undefined
                 : input.origin === 'user_edited' ? input.referenceScope : 'request',
             ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
@@ -119,6 +122,7 @@ export class WritingVersionService {
             requestId: actionId, messageId: actionId, conversationId: parent.conversationId, turnIndex: parent.turnIndex,
             parentVersionId: parent.id, text, explanation: parent.explanation, images: parent.associatedImages, origin: 'user_edited',
             backgroundSourceRefs: parent.backgroundSourceRefs, styleRevisionIds: parent.styleRevisionIds, scene: parent.scene,
+            ...(parent.generationInput ? { generationInput: parent.generationInput } : {}),
             referenceScope: parent.referenceScope,
         });
     }

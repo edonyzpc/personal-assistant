@@ -2,6 +2,7 @@ import { WritingVersionService, type WritingVersionStore } from '../src/chat/wri
 import { cloneWritingVersion, hashWritingText, type WritingVersion } from '../src/chat/writing-types';
 import { hasWritingNoteProvenance } from '../src/chat/writing-note-provenance';
 import type { MessageImage } from '../src/chat/image-types';
+import type { GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
 
 const photo = (id: string): MessageImage => ({ ref: { assetId: id, contentHash: 'a'.repeat(64) }, ordinal: 1, label: `${id}.jpg` });
 function setup() {
@@ -15,6 +16,11 @@ function setup() {
 }
 const input = () => ({ requestId: 'request1', messageId: 'message1', conversationId: 'chat1', turnIndex: 0,
     text: '  海边的风\n保留换行。🙂  ', explanation: '正文以外的说明', images: [photo('one')] });
+const generationInput = (): GenerationInputSnapshot => ({
+    schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
+    personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
+    parent: { state: 'none' }, pagelet: { state: 'none' },
+});
 
 describe('immutable writing versions', () => {
     test('rejects revoked host admission after the final lookup without writing', async () => {
@@ -113,6 +119,23 @@ describe('immutable writing versions', () => {
         delete records.get(first.id)!.referenceScope;
         const legacyEdit = await service.edit(first.id, 'Legacy edit', 'legacy-edit');
         expect(legacyEdit.referenceScope).toBeUndefined();
+    });
+    test('persists an optional physical-input receipt and keeps legacy versions readable', async () => {
+        const { service, records } = setup();
+        const legacy = await service.create(input());
+        expect(legacy.generationInput).toBeUndefined();
+        const receipt = generationInput();
+        const generated = await service.create({ ...input(), requestId: 'with-receipt', messageId: 'with-receipt',
+            generationInput: receipt });
+        expect(generated.generationInput).toEqual(receipt);
+        receipt.task.state = 'unknown';
+        expect((await service.get(generated.id))?.generationInput).toEqual(generationInput());
+        const edited = await service.edit(generated.id, 'Local edit with receipt', 'receipt-edit');
+        expect(edited.generationInput).toEqual(generationInput());
+        (records.get(generated.id) as unknown as { generationInput: unknown }).generationInput = {
+            ...generationInput(), rawText: 'forbidden body',
+        };
+        await expect(service.get(generated.id)).rejects.toThrow();
     });
     test('keeps exact chosen text, separate explanation and full version material', async () => {
         const { service } = setup();

@@ -43,6 +43,27 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Work
 
+2026-09-12 T-18持久格式首片映射：AC-06/08/09/11 → 将上一片已冻结的
+`GenerationInputSnapshot`作为WritingVersion与ChatWritingRecovery的可选本地字段，先补严格
+clone/reader再接writer；旧无字段记录仍按原格式读取，不批量迁移。自动成版及recovery的
+legacy `backgroundSourceRefs`只从最终快照与可见host source交集生成，不再使用run末union →
+snapshot非法shape/正文型字段/过量数组、旧版本/旧recovery、artifact与recovery实际
+Chat→manager→store→reload、同路径不同用途及A/B收窄回归 → 新记录准确保留最后物理请求
+身份，旧记录不伪造完整性，未知字段不能绕过边界；generation schema、History clone、
+WritingVersion create/edit、Chat finalize或source映射变化须复跑。随后独立接入跨重载逐项来源
+重验及最终store guard；本片不把可读/可持久化当来源有效，旧插件真实降级/升级矩阵仍保留。
+
+本片结果：`GenerationInputSnapshot`已有严格、有界、无正文字段的本地reader，校验task状态
+一致性、http(s) URL、父版SHA-256、图片ref及Personal/style非空身份；WritingVersion与
+ChatWritingRecovery均在排队前、store读写及manager重载时深克隆。Chat的artifact/recovery
+实际writer保存快照；存在快照时旧`backgroundSourceRefs`只取快照任务来源与本轮可见host
+记录的交集，A+B取材后最终只用B的回归不再写入A。旧无字段版本/recovery仍可读，不伪造
+完整身份。聚焦6 suites/368 tests PASS（3.311s，自然exit0），tsc、全量source lint、
+docs:check、diff及社区DOM源扫描通过；独立只读复核无新增P0–P2。明确保留三项边界：
+跨重载recovery helper尚未按快照逐项重验，旧插件严格version reader/旧recovery白名单尚未
+完成真实降级→保存→升级矩阵，历史来源只在快照及同路径不同用途的恢复准入反例随下一片
+验证；本片无build、provider或App/device证据，T-18/T-19不标完成。
+
 2026-09-12 T-18物理生成输入快照首片映射：AC-04/06/08/09 → `prepareProviderInput`
 按最终投影构造有界、无正文的`GenerationInputSnapshot`，显式记录任务来源用途与
 文件revision、Personal/Insights的`none/identified/unknown`、实际风格revision、完整
@@ -398,8 +419,8 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-15 | B-135/REQ-13 / B-135/AC-13 | Operations 语义提议适配与 schema/policy/proposal 一致 | [~] | D5；已移除latest-message关键词门，live opt-in/controller/四core动作及原policy共同约束导出与执行。生产source预检下create→append及越界混合批次已有定向证据；真实语义质量、完整来源投影及App门未完成 |
 | T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [~] | 显式native候选已接Chat→runtime工具/来源/动态handle/完整输入/图片收窄及成版parent/scene；新topic与恢复scene回归、真实Qwen合成协议通过。默认切换、真实UI、多版本失败继续及完整治理组合仍待验 |
 | T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | native候选的runtime schema/loop/bridge动态handle与物理请求快照已贯通，保留单输出、严格provider身份、无ack及host最终门；真实Qwen合成样例成功。默认切换、完整用途/成版保存生命周期与实际UI门仍待补；T-03/T-13/T-16依赖未解除 |
-| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | 生成来源receipt贯穿实际请求、自动作品/同页人工恢复和底层存储；正常清理不误撤销，实际来源变化拒绝。D13旧恢复明确确认、已记录来源用途/边界重验及来源范围未知已实现，full tests与真实App-runtime通过。完整持久生成来源身份、图片style/多版保存及full-ui/device组合仍待验收 |
-| T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3隔离和source reopen已有证据；真实2.9.2 reader拒绝当前v2库，当前重开全数据保留、旧文字升级通过，不宣称可降级。完整旧插件bootstrap/重新升级、native/media/版本及Desktop/iOS门仍待验证 |
+| T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | 生成来源receipt贯穿实际请求、自动作品/同页人工恢复和底层存储；最后物理请求的完整无正文输入身份现已保存到version/recovery并可重载，旧path refs不再使用run末union。D13确认流、来源变化拒绝、full tests及既有App-runtime有证据；跨重载逐项快照重验、图片style/多版保存及full-ui/device组合仍待验收 |
+| T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3隔离和source reopen已有证据；当前reader可读旧无generationInput记录并保留新字段，真实2.9.2 reader会拒绝新version或丢新recovery字段，不宣称可降级。完整旧插件bootstrap→保存→重新升级、native/media/版本及Desktop/iOS门仍待验证 |
 | T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [~] | 当前Qwen同案例schema失败及重复scene均有实际序列/耗时/usage；准备状态修复后2请求1准备，逐字要求仍FAIL。完整语义/质量对照未完，不推断模型净耗时或固定提速 |
 | T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [~] | 已有273 suites/7432 tests自然全门PASS，之后窄改动有相关聚焦/build/lint与独立复核；最终全部AC、full-ui/iOS及全量review未完成。各证据输入边界见Work |
 | T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [ ] | 本次开发分支提交/推送已获授权；closeout/release未授权，不先删除Brief独有故障证据 |

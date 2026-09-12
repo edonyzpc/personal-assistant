@@ -1,4 +1,5 @@
-import type { ImageRef } from '../chat/image-types';
+import { z } from 'zod';
+import { cloneImageRef, type ImageRef } from '../chat/image-types';
 import type { SourceRecordBoundary, SourceRecordKind } from './chat-types';
 
 export type GenerationInputIdentityState = 'none' | 'identified' | 'unknown';
@@ -64,6 +65,72 @@ export interface GenerationInputSnapshot {
     pagelet: GenerationInputPageletSource;
 }
 
+const shortText = z.string().min(1).max(4096);
+const revisionId = z.string().min(1).max(256);
+const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
+const webUrl = z.string().url().max(8192).refine(value => {
+    try {
+        const protocol = new URL(value).protocol;
+        return protocol === 'http:' || protocol === 'https:';
+    } catch {
+        return false;
+    }
+}, 'Unsupported source URL protocol');
+const taskSourceSchema = z.object({
+    purpose: z.literal('task_material'),
+    kind: z.enum(['memory-reference', 'context-used', 'web-source', 'skill-guide']),
+    boundary: z.enum(['memory', 'current-note', 'read-only-tool', 'vault', 'web', 'skill-context', 'unknown']),
+    dedupKey: shortText,
+    turnId: shortText.optional(), providerId: shortText.optional(), capabilityName: shortText.optional(),
+    revision: z.discriminatedUnion('state', [
+        z.object({ state: z.literal('identified'), scope: z.literal('current_process'), path: shortText,
+            mtime: z.number().finite().nonnegative(), size: z.number().finite().nonnegative() }).strict(),
+        z.object({ state: z.literal('unknown'), path: shortText.optional(), url: webUrl.optional() }).strict(),
+    ]),
+}).strict();
+const personalSchema = z.discriminatedUnion('state', [
+    z.object({ state: z.literal('none') }).strict(),
+    z.object({ state: z.literal('identified'), mode: z.literal('governed'),
+        revisions: z.array(z.object({ claimId: revisionId, revisionId }).strict()).min(1).max(2048) }).strict(),
+    z.object({ state: z.literal('unknown'), mode: z.enum(['governed', 'legacy']) }).strict(),
+]);
+const insightsSchema = z.discriminatedUnion('state', [
+    z.object({ state: z.literal('none') }).strict(),
+    z.object({ state: z.literal('unknown'), mode: z.enum(['governed', 'legacy']) }).strict(),
+]);
+const styleSchema = z.discriminatedUnion('state', [
+    z.object({ state: z.literal('none') }).strict(),
+    z.object({ state: z.literal('identified'), revisionIds: z.array(revisionId).min(1).max(2048) }).strict(),
+    z.object({ state: z.literal('unknown') }).strict(),
+]);
+const parentSchema = z.discriminatedUnion('state', [
+    z.object({ state: z.literal('none') }).strict(),
+    z.object({ state: z.literal('identified'), versionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+        textHash: z.object({ algorithm: z.literal('sha256'), value: sha256 }).strict() }).strict(),
+]);
+const pageletRevisionSchema = z.object({ path: shortText,
+    mtime: z.number().finite().nonnegative(), size: z.number().finite().nonnegative(),
+    contentHash: z.object({ algorithm: z.literal('unspecified'), value: shortText }).strict() }).strict();
+const pageletSchema = z.discriminatedUnion('state', [
+    z.object({ state: z.literal('none') }).strict(),
+    z.object({ state: z.literal('unknown'), id: revisionId, pipelineVersion: revisionId,
+        anchor: pageletRevisionSchema, sources: z.array(pageletRevisionSchema).max(2048) }).strict(),
+]);
+const generationInputSnapshotSchema = z.object({
+    schemaVersion: z.literal(1), inputPurpose: z.literal('writing'),
+    task: z.object({ state: z.enum(['none', 'identified', 'unknown']),
+        sources: z.array(taskSourceSchema).max(2048) }).strict().superRefine((task, context) => {
+        const valid = task.state === 'none' ? task.sources.length === 0
+            : task.state === 'identified' ? task.sources.length > 0
+                && task.sources.every(source => source.revision.state === 'identified')
+                : true;
+        if (!valid) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Inconsistent task source identity' });
+    }),
+    personal: personalSchema, insights: insightsSchema, style: styleSchema,
+    images: z.array(z.object({ ref: z.unknown(), hashAlgorithm: z.literal('sha256') }).strict()).max(2048),
+    parent: parentSchema, pagelet: pageletSchema,
+}).strict();
+
 export function cloneGenerationInputBackgroundSources(
     value: GenerationInputBackgroundSources,
 ): GenerationInputBackgroundSources {
@@ -75,35 +142,36 @@ export function cloneGenerationInputBackgroundSources(
     };
 }
 
-export function cloneGenerationInputSnapshot(value: GenerationInputSnapshot): GenerationInputSnapshot {
+export function cloneGenerationInputSnapshot(value: unknown): GenerationInputSnapshot {
+    const parsed = generationInputSnapshotSchema.parse(value);
     return {
         schemaVersion: 1,
         inputPurpose: 'writing',
         task: {
-            state: value.task.state,
-            sources: value.task.sources.map(source => ({
+            state: parsed.task.state,
+            sources: parsed.task.sources.map(source => ({
                 ...source,
                 revision: { ...source.revision },
             })),
         },
-        ...cloneGenerationInputBackgroundSources({ personal: value.personal, insights: value.insights }),
-        style: value.style.state === 'identified'
-            ? { state: 'identified', revisionIds: [...value.style.revisionIds] }
-            : { ...value.style },
-        images: value.images.map(image => ({
-            ref: { ...image.ref },
+        ...cloneGenerationInputBackgroundSources({ personal: parsed.personal, insights: parsed.insights }),
+        style: parsed.style.state === 'identified'
+            ? { state: 'identified', revisionIds: [...parsed.style.revisionIds] }
+            : { ...parsed.style },
+        images: parsed.images.map(image => ({
+            ref: cloneImageRef(image.ref),
             hashAlgorithm: 'sha256',
         })),
-        parent: value.parent.state === 'identified'
-            ? { state: 'identified', versionId: value.parent.versionId,
-                textHash: { algorithm: 'sha256', value: value.parent.textHash.value } }
+        parent: parsed.parent.state === 'identified'
+            ? { state: 'identified', versionId: parsed.parent.versionId,
+                textHash: { algorithm: 'sha256', value: parsed.parent.textHash.value } }
             : { state: 'none' },
-        pagelet: value.pagelet.state === 'unknown'
+        pagelet: parsed.pagelet.state === 'unknown'
             ? {
-                state: 'unknown', id: value.pagelet.id, pipelineVersion: value.pagelet.pipelineVersion,
-                anchor: { ...value.pagelet.anchor,
-                    contentHash: { algorithm: 'unspecified', value: value.pagelet.anchor.contentHash.value } },
-                sources: value.pagelet.sources.map(source => ({ ...source,
+                state: 'unknown', id: parsed.pagelet.id, pipelineVersion: parsed.pagelet.pipelineVersion,
+                anchor: { ...parsed.pagelet.anchor,
+                    contentHash: { algorithm: 'unspecified', value: parsed.pagelet.anchor.contentHash.value } },
+                sources: parsed.pagelet.sources.map(source => ({ ...source,
                     contentHash: { algorithm: 'unspecified', value: source.contentHash.value } })),
             }
             : { state: 'none' },

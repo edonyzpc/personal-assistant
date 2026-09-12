@@ -4,9 +4,16 @@ import type { ImageAsset } from "../src/chat/image-types";
 import { hashWritingText, type WritingVersion } from "../src/chat/writing-types";
 import { WritingVersionService } from "../src/chat/writing-versions";
 import { decodeNativeWritingOutput } from "../src/ai-services/writing-output";
+import type { GenerationInputSnapshot } from "../src/ai-services/generation-input-snapshot";
 import writingProtocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
+
+const generationInput = (): GenerationInputSnapshot => ({
+    schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
+    personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
+    parent: { state: 'none' }, pagelet: { state: 'none' },
+});
 
 class FakeIDBKeyRange {
     constructor(
@@ -671,6 +678,7 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
         const version = await versions.create({ requestId: 'native-request', messageId: 'native-message',
             conversationId: 'conv-1', turnIndex: 0, text: decoded.body, explanation: decoded.explanation,
             images, styleRevisionIds: ['authorized-style'], backgroundSourceRefs: [{ path: 'notes/context.md' }],
+            generationInput: generationInput(),
         });
         const displayed = `前置说明\n\n${decoded.body}`;
         await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: displayed, writingVersionId: version.id } }));
@@ -683,6 +691,7 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
         expect(await reopened.get(version.id)).toEqual(version);
         expect((await reopened.list('conv-1'))[0]).toMatchObject({ text: trace.expected, associatedImages: images,
             styleRevisionIds: ['authorized-style'], backgroundSourceRefs: [{ path: 'notes/context.md' }],
+            generationInput: generationInput(),
         });
         expect((await reader.getTurns('conv-1')).map((turn) => turn.assistant)).toEqual([
             expect.objectContaining({ content: displayed, writingVersionId: version.id }),
@@ -696,15 +705,21 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
         await store.initialize();
         const scene = { writingTask: ' caption ', purpose: ' share ', audience: ' friends ', domain: ' travel ' };
         const normalized = { writingTask: 'caption', purpose: 'share', audience: 'friends', domain: 'travel' };
-        const recovery = { requestId: 'recovery-scene', rawText: 'Partial work', reason: 'incomplete' as const, scene };
+        const receipt = generationInput();
+        const recovery = { requestId: 'recovery-scene', rawText: 'Partial work', reason: 'incomplete' as const,
+            scene, generationInput: receipt };
         await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: 'Partial work', writingRecovery: recovery } }));
         scene.audience = 'mutated input';
         const first = (await store.getTurns('conv-1'))[0].assistant.writingRecovery!;
         expect(first.scene).toEqual(normalized);
+        expect(first.generationInput).toEqual(generationInput());
         first.scene!.purpose = 'mutated reader';
+        first.generationInput!.task.state = 'unknown';
         const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('recovery-scene', factory) : store;
         await reader.initialize();
-        expect((await reader.getTurns('conv-1'))[0].assistant.writingRecovery?.scene).toEqual(normalized);
+        expect((await reader.getTurns('conv-1'))[0].assistant.writingRecovery).toMatchObject({
+            scene: normalized, generationInput: generationInput(),
+        });
         for (const invalid of [null, {}, { ...normalized, audience: '' }, { ...normalized, domain: 'x'.repeat(65) },
             { ...normalized, hostAuthority: true }]) {
             await expect(reader.appendTurn(makeTurn({ turnIndex: 1, assistant: { role: 'assistant', content: 'invalid',

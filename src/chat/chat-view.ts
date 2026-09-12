@@ -8,6 +8,7 @@ import type {
     ChatWritingMaterialContext,
     PaAgentMessage,
     PaAgentPersistedTurn,
+    SourceRecord,
     TurnEndStatus,
 } from '../ai-services/chat-types';
 import type { MemoryMaintenancePlan } from '../memory-manager';
@@ -72,7 +73,7 @@ import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal
 import { mergeWritingImages, type WritingVersion } from './writing-types';
 import { inferWritingScene } from './writing-style-service';
 import { ChatImageRequestError } from '../ai-services/image-capability';
-import { cloneGenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
+import { cloneGenerationInputSnapshot, type GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
 
 export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
@@ -95,6 +96,18 @@ const PARTIAL_SHARE_CARD_WARNING_TYPES = new Set([
     'provider_error',
     'wall_clock_exceeded',
 ]);
+
+function writingBackgroundSourceRefs(
+    records: readonly SourceRecord[],
+    generationInput?: GenerationInputSnapshot,
+) {
+    const actualSources = generationInput?.task.sources;
+    const refs = records.filter((record) => record.path && record.citationEligible !== false && !record.redacted
+        && (!actualSources || actualSources.some(source => source.dedupKey === record.dedupKey
+            && source.boundary === (record.sourceBoundary ?? (record.kind === 'memory-reference' ? 'memory' : 'unknown'))
+            && (source.revision.path ?? '') === record.path)));
+    return [...new Map(refs.map(record => [record.path!, { path: record.path! }])).values()];
+}
 
 function hasPartialShareCardWarning(warnings: readonly ChatRuntimeWarning[] = []): boolean {
     return warnings.some((warning) => PARTIAL_SHARE_CARD_WARNING_TYPES.has(warning.type));
@@ -2226,6 +2239,8 @@ export class LLMView extends ItemView {
                             parentVersionId: recovery.parentVersionId,
                             scene: recovery.scene,
                             backgroundSourceRefs: recovery.backgroundSourceRefs,
+                            ...(recovery.generationInput
+                                ? { generationInput: cloneGenerationInputSnapshot(recovery.generationInput) } : {}),
                             referenceScopeUnverified: !generationSourceCurrent,
                             images,
                         }, () => isCurrentSession() && isCurrent() && sourceCurrent());
@@ -3492,9 +3507,11 @@ export class LLMView extends ItemView {
                 hostProvenance: { version: 1, messageId: `${turn.userProvenance?.messageId ?? turn.id}-assistant`, kind: 'ai_draft' },
                 ...(turn.writingRecovery ? { writingRecovery: { ...turn.writingRecovery,
                     parentVersionId: turn.writingRecovery.parentVersionId ?? turn.writingParent?.id,
-                    backgroundSourceRefs: (turn.canonicalLifecycle.hostSourceRecords ?? [])
-                        .filter((record) => record.path && record.citationEligible !== false && !record.redacted)
-                        .map((record) => ({ path: record.path! })),
+                    backgroundSourceRefs: writingBackgroundSourceRefs(
+                        turn.canonicalLifecycle.hostSourceRecords ?? [], turn.writingRecoveryGenerationInput,
+                    ),
+                    ...(turn.writingRecoveryGenerationInput
+                        ? { generationInput: cloneGenerationInputSnapshot(turn.writingRecoveryGenerationInput) } : {}),
                 } } : {}),
                 ...(turn.writingRequestId ? { images: cloneMessageImages(turn.writingMaterials ?? []) } : {}),
                 ...(
@@ -3541,10 +3558,12 @@ export class LLMView extends ItemView {
                         explanation: artifact.explanation, parentVersionId: artifact.writingContext
                             ? artifact.writingContext.parentVersionId : turn.writingParent?.id,
                         images: turn.writingMaterials ?? [], styleRevisionIds: artifact.styleRevisionIds,
+                        ...(artifact.generationInput
+                            ? { generationInput: cloneGenerationInputSnapshot(artifact.generationInput) } : {}),
                         scene: artifact.writingContext ? artifact.writingContext.scene : inferWritingScene(prompt, turn.writingParent?.scene),
-                        backgroundSourceRefs: (turn.canonicalLifecycle.hostSourceRecords ?? [])
-                            .filter((record) => record.path && record.citationEligible !== false && !record.redacted)
-                            .map((record) => ({ path: record.path! })),
+                        backgroundSourceRefs: writingBackgroundSourceRefs(
+                            turn.canonicalLifecycle.hostSourceRecords ?? [], artifact.generationInput,
+                        ),
                     }, () => isCurrent() && artifact.isSourceCurrent?.() !== false);
                     assistantMessage.writingVersionId = version.id;
                     if (isCurrent() && isCurrentSession()) {

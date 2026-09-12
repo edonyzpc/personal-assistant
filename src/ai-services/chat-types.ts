@@ -360,6 +360,8 @@ export interface ChatWritingRecovery {
     parentVersionId?: string;
     scene?: import('../chat/writing-types').WritingScene;
     backgroundSourceRefs?: PersistedSourceRef[];
+    /** Host-recorded physical generation inputs; absent on legacy recoveries. */
+    generationInput?: GenerationInputSnapshot;
 }
 
 export interface PaToolResultContent {
