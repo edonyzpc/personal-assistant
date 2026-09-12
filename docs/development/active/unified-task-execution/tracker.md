@@ -11,10 +11,10 @@ SDD: [Software Design Document](./sdd.md)
 
 ## Current Snapshot
 
-- Current phase: P1 的 T-05–T-07 已按 Plan/SDD 全部收口；进入 P2，T-08/T-09 已完成，T-10/T-11 及本阶段 Desktop/受影响 iOS 退出门尚待收口。T-04 的 P0 来源/准入/reader 可行性已完成，T-03及后续阶段退出门仍未通过。
-- Next action: 仅按 P2 现有设计门完成 Desktop/受影响 iOS 的设置、独立退出、遗忘与已有Personal/style组合 smoke，复用已通过的默认迁移与scheduler/collector证据；不重跑既有矩阵，不新增框架。F-20/F-23模型质量继续跟踪，默认native尚未启用。
+- Current phase: P1 已收口；P2 的默认迁移、实际 scheduler/collector、Personal/style 组合及 Desktop 设置/独立退出/遗忘已按 Plan/SDD 通过，T-10 语义质量与当前 Linux 主机不可执行的受影响 iOS 实机门仍保留。继续不依赖设备的 P3 T-12–T-15，T-03及后续阶段退出门尚未通过。
+- Next action: 仅补 P3 现有出口尚缺的自然语言工具范围/取材语义对照与 Desktop Chat/Operations smoke，复用已通过的物理输入、来源准入及 provider 回执；不重跑既有矩阵，不新增框架。F-20/F-23模型质量继续由 T-20 跟踪，默认native尚未启用。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，真实current→old→current矩阵见T-19证据。剩余D4语义质量、完整native/media/Desktop/iOS兼容为工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 2026-09-12当前修复输入经`make deploy`的platform guard、lint、production build及276 suites/7620 tests全部PASS（308.785s，自然exit 0），构建与已打开test vault的`main.js`同为`561a30161e3a2fa0017ecf4e39140a1bede9939576a6d47c458af1011898fc52`。真实Qwen legacy正常完成为`stop`并持久化`completed`；两次真实请求均在停止前自然完成后，改用同一已加载Desktop Chat的可控legacy流触发实际停止按钮：部分正文精确保留，重载后由旧记录的`user_abort`推导`aborted`并显示“Generation cancelled”，零成版且不提供完成操作。前一冻结输入的真实降级/升级、默认学习宿主矩阵及Qwen native中断→人工恢复证据仍按各自输入有效。native中文引号改写仍为质量FAIL；iOS未由Desktop/CLI证据替代。
+- Last verified behavior: 2026-09-12当前修复输入经`make deploy`的platform guard、lint、production build及276 suites/7620 tests全部PASS（308.785s，自然exit 0），构建与test vault的`main.js`同为`561a30161e3a2fa0017ecf4e39140a1bede9939576a6d47c458af1011898fc52`。同一已加载Desktop中，实际设置控件分别关闭长期提取与本地习惯：scheduler停止而既有授权style继续投影；关闭Memory后旧receipt立即失效但记录仍可管理；经明确Forget确认后正文及有效投影消失，仅留无效果/无操作的防重建标记。合成治理状态、会话、版本与设置已精确清理，重启后默认11、原活动会话及`data.json`哈希恢复。前述Qwen legacy完成/中断、真实降级/升级、默认学习宿主矩阵及Qwen native中断→人工恢复证据仍按各自输入有效；native中文引号改写仍为质量FAIL，iOS未由Desktop/CLI证据替代。
 - Task count: 22项中8项完成、13项部分实现/验证、1项待最终汇总。8/22只表示完整验收任务占比，不是代码完成度；P1已通过，其他阶段退出门尚未全部通过。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
@@ -42,6 +42,18 @@ SDD: [Software Design Document](./sdd.md)
 | D14 | Confirmed — Owner 2026-09-12“接受分开评估，F-20 继续跟踪（推荐）” | 新旧协议共现的F-20保留为模型质量问题，不再单独否决专用通道兼容评估 | T-03/T-20仍保留原FAIL；协议、来源、预览、finish与App门通过后才切默认，非立即切换批准 |
 
 ## Work
+
+2026-09-12 P2 Desktop 退出/遗忘映射：REQ/AC-04/09/10/17 → 复用默认迁移、真实
+scheduler/collector、非空Personal/style物理输入与最终准入证据，仅在当前冻结bundle中以实际设置
+控件依次关闭长期提取、本地习惯和Memory主门，再从Memory控制中心明确确认Forget → 关闭提取
+不再保留scheduler但既有授权style继续可用；习惯可独立关闭；关闭Memory使旧receipt和后续style
+投影立即失效但仍可管理；Forget移除正文及有效投影，仅留无效果、无操作的防重建标记 →
+[`Desktop回执`](evidence/2026-09-12-p2-desktop-exit-and-forget.json)及两张可见截图；设置、
+style治理、Memory主门或Forget流程变化时才重跑。该 smoke 零provider请求，不重复语义矩阵。
+合成会话/版本已删除，治理状态除单调commitSequence外语义恢复，`data.json`前后均为
+`f8cfd5b…2dcbc`；插件重启后默认11、governance ready、原3条会话/活动会话及零modal恢复。
+当前Linux主机无xcrun、idevice_id、iCloud test vault或iPhone表面，受影响iOS实机门保持
+NOT TESTED；不以Desktop或模拟证据代替，也不阻塞不依赖设备的P3工作。
 
 2026-09-12 D1完整物理输入组合映射：AC-03/04/09 → 复用现有生产
 `PaAgentRuntime`→`AIUtils`→`ChatOpenAI`→SDK离线transport fixture，在同一“只用当前笔记”
@@ -498,8 +510,8 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [x] | Qwen native在实际Desktop Chat中中断后零成版、历史`aborted`、重载不冒充完成，人工恢复为唯一AI草稿并再次精确重载；legacy可控流在同一已加载Desktop Chat中中断，部分正文重载后精确保留且显示`Generation cancelled`，零成版/完成操作。iOS作品全流程仍由T-18/T-21承担 |
 | T-08 | B-135/REQ-17 / B-135/AC-17 | 原始旧值分类、默认策略/用户动作分离、版本迁移与 load/save/reload | [x] | D8 raw missing/false、有效 paused、版本化 10/01 及普通保存/重载在真实 Obsidian 宿主通过；不伪造 consent/confirmedAt，原 plugin data 摘要恢复 |
 | T-09 | B-135/REQ-17 / B-135/AC-17 | 默认实际准入、scheduler/collector、独立关闭暂停/恢复、首次说明与设置 UI | [x] | 默认 11 的真实 scheduler/collector、零启动回填、新 Chat 调度、独立关闭零新增、Personal/style 解耦及实际设置 DOM/说明通过；模型质量、T-10/T-11 与 P2 iOS 阶段门不由本任务代替 |
-| T-10 | B-135/REQ-10 / B-135/AC-10 | Chat 来源、Type A 语义候选与两条最终准入；混合真实事实/任务要求，默认开启也不学成长期风格 | [~] | semantic lane、最终保存/确认/恢复、稳定ID及source lifetime已实现；当前Qwen合成混合事实/纯任务/双事实1/0/2候选可回放。完整Chat/设置组合及语义质量门仍待验收；关闭时不另跑提取模型分类 |
-| T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed 与 legacy 无 scheduler 读取、设置说明、失败/Forget迟到、默认迁移、真实宿主关闭组合及非空Personal/style实际SDK输入已通过；剩余App/device验收 |
+| T-10 | B-135/REQ-10 / B-135/AC-10 | Chat 来源、Type A 语义候选与两条最终准入；混合真实事实/任务要求，默认开启也不学成长期风格 | [~] | semantic lane、最终保存/确认/恢复、稳定ID及source lifetime已实现；当前Qwen合成混合事实/纯任务/双事实1/0/2候选可回放，Desktop设置/关闭组合通过。剩余语义质量门由T-20跟踪；关闭时不另跑提取模型分类 |
+| T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed与legacy无scheduler读取、设置说明、失败/Forget迟到、默认迁移、真实宿主关闭组合及非空Personal/style实际SDK输入通过；Desktop实际开关、Memory主门及Forget闭环通过，剩余受影响iOS实机门 |
 | T-12 | B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 主 prompt/工具指导承接语义；去关键词路由、预测必调/隐藏与参数强制覆盖 | [~] | runtime已移除独立分类调用和预测required名单；policyModelName的rewrite/rerank保留。自然语言工具范围、writing识别、prompt与语义场景对照仍未完成；schema、真实证据、dedup和取消保留 |
 | T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [~] | 生产run已接声明/有序读计划/真实身份及受限Memory，Vault/Ops读门保持；动态句柄、独立控制轮、图片队列读门和完整物理来源投影已有定向证据。profile/Memory/style与任务事实分开，不默认空背景；真实模型语义/App门仍待完成 |
 | T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 普通Vault结果、标签/backlinks隐藏依赖、D12撤销旧回复及answer/history/tool-summary/rewrite/rerank物理重验通过；GenerationInputSnapshot已覆盖任务、Personal/Insights、风格、parent、Pagelet和完整图片身份。剩余多图指代真实语义、App/provider/device门，不以union复活排除图片 |
