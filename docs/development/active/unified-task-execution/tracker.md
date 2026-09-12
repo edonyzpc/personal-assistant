@@ -12,9 +12,9 @@ SDD: [Software Design Document](./sdd.md)
 ## Current Snapshot
 
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: D13/D14已交付；F-21/F-22修复和Owner指定DeepSeek第二模型最小对照完成，F-20/F-23模型质量继续跟踪。T-18最后物理请求快照、持久reader、跨重载逐项重验及最终store guard已贯通；下一片完成T-19旧插件降级→普通保存→重新升级矩阵，再做图文多版组合、真实Desktop流式中断/恢复与受影响iOS门；默认native尚未启用。
-- Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 2026-09-12本片完整275 suites/7577 tests自然PASS，生产/test构建`208ae6fcdbe972a61f2e7276b198aab6d20b954cdeb67984c5e6d1a2f653b914`重载后DeepSeek native/旧协议各2物理请求、唯一artifact、正常独立finish且provider正文保真。其后物理生成输入快照源码在冻结状态下聚焦7 suites/500 tests及plugin-record-note 391 tests；持久与跨重载片另有核心4 suites/330、宿主1 suite/397、store/task-source 5 suites/147及最终Canvas反例1 test PASS，tsc、完整lint、diff/社区DOM扫描通过；未重复完整build/full tests。native中文引号改写仍为质量FAIL。D13恢复片先前App证据保留；隔离ChatService与JSDOM不替代真实ChatView/full-ui/iOS。
+- Next action: D13/D14及T-19真实降级/升级矩阵已交付；F-21/F-22修复和Owner指定DeepSeek第二模型最小对照完成，F-20/F-23模型质量继续跟踪。下一片做图文多版组合、真实Desktop流式中断/恢复、D1完整物理输入及受影响iOS门；默认native尚未启用。
+- Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，真实current→old→current矩阵见T-19证据。剩余D1物理请求、D4语义质量、完整native/media/Desktop/iOS兼容为工程验收项；不把当前局部App证明当整项完成。
+- Last verified behavior: 2026-09-12当前冻结源码经`make deploy`完整276 suites/7618 tests、lint和production build自然PASS，构建`0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684`。同一Obsidian 1.14.1/test vault/Chromium origin真实部署当前HEAD→旧`c923ee2`→当前HEAD：旧版以`MemoryGovernancePersistenceError`失败关闭，普通settings保存成功而v3全库摘要逐项不变；重新升级后12个业务store完全一致，版本化语义Queue可从真实Chat History重验、确认并精确投影到隔离Profile，原Markdown树hash不变。native中文引号改写仍为质量FAIL；完整ChatView/full-ui/iOS仍未由CLI runtime eval替代。
 - Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
@@ -42,6 +42,38 @@ SDD: [Software Design Document](./sdd.md)
 | D14 | Confirmed — Owner 2026-09-12“接受分开评估，F-20 继续跟踪（推荐）” | 新旧协议共现的F-20保留为模型质量问题，不再单独否决专用通道兼容评估 | T-03/T-20仍保留原FAIL；协议、来源、预览、finish与App门通过后才切默认，非立即切换批准 |
 
 ## Work
+
+2026-09-12 T-19真实降级/升级矩阵映射：AC-10/11 + D11 → 在同一repo-local test vault与
+同一Chromium origin先由当前HEAD打开合法v3治理库并冻结DB version、各store记录与
+commitSequence；再部署真实旧基线`c923ee2`（2.9.2、逻辑/IDB v2）并重载，执行普通
+settings保存、治理读取/确认/恢复尝试及独立legacy Profile读取，最后重新部署当前HEAD重载 →
+Obsidian CLI/runtime eval、IndexedDB逐store快照及新旧bundle identity；旧版不得清空、降级或
+覆盖v3库，治理读取/确认/恢复失败关闭，普通data.json保存和独立旧Profile边界按旧版真实行为
+记录，升级后v3 store内容/身份恢复且原笔记不变 → current→old→current每段均核对plugin状态、
+DB/version/store快照与fresh console；任何persistence版本/open/bootstrap/save/Profile路由或
+部署asset变化须重跑。该矩阵不发送provider请求、不将eval冒充可见UI，不修改非test vault；
+若旧bundle无法在当前Obsidian加载则记真实兼容FAIL并保留库，不改旧代码掩盖。
+
+T-19真实矩阵结果：[脱敏逐store证据](./evidence/2026-09-12-d11-real-downgrade-matrix.json)绑定
+当前提交`0bbe12b`/bundle `0fb0aba1…d684`与真实旧提交`c923ee2`/bundle
+`3ac6e826…3740`。当前host以真实Chat History来源和合法32位十六进制Profile identity准入
+`b135-chat-semantic-v1`候选，schema3基准全库摘要`2da10d03…b3a2`。加载旧2.9.2后
+bootstrap以`MemoryGovernancePersistenceError`失败，治理repository/coordinator/Profile worker及
+Forget/Profile/GC恢复timer均未启动；治理UI为unavailable，Queue确认失败。旧版普通
+`saveSettings`的真实`saveSettingsData`调用为1，data.json和settings摘要稳定；独立legacy Profile
+reader仍为ready且可按旧版投影legacy背景，不等于读取被拒绝的治理库。旧版操作前后DB version 3、
+13个store的count/digest及全库摘要完全一致，fresh errors为0。
+
+重新部署当前bundle后bootstrap恢复ready，除`meta.commitSequence`按当前启动记账117→123外，
+12个业务store逐项count/digest完全一致；单独current→current重载同样只推进meta，证明不是旧版
+改写。持久Queue的ID、profile ID、receipt rule及receipt source identity恢复；实际确认后Queue为
+applied，创建claim、revision、governed Profile link和Profile行，正文/identity精确一致，receipt
+仍在revision且真实来源会话仍有1个turn。探针初次错误要求持久记录保留临时
+`chatSemanticEvidence`，核对契约后改从receipt sources验证；另一次非十六进制合成Profile ID被
+store规范化，按真实producer格式修正而未改生产代码或放宽断言。所有自建claim/Queue/Profile/
+会话及vault脚本随后精确清理，active conversation恢复；前后Markdown树SHA-256均为
+`bf7d823d…e5ca`，debug/mobile关闭。该证据关闭D11真实降级/升级矩阵缺口，不证明native作品、
+图片/版本reader、可见full-ui或iOS，T-19仍为部分完成。
 
 2026-09-12 T-18跨重载来源重验映射：AC-06/08/09/11 + D13 → recovery带
 `GenerationInputSnapshot`时以该快照为完整生成输入目录，不再从助手run末metadata补来源；逐项
@@ -435,7 +467,7 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-01 | B-135/REQ-11 / B-135/AC-11 | 建立 L3 Decision/Spec/SDD/Plan/Tracker，旧任务新增工作转归 B-135 | [x] | 文档 gate、2 suites/58 docs tests 及独立设计复核见下方日志；不代表 P0 已完成 |
 | T-02 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-17 / B-135/AC-17 | 记录真实产品答复，冻结范围及迁移，不重问已确认边界 | [x] | D2/D3、D5、D8、D10 已按真实答复同步 DEC-034/Spec/SDD；仅产品选择及文档任务完成，T-03/T-04 可行性和 P0 退出门未通过 |
 | T-03 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07；B-135/REQ-14 / B-135/AC-14 | native 输出与旧协议独立兼容对照：当前 qwen 配置、转义/Unicode、增量预览、正常工具结束、tail 异常 | [~] | native schema/真实历史delta经当前adapter→loop→bridge、终局/混批与无ack已有自动化及275套全门证据；当前Qwen四案按D14区分生成质量。Owner指定同网关DeepSeek最小协议对照已通过，F-23新质量偏差仍Open；完整App/device门待补 |
-| T-04 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04；B-135/REQ-10 / B-135/AC-10 | P0 来源声明/物理输入、混合消息两段准入、旧新 reader 最小可行性 | [~] | D4 TypeA/plugin两门已贯穿，D11新库隔离有当前App证据；D1完整来源声明/物理请求及完整兼容矩阵未完成 |
+| T-04 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04；B-135/REQ-10 / B-135/AC-10 | P0 来源声明/物理输入、混合消息两段准入、旧新 reader 最小可行性 | [~] | D4 TypeA/plugin两门已贯穿，D11新库隔离及真实降级/升级矩阵通过；D1完整来源声明/物理请求仍未完成 |
 | T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | tool_calls独立完成类型、finish/格式分离、tail异常/挂起及无重复invoke已有当前测试和全门证据；Owner指定DeepSeek已有实际SDK帧与tool_calls/stop；剩余真实App中断/完成组合及设备验收 |
 | T-06 | B-135/REQ-15 / B-135/AC-15；B-135/REQ-16 / B-135/AC-16 | 单一绝对期限、软收尾过渡、投影前无正文诊断 | [~] | 共同runStartedAt与startup零dispatch已有证据；本轮实现incremental已开始正文延续至原hardAt，softAt后走terminal policy而不再请求，工具仍受soft准入。新增正常完成/异常/取消/late tool及hardAt反例；完整诊断与App门仍待完成 |
 | T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [~] | 预览与最终成版分离、来源撤销、取消迟到、持久化/reload已有回归；D13真实旧记录恢复已验。仍缺生成过程中实际Desktop预览/中断/恢复及受影响iOS，不能由静态恢复样例替代 |
@@ -450,7 +482,7 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-16 | B-135/REQ-08 / B-135/AC-08；B-135/REQ-09 / B-135/AC-09 | 写作场景和续写目标由模型理解，宿主绑定 session/parent/hash/material 与受治理风格上下文 | [~] | 显式native候选已接Chat→runtime工具/来源/动态handle/完整输入/图片收窄及成版parent/scene；新topic与恢复scene回归、真实Qwen合成协议通过。默认切换、真实UI、多版本失败继续及完整治理组合仍待验 |
 | T-17 | B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07 | 专用作品输出及 Chat 终局单输出、生成请求快照、完成事实与幂等成版 | [~] | native候选的runtime schema/loop/bridge动态handle与物理请求快照已贯通，保留单输出、严格provider身份、无ack及host最终门；真实Qwen合成样例成功。默认切换、完整用途/成版保存生命周期与实际UI门仍待补；T-03/T-13/T-16依赖未解除 |
 | T-18 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-10 / B-135/AC-10 | 增量正文预览、版本选择/人工恢复、准确复制编辑保存与 SaveReceipt | [~] | 生成来源receipt贯穿实际请求、自动作品/同页人工恢复和底层存储；最后物理请求的完整无正文输入身份现已保存、重载并按各用途逐项重验，旧path refs不再使用run末union，最终store guard覆盖等待期间撤销。D13完整/未知/失效分流及当前回归通过；图片style/多版实际保存、Desktop full-ui/device组合仍待验收 |
-| T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3隔离和source reopen已有证据；当前reader可读旧无generationInput记录并保留新字段，真实2.9.2 reader会拒绝新version或丢新recovery字段，不宣称可降级。完整旧插件bootstrap→保存→重新升级、native/media/版本及Desktop/iOS门仍待验证 |
+| T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [~] | schema3隔离、source reopen及真实当前→旧2.9.2→当前矩阵通过：旧版失败关闭但普通保存/legacy Profile可用，v3业务store完整保留，升级后真实来源Queue可确认和投影。旧reader对新作品/recovery字段的已知丢失边界仍不宣称降级兼容；native/media/版本及Desktop/iOS门待验证 |
 | T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [~] | 当前Qwen同案例schema失败及重复scene均有实际序列/耗时/usage；准备状态修复后2请求1准备，逐字要求仍FAIL。完整语义/质量对照未完，不推断模型净耗时或固定提速 |
 | T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [~] | 已有273 suites/7432 tests自然全门PASS，之后窄改动有相关聚焦/build/lint与独立复核；最终全部AC、full-ui/iOS及全量review未完成。各证据输入边界见Work |
 | T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [ ] | 本次开发分支提交/推送已获授权；closeout/release未授权，不先删除Brief独有故障证据 |

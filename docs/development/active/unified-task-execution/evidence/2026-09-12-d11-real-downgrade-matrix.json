@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-12T10:49:03.226Z",
+  "environment": {
+    "vault": "test",
+    "obsidian": "1.14.1",
+    "installer": "1.11.7",
+    "currentCommit": "0bbe12ba4313ae537990d3d5208496f3c12bc312",
+    "currentBundleSha256": "0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684",
+    "oldCommit": "c923ee22089ef3e669b275718bce6052e98d7749",
+    "oldBundleSha256": "3ac6e826e69d68c7020026d1412720bc1e03a53ada53c39fe20e12396a563740"
+  },
+  "fixture": {
+    "receiptRule": "b135-chat-semantic-v1",
+    "profileRecordIdFormat": "profile- plus 32 lowercase hexadecimal characters",
+    "realChatHistory": true,
+    "sourceBackedQueueItems": 1,
+    "providerRequests": 0
+  },
+  "baseline": {
+    "version": 3,
+    "stores": {
+      "changeEvents": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "claims": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "memoryQueueItems": {
+        "count": 2,
+        "digest": "1a7e41b77413ba3a4640a412f1651ccfbe789dbaa997ccc9de95ab7d6d1b1910"
+      },
+      "meta": {
+        "count": 1,
+        "digest": "6ea6e64798cdb59a871fccf1eb2ea7cfc63b97e8b8aa48bc896afc10bf908118"
+      },
+      "migrationDeltas": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "migrationStates": {
+        "count": 2,
+        "digest": "bb3396bb400ded636298e8d2287f8d95f2f12007904424d556e281d5aedad52d"
+      },
+      "pendingOperations": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "policyStates": {
+        "count": 2,
+        "digest": "42f0d9e12e13a586578bafd6ddbe04837d122a3aabd18bd33a58a54a6d341338"
+      },
+      "projectionLinks": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "revisions": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "rollbackPayloadEntries": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "suppressionMarkers": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "undoSnapshots": {
+        "count": 0,
+        "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "wholeDigest": "2da10d0356d90d6e2b7b4cd50ab59e8b06f5160fc23e8af067dffd98a3efb3a2"
+  },
+  "oldBuild": {
+    "oldBootstrap": "failed",
+    "oldBootstrapErrorCode": "MemoryGovernancePersistenceError",
+    "v3BeforeVersion": 3,
+    "v3BeforeDigest": "2da10d0356d90d6e2b7b4cd50ab59e8b06f5160fc23e8af067dffd98a3efb3a2",
+    "v3AfterVersion": 3,
+    "v3AfterDigest": "2da10d0356d90d6e2b7b4cd50ab59e8b06f5160fc23e8af067dffd98a3efb3a2",
+    "v3StoresUnchanged": true,
+    "v3SemanticQueueCount": 2,
+    "ordinarySave": {
+      "beforeDataDigest": "b64e4e75",
+      "afterDataDigest": "b64e4e75",
+      "beforeSettingsDigest": "5954d4fca32b05c9d204121d47a7e081e7ba4e988e055cc4d81ed08c57fb9414",
+      "afterSettingsDigest": "5954d4fca32b05c9d204121d47a7e081e7ba4e988e055cc4d81ed08c57fb9414",
+      "settingsStateUnchanged": true,
+      "saveSettingsDataCalls": 1
+    },
+    "governancePanel": {
+      "uiMode": "unavailable",
+      "mode": null,
+      "records": 0,
+      "reviewItems": 0,
+      "recentChanges": 0
+    },
+    "confirmation": {
+      "ok": false,
+      "messageHash": "a9164527"
+    },
+    "recovery": {
+      "coordinatorPresent": false,
+      "projectionWorkerPresent": false,
+      "forgetTimerStarted": false,
+      "profileTimerStarted": false,
+      "garbageCollectionTimerStarted": false
+    },
+    "legacyProfile": {
+      "state": "ready",
+      "recordCount": 0,
+      "snapshotDigest": null,
+      "promptProfilePresent": false,
+      "promptInsightsPresent": true,
+      "promptMode": "legacy"
+    }
+  },
+  "reupgrade": {
+    "bootstrap": "ready",
+    "bootstrapErrorCode": null,
+    "dbVersion": 3,
+    "wholeDigest": "1d98f6506d51bb72833d4473dbfd6b7b6b34872218b61ce8ac160fb8d98fbd4f",
+    "exactWholeDigestRestored": false,
+    "businessStoresExact": true,
+    "storeComparisons": {
+      "changeEvents": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "claims": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "memoryQueueItems": {
+        "expectedCount": 2,
+        "actualCount": 2,
+        "digestEqual": true
+      },
+      "meta": {
+        "expectedCount": 1,
+        "actualCount": 1,
+        "digestEqual": false
+      },
+      "migrationDeltas": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "migrationStates": {
+        "expectedCount": 2,
+        "actualCount": 2,
+        "digestEqual": true
+      },
+      "pendingOperations": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "policyStates": {
+        "expectedCount": 2,
+        "actualCount": 2,
+        "digestEqual": true
+      },
+      "projectionLinks": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "revisions": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "rollbackPayloadEntries": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "suppressionMarkers": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      },
+      "undoSnapshots": {
+        "expectedCount": 0,
+        "actualCount": 0,
+        "digestEqual": true
+      }
+    },
+    "semanticQueueRestored": true,
+    "semanticReceiptRule": "b135-chat-semantic-v1",
+    "commitSequence": 123,
+    "oldEvidenceRetained": true
+  },
+  "postUpgradeConfirmation": {
+    "confirmationOk": true,
+    "messagePresent": true,
+    "commitSequenceBefore": 123,
+    "commitSequenceAfter": 125,
+    "queueStatusAfter": "applied",
+    "claimCreated": true,
+    "revisionCreated": true,
+    "governedProjectionLinkCreated": true,
+    "governedProfileStateBefore": "ready",
+    "governedProfileStateAfter": "ready",
+    "governedProfileRecordCreated": true,
+    "exactProjection": true,
+    "receiptRuleOnRevision": "b135-chat-semantic-v1",
+    "sourceConversationStillPresent": true,
+    "sourceTurnCount": 1,
+    "panelMode": "effect_based"
+  },
+  "controls": {
+    "invalidFixtureRemoved": {
+      "clean": true,
+      "commitSequence": 122
+    },
+    "finalSyntheticCleanup": {
+      "clean": true,
+      "commitSequence": 126,
+      "remainingClaims": 0,
+      "remainingQueueItems": 0,
+      "governedProfileRows": 0,
+      "activeConversationRestored": true
+    },
+    "noteTreeSha256Before": "bf7d823d218db0044ff03b14a70df51f49507db6f5e7e9dd476fc9c2fc96e5ca",
+    "noteTreeSha256After": "bf7d823d218db0044ff03b14a70df51f49507db6f5e7e9dd476fc9c2fc96e5ca",
+    "oldAndCurrentFreshErrors": 0,
+    "debugAndMobileRestoredOff": true,
+    "currentReloadAdvancesOnlyMeta": true,
+    "firstProbeCorrection": "Persisted semantic identity is verified from receipt sources; chatSemanticEvidence is intentionally transient."
+  }
+}
