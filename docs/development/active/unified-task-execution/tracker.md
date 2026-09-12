@@ -12,10 +12,10 @@ SDD: [Software Design Document](./sdd.md)
 ## Current Snapshot
 
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: D13/D14及T-19真实降级/升级矩阵已交付；F-21/F-22修复和Owner指定DeepSeek第二模型最小对照完成，F-20/F-23模型质量继续跟踪。下一片做图文多版组合、真实Desktop流式中断/恢复、D1完整物理输入及受影响iOS门；默认native尚未启用。
+- Next action: T-08/T-09真实宿主默认学习已收口；下一片优先补 D1 完整物理输入/来源边界，再做图文多版组合、真实 Desktop 流式中断/恢复及受影响 iOS 门。F-20/F-23模型质量继续跟踪，默认native尚未启用。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，真实current→old→current矩阵见T-19证据。剩余D1物理请求、D4语义质量、完整native/media/Desktop/iOS兼容为工程验收项；不把当前局部App证明当整项完成。
-- Last verified behavior: 2026-09-12当前冻结源码经`make deploy`完整276 suites/7618 tests、lint和production build自然PASS，构建`0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684`。同一Obsidian 1.14.1/test vault/Chromium origin真实部署当前HEAD→旧`c923ee2`→当前HEAD：旧版以`MemoryGovernancePersistenceError`失败关闭，普通settings保存成功而v3全库摘要逐项不变；重新升级后12个业务store完全一致，版本化语义Queue可从真实Chat History重验、确认并精确投影到隔离Profile，原Markdown树hash不变。native中文引号改写仍为质量FAIL；完整ChatView/full-ui/iOS仍未由CLI runtime eval替代。
-- Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
+- Last verified behavior: 2026-09-12当前冻结源码经`make deploy`完整276 suites/7618 tests、lint和production build自然PASS，构建`0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684`。同一Obsidian 1.14.1/test vault/Chromium origin真实部署当前HEAD→旧`c923ee2`→当前HEAD：旧版以`MemoryGovernancePersistenceError`失败关闭，普通settings保存成功而v3全库摘要逐项不变；重新升级后12个业务store完全一致，版本化语义Queue可从真实Chat History重验、确认并精确投影到隔离Profile，原Markdown树hash不变。随后同一当前构建的默认学习真实宿主矩阵通过，旧缺失/false、paused、版本化独立选择、scheduler/collector、设置DOM、退出零新增及Personal/style解耦均有回执且清理完成。native中文引号改写仍为质量FAIL；完整ChatView/full-ui/iOS仍未由CLI runtime eval替代。
+- Task count: 22项中4项完成、17项部分实现/验证、1项待最终汇总。4/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
@@ -33,7 +33,7 @@ SDD: [Software Design Document](./sdd.md)
 | D5 | Confirmed — Owner 2026-09-09 对语义提议及保留执行保护答复“同意” | 主 Agent 在现有 per-vault opt-in 和四个 core tools 内按目标提出 Operations 建议，替代本地操作意图规则；不明确时澄清，实际执行仍确认、stale-safe、Undo、审计，准备读取仍受来源约束 | T-15：schema、canExport/canExecute、提议、执行一并适配与验证；关闭/未确认/取消/目标 stale 均零写入。产品批准不代表已实现或验收通过 |
 | D6 | Engineering candidate — T-06 验证 | 单一绝对硬截止；已开始正文/作品允许在原硬期限内接收，不因软过渡丢弃重答。仍可能用尽重答预留，硬期限/取消不得延期 | fake-clock 测试 startup、reasoning、partial body、late tool、重复 finalization；独立回退预算适配，保留完成事实修复 |
 | D7 | Confirmed — Owner 2026-09-09 | 长期提取、本地习惯学习分别默认开启，可独立关闭/暂停/管理；首次透明说明，已有调度/预算/治理/权限不扩张 | 全量归 B-135/REQ-17、AC-17、T-08/T-09，不回 B-106 |
-| D8 | Confirmed — Owner 2026-09-09：“同意，默认开启，旧的false如果不是明确用户关闭也设置为开启” | 两项能力分别默认开启；旧 false 没有明确用户关闭证据时也迁移为开启，包括来源不明旧 false；明确用户关闭或有效暂停保持原状态，不额外询问一次。该补充覆盖先前“未知 false 保持关闭”的推荐 | T-08/T-09 在归一化前分类 raw settings；未知不是已知默认或用户授权事实，不伪造 confirmedAt。按产品策略迁移一次，迁移后明确关闭不得在 load/save/reload 时重新开启；兼容与实际准入仍待验证 |
+| D8 | Confirmed — Owner 2026-09-09：“同意，默认开启，旧的false如果不是明确用户关闭也设置为开启” | 两项能力分别默认开启；旧 false 没有明确用户关闭证据时也迁移为开启，包括来源不明旧 false；明确用户关闭或有效暂停保持原状态，不额外询问一次。该补充覆盖先前“未知 false 保持关闭”的推荐 | T-08/T-09 已在归一化前分类 raw settings；未知不是已知默认或用户授权事实，不伪造 confirmedAt。一次迁移、load/save/reload、真实宿主 scheduler/collector、设置 DOM 与退出零新增已通过；P2 的 T-10/T-11、真实语义和设备门仍独立保留 |
 | D9 | Confirmed — Owner 本次请求 | 旧 track 已交付或 closeout 的相关接缝不重开；本次所有增量与组合验收都在 B-135，必要的稳定契约修订保留有日期来源 | T-01/T-22；旧过程文件无本次新增 diff，历史证据不改写为新默认 PASS |
 | D10 | Confirmed — Owner 2026-09-09 对拆开新提取与已有画像使用答复“同意” | 关闭/暂停长期提取只停止新学习；已有有效 Personal 可继续用于后续模型输入，仍受 Memory 主开关、来源有效性、治理、排除、遗忘与预算控制。显式 style 保留独立授权/撤销规则；设置说明明确停止学习不等于停止使用已有背景 | T-11 联同 T-08/T-09：停提取零新学习但已有画像可用；关闭 Memory、删除/遗忘、来源失效即禁止相应读取/投影；覆盖保存失败、重载和实际 provider 输入，不以字段解耦冒充验收 |
 | D11 | Confirmed — Owner 2026-09-09 对明确版本边界建议答复“同意” | 新语义凭据采用明确格式版本；降级旧版时保留治理库数据并停止该库的读取/确认/恢复，升级回来再恢复使用。接受旧版暂不能操作该治理库的代价；原笔记不修改 | T-04/T-10/T-19 全量跟踪：旧 parser 拒绝未知版本仅是局部证据；必须验证旧插件 bootstrap、普通保存、确认、恢复、legacy 画像路径及重新升级的数据保真。不得清空、覆盖或绕过治理库拒绝结果；产品批准不代表安全降级已验证 |
@@ -440,6 +440,8 @@ T-04/T-10 生产前接缝映射：AC-10/11/17 → 既有Type A单模型semantic�
 
 T-04/T-10/T-19 schema3接缝映射：AC-10/11 → 旧1/2原子升级、revision/Undo/Queue typed receipt及两种origin最终提交重验、禁止有损legacy导出 → persistence/coordinator/rollback/plugin及migration/Profile worker suites → 不造旧证据、非法/错位/额外来源拒绝、source变更零commit、重开保真、旧格式拒绝 → schema/parser/准入/迁移状态变化重跑相关组合；真实IDB与生产入口未接不关闭任务。
 
+T-08/T-09/T-11 真实宿主默认学习映射：AC-17/04/09 → 在已部署当前构建的 repo-local test 库中备份并恢复完整 plugin data，经真实 `loadSettings`/迁移/保存/重载验证旧缺失值与旧 `false` 均归为默认开启、`paused` 及版本化明确关闭保持关闭；以真实 scheduler 与习惯 collector 验证启动不回填历史、新合成 Chat 才进入调度、两项可独立关闭且关闭后零新增，同时关闭新提取不清空或禁用合法 Personal/风格读取 → Obsidian CLI App-runtime receipt + 受影响 focused suites → 数据文件与业务库清理后逐字节/摘要恢复、零真实 provider 请求、fresh error 为零；设置结构、scheduler/collector、读取门或 test-vault build identity 变化时重跑。该片只关闭真实宿主生命周期缺口，不代替可见 Desktop 设置交互、真实模型语义质量或 iOS 门。
+
 2026-09-09 schema3片：逻辑与IDB版本升3，旧1/2无receipt数据在同一升级事务验证全部stores后更新meta，失败全量保留；新字段仅revision/Undo revision/Queue envelope合法。coordinator新规则须receipt+宿主candidate/projection+lifetime，admit和confirm在final commit重验，revision/outbox和Queue保留确切receipt。compatibility journal中暂拒绝新semantic记录；rollback入口拒绝目标vault任何新receipt，避免主动丢凭据导出。生产Type A/plugin仍未接，compatibility窗口正确退出仍是必做，非功能缩减决策。
 
 验证：首轮5 suites/461 tests PASS（21.273s）；增加rollback拒绝后2 suites/52 tests PASS（2.056s）；migration/migration-coordinator/governance-coordinator/Profile worker 4 suites/75 tests PASS（4.254s）。独立复核发现P2 provenance可夹带未证会话/笔记，已改为receipt会话精确相等，coordinator两origin、revision/Undo/Queue均覆盖。roundtrip fixture原带note来源因此按新门失败，修正为真实匹配conversation，未放宽校验。修复后5 suites/466 tests PASS（19.87s）。最后将fingerprint排序固定为UTF-16而非环境locale，来源身份仍不受候选改写/投影预算影响，受影响3 suites/100 tests PASS（1.485s）；均自然exit0。独立复核确认P2关闭。tsc/Lint/diff/DOM扫描通过；无当前build/App/设备升级证明，旧reader实验作为升级前历史证据保留，现future fixture使用版本4。
@@ -471,10 +473,10 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | tool_calls独立完成类型、finish/格式分离、tail异常/挂起及无重复invoke已有当前测试和全门证据；Owner指定DeepSeek已有实际SDK帧与tool_calls/stop；剩余真实App中断/完成组合及设备验收 |
 | T-06 | B-135/REQ-15 / B-135/AC-15；B-135/REQ-16 / B-135/AC-16 | 单一绝对期限、软收尾过渡、投影前无正文诊断 | [~] | 共同runStartedAt与startup零dispatch已有证据；本轮实现incremental已开始正文延续至原hardAt，softAt后走terminal policy而不再请求，工具仍受soft准入。新增正常完成/异常/取消/late tool及hardAt反例；完整诊断与App门仍待完成 |
 | T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [~] | 预览与最终成版分离、来源撤销、取消迟到、持久化/reload已有回归；D13真实旧记录恢复已验。仍缺生成过程中实际Desktop预览/中断/恢复及受影响iOS，不能由静态恢复样例替代 |
-| T-08 | B-135/REQ-17 / B-135/AC-17 | 原始旧值分类、默认策略/用户动作分离、版本迁移与 load/save/reload | [~] | D8 已确认；新增默认版本区分旧 false 与迁移后明确偏好，不伪造 consent/confirmedAt、不清空治理数据 |
-| T-09 | B-135/REQ-17 / B-135/AC-17 | 默认实际准入、scheduler/collector、独立关闭暂停/恢复、首次说明与设置 UI | [~] | 随 T-08 调整真实准入，11/10/01/00、持久化失败/并发保存、零新增收集及 App 仍须验证 |
+| T-08 | B-135/REQ-17 / B-135/AC-17 | 原始旧值分类、默认策略/用户动作分离、版本迁移与 load/save/reload | [x] | D8 raw missing/false、有效 paused、版本化 10/01 及普通保存/重载在真实 Obsidian 宿主通过；不伪造 consent/confirmedAt，原 plugin data 摘要恢复 |
+| T-09 | B-135/REQ-17 / B-135/AC-17 | 默认实际准入、scheduler/collector、独立关闭暂停/恢复、首次说明与设置 UI | [x] | 默认 11 的真实 scheduler/collector、零启动回填、新 Chat 调度、独立关闭零新增、Personal/style 解耦及实际设置 DOM/说明通过；模型质量、T-10/T-11 与 P2 iOS 阶段门不由本任务代替 |
 | T-10 | B-135/REQ-10 / B-135/AC-10 | Chat 来源、Type A 语义候选与两条最终准入；混合真实事实/任务要求，默认开启也不学成长期风格 | [~] | semantic lane、最终保存/确认/恢复、稳定ID及source lifetime已实现；当前Qwen合成混合事实/纯任务/双事实1/0/2候选可回放。完整Chat/设置组合及语义质量门仍待验收；关闭时不另跑提取模型分类 |
-| T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed 与 legacy 无 scheduler 读取已分别实现，设置说明已补；只读加载/设置通知/存储范围/失败/Forget迟到读取已有定向证据。仍需默认迁移组合、实际物理输入与 App/device 验收 |
+| T-11 | B-135/REQ-09 / B-135/AC-09；B-135/REQ-04 / B-135/AC-04 | 普通画像读取门按 D10 决策处理；显式风格授权/场景/撤销与新提取独立 | [~] | governed 与 legacy 无 scheduler 读取、设置说明、失败/Forget迟到、默认迁移与真实宿主关闭组合已通过；仍需非空 Personal/style 的实际物理 provider 输入及 App/device 验收 |
 | T-12 | B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 主 prompt/工具指导承接语义；去关键词路由、预测必调/隐藏与参数强制覆盖 | [~] | runtime已移除独立分类调用和预测required名单；policyModelName的rewrite/rerank保留。自然语言工具范围、writing识别、prompt与语义场景对照仍未完成；schema、真实证据、dedup和取消保留 |
 | T-13 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04 | 新取材约束、整批预检与每个物理 provider 输入投影 | [~] | 生产run已接声明/有序读计划/真实身份及受限Memory，Vault/Ops读门保持；动态句柄、独立控制轮和图片队列读门已有定向证据。完整来源投影及真实模型/App门仍待完成。profile/Memory/style与任务事实分开，不默认空背景 |
 | T-14 | B-135/REQ-04 / B-135/AC-04；B-135/REQ-08 / B-135/AC-08 | 完整获准历史/有来源摘要、跨轮更正、多图指代及 retry/summary/rewrite 重验 | [~] | 已补普通Vault结果、标签/backlinks隐藏依赖、D12已知撤销旧助手回复及answer/history/tool-summary物理SDK重验；原记录保留、未知legacy与合法建议可用。GenerationInputSnapshot与作品/父版本/多图/风格用途、其余来源治理和完整App/provider门仍待完成，不以union复活排除图片 |
@@ -530,8 +532,8 @@ UI/runtime 的阶段验证使用 `make deploy` 或符合复用条件的 current-
 | F-20 | P2 model quality | 原逐字提示在新旧协议均删除行标签/引号并错误声称逐字；明确正文范围后两者正确 | T-03/T-20保留失败及四案对照；D14允许与协议兼容性分开评估，其它切换门不变 | 原提示仍失败；非已证明的native专属退化，不能以明确边界案例覆盖 | Open — shared model quality |
 | F-17 | P2 implementation | 异常后的异步渲染/保存期间仍接收迟到正文，现场与已捕获的历史内容可能不同 | T-07：异常结算关闭流回调，渲染与恢复身份独立；旧 render 被取消不阻止有效恢复重渲染 | deferred save 迟到 legacy/canonical、deferred render 异常/取消回归；249 Chat tests 与独立复核通过，关闭/切会话身份保护保留 | Closed — automated scope only |
 | F-18 | P2 implementation | typed partial-output-error 后正常 resolve 或 writingRecovery 缺少持久化中断标记，重开可能恢复完成操作 | T-07：所有部分结果在持久化前统一中断 warning，现场与 reload 共同使用 | typed partial/writingRecovery 保存重开，正文/result/Add to Editor/用户取消 warning；249 Chat tests 与独立复核通过 | Closed — automated scope only |
-| F-01 | P1 design | 新默认仍可能被旧 consent 门压回关闭，旧 true 迁移还会制造当前 confirmedAt | T-08/T-09 同步默认、实际准入和历史事实 | settings/load/runtime/collector fixtures | Open — planned |
-| F-02 | P1 design | 来源不明旧 false 无法从持久化值可靠判断是否人为关闭 | D8 已选择：无明确关闭证据即按新默认开启，不声称推断出用户历史意愿 | T-08 raw settings matrix，明确关闭/暂停优先，迁移只运行一次 | Decision resolved — implementation pending |
+| F-01 | P1 design | 新默认仍可能被旧 consent 门压回关闭，旧 true 迁移还会制造当前 confirmedAt | T-08/T-09 同步默认、实际准入和历史事实 | settings/load/runtime/collector fixtures + 真实宿主回执 | Closed — 默认/旧值不要求 confirmed，未制造 confirmedAt；显式 paused 保留 |
+| F-02 | P1 design | 来源不明旧 false 无法从持久化值可靠判断是否人为关闭 | D8 已选择：无明确关闭证据即按新默认开启，不声称推断出用户历史意愿 | T-08 raw settings matrix，明确关闭/暂停优先，迁移只运行一次 | Closed — D8 已实现并经真实宿主 load/save/reload 通过 |
 | F-03 | P1 design | 首请求带背景后，不能再实现任意自然语言“不发送”的前置承诺 | D1 只承诺可证实准入，P0 明确支持边界 | 物理输入 fixture，不靠回答自证 | Open — P0 |
 | F-04 | P1 design | native 工具结束目前会落 unknown；参数完整不等于真实完成 | T-03/T-05/T-17 | native/finish/tail/format 对照 | Open — P0 |
 | F-05 | P1 design | non-ordinary 在 Type A 前被滤除，单改 prompt 无法实现语义分层 | T-04/T-10 分开输入/最终候选两条准入 | 混合事实+任务、旧新 reader | Open — P0 |
@@ -778,6 +780,16 @@ T-07 普通回答异常后的可读恢复（2026-09-09）：
 - AC-05 → 普通回答已有正文后抛错，保留内容并写partial_output_error提示；canonical终态为error，未产生作品。空回答保留原错误行；已知图片来源/请求身份失效不保留撤回文本，provider_failed可保留 → Chat suite legacy/canonical异常、持久化/reopen、迟到chunk、图片错误类别、既有取消/清理 → 正文原字符保留、失败状态可恢复、无成功作品/自动保存建议 → UI finalizer/lifecycle/persistence/source错误变化重跑。
 - 初反例发现共用finalizer把partial正文更新为可复用result并挂AddToEditor；现对已标partial的收尾保留阅读/复制，不提供已完成输出的直接编辑入口，reopen根据已存partial_output_error/user_abort一致处理，不改变长期提取或风格授权。canonical测试初期错误地使用legacy onChunk，改用真实message_start/text_delta后验证通过，未修改生产逻辑来兼容错误fixture。
 - `npm test -- --runInBand __tests__/chat-view.test.ts`：246 tests PASS，3.103 s，自然exit0；`npx tsc -noEmit -skipLibCheck`和lint自然exit0。当前源改变使上一轮构建/全量/App加载证据失效；本片尚未重新build/deploy或真实窗口验证，T-07仍未完成。
+
+T-08/T-09 真实宿主默认学习收口（2026-09-12）：
+
+- 回执：[`evidence/2026-09-12-default-learning-host-matrix.json`](evidence/2026-09-12-default-learning-host-matrix.json)。输入绑定部署源码 `0bbe12ba4313ae537990d3d5208496f3c12bc312`、`dist/main.js` SHA-256 `0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684`、插件 2.9.2 和 repo-local `test` 库；文档 HEAD 为 `6aa96d851f699cf591526f153177349a512ceead`。当前只新增 Tracker/回执，源码、测试、fixture、配置、依赖和部署产物未变，因此复用 T-08/T-09 已通过的 5 suites/706 tests、实际旧 reader probe，以及当前冻结输入 `make deploy` 的 276 suites/7618 tests、lint/build 证据，不重复运行相同测试。
+- 真实 `loadSettings`→一次迁移→普通保存→重载矩阵通过：raw missing 与无动作证据的旧 `false` 均得到 `default/default` 和实际 11；不生成 `confirmedAt`、consent 保持 `unconfirmed`。有效 `paused` 保留 extraction=0 且 habit 默认=1；版本化 10/01 即使旧镜像相反也以 `learningPreferences` 为准，调度器状态随 extraction 独立变化。
+- 实际 Obsidian 设置 DOM 中两项 Toggle 均为 `is-enabled`，说明分别明确默认开启、provider/成本/本地存储边界，以及习惯学习只用本地聚合、不调用 provider/同步/导出/写笔记。此证据验证真实渲染状态与文案，不冒充鼠标点击可用性或 iOS 验收。
+- 全新插件实例的启动阶段是 0 history read、0 model create/invoke、0 cost record；新合成 Chat 从正式 plugin 调度入口进入同一生产 scheduler，使用 delay=0 仅加速本次 timer，随后发生4次来源读取/复验、1次本地拦截模型适配器调用、1次成本记录，并持久化 through-turn=8。`createChatModel` 在重建 scheduler 前替换为本地适配器，因此真实 provider 请求为0；这验证准入/生命周期，不证明模型语义质量。
+- 默认 habit collector 将一次真实 `view` 反馈写成3个本地聚合；独立关闭后返回 `disabled` 且聚合序列化内容不变，同时 extraction 仍开启。随后明确暂停 extraction，scheduler 立即为空、再调度模型增量为0；Memory 控制中心的 Personal reader 仍 `enabled`、style service 仍可用，临时关闭 Memory 主门时 prompt context 只剩 `memoryContextMode`，未投影治理正文。
+- 清理完成：首次诊断轮因 Obsidian 窗口 `hidden` 正确停在模型前，置前并缩短 timer 后确认产品路径；后续同 ID 停止是首个成功轮已持久化 processed cursor，并非产品故障。旧/新两个合成 cursor 最终均为 `null`，所有 `.b135-learning-*` 临时文件已删除，插件重载后 governance=`ready`、scheduler存在；`data.json` 前后 SHA-256 均为 `f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc`，回执 JSON 自检 PASS。T-08/T-09 由此标 Done；P2 仍受 T-10/T-11、真实语义、可见交互与受影响 iOS 阶段门约束。
+- 当前文档输入的 `npm run docs:check` PASS（206 Markdown、1820 links，4项既有episodic advisory）；`npm run test:docs -- --runInBand` 2 suites/58 tests PASS，5.958 s，自然exit0；回执JSON解析、`git diff --check`通过。随后仅补写本验证结果与当前任务描述，checker/tests/fixtures/config/dependencies未变；最终复跑docs:check和diff，文档测试证据继续适用。
 
 ## Closeout Readiness
 
