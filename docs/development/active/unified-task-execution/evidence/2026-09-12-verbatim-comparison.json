@@ -1,0 +1,205 @@
+{
+  "state": "done",
+  "startedAt": "2026-09-12T05:08:32.189Z",
+  "results": [
+    {
+      "name": "original-native",
+      "prompt": "请为测试卡片写一段作品。只使用这条消息，不读取笔记或网页。正文请逐字写成下面两行，保留第二行中间的两个空格：\n第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+      "expected": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+      "state": "done",
+      "startedAt": 1789189712190,
+      "requests": 2,
+      "preparations": 1,
+      "forbiddenCalls": [],
+      "models": [
+        {
+          "temperature": 0.8,
+          "transport": "native",
+          "qwenRequestOptions": {
+            "enableThinking": true
+          }
+        },
+        {
+          "temperature": 0.8,
+          "transport": "native",
+          "qwenRequestOptions": {
+            "enableThinking": true
+          }
+        }
+      ],
+      "events": [
+        {
+          "version": 1,
+          "turnId": "turn_mtxxcxfv_69dgtwlu",
+          "seq": 491,
+          "timestamp": 1789189763284,
+          "kind": "writing-artifact",
+          "runId": "run_mtxxcxfp_zdcid0ro",
+          "requestId": "b135-verbatim-original-native",
+          "messageId": "message_assistant_6",
+          "body": "安静且可信。\n保留  两个空格。🙂",
+          "explanation": "正文共两行，与你给出的内容逐字一致；第二行「保留」与「两个空格」之间为两个半角空格，末尾表情符号 🙂 原样保留。未读取任何笔记或网页，仅使用本条消息。",
+          "associatedImages": [],
+          "writingContext": {
+            "scene": {
+              "writingTask": "为测试卡片撰写两行正文",
+              "purpose": "验证卡片排版与空格逐字保留",
+              "audience": "进行界面测试的用户",
+              "domain": "软件测试"
+            }
+          },
+          "preamble": "已按要求逐字生成，第二行中间保留两个空格。\n\n",
+          "styleRevisionIds": []
+        }
+      ],
+      "elapsedMs": 51095,
+      "artifactCount": 1,
+      "exact": false
+    },
+    {
+      "name": "delimited-native",
+      "prompt": "请为测试卡片写一段作品。只使用这条消息，不读取笔记或网页。正文是下方 <作品正文> 与 </作品正文> 之间的全部两行文字（不包含分隔标记）。请逐字复制，包含“第一行：”“第二行：”、中文引号、双空格及 Emoji，不要改写。\n<作品正文>\n第一行：“安静且可信。”\n第二行：保留  两个空格。🙂\n</作品正文>",
+      "expected": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+      "state": "done",
+      "startedAt": 1789189763285,
+      "requests": 2,
+      "preparations": 1,
+      "forbiddenCalls": [],
+      "models": [
+        {
+          "temperature": 0.8,
+          "transport": "native",
+          "qwenRequestOptions": {
+            "enableThinking": true
+          }
+        },
+        {
+          "temperature": 0.8,
+          "transport": "native",
+          "qwenRequestOptions": {
+            "enableThinking": true
+          }
+        }
+      ],
+      "events": [
+        {
+          "version": 1,
+          "turnId": "turn_mtxxe0uv_jdnl5ctf",
+          "seq": 134,
+          "timestamp": 1789189781744,
+          "kind": "writing-artifact",
+          "runId": "run_mtxxe0uu_q59bse5p",
+          "requestId": "b135-verbatim-delimited-native",
+          "messageId": "message_assistant_6",
+          "body": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+          "explanation": "已逐字复制 <作品正文> 中的两行内容，保留行标签、中文引号、“保留”与“两个空格”之间的双空格以及 Emoji，未作任何改写；未读取笔记或网页。",
+          "associatedImages": [],
+          "writingContext": {
+            "scene": {
+              "writingTask": "为测试卡片逐字复制指定正文",
+              "purpose": "验证卡片渲染与逐字保真",
+              "audience": "提出测试的用户本人",
+              "domain": "测试卡片"
+            }
+          },
+          "styleRevisionIds": []
+        }
+      ],
+      "elapsedMs": 18459,
+      "artifactCount": 1,
+      "exact": true
+    },
+    {
+      "name": "delimited-legacy",
+      "prompt": "请为测试卡片写一段作品。只使用这条消息，不读取笔记或网页。正文是下方 <作品正文> 与 </作品正文> 之间的全部两行文字（不包含分隔标记）。请逐字复制，包含“第一行：”“第二行：”、中文引号、双空格及 Emoji，不要改写。\n<作品正文>\n第一行：“安静且可信。”\n第二行：保留  两个空格。🙂\n</作品正文>",
+      "expected": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+      "state": "done",
+      "startedAt": 1789189781744,
+      "requests": 1,
+      "preparations": 0,
+      "forbiddenCalls": [],
+      "models": [
+        {
+          "temperature": 0.8,
+          "transport": "native",
+          "qwenRequestOptions": {
+            "enableThinking": true
+          }
+        }
+      ],
+      "events": [
+        {
+          "version": 1,
+          "turnId": "turn_mtxxef3l_1yne6rth",
+          "seq": 113,
+          "timestamp": 1789189793108,
+          "kind": "writing-artifact",
+          "runId": "run_mtxxef3l_jrgmdqhb",
+          "requestId": "b135-verbatim-delimited-legacy",
+          "messageId": "message_assistant_2",
+          "body": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+          "explanation": "按 <作品正文> 标记之间的两行内容逐字复制，保留中文引号、双空格与 Emoji，未包含分隔标记。",
+          "associatedImages": [],
+          "styleRevisionIds": []
+        }
+      ],
+      "elapsedMs": 11364,
+      "artifactCount": 1,
+      "exact": true
+    },
+    {
+      "name": "original-legacy",
+      "prompt": "请为测试卡片写一段作品。只使用这条消息，不读取笔记或网页。正文请逐字写成下面两行，保留第二行中间的两个空格：\n第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+      "expected": "第一行：“安静且可信。”\n第二行：保留  两个空格。🙂",
+      "state": "done",
+      "startedAt": 1789189845065,
+      "requests": 1,
+      "preparations": 0,
+      "forbiddenCalls": [],
+      "models": [
+        {
+          "temperature": 0.8,
+          "transport": "native",
+          "qwenRequestOptions": {
+            "enableThinking": true
+          }
+        }
+      ],
+      "events": [
+        {
+          "version": 1,
+          "turnId": "turn_mtxxfryi_i11znqwp",
+          "seq": 121,
+          "timestamp": 1789189857976,
+          "kind": "writing-artifact",
+          "runId": "run_mtxxfryi_b40lxnp7",
+          "requestId": "b135-verbatim-original-legacy",
+          "messageId": "message_assistant_2",
+          "body": "安静且可信。\n保留  两个空格。🙂",
+          "explanation": "仅依据本条消息写作，未读取笔记或网页；正文按两行逐字呈现，第二行中间保留两个空格。",
+          "associatedImages": [],
+          "styleRevisionIds": []
+        }
+      ],
+      "elapsedMs": 12911,
+      "artifactCount": 1,
+      "exact": false
+    }
+  ],
+  "config": {
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "thinking": true
+  },
+  "sourceCommit": "a9196de95cc10559b628b06d84e545e1c8d088ee",
+  "buildSha256": "5f8fda2cf69480e9fed9f5571222e61ce9e0a8b607eb0ed2aab7d190a9161661",
+  "deployedSha256": "5f8fda2cf69480e9fed9f5571222e61ce9e0a8b607eb0ed2aab7d190a9161661",
+  "tier": "App-runtime isolated ChatService/provider diagnostic; no ChatView, persistence or device proof",
+  "limitations": [
+    "One sample per case; not a quality-rate estimate or default-switch gate.",
+    "streams remained empty: the model instance stream hook was not used by the bound runnable. No raw arguments, finish frames or physical HTTP bodies were captured.",
+    "Physical request counts use the original pre-dispatch callback including retries; model settings use the original factory.",
+    "onChunk text was discarded: snapshot callbacks cannot be concatenated into a fidelity assertion.",
+    "The request bound did not interrupt any case. Native uses one context preparation and two requests; legacy uses one request and no preparation, so elapsed time does not isolate protocol overhead."
+  ]
+}

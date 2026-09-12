@@ -12,7 +12,7 @@ SDD: [Software Design Document](./sdd.md)
 ## Current Snapshot
 
 - Current phase: P1 可靠性阶段验证待补；T-11 已有画像读取解耦和 T-12 语义路由均为部分实现，P0 技术验证及各阶段退出门不视为通过。
-- Next action: Owner 2026-09-12明确“恢复执行”并确认D13；旧recovery确认/已记录来源重验切片已实现并通过本片自动化与App-runtime验证。继续T-03逐字复写固定语义对照、T-14完整用途/历史、T-18完整生成来源跨重载身份和图文多版组合；完整兼容和App/device退出门仍未通过，不切默认native。
+- Next action: D13恢复片已交付，D14已确认。保留四案质量对照；补齐真实Desktop流式中断/恢复与另一provider最小对照，另一服务环境已向Owner询问。继续T-14/T-18完整生成来源及多版图文组合；默认native尚未启用，环境门缺失不记阶段完成。
 - Blocker / decision needed: D2/D3、D5、D8、D10、D11 均有 Owner 真实答复，无需重复产品批准。旧Profile读取绕过的P2已以独立命名空间、明确目标归属、稳定身份及精确恢复/Forget处理，定向审查与真实浏览器隔离证据见下。完整旧插件降级/重新升级操作矩阵、D1物理请求、D4语义质量及native兼容仍有工程验收项；不把当前局部App证明当整项完成。
 - Last verified behavior: 2026-09-12冻结输入后lint/build及完整275 suites/7570 tests自然PASS（328.043s），构建`5f8fda2cf69480e9fed9f5571222e61ce9e0a8b607eb0ed2aab7d190a9161661`已部署重载。真实Obsidian Chat恢复窗口/宿主/IndexedDB：明确确认后1个AI版本、提交正文与旧参考范围保留；已知缺失来源零版本；provider/学习调用均0，临时库/窗口已清理。无捕获错误，缺来源反例的预期拒绝日志保留。本片不改变T-03/F-20失败结论，不将App-runtime当full-ui/iOS或整体T-18通过。
 - Task count: 22项中2项完成、19项部分实现/验证、1项待最终汇总。2/22只表示完整验收任务占比，不是代码完成度；各阶段退出门尚未通过。
@@ -39,8 +39,17 @@ SDD: [Software Design Document](./sdd.md)
 | D11 | Confirmed — Owner 2026-09-09 对明确版本边界建议答复“同意” | 新语义凭据采用明确格式版本；降级旧版时保留治理库数据并停止该库的读取/确认/恢复，升级回来再恢复使用。接受旧版暂不能操作该治理库的代价；原笔记不修改 | T-04/T-10/T-19 全量跟踪：旧 parser 拒绝未知版本仅是局部证据；必须验证旧插件 bootstrap、普通保存、确认、恢复、legacy 画像路径及重新升级的数据保真。不得清空、覆盖或绕过治理库拒绝结果；产品批准不代表安全降级已验证 |
 | D12 | Confirmed — Owner 2026-09-10“接受，仅排除受影响的旧回复” | 旧助手回复含已撤销材料且无可靠段落级拆分时，仅暂时排除该条模型输入；界面原文及其他消息保留，来源重新获准有效后可恢复 | T-14原文/摘要/SDK同门，未知legacy不整体删除；已实现定向验证，不替代完整历史/作品快照及App门 |
 | D13 | Confirmed — Owner 2026-09-12“保留明确确认后的人工恢复（推荐）” | 重开后无法完整核验来源的旧作品：现有恢复窗口提示“旧来源记录不完整”，点击“确认并恢复为 AI 草稿”，不增加第二个弹窗；已确认撤销或失效仍拒绝，AI来源与学习限制保持 | T-18：完整有效、已知失效、记录不足分别处理；确认仅允许恢复记录不足的AI草稿，不覆盖失败检查、不证明旧来源全部有效或授予学习。新持久字段仍须另证旧reader兼容与最终事务准入 |
+| D14 | Confirmed — Owner 2026-09-12“接受分开评估，F-20 继续跟踪（推荐）” | 新旧协议共现的F-20保留为模型质量问题，不再单独否决专用通道兼容评估 | T-03/T-20仍保留原FAIL；协议、来源、预览、finish与App门通过后才切默认，非立即切换批准 |
 
 ## Work
+
+2026-09-12 D14文档与证据验证：docs:check通过（206 Markdown/1814链接，4条既有advisory），文档契约2 suites/58 tests PASS（5.899s，自然exit0），探针JS语法、四案证据结构/字符等式及diff检查通过。独立只读审计确认T-03/T-05/T-07部分旧待办措辞已被现有实现/回放覆盖，任务行已改写为实际剩余环境门，状态仍为部分完成。
+
+2026-09-12 T-03/F-20验证映射：AC-06/07/14 → 复用已验部署的真实ChatService/runtime和当前Qwen配置，以无笔记/背景/网页/历史的合成输入比较原逐字任务、明确正文分隔的native任务及同输入旧协议 → 记录实际温度/thinking、物理请求数、原始输出参数/finish与正文字符等式；每案最多3次物理请求，连续同因失败不盲重试 → 区分模型生成质量与传输保真，明确边界案例不能覆盖或抹去原失败；只作诊断不默认切换native。模型/schema/prompt/runtime/构建变化使相关证据失效；不因探针或证据文档重复全量运行门。
+
+同日[四案结果](evidence/2026-09-12-verbatim-comparison.json)与[三案原探针](evidence/2026-09-12-verbatim-probe.js)：Qwen qwen3.8-max、0.8、thinking=true，源码`a9196de`，生产与test部署均`5f8fda2cf69480e9fed9f5571222e61ce9e0a8b607eb0ed2aab7d190a9161661`。原提示native和旧协议均丢失同样的行标签/引号；明确正文分隔后两者均精确相等。每案一个artifact，native各2物理请求/1准备，旧协议各1请求/0准备，均自然完成，无触发禁止的读写/Memory调用。第四案以同一探针仅替换循环为`[{ name: 'original-legacy', prompt: original, native: false }]`，先保存前三案后运行，不重跑已完成样例。不是质量通过率、成本优劣或版本保存证明。
+
+证据限制与审查：原model实例的stream hook未被实际bound runnable调用，streams为空，本次**没有**留存raw参数、finish帧或每次HTTP输入；只以真实pre-dispatch计数、工厂参数及最终artifact字符等式判断。onChunk可能是snapshot，累加text不可用，结果中已去除。独立只读审查确认隔离成立；3次预算若触发只能算探针不足，本次均未触发。模型问题在两种协议同样出现是新证据，不能把原失败覆盖为PASS。Owner已明确答复“接受分开评估，F-20 继续跟踪（推荐）”，记为D14；F-20不再单独否决协议兼容性评估，仍保留质量失败与后续工作，其它门及default legacy保持。探针句柄已删除，真实ChatHost默认协议确认仍legacy；没有源码/测试/config/dependency变更，不重复上一恢复片已通过的全量门。
 
 2026-09-12恢复映射：AC-06/08/11 + D13 → 在现有恢复窗口加入来源记录不足说明和提交确认；Chat强制确认后经宿主验证确实记录的笔记/完整图片快照及parent正文身份，再把同步来源guard连到最终写入门；不从父版倒推本次风格/材料，来源范围保留旧记录不确定性 → 同页面有效/失效、真实history序列化重开后的确认/取消/编辑、已知撤销、异步准备后撤销和会话变化、旧记录无新字段回归 → 聚焦Chat/host/store tests、类型/静态检查和独立审查；必要冻结构建与App验证，检查输入变化使对应证据失效。工作树临时目录已被外部清理，已从保留的同一分支`21a5736`恢复，未重建分支或改动main工作树；重新链接同一已安装依赖，旧构建及临时日志不作为当前证据。
 
@@ -326,11 +335,11 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | --- | --- | --- | --- | --- |
 | T-01 | B-135/REQ-11 / B-135/AC-11 | 建立 L3 Decision/Spec/SDD/Plan/Tracker，旧任务新增工作转归 B-135 | [x] | 文档 gate、2 suites/58 docs tests 及独立设计复核见下方日志；不代表 P0 已完成 |
 | T-02 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-17 / B-135/AC-17 | 记录真实产品答复，冻结范围及迁移，不重问已确认边界 | [x] | D2/D3、D5、D8、D10 已按真实答复同步 DEC-034/Spec/SDD；仅产品选择及文档任务完成，T-03/T-04 可行性和 P0 退出门未通过 |
-| T-03 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07；B-135/REQ-14 / B-135/AC-14 | native 输出与旧协议独立兼容对照：当前 qwen 配置、转义/Unicode、增量预览、正常工具结束、tail 异常 | [~] | 当前 Qwen 合成文本 native/旧 envelope 对照已返回完整正文；真实参数片段预览回放、终局/混批/旧reader整链及其他支持环境仍须验证，失败不推广 |
+| T-03 | B-135/REQ-05 / B-135/AC-05；B-135/REQ-06 / B-135/AC-06；B-135/REQ-07 / B-135/AC-07；B-135/REQ-14 / B-135/AC-14 | native 输出与旧协议独立兼容对照：当前 qwen 配置、转义/Unicode、增量预览、正常工具结束、tail 异常 | [~] | native schema/真实历史delta经当前adapter→loop→bridge、终局/混批与无ack已有自动化及275套全门证据；当前Qwen四案按D14区分生成质量。仍缺另一受支持provider最小对照与完整App/device门，不重复实现既有链 |
 | T-04 | B-135/REQ-03 / B-135/AC-03；B-135/REQ-04 / B-135/AC-04；B-135/REQ-10 / B-135/AC-10 | P0 来源声明/物理输入、混合消息两段准入、旧新 reader 最小可行性 | [~] | D4 TypeA/plugin两门已贯穿，D11新库隔离有当前App证据；D1完整来源声明/物理请求及完整兼容矩阵未完成 |
-| T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | adapter先4RED、loop先2RED后修复；4 suites/149 tests通过含旧作品整链。native工具正常结束类型、完整故障矩阵与实际App仍未完成 |
+| T-05 | B-135/REQ-14 / B-135/AC-14 | finish 及时传递，生成结束/transport/schema 分离，数组 chunk 原样保真 | [~] | tool_calls独立完成类型、finish/格式分离、tail异常/挂起及无重复invoke已有当前测试和全门证据；剩余另一provider及真实App中断/完成组合验收 |
 | T-06 | B-135/REQ-15 / B-135/AC-15；B-135/REQ-16 / B-135/AC-16 | 单一绝对期限、软收尾过渡、投影前无正文诊断 | [~] | 共同runStartedAt与startup零dispatch已有证据；本轮实现incremental已开始正文延续至原hardAt，softAt后走terminal policy而不再请求，工具仍受soft准入。新增正常完成/异常/取消/late tool及hardAt反例；完整诊断与App门仍待完成 |
-| T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [~] | 正在添加受宿主来源约束的预览、可读恢复与独立提示；完整作品decoder/结束检查不变。需字符前缀、来源撤销、取消、持久化/reload与Desktop smoke |
+| T-07 | B-135/REQ-05 / B-135/AC-05 | 普通回答与作品成版分离，中断/格式失败保留可读内容及真实恢复状态 | [~] | 预览与最终成版分离、来源撤销、取消迟到、持久化/reload已有回归；D13真实旧记录恢复已验。仍缺生成过程中实际Desktop预览/中断/恢复及受影响iOS，不能由静态恢复样例替代 |
 | T-08 | B-135/REQ-17 / B-135/AC-17 | 原始旧值分类、默认策略/用户动作分离、版本迁移与 load/save/reload | [~] | D8 已确认；新增默认版本区分旧 false 与迁移后明确偏好，不伪造 consent/confirmedAt、不清空治理数据 |
 | T-09 | B-135/REQ-17 / B-135/AC-17 | 默认实际准入、scheduler/collector、独立关闭暂停/恢复、首次说明与设置 UI | [~] | 随 T-08 调整真实准入，11/10/01/00、持久化失败/并发保存、零新增收集及 App 仍须验证 |
 | T-10 | B-135/REQ-10 / B-135/AC-10 | Chat 来源、Type A 语义候选与两条最终准入；混合真实事实/任务要求，默认开启也不学成长期风格 | [~] | semantic lane、最终保存/确认/恢复、稳定ID及source lifetime已实现；当前Qwen合成混合事实/纯任务/双事实1/0/2候选可回放。完整Chat/设置组合及语义质量门仍待验收；关闭时不另跑提取模型分类 |
@@ -384,7 +393,7 @@ UI/runtime 的阶段验证使用 `make deploy` 或符合复用条件的 current-
 | ID | Severity | Finding | Decision / fix | Verification | State |
 | --- | --- | --- | --- | --- | --- |
 | F-19 | P2 implementation | 有效context后仍无条件提示先准备，模型12次改写scene并重复准备至deadline | T-16/T-20按有效receipt切换指导；语义同义改写不构成准备理由，仍保留真实更正/新证据/失效改选 | runtime状态输入先RED后PASS；同自然语言App案例2请求/1准备/无ack，独立复核 | Closed — bounded app-runtime sample; broader semantic quality pending |
-| F-20 | P2 model quality | 逐字两行任务被模型删除行标签和中文引号，explanation却声称逐字；artifact到版本本身一致 | T-03/T-20保留失败原文/结果，不靠说明自证；补明确正文边界的固定语义对照，native不推广 | 修复准备状态前后均保留双空格/Emoji但不满足完整字符等式；尚未解决 | Open — native compatibility/quality |
+| F-20 | P2 model quality | 原逐字提示在新旧协议均删除行标签/引号并错误声称逐字；明确正文范围后两者正确 | T-03/T-20保留失败及四案对照；D14允许与协议兼容性分开评估，其它切换门不变 | 原提示仍失败；非已证明的native专属退化，不能以明确边界案例覆盖 | Open — shared model quality |
 | F-17 | P2 implementation | 异常后的异步渲染/保存期间仍接收迟到正文，现场与已捕获的历史内容可能不同 | T-07：异常结算关闭流回调，渲染与恢复身份独立；旧 render 被取消不阻止有效恢复重渲染 | deferred save 迟到 legacy/canonical、deferred render 异常/取消回归；249 Chat tests 与独立复核通过，关闭/切会话身份保护保留 | Closed — automated scope only |
 | F-18 | P2 implementation | typed partial-output-error 后正常 resolve 或 writingRecovery 缺少持久化中断标记，重开可能恢复完成操作 | T-07：所有部分结果在持久化前统一中断 warning，现场与 reload 共同使用 | typed partial/writingRecovery 保存重开，正文/result/Add to Editor/用户取消 warning；249 Chat tests 与独立复核通过 | Closed — automated scope only |
 | F-01 | P1 design | 新默认仍可能被旧 consent 门压回关闭，旧 true 迁移还会制造当前 confirmedAt | T-08/T-09 同步默认、实际准入和历史事实 | settings/load/runtime/collector fixtures | Open — planned |

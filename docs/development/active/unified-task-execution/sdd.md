@@ -248,6 +248,8 @@ JSON字符串，普通object对照返回正确对象。因此模型侧scene使�
 不代替来源校验，不用模糊scene比较复用旧handle。用户要求逐字复写时保留正文中的标签、
 引号、空白及Unicode；模型遵循效果须由真实字符对照证明，不能以explanation自证。
 
+2026-09-12 D14：Owner确认F-20作为新旧协议共有的模型质量问题继续跟踪，与专用通道兼容性分开评估。明确边界的成功样例不覆盖原提示失败；其它schema、原始完成证据、来源、预览及App门仍须通过，不能据本决定直接启用默认native。
+
 WritingContextRun提供projectTranscript及captureTranscriptValidity：按实际canonical
 工具结果完整JSON验证已发布receipt，先clone再异步验证父版，失效替换同时去掉正文、
 preview及metadata，保留独立消息和原记录。捕获同步闭包拒绝receipt替换、材料/style
