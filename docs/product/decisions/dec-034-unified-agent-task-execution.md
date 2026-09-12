@@ -3,12 +3,12 @@
 Decision ID: DEC-034
 Status: Accepted
 Updated: 2026-09-12
-Authority: Owner 于 2026-09-08 确认主 Agent 语义决策和统一写作方向；2026-09-09 明确默认学习与个性化边界，并要求建立 SDD、将全部新增工作归 B-135。Accepted 仅覆盖本文件明确列出的已确认产品选择，不将待决机制或实施视为获批。
+Authority: Owner 于 2026-09-08 确认主 Agent 语义决策和统一写作方向；2026-09-09 明确默认学习与个性化边界并将全部新增工作归 B-135。B-135 已完成实现与验证，本记录承担稳定产品选择，历史证据见验证归档。
 Work item: B-135
 
 ## Context
 
-“我好久好久没有写博客了，你有什么文章话题的建议吗？”被本地关键词识别成写作，进入最终文本 JSON 协议；原 run 在硬期限结束时 JSON 未闭合，可读内容被恢复提示替代。故障、源码事实与未知项见 [Solution Brief](../../development/discovery/pa-agent-unified-task-execution.md#2-baseline-and-evidence)。该证据不证明 native 协议、当前 provider 正常结束或新默认已经实现。
+“我好久好久没有写博客了，你有什么文章话题的建议吗？”被本地关键词识别成写作，进入最终文本JSON协议；原run在硬期限结束时JSON未闭合，可读内容被恢复提示替代。故障、源码事实与当时未知项见[历史验证的原事故](../../archive/2026/b135-unified-task-execution-validation.md#original-incident)。该证据本身不证明native协议、当前provider正常结束或新默认已经实现。
 
 PA 的个性化来自对用户的持续理解。只用当前笔记取材，不应同时关闭个人画像、既有 Memory 和已授权风格。默认能力也不应要求用户先逐项管理开关；这与 [North Star](../pa-product-north-star.md) 的透明告知及独立退出一致。
 
@@ -36,7 +36,7 @@ PA 的个性化来自对用户的持续理解。只用当前笔记取材，不�
 
 ### Dated choices and implementation boundary
 
-2026-09-12 D14 补充决定：当前Qwen真实对照中，原逐字提示在新旧协议均删去同样的行标签/引号，明确正文边界后两者均正确。Owner明确答复“接受分开评估，F-20 继续跟踪（推荐）”：F-20作为尚未解决的模型质量问题保留，不再单独否决专用作品通道的兼容性评估。协议、来源、增量预览、完成证据与App门仍必须通过后才切换默认；不得将该决定写成原提示逐字输出PASS，也不批准立即切换或减去其余验收项。全部证据与后续仍归B-135/T-03/T-20。
+2026-09-12 D14 补充决定：当前Qwen真实对照中，原逐字提示在新旧协议均删去同样的行标签/引号，明确正文边界后两者均正确。Owner明确答复“接受分开评估，F-20 继续跟踪（推荐）”：F-20作为模型质量限制保留，不再单独否决专用作品通道的兼容性评估。当时仍要求协议、来源、增量预览、完成证据与App门全部通过后才能切换默认，不得将该决定写成原提示逐字输出PASS或减去其余验收项；这些门随后由B-135/T-03/T-20完成，最终证据见验证归档。
 
 2026-09-12 D15 补充决定：Owner明确答复“接受D15建议”。DeepSeek `deepseek-v4-pro`在同一明确正文样例中通过native输出时把中文弯引号改为ASCII直引号，而旧协议保留弯引号；两条传输都把provider正文逐字交付为artifact。该单样例差异作为模型质量限制记录，保持已经通过兼容与Desktop门的native默认，不增加自动fallback、运行时双协议或DeepSeek特判。F-23据此完成处置但保留原始失败证据；不能把传输保真写成模型逐字质量通过，也不据单样例推断稳定质量率。
 
@@ -54,9 +54,9 @@ PA 的个性化来自对用户的持续理解。只用当前笔记取材，不�
 
 2026-09-09 D10 补充决定：Owner 同意拆开停止新提取与使用已有画像。关闭或暂停长期记忆提取只停止新学习；已有有效画像仍可用于后续模型输入，继续受 Memory 主开关、来源有效性、治理、排除、遗忘及预算控制。删除/遗忘内容或关闭 Memory 后按相应边界停止使用，显式风格维持独立授权与撤销。设置说明须清楚表达停止学习不等于停止使用已有背景，实现与验证归 B-135/T-11。
 
-本轮产品选择队列已完成，真实答复及工程验证依赖见 [B-135 Tracker](../../development/active/unified-task-execution/tracker.md#decisions)。更严格的自然语言“首个请求前不得发送某类上下文”仍须明确其可实现边界，不能发送后声称未发送；如工程验证要求新增交互或改变产品范围，另提交具体选择。
+本轮产品选择队列已完成，真实答复和工程验证见本决定及[B-135历史验证](../../archive/2026/b135-unified-task-execution-validation.md)。更严格的自然语言“首个请求前不得发送某类上下文”仍须明确其可实现边界，不能发送后声称未发送；如后续要求新增交互或改变产品范围，另提交具体选择。
 
-实施授权、当前验证证据与交付状态由Tracker记录；产品答复不代替真实provider、部署、Git或阶段验收证据。SDD中未确认的产品选择不因文档整体状态而成为实施依据。
+B-135实施、真实provider、部署和阶段验收已完成，最终范围见验证归档；产品答复本身不代替这些证据。后续新的产品选择仍须按当前文档流程确认，不能从本次已完成状态外推。
 
 ## Scoped Supersession
 
@@ -71,7 +71,7 @@ PA 的个性化来自对用户的持续理解。只用当前笔记取材，不�
 - Architecture / data / safety: 主 Agent 解释语义，宿主保有真实身份、来源、权限、完整性、预算和保存职责；不声称宿主能够独立证明模型对自然语言的理解。
 - Compatibility / migration: 新旧 settings、Chat、recovery、版本和 provenance reader 已分别验证；迁移不改源笔记、不触发额外提取或整库重建。后续结构变化仍须重新验证对应reader。
 - 2026-09-09 Owner 确认新学习来源凭据采用明确格式版本：降级旧版时保留治理库数据，暂停旧版对该库的读取、确认和恢复；重新升级后恢复使用，原笔记不修改。旧插件保存、legacy画像和重新升级路径已由B-135/T-19实测；未知版本拒绝仍不能单独替代整条兼容链证明。
-- Work created: [B-135 Active Package](../../development/active/unified-task-execution/README.md) 是唯一新增工作入口。保持旧任务过程文件原状；稳定契约使用本决定的有日期修订链接。
+- Work delivered: B-135已独立完成全部新增工作，旧任务过程文件保持原状；稳定契约使用本决定的有日期修订，最终证据见[B-135历史验证](../../archive/2026/b135-unified-task-execution-validation.md)。
 
 ## Revisit Trigger
 
@@ -79,7 +79,6 @@ PA 的个性化来自对用户的持续理解。只用当前笔记取材，不�
 
 ## Traceability
 
-- Discovery: [B-135 Solution Brief](../../development/discovery/pa-agent-unified-task-execution.md)
 - Product Spec: [Unified Agent Task Execution](../specs/pa-unified-task-execution-product-spec.md)
-- Architecture / SDD: [B-135 SDD](../../development/active/unified-task-execution/sdd.md)
-- Execution: [B-135 Tracker](../../development/active/unified-task-execution/tracker.md)
+- Architecture: [PA Agent](../../architecture/pa-agent-architecture-plan.md) / [Multimodal Chat](../../architecture/multimodal-chat-architecture.md) / [Settings](../../architecture/settings-status.md)
+- Historical implementation and validation: [B-135 closeout evidence](../../archive/2026/b135-unified-task-execution-validation.md)

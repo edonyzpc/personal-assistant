@@ -2,7 +2,7 @@
 
 Decision ID: DEC-005
 Status: Accepted
-Updated: 2026-09-09
+Updated: 2026-09-12
 Authority: Memory 自动提取、使用与用户控制的产品信任模型。
 Work item: Historical Memory governance
 
@@ -31,7 +31,7 @@ Work item: Historical Memory governance
 伪造用户点击确认或 `confirmedAt`；真实关闭/暂停需保留，旧值迁移边界见 DEC-033。
 本次修订不增加逐条确认，不改变 DEC-028 的笔记 Memory 首次准备路径、已有记录
 治理、显式风格授权或高后果权限；生成、改稿、保存和本次指令不自动成为长期风格。
-新默认的实现与验证全部由 [B-135 Tracker](../../development/active/unified-task-execution/tracker.md) 承接，长期选择见 [DEC-034](./dec-034-unified-agent-task-execution.md)；旧任务不重开，当前文档不证明运行时已完成迁移。
+新默认的实现与验证已由B-135完成，长期选择见[DEC-034](./dec-034-unified-agent-task-execution.md)，最终证据见[B-135验证归档](../../archive/2026/b135-unified-task-execution-validation.md)；旧任务不重开。
 
 ## Consequences
 

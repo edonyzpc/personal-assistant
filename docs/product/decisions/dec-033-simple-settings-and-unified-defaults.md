@@ -2,7 +2,7 @@
 
 Decision ID: DEC-033
 Status: Accepted
-Updated: 2026-09-09
+Updated: 2026-09-12
 Authority: Owner 于 2026-09-08 认可设置简化及明确撤销项的统一行为；于 2026-09-09 在 B-135 讨论中将长期记忆提取与本地习惯学习改为分别默认开启，无需逐项主动启用，同时保留各自关闭、暂停和管理。新决定覆盖前一日的默认关闭选择，不追溯改写历史授权。
 Work item: B-106
 
@@ -17,8 +17,10 @@ Settings 已有分组和折叠，但仍把必要实现机制、用户偏好、�
 
 2026-09-08 的选择是长期提取与习惯学习默认关闭、独立主动开启。Owner 于
 2026-09-09 明确修订为默认开启，以满足功能需要、减少用户为获得基础能力管理
-多个开关的负担。本次修订是新的产品契约；当前源码仍采用旧默认和 consent 准入，
-本修订的后续默认、准入、迁移、实现与验证全部由 [B-135 Tracker](../../development/active/unified-task-execution/tracker.md) 承接，长期产品选择归 [DEC-034](./dec-034-unified-agent-task-execution.md)；B-106 原交付证据不重写、不重开，不把文档更新称为运行时已生效。
+多个开关的负担。本次修订是新的产品契约；当前源码已由B-135实现新默认、准入和迁移，
+长期产品选择归[DEC-034](./dec-034-unified-agent-task-execution.md)，最终证据见
+[B-135验证归档](../../archive/2026/b135-unified-task-execution-validation.md)。B-106原交付
+证据不重写、不重开。
 
 ## Options Considered
 
@@ -99,7 +101,7 @@ Settings 已有分组和折叠，但仍把必要实现机制、用户偏好、�
 
 - Product Spec: [Simple Settings](../specs/pa-simple-settings-product-spec.md)
 - Product standard: [North Star](../pa-product-north-star.md)
-- Dated amendment source: [B-135 discussion and Solution Brief](../../development/discovery/pa-agent-unified-task-execution.md)
+- Dated amendment source: [DEC-034](./dec-034-unified-agent-task-execution.md) and [B-135 historical validation](../../archive/2026/b135-unified-task-execution-validation.md)
 - Current implementation entry: [Settings status](../../architecture/settings-status.md)
 - Original development entry: [B-106 Feature Home](../../development/active/simple-settings/README.md)
-- New default/migration implementation: [B-135 Feature Home](../../development/active/unified-task-execution/README.md)，不向原 B-106 Tracker 新增任务。
+- New default/migration implementation: [B-135 historical validation](../../archive/2026/b135-unified-task-execution-validation.md)，不向原B-106 Tracker新增任务。

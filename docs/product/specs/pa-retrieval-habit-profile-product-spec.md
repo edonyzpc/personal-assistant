@@ -1,13 +1,13 @@
 # PA Retrieval Habit Profile Product Spec
 
-Updated: 2026-09-09
+Updated: 2026-09-12
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / current durable contract |
-| Status | Current contract includes the 2026-09-09 default-on amendment. Historical M12 opt-in runtime and B-118 exact-candidate Dismiss validation remain evidence for their original scopes; all new default, migration and validation work is owned by B-135. |
+| Status | Current contract includes the delivered 2026-09-09 default-on amendment. Historical M12 opt-in runtime and B-118 exact-candidate Dismiss validation remain evidence for their original scopes; B-135 owns the later default, migration and validation evidence. |
 | Feature family | Retrieval Habit Profile / Local retrieval adaptation |
 | Primary surfaces | Active Vault Indexer, Quiet Recall, Pagelet, Settings advanced data controls |
 | Related research | [PA Agent AI insight research report](../../archive/pa-agent-ai-insight-research-report.md) |
@@ -30,10 +30,10 @@ The owner-approved [DEC-033 amendment of 2026-09-09](../decisions/dec-033-simple
 now sets local habit learning on by default, with a first-use explanation and
 independent disable/pause/clear controls. It supersedes the earlier opt-in
 default, without rewriting the historical implementation evidence above. The
-[B-135 Tracker](../../development/active/unified-task-execution/tracker.md) owns all
-new default, admission, migration and validation work under
+[B-135 historical validation](../../archive/2026/b135-unified-task-execution-validation.md)
+records the completed default, admission, migration and validation work under
 [DEC-034](../decisions/dec-034-unified-agent-task-execution.md). Earlier tracks
-are not reopened; the new default is not yet a claim about the shipped runtime.
+remain closed and are not rewritten with the later evidence.
 
 The product definition:
 

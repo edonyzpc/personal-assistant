@@ -1,15 +1,15 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-09
+Updated: 2026-09-12
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
-| DEC-034 | Unified Agent task execution | Accepted | B-135 已确认的语义决策、个性化与默认学习；全部增量统一归属，待决机制不作实施批准 | [Record](./dec-034-unified-agent-task-execution.md) |
-| DEC-033 | Simple settings and unified defaults | Accepted | B-106 必要机制内置；2026-09-09 修订为长期提取与本地习惯学习分别默认开启、独立关闭/暂停和首次透明说明；真实停用不复活，旧默认/consent 迁移待设计；废弃规则仍只限明确撤销项 | [Record](./dec-033-simple-settings-and-unified-defaults.md) |
+| DEC-034 | Unified Agent task execution | Accepted | B-135 已交付的主 Agent 语义、个性化取材、来源准入、作品交付、恢复与兼容边界；历史验证已归档 | [Record](./dec-034-unified-agent-task-execution.md) |
+| DEC-033 | Simple settings and unified defaults | Accepted | B-106 必要机制内置；2026-09-09 修订的长期提取与本地习惯学习默认开启、独立退出和旧值迁移已由 B-135 交付；废弃规则仍只限明确撤销项 | [Record](./dec-033-simple-settings-and-unified-defaults.md) |
 | DEC-001 | PA Agent builtin MCP-style WebSearch adapter | Accepted | PA Agent network-read capability | [Record](./pa-agent-mcp-adapter-decision.md) |
 | DEC-003 | Preserve the dual product line | Accepted | Product boundary and investment direction | [Record](./dec-003-dual-product-line.md) |
 | DEC-005 | Transparent and reversible Memory governance | Accepted | Memory trust and permission model | [Record](./dec-005-memory-governance.md) |

@@ -12,7 +12,7 @@ Authority: B-129 用户已确认的图片理解、个性化文案、显式保存
 后续紧凑图片输入与保存表单的独有证据见 [图片体验验证](../../archive/2026/chat-image-experience-validation.md)。
 验收证据的覆盖范围不能扩大为所有模型、设备和交互均已验证，也不自行授予发布权限。
 
-2026-09-12 [B-135](../../development/active/unified-task-execution/README.md)只修订
+2026-09-12 [B-135](../../archive/2026/b135-unified-task-execution-validation.md)只修订
 REQ-09的作品传输：生产Chat在完成兼容、来源、预览、结束和Desktop验证后默认使用
 宿主专用`present_writing`通道，旧JSON/recovery reader继续保留。Owner按D15接受
 DeepSeek单样例引号差异作为模型质量限制，不增加自动fallback、双协议或provider特判。

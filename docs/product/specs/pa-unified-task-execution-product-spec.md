@@ -4,7 +4,7 @@ Document status: Current
 Updated: 2026-09-12
 Work item: B-135
 Decision: [DEC-034](../decisions/dec-034-unified-agent-task-execution.md)
-Authority: B-135 已确认产品边界的当前记录与目标验收索引；未决产品变化在下方隔离，不属于已批准实施范围，当前实现与验收状态只以Tracker为准。
+Authority: B-135已交付产品边界的当前记录与REQ/AC索引；当前实现以源码和Architecture为准，最终验证见历史归档。
 
 ## Problem And Product Outcome
 
@@ -14,7 +14,7 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 
 ## Scope And Acceptance Criteria
 
-沿用 Discovery 的 REQ/AC-01–16 身份，新增 REQ/AC-17 统一承接默认学习全部增量。表中行为是目标验收；产品已选范围以 DEC-034 为准，待决机制不授予实现权限。REQ/AC-13 的语义提议变化已由 Owner 于 2026-09-09 确认 D5，保留现有启用、工具范围、来源与执行保护，实施验证归 T-15。
+沿用B-135建立的REQ/AC-01–16身份，以REQ/AC-17统一承接默认学习增量。表中行为是当前产品验收契约；产品选择以DEC-034为准。REQ/AC-13的语义提议变化由Owner于2026-09-09确认D5，保留现有启用、工具范围、来源与执行保护。
 
 | Requirement | Acceptance outcome |
 | --- | --- |
@@ -42,9 +42,9 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 - 既有笔记 Memory 与显式风格使用保持各自准入，不误绑新提取开关。按已确认 D10，普通已存 Personal 的读取与新提取解耦：关闭/暂停提取只停止新学习，已有画像仍可进入后续模型请求。Memory 主控制、治理、来源、排除、遗忘、场景匹配与预算仍适用；设置说明明确两者差别，覆盖实际输入、保存失败与重载验证。
 - 真实宿主输入限制在每个物理 provider 请求前生效，覆盖 retry、summary、rewrite、旧工具结果及其派生摘要。保留获准历史完整原文；超限才使用有来源摘要和近期原文，不退回只看本轮或只保留用户轮。
 - D12（Owner 2026-09-10确认）：旧助手回复混有已撤销来源事实和方案且无法可靠拆分时，仅将受影响的该条回复暂时排除出后续输入，界面原文和其他消息保留；来源重新获准且有效后可恢复。摘要同样排除，不按缺少新metadata统一删除旧会话。此兼容例外由B-135/T-14验收。
-- 本轮局部“不要模仿以前风格”是输出用途要求；首个 provider 请求前“不要发送某类背景”是不同能力，不可事后声称已阻断。后者的支持范围仍为设计待决项。
+- 本轮局部“不要模仿以前风格”是输出用途要求；首个provider请求前“不要发送某类背景”是不同能力，不可事后声称已阻断。当前只承诺宿主能够在每次物理发送前验证的结构化来源与用途边界；新增自然语言交互或扩大阻断范围属于后续独立产品变化。
 - 首版每轮至多一个作品。多篇请求可组织为一份分节组合正文；不静默丢掉用户请求的内容，不新增独立多作品管理平台。
-- 原 B-106/B-118/B-128/B-129/Operations 契约中仍有效的约束作为继承边界。本次新增修复、迁移与回归全部由 B-135 Tracker 承担，不重开旧任务。
+- 原B-106/B-118/B-128/B-129/Operations契约中仍有效的约束作为继承边界。B-135新增修复、迁移与回归已独立交付，不重开旧任务。
 
 ### Non-goals
 
@@ -79,10 +79,10 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 
 2026-09-12已确认D15：Owner接受将DeepSeek `deepseek-v4-pro`在同一明确正文样例中把中文弯引号改为ASCII直引号记录为单样例模型质量限制；旧协议保留弯引号，两条传输都把provider正文逐字交付为artifact。保持native默认，不增加自动fallback、运行时双协议或DeepSeek特判；保留原始失败证据，不把传输保真冒充模型逐字质量通过。
 
-已确认的模型语义、个性化边界、默认开启及 B-135 全量归属不重复询问。Owner 于 2026-09-09 选择专用作品通道及直接终局交付，兼容验证通过后切换；同日确认 Operations 语义提议及保留执行保护、无明确关闭证据的旧 false 迁移为开启，以及停止新提取与已有画像读取解耦。D15确认后本轮产品选择均已完成；答复及工程验证依赖集中在 [Tracker Decisions](../../development/active/unified-task-execution/tracker.md#decisions)。首请求发送限制的已支持边界及物理输入证据由Tracker记录；新的产品取舍仍不得用Approved标签替代真实答复。
+已确认的模型语义、个性化边界、默认开启及B-135全量归属不重复询问。Owner于2026-09-09选择专用作品通道及直接终局交付，兼容验证通过后切换；同日确认Operations语义提议及保留执行保护、无明确关闭证据的旧false迁移为开启，以及停止新提取与已有画像读取解耦。D15确认后本轮产品选择均完成；最终决定和工程证据见[DEC-034](../decisions/dec-034-unified-agent-task-execution.md)与[B-135验证归档](../../archive/2026/b135-unified-task-execution-validation.md)。首请求发送限制只承诺宿主能在物理发送前证明的边界；新的产品取舍仍不得用文档状态替代真实答复。
 
-## Delivery Handoff
+## Delivery Record
 
-- Active Package: [B-135](../../development/active/unified-task-execution/README.md)
+- Historical validation: [B-135 final validation and closeout](../../archive/2026/b135-unified-task-execution-validation.md)
 - Architecture contracts: [Multimodal Chat](../../architecture/multimodal-chat-architecture.md)、[Settings current status](../../architecture/settings-status.md)、[Write Action Framework](../../architecture/write-action-framework-sdd.md)
-- Release / rollout boundary: 实现、provider/Desktop、390×844 mobile simulator、平台风险审计及最终统一gate均已进入B-135开发分支，Tracker状态为Validated。工作分支不是Beta源；closeout、master、Beta、tag和release仍各自需要独立授权。
+- Release / rollout boundary: closeout记录不作为master、Beta、BRAT安装、设备smoke或stable发布证据；这些状态由对应Git与release流程单独证明。

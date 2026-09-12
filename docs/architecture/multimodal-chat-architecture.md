@@ -5,7 +5,7 @@ Updated: 2026-09-12
 Work item: B-129
 Authority: 当前图片聊天、作品输出、文案版本、图文保存及显式风格参考的技术契约。
 Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [B-129 Product Spec](../product/specs/pa-multimodal-chat-product-spec.md) / [B-135 Product Spec](../product/specs/pa-unified-task-execution-product-spec.md)
-Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md) / [图片管理修订验证](../archive/2026/chat-image-management-validation.md) / [B-135 Tracker](../development/active/unified-task-execution/tracker.md)
+Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md) / [图片管理修订验证](../archive/2026/chat-image-management-validation.md) / [B-135统一Agent验证](../archive/2026/b135-unified-task-execution-validation.md)
 
 ## 图片管理与保存恢复
 

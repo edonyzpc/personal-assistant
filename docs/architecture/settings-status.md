@@ -31,8 +31,8 @@ Settings 简化的产品目标和旧选项失效规则见
 来源与治理边界运行，并可独立关闭；关闭长期提取只停止新增学习，已有有效Personal
 仍须通过Memory主开关、来源有效性、治理、排除和遗忘边界后才可使用。
 
-该修订及其scheduler/collector、设置页和Desktop退出证据全部由
-[B-135 Tracker](../development/active/unified-task-execution/tracker.md)承接，产品修订见
+该修订及其scheduler/collector、设置页和Desktop退出证据见
+[B-135最终验证](../archive/2026/b135-unified-task-execution-validation.md)，产品修订见
 [DEC-034](../product/decisions/dec-034-unified-agent-task-execution.md)。旧B-106不新增任务；
 B-135已复用共享Linux/Desktop证据，并以390×844 Obsidian mobile simulator验证设置
 可达性。改动面没有macOS/iOS专属路径，因此没有B-135设置真机缺口；Keychain等其它

@@ -1,7 +1,7 @@
 # Pagelet UI/UX Hardening Product Spec
 
 Document status: Approved
-Updated: 2026-09-09
+Updated: 2026-09-12
 Work item: B-118
 Decision: [DEC-021 — 按真实界面证据分阶段修复 Pagelet UI/UX 漂移](../decisions/dec-021-evidence-led-pagelet-ui-ux-hardening.md)
 Scoped decision: [DEC-023 — Pagelet provider 首次使用采用共享非阻断通知](../decisions/dec-023-shared-pagelet-provider-first-use.md)
@@ -16,7 +16,7 @@ foreground Review / generic background preload 风险分类选择 DEC-023 方案
 
 2026-09-09 scoped amendment：Retrieval Habit Profile默认行为按
 [DEC-033](../decisions/dec-033-simple-settings-and-unified-defaults.md)改为默认开启、
-首次透明说明与独立退出。新默认实现/验证全部由[B-135 Tracker](../../development/active/unified-task-execution/tracker.md)承接，不重开旧任务，不改变B-118原有实测证据。
+首次透明说明与独立退出。新默认实现/验证已由B-135完成，最终证据见[B-135验证归档](../../archive/2026/b135-unified-task-execution-validation.md)；不重开旧任务，不改变B-118原有实测证据。
 
 > [!note] Successor amendment 2026-08-06
 > B-118 的三项长按菜单与对应 smoke 保持历史事实，不改写为已验证四项。当前 Ring 由
