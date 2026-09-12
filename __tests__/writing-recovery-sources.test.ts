@@ -3,6 +3,7 @@ import { WritingVersionService } from '../src/chat/writing-versions';
 import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
 import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from '../src/ai-services/chat-types';
 import type { MessageImage } from '../src/chat/image-types';
+import type { GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
 
 const recovery = (): ChatWritingRecovery => ({ requestId: 'request', rawText: 'Old AI draft', reason: 'invalid_output' });
 const photo = (id: string): MessageImage => ({ ref: { assetId: id, contentHash: 'a'.repeat(64) }, ordinal: 1, label: id });
@@ -13,8 +14,16 @@ function setup() {
         isMemoryAllowed: () => true,
         verifyNote: jest.fn(async () => ({ isCurrent: () => current.note })),
         verifyImage: jest.fn(async () => ({ isCurrent: () => current.image })),
+        verifyGenerationSource: jest.fn(async () => ({ isCurrent: () => current.note })),
     };
     return { host, current };
+}
+function generationInput(overrides: Partial<GenerationInputSnapshot> = {}): GenerationInputSnapshot {
+    return {
+        schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
+        personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
+        parent: { state: 'none' }, pagelet: { state: 'none' }, ...overrides,
+    };
 }
 async function parent(): Promise<WritingVersion> {
     return { id: 'parent', requestId: 'request-parent', messageId: 'message-parent', conversationId: 'chat',
@@ -24,6 +33,71 @@ async function parent(): Promise<WritingVersion> {
 }
 
 describe('explicitly confirmed recovery source revalidation', () => {
+    test('uses the physical snapshot instead of adding the run-end source union', async () => {
+        const { host } = setup();
+        const input = generationInput({ task: { state: 'identified', sources: [{
+            purpose: 'task_material', kind: 'context-used', boundary: 'read-only-tool', dedupKey: 'note:B.md',
+            revision: { state: 'identified', scope: 'current_process', path: 'B.md', mtime: 2, size: 3 },
+        }] } });
+        const metadata: ChatTurnMemoryMetadata = { hasMemoryContent: false, allowedMemorySourcePaths: [], sourceRecords: [
+            { kind: 'context-used', dedupKey: 'note:A.md', path: 'A.md', sourceBoundary: 'read-only-tool' },
+            { kind: 'context-used', dedupKey: 'note:B.md', path: 'B.md', sourceBoundary: 'read-only-tool' },
+        ] };
+        await prepareWritingRecoverySources(host, { ...recovery(), generationInput: input }, [], 'chat', metadata);
+        expect(host.verifyGenerationSource).toHaveBeenCalledTimes(1);
+        expect(host.verifyGenerationSource).toHaveBeenCalledWith({ kind: 'task', source: input.task.sources[0] });
+        expect(host.verifyNote).not.toHaveBeenCalled();
+    });
+
+    test('preserves same-path task purposes and sources that exist only in the snapshot', async () => {
+        const { host } = setup();
+        const sources: GenerationInputSnapshot['task']['sources'] = [
+            { purpose: 'task_material', kind: 'memory-reference', boundary: 'memory', dedupKey: 'memory:same',
+                revision: { state: 'unknown', path: 'Same.md' } },
+            { purpose: 'task_material', kind: 'context-used', boundary: 'read-only-tool', dedupKey: 'tool:same',
+                capabilityName: 'read_note_outline', revision: { state: 'unknown', path: 'Same.md' } },
+        ];
+        await prepareWritingRecoverySources(host, { ...recovery(), generationInput: generationInput({
+            task: { state: 'unknown', sources },
+        }) }, [], 'chat');
+        expect(host.verifyGenerationSource).toHaveBeenNthCalledWith(1, { kind: 'task', source: sources[0] });
+        expect(host.verifyGenerationSource).toHaveBeenNthCalledWith(2, { kind: 'task', source: sources[1] });
+        expect(host.verifyNote).not.toHaveBeenCalled();
+    });
+
+    test('requires exact snapshot images and parent identity before reading sources', async () => {
+        const { host } = setup();
+        const version = await parent();
+        host.versions = { get: jest.fn(async () => version) };
+        const input = generationInput({
+            images: [{ ref: photo('used').ref, hashAlgorithm: 'sha256' }],
+            parent: { state: 'identified', versionId: version.id,
+                textHash: { algorithm: 'sha256', value: version.textHash } },
+        });
+        const draft = { ...recovery(), parentVersionId: version.id, generationInput: input };
+        expect((await prepareWritingRecoverySources(host, draft, [photo('used')], 'chat')).isCurrent()).toBe(true);
+        await expect(prepareWritingRecoverySources(host, draft, [], 'chat'))
+            .rejects.toThrow('image snapshot changed');
+        await expect(prepareWritingRecoverySources(host, { ...draft, parentVersionId: undefined }, [photo('used')], 'chat'))
+            .rejects.toThrow('parent snapshot changed');
+        host.versions = { get: jest.fn(async () => ({ ...version, textHash: 'b'.repeat(64) })) };
+        await expect(prepareWritingRecoverySources(host, draft, [photo('used')], 'chat'))
+            .rejects.toThrow('Writing parent unavailable');
+    });
+
+    test('rejects an earlier generation source revoked while verifying a later image', async () => {
+        const { host, current } = setup();
+        const image = photo('used');
+        host.verifyImage = async () => { current.note = false; return { isCurrent: () => true }; };
+        await expect(prepareWritingRecoverySources(host, {
+            ...recovery(), generationInput: generationInput({
+                task: { state: 'unknown', sources: [{ purpose: 'task_material', kind: 'context-used',
+                    boundary: 'read-only-tool', dedupKey: 'note:used', revision: { state: 'unknown', path: 'used.md' } }] },
+                images: [{ ref: image.ref, hashAlgorithm: 'sha256' }],
+            }),
+        }, [image], 'chat')).rejects.toThrow('Writing recovery sources changed');
+    });
+
     test('does not infer missing historical Personal or style identities from current sources', async () => {
         const { host } = setup();
         expect((await prepareWritingRecoverySources(host, recovery(), [], 'chat')).isCurrent()).toBe(true);

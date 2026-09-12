@@ -1452,6 +1452,56 @@ describe('LLMView turn lifecycle', () => {
             } finally { open.mockRestore(); await restored.view.onClose(); }
         });
 
+    it('revalidates a complete persisted generation identity without the legacy confirmation warning', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'complete-reloaded-recovery' });
+        const versions = new WritingVersionService(store);
+        const initial = createView({ chatHistoryManager: manager });
+        Object.assign(initial.plugin, { writingVersions: versions });
+        await initial.view.onOpen();
+        initial.view.prefillComposer('写一段文案');
+        getElementByClass(initial.containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'complete_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
+            generationInput: writingGenerationInput() });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        await initial.view.onClose();
+
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, { writingVersions: versions });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        const opened: WritingRecoveryModal[] = [];
+        const open = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { opened.push(this); });
+        try {
+            getElementByClass(restored.containerEl, 'pa-chat-writing-action').click();
+            const modal = opened[0];
+            const root = new MockElement('div');
+            modal.contentEl = root as unknown as HTMLElement;
+            modal.onOpen();
+            expect(allText(root)).not.toContain('The old source record is incomplete');
+            const areas = walkAll(root, element => element.tagName === 'textarea');
+            const buttons = walkAll(root, element => element.tagName === 'button');
+            expect(allText(buttons[1])).toBe('Keep as a writing version');
+            Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+            buttons[0].click();
+            await buttons[1].click();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const [version] = await versions.list('complete-reloaded-recovery');
+            expect(version).toMatchObject({ text: 'BODY', referenceScope: 'request',
+                generationInput: writingGenerationInput() });
+            expect(restored.plugin.prepareWritingRecoverySources).toHaveBeenCalledTimes(1);
+            modal.onClose();
+        } finally {
+            open.mockRestore();
+            await restored.view.onClose();
+        }
+    });
+
     it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
         const store = new MemoryChatHistoryStore();
         let markSaved!: () => void;

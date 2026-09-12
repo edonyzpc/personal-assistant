@@ -166,6 +166,29 @@ export class WritingStyleService {
         return result.filter((reference) => reference.isCurrent());
     }
 
+    /** Revalidates exact revisions recorded on a completed physical writing request. */
+    async captureGenerationSourceValidity(revisionIds: readonly string[]): Promise<{ isCurrent: () => boolean }> {
+        this.assertActive();
+        const ids = [...new Set(revisionIds)];
+        if (!ids.length) throw new Error('Writing style source unavailable');
+        const guards = new Map<string, () => boolean>();
+        for (const id of ids) {
+            const snapshot = this.options.getStateSnapshot();
+            if (!this.isGenerationRevisionEligible(snapshot, id)) throw new Error('Writing style source unavailable');
+            const revision = snapshot!.state.revisions.find(candidate => candidate.id === id)!;
+            const source = await this.verifyRevision(revision);
+            if (!source.allowed || !source.isCurrent() || !this.isGenerationRevisionEligible(this.options.getStateSnapshot(), id)) {
+                throw new Error('Writing style source unavailable');
+            }
+            guards.set(id, source.isCurrent);
+        }
+        const isCurrent = () => !this.disposed && this.options.isRuntimeEnabled()
+            && ids.every(id => this.isGenerationRevisionEligible(this.options.getStateSnapshot(), id)
+                && guards.get(id)?.() === true);
+        if (!isCurrent()) throw new Error('Writing style source unavailable');
+        return { isCurrent };
+    }
+
     dispose(): void { this.disposed = true; }
     private assertActive(signal?: AbortSignal): void { if (this.disposed || signal?.aborted) throw new Error('Writing style cancelled'); }
     private async verifyRevision(revision: MemoryClaimRevision, signal?: AbortSignal): Promise<{ allowed: boolean; isCurrent: () => boolean }> {
@@ -178,6 +201,38 @@ export class WritingStyleService {
             } else if (!['note', 'conversation', 'explicit_setting'].includes(provenance.kind)) return { allowed: false, isCurrent: () => false };
         }
         return { allowed: checks.every((check) => check.allowed), isCurrent: () => checks.every((check) => check.isCurrent()) };
+    }
+
+    private isGenerationRevisionEligible(
+        snapshot: ReturnType<WritingStyleServiceOptions['getStateSnapshot']>,
+        revisionId: string,
+    ): boolean {
+        if (!snapshot || !this.options.isRuntimeEnabled()
+            || snapshot.state.policyStates[snapshot.vaultScopeKey]?.contextProjectionMode !== 'governed') return false;
+        const revisions = snapshot.state.revisions.filter(revision => revision.id === revisionId);
+        if (revisions.length !== 1) return false;
+        const revision = revisions[0];
+        const claims = snapshot.state.claims.filter(claim => claim.id === revision.claimId);
+        if (claims.length !== 1) return false;
+        const claim = claims[0];
+        if (claim.lifecycle !== 'active' || claim.activeRevisionId !== revision.id
+            || !isGovernableWritingStyle(claim, revision, snapshot.vaultScopeKey)
+            || snapshot.state.pendingOperations.some(operation => operation.claimId === claim.id
+                && (operation.kind === 'forget' || operation.state === 'pending'))) return false;
+        const fingerprints = new Map<string, { sourceFingerprintId: string; ruleFingerprint: string }>();
+        for (const link of snapshot.state.projectionLinks) {
+            if (link.claimId !== claim.id || link.state !== 'active'
+                || !link.sourceFingerprintId || !link.ruleFingerprint) continue;
+            fingerprints.set(`${link.sourceFingerprintId}\0${link.ruleFingerprint}`, {
+                sourceFingerprintId: link.sourceFingerprintId, ruleFingerprint: link.ruleFingerprint,
+            });
+        }
+        if (fingerprints.size !== 1) return false;
+        const fingerprint = [...fingerprints.values()][0];
+        return !snapshot.state.suppressionMarkers.some(marker => marker.partition.kind === claim.partition.kind
+            && marker.partition.key === claim.partition.key
+            && marker.sourceFingerprintId === fingerprint.sourceFingerprintId
+            && marker.ruleFingerprint === fingerprint.ruleFingerprint);
     }
 }
 

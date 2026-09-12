@@ -73,7 +73,11 @@ import { WritingRecoveryModal, WritingVersionModal, WritingSaveRecoveryListModal
 import { mergeWritingImages, type WritingVersion } from './writing-types';
 import { inferWritingScene } from './writing-style-service';
 import { ChatImageRequestError } from '../ai-services/image-capability';
-import { cloneGenerationInputSnapshot, type GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
+import {
+    cloneGenerationInputSnapshot,
+    generationInputNeedsRecoveryConfirmation,
+    type GenerationInputSnapshot,
+} from '../ai-services/generation-input-snapshot';
 
 export { VIEW_TYPE_LLM };
 export { formatOperationsPreview };
@@ -2217,9 +2221,13 @@ export class LLMView extends ItemView {
                 const recovery = message.writingRecovery;
                 if (!recovery) return;
                 const generationSourceCurrent = writingRecoverySources.get(message);
+                const requiresSourceConfirmation = !generationSourceCurrent
+                    && (!recovery.generationInput
+                        || generationInputNeedsRecoveryConfirmation(recovery.generationInput));
+                const hasCompleteGenerationIdentity = Boolean(generationSourceCurrent) || !requiresSourceConfirmation;
                 new WritingRecoveryModal(this.app, recovery, async (text, origin, confirmedIncompleteSources) => {
                     if (!isCurrentSession()) throw new Error('Writing view closed');
-                    if (!generationSourceCurrent && confirmedIncompleteSources !== true) {
+                    if (requiresSourceConfirmation && confirmedIncompleteSources !== true) {
                         throw new Error('Writing recovery requires source confirmation');
                     }
                     const entry = timelineEntries.find((entry) => entry.kind === 'history' && entry.assistant === message);
@@ -2241,7 +2249,9 @@ export class LLMView extends ItemView {
                             backgroundSourceRefs: recovery.backgroundSourceRefs,
                             ...(recovery.generationInput
                                 ? { generationInput: cloneGenerationInputSnapshot(recovery.generationInput) } : {}),
-                            referenceScopeUnverified: !generationSourceCurrent,
+                            ...(hasCompleteGenerationIdentity
+                                ? { referenceScope: 'request' as const }
+                                : { referenceScopeUnverified: true }),
                             images,
                         }, () => isCurrentSession() && isCurrent() && sourceCurrent());
                         message.writingVersionId = version.id;
@@ -2253,7 +2263,7 @@ export class LLMView extends ItemView {
                     }
                     renderWritingActions(rendered, message);
                     return version;
-                }, host, !generationSourceCurrent).open();
+                }, host, requiresSourceConfirmation).open();
             };
         };
         const createMessageElement = (

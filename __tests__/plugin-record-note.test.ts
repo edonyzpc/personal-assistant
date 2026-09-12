@@ -336,6 +336,7 @@ import { collectChatMemorySources, createChatMemoryCandidateEvidence } from '../
 import { hashWritingStyleText } from '../src/pa/writing-style';
 import type { WritingStyleService } from '../src/chat/writing-style-service';
 import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
+import type { GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
 
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
@@ -350,6 +351,14 @@ const createTFileWithStat = (path: string, stat: { mtime: number; size: number; 
     };
     return file;
 };
+
+const recoveryGenerationInput = (
+    overrides: Partial<GenerationInputSnapshot> = {},
+): GenerationInputSnapshot => ({
+    schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
+    personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
+    parent: { state: 'none' }, pagelet: { state: 'none' }, ...overrides,
+});
 
 const createVaultEventDispatchHarness = () => {
     const vaultHandlers = new Map<string, (...args: unknown[]) => Promise<void>>();
@@ -3062,6 +3071,145 @@ describe('Memory governance plugin bootstrap', () => {
             return { ...harness, path, file, boundary, receipt };
         }
 
+        it('revalidates an exact task revision and rejects Memory or Web revocation', async () => {
+            const { plugin, path, file, boundary } = await setupNoteBackedStyle();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            plugin.isDataBoundaryAllowedPath = jest.fn((candidate: string) => boundary.allowed && candidate === path);
+            const task = { purpose: 'task_material' as const, kind: 'context-used' as const,
+                boundary: 'read-only-tool' as const, dedupKey: `note:${path}`, revision: {
+                    state: 'identified' as const, scope: 'current_process' as const,
+                    path, mtime: file.stat.mtime, size: file.stat.size,
+                } };
+            const receipt = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'task-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ task: { state: 'identified', sources: [task] } }),
+            }, [], 'style-conversation');
+            expect(receipt.isCurrent()).toBe(true);
+            expect(plugin.captureLatestMemorySource).toHaveBeenCalledWith(path, expect.any(Function), 'chat');
+            file.stat.mtime += 1;
+            expect(receipt.isCurrent()).toBe(false);
+
+            plugin.settings.memoryEnabled = false;
+            await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'memory-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ task: { state: 'unknown', sources: [{
+                    ...task, kind: 'memory-reference', boundary: 'memory', revision: { state: 'unknown', path },
+                }] } }),
+            }, [], 'style-conversation')).rejects.toThrow('Writing source unavailable');
+
+            plugin.settings.memoryEnabled = true;
+            plugin.settings.webSearchEnabled = true;
+            const webReceipt = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'web-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ task: { state: 'unknown', sources: [{
+                    purpose: 'task_material', kind: 'web-source', boundary: 'web', dedupKey: 'web:source',
+                    revision: { state: 'unknown', url: 'https://example.com/source' },
+                }] } }),
+            }, [], 'style-conversation');
+            expect(webReceipt.isCurrent()).toBe(true);
+            plugin.settings.webSearchEnabled = false;
+            expect(webReceipt.isCurrent()).toBe(false);
+        });
+
+        it('revalidates an unchanged Canvas task source without treating it as Markdown', async () => {
+            const { plugin } = await setup();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            const path = 'boards/plan.canvas';
+            const file = createTFileWithStat(path, { mtime: 41, size: 73 });
+            file.extension = 'canvas';
+            let allowed = true;
+            plugin.app.vault.getAbstractFileByPath = jest.fn((candidate: string) => candidate === path ? file : null);
+            plugin.isDataBoundaryAllowedPath = jest.fn((candidate: string) => allowed && candidate === path);
+            const task = { purpose: 'task_material' as const, kind: 'context-used' as const,
+                boundary: 'read-only-tool' as const, dedupKey: `canvas:${path}`, capabilityName: 'read_canvas_summary',
+                revision: { state: 'identified' as const, scope: 'current_process' as const,
+                    path, mtime: file.stat.mtime, size: file.stat.size } };
+
+            const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'canvas-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ task: { state: 'identified', sources: [task] } }),
+            }, [], 'style-conversation');
+
+            expect(recovered.isCurrent()).toBe(true);
+            file.stat.mtime += 1;
+            expect(recovered.isCurrent()).toBe(false);
+            file.stat.mtime -= 1;
+            plugin.app.vault.getAbstractFileByPath = jest.fn(() => null);
+            expect(recovered.isCurrent()).toBe(false);
+            plugin.app.vault.getAbstractFileByPath = jest.fn((candidate: string) => candidate === path ? file : null);
+            allowed = false;
+            await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'canvas-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ task: { state: 'identified', sources: [task] } }),
+            }, [], 'style-conversation')).rejects.toThrow('Writing Canvas source unavailable');
+
+            allowed = true;
+            plugin.settings.memoryEnabled = false;
+            await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'canvas-memory-mismatch', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ task: { state: 'identified', sources: [{
+                    ...task, kind: 'memory-reference', boundary: 'memory',
+                }] } }),
+            }, [], 'style-conversation')).rejects.toThrow('Writing source unavailable');
+        });
+
+        it('revalidates an exact authorized style revision and rejects Pause', async () => {
+            const { plugin, receipt } = await setupNoteBackedStyle();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'style-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({
+                    style: { state: 'identified', revisionIds: [receipt.revisionId] },
+                }),
+            }, [], 'style-conversation');
+            expect(recovered.isCurrent()).toBe(true);
+            await expect(plugin.memoryGovernanceCoordinator.pauseUse({ claimId: receipt.claimId }))
+                .resolves.toMatchObject({ ok: true });
+            await plugin.refreshDeviceMemoryCaches();
+            expect(recovered.isCurrent()).toBe(false);
+            await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'style-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({
+                    style: { state: 'identified', revisionIds: [receipt.revisionId] },
+                }),
+            }, [], 'style-conversation')).rejects.toThrow('Writing style source unavailable');
+        });
+
+        it('revalidates Pagelet pipeline, live Markdown boundary and backing note stats', async () => {
+            const { plugin } = await setup();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            plugin.settings.pagelet = { ...plugin.settings.pagelet, enabled: true, excludedTags: [] };
+            const path = 'notes/pagelet-anchor.md';
+            const markdown = '# Anchor\n\nSource body #private';
+            const file = createTFileWithStat(path, { mtime: 30, size: markdown.length });
+            plugin.app.vault.getAbstractFileByPath = jest.fn((candidate: string) => candidate === path ? file : null);
+            plugin.app.vault.read = jest.fn(async () => markdown);
+            // Model the cold-reload cache path as provisionally allowed; the
+            // exact body must still enforce Pagelet and shared exclusions.
+            plugin.isPageletProviderPathAllowed = jest.fn(() => true);
+            plugin.createPageletProviderSourceResolver = jest.fn(() => ({}));
+            plugin.isPageletProviderSourceAllowedByResolver = jest.fn(() => true);
+            const pagelet = { state: 'unknown' as const, id: 'pagelet-1', pipelineVersion: 'pagelet-deep-discover-v2',
+                anchor: { path, mtime: 30, size: markdown.length,
+                    contentHash: { algorithm: 'unspecified' as const, value: 'opaque-hash' } }, sources: [] };
+            const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'pagelet-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ pagelet }),
+            }, [], 'style-conversation');
+            expect(recovered.isCurrent()).toBe(true);
+            plugin.settings.pagelet.excludedTags = ['private'];
+            expect(recovered.isCurrent()).toBe(false);
+            await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'pagelet-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ pagelet }),
+            }, [], 'style-conversation')).rejects.toThrow('Writing Pagelet source unavailable');
+            plugin.settings.pagelet.excludedTags = [];
+            await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'pagelet-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                generationInput: recoveryGenerationInput({ pagelet: { ...pagelet, pipelineVersion: 'old-pipeline' } }),
+            }, [], 'style-conversation')).rejects.toThrow('Writing Pagelet source unavailable');
+        });
+
         it.each(['note edit', 'path exclusion', 'Memory off', 'file removed'] as const)(
             'keeps the real recovery note guard live after %s', async (change) => {
                 const { plugin, path, file, boundary } = await setupNoteBackedStyle();
@@ -4673,6 +4821,54 @@ describe('Memory governance plugin bootstrap', () => {
         isPathAllowed.mockReturnValue(false);
         expect(plugin.getMemoryExtractionPromptContext()).toEqual({ memoryContextMode: 'governed' });
         expect(plugin.canRunMemoryExtractionRuntime()).toBe(false);
+    });
+
+    it('revalidates exact persisted Personal revisions independently of new extraction and rejects Pause', async () => {
+        const { plugin, record } = await createGovernedUseGateHarness();
+        plugin.getGovernedMemoryCurrentScope = jest.fn(() => ({
+            notePath: 'notes/use-gate.md', folderPath: 'notes', tags: [],
+        }));
+        plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+        const personal = plugin.getMemoryExtractionPromptContext().generationInputSources?.personal;
+        if (personal?.state !== 'identified') throw new Error('identified Personal source required');
+        plugin.settings.memoryExtractionEnabled = false;
+        const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+            requestId: 'personal-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+            generationInput: recoveryGenerationInput({ personal }),
+        }, [], 'personal-conversation');
+        expect(recovered.isCurrent()).toBe(true);
+        const cachedSequence = plugin.currentDeviceMemoryGovernanceState.commitSequence;
+        plugin.deviceMemoryCacheRefreshTargetSequence = cachedSequence + 1;
+        expect(recovered.isCurrent()).toBe(false);
+        plugin.deviceMemoryCacheRefreshTargetSequence = cachedSequence;
+        expect(recovered.isCurrent()).toBe(true);
+        await expect(plugin.pauseGovernedMemory(record)).resolves.toMatchObject({ ok: true });
+        expect(recovered.isCurrent()).toBe(false);
+        await expect(plugin.createChatHost().prepareWritingRecoverySources({
+            requestId: 'personal-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+            generationInput: recoveryGenerationInput({ personal }),
+        }, [], 'personal-conversation')).rejects.toThrow('Writing Personal source unavailable');
+    });
+
+    it('allows confirmed unknown Insights after cold reload while enforcing current feature boundaries', async () => {
+        const { plugin } = await createGovernedUseGateHarness();
+        plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+        plugin.settings.memoryExtractionIncludeVaultInsights = true;
+        plugin.vaultInsightsSource = null;
+        const insights = { state: 'unknown' as const, mode: 'governed' as const };
+        const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+            requestId: 'insights-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+            generationInput: recoveryGenerationInput({ insights }),
+        }, [], 'insights-conversation');
+        expect(recovered.isCurrent()).toBe(true);
+        plugin.vaultInsightsSource = { sourcePaths: [], isSourceCurrent: () => false };
+        expect(recovered.isCurrent()).toBe(true);
+        plugin.settings.memoryExtractionIncludeVaultInsights = false;
+        expect(recovered.isCurrent()).toBe(false);
+        await expect(plugin.createChatHost().prepareWritingRecoverySources({
+            requestId: 'insights-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+            generationInput: recoveryGenerationInput({ insights }),
+        }, [], 'insights-conversation')).rejects.toThrow('Writing Insights source unavailable');
     });
 
     it('does not offer Resume use while a global governed-use gate is off', async () => {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { cloneImageRef, type ImageRef } from '../chat/image-types';
+import { validateSourceRefPathShape } from '../pa/contracts/source-ref';
 import type { SourceRecordBoundary, SourceRecordKind } from './chat-types';
 
 export type GenerationInputIdentityState = 'none' | 'identified' | 'unknown';
@@ -66,6 +67,7 @@ export interface GenerationInputSnapshot {
 }
 
 const shortText = z.string().min(1).max(4096);
+const sourcePath = shortText.refine(path => validateSourceRefPathShape({ path }).ok, 'Invalid source path');
 const revisionId = z.string().min(1).max(256);
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const webUrl = z.string().url().max(8192).refine(value => {
@@ -83,11 +85,20 @@ const taskSourceSchema = z.object({
     dedupKey: shortText,
     turnId: shortText.optional(), providerId: shortText.optional(), capabilityName: shortText.optional(),
     revision: z.discriminatedUnion('state', [
-        z.object({ state: z.literal('identified'), scope: z.literal('current_process'), path: shortText,
+        z.object({ state: z.literal('identified'), scope: z.literal('current_process'), path: sourcePath,
             mtime: z.number().finite().nonnegative(), size: z.number().finite().nonnegative() }).strict(),
-        z.object({ state: z.literal('unknown'), path: shortText.optional(), url: webUrl.optional() }).strict(),
+        z.object({ state: z.literal('unknown'), path: sourcePath.optional(), url: webUrl.optional() }).strict(),
     ]),
-}).strict();
+}).strict().superRefine((source, context) => {
+    const validBoundary = source.kind === 'memory-reference' ? source.boundary === 'memory'
+        : source.kind === 'web-source' ? source.boundary === 'web'
+            : source.kind === 'skill-guide' ? source.boundary === 'skill-context'
+                : source.boundary === 'current-note' || source.boundary === 'read-only-tool'
+                    || source.boundary === 'vault';
+    if (!validBoundary) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'Inconsistent task source boundary' });
+    }
+});
 const personalSchema = z.discriminatedUnion('state', [
     z.object({ state: z.literal('none') }).strict(),
     z.object({ state: z.literal('identified'), mode: z.literal('governed'),
@@ -108,7 +119,7 @@ const parentSchema = z.discriminatedUnion('state', [
     z.object({ state: z.literal('identified'), versionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
         textHash: z.object({ algorithm: z.literal('sha256'), value: sha256 }).strict() }).strict(),
 ]);
-const pageletRevisionSchema = z.object({ path: shortText,
+const pageletRevisionSchema = z.object({ path: sourcePath,
     mtime: z.number().finite().nonnegative(), size: z.number().finite().nonnegative(),
     contentHash: z.object({ algorithm: z.literal('unspecified'), value: shortText }).strict() }).strict();
 const pageletSchema = z.discriminatedUnion('state', [
@@ -176,4 +187,14 @@ export function cloneGenerationInputSnapshot(value: unknown): GenerationInputSna
             }
             : { state: 'none' },
     };
+}
+
+/** True when D13 confirmation must cover a persisted identity the host cannot fully replay. */
+export function generationInputNeedsRecoveryConfirmation(value: unknown): boolean {
+    const snapshot = cloneGenerationInputSnapshot(value);
+    return snapshot.task.state !== 'none'
+        || snapshot.personal.state === 'unknown'
+        || snapshot.insights.state !== 'none'
+        || snapshot.style.state === 'unknown'
+        || snapshot.pagelet.state !== 'none';
 }

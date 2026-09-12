@@ -1,9 +1,24 @@
 import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from '../ai-services/chat-types';
+import {
+    cloneGenerationInputSnapshot,
+    type GenerationInputInsightsSource,
+    type GenerationInputPageletSource,
+    type GenerationInputPersonalSource,
+    type GenerationInputStyleSource,
+    type GenerationInputTaskSource,
+} from '../ai-services/generation-input-snapshot';
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape, type PersistedSourceRef } from '../pa/contracts/source-ref';
 import { cloneMessageImages, type MessageImage } from './image-types';
 import type { WritingVersionService } from './writing-versions';
 
 export interface WritingRecoverySourceReceipt { isCurrent: () => boolean; }
+
+export type WritingRecoveryGenerationSource =
+    | { kind: 'task'; source: GenerationInputTaskSource }
+    | { kind: 'personal'; source: Exclude<GenerationInputPersonalSource, { state: 'none' }> }
+    | { kind: 'insights'; source: Exclude<GenerationInputInsightsSource, { state: 'none' }> }
+    | { kind: 'style'; source: Exclude<GenerationInputStyleSource, { state: 'none' }> }
+    | { kind: 'pagelet'; source: Exclude<GenerationInputPageletSource, { state: 'none' }> };
 
 export interface WritingRecoverySourceHost {
     captureLifetime: (conversationId: string) => () => boolean;
@@ -11,6 +26,7 @@ export interface WritingRecoverySourceHost {
     isMemoryAllowed: () => boolean;
     verifyNote: (ref: PersistedSourceRef, memory: boolean) => Promise<WritingRecoverySourceReceipt>;
     verifyImage: (image: MessageImage) => Promise<WritingRecoverySourceReceipt>;
+    verifyGenerationSource: (source: WritingRecoveryGenerationSource) => Promise<WritingRecoverySourceReceipt>;
 }
 
 /**
@@ -25,6 +41,56 @@ export async function prepareWritingRecoverySources(
     conversationId: string,
     metadata?: ChatTurnMemoryMetadata,
 ): Promise<WritingRecoverySourceReceipt> {
+    const generationInput = recovery.generationInput
+        ? cloneGenerationInputSnapshot(recovery.generationInput) : undefined;
+    const selectedImages = cloneMessageImages(images);
+    const guards = [host.captureLifetime(conversationId)];
+    const isCurrent = () => guards.every((guard) => guard());
+    const assertCurrent = () => {
+        if (!isCurrent()) throw new Error('Writing recovery sources changed');
+    };
+    if (generationInput) {
+        const expectedImages = generationInput.images.map(image => `${image.ref.assetId}:${image.ref.contentHash}`);
+        const actualImages = selectedImages.map(image => `${image.ref.assetId}:${image.ref.contentHash}`);
+        if (expectedImages.length !== actualImages.length
+            || expectedImages.some((identity, index) => identity !== actualImages[index])) {
+            throw new Error('Writing recovery image snapshot changed');
+        }
+        const recordedParentId = generationInput.parent.state === 'identified'
+            ? generationInput.parent.versionId : undefined;
+        if (recovery.parentVersionId !== recordedParentId) {
+            throw new Error('Writing recovery parent snapshot changed');
+        }
+        assertCurrent();
+        if (generationInput.parent.state === 'identified') {
+            const parent = await host.versions?.get(generationInput.parent.versionId);
+            assertCurrent();
+            if (!parent || parent.conversationId !== conversationId
+                || parent.textHash !== generationInput.parent.textHash.value) {
+                throw new Error('Writing parent unavailable');
+            }
+        }
+        const generationSources: WritingRecoveryGenerationSource[] = [
+            ...generationInput.task.sources.map(source => ({ kind: 'task' as const, source })),
+            ...(generationInput.personal.state !== 'none'
+                ? [{ kind: 'personal' as const, source: generationInput.personal }] : []),
+            ...(generationInput.insights.state !== 'none'
+                ? [{ kind: 'insights' as const, source: generationInput.insights }] : []),
+            ...(generationInput.style.state !== 'none'
+                ? [{ kind: 'style' as const, source: generationInput.style }] : []),
+            ...(generationInput.pagelet.state !== 'none'
+                ? [{ kind: 'pagelet' as const, source: generationInput.pagelet }] : []),
+        ];
+        for (const source of generationSources) {
+            guards.push((await host.verifyGenerationSource(source)).isCurrent);
+            assertCurrent();
+        }
+        for (const image of selectedImages) {
+            guards.push((await host.verifyImage(image)).isCurrent);
+            assertCurrent();
+        }
+        return { isCurrent };
+    }
     // Match TaskSourceRun.historySourceRecords: a typed status-only reference
     // must not become material through the legacy path inventory. Capture only
     // primitive source facts before awaiting; later metadata edits cannot grant
@@ -42,17 +108,11 @@ export async function prepareWritingRecoverySources(
     }
     const usesMemory = legacyMemory || sources.some((source) => source.memory);
     const memoryPaths = new Set(sources.filter((source) => source.memory && !source.web).map((source) => source.path));
-    const guards = [host.captureLifetime(conversationId)];
     if (usesMemory) guards.push(host.isMemoryAllowed);
-    const isCurrent = () => guards.every((guard) => guard());
-    const assertCurrent = () => {
-        if (!isCurrent()) throw new Error('Writing recovery sources changed');
-    };
     const refs = (recovery.backgroundSourceRefs ?? []).map((ref) => ({ ...ref }));
     for (const source of sources) {
         if (source.path && !source.web && !refs.some((ref) => ref.path === source.path)) refs.push({ path: source.path });
     }
-    const selectedImages = cloneMessageImages(images);
     const parentId = recovery.parentVersionId;
     assertCurrent();
     if (parentId) {

@@ -80,7 +80,11 @@ import { ChatHistoryManager } from './chat/chat-history-manager';
 import { ImageAssetService } from './chat/image-assets';
 import { hasWritingNoteProvenance } from './chat/writing-note-provenance';
 import { WritingVersionService } from './chat/writing-versions';
-import { prepareWritingRecoverySources } from './chat/writing-recovery-sources';
+import {
+    prepareWritingRecoverySources,
+    type WritingRecoveryGenerationSource,
+    type WritingRecoverySourceReceipt,
+} from './chat/writing-recovery-sources';
 import { WritingSaveAction } from './chat/writing-save-action';
 import { WritingStyleService, WritingStyleUnavailableError, inferWritingScene } from './chat/writing-style-service';
 import { hashWritingText, type WritingScene } from './chat/writing-types';
@@ -144,6 +148,8 @@ import {
     normalizePageletInsightClaim,
     pageletAgentPolicyIdentityKey,
     pageletDeepDiscoverCommitSealIsCurrent,
+    normalizeSnapshotPath,
+    PAGELET_DEEP_DISCOVER_PIPELINE_VERSION,
     type PageletAgentPolicyIdentity,
     type PageletAgentSourceMaterial,
     type PageletAgentSourceSnapshot,
@@ -376,6 +382,7 @@ import {
     type DataBoundaryDecision,
     type MemorySensitivity,
     type MemoryType,
+    type PersistedSourceRef,
     type ReviewQueueScope,
 } from './pa/contracts';
 import {
@@ -7835,6 +7842,195 @@ export class PluginManager extends Plugin {
         return service.prepare(scene, budget);
     }
 
+    private async verifyWritingRecoveryNote(
+        ref: PersistedSourceRef,
+        memory: boolean,
+        expectedRevision?: { mtime: number; size: number },
+    ): Promise<WritingRecoverySourceReceipt> {
+        const isPathAllowed = (path: string) => memory
+            ? this.settings.memoryEnabled === true && this.isMemoryProviderPathAllowed(path)
+            : this.isDataBoundaryAllowedPath(path);
+        const source = await this.captureLatestMemorySource(ref.path, isPathAllowed, 'chat');
+        if (!source || expectedRevision
+            && (source.mtime !== expectedRevision.mtime || source.size !== expectedRevision.size)) {
+            throw new Error('Writing source unavailable');
+        }
+        // Generic PersistedSourceRef hashes have no uniform body/algorithm
+        // contract (some hash a path or a summary). Snapshot task revisions use
+        // exact stat fields; image and parent bodies have dedicated hashes.
+        const file = this.app.vault.getAbstractFileByPath(source.path);
+        if (!(file instanceof TFile)) throw new Error('Writing source unavailable');
+        const ctime = file.stat.ctime;
+        return { isCurrent: () => !this.unloading
+            && this.app.vault.getAbstractFileByPath(source.path) === file && file.path === source.path
+            && file.stat.ctime === ctime && file.stat.mtime === source.mtime && file.stat.size === source.size
+            && (!expectedRevision || file.stat.mtime === expectedRevision.mtime
+                && file.stat.size === expectedRevision.size)
+            && isPathAllowed(source.path)
+            && this.getLatestMemoryContentBoundary(source.path, source.markdown, 'chat')?.allowed === true };
+    }
+
+    private verifyWritingRecoveryCanvas(
+        path: string,
+        expectedRevision: { mtime: number; size: number },
+    ): WritingRecoverySourceReceipt {
+        if (normalizeSnapshotPath(path) !== path || !path.toLowerCase().endsWith('.canvas')) {
+            throw new Error('Writing Canvas source unavailable');
+        }
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile) || file.extension.toLowerCase() !== 'canvas'
+            || file.stat.mtime !== expectedRevision.mtime || file.stat.size !== expectedRevision.size
+            || !this.isDataBoundaryAllowedPath(path)) {
+            throw new Error('Writing Canvas source unavailable');
+        }
+        const ctime = file.stat.ctime;
+        const isCurrent = () => !this.unloading
+            && this.app.vault.getAbstractFileByPath(path) === file && file.path === path
+            && file.stat.ctime === ctime && file.stat.mtime === expectedRevision.mtime
+            && file.stat.size === expectedRevision.size && this.isDataBoundaryAllowedPath(path);
+        return { isCurrent };
+    }
+
+    private async verifyWritingRecoveryPageletNote(
+        snapshot: { path: string; mtime: number; size: number },
+    ): Promise<WritingRecoverySourceReceipt> {
+        if (normalizeSnapshotPath(snapshot.path) !== snapshot.path) {
+            throw new Error('Writing Pagelet source unavailable');
+        }
+        const source = await this.captureLatestMemorySource(
+            snapshot.path,
+            path => this.isPageletProviderPathAllowed(path),
+            'pagelet',
+        );
+        if (!source || source.mtime !== snapshot.mtime || source.size !== snapshot.size) {
+            throw new Error('Writing Pagelet source unavailable');
+        }
+        const file = this.app.vault.getAbstractFileByPath(source.path);
+        if (!(file instanceof TFile)) throw new Error('Writing Pagelet source unavailable');
+        const ctime = file.stat.ctime;
+        const isCurrent = () => !this.unloading
+            && this.app.vault.getAbstractFileByPath(source.path) === file && file.path === source.path
+            && file.stat.ctime === ctime && file.stat.mtime === source.mtime && file.stat.size === source.size
+            && this.isPageletProviderSourceAllowedFile(file, source.markdown);
+        return { isCurrent };
+    }
+
+    private writingRecoveryPersonalSourceCurrent(
+        source: Extract<WritingRecoveryGenerationSource, { kind: 'personal' }>['source'],
+    ): boolean {
+        if (this.unloading || this.settings.memoryEnabled !== true) return false;
+        if (source.state === 'unknown') {
+            return this.getMemoryGovernanceUiMode() === (source.mode === 'governed' ? 'effect_based' : 'legacy_threshold');
+        }
+        const snapshot = this.getGovernedMemoryProjectionSnapshot();
+        if (!snapshot || snapshot.state.commitSequence < this.deviceMemoryCacheRefreshTargetSequence) return false;
+        const boundary = this.getMemoryDataBoundaryFingerprint();
+        return source.revisions.every(({ claimId, revisionId }) => {
+            const claims = snapshot.state.claims.filter(candidate => candidate.id === claimId);
+            const revisions = snapshot.state.revisions.filter(candidate => candidate.id === revisionId
+                && candidate.claimId === claimId);
+            if (claims.length !== 1 || revisions.length !== 1) return false;
+            const claim = claims[0], revision = revisions[0];
+            let currentScope: { notePath?: string; folderPath?: string; tags: string[] } = { tags: [] };
+            const paths = claim.applicability.paths ?? [];
+            if (claim.applicability.kind === 'current_note' || claim.applicability.kind === 'selected_notes') {
+                currentScope = { notePath: paths[0], tags: [] };
+            } else if (claim.applicability.kind === 'folder') {
+                currentScope = { folderPath: paths[0], tags: [] };
+            } else if (claim.applicability.kind === 'tag') {
+                currentScope = { tags: claim.applicability.tags?.slice(0, 1) ?? [] };
+            }
+            try {
+                const selected = selectGovernedMemoryUse({
+                    vaultScopeKey: snapshot.vaultScopeKey,
+                    currentScope,
+                    claims: [claim],
+                    revisions: [revision],
+                    suppressionMarkers: snapshot.state.suppressionMarkers,
+                    pendingOperations: snapshot.state.pendingOperations.filter(operation => operation.claimId === claim.id),
+                    claimSuppressionFingerprints: this.buildClaimSuppressionFingerprints(
+                        snapshot.state.projectionLinks.filter(link => link.claimId === claim.id),
+                    ),
+                    includeVaultInsights: false,
+                    vaultInsights: null,
+                    currentDataBoundaryFingerprint: boundary,
+                    dataBoundaryAllowed: candidate => this.isGovernedMemoryRevisionAllowed(candidate, boundary),
+                });
+                return claim.activeRevisionId === revision.id && selected.usedClaimIds.length === 1
+                    && selected.usedClaimIds[0] === claim.id;
+            } catch {
+                return false;
+            }
+        });
+    }
+
+    private async verifyWritingRecoveryGenerationSource(
+        input: WritingRecoveryGenerationSource,
+    ): Promise<WritingRecoverySourceReceipt> {
+        if (input.kind === 'task') {
+            const source = input.source;
+            if (source.kind === 'web-source' || source.boundary === 'web') {
+                const isCurrent = () => !this.unloading && this.settings.webSearchEnabled === true;
+                if (!isCurrent()) throw new Error('Writing web source unavailable');
+                return { isCurrent };
+            }
+            const memory = source.kind === 'memory-reference' || source.boundary === 'memory';
+            const path = source.revision.path;
+            if (path && source.boundary !== 'skill-context') {
+                if (!memory && source.kind === 'context-used' && source.boundary === 'read-only-tool'
+                    && source.capabilityName === 'read_canvas_summary' && source.revision.state === 'identified') {
+                    return this.verifyWritingRecoveryCanvas(path, source.revision);
+                }
+                return this.verifyWritingRecoveryNote({ path }, memory,
+                    source.revision.state === 'identified'
+                        ? { mtime: source.revision.mtime, size: source.revision.size } : undefined);
+            }
+            const isCurrent = () => !this.unloading && (!memory || this.settings.memoryEnabled === true);
+            if (!isCurrent()) throw new Error('Writing task source unavailable');
+            return { isCurrent };
+        }
+        if (input.kind === 'personal') {
+            if (this.deviceMemoryCacheRefreshPromise) await this.deviceMemoryCacheRefreshPromise;
+            const isCurrent = () => this.writingRecoveryPersonalSourceCurrent(input.source);
+            if (!isCurrent()) throw new Error('Writing Personal source unavailable');
+            return { isCurrent };
+        }
+        if (input.kind === 'insights') {
+            const expectedMode = input.source.state === 'unknown' && input.source.mode === 'governed'
+                ? 'effect_based' : 'legacy_threshold';
+            const scope = this.getLegacyProfileScope();
+            const boundary = this.getMemoryDataBoundaryFingerprint();
+            const isCurrent = () => !this.unloading && this.canRunMemoryExtractionRuntime()
+                && this.hasConfirmedMemoryExtractionConsent()
+                && this.settings.memoryExtractionIncludeVaultInsights === true
+                && this.getMemoryGovernanceUiMode() === expectedMode
+                && this.getLegacyProfileScope() === scope
+                && this.getMemoryDataBoundaryFingerprint() === boundary;
+            if (!isCurrent()) throw new Error('Writing Insights source unavailable');
+            return { isCurrent };
+        }
+        if (input.kind === 'style') {
+            if (input.source.state === 'unknown') {
+                const isCurrent = () => !this.unloading && this.settings.memoryEnabled === true
+                    && this.getMemoryGovernanceUiMode() === 'effect_based';
+                if (!isCurrent()) throw new Error('Writing style source unavailable');
+                return { isCurrent };
+            }
+            if (this.deviceMemoryCacheRefreshPromise) await this.deviceMemoryCacheRefreshPromise;
+            const service = this.getWritingStyleService();
+            if (!service) throw new Error('Writing style source unavailable');
+            return service.captureGenerationSourceValidity(input.source.revisionIds);
+        }
+        const snapshots = [input.source.anchor, ...input.source.sources];
+        const pageletCurrent = () => !this.unloading && this.settings.pagelet.enabled === true
+            && input.source.pipelineVersion === PAGELET_DEEP_DISCOVER_PIPELINE_VERSION;
+        if (!pageletCurrent()) throw new Error('Writing Pagelet source unavailable');
+        const receipts = await Promise.all(snapshots.map(snapshot => this.verifyWritingRecoveryPageletNote(snapshot)));
+        const isCurrent = () => pageletCurrent() && receipts.every(receipt => receipt.isCurrent());
+        if (!isCurrent()) throw new Error('Writing Pagelet source unavailable');
+        return { isCurrent };
+    }
+
     private async prepareWritingRecoverySources(recovery: ChatWritingRecovery, images: readonly MessageImage[],
         conversationId: string, metadata?: ChatTurnMemoryMetadata) {
         const manager = this.chatHistoryManager;
@@ -7848,25 +8044,7 @@ export class PluginManager extends Plugin {
                 return () => !this.unloading && this.chatHistoryManager === manager
                     && this.writingVersions === versions && sourceCurrent?.() === true;
             },
-            verifyNote: async (ref, memory) => {
-                const isPathAllowed = (path: string) => memory
-                    ? this.settings.memoryEnabled === true && this.isMemoryProviderPathAllowed(path)
-                    : this.isDataBoundaryAllowedPath(path);
-                const source = await this.captureLatestMemorySource(ref.path, isPathAllowed, 'chat');
-                if (!source) throw new Error('Writing source unavailable');
-                // Generic PersistedSourceRef hashes have no uniform body/algorithm
-                // contract (some hash a path or a summary). Missing hash semantics
-                // remain part of the explicitly acknowledged historical gap;
-                // image and parent-body hashes have dedicated verifiers.
-                const file = this.app.vault.getAbstractFileByPath(source.path);
-                if (!(file instanceof TFile)) throw new Error('Writing source unavailable');
-                const ctime = file.stat.ctime;
-                return { isCurrent: () => !this.unloading
-                    && this.app.vault.getAbstractFileByPath(source.path) === file && file.path === source.path
-                    && file.stat.ctime === ctime && file.stat.mtime === source.mtime && file.stat.size === source.size
-                    && isPathAllowed(source.path)
-                    && this.getLatestMemoryContentBoundary(source.path, source.markdown, 'chat')?.allowed === true };
-            },
+            verifyNote: (ref, memory) => this.verifyWritingRecoveryNote(ref, memory),
             verifyImage: async (image) => {
                 if (!imageAssets || this.imageAssetService !== imageAssets) throw new Error('Writing image unavailable');
                 // verify reads the original bytes and applies provider-source
@@ -7874,6 +8052,7 @@ export class PluginManager extends Plugin {
                 const receipt = await imageAssets.verify(image.ref, 'provider');
                 return { isCurrent: () => this.imageAssetService === imageAssets && receipt.isCurrent() };
             },
+            verifyGenerationSource: source => this.verifyWritingRecoveryGenerationSource(source),
         }, recovery, images, conversationId, metadata);
     }
 

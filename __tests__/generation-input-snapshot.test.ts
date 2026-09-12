@@ -1,4 +1,8 @@
-import { cloneGenerationInputSnapshot, type GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
+import {
+    cloneGenerationInputSnapshot,
+    generationInputNeedsRecoveryConfirmation,
+    type GenerationInputSnapshot,
+} from '../src/ai-services/generation-input-snapshot';
 
 function snapshot(): GenerationInputSnapshot {
     return {
@@ -40,11 +44,31 @@ describe('persisted generation input snapshot', () => {
             sources: [{ ...snapshot().task.sources[0], rawText: 'forbidden body' }] } },
         { ...snapshot(), task: { state: 'none', sources: snapshot().task.sources } },
         { ...snapshot(), task: { state: 'unknown', sources: [{ ...snapshot().task.sources[0],
+            revision: { state: 'unknown', path: '../private.md' } }] } },
+        { ...snapshot(), task: { state: 'unknown', sources: [{ ...snapshot().task.sources[0],
             revision: { state: 'unknown', url: 'data:text/plain,forbidden-body' } }] } },
+        { ...snapshot(), task: { state: 'identified', sources: [{ ...snapshot().task.sources[0],
+            kind: 'context-used', boundary: 'skill-context' }] } },
+        { ...snapshot(), task: { state: 'unknown', sources: [{ ...snapshot().task.sources[0],
+            kind: 'web-source', boundary: 'read-only-tool',
+            revision: { state: 'unknown', url: 'https://example.com/source' } }] } },
         { ...snapshot(), personal: { state: 'identified', mode: 'governed', revisions: [] } },
         { ...snapshot(), style: { state: 'identified', revisionIds: [] } },
         { ...snapshot(), images: Array.from({ length: 2049 }, () => snapshot().images[0]) },
     ])('rejects malformed, body-bearing or unbounded persisted input %#', value => {
         expect(() => cloneGenerationInputSnapshot(value)).toThrow();
+    });
+
+    it('requires D13 confirmation only for identities that cannot be completely replayed', () => {
+        const complete: GenerationInputSnapshot = { ...snapshot(), task: { state: 'none', sources: [] },
+            insights: { state: 'none' }, pagelet: { state: 'none' } };
+        expect(generationInputNeedsRecoveryConfirmation(complete)).toBe(false);
+        for (const incomplete of [
+            snapshot(),
+            { ...complete, personal: { state: 'unknown' as const, mode: 'governed' as const } },
+            { ...complete, insights: { state: 'unknown' as const, mode: 'governed' as const } },
+            { ...complete, style: { state: 'unknown' as const } },
+            { ...complete, pagelet: snapshot().pagelet },
+        ]) expect(generationInputNeedsRecoveryConfirmation(incomplete)).toBe(true);
     });
 });

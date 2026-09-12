@@ -88,6 +88,33 @@ describe('host writing-style service', () => {
         expect(prepared.isSourceCurrent?.()).toBe(true);
         expect((await h.prepare()).revisionIds).toEqual([added.revisionId]);
     });
+    it('revalidates an exact persisted style revision without binding unrelated governance commits', async () => {
+        const h = await harness();
+        const added = await h.service.remember('version-1', scene, 'action', { path: 'saved.md', contentHash: 'hash' });
+        await h.refresh();
+        const receipt = await h.service.captureGenerationSourceValidity([added.revisionId]);
+        expect(receipt.isCurrent()).toBe(true);
+        h.current().commitSequence++;
+        expect(receipt.isCurrent()).toBe(true);
+        h.setSourceCurrent(false);
+        expect(receipt.isCurrent()).toBe(false);
+    });
+    it.each(['disabled runtime', 'pause', 'Forget', 'correction'] as const)(
+        'rejects a persisted style revision after %s', async (change) => {
+            const h = await harness();
+            const added = await h.service.remember('version-1', scene, 'action');
+            await h.refresh();
+            const receipt = await h.service.captureGenerationSourceValidity([added.revisionId]);
+            if (change === 'disabled runtime') h.setEnabled(false);
+            else if (change === 'pause') await h.coordinator.pauseUse({ claimId: added.claimId });
+            else if (change === 'Forget') await h.coordinator.forget({ claimId: added.claimId });
+            else await h.service.correct(added.claimId, 'Replacement sample', scene, 'correction');
+            await h.refresh();
+            expect(receipt.isCurrent()).toBe(false);
+            await expect(h.service.captureGenerationSourceValidity([added.revisionId]))
+                .rejects.toThrow('Writing style source unavailable');
+        },
+    );
     it.each(['note source', 'disabled runtime', 'pause', 'Forget', 'correction', 'dispose'] as const)(
         'still revokes source validity after cancellation when %s changes', async (change) => {
             const h = await harness();
