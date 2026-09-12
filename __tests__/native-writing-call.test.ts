@@ -23,6 +23,24 @@ function expectRejected(collector: NativeWritingCallCollector): void {
 }
 
 describe("NativeWritingCallCollector", () => {
+    it("keeps DeepSeek empty-id argument continuations anchored to the established index", () => {
+        const collector = new NativeWritingCallCollector(handle, budget);
+        collector.consume(delta({ argsText: "" }));
+        for (const argsText of raw) {
+            collector.consume(delta({ providerIdentity: { id: "", index: 0, name: "" }, argsText }));
+        }
+        expect(collector.providerIdentity).toEqual({ id: "provider_call", index: 0 });
+        expect(collector.rawArguments).toBe(raw);
+        expect(collector.decode()).toEqual({ body: input.body, explanation: input.explanation });
+    });
+
+    it.each([undefined, 1, -1])("rejects an empty-id continuation without the same index: %s", (index) => {
+        const collector = new NativeWritingCallCollector(handle, budget);
+        collector.consume(delta({ argsText: "" }));
+        collector.consume(delta({ providerIdentity: { id: "", index, name: "" }, argsText: raw }));
+        expectRejected(collector);
+    });
+
     it("requires original identity and complete arguments, independently of provider completion", () => {
         const collector = new NativeWritingCallCollector(handle, budget);
         expect(collector.hasWritingCall).toBe(false);

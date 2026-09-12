@@ -53,9 +53,12 @@ export class NativeWritingCallCollector {
             if (this.rejected) return;
             const identity = chunk.providerIdentity;
             if (!identity || typeof identity !== "object" || Array.isArray(identity)) return this.reject();
-            // LangChain emits null-id empty closing chunks for an already
-            // indexed call. Null means omitted, never a new identity/permission.
-            const id = identity.id ?? undefined;
+            // LangChain can emit null IDs; DeepSeek emits empty IDs on argument
+            // continuations. An empty ID is only an omission when the provider
+            // repeats an already established index, never a new call identity.
+            const anchoredEmptyId = identity.id === "" && this.callIndex !== undefined
+                && identity.index === this.callIndex;
+            const id = anchoredEmptyId ? undefined : identity.id ?? undefined;
             const index = identity.index ?? undefined;
             const name = identity.name ?? undefined;
             if ((id !== undefined && (typeof id !== "string" || !id || id.trim() !== id

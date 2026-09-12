@@ -66,6 +66,20 @@ async function run(options: { truncate?: boolean; revoke?: boolean; mixed?: bool
 }
 
 describe("native writing bridge host gates", () => {
+    it("preserves a complete call with empty-id continuations through adapter, loop and bridge", async () => {
+        // DeepSeek's captured header has an ID; its argument deltas repeat the
+        // index with empty ID/name placeholders. Replay that SDK shape while
+        // retaining the existing complete synthetic finish and exact body.
+        const deltas = trace.deltas.map((delta) => ({ ...delta,
+            id: delta.id ?? "", name: delta.name ?? "" }));
+        const { result, events } = await run({ deltas });
+        expect(result.status).toBe("completed");
+        expect(events.filter(event => event.kind === "writing-artifact")).toEqual([
+            expect.objectContaining({ body }),
+        ]);
+        expect(events.filter(event => event.kind === "writing-recovery")).toHaveLength(0);
+    });
+
     it("keeps the assistant-start handle after the host prepares a later context", async () => {
         let selected: string | undefined = "run:writing:1";
         const { result, events } = await run({ getContextHandle: () => selected,
