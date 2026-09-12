@@ -20,6 +20,7 @@ export interface MemorySearchPort {
         query?: string,
         signal?: AbortSignal,
         preparationOwnerSignal?: AbortSignal,
+        options?: { existingOnly?: boolean },
     ): Promise<MemoryDecisionResult>;
     searchHybrid(query: string, opts?: MemorySearchHybridOptions): Promise<MemorySearchHybridResult>;
     getChunksByPath(paths: string[], opts?: MemoryChunksByPathOptions): Promise<MemoryChunksByPathResult>;

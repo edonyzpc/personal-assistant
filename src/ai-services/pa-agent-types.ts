@@ -34,7 +34,9 @@ export type PaAgentModelStreamChunk =
     | { type: "provider_completion"; completion: ProviderCompletion }
     | { type: "thinking_delta"; text: string }
     | { type: "text_delta"; text: string }
-    | { type: "toolcall_delta"; id?: string; name: string; input?: unknown; argsText?: string; index?: number }
+    | { type: "toolcall_delta"; id?: string; name: string; input?: unknown; argsText?: string; index?: number;
+        /** Unnormalized provider fields, available only when the host requests strict output identity. */
+        providerIdentity?: { id?: unknown; index?: unknown; name?: unknown } }
     | { type: "diagnostic"; diagnostic: Record<string, unknown> };
 
 export type PaAgentToolCall = Extract<AssistantMessagePart, { type: "toolCall" }> & {
@@ -44,6 +46,8 @@ export type PaAgentToolCall = Extract<AssistantMessagePart, { type: "toolCall" }
 };
 
 export interface PaAgentToolExecutionInput {
+    /** Captured by the host after complete-batch admission; never model input. */
+    taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
     runId: string;
     turnId: string;
     turnIndex: number;
@@ -71,6 +75,8 @@ export interface PaAgentToolExecutionResult {
  * ordinary read-only calls on the existing execution path.
  */
 export interface PaAgentToolBatchPreparationInput {
+    /** Host-owned, per admitted batch; excluded from persisted intents and model arguments. */
+    taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
     runId: string;
     turnId: string;
     turnIndex: number;
@@ -86,8 +92,27 @@ export interface PaAgentToolBatchPreparationResult {
     toolResults: ReadonlyMap<string, PaAgentToolExecutionResult>;
 }
 
+/** Host-only authorization for this exact parsed batch, never a model payload. */
+export interface PaAgentToolBatchPreflightAdmission {
+    kind: "admitted";
+    taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
+    /** Only declare_source_scope calls may be consumed as control receipts. */
+    controlResults?: ReadonlyMap<string, PaAgentToolExecutionResult>;
+}
+
 export interface PaAgentToolExecutor {
     execute(input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult>;
+    /**
+     * Synchronous Host-fact validation of the complete parsed phase, before
+     * filtering, canonical keys or preparation. Do not read external sources.
+     * Undefined keeps legacy admission; an execution result rejects every call.
+     * An explicit admission binds this batch's read guard and control receipts.
+     * Rejections and applied controls consume the normal call budget; neither
+     * counts as a successful source observation.
+     */
+    preflightBatch?(
+        input: Omit<PaAgentToolBatchPreparationInput, "signal">,
+    ): PaAgentToolExecutionResult | PaAgentToolBatchPreflightAdmission | undefined;
     /**
      * Optional Host-owned duplicate key computed from the successful
      * `prepareAndValidate` output. The dispatcher must prefer this over raw
@@ -98,6 +123,11 @@ export interface PaAgentToolExecutor {
         toolCall: PaAgentToolCall,
         context: { userInput: string },
     ): string | undefined;
+    /** Only get_writing_context: true means this exact selection has a still-valid current receipt. */
+    canReuseWritingContext?(
+        toolCall: PaAgentToolCall,
+        context: { userInput: string },
+    ): boolean;
     prepareBatch?(
         input: PaAgentToolBatchPreparationInput,
     ): Promise<PaAgentToolBatchPreparationResult | void>;

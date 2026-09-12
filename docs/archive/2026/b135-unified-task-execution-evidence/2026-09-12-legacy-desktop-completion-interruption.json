@@ -1,0 +1,76 @@
+{
+  "scope": "B-135 P1 legacy Desktop completion and interruption recovery",
+  "date": "2026-09-12",
+  "environment": {
+    "vault": "repo-local test",
+    "obsidianVersion": "1.14.1",
+    "pluginVersion": "2.9.2",
+    "sourceBaseCommit": "372f3c8fc22421e36cc34bf15e2ff0e1903e1adc",
+    "deployedBundleSha256": "561a30161e3a2fa0017ecf4e39140a1bede9939576a6d47c458af1011898fc52",
+    "protocol": "legacy"
+  },
+  "providerCompletion": {
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "input": "synthetic travel prose using only white windmill, glass bottle, rain-wet pier, and evening tide",
+    "contentLength": 978,
+    "contentSha256": "52c2f1cf1499b427274ca71a7ed0f49b8506a3217372b53457a15c6886f0567d",
+    "canonicalStatus": "completed",
+    "providerCompletion": "stop",
+    "stopReason": "stop",
+    "contextUsed": [],
+    "memoryContentUsed": false,
+    "runtimeWarnings": [],
+    "persistedTurnStatus": "completed",
+    "writingVersionCount": 0,
+    "physicalAttemptsBeforeChangingMethod": 2,
+    "attemptOutcome": "Both real provider requests completed before the stop action could be applied; the first result is retained as the normal-completion proof. No third provider retry was made."
+  },
+  "desktopInterruption": {
+    "transport": "deterministic cumulative legacy chunks injected through the loaded Chat view streamLLM boundary",
+    "host": "actual loaded Obsidian Desktop Chat view and cancel-button DOM handler",
+    "partialText": "《雾中码头》\n\n退潮以后，红色浮标慢慢倾斜，",
+    "stopTrigger": "current .cancel-button click after the second visible chunk",
+    "immediate": {
+      "warning": "user_abort",
+      "visibleState": "Generation cancelled",
+      "shareCardEligible": false,
+      "writingRecoveryAvailable": false,
+      "writingVersionCount": 0
+    },
+    "persistedLegacyRecord": {
+      "turnStatusBeforeFix": "absent",
+      "runtimeWarning": "user_abort",
+      "partialTextRetained": true
+    },
+    "preFixReload": {
+      "inferredCanonicalStatus": "completed",
+      "visibleState": "Answer completed with warning",
+      "finding": "F-24"
+    },
+    "fixedReload": {
+      "inferredCanonicalStatus": "aborted",
+      "visibleState": "Generation cancelled",
+      "partialTextExact": true,
+      "addToEditorAvailable": false,
+      "shareCardAvailable": false,
+      "modalCount": 0,
+      "writingVersionCount": 0
+    }
+  },
+  "validation": {
+    "focused": "chat-history-manager: 1 suite / 32 tests PASS",
+    "typeCheck": "PASS",
+    "fullGate": "make deploy: platform guard, lint, production build, 276 suites / 7620 tests PASS in 308.785 seconds; natural exit 0",
+    "deploymentIdentity": "dist/main.js and the opened test vault main.js have identical SHA-256",
+    "visualEvidence": [
+      "2026-09-12-qwen-legacy-completed.png",
+      "2026-09-12-legacy-interrupted-reload.png"
+    ]
+  },
+  "limits": [
+    "The deterministic interrupted run proves the legacy Chat UI and persistence lifecycle, not provider timing behavior.",
+    "The Electron DOM click and screenshot prove the loaded Desktop host path; they are not iOS evidence.",
+    "The generic Jest delayed-exit warning remained after all suites passed and did not change this slice's assertions or natural process exit."
+  ]
+}

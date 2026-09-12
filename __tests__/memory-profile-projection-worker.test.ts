@@ -9,6 +9,57 @@ import {
 const NOW = new Date("2026-07-11T08:00:00.000Z");
 
 describe("MemoryProfileProjectionWorker", () => {
+    it('writes only the exact governed target when a legacy copy has the same Profile ID', async () => {
+        const initial = state();
+        initial.projectionLinks.push({ ...initial.projectionLinks[0], id: 'link-governed',
+            target: { kind: 'type_a_profile', profileRecordId: 'profile-a', store: 'governed', profileKey: 'semantic-1234abcd' } });
+        Object.assign(initial.pendingOperations[0], { profileStore: 'governed', profileKey: 'semantic-1234abcd' });
+        const repository = repositoryFor(initial);
+        const applyProjection = jest.fn(async () => undefined);
+        const worker = new MemoryProfileProjectionWorker({ repository, opaqueVaultKey: 'vault-a', now: () => NOW, applyProjection });
+        await expect(worker.resumePending()).resolves.toEqual({ completed: ['claim-a'], pending: [] });
+        expect(applyProjection).toHaveBeenCalledWith(expect.objectContaining({ profileRecordId: 'profile-a',
+            profileStore: 'governed', profileKey: 'semantic-1234abcd' }));
+        expect((await repository.initialize()).projectionLinks[0]).toEqual(initial.projectionLinks[0]);
+    });
+
+    it('keeps an old legacy outbox pending when the same ID now has a governed copy', async () => {
+        const initial = state();
+        initial.projectionLinks.push({ ...initial.projectionLinks[0], id: 'link-governed',
+            target: { kind: 'type_a_profile', profileRecordId: 'profile-a', store: 'governed', profileKey: 'semantic-1234abcd' } });
+        const repository = repositoryFor(initial);
+        const applyProjection = jest.fn(async () => undefined);
+        const worker = new MemoryProfileProjectionWorker({ repository, opaqueVaultKey: 'vault-a', now: () => NOW, applyProjection });
+        await expect(worker.resumePending()).resolves.toEqual({ completed: [], pending: ['claim-a'] });
+        expect(applyProjection).not.toHaveBeenCalled();
+        expect((await repository.initialize()).pendingOperations[0]).toMatchObject({ state: 'pending',
+            lastErrorCode: 'profile_projection_state_changed' });
+    });
+
+    it('removes each store copy exactly and retries a failed governed removal without repeating the legacy removal', async () => {
+        const initial = removalState();
+        initial.projectionLinks.push({ ...initial.projectionLinks[0], id: 'link-governed',
+            target: { kind: 'type_a_profile', profileRecordId: 'profile-a', store: 'governed', profileKey: 'semantic-1234abcd' } });
+        initial.pendingOperations.push({ ...initial.pendingOperations[0], id: 'operation-governed', kind: 'profile_projection',
+            action: 'remove', claimId: 'claim-a', profileRecordId: 'profile-a', projectionLinkId: 'link-governed',
+            profileStore: 'governed', profileKey: 'semantic-1234abcd', state: 'pending', attemptCount: 0,
+            createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() });
+        const repository = repositoryFor(initial);
+        let fail = true;
+        const removed: string[] = [];
+        const worker = new MemoryProfileProjectionWorker({ repository, opaqueVaultKey: 'vault-a', now: () => NOW,
+            applyProjection: async () => undefined, removeProjection: async (input) => {
+                if (input.profileStore === 'governed' && fail) throw new Error('Governed store unavailable');
+                removed.push(input.profileStore ?? 'legacy');
+            } });
+        await expect(worker.resumePending()).resolves.toEqual({ completed: ['claim-a'], pending: ['claim-a'] });
+        expect(removed).toEqual(['legacy']);
+        expect((await repository.initialize()).pendingOperations.find((operation) => operation.id === 'operation-governed'))
+            .toMatchObject({ state: 'pending' });
+        fail = false;
+        await expect(worker.resumePending()).resolves.toEqual({ completed: ['claim-a'], pending: [] });
+        expect(removed).toEqual(['legacy', 'governed']);
+    });
     it("applies an exact pending projection and marks the outbox only after success", async () => {
         const repository = repositoryFor(state());
         const applied: string[] = [];

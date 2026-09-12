@@ -4,9 +4,67 @@ import {
     createProviderRequestScope,
     createScopedObsidianFetch,
     obsidianFetch,
+    reportProviderRequestDiagnostic,
 } from '../src/ai-services/obsidian-fetch';
 
 jest.mock('obsidian');
+
+describe('physical request limit diagnostics', () => {
+    it.each([false, true])('consumes a later physical failure after observer cancellation (scope=%s)', async (scoped) => {
+        const raw = deferred<unknown>();
+        const then = jest.spyOn(raw.promise, 'then');
+        const controller = new AbortController();
+        mockedRequestUrl.mockImplementationOnce(() => raw.promise);
+        await expect(obsidianFetch('https://example.test', { signal: controller.signal }, {
+            ...(scoped ? { providerRequestScope: createProviderRequestScope() } : {}),
+            onProviderRequestDiagnostic: () => controller.abort(),
+        })).rejects.toMatchObject({ name: 'AbortError' });
+        expect(then.mock.calls.some((args) => typeof args[1] === 'function')).toBe(true);
+        raw.reject(new Error('physical request failed after cancellation'));
+        await Promise.resolve();
+    });
+    it.each([false, true])('notifies the observer only after dispatch creation (scope=%s)', async (scoped) => {
+        const order: string[] = [];
+        const controller = new AbortController();
+        mockedRequestUrl.mockImplementationOnce(async () => { order.push('dispatch'); return successfulResponse(); });
+        await expect(obsidianFetch('https://example.test', { signal: controller.signal }, {
+            ...(scoped ? { providerRequestScope: createProviderRequestScope() } : {}),
+            onProviderRequestStart: () => order.push('admission'),
+            onProviderRequestDiagnostic: () => { order.push('diagnostic'); controller.abort(); },
+        })).rejects.toMatchObject({ name: 'AbortError' });
+        expect(order).toEqual(['admission', 'dispatch', 'diagnostic']);
+    });
+    it.each([
+        { body: '{"messages":[{"content":"SECRET"}],"max_tokens":123}', state: 'json_object', max: 123, completion: 'absent' },
+        { body: '{"max_completion_tokens":456}', state: 'json_object', max: 'absent', completion: 456 },
+        { body: '{"max_tokens":"SECRET","max_completion_tokens":null}', state: 'json_object', max: 'unknown', completion: 'unknown' },
+        { body: 'not json SECRET', state: 'unknown', max: 'unknown', completion: 'unknown' },
+        { body: new ArrayBuffer(1), state: 'unknown', max: 'unknown', completion: 'unknown' },
+    ])('reports only observed numeric fields: $state/$max', ({ body, state, max, completion }) => {
+        const observer = jest.fn();
+        reportProviderRequestDiagnostic(body, 'native', observer);
+        expect(observer).toHaveBeenCalledWith({ transport: 'native', bodyState: state, maxTokens: max, maxCompletionTokens: completion });
+        expect(JSON.stringify(observer.mock.calls)).not.toContain('SECRET');
+    });
+
+    it('reports no attempt when dispatch admission rejects', async () => {
+        const observer = jest.fn();
+        await expect(obsidianFetch('https://example.test', { body: '{"max_tokens":12}' }, {
+            onProviderRequestStart: () => { throw new Error('not admitted'); },
+            onProviderRequestDiagnostic: observer,
+        })).rejects.toThrow('not admitted');
+        expect(observer).not.toHaveBeenCalled();
+    });
+
+    it('isolates an observer failure without changing the exact dispatched body', async () => {
+        mockedRequestUrl.mockResolvedValueOnce(successfulResponse());
+        const body = '{"messages":[{"content":"SECRET"}],"max_tokens":123}';
+        await obsidianFetch('https://example.test', { body }, {
+            onProviderRequestDiagnostic: () => { throw new Error('sink unavailable'); },
+        });
+        expect(mockedRequestUrl).toHaveBeenLastCalledWith(expect.objectContaining({ body }));
+    });
+});
 
 const mockedRequestUrl = requestUrl as unknown as jest.MockedFunction<(request: unknown) => Promise<unknown>>;
 const encode = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer;
@@ -251,16 +309,20 @@ describe('obsidianFetch', () => {
         const onProviderRequestStart = jest.fn(() => {
             throw new Error('soft deadline reached');
         });
+        const onProviderRequestDiagnostic = jest.fn();
         const second = createScopedObsidianFetch({
             providerRequestScope: scope,
             onProviderRequestStart,
+            onProviderRequestDiagnostic,
         })('https://example.test/second');
         await flushMicrotasks();
         expect(onProviderRequestStart).not.toHaveBeenCalled();
+        expect(onProviderRequestDiagnostic).not.toHaveBeenCalled();
 
         firstRaw.resolve(successfulResponse());
         await expect(second).rejects.toThrow('soft deadline reached');
         expect(onProviderRequestStart).toHaveBeenCalledTimes(1);
+        expect(onProviderRequestDiagnostic).not.toHaveBeenCalled();
         expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
     });
 

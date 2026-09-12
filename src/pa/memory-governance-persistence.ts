@@ -1,3 +1,4 @@
+import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint, isChatSemanticConversationProvenance, parseChatMemorySemanticReceipt, type ChatMemorySemanticReceipt } from "./chat-memory-semantic-receipt";
 import {
     clearPlatformTimeout,
     getPlatformIndexedDB,
@@ -15,7 +16,7 @@ import {
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
-import { cloneScope, cloneSourceRef, includesString, isRecord } from "./helpers";
+import { cloneScope, cloneSourceRef, includesString, isRecord, stableHash } from "./helpers";
 import {
     validateConfirmedMemoryRecord,
     type ConfirmedMemoryRecord,
@@ -28,8 +29,8 @@ import type { ReviewQueueItem } from "./review-queue-store";
 import { parseWritingStyle, parseWritingStyleAuthorization, isGovernableWritingStyle,
     type WritingStylePayload, type WritingStyleAuthorization } from "./writing-style";
 
-export const MEMORY_GOVERNANCE_SCHEMA_VERSION = 2 as const;
-export const MEMORY_GOVERNANCE_INDEXED_DB_VERSION = 2;
+export const MEMORY_GOVERNANCE_SCHEMA_VERSION = 3 as const;
+export const MEMORY_GOVERNANCE_INDEXED_DB_VERSION = 3;
 export const MEMORY_GOVERNANCE_DEFAULT_DB_NAME = "personal-assistant-memory-governance-device-v1";
 
 const META_STORE = "meta";
@@ -106,6 +107,7 @@ const MIGRATION_PHASES = [
     "local_verifying",
     "cutover_ready",
     "compatibility",
+    "governed_preserving_legacy",
     "finalizing",
     "finalized",
     "rolling_back",
@@ -186,11 +188,13 @@ export interface MemoryClaimRevision {
     authority: MemoryControlCenterAuthority;
     supersedesRevisionId?: string;
     createdAt: string;
+    chatSemanticReceipt?: ChatMemorySemanticReceipt;
     writingStyle?: WritingStylePayload;
     writingStyleAuthorization?: WritingStyleAuthorization;
 }
 
 export interface MemoryQueueAdmissionEnvelope {
+    chatSemanticReceipt?: ChatMemorySemanticReceipt;
     version: 1;
     origin: "type_a" | "memory_candidate";
     memoryType: MemoryType;
@@ -203,6 +207,8 @@ export interface MemoryQueueAdmissionEnvelope {
     ruleFingerprint: string;
     admissionKey: string;
     profileRecordId?: string;
+    /** Host-owned extraction identity for the isolated governed Profile copy. */
+    profileKey?: string;
 }
 
 export interface DeviceMemoryQueueItem extends ReviewQueueItem {
@@ -216,7 +222,7 @@ export interface DeviceMemoryQueueItem extends ReviewQueueItem {
 
 export type MemoryProjectionTarget =
     | { kind: "review_queue"; itemId: string }
-    | { kind: "type_a_profile"; profileRecordId: string }
+    | { kind: "type_a_profile"; profileRecordId: string; store?: "governed"; profileKey?: string }
     | { kind: "prompt_projection"; projectionId: string };
 
 export interface MemoryProjectionLink {
@@ -313,6 +319,9 @@ interface MemoryProfileProjectionOperationBase {
     kind: "profile_projection";
     claimId: string;
     profileRecordId: string;
+    /** Missing means the original legacy Profile database. */
+    profileStore?: "governed";
+    profileKey?: string;
     state: "pending" | "applied";
     attemptCount: number;
     createdAt: string;
@@ -398,7 +407,7 @@ export interface MemoryRollbackPayloadEntry {
 }
 
 export interface DeviceMemoryGovernanceStateV1 {
-    schemaVersion: 1 | 2;
+    schemaVersion: 1 | 2 | 3;
     commitSequence: number;
     claims: GovernedMemoryClaim[];
     revisions: MemoryClaimRevision[];
@@ -512,10 +521,36 @@ function hasMisplacedWritingStyle(value: unknown, path: Array<string | number>, 
     ));
 }
 
+function parseBoundChatSemanticReceipt(value: Record<string, unknown>, text: string): ChatMemorySemanticReceipt | null | undefined {
+    if (!Object.prototype.hasOwnProperty.call(value, "chatSemanticReceipt")) return undefined;
+    const receipt = parseChatMemorySemanticReceipt(value.chatSemanticReceipt);
+    return receipt && receipt.candidateTextHash === stableHash(text.trim()) ? receipt : null;
+}
+
+/** Reject misplaced/new-in-legacy fields before whitelist readers can discard them. */
+function hasMisplacedChatSemanticReceipt(value: unknown, path: Array<string | number>, legacy: boolean): boolean {
+    if (Array.isArray(value)) return value.some((child, index) => hasMisplacedChatSemanticReceipt(child, [...path, index], legacy));
+    if (!isRecord(value)) return false;
+    const revision = path.length === 2 && path[0] === "revisions" && typeof path[1] === "number";
+    const undoRevision = path.length === 4 && path[0] === "undoSnapshots" && typeof path[1] === "number"
+        && path[2] === "revisions" && typeof path[3] === "number";
+    const queue = path.length === 3 && path[0] === "memoryQueueItems" && typeof path[1] === "number" && path[2] === "governanceAdmission";
+    return Object.entries(value).some(([key, child]) => (
+        (key === "chatSemanticReceipt" && (legacy || !(revision || undoRevision || queue)))
+        || hasMisplacedChatSemanticReceipt(child, [...path, key], legacy)
+    ));
+}
+
 function parseDeviceMemoryGovernanceStateV1(value: unknown): ParseResult<DeviceMemoryGovernanceStateV1> {
     if (!isRecord(value)) return invalid("state_not_object");
-    if (value.schemaVersion !== 1 && value.schemaVersion !== MEMORY_GOVERNANCE_SCHEMA_VERSION) return invalid("unsupported_schema_version");
+    if (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== MEMORY_GOVERNANCE_SCHEMA_VERSION) return invalid("unsupported_schema_version");
     if (hasMisplacedWritingStyle(value, [], value.schemaVersion === 1)) return invalid("invalid_writing_style_location");
+    if (hasMisplacedChatSemanticReceipt(value, [], value.schemaVersion !== 3)) return invalid("invalid_chat_semantic_receipt_location");
+    if (value.schemaVersion !== 3 && hasGovernedProfileStorage(value)) return invalid("unsupported_profile_storage");
+    if (value.schemaVersion !== 3 && isRecord(value.migrationStates)
+        && Object.values(value.migrationStates).some((state) => isRecord(state) && state.phase === "governed_preserving_legacy")) {
+        return invalid("unsupported_migration_phase");
+    }
     if (!isNonNegativeSafeInteger(value.commitSequence)) return invalid("invalid_commit_sequence");
 
     const claims = parseArray(value.claims, parseClaim, "invalid_claim");
@@ -666,7 +701,9 @@ function validateStateIntegrity(state: DeviceMemoryGovernanceStateV1): ParseResu
                 const link = linkById.get(operation.projectionLinkId);
                 if (!link || link.claimId !== operation.claimId
                     || link.target.kind !== "type_a_profile"
-                    || link.target.profileRecordId !== operation.profileRecordId) {
+                    || link.target.profileRecordId !== operation.profileRecordId
+                    || link.target.store !== operation.profileStore
+                    || link.target.profileKey !== operation.profileKey) {
                     return invalid("profile_remove_operation_link_missing");
                 }
             } else {
@@ -674,6 +711,11 @@ function validateStateIntegrity(state: DeviceMemoryGovernanceStateV1): ParseResu
                 if (!revision || revision.claimId !== operation.claimId) {
                     return invalid("profile_operation_revision_missing");
                 }
+                if (operation.profileStore === "governed" && !state.projectionLinks.some((link) => (
+                    link.claimId === operation.claimId && link.target.kind === "type_a_profile"
+                    && link.target.profileRecordId === operation.profileRecordId
+                    && link.target.store === operation.profileStore && link.target.profileKey === operation.profileKey
+                ))) return invalid("profile_operation_target_missing");
             }
         } else {
             if (operation.suppressionMarkerIds.some((id) => !markerById.has(id))) {
@@ -762,6 +804,9 @@ function parseRevision(value: unknown): MemoryClaimRevision | null {
     if (!provenance.ok) return null;
     const supersedesRevisionId = optionalString(value.supersedesRevisionId);
     if (value.supersedesRevisionId !== undefined && !supersedesRevisionId) return null;
+    const chatSemanticReceipt = parseBoundChatSemanticReceipt(value, value.summary);
+    if (chatSemanticReceipt === null) return null;
+    if (chatSemanticReceipt && !isChatSemanticConversationProvenance(chatSemanticReceipt, provenance.value)) return null;
     const writingStyle = value.writingStyle === undefined ? undefined : parseWritingStyle(value.writingStyle);
     const writingStyleAuthorization = value.writingStyleAuthorization === undefined ? undefined : parseWritingStyleAuthorization(value.writingStyleAuthorization);
     if (writingStyle === null || writingStyleAuthorization === null || Boolean(writingStyle) !== Boolean(writingStyleAuthorization)) return null;
@@ -773,6 +818,7 @@ function parseRevision(value: unknown): MemoryClaimRevision | null {
         authority: value.authority,
         ...(supersedesRevisionId ? { supersedesRevisionId } : {}),
         createdAt,
+        ...(chatSemanticReceipt ? { chatSemanticReceipt } : {}),
         ...(writingStyle && writingStyleAuthorization ? { writingStyle, writingStyleAuthorization } : {}),
     };
 }
@@ -844,7 +890,7 @@ function parseMemoryQueueItem(value: unknown): DeviceMemoryQueueItem | null {
     if (value.replayRef !== undefined) item.replayRef = value.replayRef as string;
     if (metadata) item.metadata = metadata;
     if (value.governanceAdmission !== undefined) {
-        const governanceAdmission = parseMemoryQueueAdmission(value.governanceAdmission);
+        const governanceAdmission = parseMemoryQueueAdmission(value.governanceAdmission, item.claim);
         if (!governanceAdmission) return null;
         item.governanceAdmission = governanceAdmission;
     }
@@ -861,8 +907,10 @@ function parseMemoryQueueItem(value: unknown): DeviceMemoryQueueItem | null {
     return item;
 }
 
-function parseMemoryQueueAdmission(value: unknown): MemoryQueueAdmissionEnvelope | null {
+function parseMemoryQueueAdmission(value: unknown, claim: string): MemoryQueueAdmissionEnvelope | null {
     if (!isRecord(value) || value.version !== 1) return null;
+    const chatSemanticReceipt = parseBoundChatSemanticReceipt(value, claim);
+    if (chatSemanticReceipt === null) return null;
     if (value.origin !== "type_a" && value.origin !== "memory_candidate") return null;
     if (!includesString(MEMORY_TYPES, value.memoryType)
         || !includesString(MEMORY_SENSITIVITIES, value.sensitivity)
@@ -873,13 +921,22 @@ function parseMemoryQueueAdmission(value: unknown): MemoryQueueAdmissionEnvelope
     const sourceFingerprintId = requiredString(value.sourceFingerprintId);
     const ruleFingerprint = requiredString(value.ruleFingerprint);
     const admissionKey = requiredString(value.admissionKey);
+    if (chatSemanticReceipt) {
+        if (ruleFingerprint !== CHAT_MEMORY_SEMANTIC_RULE
+            || sourceFingerprintId !== chatMemorySemanticSourceFingerprint(chatSemanticReceipt)
+            || !provenance.ok || !isChatSemanticConversationProvenance(chatSemanticReceipt, provenance.value)) return null;
+    } else if (ruleFingerprint === CHAT_MEMORY_SEMANTIC_RULE) return null;
     const profileRecordId = optionalString(value.profileRecordId);
+    const profileKey = optionalString(value.profileKey);
     if (!applicability || !provenance.ok || provenance.value.length === 0
         || !sourceFingerprintId || !ruleFingerprint || !admissionKey
-        || (value.profileRecordId !== undefined && !profileRecordId)) return null;
+        || (value.profileRecordId !== undefined && !profileRecordId)
+        || (value.profileKey !== undefined && (!isGovernedProfileKey(profileKey) || !profileRecordId))
+        || (chatSemanticReceipt && profileRecordId && !profileKey)) return null;
     return {
         version: 1,
         origin: value.origin,
+        ...(chatSemanticReceipt ? { chatSemanticReceipt } : {}),
         memoryType: value.memoryType,
         sensitivity: value.sensitivity,
         authority: value.authority,
@@ -890,6 +947,7 @@ function parseMemoryQueueAdmission(value: unknown): MemoryQueueAdmissionEnvelope
         ruleFingerprint,
         admissionKey,
         ...(profileRecordId ? { profileRecordId } : {}),
+        ...(profileKey ? { profileKey } : {}),
     };
 }
 
@@ -918,6 +976,25 @@ function parseProjectionLink(value: unknown): MemoryProjectionLink | null {
     };
 }
 
+function parseProfileStorage(store: unknown, key: unknown): { profileStore?: "governed"; profileKey?: string } | null {
+    if (store === undefined) return key === undefined ? {} : null;
+    const profileKey = requiredString(key);
+    return store === "governed" && isGovernedProfileKey(profileKey) ? { profileStore: "governed", profileKey } : null;
+}
+
+/** This identity survives redaction/retry; it must never retain the personal statement. */
+export function isGovernedProfileKey(value: unknown): value is string {
+    return typeof value === "string" && /^semantic-[a-f0-9]{8}$/.test(value);
+}
+
+function hasGovernedProfileStorage(value: unknown): boolean {
+    if (Array.isArray(value)) return value.some(hasGovernedProfileStorage);
+    if (!isRecord(value)) return false;
+    if (value.profileKey !== undefined || value.profileStore !== undefined
+        || (value.kind === "type_a_profile" && value.store !== undefined)) return true;
+    return Object.values(value).some(hasGovernedProfileStorage);
+}
+
 function parseProjectionTarget(value: unknown): MemoryProjectionTarget | null {
     if (!isRecord(value)) return null;
     if (value.kind === "review_queue") {
@@ -926,7 +1003,9 @@ function parseProjectionTarget(value: unknown): MemoryProjectionTarget | null {
     }
     if (value.kind === "type_a_profile") {
         const profileRecordId = requiredString(value.profileRecordId);
-        return profileRecordId ? { kind: "type_a_profile", profileRecordId } : null;
+        const storage = parseProfileStorage(value.store, value.profileKey);
+        return profileRecordId && storage ? { kind: "type_a_profile", profileRecordId,
+            ...(storage.profileStore ? { store: storage.profileStore, profileKey: storage.profileKey } : {}) } : null;
     }
     if (value.kind === "prompt_projection") {
         const projectionId = requiredString(value.projectionId);
@@ -1039,12 +1118,14 @@ function parsePendingOperation(value: unknown): MemoryPendingOperation | null {
     if (value.lastErrorCode !== undefined && !lastErrorCode) return null;
     if (value.kind === "profile_projection") {
         const profileRecordId = requiredString(value.profileRecordId);
-        if (!profileRecordId || !includesString(["pending", "applied"] as const, value.state)) return null;
+        const storage = parseProfileStorage(value.profileStore, value.profileKey);
+        if (!profileRecordId || !storage || !includesString(["pending", "applied"] as const, value.state)) return null;
         const base: MemoryProfileProjectionOperationBase = {
             id,
             kind: "profile_projection",
             claimId,
             profileRecordId,
+            ...storage,
             state: value.state,
             attemptCount: value.attemptCount,
             createdAt,
@@ -1566,7 +1647,7 @@ export interface IndexedDbMemoryGovernanceRepositoryOptions {
 }
 
 interface PersistedMetaRecord {
-    schemaVersion: 1 | 2;
+    schemaVersion: 1 | 2 | 3;
     commitSequence: number;
 }
 
@@ -1717,7 +1798,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
             const request = store.get(META_KEY);
             request.onsuccess = () => {
                 if (request.result === undefined) {
-                    store.put({ schemaVersion: 2, commitSequence: 0 } satisfies PersistedMetaRecord, META_KEY);
+                    store.put({ schemaVersion: 3, commitSequence: 0 } satisfies PersistedMetaRecord, META_KEY);
                 }
             };
             request.onerror = () => reject(new MemoryGovernancePersistenceError("database_read_failed"));
@@ -1817,7 +1898,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
             const request = metaStore.get(META_KEY);
             request.onsuccess = () => {
                 const current = request.result as PersistedMetaRecord | undefined;
-                if (!current || current.schemaVersion !== 2 || current.commitSequence !== expectedCommitSequence) {
+                if (!current || current.schemaVersion !== 3 || current.commitSequence !== expectedCommitSequence) {
                     return;
                 }
                 try {
@@ -1829,7 +1910,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
                     return;
                 }
                 committed = true;
-                metaStore.put({ schemaVersion: 2, commitSequence: next.commitSequence } satisfies PersistedMetaRecord, META_KEY);
+                metaStore.put({ schemaVersion: 3, commitSequence: next.commitSequence } satisfies PersistedMetaRecord, META_KEY);
                 for (const storeName of ARRAY_STORES) {
                     const store = transaction.objectStore(storeName);
                     store.clear();
@@ -1917,7 +1998,7 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
                 for (const storeName of ALL_INDEXED_DB_STORES) {
                     if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName);
                 }
-                if (event.oldVersion === 1 && request.transaction) {
+                if ((event.oldVersion === 1 || event.oldVersion === 2) && request.transaction) {
                     const transaction = request.transaction;
                     const candidate = {} as Record<string, unknown>;
                     let remaining = 1 + ARRAY_STORES.length + MAP_STORES.length;
@@ -1925,8 +2006,8 @@ export class IndexedDbMemoryGovernanceRepository implements MemoryGovernanceRepo
                         if (settled || this.disposed) { transaction.abort(); return; }
                         if (--remaining) return;
                         const parsed = normalizeDeviceMemoryGovernanceStateV1(candidate);
-                        if (!parsed || candidate.schemaVersion !== 1) { transaction.abort(); return; }
-                        transaction.objectStore(META_STORE).put({ schemaVersion: 2, commitSequence: parsed.commitSequence }, META_KEY);
+                        if (!parsed || (candidate.schemaVersion !== 1 && candidate.schemaVersion !== 2)) { transaction.abort(); return; }
+                        transaction.objectStore(META_STORE).put({ schemaVersion: 3, commitSequence: parsed.commitSequence }, META_KEY);
                     };
                     const meta = transaction.objectStore(META_STORE).get(META_KEY);
                     meta.onsuccess = () => { Object.assign(candidate, meta.result); complete(); };

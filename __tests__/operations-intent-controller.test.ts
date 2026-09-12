@@ -10,9 +10,12 @@ import type {
 } from "../src/ai-services/operations/operations-audit-store";
 import type {
     OperationsControllerEvent,
+    OperationsToolCall,
     OperationsVault,
     OperationsVaultFile,
 } from "../src/ai-services/operations/types";
+import type { TaskSourceReadGuard } from "../src/ai-services/task-source-read-guard";
+import { formatOperationsPreview } from "../src/ai-services/operations/operations-presentation";
 
 class MemoryVault implements OperationsVault {
     readonly files = new Map<string, string>();
@@ -607,5 +610,241 @@ describe("OperationsIntentController", () => {
             category: "schema_invalid",
             message: "bad",
         });
+    });
+});
+
+describe("Operations task source reads", () => {
+    it("permits a new output target and later virtual edits without granting its existing body as material", async () => {
+        const vault = new MemoryVault();
+        const kinds: string[] = [];
+        const guard: TaskSourceReadGuard = {
+            isCurrent: () => true,
+            isPathAllowed: (path, kind) => {
+                kinds.push(kind ?? "task_material");
+                return path === "notes/new.md" && kind === "output_target_exists";
+            },
+        };
+        const controller = makeController(vault);
+        try {
+            const intent = await controller.stageIntent({
+                runId: "run", turnId: "turn", taskSourceReadGuard: guard,
+                operations: [
+                    { toolCallId: "create", name: "vault_create", input: { path: "notes/new.md", content: "new" } },
+                    { toolCallId: "append", name: "vault_append", input: { path: "notes/new.md", content: "after" } },
+                ],
+            });
+            expect(intent.operations.map(operation => operation.expectedBefore)).toEqual([null, "new"]);
+            expect(intent.operations[1]?.expectedAfter).toBe("new\nafter");
+            expect(kinds.length).toBeGreaterThan(0);
+            expect(new Set(kinds)).toEqual(new Set(["output_target_exists"]));
+            expect(vault.adapter.exists).toHaveBeenCalledWith("notes/new.md");
+            expect(vault.cachedRead).not.toHaveBeenCalled();
+            expect(vault.adapter.read).not.toHaveBeenCalled();
+            expect(vault.create).not.toHaveBeenCalled();
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it.each(["append_first", "create_collision"] as const)("does not upgrade output-target permission to old-body access: %s", async (order) => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/existing.md", "private baseline");
+        const guard: TaskSourceReadGuard = {
+            isCurrent: () => true,
+            isPathAllowed: (_path, kind) => kind === "output_target_exists",
+        };
+        const controller = makeController(vault);
+        const create: OperationsToolCall = { toolCallId: "create", name: "vault_create", input: { path: "notes/existing.md", content: "new" } };
+        const append: OperationsToolCall = { toolCallId: "append", name: "vault_append", input: { path: "notes/existing.md", content: "after" } };
+        try {
+            await expect(controller.stageIntent({
+                runId: "run", turnId: "turn", taskSourceReadGuard: guard,
+                operations: order === "append_first" ? [append, create] : [create, append],
+            })).rejects.toMatchObject({ category: order === "append_first" ? "boundary_denied" : "target_collision" });
+            expect(vault.cachedRead).not.toHaveBeenCalled();
+            expect(vault.adapter.read).not.toHaveBeenCalled();
+            expect(vault.files.get("notes/existing.md")).toBe("private baseline");
+            expect(controller.listPendingIntents()).toEqual([]);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it.each<OperationsToolCall>([
+        { toolCallId: "create", name: "vault_create", input: { path: "notes/a.md", content: "new" } },
+        { toolCallId: "append", name: "vault_append", input: { path: "notes/a.md", content: "after" } },
+        { toolCallId: "process", name: "vault_process", input: { path: "notes/a.md", operation: "replace", params: { search: "before", replace: "after" } } },
+        { toolCallId: "frontmatter", name: "frontmatter_update", input: { path: "notes/a.md", set: { status: "done" } } },
+    ])("rejects $name before target lookup or baseline reads", async (operation) => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "before");
+        const lookup = jest.spyOn(vault, "getAbstractFileByPath");
+        const controller = makeController(vault);
+        try {
+            await expect(controller.stageIntent({
+                runId: "run", turnId: "turn", operations: [operation],
+                taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: () => false },
+            })).rejects.toMatchObject({ category: "boundary_denied" });
+            expect(lookup).not.toHaveBeenCalled();
+            expect(vault.adapter.exists).not.toHaveBeenCalled();
+            expect(vault.cachedRead).not.toHaveBeenCalled();
+            expect(vault.adapter.read).not.toHaveBeenCalled();
+            expect(controller.listPendingIntents()).toEqual([]);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("preflights every target before reading an earlier allowed target", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B");
+        const lookup = jest.spyOn(vault, "getAbstractFileByPath");
+        const controller = makeController(vault);
+        try {
+            await expect(controller.stageIntent({
+                runId: "run", turnId: "turn",
+                operations: [
+                    { toolCallId: "a", name: "vault_append", input: { path: "notes/a.md", content: "after" } },
+                    { toolCallId: "b", name: "vault_append", input: { path: "notes/b.md", content: "after" } },
+                ],
+                taskSourceReadGuard: { isCurrent: () => true, isPathAllowed: path => path === "notes/a.md" },
+            })).rejects.toMatchObject({ category: "boundary_denied" });
+            expect(lookup).not.toHaveBeenCalled();
+            expect(vault.cachedRead).not.toHaveBeenCalled();
+            expect(vault.adapter.exists).not.toHaveBeenCalled();
+            expect(controller.listPendingIntents()).toEqual([]);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it.each(["task_scope", "data_boundary"] as const)("stops the batch when %s is revoked during the first baseline read", async (revocation) => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B");
+        let releaseRead!: (text: string) => void;
+        vault.cachedRead.mockImplementationOnce(() => new Promise(resolve => { releaseRead = resolve; }));
+        let current = true;
+        let dataAllowed = true;
+        const events: OperationsControllerEvent[] = [];
+        const controller = makeController(vault, {
+            isPathAllowed: () => dataAllowed,
+            onEvent: event => events.push(event),
+        });
+        try {
+            const staging = controller.stageIntent({
+                runId: "run", turnId: "turn",
+                operations: [
+                    { toolCallId: "a", name: "vault_append", input: { path: "notes/a.md", content: "after" } },
+                    { toolCallId: "b", name: "vault_append", input: { path: "notes/b.md", content: "after" } },
+                ],
+                taskSourceReadGuard: { isCurrent: () => current, isPathAllowed: () => true },
+            });
+            expect(vault.cachedRead).toHaveBeenCalledTimes(1);
+            const rejected = expect(staging).rejects.toMatchObject({ category: "boundary_denied" });
+            if (revocation === "task_scope") current = false;
+            else dataAllowed = false;
+            releaseRead("A");
+            await rejected;
+            expect(vault.cachedRead).toHaveBeenCalledTimes(1);
+            expect(vault.cachedRead).not.toHaveBeenCalledWith(expect.objectContaining({ path: "notes/b.md" }));
+            expect(controller.listPendingIntents()).toEqual([]);
+            expect(events).toEqual([]);
+            expect(vault.process).not.toHaveBeenCalled();
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("rejects a revoked target-existence result before publishing a create proposal", async () => {
+        const vault = new MemoryVault();
+        let releaseExists!: (exists: boolean) => void;
+        vault.adapter.exists.mockImplementationOnce(() => new Promise(resolve => { releaseExists = resolve; }));
+        let current = true;
+        const lookup = jest.spyOn(vault, "getAbstractFileByPath");
+        const controller = makeController(vault);
+        try {
+            const staging = controller.stageIntent({
+                runId: "run", turnId: "turn",
+                operations: [{ toolCallId: "create", name: "vault_create", input: { path: "notes/new.md", content: "new" } }],
+                taskSourceReadGuard: { isCurrent: () => current, isPathAllowed: () => true },
+            });
+            expect(vault.adapter.exists).toHaveBeenCalledWith("notes/new.md");
+            const rejected = expect(staging).rejects.toMatchObject({ category: "boundary_denied" });
+            current = false;
+            releaseExists(false);
+            await rejected;
+            expect(lookup).toHaveBeenCalledTimes(1);
+            expect(vault.cachedRead).not.toHaveBeenCalled();
+            expect(vault.create).not.toHaveBeenCalled();
+            expect(controller.listPendingIntents()).toEqual([]);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("keeps concurrent run guards isolated on the same controller", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "A");
+        vault.files.set("notes/b.md", "B");
+        const reads = new Map<string, (text: string) => void>();
+        vault.cachedRead.mockImplementation(file => new Promise(resolve => { reads.set(file.path, resolve); }));
+        let aCurrent = true;
+        const aGuard: TaskSourceReadGuard = { isCurrent: () => aCurrent, isPathAllowed: path => path === "notes/a.md" };
+        const bGuard: TaskSourceReadGuard = { isCurrent: () => true, isPathAllowed: path => path === "notes/b.md" };
+        const controller = makeController(vault);
+        try {
+            const a = controller.stageIntent({
+                runId: "run-a", turnId: "turn-a", taskSourceReadGuard: aGuard,
+                operations: [{ toolCallId: "a", name: "vault_append", input: { path: "notes/a.md", content: "after" } }],
+            });
+            const b = controller.stageIntent({
+                runId: "run-b", turnId: "turn-b", taskSourceReadGuard: bGuard,
+                operations: [{ toolCallId: "b", name: "vault_append", input: { path: "notes/b.md", content: "after" } }],
+            });
+            expect([...reads.keys()]).toEqual(["notes/a.md", "notes/b.md"]);
+            reads.get("notes/b.md")!("B");
+            const accepted = await b;
+            const rejected = expect(a).rejects.toMatchObject({ category: "boundary_denied" });
+            aCurrent = false;
+            reads.get("notes/a.md")!("A");
+            await rejected;
+            expect(accepted.runId).toBe("run-b");
+            expect(accepted.operations[0]).toMatchObject({ path: "notes/b.md", expectedBefore: "B" });
+            expect(controller.listPendingIntents()).toEqual([accepted]);
+            expect(vault.cachedRead).toHaveBeenCalledTimes(2);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    it("does not retain the read guard in proposals, preview, audit or Undo and keeps confirmation independent", async () => {
+        const vault = new MemoryVault();
+        vault.files.set("notes/a.md", "before");
+        let current = true;
+        const guard = { marker: "host-only-guard-marker", isCurrent: () => current, isPathAllowed: () => true };
+        const audit = makeAuditStore();
+        const events: OperationsControllerEvent[] = [];
+        const controller = makeController(vault, { auditStore: audit.store, onEvent: event => events.push(event) });
+        try {
+            const intent = await controller.stageIntent({
+                runId: "run", turnId: "turn", taskSourceReadGuard: guard,
+                operations: [{ toolCallId: "a", name: "vault_append", input: { path: "notes/a.md", content: "after" } }],
+            });
+            expect(intent).not.toHaveProperty("taskSourceReadGuard");
+            expect(JSON.stringify([intent, intent.operations.map(operation => formatOperationsPreview(operation)), events])).not.toContain(guard.marker);
+            expect(vault.process).not.toHaveBeenCalled();
+            current = false;
+            const result = await controller.executeIntent(intent.id);
+            expect(result.state).toBe("completed");
+            expect(vault.files.get("notes/a.md")).toBe("before\nafter");
+            expect(JSON.stringify(audit.write.mock.calls)).not.toContain(guard.marker);
+            const undone = await controller.undoCompleted(result);
+            expect(undone[0]?.status).toBe("undone");
+            expect(vault.files.get("notes/a.md")).toBe("before");
+        } finally {
+            controller.dispose();
+        }
     });
 });

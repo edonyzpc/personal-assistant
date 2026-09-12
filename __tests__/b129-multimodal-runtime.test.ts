@@ -3,13 +3,15 @@ import { BaseMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIUtils } from "../src/ai-services/ai-utils";
 import type { AiServiceHost } from "../src/ai-services/AiServiceHost";
+import type { MemorySearchPort } from "../src/memory/MemorySearchPort";
 import { PaAgentRuntime, type PaAgentRuntimeOptions, type PaAgentStreamOptions } from "../src/ai-services/pa-agent-runtime";
 import { ChatService } from "../src/ai-services/chat-service";
-import type { AgentEvent, LegacyAgentEvent } from "../src/ai-services/chat-types";
+import type { AgentEvent, LegacyAgentEvent, ChatMessage } from "../src/ai-services/chat-types";
 import type { ImageAssetService } from "../src/chat/image-assets";
 import type { MessageImage } from "../src/chat/image-types";
 import { createPaAgentPersistedTurn } from "../src/ai-services/pa-agent-history";
 import { decodeWritingOutput, isWritingContinuationPrompt, isWritingRequestPrompt, readProviderCompletion } from "../src/ai-services/writing-output";
+import { formatInjectedContext, MEMORY_CONTEXT_MAX_CHARS } from "../src/ai-services/context/PaAgentContextProjector";
 
 jest.mock("obsidian");
 const realFetch = globalThis.fetch;
@@ -18,21 +20,23 @@ afterEach(() => { globalThis.fetch = realFetch; jest.restoreAllMocks(); });
 const image = (n: number): MessageImage => ({ ref: { assetId: `image-${n}`, contentHash: String(n).repeat(64) }, ordinal: n, label: `Image ${n}` });
 const envelope = (body = '正文："海风"\n🌊') => JSON.stringify({ kind: "pa.writing", version: 1, requestId: "writing-1", body, explanation: "参考当前材料" });
 type RequestBody = { stream?: boolean; messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }>; tools?: Array<{ function: { name: string } }> };
-type Reply = { text?: string; finish?: string | null; tool?: { name: string; input: unknown }; error?: unknown; httpError?: { status: number; code: string; retryAfter?: string }; onEnd?: () => void };
+type FixtureTool = { name: string; input: unknown };
+type Reply = { text?: string; finish?: string | null; tool?: FixtureTool; tools?: FixtureTool[]; error?: unknown; httpError?: { status: number; code: string; retryAfter?: string }; onEnd?: () => void };
 const response = (body: RequestBody, reply: Reply): Response => {
     if (reply.error) throw reply.error;
     if (reply.httpError) return new Response(JSON.stringify({ error: { code: reply.httpError.code, message: "Request rejected; echoed data:image/jpeg;base64,SECRET" } }), {
         status: reply.httpError.status, headers: { "content-type": "application/json", ...(reply.httpError.retryAfter ? { "retry-after": reply.httpError.retryAfter } : {}) },
     });
     const common = { id: "fixture", created: 0, model: "fixture-model" };
-    const message = reply.tool ? { role: "assistant", content: "", tool_calls: [{ id: "call-1", type: "function", function: { name: reply.tool.name, arguments: JSON.stringify(reply.tool.input) } }] }
+    const tools = reply.tools ?? (reply.tool ? [reply.tool] : []);
+    const message = tools.length ? { role: "assistant", content: "", tool_calls: tools.map((tool, index) => ({ id: `call-${index + 1}`, type: "function", function: { name: tool.name, arguments: JSON.stringify(tool.input) } })) }
         : { role: "assistant", content: reply.text ?? "ordinary answer" };
     const finish = reply.finish === undefined ? "stop" : reply.finish;
     if (!body.stream) { reply.onEnd?.(); return new Response(JSON.stringify({ ...common, object: "chat.completion", choices: [{ index: 0, message, finish_reason: finish }] }), { headers: { "content-type": "application/json" } }); }
     const frame = (delta: unknown, reason: string | null = null) => `data: ${JSON.stringify({ ...common, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`;
-    const frames = reply.tool ? [frame({ ...message, tool_calls: message.tool_calls!.map((tool) => ({ ...tool, index: 0 })) })]
+    const frames = tools.length ? [frame({ ...message, tool_calls: message.tool_calls!.map((tool, index) => ({ ...tool, index })) })]
         : [(reply.text ?? "ordinary answer").slice(0, 9), (reply.text ?? "ordinary answer").slice(9, 37), (reply.text ?? "ordinary answer").slice(37)].map((content) => frame({ role: "assistant", content }));
-    frames.push(frame({}, reply.tool ? "tool_calls" : finish));
+    frames.push(frame({}, tools.length ? "tool_calls" : finish));
     frames.push(`data: ${JSON.stringify({ ...common, object: "chat.completion.chunk", choices: [], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })}\n\n`);
     reply.onEnd?.();
     return new Response(frames.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
@@ -42,14 +46,19 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
     const requests: RequestBody[] = [], observed: BaseMessage[][] = [], events: LegacyAgentEvent[] = [], lifecycle: AgentEvent[] = [];
     const sdkAttempts: Array<{ stream: boolean; retryCount: string | null }> = [];
     let beforeSdkDispatch: (() => void) | undefined;
+    let afterModelCreated: ((isSummary: boolean) => void | Promise<void>) | undefined;
     const host = {
         settings: { aiProvider: "openai", baseURL: "https://b129-runtime.invalid/v1", chatModelName: "fixture-model", embeddingModelName: "fixture-embedding", policyModelName: "",
             skillContextEnabled: false, enabledSkillIds: [], webSearchEnabled: false, memoryEnabled: false, licenseTier: "free", statisticsVaultId: "fixture-vault",
             retrievalOptimizationFlags: { lexicalProfile: false, strictReranker: false, graphPpr: false, relaxedRecovery: false } },
         app: { workspace: { getActiveViewOfType: () => null, getMostRecentLeaf: () => null, getLeavesOfType: () => [] },
             vault: { getMarkdownFiles: () => [], getAbstractFileByPath: () => null, cachedRead: async () => "" }, metadataCache: { getFileCache: () => null } },
-        memorySearch: { ensureReadyForChat: async () => ({ decision: "answer-now" }), searchHybrid: async () => [], getChunksByPath: async () => [] },
-        getAPIToken: async () => "synthetic-fixture-token", log: jest.fn(), isOperationsAgentEnabled: false,
+        memorySearch: {
+            ensureReadyForChat: async (..._args: Parameters<MemorySearchPort['ensureReadyForChat']>) => ({ decision: "answer-now" }),
+            searchHybrid: async (..._args: Parameters<MemorySearchPort['searchHybrid']>) => [],
+            getChunksByPath: async () => [],
+        },
+        getAPIToken: async () => "synthetic-fixture-token", log: jest.fn(), isOperationsAgentEnabled: Boolean(runtimeOptions.operationsIntentController),
         getMemoryExtractionPromptContext: jest.fn(() => undefined as Record<string, unknown> | undefined),
     };
     const originalCreate = AIUtils.prototype.createChatModel;
@@ -72,6 +81,7 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
         model.bindTools = ((...bindArgs: Parameters<typeof model.bindTools>) => {
             const bound = originalBind(...bindArgs); (bound as unknown as { callbacks: typeof callbacks }).callbacks = callbacks; return bound;
         }) as typeof model.bindTools;
+        await afterModelCreated?.(args[1]?.maxTokens !== undefined);
         return model;
     });
     globalThis.fetch = jest.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -94,12 +104,613 @@ function fixture(replies: Reply[] | ((body: RequestBody, index: number) => Reply
         finally { runtime.dispose(); }
     };
     return { host, requests, observed, sdkAttempts, events, lifecycle, service, release, run, invalidate: () => { sourceCurrent = false; },
-        beforeSdkDispatch: (callback: () => void) => { beforeSdkDispatch = callback; } };
+        beforeSdkDispatch: (callback: () => void) => { beforeSdkDispatch = callback; },
+        afterModelCreated: (callback: (isSummary: boolean) => void | Promise<void>) => { afterModelCreated = callback; } };
 }
 const pixels = (request: RequestBody) => request.messages.flatMap((message) => Array.isArray(message.content) ? message.content.filter((part) => part.type === "image_url") : []);
 const requestText = (request: RequestBody) => request.messages.map((message) => typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("")).join("\n");
 
+describe('B-135 production source declaration', () => {
+    it('does not create a writing artifact when a supplied note disappears after the final request', async () => {
+        const prompt = '根据当前笔记写一段文字';
+        let live = true;
+        const f = fixture([
+            { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } },
+                { name: 'get_current_note_context', input: { mode: 'full' } },
+            ] },
+            { text: envelope('SOURCE_BASED_WRITING'), onEnd: () => { live = false; } },
+        ]);
+        const file = { path: 'source.md', extension: 'md' };
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file,
+            editor: { getValue: () => 'NOTE_USED_FOR_WRITING', getSelection: () => '', lineCount: () => 1,
+                getLine: () => 'NOTE_USED_FOR_WRITING', getCursor: () => ({ line: 0, ch: 0 }) } } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation(() => live ? file as never : null);
+        await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' } });
+        expect(f.requests).toHaveLength(2);
+        expect(requestText(f.requests[1])).toContain('NOTE_USED_FOR_WRITING');
+        expect(f.events.some(event => event.kind === 'writing-artifact')).toBe(false);
+        expect(f.events.find(event => event.kind === 'writing-recovery')).toMatchObject({ reason: 'source_changed', rawText: '', previewText: '' });
+    });
+
+    it.each(['answer', 'summary'] as const)('revalidates historical Memory revocation at the %s SDK retry', async stage => {
+        const history: ChatMessage[] = [
+            { role: 'assistant', content: 'REVOKED_HISTORY_MEMORY ' + (stage === 'summary' ? 'earlier '.repeat(900) : ''),
+                memoryMetadata: { hasMemoryContent: true, allowedMemorySourcePaths: ['A.md'] } },
+            { role: 'assistant', content: 'KEEP_INDEPENDENT_CHOICES' },
+            { role: 'user', content: '保留第二个方案' },
+        ];
+        const original = JSON.stringify(history);
+        const f = fixture((_body, index) => {
+            if (index === 0) {
+                f.host.settings.memoryEnabled = false;
+                return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+            }
+            return { text: '继续方案' };
+        }, {}, 1);
+        f.host.settings.memoryEnabled = true;
+        const file = { path: 'A.md', extension: 'md' };
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockReturnValue(file as never);
+        await f.run({ images: undefined, prompt: '继续', chatHistory: history,
+            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+        expect(f.requests[0].stream).toBe(stage === 'answer');
+        expect(requestText(f.requests[0])).toContain('REVOKED_HISTORY_MEMORY');
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
+            { stream: stage === 'answer', retryCount: '1' },
+        ]);
+        expect(f.requests.length).toBeGreaterThan(1);
+        for (const request of f.requests.slice(1)) {
+            expect(requestText(request)).not.toContain('REVOKED_HISTORY_MEMORY');
+            expect(requestText(request)).toContain('KEEP_INDEPENDENT_CHOICES');
+        }
+        expect(JSON.stringify(history)).toBe(original);
+    });
+
+    it.each(['tags', 'backlinks'] as const)('withdraws %s aggregate evidence when its hidden source is excluded', async kind => {
+        const prompt = '先查全库再只用B';
+        const f = fixture((body, index) => {
+            if (index === 0) return { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: '先查全库', notes: 'vault', webAllowed: false } },
+                kind === 'tags' ? { name: 'list_vault_tags', input: {} }
+                    : { name: 'inspect_obsidian_note', input: { path: 'B.md' } },
+                { name: 'read_note_outline', input: { path: 'B.md' } },
+            ] };
+            if (index === 1) {
+                const match = requestText(body).match(/\{"handle":"([^"]+)","path":"B.md"\}/);
+                expect(match).not.toBeNull();
+                return { tool: { name: 'declare_source_scope', input: { instructionQuote: '只用B',
+                    notes: 'selected', noteHandles: [match![1]], webAllowed: false } } };
+            }
+            return { text: '按B继续' };
+        }, { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write'); } } as never });
+        const files = ['HIDDEN_SOURCE_A', 'B'].map(name => ({ path: `${name}.md`, name: `${name}.md`, basename: name,
+            extension: 'md', stat: { ctime: 1, mtime: 1, size: 0 } }));
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue(files as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => files.find(file => file.path === args[0]) as never);
+        jest.spyOn(f.host.app.metadataCache, 'getFileCache').mockImplementation((...args: unknown[]) => ({
+            tags: [{ tag: (args[0] as typeof files[0]).basename === 'B' ? '#B' : '#PRIVATE_AGGREGATE_A' }],
+            headings: [{ level: 1, heading: 'B_ALLOWED_OUTLINE' }],
+        }) as never);
+        Object.assign(f.host.app.metadataCache, { resolvedLinks: { 'HIDDEN_SOURCE_A.md': { 'B.md': 1 }, 'B.md': {} }, unresolvedLinks: {} });
+        await f.run({ images: undefined, prompt });
+        expect(f.requests).toHaveLength(3);
+        expect(requestText(f.requests[1])).toContain('HIDDEN_SOURCE_A');
+        expect(requestText(f.requests[2])).not.toContain('HIDDEN_SOURCE_A');
+        expect(requestText(f.requests[2])).not.toContain('PRIVATE_AGGREGATE_A');
+        expect(requestText(f.requests[2])).toContain('B_ALLOWED_OUTLINE');
+    });
+
+    it('does not promote a canonical status-only Memory reference into a revoked history dependency', async () => {
+        const f = fixture([{ text: 'Continue' }]);
+        await f.run({ images: undefined, prompt: '继续', chatHistory: [{ role: 'assistant', content: 'VALID_OLD_CHOICES',
+            canonicalTurn: { schemaVersion: 1, runId: 'prior', turnId: 'prior-turn', messages: [], sourceRecords: [
+                { kind: 'memory-reference', dedupKey: 'status', path: 'missing.md', statusOnly: true },
+            ] },
+        }] });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).toContain('VALID_OLD_CHOICES');
+    });
+
+    it.each(['answer', 'summary'] as const)('excludes only a revoked historical assistant reply from %s input', async stage => {
+        const history: ChatMessage[] = [
+            { role: 'user', content: '保留我的原始要求 ' + (stage === 'summary' ? 'context '.repeat(900) : '') },
+            { role: 'assistant', content: 'REVOKED_MIXED_REPLY with facts and proposals', memoryMetadata: {
+                hasMemoryContent: false, allowedMemorySourcePaths: [], sourceRecords: [
+                    { kind: 'context-used', dedupKey: 'A', path: 'A.md', sourceBoundary: 'read-only-tool' },
+                ],
+            } },
+            { role: 'assistant', content: 'KEPT_ALTERNATIVES 方案一；方案二' },
+            { role: 'user', content: '采用第二个方案' },
+        ];
+        const original = JSON.stringify(history);
+        const f = fixture(body => ({ text: body.stream ? '继续第二个方案' : JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [],
+        }) }));
+        // A is absent. Legacy messages without source metadata retain continuity.
+        await f.run({ images: undefined, prompt: '继续', chatHistory: history,
+            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+        expect(f.requests.length).toBeGreaterThan(0);
+        expect(f.requests.some(request => !request.stream)).toBe(stage === 'summary');
+        for (const request of f.requests) expect(requestText(request)).not.toContain('REVOKED_MIXED_REPLY');
+        const provided = f.requests.map(requestText).join('\n');
+        expect(provided).toContain('保留我的原始要求');
+        expect(provided).toContain('KEPT_ALTERNATIVES');
+        expect(provided).toContain('采用第二个方案');
+        expect(JSON.stringify(history)).toBe(original);
+    });
+
+    it.each(['answer', 'summary'] as const)('does not resend replaced history on a %s SDK retry', async stage => {
+        const history: ChatMessage[] = [
+            { role: 'user', content: 'OLD_HISTORY_TEXT ' + (stage === 'summary' ? 'earlier '.repeat(900) : '') },
+            { role: 'assistant', content: '方案一；方案二' },
+        ];
+        const f = fixture((_body, index) => {
+            if (index === 0) {
+                history[0].content = 'CORRECTED_HISTORY_TEXT';
+                return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+            }
+            return { text: '采用第二个方案' };
+        }, {}, 1);
+        await f.run({ images: undefined, prompt: '采用第二个', chatHistory: history,
+            ...(stage === 'summary' ? { historyBudgetChars: 1200 } : {}) });
+        expect(requestText(f.requests[0])).toContain('OLD_HISTORY_TEXT');
+        expect(f.requests[0].stream).toBe(stage === 'answer');
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
+            { stream: stage === 'answer', retryCount: '1' },
+        ]);
+        expect(f.requests.length).toBeGreaterThan(1);
+        for (const request of f.requests.slice(1)) {
+            expect(requestText(request)).not.toContain('OLD_HISTORY_TEXT');
+            expect(requestText(request)).toContain('CORRECTED_HISTORY_TEXT');
+            expect(requestText(request)).toContain('方案一；方案二');
+        }
+    });
+
+    it.each(['answer', 'summary'] as const)('rejects a %s SDK retry containing a Vault result after same-path replacement', async stage => {
+        const prompt = '读取当前笔记';
+        let liveFile = { path: 'A.md', extension: 'md' };
+        let revokedAt = -1;
+        const f = fixture((body, index) => {
+            if (index === 0) return { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } },
+                { name: 'get_current_note_context', input: { mode: 'full' } },
+            ] };
+            if (revokedAt === -1 && requestText(body).includes('SERIALIZED_VAULT_SECRET')
+                && Boolean(body.stream) === (stage === 'answer')) {
+                revokedAt = index;
+                liveFile = { ...liveFile };
+                return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+            }
+            return { text: body.stream ? 'Source unavailable' : JSON.stringify({
+                goals: [], constraints: [], decisions: [], completed: [], open_questions: [], facts: [],
+            }) };
+        }, stage === 'summary' ? { answerStreamMaxObservationChars: 1200 } : {}, 1);
+        const captured = liveFile;
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file: captured,
+            editor: { getValue: () => 'SERIALIZED_VAULT_SECRET ' + 'material '.repeat(900), getSelection: () => '', lineCount: () => 1,
+                getLine: () => 'SERIALIZED_VAULT_SECRET', getCursor: () => ({ line: 0, ch: 0 }) } } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation(() => liveFile as never);
+        await f.run({ images: undefined, prompt });
+        expect(revokedAt).toBeGreaterThan(0);
+        expect(requestText(f.requests[revokedAt])).toContain('SERIALIZED_VAULT_SECRET');
+        expect(f.requests[revokedAt].stream).toBe(stage === 'answer');
+        // The SDK retry is blocked; the runtime may prepare a fresh invoke
+        // fallback. That request must contain no material from the old file.
+        expect(f.sdkAttempts.filter(attempt => attempt.retryCount === '1')).toEqual([
+            { stream: stage === 'answer', retryCount: '1' },
+        ]);
+        expect(f.requests.length).toBeGreaterThan(revokedAt + 1);
+        for (const request of f.requests.slice(revokedAt + 1)) {
+            expect(requestText(request)).not.toContain('SERIALIZED_VAULT_SECRET');
+        }
+    });
+
+    it('removes earlier Vault material after narrowing to B while preserving B and Personal', async () => {
+        const prompt = '先读取两篇笔记，再只用B整理';
+        const f = fixture((body, index) => {
+            if (index === 0) return { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: '先读取两篇笔记', notes: 'vault', webAllowed: false } },
+                { name: 'read_note_outline', input: { path: 'A.md' } },
+                { name: 'read_note_outline', input: { path: 'B.md' } },
+            ] };
+            if (index === 1) {
+                const match = requestText(body).match(/\{"handle":"([^"]+)","path":"B.md"\}/);
+                expect(match).not.toBeNull();
+                return { tool: { name: 'declare_source_scope', input: {
+                    instructionQuote: '只用B整理', notes: 'selected', noteHandles: [match![1]], webAllowed: false,
+                } } };
+            }
+            return { text: envelope('按B整理') };
+        }, { operationsIntentController: { stageIntent: async () => { throw new Error('Unexpected write in read-only fixture'); } } as never });
+        const files = ['A', 'B'].map(name => ({ path: `${name}.md`, name: `${name}.md`, basename: name,
+            extension: 'md', stat: { ctime: 1, mtime: name === 'A' ? 11 : 22, size: name === 'A' ? 31 : 42 } }));
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => files.find(file => file.path === args[0]) as never);
+        jest.spyOn(f.host.app.metadataCache, 'getFileCache').mockImplementation((...args: unknown[]) => ({
+            headings: [{ level: 1, heading: (args[0] as typeof files[0]).basename === 'A' ? 'A_PRIVATE_MATERIAL' : 'B_ALLOWED_MATERIAL' }],
+        }) as never);
+        f.host.settings.memoryEnabled = true;
+        f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: 'VALID_PERSONAL_BACKGROUND' });
+        await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' } });
+        expect(f.lifecycle.filter(event => event.type === 'message_end' && event.message.role === 'toolResult').map(event => event.type === 'message_end' ? event.message : null)).not.toEqual(expect.arrayContaining([expect.objectContaining({ isError: true })]));
+        expect(f.requests).toHaveLength(3);
+        expect(requestText(f.requests[1])).toContain('A_PRIVATE_MATERIAL');
+        expect(requestText(f.requests[1])).toContain('B_ALLOWED_MATERIAL');
+        expect(requestText(f.requests[2])).not.toContain('A_PRIVATE_MATERIAL');
+        expect(requestText(f.requests[2])).toContain('B_ALLOWED_MATERIAL');
+        expect(requestText(f.requests[2])).toContain('VALID_PERSONAL_BACKGROUND');
+        const artifact = f.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
+            event.kind === 'writing-artifact');
+        expect(artifact?.generationInput?.task).toEqual({
+            state: 'identified',
+            sources: [expect.objectContaining({ boundary: 'read-only-tool',
+                revision: { state: 'identified', scope: 'current_process', path: 'B.md', mtime: 22, size: 42 } })],
+        });
+        expect(JSON.stringify(artifact?.generationInput)).not.toContain('A.md');
+    });
+
+    it('does not publish internal Memory path enumeration as a source directory', async () => {
+        const prompt = 'Search my notes for a matching idea';
+        const f = fixture([{ tools: [
+            { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'vault', webAllowed: false } },
+            { name: 'search_memory', input: { query: 'matching idea' } },
+        ] }, { text: 'No matching notes found' }]);
+        const file = { path: 'INTERNAL_ENUMERATION_ONLY.md', extension: 'md' };
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue([file] as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockReturnValue(file as never);
+        f.host.settings.memoryEnabled = true;
+        jest.spyOn(f.host.memorySearch, 'ensureReadyForChat').mockResolvedValue({ decision: 'use-memory' });
+        const search = jest.spyOn(f.host.memorySearch, 'searchHybrid');
+        await f.run({ images: undefined, prompt });
+        expect(search).toHaveBeenCalledWith('matching idea', expect.objectContaining({
+            noteScope: { allowedPaths: [file.path], excludedPaths: [] },
+        }));
+        expect(f.requests).toHaveLength(2);
+        for (const request of f.requests) expect(requestText(request)).not.toContain(file.path);
+    });
+
+    it('does not advertise an excluded current note through host handles', async () => {
+        const f = fixture([{}]);
+        const file = { path: 'PRIVATE_FILE_NAME.md', extension: 'md' };
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file, editor: {} } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockReturnValue(file as never);
+        Object.assign(f.host, { isDataBoundaryAllowedPath: () => false });
+        await f.run({ images: undefined, prompt: 'Continue' });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).not.toContain(file.path);
+        expect(requestText(f.requests[0])).toContain('"currentNoteHandle":null');
+    });
+
+    it.each(['admitted', 'separate', 'missing', 'conflicting'] as const)('preflights a real current-note/Memory batch: %s', async mode => {
+        const prompt = '只用当前笔记的资料整理提纲，保持我的表达习惯';
+        const declaration = { name: 'declare_source_scope', input: { instructionQuote: prompt, notes: 'current_note', webAllowed: false } };
+        const reads = [{ name: 'get_current_note_context', input: { mode: 'full' } },
+            { name: 'search_memory', input: { query: 'outline' } }];
+        const f = fixture(mode === 'separate'
+            ? [{ tool: declaration }, { tools: reads }, { text: 'Draft outline' }]
+            : [{ tools: [...(mode === 'missing' ? [] : [declaration]), ...reads,
+                ...(mode === 'conflicting' ? [{ name: 'webSearch', input: { query: 'outside source' } }] : [])] }, { text: 'Draft outline' }]);
+        const file = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md', stat: { ctime: 1, mtime: 1, size: 20 } };
+        const editor = { getValue: jest.fn(() => 'CURRENT_NOTE_BODY'), getSelection: () => '',
+            lineCount: () => 1, getLine: () => 'CURRENT_NOTE_BODY', getCursor: () => ({ line: 0, ch: 0 }) };
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file, editor } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => args[0] === file.path ? file as never : null);
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue([file] as never);
+        f.host.settings.memoryEnabled = true;
+        f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: 'VALID_PERSONAL_BACKGROUND' });
+        const ready = jest.spyOn(f.host.memorySearch, 'ensureReadyForChat').mockResolvedValue({ decision: 'use-memory' });
+        const search = jest.spyOn(f.host.memorySearch, 'searchHybrid');
+        await f.run({ images: undefined, prompt });
+        expect(f.requests[0].tools?.some(tool => tool.function.name === 'declare_source_scope')).toBe(true);
+        expect(requestText(f.requests[0])).toContain('VALID_PERSONAL_BACKGROUND');
+        expect(requestText(f.requests[0])).not.toContain('CURRENT_NOTE_BODY');
+        if (mode === 'admitted' || mode === 'separate') {
+            expect(editor.getValue).toHaveBeenCalledTimes(1);
+            expect(search).toHaveBeenCalledWith('outline', expect.objectContaining({
+                noteScope: { allowedPaths: [file.path], excludedPaths: [] },
+            }));
+            expect(ready).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.anything(), { existingOnly: true });
+            expect(f.requests.slice(1).some(request => requestText(request).includes('CURRENT_NOTE_BODY'))).toBe(true);
+            expect(f.lifecycle.some(event => event.type === 'message_end' && event.message.role === 'toolResult'
+                && event.message.content.metadata?.outcome === 'control_applied')).toBe(true);
+        } else {
+            expect(editor.getValue).not.toHaveBeenCalled();
+            expect(search).not.toHaveBeenCalled();
+            expect(ready).not.toHaveBeenCalled();
+        }
+    });
+
+    it('keeps current-note task material, Personal, existing Memory and authorized style in one physical writing input', async () => {
+        const prompt = '只用当前笔记整理一段邀请，保持我的表达习惯';
+        const f = fixture([
+            { tools: [
+                { name: 'declare_source_scope', input: { instructionQuote: '只用当前笔记', notes: 'current_note', webAllowed: false } },
+                { name: 'get_current_note_context', input: { mode: 'full' } },
+            ] },
+            { text: envelope('COMBINED_SOURCE_WRITING') },
+        ]);
+        const current = { path: 'notes/current.md', name: 'current.md', basename: 'current', extension: 'md',
+            stat: { ctime: 1, mtime: 23, size: 41 } };
+        const other = { path: 'notes/other.md', name: 'other.md', basename: 'other', extension: 'md',
+            stat: { ctime: 1, mtime: 29, size: 53 } };
+        const editor = { getValue: jest.fn(() => 'CURRENT_NOTE_TASK_MATERIAL'), getSelection: () => '',
+            lineCount: () => 1, getLine: () => 'CURRENT_NOTE_TASK_MATERIAL', getCursor: () => ({ line: 0, ch: 0 }) };
+        jest.spyOn(f.host.app.workspace, 'getActiveViewOfType').mockReturnValue({ file: current, editor } as never);
+        jest.spyOn(f.host.app.vault, 'getAbstractFileByPath').mockImplementation((...args: unknown[]) => {
+            const found = [current, other].find(file => file.path === args[0]);
+            return (found ?? null) as never;
+        });
+        jest.spyOn(f.host.app.vault, 'getMarkdownFiles').mockReturnValue([current, other] as never);
+        const memoryContext = {
+            memoryContextMode: 'governed' as const,
+            governedMemoryContext: 'PERSONAL_PROFILE_SENTINEL\nEXISTING_MEMORY_SENTINEL',
+        };
+        Object.defineProperties(memoryContext, {
+            isSourceCurrent: { value: () => true },
+            generationInputSources: { value: {
+                personal: { state: 'identified', mode: 'governed',
+                    revisions: [{ claimId: 'personal-claim', revisionId: 'personal-revision' }] },
+                insights: { state: 'unknown', mode: 'governed' },
+            } },
+        });
+        f.host.settings.memoryEnabled = true;
+        f.host.getMemoryExtractionPromptContext.mockReturnValue(memoryContext);
+        const styleText = '<writing_style context_only="true">AUTHORIZED_STYLE_SAMPLE_SENTINEL</writing_style>';
+        const prepareWritingStyle = jest.fn(async () => ({
+            context: styleText,
+            revisionIds: ['authorized-style-revision'],
+            isCurrent: () => true,
+            isSourceCurrent: () => true,
+        }));
+
+        await f.run({ images: undefined, prompt, writingRequest: { requestId: 'writing-1' }, prepareWritingStyle });
+
+        expect(f.requests).toHaveLength(2);
+        const finalInput = requestText(f.requests[1]);
+        expect(finalInput).toContain('CURRENT_NOTE_TASK_MATERIAL');
+        expect(finalInput).toContain('PERSONAL_PROFILE_SENTINEL');
+        expect(finalInput).toContain('EXISTING_MEMORY_SENTINEL');
+        expect(finalInput).toContain('AUTHORIZED_STYLE_SAMPLE_SENTINEL');
+        expect(finalInput).not.toContain(other.path);
+        const artifact = f.events.find((event): event is Extract<LegacyAgentEvent, { kind: 'writing-artifact' }> =>
+            event.kind === 'writing-artifact');
+        expect(artifact?.generationInput).toMatchObject({
+            task: { state: 'identified', sources: [expect.objectContaining({
+                purpose: 'task_material',
+                revision: { state: 'identified', scope: 'current_process', path: current.path, mtime: 23, size: 41 },
+            })] },
+            personal: { state: 'identified', mode: 'governed',
+                revisions: [{ claimId: 'personal-claim', revisionId: 'personal-revision' }] },
+            insights: { state: 'unknown', mode: 'governed' },
+            style: { state: 'identified', revisionIds: ['authorized-style-revision'] },
+        });
+        expect(JSON.stringify(artifact?.generationInput)).not.toContain(other.path);
+    });
+});
+
+describe.each([
+    { label: 'Personal', tag: '<user_profile context_only="true"',
+        context: (text: string): Record<string, unknown> => ({ memoryContextMode: 'legacy', userProfile: `# User Profile\n- ${text}` }) },
+    { label: 'governed Memory', tag: '<governed_memory_projection context_only="true"',
+        context: (text: string): Record<string, unknown> => ({ memoryContextMode: 'governed', governedMemoryContext: text }) },
+])('B-135 T14 background refresh: $label', background => {
+    const oldText = 'T14_OLD_BACKGROUND_SENTINEL';
+    const newText = 'T14_CURRENT_BACKGROUND_SENTINEL';
+    const changes = ['removed', 'replaced'] as const;
+
+    function configureBackground(f: ReturnType<typeof fixture>, change: typeof changes[number]) {
+        let context: Record<string, unknown> | undefined = background.context(oldText);
+        f.host.settings.memoryEnabled = true;
+        f.host.getMemoryExtractionPromptContext.mockImplementation(() => context);
+        return () => { context = change === 'removed' ? undefined : background.context(newText); };
+    }
+
+    function expectCurrentRequest(request: RequestBody, change: typeof changes[number]) {
+        const text = requestText(request);
+        expect(text).not.toContain(oldText);
+        if (change === 'replaced') {
+            expect(text).toContain(newText);
+            expect(text).toContain(background.tag);
+        } else {
+            expect(text).not.toContain(background.tag);
+        }
+    }
+
+    it('keeps a valid non-empty background in the actual provider body', async () => {
+        const f = fixture([{}]);
+        configureBackground(f, 'replaced');
+        await f.run({ images: undefined, prompt: 'Continue our discussion' });
+        expect(f.requests).toHaveLength(1);
+        expect(requestText(f.requests[0])).toContain(oldText);
+        expect(requestText(f.requests[0])).toContain(background.tag);
+    });
+
+    it.each(changes)('refreshes %s background after model construction without a style callback', async change => {
+        const f = fixture([{}]);
+        const changeBackground = configureBackground(f, change);
+        let modelWaits = 0;
+        f.afterModelCreated(async isSummary => {
+            if (isSummary) return;
+            modelWaits++;
+            await Promise.resolve();
+            changeBackground();
+        });
+        await f.run({ images: undefined, prompt: 'Continue our discussion' });
+        expect(modelWaits).toBe(1);
+        expect(f.requests).toHaveLength(1);
+        expectCurrentRequest(f.requests[0], change);
+    });
+
+    it.each(changes)('refreshes %s background after asynchronous style preparation', async change => {
+        const f = fixture([{ text: envelope() }]);
+        const changeBackground = configureBackground(f, change);
+        const styleText = '<writing_style context_only="true">T14_VALID_STYLE_SENTINEL</writing_style>';
+        const prepareWritingStyle = jest.fn(async () => {
+            await Promise.resolve();
+            changeBackground();
+            return { context: styleText, revisionIds: ['t14-style'], isCurrent: () => true, isSourceCurrent: () => true };
+        });
+        await f.run({ images: undefined, prompt: 'Write a short paragraph', writingRequest: { requestId: 'writing-1' }, prepareWritingStyle });
+        expect(prepareWritingStyle).toHaveBeenCalled();
+        expect(f.requests).toHaveLength(1);
+        expectCurrentRequest(f.requests[0], change);
+        expect(requestText(f.requests[0])).toContain(styleText);
+        expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ styleRevisionIds: ['t14-style'] });
+    });
+
+    it.each(changes)('blocks already formatted messages when background is %s before physical SDK dispatch', async change => {
+        const f = fixture(() => ({}));
+        const changeBackground = configureBackground(f, change);
+        let changed = false;
+        f.beforeSdkDispatch(() => {
+            if (changed) return;
+            changed = true;
+            changeBackground();
+        });
+        const signal = new AbortController().signal;
+        const outcome = await f.run({ images: undefined, prompt: 'Continue our discussion', signal })
+            .then(() => ({ ok: true }), () => ({ ok: false }));
+        expect(changed).toBe(true);
+        expect(signal.aborted).toBe(false);
+        // This observer runs after real ChatOpenAI formatting. The old body
+        // existed at the SDK boundary, so an always-empty prompt cannot pass.
+        expect(JSON.stringify(f.observed[0].map(message => message.content))).toContain(oldText);
+        expect(f.sdkAttempts.length).toBeGreaterThan(0);
+        for (const request of f.requests) expectCurrentRequest(request, change);
+        if (outcome.ok) expect(f.requests.length).toBeGreaterThan(0);
+        else expect(f.requests).toHaveLength(0);
+    });
+
+    it.each(changes)('blocks the real SDK 429 retry after background is %s', async change => {
+        let changeBackground = () => {};
+        let changed = false;
+        const f = fixture((_body, index) => {
+            if (index > 0) return {};
+            queueMicrotask(() => { changed = true; changeBackground(); });
+            return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+        }, {}, 1);
+        changeBackground = configureBackground(f, change);
+        const signal = new AbortController().signal;
+        const outcome = await f.run({ images: undefined, prompt: 'Continue our discussion', signal })
+            .then(() => ({ ok: true }), () => ({ ok: false }));
+        expect(changed).toBe(true);
+        expect(signal.aborted).toBe(false);
+        expect(requestText(f.requests[0])).toContain(oldText);
+        expect(f.sdkAttempts.slice(0, 2)).toEqual([{ stream: true, retryCount: '0' }, { stream: true, retryCount: '1' }]);
+        // The first request preceded revocation. Every later actual fetch must
+        // use a newly prepared projection; an SDK retry may never resend it.
+        for (const request of f.requests.slice(1)) expectCurrentRequest(request, change);
+        if (outcome.ok) expect(f.requests.length).toBeGreaterThan(1);
+        else expect(f.requests).toHaveLength(1);
+    });
+});
+
+describe('B-135 T14 selected-image history summary', () => {
+    it.each(['valid', 'revoked'] as const)('preserves selected-image summary preparation for %s sources', async state => {
+        const f = fixture(body => ({ text: body.stream ? 'Current answer' : JSON.stringify({
+            goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+            facts: [{ text: 'Historical source fact', sourceMessages: [1] }],
+        }) }));
+        if (state === 'revoked') f.beforeSdkDispatch(() => f.invalidate());
+        const running = f.run({ prompt: 'Continue our discussion', historyBudgetChars: 1200,
+            chatHistory: [{ role: 'user', content: 'Historical source fact. ' + 'context '.repeat(800) },
+                { role: 'assistant', content: 'Prior alternatives. ' + 'detail '.repeat(800) }] });
+        if (state === 'revoked') {
+            await expect(running).rejects.toThrow('PA Agent canonical runtime failed');
+            expect(f.requests).toHaveLength(0);
+        } else {
+            await running;
+            const summaries = f.requests.filter(request => !request.stream);
+            expect(summaries.length).toBeGreaterThan(0);
+            for (const request of summaries) expect(pixels(request)).toEqual([]);
+            const answer = f.requests.find(request => request.stream);
+            expect(answer).toBeDefined();
+            expect(pixels(answer!)).toEqual([{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,/9j/' } }]);
+        }
+        expect(f.service.resolveVariant).toHaveBeenCalledTimes(1);
+        expect(f.release).toHaveBeenCalledTimes(1);
+    });
+});
+
+it('B-135 T14 keeps grown Memory and drops style that no longer fits after preparation', async () => {
+    const f = fixture([{ text: envelope() }]);
+    const oldText = 'T14_SMALL_MEMORY_SENTINEL';
+    const grownText = 'T14_GROWN_MEMORY_SENTINEL';
+    const styleText = `<writing_style context_only="true">T14_OVER_BUDGET_STYLE_SENTINEL ${'s'.repeat(200)}</writing_style>`;
+    const wrapperChars = formatInjectedContext({ memoryContextMode: 'governed', governedMemoryContext: 'x' }).length - 1;
+    const grownContext = { memoryContextMode: 'governed' as const,
+        governedMemoryContext: grownText + 'x'.repeat(MEMORY_CONTEXT_MAX_CHARS - wrapperChars - grownText.length - 100) };
+    expect(formatInjectedContext(grownContext).length).toBe(MEMORY_CONTEXT_MAX_CHARS - 100);
+    expect(styleText.length).toBeGreaterThan(100);
+    f.host.settings.memoryEnabled = true;
+    f.host.getMemoryExtractionPromptContext.mockReturnValue({ memoryContextMode: 'governed', governedMemoryContext: oldText });
+    const prepareWritingStyle = jest.fn(async (input: { remainingTextChars: number; remainingMemoryChars: number }) => {
+        // The style really fits the initial budget. Only the intervening source
+        // change makes it ineligible; final projection must preserve new Memory.
+        expect(styleText.length).toBeLessThan(input.remainingMemoryChars);
+        expect(styleText.length).toBeLessThan(input.remainingTextChars);
+        await Promise.resolve();
+        f.host.getMemoryExtractionPromptContext.mockReturnValue(grownContext);
+        return { context: styleText, revisionIds: ['t14-over-budget-style'], isCurrent: () => true, isSourceCurrent: () => true };
+    });
+    await f.run({ images: undefined, prompt: 'Write a short paragraph', writingRequest: { requestId: 'writing-1' }, prepareWritingStyle });
+    expect(prepareWritingStyle).toHaveBeenCalledTimes(1);
+    expect(f.requests).toHaveLength(1);
+    expect(requestText(f.requests[0])).toContain(grownContext.governedMemoryContext);
+    expect(requestText(f.requests[0])).not.toContain(oldText);
+    expect(requestText(f.requests[0])).not.toContain('T14_OVER_BUDGET_STYLE_SENTINEL');
+    expect(f.events.find(event => event.kind === 'writing-artifact')).toMatchObject({ styleRevisionIds: [] });
+});
+
 describe("B-129 production runtime with real ChatOpenAI/bindTools and offline transport", () => {
+    it('B-135 blocks a summary SDK retry after the request epoch changes', async () => {
+        let current = true;
+        const f = fixture((_body, index) => {
+            if (index !== 0) throw new Error('Revoked summary reached the provider');
+            queueMicrotask(() => { current = false; });
+            return { httpError: { status: 429, code: 'rate_limit_exceeded', retryAfter: '0.001' } };
+        }, {}, 1);
+        await expect(f.run({ images: undefined, prompt: 'Continue', isCurrent: () => current,
+            historyBudgetChars: 1200, chatHistory: [
+                { role: 'user', content: 'Prior request. ' + 'context '.repeat(800) },
+                { role: 'assistant', content: 'Prior alternatives. ' + 'detail '.repeat(800) },
+            ] })).rejects.toThrow('PA Agent canonical runtime failed');
+        expect(f.requests).toHaveLength(1);
+        expect(f.requests[0].stream).toBe(false);
+        expect(f.sdkAttempts).toEqual([{ stream: false, retryCount: '0' }, { stream: false, retryCount: '1' }]);
+    });
+
+    it.each(['model_wait', 'physical_dispatch', 'valid'] as const)(
+        'B-135 revalidates summary requests at %s without requiring signal cancellation', async phase => {
+            let current = true;
+            let summariesPrepared = 0;
+            const f = fixture(body => ({ text: body.stream ? 'Current answer' : JSON.stringify({
+                goals: [], constraints: [], decisions: [], completed: [], open_questions: [],
+                facts: [{ text: 'Historical source fact', sourceMessages: [1] }],
+            }) }));
+            f.afterModelCreated(async isSummary => {
+                if (!isSummary) return;
+                summariesPrepared++;
+                await Promise.resolve();
+                if (phase === 'model_wait') current = false;
+            });
+            f.beforeSdkDispatch(() => { if (phase === 'physical_dispatch') current = false; });
+            const signal = new AbortController().signal;
+            const running = f.run({ images: undefined, prompt: 'Continue the discussion', signal,
+                isCurrent: () => current, historyBudgetChars: 1200,
+                chatHistory: [{ role: 'user', content: 'Historical source fact. ' + 'context '.repeat(800) },
+                    { role: 'assistant', content: 'Two proposed alternatives. ' + 'detail '.repeat(800) }] });
+            if (phase === 'valid') await running;
+            else await expect(running).rejects.toThrow('PA Agent canonical runtime failed');
+            expect(signal.aborted).toBe(false);
+            expect(summariesPrepared).toBeGreaterThan(0);
+            if (phase === 'valid') {
+                expect(f.requests.some(request => !request.stream)).toBe(true);
+                expect(f.requests.some(request => request.stream)).toBe(true);
+            } else {
+                expect(f.requests).toHaveLength(0);
+            }
+        });
+
     it("sends image-only current input as real image blocks, with no image bytes in canonical events or diagnostics", async () => {
         const f = fixture([{}]); await f.run({ prompt: "" });
         expect(f.requests).toHaveLength(1); expect(pixels(f.requests[0])).toEqual([{ type: "image_url", image_url: { url: "data:image/jpeg;base64,/9j/" } }]);
@@ -170,7 +781,7 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
             expect(f.events.some((event) => event.kind === 'writing-recovery')).toBe(false);
         } else {
             expect(f.events.some((event) => event.kind === 'writing-artifact' || event.kind === 'answer-snapshot')).toBe(false);
-            expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({ rawText, reason: state });
+            expect(f.events.find((event) => event.kind === 'writing-recovery')).toMatchObject({ rawText: state === 'source_changed' ? '' : rawText, reason: state });
         }
     });
 
@@ -222,7 +833,11 @@ describe("B-129 production runtime with real ChatOpenAI/bindTools and offline tr
         await f.run({ writingRequest: { requestId: "writing-1" }, writingContext: { parentVersionId: "v2", text: "本地修改的 V2，不能退回 V1", textHash: "a".repeat(64), associatedImages: [image(1)] }, prepareWritingStyle });
         expect(requestText(f.requests[0])).toContain("本地修改的 V2"); expect(requestText(f.requests[0])).toContain("<writing_style");
         expect(prepareWritingStyle.mock.calls[0][0].remainingMemoryChars).toBeLessThan(6000);
-        expect(f.events.find((event) => event.kind === "writing-artifact")).toMatchObject({ styleRevisionIds: ["style-1"] });
+        expect(f.events.find((event) => event.kind === "writing-artifact")).toMatchObject({
+            styleRevisionIds: ["style-1"],
+            generationInput: { parent: { state: 'identified', versionId: 'v2',
+                textHash: { algorithm: 'sha256', value: 'a'.repeat(64) } } },
+        });
         current = false;
         const canonical = f.lifecycle.filter((event) => event.type === "message_end").map((event) => (event as Extract<AgentEvent, { type: "message_end" }>).message);
         const persisted = createPaAgentPersistedTurn({ runId: "r", turnId: "t", messages: canonical, committedFinalText: '正文："海风"\n🌊' });

@@ -23,6 +23,8 @@ import {
 } from "../src/pa/memory-governance-persistence";
 import type { ConfirmedMemoryRecord } from "../src/pa/memory-governance-store";
 import type { ReviewQueueItem } from "../src/pa/review-queue-store";
+import { createChatMemorySemanticReceipt } from "../src/pa/chat-memory-semantic-receipt";
+import { stableHash } from "../src/pa/helpers";
 
 const NOW = new Date("2026-07-10T08:00:00.000Z");
 const EXPIRES = "2026-07-17T08:00:00.000Z";
@@ -174,6 +176,40 @@ function state(): DeviceMemoryGovernanceStateV1 {
 }
 
 describe("buildLegacyMemoryRollbackProjection", () => {
+    it('refuses governed Profile exports even after correction removed the active semantic receipt', () => {
+        const input = state();
+        input.claims.push({ id: 'claim-governed', partition: PARTITION, memoryType: 'preference', sensitivity: 'low',
+            applicability: { kind: 'whole_vault' }, activeRevisionId: 'revision-governed', effect: 'future_answers',
+            lifecycle: 'active', createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() });
+        input.revisions.push({ id: 'revision-governed', claimId: 'claim-governed', summary: 'A later correction.',
+            provenance: [{ kind: 'conversation', conversationIds: ['conversation'], observedAt: NOW.toISOString() }],
+            authority: 'user_correction', createdAt: NOW.toISOString() });
+        input.projectionLinks.push({ id: 'governed-copy', claimId: 'claim-governed',
+            target: { kind: 'type_a_profile', profileRecordId: 'profile-a', store: 'governed', profileKey: 'semantic-1234abcd' },
+            relation: 'derived_copy', state: 'active', createdAt: NOW.toISOString() });
+        expect(buildLegacyMemoryRollbackProjection(input, 'vault-a', NOW))
+            .toEqual({ ok: false, reason: 'semantic_receipt_requires_current_reader' });
+    });
+    it('refuses a legacy export that would strip required semantic source evidence', () => {
+        const input = state();
+        const text = 'I prefer concise answers.';
+        const source = { conversationId: 'conversation', messageId: 'user', hostKind: 'writing_request' as const,
+            text, contentHash: stableHash(text) };
+        const receipt = createChatMemorySemanticReceipt({ text, meaning: 'independent_personal_statement',
+            kind: 'user_explicit', confidence: 'high', quotes: [{ messageId: 'user', quote: text }] },
+        'conversation', [{ source, presentedText: text }])!;
+        input.claims.push({ id: 'semantic-claim', partition: PARTITION, memoryType: 'preference', sensitivity: 'low',
+            applicability: { kind: 'whole_vault' }, activeRevisionId: 'semantic-revision', effect: 'future_answers',
+            lifecycle: 'active', createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() });
+        input.revisions.push({ id: 'semantic-revision', claimId: 'semantic-claim', summary: text,
+            provenance: [{ kind: 'conversation', conversationIds: ['conversation'], observedAt: NOW.toISOString() }],
+            authority: 'explicit_user', createdAt: NOW.toISOString(), chatSemanticReceipt: receipt });
+        const before = JSON.stringify(input);
+        expect(buildLegacyMemoryRollbackProjection(input, 'vault-a', NOW))
+            .toEqual({ ok: false, reason: 'semantic_receipt_requires_current_reader' });
+        expect(JSON.stringify(input)).toBe(before);
+    });
+
     it("replays add/change/forget/queue/policy deltas in sequence", () => {
         const input = state();
         const changed = payload("delta-change", "entity-1", {

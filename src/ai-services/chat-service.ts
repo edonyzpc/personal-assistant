@@ -53,6 +53,9 @@ export interface StreamLLMOptions {
     writingContext?: import('./chat-types').ChatWritingContext;
     writingMaterialContext?: import('./chat-types').ChatWritingMaterialContext;
     prepareWritingStyle?: import('./chat-types').ChatWritingStylePreparation;
+    writingContextHost?: import('./pa-agent-runtime').PaAgentRunOptions['writingContextHost'];
+    /** Explicit compatibility candidate; no default protocol switch. */
+    writingOutputProtocol?: 'native';
     memoryMode?: MemoryMode;
     /** Optional per-turn history cap; the runtime only permits lowering its normal limit. */
     historyBudgetChars?: number;
@@ -237,6 +240,8 @@ export class ChatService {
                 writingContext: options.writingContext,
                 writingMaterialContext: options.writingMaterialContext,
                 prepareWritingStyle: options.prepareWritingStyle,
+                writingContextHost: options.writingContextHost,
+                writingOutputProtocol: options.writingOutputProtocol,
                 isCurrent: () => contextEpoch === this.contextEpoch && imageModelKey === chatImageModelKey(this.host.settings),
                 imageCapability: {
                     get: () => this.imageCapabilities.get(imageModelIdentity),

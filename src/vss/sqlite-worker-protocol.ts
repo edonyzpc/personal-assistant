@@ -1,5 +1,6 @@
 import type {
     EmbeddingProfile,
+    NoteSearchScope,
     LexicalIncrementalMaintenanceReceipt,
     LexicalIndexStatus,
     LexicalRebuildFinalizeReceiptResult,
@@ -61,6 +62,7 @@ export type SqliteWorkerRequest =
             lexicalBoundaryFingerprint?: string;
             lexicalBudget?: LexicalSearchBudget;
             excludedPathGenerations?: PathEvidenceGenerationRef[];
+            noteScope?: NoteSearchScope;
         };
     }
     | {

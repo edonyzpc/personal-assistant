@@ -9,6 +9,37 @@ import {
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 
 describe("PA Agent answer completion policy", () => {
+    const sourceControl = () => createToolResult("declare_source_scope", {
+        outcome: "control_applied",
+        metadata: { sourceScopeControl: true, preflightOnly: true },
+    });
+
+    it("continues after a standalone scope control without recording evidence or an observation", () => {
+        const ledger = createAnswerCompletionLedger();
+        const summary = createSummary({ status: "tool_results_ready", toolResults: [sourceControl()] });
+        const facts = deriveAnswerCompletionTurnFacts(summary);
+        recordAnswerCompletionTurn(ledger, summary, facts);
+        expect(facts.hasNewSuccessfulEvidence).toBe(false);
+        expect(facts.hasPromptIncludedObservation).toBe(false);
+        expect(ledger).toEqual(createAnswerCompletionLedger());
+        expect(decideAnswerCompletion({ summary, ledger, facts })).toEqual({
+            action: "continue_tooling", reason: "tool_chain_allowed",
+        });
+    });
+
+    it.each(["failure", "duplicate"])("does not let an applied control mask a %s result", kind => {
+        const ledger = createAnswerCompletionLedger();
+        const result = kind === "failure"
+            ? createToolResult("read_note_outline", { isError: true, outcome: "policy_rejected" })
+            : createDuplicateToolResult("read_note_outline");
+        const summary = createSummary({ status: "tool_results_ready", toolResults: [sourceControl(), result] });
+        recordAnswerCompletionTurn(ledger, summary);
+        expect(decideAnswerCompletion({ summary, ledger })).toMatchObject(kind === "failure"
+            ? { action: "force_finalize", reason: "tool_failure" }
+            : { action: "stop_incomplete", reason: "duplicate_tool_call_without_answer" });
+        expect(ledger.promptIncludedObservationTools.has("declare_source_scope")).toBe(false);
+    });
+
     it("allows normal tool chaining when new successful evidence was gathered", () => {
         const ledger = createAnswerCompletionLedger();
         const summary = createSummary({

@@ -8,10 +8,15 @@ import { sanitizeUserProfileMarkdownForPrompt } from "../memory-extraction/type-
 import { groupChatTurns, PaAgentContextCompactor } from "./PaAgentContextCompactor";
 import { fitFullHistory, formatHistoryMessages, formatSemanticHistorySummary } from "./PaAgentHistoryContextPlan";
 import { isCurrentHistorySummary, type PaAgentContextSummaries } from "./PaAgentContextSummaryTypes";
+import type { GenerationInputBackgroundSources } from "../generation-input-snapshot";
 
 export const MEMORY_CONTEXT_MAX_CHARS = 6_000;
 
 export interface PaAgentInjectedContext {
+    /** Host-only source receipt; never serialize into provider inputs or history. */
+    isSourceCurrent?: () => boolean;
+    /** Host-only identities for the exact Personal/Insights projection. */
+    generationInputSources?: GenerationInputBackgroundSources;
     /** Host-rendered typed samples; admission counts their complete wrapper. */
     writingStyleContext?: string;
     /** Select exactly one Memory projection path for this prompt. */
@@ -50,6 +55,8 @@ export interface PaAgentProjectedHistory {
     summaryChars: number;
     omittedCount: number;
     historyCompressed: boolean;
+    /** Exact history messages represented by raw history or either summary form. Host-only. */
+    sourceMessages: ChatMessage[];
     /** Separate from summaryChars, which continues to measure the expendable legacy digest. */
     semanticSummaryChars?: number;
 }
@@ -98,13 +105,13 @@ export class PaAgentContextProjector {
         const budget = Math.max(0, maxHistoryChars);
         const fullHistory = fitFullHistory(history, budget, allowLossless);
         if (fullHistory) {
-            return {
+            return withHistorySources({
                 text: fullHistory.text,
                 compactedCount: 0,
                 summaryChars: 0,
                 omittedCount: 0,
                 historyCompressed: fullHistory.losslesslyEncoded,
-            };
+            }, history);
         }
 
         const semantic = summaries?.history;
@@ -122,14 +129,14 @@ export class PaAgentContextProjector {
             // A valid semantic prefix is atomic. If even the prefix cannot fit,
             // leave it intact for the final-request guard rather than slice JSON
             // or silently lose the goals/decisions that motivated summarization.
-            return {
+            return withHistorySources({
                 text: [summaryText, tail.text].filter(Boolean).join("\n\n"),
                 compactedCount: coveredMessages + tail.compactedCount,
                 summaryChars: tail.summaryChars,
                 semanticSummaryChars: semantic.text.length,
                 omittedCount: tail.omittedCount,
                 historyCompressed: true,
-            };
+            }, [...semanticHistorySourceMessages(semantic, history), ...tail.sourceMessages]);
         }
 
         // Keep complete recent exchanges as a contiguous suffix. Count the
@@ -162,13 +169,54 @@ export class PaAgentContextProjector {
             });
             text = formatProjectedHistory(compacted.summary, recentHistory);
         }
-        return {
+        return withHistorySources({
             text,
             compactedCount: compacted.compactedCount,
             summaryChars: compacted.summary.length,
             omittedCount: history.length - recentHistory.length - compacted.compactedCount,
             historyCompressed: true,
-        };
+        }, [
+            ...olderHistory.slice(Math.max(0, olderHistory.length - compacted.compactedCount)),
+            ...recentHistory,
+        ]);
+    }
+}
+
+function withHistorySources(
+    history: Omit<PaAgentProjectedHistory, 'sourceMessages'>,
+    sourceMessages: readonly ChatMessage[],
+): PaAgentProjectedHistory {
+    Object.defineProperty(history, 'sourceMessages', { value: [...sourceMessages] });
+    return history as PaAgentProjectedHistory;
+}
+
+function semanticHistorySourceMessages(
+    summary: NonNullable<PaAgentContextSummaries['history']>,
+    currentHistory: readonly ChatMessage[],
+): ChatMessage[] {
+    const currentPrefix = currentHistory.slice(0, summary.sourceMessages.length);
+    try {
+        const parsed = JSON.parse(summary.text) as Record<string, unknown>;
+        const indices = new Set<number>();
+        for (const items of Object.values(parsed)) {
+            if (!Array.isArray(items)) throw new Error('Invalid semantic history summary');
+            for (const item of items) {
+                if (!item || typeof item !== 'object' || !Array.isArray((item as { sourceMessages?: unknown }).sourceMessages)) {
+                    throw new Error('Invalid semantic history source map');
+                }
+                for (const index of (item as { sourceMessages: unknown[] }).sourceMessages) {
+                    if (!Number.isSafeInteger(index) || (index as number) < 1 || (index as number) > summary.sourceMessages.length) {
+                        throw new Error('Invalid semantic history source index');
+                    }
+                    indices.add(index as number);
+                }
+            }
+        }
+        return [...indices].sort((left, right) => left - right).map(index => currentPrefix[index - 1]);
+    } catch {
+        // Compatibility summaries without item-level indices are opaque. Keep
+        // their complete verified basis instead of guessing a narrower source set.
+        return currentPrefix;
     }
 }
 

@@ -20,6 +20,7 @@ import {
 import { getPlatformCrypto } from "../platform-dom";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
+import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneMessageImages } from "./image-types";
 
 const TITLE_MAX_LENGTH = 60;
@@ -52,6 +53,52 @@ export class ChatHistoryManager {
     private initialized = false;
     private initializationFailed = false;
     private turnsSinceLastPrune = 0;
+    private sourceEpoch = 0;
+    private readonly sourceRevisions = new Map<string, number>();
+    private readonly sourceMutations = new Map<string, number>();
+    private pruningSources = 0;
+    private readonly sourceObservers = new Map<string, Set<AbortController>>();
+
+    /** Short external-write lease; callers must release it when the write settles. */
+    observeSourceLifetime(conversationId: string): { isCurrent: () => boolean; signal: AbortSignal; release: () => void } {
+        const isCurrent = this.captureSourceLifetime(conversationId);
+        const controller = new AbortController();
+        const observers = this.sourceObservers.get(conversationId) ?? new Set<AbortController>();
+        observers.add(controller);
+        this.sourceObservers.set(conversationId, observers);
+        if (!isCurrent()) controller.abort();
+        return { isCurrent: () => !controller.signal.aborted && isCurrent(), signal: controller.signal,
+            release: () => {
+                observers.delete(controller);
+                if (observers.size === 0 && this.sourceObservers.get(conversationId) === observers) {
+                    this.sourceObservers.delete(conversationId);
+                }
+            } };
+    }
+
+    /** Capture before reading: an in-flight mutation cannot grant a valid source lease. */
+    captureSourceLifetime(conversationId: string): () => boolean {
+        const epoch = this.sourceEpoch;
+        const revision = this.sourceRevisions.get(conversationId) ?? 0;
+        const admitted = this.isAvailable() && this.pruningSources === 0
+            && !this.sourceMutations.has(conversationId);
+        return () => admitted && this.isAvailable() && this.pruningSources === 0
+            && !this.sourceMutations.has(conversationId) && this.sourceEpoch === epoch
+            && (this.sourceRevisions.get(conversationId) ?? 0) === revision;
+    }
+
+    private async mutateSources<T>(conversationId: string, mutation: () => Promise<T>): Promise<T> {
+        this.sourceRevisions.set(conversationId, (this.sourceRevisions.get(conversationId) ?? 0) + 1);
+        this.sourceMutations.set(conversationId, (this.sourceMutations.get(conversationId) ?? 0) + 1);
+        for (const observer of this.sourceObservers.get(conversationId) ?? []) observer.abort();
+        try {
+            return await mutation();
+        } finally {
+            const remaining = (this.sourceMutations.get(conversationId) ?? 1) - 1;
+            if (remaining > 0) this.sourceMutations.set(conversationId, remaining);
+            else this.sourceMutations.delete(conversationId);
+        }
+    }
 
     constructor(options: ChatHistoryManagerOptions) {
         this.store = options.store;
@@ -112,8 +159,10 @@ export class ChatHistoryManager {
 
     async deleteConversation(id: string): Promise<void> {
         if (!this.isAvailable()) return;
-        await this.store.deleteTurnsForConversation(id);
-        await this.store.deleteConversation(id);
+        await this.mutateSources(id, async () => {
+            await this.store.deleteTurnsForConversation(id);
+            await this.store.deleteConversation(id);
+        });
     }
 
     async startConversation(firstUserMessage: string, imageAnchor?: PersistedConversation['imageAnchor']): Promise<PersistedConversation> {
@@ -129,8 +178,10 @@ export class ChatHistoryManager {
             ...(imageAnchor ? { imageAnchor: { ...imageAnchor } } : {}),
         };
         if (this.isAvailable()) {
-            await this.store.upsertConversation(conversation);
-            await this.store.setActiveConversationId(id);
+            await this.mutateSources(id, async () => {
+                await this.store.upsertConversation(conversation);
+                await this.store.setActiveConversationId(id);
+            });
         }
         return conversation;
     }
@@ -151,7 +202,7 @@ export class ChatHistoryManager {
         };
         if (!this.isAvailable()) return updated;
         const turn = this.serializeTurn(input.entry, input.conversationId, input.turnIndex);
-        await this.store.appendTurnAndUpdateConversation(turn, updated);
+        await this.mutateSources(input.conversationId, () => this.store.appendTurnAndUpdateConversation(turn, updated));
         return updated;
     }
 
@@ -165,15 +216,17 @@ export class ChatHistoryManager {
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
         if (!this.isAvailable()) return;
-        await this.store.deleteTurn(conversationId, turnIndex);
-        const conversation = await this.store.getConversation(conversationId);
-        if (conversation) {
-            await this.store.upsertConversation({
-                ...conversation,
-                updatedAt: this.toIso(this.now()),
-                turnCount: Math.max(0, conversation.turnCount - 1),
-            });
-        }
+        await this.mutateSources(conversationId, async () => {
+            await this.store.deleteTurn(conversationId, turnIndex);
+            const conversation = await this.store.getConversation(conversationId);
+            if (conversation) {
+                await this.store.upsertConversation({
+                    ...conversation,
+                    updatedAt: this.toIso(this.now()),
+                    turnCount: Math.max(0, conversation.turnCount - 1),
+                });
+            }
+        });
     }
 
     async findConversation(id: string): Promise<PersistedConversation | null> {
@@ -199,29 +252,39 @@ export class ChatHistoryManager {
 
     async removeTurnsFromIndex(conversationId: string, fromIndex: number): Promise<void> {
         if (!this.isAvailable()) return;
-        const turns = await this.store.getTurns(conversationId);
-        const surviving = turns.filter((turn) => turn.turnIndex < fromIndex);
-        await this.store.deleteTurnsForConversation(conversationId);
-        for (const turn of surviving) {
-            await this.store.appendTurn(turn);
-        }
-        const conversation = await this.store.getConversation(conversationId);
-        if (conversation) {
-            await this.store.upsertConversation({
-                ...conversation,
-                updatedAt: this.toIso(this.now()),
-                turnCount: surviving.length,
-            });
-        }
+        await this.mutateSources(conversationId, async () => {
+            const turns = await this.store.getTurns(conversationId);
+            const surviving = turns.filter((turn) => turn.turnIndex < fromIndex);
+            await this.store.deleteTurnsForConversation(conversationId);
+            for (const turn of surviving) {
+                await this.store.appendTurn(turn);
+            }
+            const conversation = await this.store.getConversation(conversationId);
+            if (conversation) {
+                await this.store.upsertConversation({
+                    ...conversation,
+                    updatedAt: this.toIso(this.now()),
+                    turnCount: surviving.length,
+                });
+            }
+        });
     }
 
     async prune(): Promise<string[]> {
         if (!this.isAvailable()) return [];
+        this.sourceEpoch += 1;
+        this.sourceRevisions.clear();
+        this.pruningSources += 1;
+        for (const observers of this.sourceObservers.values()) {
+            for (const observer of observers) observer.abort();
+        }
         try {
             return await this.store.pruneOldConversations(this.maxConversations);
         } catch (error) {
             this.log("Failed to prune chat conversations", error);
             return [];
+        } finally {
+            this.pruningSources -= 1;
         }
     }
 
@@ -231,6 +294,10 @@ export class ChatHistoryManager {
         turnIndex: number,
     ): PersistedTurn {
         const assistantCanonical = entry.assistant.canonicalTurn;
+        const assistantTurnStatus = assistantCanonical?.status
+            ?? (entry.assistant.runtimeWarnings?.some((warning) => warning.type === "user_abort")
+                ? "aborted"
+                : undefined);
         const userMessage: PersistedChatMessage = {
             role: "user",
             content: entry.user.content,
@@ -246,7 +313,9 @@ export class ChatHistoryManager {
             role: "assistant",
             content: entry.assistant.content,
             ...(entry.assistant.writingVersionId !== undefined ? { writingVersionId: entry.assistant.writingVersionId } : {}),
-            ...(entry.assistant.writingRecovery !== undefined ? { writingRecovery: { ...entry.assistant.writingRecovery } } : {}),
+            ...(entry.assistant.writingRecovery !== undefined ? { writingRecovery: { ...entry.assistant.writingRecovery,
+                ...(entry.assistant.writingRecovery.generationInput
+                    ? { generationInput: cloneGenerationInputSnapshot(entry.assistant.writingRecovery.generationInput) } : {}) } } : {}),
             ...(entry.assistant.images ? { images: cloneMessageImages(entry.assistant.images) } : {}),
             ...(entry.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(entry.assistant.hostProvenance) } : {}),
             ...(entry.assistant.shareCardEligible !== undefined
@@ -258,7 +327,7 @@ export class ChatHistoryManager {
             ...(entry.assistant.runtimeWarnings && entry.assistant.runtimeWarnings.length > 0
                 ? { runtimeWarnings: entry.assistant.runtimeWarnings.map(cloneRuntimeWarning) }
                 : {}),
-            ...(assistantCanonical?.status ? { turnStatus: assistantCanonical.status } : {}),
+            ...(assistantTurnStatus ? { turnStatus: assistantTurnStatus } : {}),
         };
         const memoryMetadata = entry.assistant.memoryMetadata ?? entry.memoryMetadata;
         return {
@@ -290,7 +359,10 @@ export class ChatHistoryManager {
                 : {}),
         };
         const memoryMetadata = turn.memoryMetadata ? cloneMemoryMetadata(turn.memoryMetadata) : undefined;
-        const status = turn.assistant.turnStatus ?? "completed";
+        const status = turn.assistant.turnStatus
+            ?? (turn.assistant.runtimeWarnings?.some((warning) => warning.type === "user_abort")
+                ? "aborted"
+                : "completed");
         const canonicalTurn = rebuildCanonicalTurn({
             conversationId: turn.conversationId,
             turnIndex: turn.turnIndex,
@@ -302,7 +374,9 @@ export class ChatHistoryManager {
             role: "assistant",
             content: turn.assistant.content,
             ...(turn.assistant.writingVersionId !== undefined ? { writingVersionId: turn.assistant.writingVersionId } : {}),
-            ...(turn.assistant.writingRecovery !== undefined ? { writingRecovery: { ...turn.assistant.writingRecovery } } : {}),
+            ...(turn.assistant.writingRecovery !== undefined ? { writingRecovery: { ...turn.assistant.writingRecovery,
+                ...(turn.assistant.writingRecovery.generationInput
+                    ? { generationInput: cloneGenerationInputSnapshot(turn.assistant.writingRecovery.generationInput) } : {}) } } : {}),
             ...(turn.assistant.images ? { images: cloneMessageImages(turn.assistant.images) } : {}),
             ...(turn.assistant.hostProvenance !== undefined ? { hostProvenance: cloneChatHostProvenance(turn.assistant.hostProvenance) } : {}),
             canonicalTurn,

@@ -423,6 +423,7 @@ describe("PaAgentContextProjector history budgets", () => {
         expect(exact.historyCompressed).toBe(false);
         expect(exact.compactedCount).toBe(0);
         expect(exact.omittedCount).toBe(0);
+        expect(exact.sourceMessages).toEqual(history);
         expect(exact.text).toContain("user-0");
         expect(exact.text).not.toContain("<compaction_summary");
         expect(exact.text).toContain("<\\/chat_history>");
@@ -444,6 +445,8 @@ describe("PaAgentContextProjector history budgets", () => {
         expect(noDigest.text).toBe(recentText);
         expect(projected.omittedCount).toBe(6);
         expect(projected.compactedCount).toBe(0);
+        expect(projected.sourceMessages).toEqual(history.slice(-4));
+        expect(noDigest.sourceMessages).toEqual(history.slice(-4));
         expect(projected.historyCompressed).toBe(true);
     });
 
@@ -465,6 +468,7 @@ describe("PaAgentContextProjector history budgets", () => {
         expect(projected.text).toContain("<\\/compaction_summary>");
         expect(projected.compactedCount).toBe(4);
         expect(projected.omittedCount).toBe(4);
+        expect(projected.sourceMessages).toEqual([...oldHistory.slice(4), ...recent]);
         expect(project([...oldHistory, ...recent], budget, 0).text).toBe(project(recent, 100000).text);
     });
 
@@ -473,6 +477,7 @@ describe("PaAgentContextProjector history budgets", () => {
         expect(project(history, 0)).toEqual({
             text: "", compactedCount: 0, summaryChars: 0, omittedCount: 2, historyCompressed: true,
         });
+        expect(project(history, 0).sourceMessages).toEqual([]);
     });
 });
 

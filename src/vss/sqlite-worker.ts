@@ -3,6 +3,8 @@
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import {
     getEmbeddingProfileSignature,
+    copyNoteSearchScope,
+    type NoteSearchScope,
     scoreFromDistance,
     VSS_SCHEMA_VERSION,
     type EmbeddingProfile,
@@ -334,6 +336,7 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
                 request.payload.lexicalBudget,
                 request.payload.excludedPathGenerations,
                 request.payload.retrieval,
+                request.payload.noteScope,
             );
         case "getPathEvidenceGenerations":
             requireDb();
@@ -3116,7 +3119,9 @@ function searchHybrid(
     lexicalBudget?: LexicalSearchBudget,
     excludedPathGenerations?: PathEvidenceGenerationRef[],
     retrievalInput?: RetrievalSearchRuntimeParameters,
+    noteScopeInput?: NoteSearchScope,
 ): VectorHybridSearchResult {
+    const noteScope = copyNoteSearchScope(noteScopeInput);
     const profile = activeProfile;
     if (!profile) {
         throw createWorkerError("profile-missing", "SQLite vector index has no active embedding profile.");
@@ -3128,7 +3133,7 @@ function searchHybrid(
     const retrieval = resolveRetrievalSearchRuntimeParameters(retrievalInput, k, fusionTopK);
 
     // Vector leg — brute-force
-    const cache = getVectorCacheForTemporalFilter(temporalFilter, excludedPaths);
+    const cache = getVectorCacheForTemporalFilter(temporalFilter, excludedPaths, noteScope);
     const queryVec = new Float32Array(queryEmbedding);
     const topK = bruteForceTopK(queryVec, cache, retrieval.vectorRaw, profile.distanceMetric);
 
@@ -3180,6 +3185,7 @@ function searchHybrid(
     } else {
         lexicalAttempted = true;
         const ftsTemporalClause = buildTemporalWhereClause("c.last_modified", temporalFilter);
+        const noteScopeClause = buildNoteScopeWhereClause("c.path", noteScope);
         const lexicalTable = getLexicalTableName(lexicalProfileMarker.generation);
         try {
             runWithSqliteDeadline(database, deadlineAtMs, () => {
@@ -3190,12 +3196,13 @@ function searchHybrid(
                         JOIN vss_chunks AS c ON c.id = ${lexicalTable}.rowid
                         JOIN vss_files AS f ON f.path = c.path
                         WHERE ${lexicalTable} MATCH ?
+                        ${noteScopeClause.sql}
                         ${excludedPaths.size > 0 ? `AND c.path NOT IN (${[...excludedPaths].map(() => "?").join(",")})` : ""}
                         ${ftsTemporalClause.sql}
                         ORDER BY bm25(${lexicalTable}, ${retrieval.bm25Weights.join(", ")}), c.path, c.chunk_index
                         LIMIT ?
                     `,
-                    bind: [ftsQuery, ...excludedPaths, ...ftsTemporalClause.bind, retrieval.lexicalRaw],
+                    bind: [ftsQuery, ...noteScopeClause.bind, ...excludedPaths, ...ftsTemporalClause.bind, retrieval.lexicalRaw],
                     rowMode: "object",
                     resultRows: ftsRows,
                 });
@@ -3330,19 +3337,39 @@ function runWithSqliteDeadline(
 function getVectorCacheForTemporalFilter(
     temporalFilter?: { since?: number; until?: number },
     excludedPaths: ReadonlySet<string> = new Set(),
+    noteScope?: NoteSearchScope,
 ): Map<number, Float32Array> {
-    const cache = getOrLoadVectorCache();
     const temporalClause = buildTemporalWhereClause("last_modified", temporalFilter);
-    if (!temporalClause.sql && excludedPaths.size === 0) return cache;
+    const noteScopeClause = buildNoteScopeWhereClause("path", noteScope);
+    if (noteScope) {
+        // A scoped request must not warm the global cache by reading every vector.
+        // Keep this partial result invocation-local, including null/empty scopes.
+        const rows: unknown[][] = [];
+        requireDb().exec({
+            sql: `SELECT id, embedding FROM vss_chunks WHERE 1=1${temporalClause.sql}
+                ${noteScopeClause.sql}
+                ${excludedPaths.size > 0 ? `AND path NOT IN (${[...excludedPaths].map(() => "?").join(",")})` : ""}`,
+            bind: [...temporalClause.bind, ...noteScopeClause.bind, ...excludedPaths],
+            rowMode: "array",
+            resultRows: rows,
+        });
+        return new Map(rows.map((row) => {
+            const blob = row[1] as Uint8Array;
+            return [Number(row[0]), new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4)];
+        }));
+    }
+    const cache = getOrLoadVectorCache();
+    if (!temporalClause.sql && excludedPaths.size === 0 && !noteScopeClause.sql) return cache;
 
     const rows: Array<Record<string, unknown>> = [];
     requireDb().exec({
         sql: `
             SELECT id FROM vss_chunks
             WHERE 1=1${temporalClause.sql}
+            ${noteScopeClause.sql}
             ${excludedPaths.size > 0 ? `AND path NOT IN (${[...excludedPaths].map(() => "?").join(",")})` : ""}
         `,
-        bind: [...temporalClause.bind, ...excludedPaths],
+        bind: [...temporalClause.bind, ...noteScopeClause.bind, ...excludedPaths],
         rowMode: "object",
         resultRows: rows,
     });
@@ -3352,6 +3379,23 @@ function getVectorCacheForTemporalFilter(
         if (eligibleIds.has(id)) filtered.set(id, vector);
     }
     return filtered;
+}
+
+function buildNoteScopeWhereClause(column: string, scope?: NoteSearchScope): { sql: string; bind: string[] } {
+    if (!scope) return { sql: '', bind: [] };
+    const clauses: string[] = [];
+    const bind: string[] = [];
+    // JSON arrays use two bound values even for a whole-vault host path set.
+    // These predicates run before scoring/ORDER BY/LIMIT, never on ranked results.
+    if (scope.allowedPaths !== null) {
+        clauses.push(`AND ${column} IN (SELECT value FROM json_each(?))`);
+        bind.push(JSON.stringify(scope.allowedPaths));
+    }
+    if (scope.excludedPaths.length > 0) {
+        clauses.push(`AND ${column} NOT IN (SELECT value FROM json_each(?))`);
+        bind.push(JSON.stringify(scope.excludedPaths));
+    }
+    return { sql: clauses.join(' '), bind };
 }
 
 function resolveUnchangedExcludedPaths(

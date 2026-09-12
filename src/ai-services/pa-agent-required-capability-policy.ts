@@ -55,6 +55,8 @@ interface RequiredCapabilityRuntimeState {
     seenMemoryToolCallIds: Set<string>;
     phase: CapabilityRuntimePhase;
     answerCompletionLedger: AnswerCompletionLedger;
+    allowWritingContextSchemaRepair: boolean;
+    writingContextSchemaRepairAttempted: boolean;
 }
 
 export interface RequiredCapabilityClassifier {
@@ -79,6 +81,8 @@ export function createRequiredCapabilityHostPolicy(
         userInput: string;
         availableCapabilities: ReadonlySet<RequiredCapability>;
         classification?: RequiredCapabilityClassification;
+        /** The native host exports this preparation tool; one schema correction is allowed. */
+        allowWritingContextSchemaRepair?: boolean;
     },
 ): {
     hostPolicy: PaAgentHostPolicy;
@@ -98,6 +102,8 @@ export function createRequiredCapabilityHostPolicy(
         seenMemoryToolCallIds: new Set(),
         phase: { kind: "awaiting_initial_tools" },
         answerCompletionLedger: createAnswerCompletionLedger(),
+        allowWritingContextSchemaRepair: options.allowWritingContextSchemaRepair === true,
+        writingContextSchemaRepairAttempted: false,
     };
 
     const hostPolicy: PaAgentHostPolicy = {
@@ -273,6 +279,18 @@ function decideAfterTurn(
     const failedRequiredCapabilities = getFailedRequiredCapabilityNames(summary, state);
     if (failedRequiredCapabilities.length > 0) {
         return handleFailedRequired(summary, state, facts, failedRequiredCapabilities);
+    }
+
+    const observations = summary.toolResults.filter(result => !(result.toolName === 'declare_source_scope'
+        && !result.isError && result.content.metadata?.outcome === 'control_applied'
+        && result.content.metadata?.preflightOnly === true));
+    if (state.allowWritingContextSchemaRepair && !state.writingContextSchemaRepairAttempted
+        && summary.status === 'tool_results_ready' && observations.length > 0
+        && observations.every(result => result.toolName === 'get_writing_context' && result.isError
+            && result.content.metadata?.outcome === 'schema_invalid')) {
+        state.writingContextSchemaRepairAttempted = true;
+        return { action: 'continue', reason: 'tool_results_ready', runtimeInstruction:
+            'The writing context was not prepared because its arguments failed schema validation. You may correct the arguments once using the existing allowed tools and source scope. When known, scene must be an object with writingTask, purpose, audience and domain; omit scene when unknown, never use a JSON-encoded string. Wait for a successful context result before presenting a work.' };
     }
 
     const completionDecision = decideAnswerCompletion({

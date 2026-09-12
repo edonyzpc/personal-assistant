@@ -83,6 +83,7 @@ export type AgentCapabilitySourceBoundary =
     | Extract<SourceRecordBoundary, "vault" | "web" | "skill-context">;
 
 export interface AgentCapabilityContext {
+    taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
     host: AiServiceHost;
     turnId?: string;
     signal?: AbortSignal;

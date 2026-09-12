@@ -1,0 +1,52 @@
+{
+  "state": "done",
+  "cleanup": "deleted",
+  "result": {
+    "tier": "app-runtime DOM interaction; not full-ui or iOS",
+    "realIndexedDB": true,
+    "results": [
+      {
+        "outcome": "valid",
+        "explanation": true,
+        "versions": 1,
+        "submittedTextPreserved": true,
+        "uncertainReferenceScopePreserved": true,
+        "providerCalls": 0,
+        "learningCalls": 0
+      },
+      {
+        "outcome": "missing_source",
+        "explanation": true,
+        "versions": 0,
+        "submittedTextPreserved": false,
+        "uncertainReferenceScopePreserved": false,
+        "providerCalls": 0,
+        "learningCalls": 0
+      }
+    ],
+    "providerCalls": 0,
+    "learningCalls": 0
+  },
+  "buildSha256": "5f8fda2cf69480e9fed9f5571222e61ce9e0a8b607eb0ed2aab7d190a9161661",
+  "vault": "/mnt/code/personal-assistant/test",
+  "date": "2026-09-12",
+  "notes": "CLI-driven DOM checks; no full-ui or iOS proof. Textarea selection uses LF; original recovery text retains CRLF.",
+  "obsidian": "1.14.1 (installer 1.11.7)",
+  "checks": {
+    "lint": "PASS",
+    "build": "PASS",
+    "fullTestSuites": 275,
+    "fullTests": 7570,
+    "jestSeconds": 328.043,
+    "exitCode": 0,
+    "frozenInputSha256": "f2290ef4791c81b5479d2c214156c14c070f0c62c39f7132223f2bc0c53e6dd9",
+    "appErrors": "No errors captured",
+    "expectedConsole": "Missing-source negative case logged Writing source unavailable",
+    "nativeDefault": false,
+    "remainingWritingModals": 0
+  },
+  "probeCorrections": [
+    "First attempt had no durable async result handle and assumed a close icon absent in this Obsidian build; its database and modals were verified cleaned.",
+    "Second attempt classified transient deleteDatabase onblocked as failure; database deletion was independently verified complete. Final probe awaits view onClose and actual delete success, with an explicit completion handle."
+  ]
+}

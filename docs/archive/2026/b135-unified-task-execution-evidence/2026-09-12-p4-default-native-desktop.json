@@ -1,0 +1,110 @@
+{
+  "workItem": "B-135",
+  "taskScope": [
+    "T-03",
+    "T-17",
+    "T-19"
+  ],
+  "result": "PASS",
+  "source": {
+    "branch": "codex/b135-discussion-followup",
+    "baseCommit": "882aba281d15082194779fe22d61d191d576aac9",
+    "productionChange": "PluginManager.createChatHost exports writingOutputProtocol=native",
+    "bundleSha256": "54cd8cd97b77dc38885557f965339e9594a56429bfd40610abc97a37c0cb8b37"
+  },
+  "configuration": {
+    "pluginVersion": "2.9.2",
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "writingOutputProtocol": "native"
+  },
+  "focusedValidation": [
+    {
+      "command": "npm test -- --runInBand __tests__/plugin-lifecycle.test.ts -t B-135 native writing rollout",
+      "result": "1 passed, 114 skipped; natural exit 0"
+    },
+    {
+      "command": "npm test -- --runInBand __tests__/chat-view.test.ts -t passes native candidates for an ordinary prompt",
+      "result": "1 passed, 267 skipped; natural exit 0"
+    },
+    {
+      "command": "npx tsc -noEmit -skipLibCheck",
+      "result": "natural exit 0"
+    },
+    {
+      "command": "targeted ESLint, git diff --check, and community DOM source scan",
+      "result": "PASS; source scan found no matches"
+    },
+    {
+      "command": "npm run build",
+      "result": "natural exit 0"
+    }
+  ],
+  "deployment": {
+    "target": "repo-local Obsidian test vault",
+    "method": "deploy-current after focused checks and production build",
+    "bundleIdentityVerified": true,
+    "pluginReloaded": true
+  },
+  "desktopFlow": {
+    "prompt": "请起草一则不超过80字的中文会议通知，必须包含“B-135作品通道验证完成”和“明早九点开会”。不要读取笔记、Memory或网页，直接交付可保存的成品。",
+    "physicalProviderRequests": 2,
+    "stream": {
+      "protocol": "native",
+      "writingRequestPresent": true,
+      "candidateCount": 0,
+      "previewEventCount": 17,
+      "previewMaximumCharacters": 57
+    },
+    "artifact": {
+      "count": 1,
+      "recoveryCount": 0,
+      "operationsIntentCount": 0,
+      "body": "会议通知：B-135作品通道验证完成，明早九点开会。请相关同事准时到会议室参加，携带验证记录，如有冲突请提前告知。",
+      "preamble": "已按要求起草，未读取任何笔记、Memory 或网页。\n\n"
+    },
+    "versions": {
+      "aiGenerated": 1,
+      "userEdited": 0,
+      "visibleVersionCount": 1,
+      "visibleBodyMatchedArtifact": true
+    },
+    "save": {
+      "target": "B135-P4-Default-Native.md",
+      "previewDidNotWrite": true,
+      "explicitFinalConfirmationUsed": true,
+      "receiptState": "completed",
+      "savedNoteContainedExactVersionBody": true
+    },
+    "additionalModelAcknowledgementRound": false,
+    "pass": true
+  },
+  "reusedEvidence": [
+    "unchanged native preview, finish, source, image, version and legacy-reader automated matrices",
+    "current-to-old-to-current real Obsidian persistence matrix",
+    "current host reload of versions, media, style and source receipts",
+    "Qwen and DeepSeek protocol captures already recorded by the Tracker"
+  ],
+  "screenshots": [
+    {
+      "path": "2026-09-12-p4-default-native-version.png",
+      "sha256": "9eef07c5e52efe0235146935e55e52c46535034988b8a374a1fc39df65dc5839"
+    },
+    {
+      "path": "2026-09-12-p4-default-native-save-preview.png",
+      "sha256": "b8a23b0c2d0e55639845d0a038cf181378b47660edb57619777ab37d2dc08efa"
+    }
+  ],
+  "cleanup": {
+    "isolatedDatabaseDeleted": true,
+    "saveTargetRemoved": true,
+    "knownB135SyntheticResidueRemoved": true,
+    "testVaultDataSha256": "f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc",
+    "mainWorkspaceClean": true
+  },
+  "limits": [
+    "This single Desktop flow does not replace the affected iOS device gate.",
+    "F-20 and F-23 remain model-quality findings under T-20.",
+    "Natural-language continuation and failed-continue combinations remain under T-16 and T-18."
+  ]
+}

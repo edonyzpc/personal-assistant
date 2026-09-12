@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "workItem": "B-135",
+  "scope": "T-14 cross-turn correction and second-image semantic case",
+  "startedAt": "2026-09-12T13:32:58.045Z",
+  "finishedAt": "2026-09-12T13:33:10.700Z",
+  "environment": {
+    "platform": "Linux",
+    "host": "Obsidian Desktop with the repo-local test vault",
+    "sourceCommit": "8cefe0b286d41e6eb6791863e7566d8c26d1bb8a",
+    "deployedBundleSha256": "561a30161e3a2fa0017ecf4e39140a1bede9939576a6d47c458af1011898fc52",
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "memoryMode": "skip-memory"
+  },
+  "validationBoundary": {
+    "fixedCases": 1,
+    "physicalRequests": 2,
+    "reused": [
+      "existing complete-history and source-summary projections",
+      "existing image identity, retry, summary and rewrite currentness tests",
+      "existing GenerationInputSnapshot image subset tests"
+    ],
+    "notRepeated": [
+      "source or image permutation matrix",
+      "DeepSeek comparison",
+      "build, deploy or full test suite"
+    ]
+  },
+  "case": {
+    "priorUserRequest": "这里有两张图。我先想使用第一张；请先不要分析，等我下一条消息确认或更正。",
+    "priorAssistantResponse": "好的，我会等待你的确认或更正。",
+    "currentCorrection": "更正上一轮：只看第二张，不使用第一张。请只告诉我第二张顶部的 ASCII 标题；不要读取笔记、Memory 或网页。",
+    "registeredImages": [
+      {
+        "assetId": "b135-p3-first-image",
+        "contentHash": "f79fa62ac0f90982ed5cefd36fc53bc3a6434840540659c8a076747e34f31b6f",
+        "ordinal": 1,
+        "path": "pa-8eb638874373ff8e-1.jpg"
+      },
+      {
+        "assetId": "b135-p3-second-image",
+        "contentHash": "f6a752a2e705f7b69140014cd6af43c54f27b1d189b5400299f014f715d26020",
+        "ordinal": 2,
+        "path": "pa-images/img_b3358334275245d98f33bde27b3a9706.png"
+      }
+    ],
+    "providerTurns": [
+      {
+        "imageBlocks": 0,
+        "finishReason": "tool_calls",
+        "toolNames": [
+          "declare_source_scope",
+          "resolve_chat_images"
+        ]
+      },
+      {
+        "imageBlocks": 1,
+        "finishReason": "stop",
+        "toolNames": []
+      }
+    ],
+    "resolvedVariantRefs": [
+      "b135-p3-second-image"
+    ],
+    "verifiedRefs": [
+      "b135-p3-second-image",
+      "b135-p3-second-image"
+    ],
+    "firstImageReadOrSent": false,
+    "ordinaryText": "30-deep-target",
+    "agentStatus": "completed",
+    "artifactCount": 0,
+    "recoveryCount": 0,
+    "intentCount": 0,
+    "result": "PASS"
+  },
+  "cleanup": {
+    "probeScriptRemovedFromTestVault": true,
+    "imageRegistryChanged": false,
+    "conversationPersisted": false,
+    "noteWritten": false,
+    "pluginDataSha256": "f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc",
+    "mainWorktreeClean": true
+  },
+  "result": "PASS: the later correction overrode the earlier image choice; only the second image reached the provider and its exact heading was returned"
+}

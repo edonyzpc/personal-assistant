@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "workItem": "B-135",
+  "scope": "P2 Desktop settings, independent opt-out, existing writing-style use, Memory master switch, and Forget smoke",
+  "observedAt": "2026-09-12T20:54:00+08:00",
+  "environment": {
+    "platform": "Linux",
+    "host": "Obsidian Desktop with the repo-local test vault",
+    "sourceCommit": "f724dcd7cfd8a1c9f42f4ffb67bd7708177a8c2f",
+    "deployedBundleSha256": "561a30161e3a2fa0017ecf4e39140a1bede9939576a6d47c458af1011898fc52"
+  },
+  "reusedEvidence": [
+    {
+      "path": "2026-09-12-default-learning-host-matrix.json",
+      "covers": "raw-setting migration, default scheduler and collector admission, independent no-new-learning behavior, and rendered setting copy"
+    },
+    {
+      "trackerSection": "D1 and T-11 physical-input evidence",
+      "covers": "non-empty Personal, existing Memory, and authorized writing style in actual SDK input with task-source identities kept separate"
+    },
+    {
+      "trackerSection": "T-10 and T-11 focused regression evidence",
+      "covers": "final admission, reload, save failure, source revocation, and governed plus legacy Personal readers"
+    }
+  ],
+  "desktopChecks": {
+    "baseline": {
+      "memoryEnabled": true,
+      "memoryExtractionEnabled": true,
+      "habitLearningEnabled": true,
+      "learningPreferences": {
+        "memoryExtraction": "default",
+        "habitLearning": "default"
+      },
+      "authorizedSyntheticStyleSelected": true,
+      "controlCenterExposedActions": [
+        "correct",
+        "pause_use",
+        "forget"
+      ]
+    },
+    "memoryExtractionOffThroughRenderedToggle": {
+      "memoryExtractionEnabled": false,
+      "learningPreference": "disabled",
+      "schedulerPresent": false,
+      "habitLearningEnabled": true,
+      "memoryEnabled": true,
+      "existingAuthorizedStyleStillSelected": true,
+      "preparedReceiptStillCurrent": true
+    },
+    "habitLearningOffThroughRenderedToggle": {
+      "habitLearningEnabled": false,
+      "learningPreference": "disabled",
+      "memoryExtractionEnabled": false,
+      "memoryEnabled": true,
+      "existingAuthorizedStyleStillSelected": true,
+      "aggregateCount": 0
+    },
+    "memoryOffThroughRenderedToggle": {
+      "memoryEnabled": false,
+      "futureStyleContextEmpty": true,
+      "preparedReceiptCurrent": false,
+      "recordStillManageable": true,
+      "supportedActions": [
+        "correct",
+        "pause_use",
+        "forget"
+      ]
+    },
+    "forgetThroughRenderedControlCenter": {
+      "confirmationTitle": "Permanently forget this Memory?",
+      "confirmationButton": "Forget permanently",
+      "confirmed": true,
+      "exactStyleTextAbsentFromGovernance": true,
+      "futureStyleContextEmpty": true,
+      "preparedReceiptCurrent": false,
+      "pendingForgetCount": 0,
+      "sourceConversationPreservedUntilSeparateCleanup": true,
+      "visibleSavedUnderstandingInUse": 0,
+      "remainingMarker": {
+        "lifecycle": "forgotten_marker",
+        "effect": "none",
+        "supportedActions": []
+      }
+    }
+  },
+  "screenshots": [
+    "2026-09-12-p2-desktop-extraction-off.png",
+    "2026-09-12-p2-desktop-after-forget.png"
+  ],
+  "cleanup": {
+    "governanceSemanticStateRestoredExceptCommitSequence": true,
+    "baselineCommitSequence": 142,
+    "restoredCommitSequence": 150,
+    "syntheticConversationRemoved": true,
+    "syntheticWritingVersionRemoved": true,
+    "syntheticTextAbsentAfterPluginRestart": true,
+    "conversationCountRestored": 3,
+    "originalActiveConversationRestored": true,
+    "settingsFileSha256BeforeAndAfter": "f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc",
+    "settingsAfterRestart": {
+      "memoryEnabled": true,
+      "memoryExtractionEnabled": true,
+      "habitLearningEnabled": true,
+      "memoryExtractionPreference": "default",
+      "habitLearningPreference": "default"
+    },
+    "governanceBootstrapAfterRestart": "ready",
+    "openModalCountAfterRestart": 0
+  },
+  "providerRequests": 0,
+  "result": "PASS for the bounded Desktop P2 smoke",
+  "limits": {
+    "iosRealDevice": "NOT TESTED: this Linux host has no xcrun, idevice_id, iCloud test-vault, or connected iPhone surface",
+    "semanticModelQuality": "Tracked separately by T-10 and T-20; this smoke did not repeat provider comparisons"
+  }
+}

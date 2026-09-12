@@ -31,6 +31,12 @@ import type {
 } from "./types";
 import { OperationsPathError, parentVaultPath, validateOperationsVaultPath } from "./vault-path";
 import {
+    assertTaskSourceReadCurrent,
+    isTaskSourcePathAllowed,
+    type TaskSourceReadGuard,
+    type TaskSourceReadKind,
+} from "../task-source-read-guard";
+import {
     type FrontmatterCodec,
     OperationsTransformError,
     appendMarkdown,
@@ -120,7 +126,16 @@ export class OperationsIntentController {
     async stageIntent(input: StageOperationsIntentInput, signal?: AbortSignal): Promise<OperationsIntent> {
         this.assertUsable();
         const lifecycleEpoch = this.lifecycleEpoch;
-        this.assertStageActive(signal, lifecycleEpoch);
+        const taskSourceReadGuard = input.taskSourceReadGuard;
+        const assertCurrent = () => this.assertStageActive(signal, lifecycleEpoch, taskSourceReadGuard);
+        const assertReadAllowed = (path: string, kind: TaskSourceReadKind) => {
+            assertCurrent();
+            this.assertPathAllowed(path);
+            if (!isTaskSourcePathAllowed(taskSourceReadGuard, path, kind)) {
+                throw new OperationsControllerError("boundary_denied", `Target is outside the current task source scope: ${path}.`);
+            }
+        };
+        assertCurrent();
         if (!input.runId || !input.turnId) {
             throw new OperationsControllerError("schema_invalid", "runId and turnId are required.");
         }
@@ -132,10 +147,13 @@ export class OperationsIntentController {
         }
         const toolCallIds = new Set<string>();
         const virtualTargets = new Map<string, VirtualTarget>();
+        const initialReadKinds = new Map<string, TaskSourceReadKind>();
         const prepared: PreparedOperation[] = [];
         let generatedChars = 0;
 
-        for (const call of input.operations) {
+        // Validate the complete target list before a guarded batch reads any
+        // baseline. The guard stays local to this call, including concurrent runs.
+        const normalizedCalls = input.operations.map((call) => {
             if (!call.toolCallId || toolCallIds.has(call.toolCallId)) {
                 throw new OperationsControllerError("schema_invalid", "Tool call ids must be non-empty and unique per intent.");
             }
@@ -151,19 +169,29 @@ export class OperationsIntentController {
             } catch (error) {
                 throw normalizeStageError(error);
             }
-            this.assertPathAllowed(path);
             const normalizedInput = Object.freeze({ ...validated, path }) as CoreWriteInput;
+            // Later operations on this path use the virtual baseline produced
+            // in this batch; create does not grant permission to read old text.
+            const readKind = initialReadKinds.get(path)
+                ?? (call.name === "vault_create" ? "output_target_exists" : "task_material");
+            initialReadKinds.set(path, readKind);
+            if (taskSourceReadGuard) assertReadAllowed(path, readKind);
+            return { call, normalizedInput, path, readKind };
+        });
+
+        for (const { call, normalizedInput, path, readKind } of normalizedCalls) {
+            assertReadAllowed(path, readKind);
             let target = virtualTargets.get(path);
             if (!target) {
-                target = await this.readInitialTarget(path, call.name !== "vault_create");
-                this.assertStageActive(signal, lifecycleEpoch);
+                target = await this.readInitialTarget(path, call.name !== "vault_create", () => assertReadAllowed(path, readKind));
+                assertReadAllowed(path, readKind);
                 virtualTargets.set(path, target);
             }
             const expectedBefore = target.exists ? target.content : null;
             let expectedAfter: string;
             try {
                 expectedAfter = await this.prepareExpectedAfter(call.name, normalizedInput, path, target);
-                this.assertStageActive(signal, lifecycleEpoch);
+                assertReadAllowed(path, readKind);
                 assertExpectedAfterGrowth(expectedBefore, expectedAfter);
                 generatedChars += countPreparedGeneratedCharacters(
                     call.name,
@@ -203,12 +231,12 @@ export class OperationsIntentController {
             operations: prepared,
             state: "pending",
         });
-        this.assertStageActive(signal, lifecycleEpoch);
+        assertCurrent();
         this.intents.set(intent.id, intent);
         try {
-            this.assertStageActive(signal, lifecycleEpoch);
+            assertCurrent();
             this.scheduleExpiration(intent);
-            this.assertStageActive(signal, lifecycleEpoch);
+            assertCurrent();
             this.emit({ type: "intent-staged", intent });
             return intent;
         } catch (error) {
@@ -515,10 +543,22 @@ export class OperationsIntentController {
         });
     }
 
-    private async readInitialTarget(path: string, readContent: boolean): Promise<VirtualTarget> {
+    private async readInitialTarget(
+        path: string,
+        readContent: boolean,
+        assertReadAllowed: () => void,
+    ): Promise<VirtualTarget> {
+        assertReadAllowed();
         const file = this.resolveFile(path);
-        if (file) return { exists: true, content: readContent ? await this.readFile(file) : null };
-        if (await this.vault.adapter.exists(path)) {
+        assertReadAllowed();
+        if (file) {
+            const content = readContent ? await this.readFile(file) : null;
+            assertReadAllowed();
+            return { exists: true, content };
+        }
+        const exists = await this.vault.adapter.exists(path);
+        assertReadAllowed();
+        if (exists) {
             throw new OperationsControllerError("target_missing", `Target is not a readable Markdown note: ${path}.`);
         }
         return { exists: false, content: null };
@@ -628,12 +668,21 @@ export class OperationsIntentController {
         if (this.disposed) throw new OperationsControllerError("cancelled", "Operations controller is disposed.");
     }
 
-    private assertStageActive(signal: AbortSignal | undefined, lifecycleEpoch: number): void {
+    private assertStageActive(
+        signal: AbortSignal | undefined,
+        lifecycleEpoch: number,
+        taskSourceReadGuard?: TaskSourceReadGuard,
+    ): void {
         if (signal?.aborted) {
             throw new OperationsControllerError("cancelled", "Operations staging was cancelled.");
         }
         if (this.disposed || lifecycleEpoch !== this.lifecycleEpoch) {
             throw new OperationsControllerError("cancelled", "Operations controller was disposed during staging.");
+        }
+        try {
+            assertTaskSourceReadCurrent(taskSourceReadGuard);
+        } catch {
+            throw new OperationsControllerError("boundary_denied", "The task source scope changed during Operations staging.");
         }
     }
 

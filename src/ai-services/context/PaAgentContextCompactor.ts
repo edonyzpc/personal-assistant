@@ -220,6 +220,7 @@ function toolResultReductionMarker(
     reduction: "compacted" | "truncated",
 ): string {
     const sourcePaths = message.content.sourceRecords
+        ?.filter((record) => record.metadata?.sourceDependency !== true)
         ?.map((record) => record.path || record.url || record.title)
         .filter((value): value is string => typeof value === "string" && value.length > 0)
         .slice(0, 4)

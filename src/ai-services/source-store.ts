@@ -45,6 +45,7 @@ export class SourceStore {
     getDisplayChips(): SourceDisplayChip[] {
         const grouped = new Map<string, SourceRecord[]>();
         for (const record of this.records) {
+            if (record.metadata?.sourceDependency === true) continue;
             grouped.set(record.dedupKey, [...(grouped.get(record.dedupKey) ?? []), record]);
         }
         return [...grouped.entries()].map(([dedupKey, records]) => ({

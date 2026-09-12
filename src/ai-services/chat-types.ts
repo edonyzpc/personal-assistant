@@ -2,6 +2,7 @@ import type { PersistedContextTrace } from "../pa/contracts";
 import type { MessageImage } from "../chat/image-types";
 import type { ChatHostProvenance } from "./chat-provenance";
 import type { PersistedSourceRef } from "../pa/contracts/source-ref";
+import type { GenerationInputSnapshot } from "./generation-input-snapshot";
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -337,14 +338,18 @@ export type AssistantMessagePart =
     | { type: "toolCall"; id?: string; name: string; input: unknown; index?: number };
 
 /** Provider evidence, independent of the loop's local EOF/cancellation state. */
-export type ProviderCompletion = "stop" | "length" | "content_filter" | "unknown";
+export type ProviderCompletion = "stop" | "tool_calls" | "length" | "content_filter" | "unknown";
 
 export interface ChatWritingRequest { requestId: string; }
+/** Host receipt metadata; absent means the legacy path, an empty object means a new work with unknown scene. */
+export interface ChatWritingContextMetadata { parentVersionId?: string; scene?: import('../chat/writing-types').WritingScene; }
 export interface ChatWritingContext { parentVersionId: string; text: string; textHash: string; associatedImages: MessageImage[]; }
 /** A failed writing task has material lineage without a validated parent body/version. Host-only. */
 export interface ChatWritingMaterialContext { requestId: string; associatedImages: MessageImage[]; }
 export interface ChatWritingStyleResult {
     context: string; revisionIds: string[]; isCurrent: () => boolean;
+    /** Source validity independent of cancellation of the preparing model turn. */
+    isSourceCurrent?: () => boolean;
     skipped?: Array<{ revisionId: string; reason: "ineligible" | "budget" | "invalid_budget" }>;
 }
 export type ChatWritingStylePreparation = (input: { remainingTextChars: number; remainingMemoryChars: number; signal?: AbortSignal }) => Promise<ChatWritingStyleResult>;
@@ -353,7 +358,10 @@ export interface ChatWritingRecovery {
     requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason;
     /** Optional lineage populated by the host, never from the model envelope. */
     parentVersionId?: string;
+    scene?: import('../chat/writing-types').WritingScene;
     backgroundSourceRefs?: PersistedSourceRef[];
+    /** Host-recorded physical generation inputs; absent on legacy recoveries. */
+    generationInput?: GenerationInputSnapshot;
 }
 
 export interface PaToolResultContent {
@@ -424,6 +432,7 @@ export type ToolExecutionOutcome =
     | "policy_rejected"
     | "budget_exceeded"
     | "duplicate_skipped"
+    | "control_applied"
     | "aborted"
     | "abort_timeout";
 
@@ -587,8 +596,11 @@ export type LegacyAgentEvent =
     | LegacyAgentAnswerSnapshotEvent
     | LegacyAgentReasoningChunkEvent
     | LegacyAgentTurnMetadataEvent
-    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[] })
-    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; associatedImages?: MessageImage[] })
+    | (LegacyAgentEventBase & { kind: "writing-artifact"; runId: string; requestId: string; messageId: string; body: string; explanation: string; preamble?: string; styleRevisionIds?: string[]; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot;
+        /** Ephemeral host receipt from the generating request; never a persisted/model field. */
+        isSourceCurrent?: () => boolean })
+    | (LegacyAgentEventBase & { kind: "writing-preview"; runId: string; requestId: string; messageId: string; text: string })
+    | (LegacyAgentEventBase & { kind: "writing-recovery"; runId: string; requestId: string; messageId?: string; rawText: string; reason: WritingRecoveryReason; previewText?: string; associatedImages?: MessageImage[]; writingContext?: ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot; isSourceCurrent?: () => boolean })
     | LegacyAgentTerminalEvent;
 
 export type VaultAdviceEvidenceKind =
@@ -618,6 +630,7 @@ export interface AgentTurnPlan {
 export type ChatAgentIntent = "content-seeking" | "agent-control";
 
 export type ChatToolName =
+    | "get_writing_context"
     | "resolve_chat_images"
     | "search_memory"
     | "get_current_note_context"

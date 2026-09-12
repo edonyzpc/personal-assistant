@@ -24,6 +24,8 @@ import {
 } from "./chat-tools";
 import { PolicyEngine, type CapabilityPolicyDecision } from "./policy-engine";
 import { getErrorType } from "./agent-utils";
+import { nativeWritingOutputSchema } from "./writing-output";
+import type { ChatWritingRequest } from "./chat-types";
 
 export interface CapabilityRegistryOptions {
     policyEngine?: PolicyEngine;
@@ -60,6 +62,13 @@ export class CapabilityRegistry {
     }
 
     register(capability: AgentCapability): boolean {
+        // This exact name belongs to the Chat host's fixed output protocol.
+        // Providers cannot replace it with an executable source or action.
+        if (String(capability.name) === "present_writing") {
+            this.diagnostics.push({ type: "policy", capabilityName: capability.name,
+                providerId: capability.providerId, reason: "reserved Chat output name" });
+            return false;
+        }
         if (this.capabilities.has(capability.name)) {
             this.diagnostics.push({
                 type: "duplicate",
@@ -90,6 +99,11 @@ export class CapabilityRegistry {
         }
         this.capabilities.set(capability.name, capability);
         return true;
+    }
+
+    /** Static output registration, separate from all executable capabilities. */
+    getWritingOutputSchema(request: ChatWritingRequest): ChatToolProviderSchema {
+        return nativeWritingOutputSchema(request);
     }
 
     registerMany(capabilities: readonly AgentCapability[]): void {
@@ -148,6 +162,12 @@ export class CapabilityRegistry {
 
     get(name: string): AgentCapability | undefined {
         return this.capabilities.get(name);
+    }
+
+    /** A run may release only the exact capability instance it registered. */
+    unregister(capability: AgentCapability): boolean {
+        if (this.capabilities.get(capability.name) !== capability) return false;
+        return this.capabilities.delete(capability.name);
     }
 
     getDefinition(name: string): ChatToolRegistryDefinition | undefined {

@@ -69,6 +69,80 @@ describe('host writing-style service', () => {
         await h.coordinator.pauseUse({ claimId: added.claimId }); await h.refresh();
         expect(prepared.isCurrent()).toBe(false); expect((await h.prepare()).context).toBe('');
     });
+    it('keeps prepared source validity after generation is cancelled', async () => {
+        const h = await harness();
+        const added = await h.service.remember('version-1', scene, 'action', { path: 'saved.md', contentHash: 'hash' });
+        await h.refresh();
+        const abort = new AbortController();
+        const prepared = await h.service.prepare(scene, {
+            remainingTextChars: 6000, remainingMemoryChars: 6000, signal: abort.signal,
+        });
+        expect(prepared.context).toContain(text);
+        expect(prepared.revisionIds).toEqual([added.revisionId]);
+        expect(prepared.isCurrent()).toBe(true);
+        expect(prepared.isSourceCurrent?.()).toBe(true);
+
+        abort.abort();
+
+        expect(prepared.isCurrent()).toBe(false);
+        expect(prepared.isSourceCurrent?.()).toBe(true);
+        expect((await h.prepare()).revisionIds).toEqual([added.revisionId]);
+    });
+    it('revalidates an exact persisted style revision without binding unrelated governance commits', async () => {
+        const h = await harness();
+        const added = await h.service.remember('version-1', scene, 'action', { path: 'saved.md', contentHash: 'hash' });
+        await h.refresh();
+        const receipt = await h.service.captureGenerationSourceValidity([added.revisionId]);
+        expect(receipt.isCurrent()).toBe(true);
+        h.current().commitSequence++;
+        expect(receipt.isCurrent()).toBe(true);
+        h.setSourceCurrent(false);
+        expect(receipt.isCurrent()).toBe(false);
+    });
+    it.each(['disabled runtime', 'pause', 'Forget', 'correction'] as const)(
+        'rejects a persisted style revision after %s', async (change) => {
+            const h = await harness();
+            const added = await h.service.remember('version-1', scene, 'action');
+            await h.refresh();
+            const receipt = await h.service.captureGenerationSourceValidity([added.revisionId]);
+            if (change === 'disabled runtime') h.setEnabled(false);
+            else if (change === 'pause') await h.coordinator.pauseUse({ claimId: added.claimId });
+            else if (change === 'Forget') await h.coordinator.forget({ claimId: added.claimId });
+            else await h.service.correct(added.claimId, 'Replacement sample', scene, 'correction');
+            await h.refresh();
+            expect(receipt.isCurrent()).toBe(false);
+            await expect(h.service.captureGenerationSourceValidity([added.revisionId]))
+                .rejects.toThrow('Writing style source unavailable');
+        },
+    );
+    it.each(['note source', 'disabled runtime', 'pause', 'Forget', 'correction', 'dispose'] as const)(
+        'still revokes source validity after cancellation when %s changes', async (change) => {
+            const h = await harness();
+            const added = await h.service.remember('version-1', scene, 'action', { path: 'saved.md', contentHash: 'hash' });
+            await h.refresh();
+            const abort = new AbortController();
+            const prepared = await h.service.prepare(scene, {
+                remainingTextChars: 6000, remainingMemoryChars: 6000, signal: abort.signal,
+            });
+            expect(prepared.context).toContain(text);
+            abort.abort();
+            expect(prepared.isCurrent()).toBe(false);
+            expect(prepared.isSourceCurrent?.()).toBe(true);
+
+            switch (change) {
+                case 'note source': h.setSourceCurrent(false); break;
+                case 'disabled runtime': h.setEnabled(false); break;
+                case 'pause': await h.coordinator.pauseUse({ claimId: added.claimId }); break;
+                case 'Forget': await h.coordinator.forget({ claimId: added.claimId }); break;
+                case 'correction': await h.service.correct(added.claimId, 'Replacement sample', scene, 'correction'); break;
+                case 'dispose': h.service.dispose(); break;
+            }
+            await h.refresh();
+
+            expect(prepared.isCurrent()).toBe(false);
+            expect(prepared.isSourceCurrent?.()).toBe(false);
+        },
+    );
     it('snapshots commitSequence even if a host mutates its cached state object in place', async () => {
         const h = await harness(); await h.service.remember('version-1', scene, 'action'); await h.refresh();
         const result = await h.prepare(); h.current().commitSequence++;
@@ -115,8 +189,9 @@ describe('conservative local writing-scene mapping', () => {
         expect(inferWritingScene('new topic: make it shorter', scene)).toBeUndefined();
         expect(inferWritingScene('改写成工作邮件给同事', scene)).toEqual({ writingTask: 'email', purpose: 'work_email', audience: 'colleagues', domain: 'work' });
     });
-    it.each(['不要参考旧风格', '这次换一种风格', '不要学我', '不要旅行风格', "don't use my previous style", 'ignore my previous style'])
-    ('respects a current explicit refusal: %s', (prompt) => {
-        expect(hasConflictingWritingStyleInstruction(prompt)).toBe(true); expect(inferWritingScene(`帮我写旅行朋友圈文案，${prompt}`, scene)).toBeUndefined();
-    });
+    it.each(['不要参考旧风格', '这次换一种风格', '不要学我', '不要旅行风格', "don't use my previous style", 'ignore my previous style'])(
+        'respects a current explicit refusal: %s', (prompt) => {
+            expect(hasConflictingWritingStyleInstruction(prompt)).toBe(true); expect(inferWritingScene(`帮我写旅行朋友圈文案，${prompt}`, scene)).toBeUndefined();
+        },
+    );
 });

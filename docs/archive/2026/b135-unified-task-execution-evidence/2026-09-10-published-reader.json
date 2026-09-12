@@ -1,0 +1,271 @@
+{
+  "description": "Actual published 2.9.2 source compared with B-135 current reader; isolated synthetic IndexedDB experiment, not app downgrade validation.",
+  "command": "node /tmp/b135-old-reader-292/probe.cjs",
+  "naturalExit": 0,
+  "report": {
+    "baseline": {
+      "tag": "2.9.2",
+      "commit": "22c192b84ebdeb14e3808f57a63da0a7d4efbca7",
+      "schema": 1,
+      "idb": 1
+    },
+    "current": {
+      "schema": 2,
+      "idb": 2
+    },
+    "results": [
+      {
+        "case": "actual_292_opens_current_v2",
+        "outcome": "INCOMPATIBLE",
+        "error": {
+          "name": "VersionError",
+          "message": "An attempt was made to open a database using a lower version than the existing version."
+        }
+      },
+      {
+        "case": "actual_292_reader_APIs",
+        "methods": {
+          "getWritingVersion": "undefined",
+          "listWritingVersions": "undefined",
+          "getImageAsset": "undefined",
+          "getSaveReceipt": "undefined",
+          "listSaveReceipts": "undefined"
+        }
+      },
+      {
+        "case": "current_reopens_after_failed_292_open",
+        "outcome": "PASS",
+        "preserved": [
+          "turns",
+          "writing versions",
+          "recovery scene",
+          "images",
+          "save receipts"
+        ]
+      },
+      {
+        "case": "actual_292_memory_message_projection_diagnostic",
+        "outcome": "TEXT_ONLY",
+        "dropped": [
+          "writingVersionId",
+          "images",
+          "writingRecovery including scene"
+        ],
+        "projected": [
+          {
+            "conversationId": "compat-conversation",
+            "turnIndex": 0,
+            "user": {
+              "role": "user",
+              "content": "Synthetic write"
+            },
+            "assistant": {
+              "role": "assistant",
+              "content": "第一行：“精确保真。”\nC:\\notes\\draft.md 🙂\n保留  双空格"
+            }
+          },
+          {
+            "conversationId": "compat-conversation",
+            "turnIndex": 1,
+            "user": {
+              "role": "user",
+              "content": "Synthetic edit"
+            },
+            "assistant": {
+              "role": "assistant",
+              "content": "Partial synthetic work"
+            }
+          }
+        ]
+      },
+      {
+        "case": "actual_292_v1_writer_to_current_v2_reader",
+        "outcome": "PASS"
+      }
+    ],
+    "limitations": [
+      "fake-indexeddb 6.2.4 implements real version admission; no Obsidian UI or real browser tested.",
+      "No old writing/image/SaveReceipt reader exists in tag 2.9.2; no such API was invented.",
+      "No persistent vault or current repository files modified; all data synthetic and isolated."
+    ]
+  },
+  "identity": {
+    "baselineTagObject": "d1b2ebfffbf790cc43b96934f15293fceb6237eb",
+    "baselineCommit": "22c192b84ebdeb14e3808f57a63da0a7d4efbca7",
+    "currentHead": "4591434f7df1499b11f0143240d38b99165fc9bc",
+    "files": {
+      "/tmp/b135-old-reader-292/old/src/chat/chat-history-store.ts": "45b0ce107c775ac9b6939f97559d9b5036643a44f9acffe087649280d7a913fe",
+      "/tmp/b135-old-reader-292/old/src/ai-services/chat-types.ts": "76ae28b755ec3594e076550d3f6aa48abd4e04ac295100a08124627b88af9023",
+      "/tmp/pa-b135-completion/src/chat/chat-history-store.ts": "01d2db59face9fba3332107d463021c3fa647e5dfda994ba2dabcdcdb59f43b0",
+      "/tmp/pa-b135-completion/src/chat/writing-types.ts": "9eea3e28ca9e53ab96a4fa5dfadbe266e1f18fb19c8ba67ac798922c46fced4b",
+      "/tmp/pa-b135-completion/src/chat/writing-versions.ts": "96d60894ffe49c7117982addcb6de612dc17935eb1369abc5a1719f37e675187",
+      "/tmp/pa-b135-completion/src/chat/save-receipt-types.ts": "6d97ba086d0bb85b89eb598353f443955ea4c9bf21a4d5fcfb9ac47c43d7545e",
+      "/tmp/pa-b135-completion/src/chat/image-types.ts": "3e703b1963eb4fffe73d70fb4bc02d29eccf9cfbf41a5cc2fbdc8af8884f4c27",
+      "/tmp/b135-old-reader-292/probe.cjs": "aeff45fd61a14ddf7919ea5a7e4f22fb3bb843e278601b6966e8653a0144960e",
+      "/tmp/b135-old-reader-292/build.cjs": "390ece45b497a2f985dcc447d545e3c938ae360e95e3ff6217ecdbc55299dcb2",
+      "/tmp/b135-old-reader-292/old.cjs": "4c0e49c597eb9ede9e9d86176039a203c00ea67a6b3f9c7e358031ff0db2c372",
+      "/tmp/b135-old-reader-292/current.cjs": "937d92ac46d4042cc6b7ca4916e3f06b9473a74d334beb7bd5b335d25c767af4"
+    }
+  },
+  "probeSource": "const assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst { IDBFactory, IDBKeyRange } = require('fake-indexeddb');\nglobalThis.IDBKeyRange = IDBKeyRange;\nglobalThis.self = { crypto: require('node:crypto').webcrypto, IDBKeyRange };\nconst current = require('./current.cjs');\nconst old = require('./old.cjs');\nconst report = { baseline: { tag: '2.9.2', commit: '22c192b84ebdeb14e3808f57a63da0a7d4efbca7',\n  schema: old.CHAT_HISTORY_SCHEMA_VERSION, idb: old.CHAT_HISTORY_IDB_VERSION },\n  current: { schema: current.CHAT_HISTORY_SCHEMA_VERSION, idb: current.CHAT_HISTORY_IDB_VERSION }, results: [] };\nconst conversation = { id: 'compat-conversation', title: 'Synthetic compatibility', createdAt: '2026-09-10T00:00:00Z',\n  updatedAt: '2026-09-10T00:00:00Z', turnCount: 2, preview: 'Synthetic' };\nconst scene = { writingTask: 'caption', purpose: 'share', audience: 'friends', domain: 'travel' };\nconst images = [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'Synthetic photo' }];\nconst asset = { id: 'image_one', source: 'vault_reference', originalPath: 'photos/synthetic.jpg', originalHash: 'a'.repeat(64),\n  byteLength: 3, detectedMime: 'image/jpeg', acquisition: 'original_file', state: 'available', anchorPath: 'PA Chat.md',\n  anchorKind: 'logical_root', createdAt: 1, owners: [] };\nasync function snapshot(store) {\n return { turns: await store.getTurns(conversation.id), versions: await store.listWritingVersions(conversation.id),\n  assets: await store.getImageAsset('image_one'), receipts: await store.listSaveReceipts() };\n}\nasync function main() {\n const factory = new IDBFactory();\n const writer = new current.IndexedDbChatHistoryStore('b135-compat-real-version', factory);\n await writer.initialize(); await writer.upsertConversation(conversation); await writer.putImageAsset(asset);\n const versions = new current.WritingVersionService(writer);\n const version = await versions.create({ requestId: 'native-request', messageId: 'native-message', conversationId: conversation.id,\n  turnIndex: 0, text: '第一行：“精确保真。”\\nC:\\\\notes\\\\draft.md 🙂\\n保留  双空格', images, scene,\n  styleRevisionIds: ['style-one'], backgroundSourceRefs: [{ path: 'notes/synthetic.md' }] });\n const turns = [{ conversationId: conversation.id, turnIndex: 0, user: { role: 'user', content: 'Synthetic write', images },\n  assistant: { role: 'assistant', content: version.text, writingVersionId: version.id, images } },\n { conversationId: conversation.id, turnIndex: 1, user: { role: 'user', content: 'Synthetic edit' },\n  assistant: { role: 'assistant', content: 'Partial synthetic work', images,\n   writingRecovery: { requestId: 'recovery-request', messageId: 'recovery-message', rawText: '{\"kind\":\"pa.writing\",\"body\":\"partial',\n    reason: 'incomplete', parentVersionId: version.id, scene, backgroundSourceRefs: [{ path: 'notes/synthetic.md' }] } } }];\n for (const turn of turns) await writer.appendTurn(turn);\n await writer.putSaveReceipt({ id: 'save-one', operationId: 'save-one', writingVersionId: version.id, textHash: version.textHash,\n  targetNotePath: 'Saved/synthetic.md', origin: 'ai_generated', createdAt: 1, attachments: [],\n  initialNoteHash: 'b'.repeat(64), noteContentHash: 'c'.repeat(64), noteState: 'pending', state: 'prepared' });\n const before = await snapshot(writer); fs.writeFileSync(__dirname + '/generated-data.json', JSON.stringify(before, null, 2));\n versions.dispose(); await writer.dispose();\n const older = new old.IndexedDbChatHistoryStore('b135-compat-real-version', factory);\n let failure;\n try { await older.initialize(); } catch (error) { failure = { name: error.name, message: error.message }; }\n assert.equal(failure?.name, 'VersionError');\n report.results.push({ case: 'actual_292_opens_current_v2', outcome: 'INCOMPATIBLE', error: failure });\n report.results.push({ case: 'actual_292_reader_APIs', methods: Object.fromEntries(['getWritingVersion', 'listWritingVersions',\n  'getImageAsset', 'getSaveReceipt', 'listSaveReceipts'].map(name => [name, typeof older[name]])) });\n await older.dispose();\n const reopened = new current.IndexedDbChatHistoryStore('b135-compat-real-version', factory); await reopened.initialize();\n assert.deepEqual(await snapshot(reopened), before);\n report.results.push({ case: 'current_reopens_after_failed_292_open', outcome: 'PASS', preserved: ['turns', 'writing versions', 'recovery scene', 'images', 'save receipts'] });\n await reopened.dispose();\n // Diagnose the old message projector separately; this does not bypass or claim IDB downgrade support.\n const memory = new old.MemoryChatHistoryStore(); await memory.initialize();\n for (const turn of turns) await memory.appendTurn(turn);\n const projected = await memory.getTurns(conversation.id);\n assert.equal(projected[0].assistant.content, version.text);\n assert.equal(projected[0].assistant.writingVersionId, undefined);\n assert.equal(projected[0].assistant.images, undefined);\n assert.equal(projected[1].assistant.writingRecovery, undefined);\n report.results.push({ case: 'actual_292_memory_message_projection_diagnostic', outcome: 'TEXT_ONLY',\n  dropped: ['writingVersionId', 'images', 'writingRecovery including scene'], projected });\n // Supported upgrade direction: real old writer -> current reader, same versioned database.\n const oldFirst = new old.IndexedDbChatHistoryStore('b135-compat-upgrade', factory); await oldFirst.initialize();\n await oldFirst.upsertConversation(conversation);\n const legacyTurn = { conversationId: conversation.id, turnIndex: 0, user: { role: 'user', content: 'Old question' },\n  assistant: { role: 'assistant', content: 'Old text answer' } };\n await oldFirst.appendTurn(legacyTurn); await oldFirst.dispose();\n const upgrade = new current.IndexedDbChatHistoryStore('b135-compat-upgrade', factory); await upgrade.initialize();\n assert.deepEqual(await upgrade.getTurns(conversation.id), [legacyTurn]);\n assert.deepEqual(await upgrade.listWritingVersions(conversation.id), []);\n report.results.push({ case: 'actual_292_v1_writer_to_current_v2_reader', outcome: 'PASS' });\n await upgrade.dispose();\n report.limitations = ['fake-indexeddb 6.2.4 implements real version admission; no Obsidian UI or real browser tested.',\n  'No old writing/image/SaveReceipt reader exists in tag 2.9.2; no such API was invented.',\n  'No persistent vault or current repository files modified; all data synthetic and isolated.'];\n fs.writeFileSync(__dirname + '/report.json', JSON.stringify(report, null, 2));\n console.log(JSON.stringify(report, null, 2));\n}\nmain().catch(error => { console.error(error); process.exitCode = 1; });\n",
+  "buildSource": "const esbuild = require('/mnt/code/personal-assistant/node_modules/esbuild');\nfor (const [entry, out] of [['current-entry.ts', 'current.cjs'], ['old/src/chat/chat-history-store.ts', 'old.cjs']]) {\n  esbuild.buildSync({ entryPoints: [__dirname + '/' + entry], outfile: __dirname + '/' + out,\n    bundle: true, platform: 'node', format: 'cjs', target: 'node22',\n    nodePaths: ['/mnt/code/personal-assistant/node_modules'], external: ['obsidian'] });\n}\n",
+  "generatedData": {
+    "turns": [
+      {
+        "conversationId": "compat-conversation",
+        "turnIndex": 0,
+        "user": {
+          "role": "user",
+          "content": "Synthetic write",
+          "images": [
+            {
+              "ref": {
+                "assetId": "image_one",
+                "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "ordinal": 1,
+              "label": "Synthetic photo"
+            }
+          ]
+        },
+        "assistant": {
+          "role": "assistant",
+          "content": "第一行：“精确保真。”\nC:\\notes\\draft.md 🙂\n保留  双空格",
+          "images": [
+            {
+              "ref": {
+                "assetId": "image_one",
+                "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "ordinal": 1,
+              "label": "Synthetic photo"
+            }
+          ],
+          "writingVersionId": "writing_316b66d705070a5839427b8327a008a8bdb9fc04aac75e89"
+        }
+      },
+      {
+        "conversationId": "compat-conversation",
+        "turnIndex": 1,
+        "user": {
+          "role": "user",
+          "content": "Synthetic edit"
+        },
+        "assistant": {
+          "role": "assistant",
+          "content": "Partial synthetic work",
+          "images": [
+            {
+              "ref": {
+                "assetId": "image_one",
+                "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "ordinal": 1,
+              "label": "Synthetic photo"
+            }
+          ],
+          "writingRecovery": {
+            "requestId": "recovery-request",
+            "rawText": "{\"kind\":\"pa.writing\",\"body\":\"partial",
+            "reason": "incomplete",
+            "scene": {
+              "writingTask": "caption",
+              "purpose": "share",
+              "audience": "friends",
+              "domain": "travel"
+            },
+            "parentVersionId": "writing_316b66d705070a5839427b8327a008a8bdb9fc04aac75e89",
+            "backgroundSourceRefs": [
+              {
+                "path": "notes/synthetic.md"
+              }
+            ],
+            "messageId": "recovery-message"
+          }
+        }
+      }
+    ],
+    "versions": [
+      {
+        "id": "writing_316b66d705070a5839427b8327a008a8bdb9fc04aac75e89",
+        "requestId": "native-request",
+        "messageId": "native-message",
+        "text": "第一行：“精确保真。”\nC:\\notes\\draft.md 🙂\n保留  双空格",
+        "textHash": "f9336552d3d96c328a5405ba545737a437b56ec41bca7a0f517eb71585d959ee",
+        "explanation": "",
+        "origin": "ai_generated",
+        "conversationId": "compat-conversation",
+        "turnIndex": 0,
+        "createdAt": 1789018788173,
+        "associatedImages": [
+          {
+            "ref": {
+              "assetId": "image_one",
+              "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "ordinal": 1,
+            "label": "Synthetic photo"
+          }
+        ],
+        "backgroundSourceRefs": [
+          {
+            "path": "notes/synthetic.md"
+          }
+        ],
+        "styleRevisionIds": [
+          "style-one"
+        ],
+        "scene": {
+          "writingTask": "caption",
+          "purpose": "share",
+          "audience": "friends",
+          "domain": "travel"
+        },
+        "referenceScope": "request"
+      }
+    ],
+    "assets": {
+      "id": "image_one",
+      "originalHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source": "vault_reference",
+      "originalPath": "photos/synthetic.jpg",
+      "byteLength": 3,
+      "detectedMime": "image/jpeg",
+      "acquisition": "original_file",
+      "state": "available",
+      "anchorPath": "PA Chat.md",
+      "anchorKind": "logical_root",
+      "createdAt": 1,
+      "owners": [
+        {
+          "kind": "writing",
+          "id": "writing_316b66d705070a5839427b8327a008a8bdb9fc04aac75e89"
+        },
+        {
+          "kind": "turn",
+          "id": "[\"compat-conversation\",0]"
+        },
+        {
+          "kind": "turn",
+          "id": "[\"compat-conversation\",1]"
+        }
+      ]
+    },
+    "receipts": [
+      {
+        "id": "save-one",
+        "operationId": "save-one",
+        "writingVersionId": "writing_316b66d705070a5839427b8327a008a8bdb9fc04aac75e89",
+        "textHash": "f9336552d3d96c328a5405ba545737a437b56ec41bca7a0f517eb71585d959ee",
+        "targetNotePath": "Saved/synthetic.md",
+        "origin": "ai_generated",
+        "createdAt": 1,
+        "attachments": [],
+        "initialNoteHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "noteContentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "noteState": "pending",
+        "state": "prepared"
+      }
+    ]
+  }
+}

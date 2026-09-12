@@ -216,28 +216,38 @@ describe("Phase 1 reranker invocation", () => {
                     : '{"keywords":"useful evidence","temporal":"none"}',
             };
         });
-        const tool = new MemorySearchTool({} as never, {
-            createChatModel: jest.fn(async () => llm),
-        } as never);
+        const createChatModel = jest.fn(async (_temperature: number, _options: unknown) => llm);
+        const tool = new MemorySearchTool({} as never, { createChatModel } as never);
+        const rewriteObserver = jest.fn();
+        const rerankObserver = jest.fn();
+        const invocation = createStandardMemorySearchInvocation({
+            temporalIntent: "none", captureRecoverySeed: false,
+            providerRequestDiagnostic: (stage) => stage === "query_rewrite" ? rewriteObserver : rerankObserver,
+        });
         try {
             const rewritten = await (tool as unknown as {
                 rewriteQueryWithTimeout(
                     query: string,
                     policyModelName: string,
                     signal: AbortSignal,
+                    invocation: ReturnType<typeof createStandardMemorySearchInvocation>,
                 ): Promise<{ keywords: string | null }>;
-            }).rewriteQueryWithTimeout("find the useful evidence in my notes", "policy-model", parent.signal);
+            }).rewriteQueryWithTimeout("find the useful evidence in my notes", "policy-model", parent.signal, invocation);
             const reranked = await (tool as unknown as {
                 rerankCandidates(
                     query: string,
                     candidates: MemoryCandidate[],
                     selectedModel: { kind: "chat"; modelName: string },
                     signal: AbortSignal,
+                    deadline: undefined,
+                    invocation: ReturnType<typeof createStandardMemorySearchInvocation>,
                 ): Promise<unknown>;
-            }).rerankCandidates("useful", [candidate], { kind: "chat", modelName: "chat-model" }, parent.signal);
+            }).rerankCandidates("useful", [candidate], { kind: "chat", modelName: "chat-model" }, parent.signal, undefined, invocation);
 
             expect(rewritten.keywords).toBe("useful evidence");
             expect(reranked).toMatchObject({ kind: "valid", verdict: "relevant" });
+            expect(createChatModel).toHaveBeenNthCalledWith(1, 0, expect.objectContaining({ onProviderRequestDiagnostic: rewriteObserver }));
+            expect(createChatModel).toHaveBeenNthCalledWith(2, 0, expect.objectContaining({ onProviderRequestDiagnostic: rerankObserver }));
             expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
         } finally {
             removeListener.mockRestore();

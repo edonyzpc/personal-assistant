@@ -1,0 +1,72 @@
+{
+  "status": "complete",
+  "startedAt": 1788946355626,
+  "provider": "qwen",
+  "model": "qwen3.8-max",
+  "thinking": true,
+  "deltas": [
+    {
+      "id": "call_35e139e2889742e8b259ae5a",
+      "index": 0,
+      "name": "present_writing",
+      "args": ""
+    },
+    {
+      "index": 0,
+      "args": "{\"body\": "
+    },
+    {
+      "index": 0,
+      "args": "\"第一行："
+    },
+    {
+      "index": 0,
+      "args": "安静且可信。"
+    },
+    {
+      "index": 0,
+      "args": "\\n第二行："
+    },
+    {
+      "index": 0,
+      "args": "🙂 Keep  spaces"
+    },
+    {
+      "index": 0,
+      "args": "."
+    },
+    {
+      "index": 0,
+      "args": "\""
+    },
+    {
+      "index": 0,
+      "args": ", \"contextHandle\": "
+    },
+    {
+      "index": 0,
+      "args": "\"b135"
+    },
+    {
+      "index": 0,
+      "args": "-identity"
+    },
+    {
+      "index": 0,
+      "args": "\""
+    },
+    {
+      "index": 0,
+      "args": "}"
+    },
+    {
+      "id": null,
+      "index": 0,
+      "args": ""
+    }
+  ],
+  "finishes": [
+    "tool_calls"
+  ],
+  "elapsedMs": 3350
+}

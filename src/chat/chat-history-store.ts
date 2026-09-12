@@ -3,7 +3,8 @@ import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import { getPlatformIDBKeyRange, getPlatformIndexedDB } from "../platform-dom";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import { cloneChatHostProvenance, type ChatHostProvenance } from "../ai-services/chat-provenance";
-import { cloneWritingVersion, hashWritingText, type WritingVersion } from "./writing-types";
+import { cloneWritingVersion, hashWritingText, writingSceneSchema, type WritingVersion } from "./writing-types";
+import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape, type PersistedSourceRef } from '../pa/contracts/source-ref';
 import { cloneImageAsset, cloneImageRef, cloneImageVariant, cloneMessageImages, imageTurnOwnerId, validateImagePath,
@@ -119,7 +120,7 @@ export interface ChatHistoryStore {
     getImageSetting<T>(key: string): Promise<T | null>;
     setImageSetting(key: string, value: unknown): Promise<void>;
     getWritingVersion(id: string): Promise<WritingVersion | null>;
-    putWritingVersion(version: WritingVersion): Promise<void>;
+    putWritingVersion(version: WritingVersion, assertSourceCurrent?: () => void): Promise<void>;
     listWritingVersions(conversationId: string): Promise<WritingVersion[]>;
     getSaveReceipt(id: string): Promise<SaveReceipt | null>;
     putSaveReceipt(receipt: SaveReceipt): Promise<void>;
@@ -327,12 +328,13 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
     async listWritingVersions(conversationId: string): Promise<WritingVersion[]> {
         return [...this.writingVersions.values()].filter((v) => v.conversationId === conversationId).map(cloneWritingVersion);
     }
-    async putWritingVersion(version: WritingVersion): Promise<void> {
+    async putWritingVersion(version: WritingVersion, assertSourceCurrent?: () => void): Promise<void> {
         const copy = cloneWritingVersion(version);
         if (await hashWritingText(copy.text) !== copy.textHash) throw new Error('Writing text hash mismatch');
         assertWritingVersionUpdate(this.writingVersions.get(copy.id), copy);
         assertWritingParent(copy, copy.parentVersionId ? this.writingVersions.get(copy.parentVersionId) : undefined);
         const changed = addImageOwners([...this.assets.values()], copy.associatedImages.map((i) => i.ref), { kind: 'writing', id: copy.id });
+        assertSourceCurrent?.();
         for (const asset of changed) this.assets.set(asset.id, asset);
         this.writingVersions.set(copy.id, copy);
     }
@@ -590,9 +592,10 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
         return (await requestToPromise<unknown[]>(this.getStore(WRITING_VERSIONS_STORE, 'readonly').getAll()))
             .map(cloneWritingVersion).filter((v) => v.conversationId === conversationId);
     }
-    async putWritingVersion(version: WritingVersion): Promise<void> {
+    async putWritingVersion(version: WritingVersion, assertSourceCurrent?: () => void): Promise<void> {
         const copy = cloneWritingVersion(version);
         if (await hashWritingText(copy.text) !== copy.textHash) throw new Error('Writing text hash mismatch');
+        assertSourceCurrent?.();
         await this.writeTransaction([WRITING_VERSIONS_STORE, ASSETS_STORE], async (tx) => {
             const versions = tx.objectStore(WRITING_VERSIONS_STORE);
             const previous = await requestToPromise<unknown>(versions.get(copy.id));
@@ -600,6 +603,8 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
             const parent = copy.parentVersionId ? await requestToPromise<unknown>(versions.get(copy.parentVersionId)) : undefined;
             assertWritingParent(copy, parent ? cloneWritingVersion(parent) : undefined);
             await this.addOwners(tx, copy.associatedImages.map((i) => i.ref), { kind: 'writing', id: copy.id });
+            // A rejection aborts the same transaction, including image owners.
+            assertSourceCurrent?.();
             versions.put(copy);
         });
     }
@@ -983,8 +988,10 @@ function cloneWritingRecovery(value: unknown): ChatWritingRecovery {
         || !['incomplete', 'provider_incomplete', 'invalid_output', 'source_changed'].includes(String(recovery.reason))) throw new Error('Invalid writing recovery');
     return { requestId: validateWritingVersionId(recovery.requestId), rawText: recovery.rawText,
         reason: recovery.reason as ChatWritingRecovery['reason'],
+        ...(recovery.scene !== undefined ? { scene: writingSceneSchema.parse(recovery.scene) } : {}),
         ...(recovery.parentVersionId !== undefined ? { parentVersionId: validateWritingVersionId(recovery.parentVersionId) } : {}),
         ...(recovery.backgroundSourceRefs !== undefined ? { backgroundSourceRefs: cloneWritingRecoverySources(recovery.backgroundSourceRefs) } : {}),
+        ...(recovery.generationInput !== undefined ? { generationInput: cloneGenerationInputSnapshot(recovery.generationInput) } : {}),
         ...(recovery.messageId !== undefined ? { messageId: validateWritingVersionId(recovery.messageId) } : {}) };
 }
 function cloneWritingRecoverySources(value: unknown): PersistedSourceRef[] {

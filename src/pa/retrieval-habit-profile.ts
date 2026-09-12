@@ -59,7 +59,7 @@ export interface RetrievalHabitProfileSettings {
 }
 
 export const RETRIEVAL_HABIT_PROFILE_DEFAULTS: Readonly<RetrievalHabitProfileSettings> = Object.freeze({
-    enabled: false,
+    enabled: true,
     state: {
         aggregates: [],
     },

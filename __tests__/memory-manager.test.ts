@@ -345,6 +345,21 @@ describe('MemoryManager chat decisions', () => {
         expect(mockNoticeMessages).toEqual([]);
     });
 
+    it.each(['ready', 'unprepared', 'unknown', 'stale', 'error'] as const)(
+        'restricted retrieval only uses existing %s state without whole-vault maintenance', async status => {
+            const plugin = createPlugin(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            plugin.vss.getMemoryStatusSnapshot.mockReturnValue({ status, dirtyCount: 2, verificationPending: 3 });
+            const manager = createManager(plugin);
+            const result = await manager.ensureReadyForChat('Only current note', undefined, undefined, { existingOnly: true });
+            expect(result.decision).toBe(status === 'ready' ? 'use-memory' : 'answer-now');
+            expect(plugin.vss.getMemoryReadiness).not.toHaveBeenCalled();
+            expect(plugin.vss.verifyPendingChanges).not.toHaveBeenCalled();
+            expect(plugin.vss.reconcileLocalFiles).not.toHaveBeenCalled();
+            expect(plugin.vss.flush).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).toEqual([]);
+        },
+    );
+
     it('runs a small desktop verification pass before chat when readiness is otherwise ready', async () => {
         const plugin = createPlugin(createPlan({ verificationPending: 1 }));
         plugin.vss.verifyPendingChanges.mockResolvedValue({

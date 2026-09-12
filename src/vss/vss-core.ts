@@ -27,6 +27,8 @@ import {
 } from '../platform-dom';
 import {
     getEmbeddingProfileSignature,
+    copyNoteSearchScope,
+    type NoteSearchScope,
     VSS_DEFAULT_DIMENSIONS,
     VSS_DEFAULT_DISTANCE_METRIC,
     VSS_SCHEMA_VERSION,
@@ -2351,8 +2353,10 @@ export class VSS {
             retrievalMode?: RetrievalCalibrationMode;
             /** Only current matching generations are pushed down before vector/FTS caps. */
             excludeUnchangedPathGenerations?: readonly PathEvidenceGenerationRef[];
+            noteScope?: NoteSearchScope;
         },
     ) {
+        const noteScope = copyNoteSearchScope(options?.noteScope);
         const lexicalCandidateEnabled = this.isLexicalProfileEnabled();
         const retrievalMode = options?.retrievalMode ?? "standard";
         const usesLegacyDepthOverrides = options?.candidateDepth !== undefined
@@ -2500,6 +2504,11 @@ export class VSS {
             }
 
             if (!(invocationIndex instanceof SqliteVectorIndex)) {
+                if (noteScope) {
+                    throw Object.assign(new Error("This Memory index cannot search a note scope."), {
+                        code: "vss-scoped-hybrid-unavailable",
+                    });
+                }
                 const results = await invocationIndex.search(queryEmbedding, 8);
                 assertInvocationIndexCurrent();
                 return results.map(normalizeSearchResult);
@@ -2536,7 +2545,7 @@ export class VSS {
                     lexicalBudget,
                     exclusions,
                     usesLegacyDepthOverrides ? undefined : activeRetrieval,
-                    { signal },
+                    { signal, ...(noteScope ? { noteScope } : {}) },
                 );
             };
             let lexicalEnabledForAttempt = lexicalCandidateEnabled

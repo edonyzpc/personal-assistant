@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { readFileSync } from 'node:fs';
 import { Component, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, TFile, type App } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
-import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
+import type { AgentEvent, LegacyAgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, formatOperationsPreview, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
 import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import type { ChatHost } from '../src/chat/ChatHost';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { WritingVersionService } from '../src/chat/writing-versions';
 import { WritingRecoveryModal, WritingSaveModal, WritingStyleModal, WritingVersionModal } from '../src/chat/writing-modal';
@@ -18,10 +19,12 @@ import { ImageManagementModal, ImageSourcePickerModal, VaultImagePickerModal } f
 import { ImageAttachmentDetailModal } from '../src/chat/image-attachment-view';
 import { ImageAssetService } from '../src/chat/image-assets';
 import { PaAgentContextOverflowError } from '../src/ai-services/context';
+import { ChatImageRequestError } from '../src/ai-services/image-capability';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 import type { PageletChatHandoffContext } from '../src/ai-services/pagelet-handoff';
 import type { ComposerDraft } from '../src/chat/composer-draft';
 import type { MessageImage } from '../src/chat/image-types';
+import type { GenerationInputSnapshot } from '../src/ai-services/generation-input-snapshot';
 import type {
     OperationsExecutionResult,
     OperationsIntent,
@@ -627,6 +630,25 @@ function canonicalEvent(overrides: Partial<AgentEvent> & { type: AgentEvent['typ
     } as AgentEvent;
 }
 
+function writingGenerationInput(path?: string): GenerationInputSnapshot {
+    return {
+        schemaVersion: 1,
+        inputPurpose: 'writing',
+        task: path ? { state: 'identified', sources: [{
+            purpose: 'task_material', kind: 'context-used', boundary: 'read-only-tool',
+            dedupKey: `note:${path}`, revision: {
+                state: 'identified', scope: 'current_process', path, mtime: 10, size: 20,
+            },
+        }] } : { state: 'none', sources: [] },
+        personal: { state: 'none' },
+        insights: { state: 'none' },
+        style: { state: 'none' },
+        images: [],
+        parent: { state: 'none' },
+        pagelet: { state: 'none' },
+    };
+}
+
 function assistantMessage(
     id: string,
     content: Extract<PaAgentMessage, { role: 'assistant' }>['content'],
@@ -768,6 +790,7 @@ function createView(options: {
             operationsProactiveSaveSuggestionsEnabled: true,
         },
         chatHistoryManager: options.chatHistoryManager,
+        prepareWritingRecoverySources: jest.fn<NonNullable<ChatHost['prepareWritingRecoverySources']>>(async () => ({ isCurrent: () => true })),
         memoryStatus: {
             getMaintenancePlan: jest.fn(async (): Promise<MemoryMaintenancePlan> => ({
                 reason: 'ready',
@@ -997,7 +1020,71 @@ describe('LLMView turn lifecycle', () => {
         expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
     });
 
-    it('freezes a host-bound writing artifact once and keeps the raw envelope out of the visible/copy answer', async () => {
+    it('passes native candidates for an ordinary prompt and persists the host-selected parent and semantic scene', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'native-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        const prepare = jest.fn<import('../src/chat/writing-style-service').WritingStyleService['prepare']>(async () => ({ context: '', revisionIds: [], isCurrent: () => true }));
+        Object.assign(plugin, { writingVersions: versions, writingOutputProtocol: 'native', prepareWritingStyleForScene: prepare });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        let appended: (() => void) | undefined;
+        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            await append(...args); appended?.();
+        });
+        await view.onOpen();
+        const submit = async (prompt: string) => {
+            const invoked = new Promise<StreamCall>(notify => {
+                mockStreamLLM.mockImplementationOnce((text, onChunk, signal, chatHistory, options = {}) => new Promise<void>((resolve, reject) => {
+                    const call = { prompt: text, onChunk, signal, chatHistory, options, resolve, reject };
+                    streamCalls.push(call); notify(call);
+                }));
+            });
+            view.prefillComposer(prompt);
+            getElementByClass(containerEl, 'send-button-visible').click();
+            return invoked;
+        };
+        const deliver = async (call: StreamCall, messageId: string, writingContext: NonNullable<Extract<LegacyAgentEvent, { kind: 'writing-artifact' }>['writingContext']>) => {
+            const persisted = new Promise<void>(resolve => { appended = resolve; });
+            call.options.onEvent?.({ version: 1, turnId: 'turn', seq: 1, timestamp: 1, kind: 'writing-artifact',
+                runId: 'run', requestId: call.options.writingRequest!.requestId, messageId, body: messageId,
+                explanation: '', writingContext, associatedImages: [] });
+            call.resolve();
+            await persisted;
+            await flushPromises();
+        };
+        const first = await submit('我们先讨论一下安排');
+        expect(first.options.writingOutputProtocol).toBe('native');
+        expect(first.options.writingRequest).toBeDefined();
+        expect(first.options.writingContextHost?.candidates).toEqual([]);
+        expect(first.options.writingContext).toBeUndefined();
+        const firstScene = { writingTask: 'invitation', purpose: 'team_event', audience: 'colleagues', domain: 'work' };
+        await deliver(first, 'first-native', { scene: firstScene });
+        const firstVersion = (await versions.list('native-conversation'))[0];
+        expect(firstVersion.scene).toEqual(firstScene);
+
+        const second = await submit('保留第二句的意思');
+        const contextHost = second.options.writingContextHost!;
+        expect(contextHost.candidates.map(version => version.id)).toEqual([firstVersion.id]);
+        expect(contextHost.isParentCurrent(firstVersion)).toBe(true);
+        expect(second.options.writingContext).toBeUndefined();
+        const secondScene = { ...firstScene, audience: 'friends', domain: 'personal' };
+        await contextHost.styles.prepare(secondScene, { remainingTextChars: 3000, remainingMemoryChars: 2000 });
+        expect(prepare).toHaveBeenCalledWith(secondScene, expect.any(Object));
+        await deliver(second, 'second-native', { parentVersionId: firstVersion.id, scene: secondScene });
+        const secondVersion = (await versions.list('native-conversation')).find(version => version.messageId === 'second-native')!;
+        expect(secondVersion.parentVersionId).toBe(firstVersion.id);
+        expect(secondVersion.scene).toEqual(secondScene);
+
+        const third = await submit('接下来聊个新内容');
+        await deliver(third, 'third-native', {});
+        const thirdVersion = (await versions.list('native-conversation')).find(version => version.messageId === 'third-native')!;
+        expect(thirdVersion.parentVersionId).toBeUndefined();
+        expect(thirdVersion.scene).toBeUndefined();
+        expect(contextHost.isCurrent()).toBe(false);
+    });
+
+    it.each([undefined, '先说明本次写作的取舍。'])('freezes a host-bound artifact independently of its preamble (%s)', async (preamble) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'writing-conversation' });
         const versions = new WritingVersionService(store);
@@ -1011,12 +1098,17 @@ describe('LLMView turn lifecycle', () => {
         expect(call.options.writingRequest?.requestId).toBeTruthy();
         const raw = '{"body":"不直接展示整个 envelope"}';
         emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
-        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', metadata: { hostContext: { sourceRecords: [
+            { kind: 'context-used', dedupKey: 'note:A.md', path: 'A.md', sourceBoundary: 'read-only-tool', citationEligible: true },
+            { kind: 'context-used', dedupKey: 'note:B.md', path: 'B.md', sourceBoundary: 'read-only-tool', citationEligible: true },
+        ] } } }));
         emitCanonical(call, canonicalEvent({ type: 'message_end', message: assistantMessage('writing_answer', [{ type: 'text', text: raw }]) }));
         expect(allText(containerEl)).not.toContain(raw);
+        const generationInput = writingGenerationInput('B.md');
         const artifact = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1,
             kind: 'writing-artifact' as const, runId: 'run_1', requestId: call.options.writingRequest!.requestId,
-            messageId: 'writing_answer', body: '  海边的风。\n带着盐味。🙂', explanation: '辅助说明单独保留' };
+            messageId: 'writing_answer', body: '  海边的风。\n带着盐味。🙂', explanation: '辅助说明单独保留',
+            preamble, generationInput };
         call.options.onEvent?.(artifact);
         call.options.onEvent?.(artifact);
         call.resolve();
@@ -1025,7 +1117,13 @@ describe('LLMView turn lifecycle', () => {
         expect(stored).toHaveLength(1);
         expect(stored[0].text).toBe(artifact.body);
         expect(stored[0].explanation).toBe(artifact.explanation);
-        expect(view.chatHistory[1].content).toBe(artifact.body);
+        expect(stored[0].generationInput).toEqual(writingGenerationInput('B.md'));
+        expect(stored[0].backgroundSourceRefs).toEqual([{ path: 'B.md' }]);
+        generationInput.task.state = 'unknown';
+        expect((await versions.list('writing-conversation'))[0].generationInput).toEqual(writingGenerationInput('B.md'));
+        expect(view.chatHistory[1].content).toBe(preamble ? `${preamble}\n\n${artifact.body}` : artifact.body);
+        expect((await store.getTurns('writing-conversation'))[0].assistant.content)
+            .toBe(preamble ? `${preamble}\n\n${artifact.body}` : artifact.body);
         expect(view.chatHistory[1].writingVersionId).toBe(stored[0].id);
         expect((await store.getTurns('writing-conversation'))[0].assistant.writingVersionId).toBe(stored[0].id);
         expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
@@ -1057,8 +1155,363 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'pa-chat-writing-action')).toHaveLength(1);
     });
 
+    it.each([false, true])('keeps preview/recovery and truthful status after reopen (user cancel=%s)', async (cancelled) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'preview-conversation' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+        emitCanonical(call, canonicalEvent({ type: 'message_start', message: assistantMessage('preview-answer', []) }));
+        const shared = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1,
+            runId: 'run_1', requestId: call.options.writingRequest!.requestId, messageId: 'preview-answer' };
+        const text = '  海边的风。\n保留这段未完成的正文。🌊';
+        call.options.onEvent?.({ ...shared, kind: 'writing-preview', text });
+        for (let i = 0; i < 6; i++) await flushPromises();
+        expect(allText(containerEl)).toContain('保留这段未完成的正文');
+        expect(await versions.list('preview-conversation')).toEqual([]);
+        expect(await store.getTurns('preview-conversation')).toEqual([]);
+        if (cancelled) getButtonByClass(containerEl, 'cancel-button').click();
+        emitCanonical(call, canonicalEvent({ type: 'turn_end', status: cancelled ? 'aborted' : 'completed_with_warning' }));
+        emitCanonical(call, canonicalEvent({ type: 'agent_end', status: cancelled ? 'aborted' : 'completed_with_warning' }));
+        call.options.onEvent?.({ ...shared, kind: 'writing-recovery', rawText: '{"body":"partial', previewText: text, reason: 'incomplete' });
+        if (cancelled) {
+            call.options.onEvent?.({ ...shared, kind: 'writing-preview', text: 'late cancelled text' });
+            call.reject(new DOMException('Aborted', 'AbortError'));
+        } else call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(view.chatHistory[1].content).toBe(text);
+        expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        expect(view.chatHistory[1].canonicalTurn?.status).toBe(cancelled ? 'aborted' : 'completed_with_warning');
+        expect(allText(containerEl)).not.toContain('late cancelled text');
+        expect((await store.getTurns('preview-conversation'))[0].assistant.content).toBe(text);
+        expect(await versions.list('preview-conversation')).toEqual([]);
+        expect(getElementsByClass(containerEl, 'pa-chat-writing-recovery-notice')).toHaveLength(1);
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, { writingVersions: versions });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1].content).toBe(text);
+        expect(restored.view.chatHistory[1].canonicalTurn?.status).toBe(cancelled ? 'aborted' : 'completed_with_warning');
+        expect(restored.view.result).toBe('');
+        expect(getButtonsByText(restored.containerEl, 'Add to Editor')).toHaveLength(0);
+        expect(restored.view.chatHistory[1].runtimeWarnings).toContainEqual(expect.objectContaining({
+            type: cancelled ? 'user_abort' : 'partial_output_error',
+        }));
+        if (cancelled) expect(allText(restored.containerEl)).toContain('Generation cancelled');
+        expect(getElementsByClass(restored.containerEl, 'pa-chat-writing-recovery-notice')).toHaveLength(1);
+    });
+
+    it.each(['artifact', 'recovery', 'continue'] as const)('does not restore parent images after the host supplies an empty %s material snapshot', async (kind) => {
+        const store = new MemoryChatHistoryStore();
+        let appendedCount = 0;
+        let firstAppended!: () => void;
+        let secondAppended!: () => void;
+        const firstSaved = new Promise<void>((resolve) => { firstAppended = resolve; });
+        const secondSaved = new Promise<void>((resolve) => { secondAppended = resolve; });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            await append(...args);
+            if (++appendedCount === 1) firstAppended();
+            else if (appendedCount === 2) secondAppended();
+        });
+        const manager = new ChatHistoryManager({ store, generateId: () => 'subset-writing' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('帮我写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const first = streamCalls[0];
+        const material: MessageImage = { ordinal: 1, label: 'source.png', ref: { assetId: 'png', contentHash: 'a'.repeat(64) } };
+        await store.putImageAsset({ id: 'png', originalHash: material.ref.contentHash, source: 'vault_reference',
+            originalPath: 'source.png', detectedMime: 'image/png', byteLength: 3, acquisition: 'original_file',
+            anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
+        const envelope = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1' };
+        first.options.onEvent?.({ ...envelope, kind: 'writing-artifact', requestId: first.options.writingRequest!.requestId,
+            messageId: 'parent', body: 'Parent body', explanation: '', associatedImages: [material] });
+        first.resolve();
+        await firstSaved;
+        for (let i = 0; i < 8; i++) await flushPromises();
+        view.prefillComposer('短一点');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const next = streamCalls[1];
+        expect(next.options.writingContext?.associatedImages).toEqual([material]);
+        const shared = { ...envelope, requestId: next.options.writingRequest!.requestId, messageId: 'subset', associatedImages: [] };
+        next.options.onEvent?.(kind === 'artifact'
+            ? { ...shared, kind: 'writing-artifact', body: 'Text without images', explanation: '' }
+            : { ...shared, kind: 'writing-recovery', rawText: 'Candidate without images', reason: 'incomplete' });
+        next.resolve();
+        await secondSaved;
+        for (let i = 0; i < 8; i++) await flushPromises();
+        const turns = await store.getTurns('subset-writing');
+        expect(turns[1].assistant.images).toEqual([]);
+        const stored = await versions.list('subset-writing');
+        expect(stored.find((version) => version.messageId === 'parent')?.associatedImages).toEqual([material]);
+        if (kind === 'artifact') expect(stored.find((version) => version.messageId === 'subset')?.associatedImages).toEqual([]);
+        else if (kind === 'continue') {
+            view.prefillComposer('继续刚才的文案任务');
+            getElementByClass(containerEl, 'send-button-visible').click();
+            await flushPromises();
+            const continuation = streamCalls[2];
+            expect(continuation.options.writingMaterialContext).toEqual({
+                requestId: next.options.writingRequest!.requestId, associatedImages: [],
+            });
+            expect(continuation.options.writingContext).toMatchObject({
+                parentVersionId: next.options.writingContext!.parentVersionId,
+                text: 'Parent body', textHash: next.options.writingContext!.textHash,
+            });
+            continuation.resolve();
+            for (let i = 0; i < 8; i++) await flushPromises();
+        } else {
+            expect(stored).toHaveLength(1);
+            const opened: WritingRecoveryModal[] = [];
+            const open = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { opened.push(this); });
+            getElementsByClass(containerEl, 'pa-chat-writing-action').at(-1)!.click();
+            const modal = opened[0];
+            const root = new MockElement('div');
+            modal.contentEl = root as unknown as HTMLElement;
+            modal.onOpen();
+            const area = walkAll(root, (element) => element.tagName === 'textarea')[0];
+            const buttons = walkAll(root, (element) => element.tagName === 'button');
+            Object.assign(area, { selectionStart: 0, selectionEnd: 'Candidate without images'.length });
+            buttons[0].click(); await buttons[1].click();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const recovered = (await versions.list('subset-writing')).find((version) => version.messageId === 'subset');
+            expect(recovered?.text).toBe('Candidate without images');
+            expect(recovered?.associatedImages).toEqual([]);
+            modal.onClose();
+            open.mockRestore();
+        }
+        await view.onClose();
+    });
+
+    it.each([true, false])('checks the generating sources when manually recovering in the same view: current=%s', async (sourceCurrent) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'guarded-recovery' });
+        const versions = new WritingVersionService(store);
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('请起草一段文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        let allowed = true;
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'guarded_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
+            isSourceCurrent: () => allowed });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        allowed = sourceCurrent;
+        const openedRecoveries: WritingRecoveryModal[] = [];
+        const openRecovery = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { openedRecoveries.push(this); });
+        try {
+            getElementByClass(containerEl, 'pa-chat-writing-action').click();
+            const recoveryModal = openedRecoveries[0];
+            const modalRoot = new MockElement('div');
+            recoveryModal.contentEl = modalRoot as unknown as HTMLElement;
+            recoveryModal.onOpen();
+            const areas = walkAll(modalRoot, (element) => element.tagName === 'textarea');
+            const buttons = walkAll(modalRoot, (element) => element.tagName === 'button');
+            Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+            buttons[0].click(); await buttons[1].click();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const recovered = await versions.list('guarded-recovery');
+            expect(allText(modalRoot)).not.toContain('The old source record is incomplete');
+            expect(plugin.prepareWritingRecoverySources).not.toHaveBeenCalled();
+            expect(recovered).toHaveLength(sourceCurrent ? 1 : 0);
+            if (sourceCurrent) expect(recovered[0].text).toBe('BODY');
+            const saved = (await store.getTurns('guarded-recovery'))[0].assistant;
+            expect(saved.writingVersionId).toBe(recovered[0]?.id);
+            expect(saved.writingRecovery).not.toHaveProperty('isSourceCurrent');
+            expect(saved.writingRecovery?.rawText).toBe('prefix BODY suffix');
+            recoveryModal.onClose();
+        } finally {
+            openRecovery.mockRestore();
+            await view.onClose();
+        }
+    });
+
+    it.each(['valid', 'edited', 'rejected', 'revoked_before_write', 'missing_host', 'closed_during_prepare'] as const)(
+        'requires explicit recovery confirmation after history reload and checks recorded sources: %s', async (outcome) => {
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => 'reloaded-recovery' });
+            const versions = new WritingVersionService(store);
+            const initial = createView({ chatHistoryManager: manager });
+            Object.assign(initial.plugin, { writingVersions: versions });
+            await initial.view.onOpen();
+            initial.view.prefillComposer('写一段文案');
+            getElementByClass(initial.containerEl, 'send-button-visible').click();
+            await flushPromises();
+            const call = streamCalls[0];
+            emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_start', metadata: { hostContext: {
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'note:Source.md', path: 'Source.md',
+                    sourceBoundary: 'read-only-tool', citationEligible: true }],
+            } } }));
+            const generationInput = writingGenerationInput('Source.md');
+            call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+                kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+                messageId: 'old_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
+                generationInput,
+                isSourceCurrent: () => true });
+            emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'completed_with_warning' }));
+            call.resolve();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            await initial.view.onClose();
+            const before = (await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery;
+            if (!before) throw new Error('Expected persisted recovery fixture');
+            expect(before).not.toHaveProperty('isSourceCurrent');
+            expect(before.generationInput).toEqual(writingGenerationInput('Source.md'));
+            generationInput.task.state = 'unknown';
+            expect((await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery?.generationInput)
+                .toEqual(writingGenerationInput('Source.md'));
+            const restored = createView({ chatHistoryManager: manager });
+            Object.assign(restored.plugin, { writingVersions: versions });
+            let allowed = true;
+            let releasePreparation!: () => void;
+            let markPreparing!: () => void;
+            const preparing = new Promise<void>((resolve) => { markPreparing = resolve; });
+            const preparation = new Promise<void>((resolve) => { releasePreparation = resolve; });
+            restored.plugin.prepareWritingRecoverySources.mockImplementation(async () => {
+                if (outcome === 'rejected') throw new Error('Source no longer allowed');
+                if (outcome === 'closed_during_prepare') { markPreparing(); await preparation; }
+                return { isCurrent: () => allowed };
+            });
+            if (outcome === 'missing_host') Object.assign(restored.plugin, { prepareWritingRecoverySources: undefined });
+            if (outcome === 'revoked_before_write') {
+                const put = store.putWritingVersion.bind(store);
+                jest.spyOn(store, 'putWritingVersion').mockImplementation(async (version, assertSourceCurrent) => {
+                    allowed = false;
+                    return put(version, assertSourceCurrent);
+                });
+            }
+            await restored.view.onOpen();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const opened: WritingRecoveryModal[] = [];
+            const open = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { opened.push(this); });
+            try {
+                getElementByClass(restored.containerEl, 'pa-chat-writing-action').click();
+                const modal = opened[0];
+                const root = new MockElement('div');
+                modal.contentEl = root as unknown as HTMLElement;
+                modal.onOpen();
+                expect(allText(root)).toContain('The old source record is incomplete');
+                const areas = walkAll(root, (element) => element.tagName === 'textarea');
+                const buttons = walkAll(root, (element) => element.tagName === 'button');
+                expect(allText(buttons[1])).toBe('Confirm and recover as an AI draft');
+                expect(await versions.list('reloaded-recovery')).toEqual([]);
+                if (outcome !== 'missing_host') expect(restored.plugin.prepareWritingRecoverySources).not.toHaveBeenCalled();
+                Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+                buttons[0].click();
+                // The commit boundary itself rejects a caller that skipped the
+                // confirmation button, even after selecting a body.
+                const commit = (modal as unknown as { commit: (text: string, origin: 'ai_generated') => Promise<WritingVersion> }).commit;
+                await expect(commit('BODY', 'ai_generated')).rejects.toThrow('source confirmation');
+                expect(await versions.list('reloaded-recovery')).toEqual([]);
+                if (outcome === 'edited') areas[1].value = 'MY BODY';
+                const saved = buttons[1].click();
+                if (outcome === 'closed_during_prepare') {
+                    await preparing;
+                    const closing = restored.view.onClose();
+                    releasePreparation();
+                    await closing;
+                }
+                await saved;
+                for (let i = 0; i < 8; i++) await flushPromises();
+                const result = await versions.list('reloaded-recovery');
+                expect(result).toHaveLength(outcome === 'valid' || outcome === 'edited' ? 1 : 0);
+                if (outcome === 'valid' || outcome === 'edited') {
+                    expect(restored.plugin.prepareWritingRecoverySources).toHaveBeenCalledWith(before, [], 'reloaded-recovery',
+                        expect.objectContaining({ sourceRecords: expect.arrayContaining([
+                            expect.objectContaining({ path: 'Source.md', kind: 'context-used' }),
+                        ]) }));
+                    expect(result[0]).toMatchObject({ text: outcome === 'edited' ? 'MY BODY' : 'BODY',
+                        origin: outcome === 'edited' ? 'user_edited' : 'ai_generated',
+                        backgroundSourceRefs: [{ path: 'Source.md' }], styleRevisionIds: [],
+                        generationInput: writingGenerationInput('Source.md') });
+                    expect(result[0].referenceScope).toBeUndefined();
+                    expect(result[0]).not.toHaveProperty('referenceScopeUnverified');
+                    const edited = await versions.edit(result[0].id, 'Later edit', 'edit-recovery');
+                    expect(edited.referenceScope).toBeUndefined();
+                }
+                expect((await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery).toEqual(before);
+                expect(streamCalls).toHaveLength(1);
+                modal.onClose();
+            } finally { open.mockRestore(); await restored.view.onClose(); }
+        });
+
+    it('revalidates a complete persisted generation identity without the legacy confirmation warning', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'complete-reloaded-recovery' });
+        const versions = new WritingVersionService(store);
+        const initial = createView({ chatHistoryManager: manager });
+        Object.assign(initial.plugin, { writingVersions: versions });
+        await initial.view.onOpen();
+        initial.view.prefillComposer('写一段文案');
+        getElementByClass(initial.containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'complete_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
+            generationInput: writingGenerationInput() });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        await initial.view.onClose();
+
+        const restored = createView({ chatHistoryManager: manager });
+        Object.assign(restored.plugin, { writingVersions: versions });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        const opened: WritingRecoveryModal[] = [];
+        const open = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { opened.push(this); });
+        try {
+            getElementByClass(restored.containerEl, 'pa-chat-writing-action').click();
+            const modal = opened[0];
+            const root = new MockElement('div');
+            modal.contentEl = root as unknown as HTMLElement;
+            modal.onOpen();
+            expect(allText(root)).not.toContain('The old source record is incomplete');
+            const areas = walkAll(root, element => element.tagName === 'textarea');
+            const buttons = walkAll(root, element => element.tagName === 'button');
+            expect(allText(buttons[1])).toBe('Keep as a writing version');
+            Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+            buttons[0].click();
+            await buttons[1].click();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const [version] = await versions.list('complete-reloaded-recovery');
+            expect(version).toMatchObject({ text: 'BODY', referenceScope: 'request',
+                generationInput: writingGenerationInput() });
+            expect(restored.plugin.prepareWritingRecoverySources).toHaveBeenCalledTimes(1);
+            modal.onClose();
+        } finally {
+            open.mockRestore();
+            await restored.view.onClose();
+        }
+    });
+
     it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
         const store = new MemoryChatHistoryStore();
+        let markSaved!: () => void;
+        const saved = new Promise<void>((resolve) => { markSaved = resolve; });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            const result = await append(...args);
+            markSaved();
+            return result;
+        });
         const manager = new ChatHistoryManager({ store, generateId: () => 'resolved-writing' });
         const versions = new WritingVersionService(store);
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
@@ -1074,15 +1527,18 @@ describe('LLMView turn lifecycle', () => {
             anchorPath: 'PA Chat.md', anchorKind: 'logical_root', state: 'available', createdAt: 1, owners: [] });
         const shared = { version: 1 as const, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
             requestId: call.options.writingRequest!.requestId, messageId: 'writing_answer', associatedImages: [material] };
+        const semanticScene = { writingTask: 'caption', purpose: 'share', audience: 'friends', domain: 'travel' };
         call.options.onEvent?.(kind === 'artifact' ? { ...shared, kind: 'writing-artifact', body: 'BODY', explanation: '' }
-            : { ...shared, kind: 'writing-recovery', rawText: 'prefix BODY suffix', reason: 'invalid_output' });
+            : { ...shared, kind: 'writing-recovery', rawText: 'prefix BODY suffix', reason: 'invalid_output', writingContext: { scene: semanticScene } });
         call.resolve();
+        await saved;
         for (let i = 0; i < 8; i++) await flushPromises();
         const turns = await store.getTurns('resolved-writing');
         expect(turns[0].assistant.images).toEqual([material]);
         if (kind === 'artifact') expect((await versions.list('resolved-writing'))[0].associatedImages.map((image) => image.ref)).toEqual([material.ref]);
         else {
             expect(await versions.list('resolved-writing')).toEqual([]);
+            expect(turns[0].assistant.writingRecovery?.scene).toEqual(semanticScene);
             await view.onClose();
             const restored = createView({ chatHistoryManager: manager });
             Object.assign(restored.plugin, { writingVersions: versions });
@@ -1098,10 +1554,11 @@ describe('LLMView turn lifecycle', () => {
             const areas = walkAll(modalRoot, (element) => element.tagName === 'textarea');
             const buttons = walkAll(modalRoot, (element) => element.tagName === 'button');
             Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
-            buttons[0].click(); buttons[1].click();
+            buttons[0].click(); await buttons[1].click();
             for (let i = 0; i < 8; i++) await flushPromises();
             const recovered = (await versions.list('resolved-writing'))[0];
             expect(recovered.text).toBe('BODY');
+            expect(recovered.scene).toEqual(semanticScene);
             expect(recovered.associatedImages.map((image) => image.ref)).toEqual([material.ref]);
             expect((await store.getTurns('resolved-writing'))[0].assistant.writingVersionId).toBe(recovered.id);
             recoveryModal.onClose();
@@ -1115,7 +1572,10 @@ describe('LLMView turn lifecycle', () => {
         }
     });
 
-    it.each([false, true])('inherits only the immediately preceding failed writing material on explicit continuation, including reopen: %s', async (reopen) => {
+    it.each([
+        { reopen: false, empty: false }, { reopen: true, empty: false },
+        { reopen: false, empty: true }, { reopen: true, empty: true },
+    ])('inherits the failed writing material snapshot on continuation: %j', async ({ reopen, empty }) => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'failed-material' });
         const versions = new WritingVersionService(store);
@@ -1137,7 +1597,7 @@ describe('LLMView turn lifecycle', () => {
         const failed = streamCalls[0];
         failed.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1, runId: 'run_1',
             kind: 'writing-recovery', requestId: failed.options.writingRequest!.requestId,
-            rawText: '{"body":""}', reason: 'invalid_output' });
+            rawText: '{"body":""}', reason: 'invalid_output', ...(empty ? { associatedImages: [] } : {}) });
         failed.resolve();
         for (let i = 0; i < 8; i++) await flushPromises();
         if (reopen) {
@@ -1151,7 +1611,7 @@ describe('LLMView turn lifecycle', () => {
         getElementByClass(fixture.containerEl, 'send-button-visible').click();
         await flushPromises();
         expect(streamCalls[1].options).toMatchObject({ writingMaterialContext: {
-            requestId: failed.options.writingRequest!.requestId, associatedImages: [material],
+            requestId: failed.options.writingRequest!.requestId, associatedImages: empty ? [] : [material],
         } });
         expect(streamCalls[1].options.writingContext).toBeUndefined();
         streamCalls[1].resolve();
@@ -1246,10 +1706,47 @@ describe('LLMView turn lifecycle', () => {
         await settle(short);
     });
 
+    it('rejects a writing source revoked while the final version lookup is pending', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'source-admission' });
+        const versions = new WritingVersionService(store);
+        let release!: () => void;
+        let started!: () => void;
+        const waiting = new Promise<void>(resolve => { started = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        jest.spyOn(store, 'getWritingVersion').mockImplementationOnce(async () => { started(); await pending; return null; });
+        const put = jest.spyOn(store, 'putWritingVersion');
+        let sourceCurrent = true;
+        const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
+        Object.assign(plugin, { writingVersions: versions });
+        await view.onOpen();
+        view.prefillComposer('写一段旅行文案');
+        getElementByClass(containerEl, 'send-button-visible').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+            kind: 'writing-artifact', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+            messageId: 'writing_answer', body: 'Source-backed writing.', explanation: '',
+            isSourceCurrent: () => sourceCurrent });
+        call.resolve();
+        await waiting;
+        sourceCurrent = false;
+        release();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(put).not.toHaveBeenCalled();
+        expect(await versions.list('source-admission')).toEqual([]);
+        expect(view.chatHistory[1].writingVersionId).toBeUndefined();
+    });
+
     it('keeps the writing visible and discloses when its chat turn could not be persisted', async () => {
         const store = new MemoryChatHistoryStore();
         const manager = new ChatHistoryManager({ store, generateId: () => 'history-failure-conversation' });
-        jest.spyOn(manager, 'recordTurn').mockRejectedValue(new Error('IDB quota'));
+        let recordAttempted!: () => void;
+        const attempted = new Promise<void>((resolve) => { recordAttempted = resolve; });
+        jest.spyOn(manager, 'recordTurn').mockImplementation(async () => {
+            recordAttempted();
+            throw new Error('IDB quota');
+        });
         const versions = new WritingVersionService(store);
         const notices = (Notice as unknown as { messages: Array<{ message: unknown }> }).messages;
         const previousNoticeCount = notices.length;
@@ -1264,6 +1761,7 @@ describe('LLMView turn lifecycle', () => {
             kind: 'writing-artifact', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
             messageId: 'writing_answer', body: 'Keep this exact writing.', explanation: '' });
         call.resolve();
+        await attempted;
         for (let i = 0; i < 8; i++) await flushPromises();
         expect(view.chatHistory[1].content).toBe('Keep this exact writing.');
         expect(await store.getTurns('history-failure-conversation')).toEqual([]);
@@ -1288,11 +1786,12 @@ describe('LLMView turn lifecycle', () => {
         const rawText = '{"body":"中断的原始回答"';
         call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
             kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
-            messageId: 'failed_answer', rawText, reason: 'incomplete', associatedImages: [material] });
+            messageId: 'failed_answer', rawText, previewText: '中断的原始回答', reason: 'incomplete', associatedImages: [material] });
         call.reject(failure === 'cancel' ? new DOMException('Cancelled', 'AbortError') : new Error('transport failed'));
         for (let i = 0; i < 8; i++) await flushPromises();
         expect(await versions.list('failed-writing-conversation')).toEqual([]);
         expect(view.chatHistory[1].writingRecovery?.rawText).toBe(rawText);
+        expect(view.chatHistory[1].content).toBe('中断的原始回答');
         expect(view.chatHistory[1].shareCardEligible).toBe(false);
         expect((await store.getTurns('failed-writing-conversation'))[0].assistant.writingRecovery?.rawText).toBe(rawText);
         expect((await store.getTurns('failed-writing-conversation'))[0].assistant.images).toEqual([material]);
@@ -1325,7 +1824,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it.each([false, true])('requires an explicit body selection and records actual edits: %s', async (edited) => {
-        const commit = jest.fn(async (_text: string, _origin: WritingVersion['origin']) => ({ id: 'recovered' } as WritingVersion));
+        const commit = jest.fn(async (_text: string, _origin: WritingVersion['origin'], _confirmed?: boolean) => ({ id: 'recovered' } as WritingVersion));
         const root = new MockElement('div');
         const modal = new WritingRecoveryModal({} as never, { requestId: 'request', rawText: 'prefix BODY suffix', reason: 'incomplete' },
             commit, { versions: {} as WritingVersionService });
@@ -1341,7 +1840,27 @@ describe('LLMView turn lifecycle', () => {
         if (edited) areas[1].value = 'MY BODY';
         buttons[1].click();
         await flushPromises();
-        expect(commit).toHaveBeenCalledWith(edited ? 'MY BODY' : 'BODY', edited ? 'user_edited' : 'ai_generated');
+        expect(commit).toHaveBeenCalledWith(edited ? 'MY BODY' : 'BODY', edited ? 'user_edited' : 'ai_generated', undefined);
+    });
+
+    it.each([false, true])('confirms incomplete source recovery without changing actual edit provenance: %s', async (edited) => {
+        const commit = jest.fn(async (_text: string, _origin: WritingVersion['origin'], _confirmed?: boolean) => ({ id: 'recovered' } as WritingVersion));
+        const root = new MockElement('div');
+        const modal = new WritingRecoveryModal({} as never, { requestId: 'request', rawText: 'prefix BODY suffix', reason: 'incomplete' },
+            commit, { versions: {} as WritingVersionService }, true);
+        modal.contentEl = root as unknown as HTMLElement;
+        modal.onOpen();
+        const areas = walkAll(root, (element) => element.tagName === 'textarea');
+        const buttons = walkAll(root, (element) => element.tagName === 'button');
+        await buttons[1].click();
+        expect(commit).not.toHaveBeenCalled();
+        Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+        buttons[0].click();
+        if (edited) areas[1].value = 'MY BODY';
+        expect(commit).not.toHaveBeenCalled();
+        await buttons[1].click();
+        expect(commit).toHaveBeenCalledWith(edited ? 'MY BODY' : 'BODY', edited ? 'user_edited' : 'ai_generated', true);
+        modal.onClose();
     });
 
     it('prepares all version images by default and releases a preview that completes after close', async () => {
@@ -3882,7 +4401,157 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(0);
     });
 
-    it('unloads assistant markdown render owners when a streamed answer becomes a terminal row', async () => {
+    it.each([false, true])('retains ordinary failed text and its status after reopen (canonical=%s)', async (canonical) => {
+        const store = new MemoryChatHistoryStore();
+        let releaseSave!: () => void;
+        const saving = new Promise<void>((resolve) => { releaseSave = resolve; });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        const appendSpy = jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            await saving;
+            return append(...args);
+        });
+        const manager = new ChatHistoryManager({ store, generateId: () => 'failed-ordinary' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'explain this topic';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        if (canonical) {
+            emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'message_start', message: assistantMessage('ordinary-failure', []) }));
+            emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'ordinary-failure',
+                update: { kind: 'text_delta', text: '  已收到的正文\n仍可阅读 🌊' } }));
+        }
+        call.onChunk('  已收到的正文\n仍可阅读 🌊');
+        call.reject(new Error('network fixture failure'));
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(appendSpy).toHaveBeenCalledTimes(1);
+        // The stream has failed, but finalization is still awaiting persistence.
+        // Both callback paths must already be closed during this window.
+        call.onChunk('late stale replacement');
+        if (canonical) emitCanonical(call, canonicalEvent({ type: 'message_update', messageId: 'ordinary-failure',
+            update: { kind: 'text_delta', text: 'late canonical replacement' } }));
+        for (let i = 0; i < 3; i++) await flushPromises();
+        const settlementText = allText(containerEl);
+        releaseSave();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(settlementText).not.toContain('late stale replacement');
+        expect(settlementText).not.toContain('late canonical replacement');
+
+        expect(view.chatHistory[1]).toMatchObject({
+            role: 'assistant', content: '  已收到的正文\n仍可阅读 🌊', shareCardEligible: false,
+            runtimeWarnings: [expect.objectContaining({ type: 'partial_output_error' })],
+        });
+        expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+        expect(view.result).toBe('');
+        expect(getButtonsByText(containerEl, 'Add to Editor')).toHaveLength(0);
+        if (canonical) expect(view.chatHistory[1].canonicalTurn?.status).toBe('error');
+        call.onChunk('late stale replacement');
+        await flushPromises();
+        expect(view.chatHistory[1].content).toBe('  已收到的正文\n仍可阅读 🌊');
+        expect(allText(containerEl)).not.toContain('late stale replacement');
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1].content).toBe('  已收到的正文\n仍可阅读 🌊');
+        expect(restored.view.chatHistory[1].runtimeWarnings).toContainEqual(expect.objectContaining({ type: 'partial_output_error' }));
+        if (canonical) expect(restored.view.chatHistory[1].canonicalTurn?.status).toBe('error');
+        expect(restored.view.result).toBe('');
+        expect(getButtonsByText(restored.containerEl, 'Add to Editor')).toHaveLength(0);
+        await restored.view.onClose();
+    });
+
+    it('preserves interrupted actions after a typed partial error resolves and reopens', async () => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'typed-partial' });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'explain the topic';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.onChunk('Readable partial answer');
+        call.options.onEvent?.({ version: 1, turnId: 'legacy-partial', seq: 1, timestamp: 1,
+            kind: 'partial-output-error', category: 'provider' });
+        call.resolve();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(view.result).toBe('');
+        expect(getButtonsByText(containerEl, 'Add to Editor')).toHaveLength(0);
+        await view.onClose();
+        const restored = createView({ chatHistoryManager: manager });
+        await restored.view.onOpen();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(restored.view.chatHistory[1]).toMatchObject({ content: 'Readable partial answer', shareCardEligible: false,
+            runtimeWarnings: [expect.objectContaining({ type: 'partial_output_error' })] });
+        expect(restored.view.result).toBe('');
+        expect(getButtonsByText(restored.containerEl, 'Add to Editor')).toHaveLength(0);
+        await restored.view.onClose();
+    });
+
+    it.each([false, true])('finishes recovery after a pending markdown render (user cancel=%s)', async (cancelled) => {
+        const store = new MemoryChatHistoryStore();
+        const manager = new ChatHistoryManager({ store, generateId: () => 'pending-render-error' });
+        let releaseRender!: () => void;
+        const pendingRender = new Promise<void>((resolve) => { releaseRender = resolve; });
+        const renderedText = 'Body already received';
+        let heldRender = false;
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>)
+            .mockImplementation(async (_app, markdown, el) => {
+                if (markdown === renderedText && !heldRender) {
+                    heldRender = true;
+                    await pendingRender;
+                }
+                el.setText(markdown);
+            });
+        const { view, containerEl } = createView({ chatHistoryManager: manager });
+        await view.onOpen();
+        getTextArea(containerEl).value = 'explain this';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.onChunk(renderedText);
+        runAnimationFrames();
+        await flushPromises();
+        expect(heldRender).toBe(true);
+        if (cancelled) getButtonByClass(containerEl, 'cancel-button').click();
+        call.reject(cancelled ? new DOMException('Aborted', 'AbortError') : new Error('failed during render'));
+        await flushPromises();
+        call.onChunk('unaccepted replacement');
+        releaseRender();
+        for (let i = 0; i < 8; i++) await flushPromises();
+        expect(view.chatHistory[1]).toMatchObject({ content: renderedText, shareCardEligible: false });
+        expect(view.chatHistory[1].runtimeWarnings).toContainEqual(expect.objectContaining({
+            type: cancelled ? 'user_abort' : 'partial_output_error',
+        }));
+        expect((await store.getTurns('pending-render-error'))[0].assistant.content).toBe(renderedText);
+        expect(allText(containerEl)).toContain(renderedText);
+        expect(allText(containerEl)).not.toContain('unaccepted replacement');
+        await view.onClose();
+    });
+
+    it.each(['source_unavailable', 'request_changed', 'provider_failed'] as const)('keeps image invalidation distinct from transport failure: %s', async (code) => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        getTextArea(containerEl).value = 'describe the scene';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('received description');
+        streamCalls[0].reject(new ChatImageRequestError(code));
+        for (let i = 0; i < 8; i++) await flushPromises();
+        if (code === 'provider_failed') {
+            expect(view.chatHistory[1].content).toBe('received description');
+            expect(view.chatHistory[1].shareCardEligible).toBe(false);
+        } else {
+            expect(view.chatHistory).toEqual([]);
+            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
+        }
+        await view.onClose();
+    });
+
+    it('keeps cancelled partial text and releases its markdown render owners on close', async () => {
         const unloadSpy = jest.spyOn(Component.prototype, 'unload');
         try {
             const { view, containerEl } = createView();
@@ -3900,12 +4569,14 @@ describe('LLMView turn lifecycle', () => {
 
             getButtonByClass(containerEl, 'cancel-button').click();
             streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
-            await flushPromises();
-            await flushPromises();
+            for (let i = 0; i < 8; i++) await flushPromises();
 
-            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
+            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+            expect(view.chatHistory[1].content).toBe('partial **answer**');
+            expect(view.chatHistory[1].shareCardEligible).toBe(false);
             expect(allText(containerEl)).toContain('Generation cancelled');
-            expect((view as any).markdownRenderOwners.size).toBe(1); // eslint-disable-line @typescript-eslint/no-explicit-any
+            await view.onClose();
+            expect((view as any).markdownRenderOwners.size).toBe(0); // eslint-disable-line @typescript-eslint/no-explicit-any
             expect(unloadSpy).toHaveBeenCalled();
         } finally {
             unloadSpy.mockRestore();

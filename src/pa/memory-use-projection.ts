@@ -76,6 +76,8 @@ export interface GovernedMemoryUseInput {
 export interface GovernedMemoryUseResult {
     boundedContext: string;
     usedClaimIds: string[];
+    /** Host selection metadata; never embed this receipt in prompt text. */
+    usedVaultInsights: boolean;
 }
 
 export interface MemoryContextCompatibilityPort {
@@ -141,15 +143,18 @@ export function selectGovernedMemoryUse(
         usedClaimIds.push(selection.claim.id);
     }
 
+    let usedVaultInsights = false;
     if (vaultInsightsLine && totalLineChars(lines) + (lines.length > 0 ? 1 : 0)
         + vaultInsightsLine.length <= availableChars) {
         lines.push(vaultInsightsLine);
+        usedVaultInsights = true;
     }
-    if (lines.length === 0) return { boundedContext: "", usedClaimIds: [] };
+    if (lines.length === 0) return { boundedContext: "", usedClaimIds: [], usedVaultInsights: false };
 
     return {
         boundedContext: `${CONTEXT_OPEN}\n${lines.join("\n")}\n${CONTEXT_CLOSE}`,
         usedClaimIds,
+        usedVaultInsights,
     };
 }
 
@@ -178,6 +183,7 @@ export function readCompatibleMemoryContext(
         governedContext: {
             boundedContext: governed.boundedContext,
             usedClaimIds: [...governed.usedClaimIds],
+            usedVaultInsights: governed.usedVaultInsights,
         },
     };
 }

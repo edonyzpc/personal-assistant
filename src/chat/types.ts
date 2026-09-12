@@ -5,6 +5,7 @@ import type { MessageImage } from './image-types';
 import type { ChatHostProvenance } from '../ai-services/chat-provenance';
 import type { ChatWritingRecovery, ChatWritingMaterialContext } from '../ai-services/chat-types';
 import type { WritingVersion } from './writing-types';
+import type { GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
 
 export interface ThinkingStatusView {
     messageDiv: HTMLDivElement;
@@ -37,6 +38,7 @@ export type RenderedMessage = {
     shareButton?: HTMLButtonElement;
     deleteButton?: HTMLButtonElement;
     writingButton?: HTMLButtonElement;
+    writingRecoveryNotice?: HTMLElement;
     renderToken: number;
     copyContent: string;
     renderOwner?: Component;
@@ -74,8 +76,13 @@ export type UiTurn = {
     writingParent?: WritingVersion;
     writingMaterialContext?: ChatWritingMaterialContext;
     writingMaterials?: MessageImage[];
-    writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[] };
+    writingArtifact?: { requestId: string; messageId: string; body: string; explanation: string; styleRevisionIds?: string[];
+        writingContext?: import('../ai-services/chat-types').ChatWritingContextMetadata; generationInput?: GenerationInputSnapshot;
+        isSourceCurrent?: () => boolean };
     writingRecovery?: ChatWritingRecovery;
+    writingRecoverySourceCurrent?: () => boolean;
+    writingRecoveryGenerationInput?: GenerationInputSnapshot;
+    writingRecoveryText?: string;
     memoryMetadata?: ChatTurnMemoryMetadata;
     contextUsedItems: ChatContextUsedItem[];
     activityDetails: string[];

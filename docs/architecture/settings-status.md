@@ -1,6 +1,6 @@
 # Settings Current Status
 
-Updated: 2026-09-08
+Updated: 2026-09-12
 
 ## Status
 
@@ -24,6 +24,19 @@ Settings 简化的产品目标和旧选项失效规则见
 产品契约，运行时仍以当前源码为准；实施入口为
 [B-106 Feature Home](../development/active/simple-settings/README.md)，执行状态只看
 [Tracker](../development/active/simple-settings/tracker.md)。
+
+2026-09-12当前实现已将长期记忆提取与本地习惯学习分别默认开启。缺失值及没有
+明确用户关闭证据的旧`false`按新默认迁移为开启；明确关闭或有效暂停继续保留。
+迁移不伪造用户确认时间，也不触发历史回填。两项能力各自通过当前调度、预算、
+来源与治理边界运行，并可独立关闭；关闭长期提取只停止新增学习，已有有效Personal
+仍须通过Memory主开关、来源有效性、治理、排除和遗忘边界后才可使用。
+
+该修订及其scheduler/collector、设置页和Desktop退出证据见
+[B-135最终验证](../archive/2026/b135-unified-task-execution-validation.md)，产品修订见
+[DEC-034](../product/decisions/dec-034-unified-agent-task-execution.md)。旧B-106不新增任务；
+B-135已复用共享Linux/Desktop证据，并以390×844 Obsidian mobile simulator验证设置
+可达性。改动面没有macOS/iOS专属路径，因此没有B-135设置真机缺口；Keychain等其它
+功能实际拥有的平台门不由本修订取消。
 
 Highest-risk Settings issues are no longer open:
 
@@ -56,9 +69,10 @@ contextual entry. Statistics view selection remains in its existing tabs;
 `displaySectionCounts` and `countComments` already have Settings controls.
 Ordinary field saves and statistics choices expose failure/retry feedback.
 
-The [B-106 Tracker](../development/active/simple-settings/tracker.md) owns all
-remaining review, Desktop, real-device, and acceptance evidence. Source-level
-implementation here does not imply those gates passed.
+The [B-106 Tracker](../development/active/simple-settings/tracker.md) retains
+only its historical delivery evidence. B-135 owns the later default-on,
+migration, independent-exit, platform-risk audit, and mobile-simulator evidence
+described above.
 
 ## Navigation Rule
 

@@ -3,6 +3,7 @@ import type { PersistedSourceRef } from '../pa/contracts/source-ref';
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape } from '../pa/contracts/source-ref';
 import { cloneMessageImages, type MessageImage } from './image-types';
 import { getPlatformCrypto } from '../platform-dom';
+import { cloneGenerationInputSnapshot, type GenerationInputSnapshot } from '../ai-services/generation-input-snapshot';
 
 export interface WritingScene {
     writingTask: string;
@@ -28,6 +29,8 @@ export interface WritingVersion {
     styleRevisionIds: string[];
     /** Absent on older records whose references may include ancestor requests. */
     referenceScope?: 'request';
+    /** Absent on versions created before physical generation input receipts. */
+    generationInput?: GenerationInputSnapshot;
     scene?: WritingScene;
 }
 
@@ -44,6 +47,7 @@ const versionSchema = z.object({
     associatedImages: z.array(z.unknown()).max(2048), backgroundSourceRefs: z.array(z.unknown()).max(2048),
     styleRevisionIds: z.array(id).max(2048), scene: writingSceneSchema.optional(),
     referenceScope: z.literal('request').optional(),
+    generationInput: z.unknown().optional(),
 }).strict();
 
 export function cloneWritingVersion(value: unknown): WritingVersion {
@@ -60,7 +64,9 @@ export function cloneWritingVersion(value: unknown): WritingVersion {
             ...(ref.retrievalOutcomeId !== undefined ? { retrievalOutcomeId: ref.retrievalOutcomeId } : {}),
         };
     });
-    return { ...parsed, associatedImages: cloneMessageImages(parsed.associatedImages), backgroundSourceRefs };
+    const { generationInput, ...fields } = parsed;
+    return { ...fields, associatedImages: cloneMessageImages(parsed.associatedImages), backgroundSourceRefs,
+        ...(generationInput !== undefined ? { generationInput: cloneGenerationInputSnapshot(generationInput) } : {}) };
 }
 
 export async function hashWritingText(text: string): Promise<string> {

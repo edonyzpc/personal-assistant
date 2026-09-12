@@ -1,6 +1,11 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { AIMessageChunk } from "@langchain/core/messages";
+import { RunnableLambda } from "@langchain/core/runnables";
+import type { App } from "obsidian";
 
+import { AIUtils } from "../src/ai-services/ai-utils";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
+import type { AgentEvent } from "../src/ai-services/chat-types";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { PaAgentLoop } from "../src/ai-services/pa-agent-loop";
 import { createAgentControlSnapshot } from "../src/ai-services/pa-agent-control-policy";
@@ -11,11 +16,12 @@ import type {
 } from "../src/ai-services/pa-agent-types";
 import {
     createOperationsAcknowledgementControlSnapshot,
-    hasOperationsWriteIntent,
     isOperationsStagedAcknowledgement,
     OPERATIONS_STAGED_ACKNOWLEDGEMENT_INSTRUCTION,
+    PaAgentRuntime,
     preserveOperationsActionsInControlSnapshot,
 } from "../src/ai-services/pa-agent-runtime";
+import { OperationsIntentController } from "../src/ai-services/operations/operations-intent-controller";
 import {
     createOperationsStagingToolExecutor,
 } from "../src/ai-services/operations/operations-tool-executor";
@@ -32,8 +38,11 @@ import {
 import {
     CORE_WRITE_TOOL_NAMES,
     type OperationsIntent,
+    type OperationsVault,
+    type OperationsVaultFile,
     type StageOperationsIntentInput,
 } from "../src/ai-services/operations/types";
+import { createAiServiceHost } from "../src/tests/factories/host-factory";
 
 jest.mock("obsidian");
 
@@ -95,85 +104,6 @@ describe("Operations Agent runtime discovery and staging", () => {
             .toBe(MAX_OPERATION_SELECTOR_CHARS);
         expect(params.oneOf[2].oneOf?.[0].properties?.section?.maxLength)
             .toBe(MAX_OPERATION_SELECTOR_CHARS);
-    });
-
-    it("detects only latest-message write intent, including the Save suggestion request", () => {
-        for (const input of [
-            "把你上一条回答中的结论保存到我的知识库。",
-            "保存",
-            "Save it",
-            "请把这个方案追加到 notes/plan.md",
-            "请追加‘X’到 operations-agent-step2-dogfood-secondary.md 末尾。",
-            "请向 operations-agent-step2-dogfood-secondary.md 末尾追加‘X’。",
-            "Save the conclusion from your previous answer to my vault.",
-            "Use the current note only and save this conclusion to this note.",
-            "Update the status property in project.md",
-            "保存到 projects/plan.md",
-            "Append this to projects/plan.md",
-            "Update projects/plan.md",
-            "In projects/plan.md, append the result.",
-            "Write this conclusion to the current note.",
-            "Show me what you'll save, then save it to the current note.",
-            "Don't summarize it; just save it to the current note.",
-            "Don't create a new note; append this to projects/plan.md instead.",
-            "Append this to projects/plan.md, but don't create a new note.",
-            "Only append this to the current note.",
-            "Don't create a new note, only append this to the current note.",
-            "Save this to the current note without changing anything else.",
-            "Insert this text into the current note.",
-            "Replace ORIGINAL_MARKER with UPDATED_MARKER in the current note.",
-            "Delete the Archive section from the current note.",
-            "In the current note, replace A with B.",
-            "In project.md after Summary, insert this text.",
-            "Create a note for this decision.",
-            "Edit the current note.",
-            "把结论记录到项目笔记",
-            "把结论加到 projects/plan.md",
-            "把当前笔记中的 ORIGINAL_MARKER 替换为 UPDATED_MARKER",
-            "删除当前笔记中的 Archive 章节",
-            "在当前笔记中把 A 替换为 B",
-            "在当前笔记的 Summary 后插入这段文字",
-            "在 project.md 的 Summary 标题后插入这段文字",
-            "只追加到当前笔记",
-            "不要新建笔记，只追加到当前笔记",
-        ]) {
-            expect({ input, detected: hasOperationsWriteIntent(input) }).toEqual({ input, detected: true });
-        }
-        for (const input of [
-            "总结一下这个方案",
-            "How should I organize my vault?",
-            "不要保存，只在这里回答",
-            "Explain how note saving works",
-            "Explain how to save a note.",
-            "Explain how to create a note.",
-            "Explain how to edit project.md safely.",
-            "Explain how to replace text in a note.",
-            "Explain how to create a note, then save time by using a template.",
-            "Can you explain why I should not delete the status property in project.md?",
-            "What is the best way to create a note?",
-            "How do I create a note, then save it to my vault?",
-            "Show me how to create a note, then save it to my vault.",
-            "Tell me how to edit a note, then append the result to project.md.",
-            "No need to create a note.",
-            "Do not, under any circumstances, save this to the current note.",
-            "In project.md, explain how to update the status property.",
-            "Translate \"Save this to the current note\" into Chinese.",
-            "Write an explanation of how Markdown notes work.",
-            "Edit this sentence so it mentions a note.",
-            "Describe how frontmatter properties work.",
-            "How do I create a note?",
-            "如何创建一篇笔记？",
-            "不要记录到项目笔记",
-            "不要新建笔记。",
-            "不要在任何情况下，创建一篇笔记。",
-            "告诉我怎么创建笔记，然后保存到知识库。",
-            "翻译“保存到当前笔记”这句话。",
-            "请把“向 operations-agent-step2-dogfood-secondary.md 末尾追加‘X’”翻译成英文。",
-            "Don't add this to projects/plan.md",
-            "Don't delete the Archive section from the current note.",
-        ]) {
-            expect({ input, detected: hasOperationsWriteIntent(input) }).toEqual({ input, detected: false });
-        }
     });
 
     it("stages all action calls in a model phase as one intent and never direct-executes them", async () => {
@@ -431,6 +361,274 @@ describe("Operations Agent runtime discovery and staging", () => {
     });
 });
 
+describe("Operations runtime task source declarations", () => {
+    it("stages a declared create-then-append batch without reading old note text or performing writes", async () => {
+        const prompt = "不要读取现有笔记。新建 notes/new.md，内容为 # Draft，然后追加 Final。";
+        const fixture = operationsRuntimeFixture(prompt, [
+            sourceDeclaration("不要读取现有笔记", "none"),
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "# Draft" }, 1),
+            toolCall("append", "vault_append", { path: "notes/new.md", content: "Final" }, 2),
+        ]);
+        try {
+            await fixture.run();
+
+            expect(fixture.boundToolNames[0]).toEqual(expect.arrayContaining([
+                "declare_source_scope", "vault_create", "vault_append",
+            ]));
+            expect(fixture.stageIntent).toHaveBeenCalledTimes(1);
+            const [intent] = fixture.controller.listPendingIntents();
+            expect(intent).toMatchObject({
+                state: "pending",
+                operations: [
+                    { toolCallId: "create", expectedBefore: null, expectedAfter: "# Draft" },
+                    { toolCallId: "append", expectedBefore: "# Draft", expectedAfter: "# Draft\nFinal" },
+                ],
+            });
+            expect(intent).not.toHaveProperty("taskSourceReadGuard");
+            expect(fixture.lifecycle).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: "tool_execution_end", toolCallId: "scope", outcome: "control_applied" }),
+                expect.objectContaining({ type: "tool_execution_end", toolCallId: "create", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ staged: true, wrote: false }) }) }),
+                expect.objectContaining({ type: "tool_execution_end", toolCallId: "append", outcome: "success", metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ staged: true, wrote: false }) }) }),
+                expect.objectContaining({ type: "agent_end", status: "completed" }),
+            ]));
+            expect(fixture.vault.adapter.exists).toHaveBeenCalledWith("notes/new.md");
+            expectNoSourceReadsOrWrites(fixture);
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("rejects the complete declared batch when append requires old text outside the current-note scope", async () => {
+        const prompt = "只用当前笔记作为素材。新建 notes/new.md，并向 notes/other.md 追加结论。";
+        const fixture = operationsRuntimeFixture(prompt, [
+            sourceDeclaration("只用当前笔记作为素材", "current_note"),
+            toolCall("create", "vault_create", { path: "notes/new.md", content: "Conclusion" }, 1),
+            toolCall("append", "vault_append", { path: "notes/other.md", content: "Conclusion" }, 2),
+        ]);
+        try {
+            await fixture.run();
+
+            expect(fixture.stageIntent).not.toHaveBeenCalled();
+            expect(fixture.controller.listPendingIntents()).toEqual([]);
+            for (const toolCallId of ["scope", "create", "append"]) {
+                expect(fixture.lifecycle).toContainEqual(expect.objectContaining({
+                    type: "tool_execution_end", toolCallId, outcome: "policy_rejected",
+                    metadata: expect.objectContaining({ contentMetadata: expect.objectContaining({ reason: "source_read_outside_scope" }) }),
+                }));
+            }
+            expect(fixture.vault.adapter.exists).not.toHaveBeenCalled();
+            expectNoSourceReadsOrWrites(fixture);
+        } finally {
+            fixture.dispose();
+        }
+    });
+
+    it("publishes a returned context-used note handle and accepts a later selected-note narrowing", async () => {
+        const prompt = "先使用整个知识库查阅 notes/other.md 的标题结构，然后只使用找到的这篇笔记，继续读取完整标题结构。";
+        let discoveredHandle: string | undefined;
+        const fixture = operationsRuntimeFixture(prompt, [
+            sourceDeclaration("先使用整个知识库", "vault"),
+            toolCall("outline-first", "read_note_outline", { path: "notes/other.md", max_headings: 1 }, 1),
+        ], {
+            outlineHeadings: [
+                { level: 1, heading: "Returned outline fact" },
+                { level: 2, heading: "Scoped follow-up fact" },
+            ],
+            nextToolCalls: (input, modelTurn) => {
+                if (modelTurn !== 2) return undefined;
+                discoveredHandle = readProviderNoteDirectory(input).notes
+                    .find(note => note.path === "notes/other.md")?.handle;
+                if (!discoveredHandle) return undefined;
+                return [
+                    {
+                        type: "toolCall", id: "scope-selected", name: "declare_source_scope", index: 0,
+                        input: {
+                            instructionQuote: "然后只使用找到的这篇笔记", notes: "selected",
+                            noteHandles: [discoveredHandle], webAllowed: false,
+                        },
+                    },
+                    toolCall("outline-selected", "read_note_outline", { path: "notes/other.md", max_headings: 2 }, 1),
+                ];
+            },
+            finalText: "这篇笔记包含 Returned outline fact 和 Scoped follow-up fact 两个标题。",
+        });
+        try {
+            await fixture.run();
+
+            expect(fixture.providerInputs).toHaveLength(3);
+            const directories = fixture.providerInputs.map(readProviderNoteDirectory);
+            expect(directories[0].notes.map(note => note.path)).toEqual(["notes/current.md"]);
+            expect(discoveredHandle).toEqual(expect.any(String));
+            expect(directories[1].notes).toContainEqual({ path: "notes/other.md", handle: discoveredHandle });
+            expect(directories[2]).toEqual({
+                currentNoteHandle: null, notes: [{ path: "notes/other.md", handle: discoveredHandle }],
+            });
+
+            const toolMessages = fixture.lifecycle.flatMap(event => (
+                event.type === "message_end" && event.message.role === "toolResult" ? [event.message] : []
+            ));
+            const initialRead = toolMessages.find(message => message.toolCallId === "outline-first");
+            const selectedRead = toolMessages.find(message => message.toolCallId === "outline-selected");
+            expect(initialRead).toMatchObject({ isError: false, content: {
+                includeInNextPrompt: true,
+                sourceRecords: [{ kind: "context-used", path: "notes/other.md", citationEligible: false }],
+            } });
+            expect(initialRead?.content.promptText).toContain("Returned outline fact");
+            expect(initialRead?.content.promptText).not.toContain("Scoped follow-up fact");
+            expect(selectedRead).toMatchObject({ isError: false, content: {
+                includeInNextPrompt: true,
+                sourceRecords: [{ kind: "context-used", path: "notes/other.md", citationEligible: false }],
+            } });
+            expect(selectedRead?.content.promptText).toContain("Scoped follow-up fact");
+            expect(toolMessages.find(message => message.toolCallId === "scope-selected")).toMatchObject({
+                isError: false, content: { metadata: { outcome: "control_applied", scopeRevision: 2 } },
+            });
+            expect(fixture.getFileCache.mock.calls.map(([file]) => file.path)).toEqual([
+                "notes/other.md", "notes/other.md",
+            ]);
+            expect(fixture.vault.getMarkdownFiles).not.toHaveBeenCalled();
+            expect(fixture.vault.cachedRead).not.toHaveBeenCalled();
+            expect(fixture.vault.read).not.toHaveBeenCalled();
+            expect(fixture.stageIntent).not.toHaveBeenCalled();
+            expect(fixture.executeIntent).not.toHaveBeenCalled();
+            expect(fixture.vault.create).not.toHaveBeenCalled();
+            expect(fixture.vault.process).not.toHaveBeenCalled();
+            expect(fixture.trashFile).not.toHaveBeenCalled();
+        } finally {
+            fixture.dispose();
+        }
+    });
+});
+
+function sourceDeclaration(
+    instructionQuote: string,
+    notes: "current_note" | "none" | "vault",
+): ParsedBufferedToolCall {
+    return {
+        type: "toolCall", id: "scope", name: "declare_source_scope", index: 0,
+        input: { instructionQuote, notes, webAllowed: false },
+    };
+}
+
+interface OperationsRuntimeFixtureOptions {
+    outlineHeadings?: Array<{ level: number; heading: string }>;
+    nextToolCalls?: (input: unknown, modelTurn: number) => readonly ParsedBufferedToolCall[] | undefined;
+    finalText?: string;
+}
+
+function operationsRuntimeFixture(
+    prompt: string,
+    calls: readonly ParsedBufferedToolCall[],
+    fixtureOptions: OperationsRuntimeFixtureOptions = {},
+) {
+    const currentFile = { path: "notes/current.md", extension: "md" };
+    const otherFile = { path: "notes/other.md", extension: "md" };
+    const fileObjects = new Map<string, OperationsVaultFile>([
+        [currentFile.path, currentFile], [otherFile.path, otherFile],
+        ["notes", { path: "notes", children: [] }],
+    ]);
+    const oldContents = new Map([
+        [currentFile.path, "PRIVATE CURRENT NOTE BODY"],
+        [otherFile.path, "PRIVATE OTHER NOTE BODY"],
+    ]);
+    const vault = {
+        getAbstractFileByPath: jest.fn((path: string) => fileObjects.get(path) ?? null),
+        getMarkdownFiles: jest.fn(() => [currentFile, otherFile]),
+        cachedRead: jest.fn(async (file: OperationsVaultFile) => oldContents.get(file.path) ?? ""),
+        read: jest.fn(async (file: OperationsVaultFile) => oldContents.get(file.path) ?? ""),
+        create: jest.fn(async (path: string, _content: string) => ({ path })),
+        process: jest.fn(async (_file: OperationsVaultFile, _change: (text: string) => string) => undefined),
+        adapter: { exists: jest.fn(async (path: string) => fileObjects.has(path)) },
+    } satisfies OperationsVault & { getMarkdownFiles(): OperationsVaultFile[] };
+    const trashFile = jest.fn(async (_file: OperationsVaultFile) => undefined);
+    const controller = new OperationsIntentController({ vault, trashFile });
+    const stageIntent = jest.spyOn(controller, "stageIntent");
+    const executeIntent = jest.spyOn(controller, "executeIntent");
+    const getFileCache = jest.fn((_file: OperationsVaultFile) => fixtureOptions.outlineHeadings
+        ? { headings: fixtureOptions.outlineHeadings }
+        : null);
+    const host = createAiServiceHost({
+        settings: { memoryEnabled: false, operationsAgentEnabled: true },
+        app: {
+            vault,
+            workspace: {
+                getActiveViewOfType: () => ({ file: currentFile }),
+                getMostRecentLeaf: () => null,
+                getLeavesOfType: () => [],
+            },
+            metadataCache: { getFileCache },
+        } as unknown as App,
+        isDataBoundaryAllowedPath: () => true,
+    });
+    const aiUtils = new AIUtils(host);
+    const boundToolNames: string[][] = [];
+    const providerInputs: unknown[] = [];
+    let modelTurn = 0;
+    const createModel = jest.spyOn(aiUtils, "createChatModel").mockImplementation(async (_temperature, options) => {
+        const model = RunnableLambda.from(async function* (input: unknown) {
+            options?.onProviderRequestStart?.();
+            providerInputs.push(input);
+            modelTurn += 1;
+            const turnCalls = modelTurn === 1 ? calls : fixtureOptions.nextToolCalls?.(input, modelTurn);
+            if (turnCalls) {
+                yield new AIMessageChunk({ content: "", tool_call_chunks: turnCalls.map(call => ({
+                    id: call.id, name: call.name, index: call.index, args: JSON.stringify(call.input),
+                })) });
+                yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: "tool_calls" } });
+                return;
+            }
+            yield new AIMessageChunk({ content: fixtureOptions.finalText ?? (controller.listPendingIntents().length
+                ? "请确认这份修改提案；尚未写入笔记。"
+                : "当前取材范围不允许读取该笔记，未暂存或执行修改。") });
+            yield new AIMessageChunk({ content: "", response_metadata: { finish_reason: "stop" } });
+        });
+        Object.assign(model, { bindTools: (schemas: Array<{ function: { name: string } }>) => {
+            boundToolNames.push(schemas.map(schema => schema.function.name));
+            return model;
+        } });
+        return model as unknown as Awaited<ReturnType<AIUtils["createChatModel"]>>;
+    });
+    const lifecycle: AgentEvent[] = [];
+    const runtime = new PaAgentRuntime(host, aiUtils, {
+        skillContextProvider: null, operationsIntentController: controller, maxModelTurns: 3,
+    });
+    return {
+        vault, trashFile, controller, stageIntent, executeIntent, getFileCache,
+        boundToolNames, providerInputs, lifecycle,
+        run: () => runtime.streamTurn({
+            prompt, memoryMode: "auto", onLifecycleEvent: event => lifecycle.push(event),
+        }),
+        dispose: () => {
+            runtime.dispose();
+            controller.dispose();
+            createModel.mockRestore();
+            stageIntent.mockRestore();
+            executeIntent.mockRestore();
+        },
+    };
+}
+
+function readProviderNoteDirectory(input: unknown): {
+    currentNoteHandle: string | null;
+    notes: Array<{ path: string; handle: string }>;
+} {
+    const directory = String(input).split("\n").find(line => line.startsWith('{"currentNoteHandle":'));
+    if (!directory) throw new Error("Provider input did not contain the host note directory.");
+    return JSON.parse(directory);
+}
+
+function expectNoSourceReadsOrWrites(fixture: ReturnType<typeof operationsRuntimeFixture>): void {
+    expect(fixture.vault.cachedRead).not.toHaveBeenCalled();
+    expect(fixture.vault.read).not.toHaveBeenCalled();
+    expect(fixture.getFileCache).not.toHaveBeenCalled();
+    expect(fixture.executeIntent).not.toHaveBeenCalled();
+    expect(fixture.vault.create).not.toHaveBeenCalled();
+    expect(fixture.vault.process).not.toHaveBeenCalled();
+    expect(fixture.trashFile).not.toHaveBeenCalled();
+    expect(JSON.stringify(fixture.providerInputs)).not.toContain("PRIVATE CURRENT NOTE BODY");
+    expect(JSON.stringify(fixture.providerInputs)).not.toContain("PRIVATE OTHER NOTE BODY");
+}
+
 function providerContext(enabled: boolean) {
     return {
         turnId: "turn-1",
@@ -455,7 +653,7 @@ async function operationsRegistry(): Promise<CapabilityRegistry> {
 
 function toolCall(
     id: string,
-    name: "vault_create" | "vault_append" | "frontmatter_update",
+    name: "vault_create" | "vault_append" | "frontmatter_update" | "read_note_outline",
     input: unknown,
     index: number,
 ): ParsedBufferedToolCall {

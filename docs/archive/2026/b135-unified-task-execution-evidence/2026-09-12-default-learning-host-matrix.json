@@ -1,0 +1,362 @@
+{
+  "schemaVersion": 1,
+  "feature": "B-135",
+  "tasks": [
+    "T-08",
+    "T-09",
+    "T-11"
+  ],
+  "requirements": [
+    "B-135/REQ-17",
+    "B-135/REQ-04",
+    "B-135/REQ-09"
+  ],
+  "acceptanceCriteria": [
+    "B-135/AC-17",
+    "B-135/AC-04",
+    "B-135/AC-09"
+  ],
+  "capturedAt": "2026-09-12T11:12:09.778Z",
+  "repository": {
+    "branch": "codex/b135-discussion-followup",
+    "documentationHead": "6aa96d851f699cf591526f153177349a512ceead",
+    "deployedBuildSource": "0bbe12ba4313ae537990d3d5208496f3c12bc312",
+    "deployedMainJsSha256": "0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684"
+  },
+  "host": {
+    "surface": "running Obsidian repo-local test vault",
+    "pluginVersion": "2.9.2",
+    "entry": "Obsidian CLI eval into loaded plugin instance"
+  },
+  "safety": {
+    "realProviderRequests": 0,
+    "providerAdapter": "createChatModel replaced before scheduler recreation; counters describe the local adapter interception",
+    "pluginDataSha256Before": "f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc",
+    "pluginDataSha256After": "f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc",
+    "syntheticConversationCursorRemoved": true
+  },
+  "migrationAndUi": {
+    "version": "2.9.2",
+    "matrix": [
+      {
+        "name": "legacy-missing",
+        "pendingBeforeMigration": true,
+        "loaded": {
+          "extraction": true,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "default",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        },
+        "reloaded": {
+          "extraction": true,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "default",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        }
+      },
+      {
+        "name": "legacy-false-without-action",
+        "pendingBeforeMigration": true,
+        "loaded": {
+          "extraction": true,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "default",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        },
+        "reloaded": {
+          "extraction": true,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "default",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        }
+      },
+      {
+        "name": "recorded-extraction-pause",
+        "pendingBeforeMigration": true,
+        "loaded": {
+          "extraction": false,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "disabled",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "paused",
+            "version": 1,
+            "confirmedAt": "2026-08-01T00:00:00.000Z"
+          },
+          "scheduler": false
+        },
+        "reloaded": {
+          "extraction": false,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "disabled",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "paused",
+            "version": 1,
+            "confirmedAt": "2026-08-01T00:00:00.000Z"
+          },
+          "scheduler": false
+        }
+      },
+      {
+        "name": "versioned-10",
+        "pendingBeforeMigration": false,
+        "loaded": {
+          "extraction": true,
+          "habit": false,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "enabled",
+            "habitLearning": "disabled"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        },
+        "reloaded": {
+          "extraction": true,
+          "habit": false,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "enabled",
+            "habitLearning": "disabled"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        }
+      },
+      {
+        "name": "versioned-01",
+        "pendingBeforeMigration": false,
+        "loaded": {
+          "extraction": false,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "disabled",
+            "habitLearning": "enabled"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": false
+        },
+        "reloaded": {
+          "extraction": false,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "disabled",
+            "habitLearning": "enabled"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": false
+        }
+      },
+      {
+        "name": "runtime-default",
+        "pendingBeforeMigration": true,
+        "loaded": {
+          "extraction": true,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "default",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        },
+        "reloaded": {
+          "extraction": true,
+          "habit": true,
+          "preference": {
+            "version": 1,
+            "memoryExtraction": "default",
+            "habitLearning": "default"
+          },
+          "consent": {
+            "state": "unconfirmed",
+            "version": 1
+          },
+          "scheduler": true
+        }
+      }
+    ],
+    "ui": {
+      "extraction": {
+        "found": true,
+        "enabled": true,
+        "description": "On by default. Your configured AI model learns preferences from conversations; content may be sent to your provider and API costs may apply. Learned information is stored locally. Turning this off stops new learning; saved personal information can still be used while Memory is on. Turn off Memory or forget the information to stop using it."
+      },
+      "habit": {
+        "found": true,
+        "enabled": true,
+        "description": "On by default. Use local aggregate choices such as kept recalls or source types to gently order comparable results. You can turn this off or clear the preferences. No provider call, sync, export, or note write is allowed."
+      }
+    },
+    "errors": [],
+    "restore": {
+      "semanticExact": true,
+      "extraction": true,
+      "habit": true,
+      "scheduler": true
+    },
+    "ok": true
+  },
+  "runtime": {
+    "version": "2.9.2",
+    "scheduler": {
+      "conversationId": "b135-learning-host-probe-1789211471142",
+      "cursorKey": "conversation-1e69d9f3",
+      "startup": {
+        "visibility": "visible",
+        "historyReads": 0,
+        "modelCreates": 0,
+        "modelInvokes": 0,
+        "costRecords": 0
+      },
+      "afterNewChat": {
+        "visibility": "visible",
+        "historyReads": 4,
+        "modelCreates": 1,
+        "modelInvokes": 1,
+        "costRecords": 1
+      },
+      "cursorAfterRun": 8
+    },
+    "habit": {
+      "sourcePath": "retrieval-smoke/temporal-retry/113-old-forbidden.md",
+      "before": 0,
+      "after": 3,
+      "recorded": {
+        "ok": true,
+        "state": {
+          "aggregates": [
+            {
+              "key": "relation:related",
+              "signal": "quiet_recall_relation",
+              "counts": {
+                "view": 1
+              },
+              "updatedAt": "2026-09-12T11:11:11.748Z",
+              "windowStart": "2026-09-12",
+              "windowDays": 1
+            },
+            {
+              "key": "source:fd5fe1f8",
+              "signal": "quiet_recall_source",
+              "counts": {
+                "view": 1
+              },
+              "updatedAt": "2026-09-12T11:11:11.748Z",
+              "windowStart": "2026-09-12",
+              "windowDays": 1
+            },
+            {
+              "key": "strength:medium",
+              "signal": "quiet_recall_strength",
+              "counts": {
+                "view": 1
+              },
+              "updatedAt": "2026-09-12T11:11:11.748Z",
+              "windowStart": "2026-09-12",
+              "windowDays": 1
+            }
+          ]
+        }
+      },
+      "rejected": {
+        "ok": false,
+        "reason": "disabled"
+      },
+      "unchangedAfterDisable": true,
+      "extractionStillEnabled": true
+    },
+    "background": {
+      "extractionEnabled": false,
+      "scheduler": false,
+      "disabledScheduleModelDelta": 0,
+      "promptContextMode": "governed",
+      "profile": {
+        "enabled": true,
+        "status": "empty",
+        "itemCount": 0
+      },
+      "styleServiceAvailable": true,
+      "memoryDisabledContextKeys": [
+        "memoryContextMode"
+      ]
+    },
+    "cleanup": {
+      "conversationId": "b135-learning-host-probe-1789211471142",
+      "cursorKey": "conversation-1e69d9f3",
+      "before": 8,
+      "after": null
+    },
+    "errors": [],
+    "restore": {
+      "semanticExact": true,
+      "extraction": true,
+      "habit": true,
+      "scheduler": true
+    },
+    "ok": true
+  },
+  "pass": true,
+  "limits": [
+    "The settings surface was verified through the rendered Obsidian DOM state and copy; this receipt is not a mouse-click usability acceptance.",
+    "The scheduler used the production plugin, persistence, source-lifetime and admission path with a local model adapter; semantic provider quality remains a separate gate.",
+    "No iOS or external-device behavior is claimed."
+  ]
+}

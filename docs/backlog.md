@@ -1,6 +1,6 @@
 # Project Backlog
 
-Updated: 2026-09-08
+Updated: 2026-09-12
 
 这里是被用户明确要求持久记录，或达到产品决策、版本候选、跨会话研究/执行条件，但尚未开始或仍未完成的项目事项清单；随口 PA idea 留在当前对话，不自动制造低信号条目。已完成的版本、feature、SDD 和验证记录不在此重复；需要历史依据时进入 [Archive](./archive/README.md)。需要跨会话研究或讨论时先创建 [Discovery Brief](./development/discovery/README.md)；获批进入开发后按 [Documentation Workflow](./development/documentation-workflow.md) 建立活跃开发包。
 
@@ -8,7 +8,6 @@ Updated: 2026-09-08
 
 | ID | 事项 | 当前边界 | 下一步 | 依据 |
 | --- | --- | --- | --- | --- |
-| B-135 | 主 Agent 统一语义决策与可靠作品交付 | 用户认可模型判断/统一Agent；原run已确认硬期限结束及JSON未闭合。方案同时覆盖来源边界、预算/结束证据、版本和风格治理，新机制仍为候选 | 先承接故障取证与结束/预算对照，再冻结方案契约并完成P0兼容验证 | User request 2026-09-08；[Solution Brief](./development/discovery/pa-agent-unified-task-execution.md) |
 | B-002 | Pagelet source-bound async result 完整体验 | Typed outcome 与 interim stale-result 修复已存在；统一 in-memory result store 与 Pet/Bubble ready-state 仍需按当前代码复核 | 先做 code-to-plan reconciliation，再为剩余 slice 建新 SDD；不要重复已实现部分 | [Historical plan](./archive/pagelet-async-result-plan.md) |
 | B-003 | Android VSS 真机验证 | Desktop 与 iOS 有证据，Android parity 未验证 | 在物理 Android 设备验证 SQLite/WASM Memory backend 后再更新 README 声明 | [README note](../README.md#mobile-vss-validation-note) |
 | B-004 | PA Agent telemetry baseline | Instrumentation 与 runbook 就绪，尚无 post-ship aggregate sample | 在明确 opt-in 后采集至少 7 天内容无关的聚合数据，再用于功能优先级判断 | [Runbook](./operations/pa-agent-telemetry-baseline.md) |

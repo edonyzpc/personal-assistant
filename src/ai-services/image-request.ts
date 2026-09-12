@@ -33,13 +33,14 @@ export class ChatImageRequestScope {
     private readonly snapshot: string;
     private readonly parentImages: MessageImage[];
     private associatedImages: MessageImage[];
+    private writingMaterialKeys?: Set<string>;
     private selectionRequired = false;
     private resolutionFailed = false;
     private disposed = false;
 
     constructor(private readonly options: ImageRequestOptions) {
         const current = cloneMessageImages(options.images ?? []);
-        this.parentImages = mergeChatImageMaterials(options.writingMaterialContext?.associatedImages ?? [], options.writingContext?.associatedImages ?? []);
+        this.parentImages = cloneMessageImages(options.writingMaterialContext?.associatedImages ?? options.writingContext?.associatedImages ?? []);
         // A recovery's copy may have an older per-version ordinal. Prefer the
         // original user index over assistant material metadata for the same ref.
         for (const role of ["user", "assistant"] as const) for (const message of options.history ?? []) {
@@ -68,6 +69,57 @@ export class ChatImageRequestScope {
     get currentImages(): MessageImage[] { return cloneMessageImages(this.options.images ?? []); }
     /** Complete linked material, not a claim that every image was sent/viewed. Never includes the history inventory wholesale. */
     get writingMaterials(): MessageImage[] { return cloneMessageImages(this.associatedImages); }
+
+    /** A completed writing selection narrows future pixels; linked images are not automatically viewed. */
+    selectWritingMaterials(refs: readonly ImageRef[]): void {
+        this.assertSnapshot();
+        const identities = refs.map(ref => key(cloneImageRef(ref)));
+        if (new Set(identities).size !== identities.length || identities.some(id => !this.authorized.has(id))) {
+            throw new ChatImageRequestError('source_unavailable');
+        }
+        const allowed = new Set(identities);
+        const previousSelection = [...this.selected.keys()];
+        for (const id of this.selected.keys()) {
+            if (allowed.has(id)) continue;
+            this.selected.delete(id);
+            this.materialized.get(id)?.lease.release();
+            this.materialized.delete(id);
+        }
+        this.guards = this.guards.filter((_guard, index) => allowed.has(previousSelection[index]));
+        this.writingMaterialKeys = allowed;
+        this.associatedImages = cloneMessageImages(identities.map(id => this.authorized.get(id)!));
+        this.selectionRequired = false;
+        this.resolutionFailed = false;
+    }
+
+    /** Verify linked writing material without claiming it was sent as pixels or changing the active selection. */
+    async verifyWritingMaterials(refs: readonly ImageRef[], signal?: AbortSignal): Promise<{
+        images: MessageImage[]; isCurrent(): boolean; isSourceCurrent(): boolean;
+    }> {
+        this.assertSnapshot(signal);
+        const requested = refs.map(cloneImageRef);
+        if (new Set(requested.map(key)).size !== requested.length || requested.some(ref => !this.authorized.has(key(ref)))) {
+            throw new ChatImageRequestError("source_unavailable");
+        }
+        const images = cloneMessageImages(requested.map(ref => this.authorized.get(key(ref))!));
+        const guards: Array<() => boolean> = [];
+        if (images.length && !this.options.service) throw new ChatImageRequestError("source_unavailable");
+        for (const image of images) {
+            const receipt = await this.options.service!.verify(image.ref, "provider", {
+                signal, isCurrent: () => { this.assertSnapshot(); return true; },
+            }).catch(error => { this.assertSnapshot(signal); throw error; });
+            this.assertSnapshot(signal);
+            if (!receipt.isCurrent()) throw new ChatImageRequestError("request_changed");
+            guards.push(receipt.isCurrent);
+        }
+        const isCurrent = () => {
+            try { this.assertSnapshot(); return guards.every(guard => guard()); }
+            catch { return false; }
+        };
+        this.assertSnapshot(signal);
+        if (!isCurrent()) throw new ChatImageRequestError("request_changed");
+        return { images: cloneMessageImages(images), isCurrent, isSourceCurrent: sourceChecksCurrent(guards) };
+    }
     diagnostics(): Record<string, unknown> {
         return { type: "image_request_budget", count: this.selected.size,
             encodedImageBytes: [...this.materialized.values()].reduce((sum, value) => sum + value.lease.blob.size, 0),
@@ -98,7 +150,9 @@ export class ChatImageRequestScope {
         try {
             for (const [id, image] of this.selected) {
                 if (this.materialized.has(id)) continue;
-                const lease = await this.options.service.resolveVariant(image.ref, "provider", { signal });
+                const lease = await this.options.service.resolveVariant(image.ref, "provider", {
+                    signal, isCurrent: () => { this.assertSnapshot(); return true; },
+                });
                 try {
                     this.assertSnapshot(signal);
                     const totalBytes = [...this.materialized.values()].reduce((sum, value) => sum + value.lease.blob.size, 0) + lease.blob.size;
@@ -115,7 +169,9 @@ export class ChatImageRequestScope {
             // checks vault revision/path/stat and the live boundary synchronously.
             const guards: Array<() => boolean> = [];
             for (const image of this.selected.values()) {
-                const receipt = await this.options.service.verify(image.ref, "provider");
+                const receipt = await this.options.service.verify(image.ref, "provider", {
+                    signal, isCurrent: () => { this.assertSnapshot(); return true; },
+                });
                 this.assertSnapshot(signal);
                 guards.push(receipt.isCurrent);
             }
@@ -133,6 +189,12 @@ export class ChatImageRequestScope {
         if (this.guards.length !== this.selected.size || this.materialized.size !== this.selected.size || this.guards.some((guard) => !guard())) {
             throw new ChatImageRequestError("request_changed");
         }
+    }
+
+    /** Snapshot only the sources actually selected for the prepared physical request. */
+    captureSourceValidity(): () => void {
+        this.assertReady();
+        return assertImageSourcesCurrent([...this.guards]);
     }
 
     isUsable(): boolean {
@@ -154,6 +216,9 @@ export class ChatImageRequestScope {
         if (!unique.length || unique.length > IMAGE_POLICY.maxImagesPerTurn || unique.some((ref) => !this.authorized.has(key(ref)))) {
             throw new ChatImageRequestError("source_unavailable");
         }
+        if (this.writingMaterialKeys && unique.some(ref => !this.writingMaterialKeys!.has(key(ref)))) {
+            throw new ChatImageRequestError('source_unavailable');
+        }
         if (new Set([...this.selected.keys(), ...unique.map(key)]).size > IMAGE_POLICY.maxImagesPerTurn) {
             this.resolutionFailed = true;
             return unique.map((ref) => ({ ref, availability: "budget_exceeded" }));
@@ -162,7 +227,9 @@ export class ChatImageRequestScope {
         for (const ref of unique) {
             try {
                 if (!this.options.service) throw new ChatImageRequestError("source_unavailable");
-                const receipt = await this.options.service.verify(ref, "provider");
+                const receipt = await this.options.service.verify(ref, "provider", {
+                    signal, isCurrent: () => { this.assertSnapshot(); return true; },
+                });
                 this.assertSnapshot(signal);
                 if (!receipt.isCurrent()) throw new ChatImageRequestError("request_changed");
                 this.selected.set(key(ref), this.authorized.get(key(ref))!);
@@ -196,6 +263,21 @@ export class ChatImageRequestScope {
             throw new ChatImageRequestError("request_changed");
         }
     }
+}
+
+// These closures own only immutable verification functions, never the request
+// scope, its pixels/leases, its abort signal or its temporary selection state.
+function sourceChecksCurrent(checks: readonly (() => boolean)[]): () => boolean {
+    const captured = [...checks];
+    return () => {
+        try { return captured.every(check => check()); }
+        catch { return false; }
+    };
+}
+
+function assertImageSourcesCurrent(checks: readonly (() => boolean)[]): () => void {
+    const isCurrent = sourceChecksCurrent(checks);
+    return () => { if (!isCurrent()) throw new ChatImageRequestError("request_changed"); };
 }
 
 function explicitSingleImageOrdinal(text: string): number | undefined {

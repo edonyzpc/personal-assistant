@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-06
+Updated: 2026-09-12
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -16,7 +16,7 @@ Default runtime boundary:
 - Memory and Context Used remain source-visible.
 - No provider built-in web-search fallback.
 - No arbitrary MCP endpoint, shell, script, local executable, or hidden note mutation.
-- Operations Agent Step 2 is build-available, but its persisted per-vault opt-in defaults off; only the four approved tools can be exposed, and only for a detected write-intent run.
+- Operations Agent Step 2 is build-available, but its persisted per-vault opt-in defaults off; when enabled, the same main Agent may propose only the four approved tools, and every write still requires the existing policy and explicit confirmation.
 
 ## Runtime Map
 
@@ -35,6 +35,8 @@ flowchart TD
   Sources["SourceStore / Context Used"]
   Memory["MemorySearchTool\nHost-only candidates + projector"]
   Recovery["ChatMemoryRecoveryCoordinator\nrun-scoped one-shot recovery"]
+  TaskScope["TaskSourceRun\nhost-bound source scope"]
+  Writing["WritingContextRun / present_writing\nhost-bound writing output"]
   Events["AgentEvent lifecycle"]
   History["Canonical persisted turn"]
 
@@ -42,6 +44,8 @@ flowchart TD
   Runtime --> Context
   Runtime --> Registry --> Policy
   Runtime --> Memory --> Recovery
+  Runtime --> TaskScope --> Dispatcher
+  Runtime --> Writing --> Loop
   Registry --> Providers
   Runtime --> Loop --> Model
   Loop --> Dispatcher --> Registry
@@ -56,7 +60,7 @@ flowchart TD
 | Component | Current responsibility |
 | --- | --- |
 | `ChatService.streamLLM(...)` | Stable entry used by Chat UI; selects the supported PA Agent path and bridges callbacks. |
-| `PaAgentRuntime` | Composes model, context, capabilities, policies, sources, Write Action hooks, and lifecycle loop. |
+| `PaAgentRuntime` | Composes model, context, capabilities, policies, task-source and writing-output runs, Write Action hooks, and lifecycle loop. |
 | `PaAgentLoop` | Owns canonical run/turn/message/tool ordering, budgets, cancellation, terminal state, and final committed text. |
 | `ToolExecutionDispatcher` | Validates buffered tool calls, selects parallel/sequential batch mode, enforces tool budgets/timeouts, and emits paired results. |
 | `CapabilityRegistry` | Registers providers/capabilities, prepares and validates input, applies policy, executes capabilities, and emits opt-in content-free usage events. |
@@ -65,7 +69,9 @@ flowchart TD
 | `SourceStore` | Keeps source records and source-boundary metadata separate from answer text. |
 | `MemorySearchTool` | Owns direct/graph candidate collection, selected-model reranking, live-source checks, final allocation, and the allowlisted Memory observation. |
 | `ChatMemoryRecoveryCoordinator` | Owns one run-scoped hidden relaxed attempt, its token/deadlines/frozen plan, exact-repeat suppression, and the cumulative ≤8-document replacement observation. |
-| `ChatView` | Consumes canonical lifecycle events and persists current-turn state without duplicate legacy rendering. |
+| `TaskSourceRun` | Binds one user request to the Host-allowed note/Web scope and revalidates the material used by every physical provider request. |
+| `WritingContextRun` | Exposes Host-selected writing candidates, binds the selected parent/material/style state to one context handle, and admits the final pure output against that handle. |
+| `ChatView` | Consumes canonical lifecycle, writing preview/artifact/recovery events and persists current-turn state, versions and confirmed save results without duplicate legacy rendering. |
 
 ## Capability Model
 
@@ -87,6 +93,11 @@ provider.load → CapabilityRegistry.register → PolicyEngine export gate
 ```
 
 Input normalization is tool-local through `prepareArguments` / `prepareAndValidate`. Invalid required input returns `schema_invalid`; the runtime may issue one corrective turn, but it must not silently broaden tool scope or invent a write target.
+
+Native writing output is a Host-declared final-output shape rather than an
+executable capability. Providers cannot register or execute it through the
+Capability Registry, and calling it grants no read, write, source, or save
+permission.
 
 ## Current Providers
 
@@ -187,9 +198,29 @@ abort, or deadline expiry invalidates the token and discards late work.
 - Referenced resources are loaded only through the approved Skill context path.
 - Bundled Skills provide context/instructions; they do not become arbitrary script execution.
 
+### Task source and writing output
+
+The main Agent interprets the user's goal and may call `declare_source_scope`
+before note or Web reads. `TaskSourceRun` commits that declaration only after
+Host validation and rejects a mixed batch whose reads are not covered by the
+committed scope. Note scope and personalization are separate: a request limited
+to the current note does not by itself remove eligible Personal, existing
+Memory, or explicitly authorized style samples. Before every physical provider
+request, the Host rebuilds and revalidates the actual admitted inputs.
+
+For writing, `get_writing_context` exposes only Host-selected candidates and
+returns a run-bound context handle. When native writing output is enabled,
+`present_writing` becomes available only after that context is prepared. It must
+be the single output call in its response and cannot be mixed with new source or
+action calls. The Host separately verifies provider completion, call identity,
+schema, source currentness and the generation-input snapshot before creating one
+artifact/version. Preview reads and saves nothing; saving remains an explicit
+confirmed Host action. Legacy JSON, recovery and persisted-version readers stay
+available for existing records.
+
 ### Operations Agent providers
 
-`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. Operations becomes effective only when the persisted per-vault `operationsAgentEnabled` setting is also `true`. A detected write-intent run may then switch to `chat-with-actions` and register exactly `vault_create`, `vault_append`, `vault_process`, and `frontmatter_update`; no old append/selection action or fifth write tool is registered.
+`OPERATIONS_AGENT_RUNTIME_ENABLED=true` is a build-availability gate, not user consent. Operations becomes effective only when the persisted per-vault `operationsAgentEnabled` setting is also `true`. The same main Agent may then propose exactly `vault_create`, `vault_append`, `vault_process`, and `frontmatter_update` according to the user's goal; there is no separate local write-intent classifier. No old append/selection action or fifth write tool is registered.
 
 Calls from one assistant tool phase stage one immutable intent and show one inline Chat preview; no write occurs until explicit confirmation. Existing-note changes revalidate their frozen baseline inside `vault.process()`, create rechecks collisions, Undo fails closed after drift, and audit is content-free by default.
 
@@ -240,7 +271,7 @@ input, runtime instructions, tool/write boundaries and existing Memory/Pagelet
 projections are not silently cut. An irreducible overflow stops that attempted
 request with a local Context explanation; a previous attempt in the same run
 may already have reached the provider. An early lower-bound check rejects an
-oversized current input before optional startup classification.
+oversized current input before optional context preparation.
 
 Each attempted admissible projection contributes a three-boolean Context
 receipt (`historyCompressed`, `toolContextReduced`, `budgetLimited`), aggregated
@@ -338,7 +369,12 @@ or changing the Memory index.
 
 ## Required Capability And Completion Policy
 
-The runtime can classify a request as requiring Memory, current-note context, or WebSearch. A required capability is satisfied only by a successful tool result.
+The main Agent interprets the request and selects from the tools that Host policy
+actually exports. The Host does not make a separate startup-classification model
+call or create a predicted required-tool list. Completion policy instead uses
+the tools that were actually executed, their admitted source state, pending
+actions, writing-output state and the run terminal condition. An executed
+capability is satisfied only by its successful tool result.
 
 Host policy may:
 
@@ -378,6 +414,8 @@ entry.
 - Canonical turns use `PaAgentPersistedTurn` schema version 1.
 - Messages preserve user, assistant thinking/text/toolCall parts, and structured tool results.
 - `agent_end.metadata.finalTurnId` identifies the last model turn while run-scope events retain `RUN_SCOPE_TURN_ID`.
+- Writing versions persist the exact body, parent/scene/material references and generation-input source receipt; preview is zero-write and a confirmed save persists its own receipt.
+- Native output and legacy JSON/recovery readers coexist; unknown or invalid newer governance records fail closed without deleting their durable data.
 - Legacy events/callbacks remain compatibility output; canonical ChatView rendering must not consume both lanes for the same live turn.
 
 ## Validation And Change Rules

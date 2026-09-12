@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-09-08
+Updated: 2026-09-12
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,12 +18,13 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
-| DEC-033 | 设置面向普通用户，必要机制内置，废弃开关不再参与运行 | 长期提取与习惯学习独立主动开启；清理仅限明确撤销项，保留有效数据范围、权限与专业连接 | [Decision](./decisions/dec-033-simple-settings-and-unified-defaults.md), [Product Spec](./specs/pa-simple-settings-product-spec.md) | 默认策略造成异常成本、功能缺失或权限扩大 |
+| DEC-034 | 主 Agent 语义决策、个性化取材边界与默认学习 | 主 Agent 统一理解咨询、取材、创作与 Operations 提议；宿主逐次重验物理发送来源，作品由专用通道交付并保留 legacy reader、恢复和降级边界。旧 track 不重开 | [Decision](./decisions/dec-034-unified-agent-task-execution.md), [Product Spec](./specs/pa-unified-task-execution-product-spec.md), [B-135 validation](../archive/2026/b135-unified-task-execution-validation.md) | 来源、权限、默认迁移或可靠交付不能满足已确认边界 |
+| DEC-033 | 设置面向普通用户，必要机制内置，废弃开关不再参与运行 | 2026-09-09 修订为长期提取与本地习惯学习分别默认开启、独立关闭/暂停和首次透明说明；不伪造用户确认，迁移不得复活真实停用。默认与旧值迁移已由 B-135 交付；清理仍仅限明确撤销项 | [Decision](./decisions/dec-033-simple-settings-and-unified-defaults.md), [Product Spec](./specs/pa-simple-settings-product-spec.md), [B-135 validation](../archive/2026/b135-unified-task-execution-validation.md) | 默认策略造成异常成本、功能缺失或权限扩大 |
 | DEC-032 | Context 可靠性和长会话连续性分别验收，长期 Memory 保持独立 | 完整原文与可逆表示优先，超限时采用有来源的结构化会话/工具摘要；不引入工具归档或执行恢复 | [Decision](./decisions/dec-032-context-reliability-and-conversation-continuity.md), [Product Spec](./specs/pa-context-management-product-spec.md) | 摘要遗漏重要语义或递归漂移，或存在独立重启续跑需求 |
 | DEC-002 | 产品北极星是“随手记下，需要时自然浮现”，设计约束是“安静且可信” | 优先用户真实笔记的轻量 Capture 与有证据的自然返回 | [North Star](./pa-product-north-star.md) | 用户明确选择新的产品方向 |
 | DEC-003 | 保留“管理工具 + AI Chat/Memory”双产品线，不拆分插件；资源优先 AI 侧 | 管理能力仍是产品边界，AI 侧承担主要新增价值 | [Decision Record](./decisions/dec-003-dual-product-line.md), [Product IA](./pa-product-information-architecture-spec.md) | 用户明确批准拆分或产品定位改变 |
 | DEC-004 | Quiet Recall 候选来自整个 vault，使用打开笔记、保存后自然间隙与快捷键等低打扰触发 | 回忆自己的内容，不制造待处理队列 | [Quiet Recall Spec](./specs/pa-quiet-recall-insight-timing-product-spec.md) | Dogfood 证明触发负担高于返回价值 |
-| DEC-005 | 用户主动开启长期提取后，Memory 按 effect/risk 自动处理并可检查、纠正、撤销 | DEC-033 明确独立启用前提；不采用逐条 clickworker 确认，高后果动作仍需披露或授权 | [Decision Record](./decisions/dec-005-memory-governance.md), [DEC-033](./decisions/dec-033-simple-settings-and-unified-defaults.md), [Memory Control Center](./specs/pa-memory-control-center-product-spec.md) | 真实安全事件或用户研究否定当前治理模型 |
+| DEC-005 | 长期提取默认开启，Memory 按 effect/risk 自动处理并可检查、纠正、撤销 | DEC-033 的 2026-09-09 修订保留独立关闭/暂停与首次透明说明；不采用逐条 clickworker 确认，显式风格和高后果动作仍按原权限治理 | [Decision Record](./decisions/dec-005-memory-governance.md), [DEC-033](./decisions/dec-033-simple-settings-and-unified-defaults.md), [Memory Control Center](./specs/pa-memory-control-center-product-spec.md) | 真实安全事件或用户研究否定当前治理模型 |
 | DEC-009 | Pagelet 保持安静、可忽略的 Pet/Bubble/Review delivery 模型 | 不把独立 AI 功能按钮和队列重新堆回 surface | [Pagelet Product Design](./pagelet-product-design.md) | 当前 delivery 无法满足真实 Capture/Recall 需求 |
 | DEC-014 | Operations Agent 仅开放 per-vault opt-in 的有界 Chat / Pagelet 写入 | 仅四个 core tools、inline 确认、stale-safe、Undo、content-free audit；Pagelet 只直接执行单文件确定性动作，复杂动作带完整上下文进入 Chat；额外写入仍关闭 | [Decision Record](./decisions/dec-014-defer-operations-agent.md), [Step 2 SDD](../development/proposals/operations-agent/operations-agent-step2-sdd.md), [Step 3 SDD](../development/proposals/operations-agent/operations-agent-step3-sdd.md) | 真实 dogfood/安全证据要求缩窄，或 owner 评估额外写入 |
 | DEC-017 | Scope Recap 默认进行有界后台准备 | provider 配置后提前准备高意图 scope，使用户点击即得；首次通知按 DEC-023，用户 opt-out、独立预算、非 whole-vault 与只读 derived artifact 边界继续有效 | [Decision Record](./decisions/dec-017-default-background-recap-preparation.md), [Scope Recap Spec](./specs/pa-scope-recap-theme-summary-product-spec.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md) | 成本、资源、隐私或低价值 dogfood 信号证明默认开启负担更高 |

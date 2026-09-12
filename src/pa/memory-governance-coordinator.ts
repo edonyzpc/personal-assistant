@@ -716,6 +716,7 @@ export class MemoryGovernanceCoordinator {
                 action: "remove",
                 claimId: claim.id,
                 profileRecordId: link.target.profileRecordId,
+                ...(link.target.store ? { profileStore: link.target.store, profileKey: link.target.profileKey } : {}),
                 projectionLinkId: link.id,
                 state: "pending",
                 attemptCount: 0,
@@ -777,7 +778,7 @@ export class MemoryGovernanceCoordinator {
 
                     const expiredRunIds = new Set<string>();
                     for (const [vaultKey, migration] of Object.entries(draft.migrationStates)) {
-                        if (migration.phase === "finalizing" || migration.phase === "rolling_back") continue;
+                        if (migration.phase === "finalizing" || migration.phase === "rolling_back" || migration.phase === "governed_preserving_legacy") continue;
                         const policy = draft.policyStates[vaultKey];
                         if (migration.phase === "compatibility"
                             && (!policy
@@ -977,7 +978,7 @@ export class MemoryGovernanceCoordinator {
                             );
                         }
                     }
-                    const legacyCompatibility = compatibilityMigration?.phase === "compatibility"
+                    const legacyCompatibility = (compatibilityMigration?.phase === "compatibility" || compatibilityMigration?.phase === "governed_preserving_legacy")
                         && legacyRecordIdFingerprints.size
                             + legacyMemoryQueueItemIdFingerprints.size > 0
                         ? {
@@ -1184,7 +1185,7 @@ export class MemoryGovernanceCoordinator {
                     const trustedSourceHash = migration?.legacySourceStateHash
                         ?? migration?.sourceHash;
                     const prepare = this.projectionCleanupPort?.prepareLegacyCompatibilityForget;
-                    if (!migration || migration.phase !== "compatibility" || !trustedSourceHash) {
+                    if (!migration || (migration.phase !== "compatibility" && migration.phase !== "governed_preserving_legacy") || !trustedSourceHash) {
                         await this.recordForgetFailure(
                             operationId,
                             "legacy_compatibility_state_unavailable",
@@ -1249,7 +1250,7 @@ export class MemoryGovernanceCoordinator {
                             const currentMigration = draft.migrationStates[this.opaqueVaultKey];
                             const currentTrustedHash = currentMigration?.legacySourceStateHash
                                 ?? currentMigration?.sourceHash;
-                            if (!currentMigration || currentMigration.phase !== "compatibility"
+                            if (!currentMigration || (currentMigration.phase !== "compatibility" && currentMigration.phase !== "governed_preserving_legacy")
                                 || currentTrustedHash !== trustedSourceHash
                                 || currentMigration.pendingLegacySourceHash
                                     !== migration.pendingLegacySourceHash) {
@@ -1340,7 +1341,7 @@ export class MemoryGovernanceCoordinator {
                                 throw new CoordinatorError("legacy_compatibility_plan_changed");
                             }
                             const migration = draft.migrationStates[this.opaqueVaultKey];
-                            if (!migration || migration.phase !== "compatibility") {
+                            if (!migration || (migration.phase !== "compatibility" && migration.phase !== "governed_preserving_legacy")) {
                                 throw new CoordinatorError("legacy_compatibility_state_unavailable");
                             }
                             if (current.preservePendingReconciliation) {
@@ -1509,7 +1510,7 @@ export class MemoryGovernanceCoordinator {
                 const migration = draft.migrationStates[this.opaqueVaultKey];
                 const trustedSourceHash = migration?.legacySourceStateHash
                     ?? migration?.sourceHash;
-                if (!migration || migration.phase !== "compatibility" || !trustedSourceHash) {
+                if (!migration || (migration.phase !== "compatibility" && migration.phase !== "governed_preserving_legacy") || !trustedSourceHash) {
                     throw new CoordinatorError("legacy_compatibility_state_unavailable");
                 }
                 if (sourceHash === trustedSourceHash) {
@@ -1604,6 +1605,7 @@ export class MemoryGovernanceCoordinator {
                     || existing.action !== "remove"
                     || existing.claimId !== claimId
                     || existing.profileRecordId !== link.target.profileRecordId
+                    || existing.profileStore !== link.target.store || existing.profileKey !== link.target.profileKey
                     || existing.projectionLinkId !== link.id
                     || existing.ownerVaultKey !== this.opaqueVaultKey) {
                     throw new CoordinatorError("profile_projection_operation_collision");
@@ -1616,6 +1618,7 @@ export class MemoryGovernanceCoordinator {
                 action: "remove",
                 claimId,
                 profileRecordId: link.target.profileRecordId,
+                ...(link.target.store ? { profileStore: link.target.store, profileKey: link.target.profileKey } : {}),
                 projectionLinkId: link.id,
                 ownerVaultKey: this.opaqueVaultKey,
                 state: "pending",
@@ -1742,7 +1745,7 @@ export class MemoryGovernanceCoordinator {
         if (migration.phase === "rolling_back") {
             throw new CoordinatorError("migration_rolling_back");
         }
-        if (migration.phase === "finalized") return null;
+        if (migration.phase === "finalized" || migration.phase === "governed_preserving_legacy") return null;
         if (migration.phase !== "compatibility") {
             throw new CoordinatorError("migration_phase_blocks_mutation");
         }
@@ -2119,9 +2122,12 @@ function scheduleProfileProjectionOperations(
         && link.target.kind === "type_a_profile"
     ));
     for (const link of profileLinks) {
-        const profileRecordId = link.target.kind === "type_a_profile"
-            ? link.target.profileRecordId
-            : "";
+        if (link.target.kind !== "type_a_profile") continue;
+        const target = link.target;
+        // A retained legacy copy remains a Forget target, never a destination for new revisions.
+        if (!target.store && profileLinks.some((other) => other.target.kind === "type_a_profile"
+            && other.target.profileRecordId === target.profileRecordId && other.target.store === "governed")) continue;
+        const profileRecordId = target.profileRecordId;
         const operationId = `profile-projection:${revision.id}:${link.id}`;
         const existing = draft.pendingOperations.find((operation) => operation.id === operationId);
         if (existing) {
@@ -2129,6 +2135,7 @@ function scheduleProfileProjectionOperations(
                 || existing.action === "remove"
                 || existing.claimId !== claim.id
                 || existing.profileRecordId !== profileRecordId
+                || existing.profileStore !== target.store || existing.profileKey !== target.profileKey
                 || existing.targetRevisionId !== revision.id) {
                 throw new CoordinatorError("profile_projection_collision");
             }
@@ -2142,6 +2149,7 @@ function scheduleProfileProjectionOperations(
             kind: "profile_projection",
             claimId: claim.id,
             profileRecordId,
+            ...(target.store ? { profileStore: target.store, profileKey: target.profileKey } : {}),
             targetRevisionId: revision.id,
             state: "pending",
             attemptCount: 0,
@@ -2167,9 +2175,15 @@ function replaceClaimLinks(
     claimId: string,
     links: readonly MemoryProjectionLink[],
 ): void {
+    // Undo can predate creation of the governed copy. Keep the real copy linked
+    // for recovery/Forget and restore its body through the current store boundary.
+    const retainedCopies = draft.projectionLinks.filter((link) => link.claimId === claimId
+        && link.state === "active" && link.target.kind === "type_a_profile"
+        && !links.some((restored) => restored.id === link.id));
     draft.projectionLinks = [
         ...draft.projectionLinks.filter((link) => link.claimId !== claimId),
         ...links.map(cloneProjectionLink),
+        ...retainedCopies.map(cloneProjectionLink),
     ];
 }
 

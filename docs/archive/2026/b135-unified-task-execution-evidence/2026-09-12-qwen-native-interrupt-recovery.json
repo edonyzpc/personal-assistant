@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-12T11:59:55.995Z",
+  "scenario": "B-135 T-05/T-07 native writing interruption and local recovery",
+  "environment": {
+    "vault": "test",
+    "obsidian": "1.14.1",
+    "pluginVersion": "2.9.2",
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "deployedSourceCommit": "0bbe12ba4313ae537990d3d5208496f3c12bc312",
+    "bundleSha256": "0fb0aba1e069086ec821f979fba9749d0d82146d8d8082b19327610705a4d684"
+  },
+  "request": {
+    "conversationId": "355679d3-4593-4972-88e3-0c7f6495aeaf",
+    "nativeProtocolEnabledForIsolatedView": true,
+    "memoryEnabled": false,
+    "webSearchEnabled": false,
+    "prompt": "B-135 隔离取消验证。不要读取笔记、Memory、网页或调用任何来源工具。请创作一段约 800 字的合成旅行散文，只使用这些虚构事实：青色灯塔、纸船、雨后石阶、海风。直接交付作品，不要说明。",
+    "contextStates": {
+      "task": "none",
+      "personal": "none",
+      "insights": "none",
+      "style": "none",
+      "images": 0,
+      "parent": "none",
+      "pagelet": "none"
+    }
+  },
+  "interruption": {
+    "trigger": "DOM stop button after native preview became readable",
+    "previewText": "《青色灯塔》\n雨后石阶还",
+    "committedPartialText": "《青色灯塔》\n\n雨后石阶还泛着凉意，一级一级往坡上去，像谁把整段黄昏铺成了路。我踩着水痕",
+    "turnStatus": "aborted",
+    "recoveryReason": "incomplete",
+    "warning": "user_abort",
+    "shareCardEligible": false,
+    "versionCountBeforeRecovery": 0,
+    "persistedTurnCount": 1,
+    "canonicalAssistantMessagesAfterAbort": 0
+  },
+  "reloadBeforeRecovery": {
+    "partialVisible": true,
+    "cancelledVisible": true,
+    "recoveryActionCount": 1,
+    "status": "aborted"
+  },
+  "recovery": {
+    "selection": "雨后石阶还泛着凉意，一级一级往坡上去，像谁把整段黄昏铺成了路。我踩着水痕",
+    "origin": "ai_generated",
+    "text": "雨后石阶还泛着凉意，一级一级往坡上去，像谁把整段黄昏铺成了路。我踩着水痕",
+    "textSha256": "755f48db2653b3be1cde544b9b1cbfd9f285caf5da1c82316a0e38ec26bb15b2",
+    "versionId": "writing_99c53a9a22dd40786fce5c863cb2cb498d3a6628dc06c34e",
+    "referenceScope": "request",
+    "images": 0,
+    "backgroundSources": 0,
+    "styleSamples": 0,
+    "generationInput": {
+      "schemaVersion": 1,
+      "inputPurpose": "writing",
+      "task": {
+        "state": "none",
+        "sources": []
+      },
+      "personal": {
+        "state": "none"
+      },
+      "insights": {
+        "state": "none"
+      },
+      "style": {
+        "state": "none"
+      },
+      "images": [],
+      "parent": {
+        "state": "none"
+      },
+      "pagelet": {
+        "state": "none"
+      }
+    },
+    "modelRequestDuringRecovery": false
+  },
+  "reloadAfterRecovery": {
+    "versionCount": 1,
+    "persistedVersionId": "writing_99c53a9a22dd40786fce5c863cb2cb498d3a6628dc06c34e",
+    "writingAction": "Writing versions",
+    "interruptedHistoryRetained": true
+  },
+  "settingsRestored": {
+    "memoryEnabled": true,
+    "webSearchEnabled": true,
+    "provider": "qwen",
+    "model": "qwen3.8-max"
+  },
+  "screenshots": [
+    ".b135-interrupt-after-clear.png",
+    ".b135-interrupt-reload.png",
+    ".b135-interrupt-recovered-version.png"
+  ],
+  "limitations": [
+    "DOM-dispatched controls and Electron screenshots; no mouse gesture proof",
+    "Desktop test vault only; iOS remains untested"
+  ],
+  "cleanup": {
+    "activeConversationId": "86c42fff-d476-4b8d-8ed2-db1d7cd092cf",
+    "conversationCount": 3,
+    "isolatedConversationDeleted": true,
+    "isolatedVersions": 0,
+    "orphanRecoveredVersion": false,
+    "originalConversationHistoryLength": 2,
+    "originalFirstUserText": "帮我提取图片中的问题",
+    "memoryEnabled": true,
+    "webSearchEnabled": true,
+    "provider": "qwen",
+    "model": "qwen3.8-max",
+    "modals": 0,
+    "mobileEmulation": false
+  }
+}

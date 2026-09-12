@@ -2,8 +2,18 @@ import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import type { Vault } from "obsidian";
 import type { ImageAsset } from "../src/chat/image-types";
 import { hashWritingText, type WritingVersion } from "../src/chat/writing-types";
+import { WritingVersionService } from "../src/chat/writing-versions";
+import { decodeNativeWritingOutput } from "../src/ai-services/writing-output";
+import type { GenerationInputSnapshot } from "../src/ai-services/generation-input-snapshot";
+import writingProtocolTrace from "./fixtures/b135-writing-protocol-trace.json";
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 import { createContextPagerStateFromChatContextUsed } from "../src/pa/context-pager";
+
+const generationInput = (): GenerationInputSnapshot => ({
+    schemaVersion: 1, inputPurpose: 'writing', task: { state: 'none', sources: [] },
+    personal: { state: 'none' }, insights: { state: 'none' }, style: { state: 'none' }, images: [],
+    parent: { state: 'none' }, pagelet: { state: 'none' },
+});
 
 class FakeIDBKeyRange {
     constructor(
@@ -580,6 +590,143 @@ describe.each(['memory', 'indexeddb'] as const)('multimodal turn transaction (%s
             : new IndexedDbChatHistoryStore('images', new FakeIndexedDbFactory() as unknown as IDBFactory);
         await store.initialize(); return store;
     };
+    it('rejects source revocation during the store hash without persisting a version or image owner', async () => {
+        const store = await open();
+        await store.putImageAsset(asset());
+        const originalPut = store.putWritingVersion.bind(store);
+        let current = true;
+        jest.spyOn(store, 'putWritingVersion').mockImplementation((version: WritingVersion, assertSourceCurrent?: () => void) => {
+            const pending = originalPut(version, assertSourceCurrent);
+            // Real store execution is now suspended on its asynchronous hash.
+            current = false;
+            return pending;
+        });
+        const service = new WritingVersionService(store);
+        try {
+            await expect(service.create({ requestId: 'revoked', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Source-backed body', images: [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }],
+            }, () => current)).rejects.toThrow('Writing conversation changed');
+            expect(await store.listWritingVersions('conv-1')).toEqual([]);
+            expect((await store.getImageAsset('image_one'))?.owners).toEqual([]);
+        } finally { await service.dispose(); await store.dispose(); }
+    });
+    it('preserves a committed write when the source is revoked before its promise returns', async () => {
+        const store = await open();
+        const originalPut = store.putWritingVersion.bind(store);
+        let current = true;
+        jest.spyOn(store, 'putWritingVersion').mockImplementation(async (version: WritingVersion, assertSourceCurrent?: () => void) => {
+            await originalPut(version, assertSourceCurrent);
+            current = false;
+        });
+        const service = new WritingVersionService(store);
+        try {
+            const version = await service.create({ requestId: 'committed', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Committed body', images: [],
+            }, () => current);
+            expect(await store.getWritingVersion(version.id)).toEqual(version);
+        } finally { await service.dispose(); await store.dispose(); }
+    });
+    it('drains a source-valid write already inside the store when the version service is disposed', async () => {
+        const store = await open();
+        const originalPut = store.putWritingVersion.bind(store);
+        const service = new WritingVersionService(store);
+        let closing: Promise<void> | undefined;
+        jest.spyOn(store, 'putWritingVersion').mockImplementation((version: WritingVersion, assertSourceCurrent?: () => void) => {
+            const pending = originalPut(version, assertSourceCurrent);
+            closing = service.dispose();
+            return pending;
+        });
+        try {
+            const version = await service.create({ requestId: 'draining', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Valid admitted body', images: [],
+            });
+            await closing;
+            expect(await store.getWritingVersion(version.id)).toEqual(version);
+        } finally { await service.dispose(); await store.dispose(); }
+    });
+    if (backend === 'indexeddb') it('aborts ownership changes when a source is revoked inside the writing transaction', async () => {
+        const store = await open();
+        await store.putImageAsset(asset());
+        let current = true;
+        const originalPut = FakeObjectStore.prototype.put;
+        const mutation = jest.spyOn(FakeObjectStore.prototype, 'put').mockImplementation(function (this: FakeObjectStore, record) {
+            const request = originalPut.call(this, record);
+            if (record.id === 'image_one' && (record as ImageAsset).owners.some(owner => owner.kind === 'writing')) current = false;
+            return request;
+        });
+        const service = new WritingVersionService(store);
+        try {
+            await expect(service.create({ requestId: 'transaction', messageId: 'message', conversationId: 'conv-1',
+                turnIndex: 0, text: 'Source-backed body', images: [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }],
+            }, () => current)).rejects.toThrow('Writing conversation changed');
+            expect(current).toBe(false);
+            expect(await store.listWritingVersions('conv-1')).toEqual([]);
+            expect((await store.getImageAsset('image_one'))?.owners).toEqual([]);
+        } finally { mutation.mockRestore(); await service.dispose(); await store.dispose(); }
+    });
+    it('reads native output through existing version/history readers alongside old recovery records', async () => {
+        const factory = new FakeIndexedDbFactory() as unknown as IDBFactory;
+        const store = backend === 'memory' ? new MemoryChatHistoryStore() : new IndexedDbChatHistoryStore('native-reader', factory);
+        await store.initialize();
+        await store.putImageAsset(asset());
+        await store.upsertConversation(makeConversation());
+        const trace = writingProtocolTrace.results.find((result) => result.mode === 'native')!;
+        const decoded = decodeNativeWritingOutput(trace.rawArguments, 'b135-probe', 20_000)!;
+        expect(decoded.body).toBe(trace.expected);
+        const versions = new WritingVersionService(store);
+        const images = [{ ref: { assetId: 'image_one', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'photo' }];
+        const version = await versions.create({ requestId: 'native-request', messageId: 'native-message',
+            conversationId: 'conv-1', turnIndex: 0, text: decoded.body, explanation: decoded.explanation,
+            images, styleRevisionIds: ['authorized-style'], backgroundSourceRefs: [{ path: 'notes/context.md' }],
+            generationInput: generationInput(),
+        });
+        const displayed = `前置说明\n\n${decoded.body}`;
+        await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: displayed, writingVersionId: version.id } }));
+        const oldRecovery = { requestId: 'old-request', rawText: '{"kind":"pa.writing",', reason: 'incomplete' as const };
+        await store.appendTurn(makeTurn({ turnIndex: 1, assistant: { role: 'assistant', content: '旧恢复内容', writingRecovery: oldRecovery } }));
+        versions.dispose();
+        const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('native-reader', factory) : store;
+        await reader.initialize();
+        const reopened = new WritingVersionService(reader);
+        expect(await reopened.get(version.id)).toEqual(version);
+        expect((await reopened.list('conv-1'))[0]).toMatchObject({ text: trace.expected, associatedImages: images,
+            styleRevisionIds: ['authorized-style'], backgroundSourceRefs: [{ path: 'notes/context.md' }],
+            generationInput: generationInput(),
+        });
+        expect((await reader.getTurns('conv-1')).map((turn) => turn.assistant)).toEqual([
+            expect.objectContaining({ content: displayed, writingVersionId: version.id }),
+            expect.objectContaining({ content: '旧恢复内容', writingRecovery: oldRecovery }),
+        ]);
+        reopened.dispose();
+    });
+    it('preserves normalized recovery scenes across reload without sharing mutable objects', async () => {
+        const factory = new FakeIndexedDbFactory() as unknown as IDBFactory;
+        const store = backend === 'memory' ? new MemoryChatHistoryStore() : new IndexedDbChatHistoryStore('recovery-scene', factory);
+        await store.initialize();
+        const scene = { writingTask: ' caption ', purpose: ' share ', audience: ' friends ', domain: ' travel ' };
+        const normalized = { writingTask: 'caption', purpose: 'share', audience: 'friends', domain: 'travel' };
+        const receipt = generationInput();
+        const recovery = { requestId: 'recovery-scene', rawText: 'Partial work', reason: 'incomplete' as const,
+            scene, generationInput: receipt };
+        await store.appendTurn(makeTurn({ assistant: { role: 'assistant', content: 'Partial work', writingRecovery: recovery } }));
+        scene.audience = 'mutated input';
+        const first = (await store.getTurns('conv-1'))[0].assistant.writingRecovery!;
+        expect(first.scene).toEqual(normalized);
+        expect(first.generationInput).toEqual(generationInput());
+        first.scene!.purpose = 'mutated reader';
+        first.generationInput!.task.state = 'unknown';
+        const reader = backend === 'indexeddb' ? new IndexedDbChatHistoryStore('recovery-scene', factory) : store;
+        await reader.initialize();
+        expect((await reader.getTurns('conv-1'))[0].assistant.writingRecovery).toMatchObject({
+            scene: normalized, generationInput: generationInput(),
+        });
+        for (const invalid of [null, {}, { ...normalized, audience: '' }, { ...normalized, domain: 'x'.repeat(65) },
+            { ...normalized, hostAuthority: true }]) {
+            await expect(reader.appendTurn(makeTurn({ turnIndex: 1, assistant: { role: 'assistant', content: 'invalid',
+                writingRecovery: { ...recovery, scene: invalid as never } } }))).rejects.toThrow();
+        }
+        expect(await reader.getTurns('conv-1')).toHaveLength(1);
+    });
     it('retains a fixed conversation anchor before any image and does not let a stale turn snapshot undo a folder rename', async () => {
         const store = await open(), original = makeConversation({ imageAnchor: { kind: 'existing_note', path: 'notes/source.md' } });
         await store.upsertConversation(original);

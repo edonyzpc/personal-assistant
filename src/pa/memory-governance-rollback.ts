@@ -58,6 +58,20 @@ export function buildLegacyMemoryRollbackProjection(
     try {
         const vaultKey = opaqueVaultKey.trim();
         if (!vaultKey) throw new RollbackError("invalid_vault_key");
+        const vaultClaimIds = new Set(state.claims.filter((claim) => claim.partition.kind === "vault"
+            && claim.partition.key === vaultKey).map((claim) => claim.id));
+        const hasSemanticEvidence = state.revisions.some((revision) => vaultClaimIds.has(revision.claimId) && revision.chatSemanticReceipt)
+            || state.memoryQueueItems.some((item) => item.partition.kind === "vault" && item.partition.key === vaultKey
+                && item.governanceAdmission?.chatSemanticReceipt)
+            || state.undoSnapshots.some((snapshot) => snapshot.partition.kind === "vault" && snapshot.partition.key === vaultKey
+                && snapshot.revisions.some((revision) => revision.chatSemanticReceipt));
+        // The legacy projection cannot carry the source proof required by new learning.
+        // Preserve the database for re-upgrade instead of exporting an unguarded copy.
+        const hasGovernedProfile = state.projectionLinks.some((link) => vaultClaimIds.has(link.claimId)
+            && link.target.kind === "type_a_profile" && link.target.store === "governed")
+            || state.undoSnapshots.some((snapshot) => snapshot.partition.kind === "vault" && snapshot.partition.key === vaultKey
+                && snapshot.projectionLinks.some((link) => link.target.kind === "type_a_profile" && link.target.store === "governed"));
+        if (hasSemanticEvidence || hasGovernedProfile) throw new RollbackError("semantic_receipt_requires_current_reader");
         const migration = state.migrationStates[vaultKey];
         if (!migration || ![
             "compatibility",

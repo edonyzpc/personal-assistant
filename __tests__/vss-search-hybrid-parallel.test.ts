@@ -560,6 +560,19 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         vss.dispose();
     });
 
+    it('refuses scoped hybrid on an index without candidate scope support', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        await expect(vss.searchHybrid('notes', {
+            noteScope: { allowedPaths: ['allowed.md'], excludedPaths: [] },
+        })).rejects.toMatchObject({ code: 'vss-scoped-hybrid-unavailable' });
+        expect(index.search).not.toHaveBeenCalled();
+        expect(index.getChunksByPath).not.toHaveBeenCalled();
+        vss.dispose();
+    });
+
     it('returns empty exact path chunks from fallback indexes without embedding', async () => {
         const { plugin } = createPlugin();
         const vss = new VSS(plugin, 'cache');

@@ -13,6 +13,7 @@ import {
 } from "../src/ai-services/memory-extraction";
 import type {
     AdmitTypeACandidates,
+    TypeAAdmissionBatch,
     UserProfileCandidate,
     UserProfileRecord,
     VaultMetacognitionSnapshot,
@@ -271,6 +272,108 @@ describe("TypeAUserProfileExtractor", () => {
 });
 
 describe("MemoryExtractionScheduler", () => {
+    it("publishes source evidence that survives dispose but detects same-path replacement and explicit clearing", async () => {
+        const file = Object.assign(new TFile(), { path: 'notes/source.md', basename: 'source',
+            stat: { mtime: 1, ctime: 1, size: 10 } });
+        let current = file;
+        const changed = jest.fn();
+        const app = {
+            vault: { getMarkdownFiles: () => [current], getAbstractFileByPath: () => current },
+            metadataCache: { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} },
+        };
+        const scheduler = new MemoryExtractionScheduler({
+            app: app as any, chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: changed,
+        });
+        await scheduler.runTypeCRefresh('test');
+        const source = changed.mock.calls[0][0] as { isSourceCurrent: () => boolean; sourcePaths: string[] };
+        expect(source.sourcePaths).toEqual(['notes/source.md']);
+        expect(source.isSourceCurrent()).toBe(true);
+        scheduler.setIncludeVaultInsightsInPrompt(false);
+        expect(changed).toHaveBeenLastCalledWith(null);
+        expect(source.isSourceCurrent()).toBe(false);
+        scheduler.setIncludeVaultInsightsInPrompt(true);
+        await scheduler.runTypeCRefresh('again');
+        const next = changed.mock.calls.at(-1)![0] as typeof source;
+        scheduler.dispose();
+        expect(next.isSourceCurrent()).toBe(true);
+        current = Object.assign(new TFile(), { path: file.path, basename: file.basename, stat: { ...file.stat } });
+        expect(next.isSourceCurrent()).toBe(false);
+    });
+
+    it("does not publish source evidence when a source changes during asynchronous analysis", async () => {
+        const file = Object.assign(new TFile(), { path: 'notes/source.md', basename: 'source',
+            stat: { mtime: 1, ctime: 1, size: 10 } });
+        const changed = jest.fn();
+        const scheduler = new MemoryExtractionScheduler({
+            app: { vault: { getMarkdownFiles: () => [file], getAbstractFileByPath: () => file },
+                metadataCache: { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} } } as any,
+            chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: changed,
+        });
+        scheduler.setSemanticClusterProvider(async () => {
+            file.stat.mtime += 1;
+            return [];
+        });
+        await expect(scheduler.runTypeCRefresh('test')).resolves.toBeNull();
+        expect(changed).not.toHaveBeenCalled();
+        expect(scheduler.getVaultInsightsSnapshot()).toBeNull();
+        scheduler.dispose();
+    });
+
+    it("invalidates pending evidence when a folder rename adds eligible children without scheduling analysis", async () => {
+        const files: TFile[] = [];
+        const changed = jest.fn();
+        const scheduler = new MemoryExtractionScheduler({
+            app: { vault: { getMarkdownFiles: () => [...files], getAbstractFileByPath: () => null },
+                metadataCache: { getFileCache: () => ({}), resolvedLinks: {}, unresolvedLinks: {} } } as any,
+            chatHistoryManager: {} as any, userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true, onVaultInsightsSourceChanged: changed,
+        });
+        const schedule = jest.spyOn(scheduler, 'scheduleTypeCRefresh');
+        scheduler.setSemanticClusterProvider(async () => {
+            files.push(Object.assign(new TFile(), { path: 'notes/imported.md',
+                stat: { mtime: 1, ctime: 1, size: 10 } }));
+            scheduler.invalidateVaultInsightsSource({ path: 'notes' } as any);
+            return [];
+        });
+        await expect(scheduler.runTypeCRefresh('test')).resolves.toBeNull();
+        expect(changed).not.toHaveBeenCalled();
+        expect(schedule).not.toHaveBeenCalled();
+        scheduler.dispose();
+    });
+
+    it("carries a source guard through a pending Profile mutation without advancing its prompt cache", async () => {
+        const store = new MemoryUserProfileStore();
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as any,
+            chatHistoryManager: {} as any,
+            userProfileStore: store,
+        });
+        let release!: () => void;
+        let entered!: () => void;
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        const controller = new AbortController();
+        const guard = Object.assign(() => undefined, { signal: controller.signal });
+        const proposed = new TypeAUserProfileExtractor().mergeCandidates(null,
+            extractCandidatesFromText("Remember I prefer concise replies.", "conversation-1", "2026-06-16T08:00:00.000Z"),
+            new Date("2026-06-16T08:00:00.000Z"));
+        const mutation = scheduler.mutateUserProfile(async () => {
+            entered();
+            await pending;
+            return proposed;
+        }, guard);
+        await started;
+        controller.abort();
+        release();
+        await expect(mutation).rejects.toThrow("no longer current");
+        expect(await store.getProfile()).toBeNull();
+        expect(scheduler.getUserProfileSnapshot()).toBeNull();
+        expect(scheduler.getPromptContext().userProfile).toBeUndefined();
+        scheduler.dispose();
+    });
+
     it("updates the scheduler prompt cache through the serialized Profile governance port", async () => {
         const scheduler = new MemoryExtractionScheduler({
             app: {} as any,
@@ -820,6 +923,77 @@ describe("MemoryExtractionScheduler lifecycle", () => {
 
     afterEach(() => {
         jest.useRealTimers();
+    });
+
+    it.each(["cursor", "model", "response"] as const)("stops disposed extraction after awaiting %s", async (stage) => {
+        let release!: () => void;
+        let reached!: () => void;
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const pauseAt = async (point: typeof stage) => {
+            if (point !== stage) return;
+            reached();
+            await waiting;
+        };
+        const invoke = jest.fn(async () => { await pauseAt("response"); return "[]"; });
+        const createModel = jest.fn(async () => { await pauseAt("model"); return { invoke }; });
+        const admit = jest.fn<AdmitTypeACandidates>(async () => ({ status: "processed" }));
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(async () => ({ id: "c1", title: "Chat", turnCount: 1 })),
+                getTurns: jest.fn(async () => [{ conversationId: "c1", turnIndex: 1,
+                    user: { role: "user", content: "I prefer concise answers." },
+                    assistant: { role: "assistant", content: "Understood." } }]),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            createModelForExtraction: createModel,
+            getTypeAProcessedTurn: async () => { await pauseAt("cursor"); return undefined; },
+            admitTypeACandidates: admit,
+        });
+        const running = scheduler.runTypeAExtraction("c1");
+        await entered;
+        scheduler.dispose();
+        release();
+        await expect(running).resolves.toBeNull();
+        expect(invoke).toHaveBeenCalledTimes(stage === "response" ? 1 : 0);
+        expect(createModel).toHaveBeenCalledTimes(stage === "cursor" ? 0 : 1);
+        expect(admit).not.toHaveBeenCalled();
+        expect((scheduler as any).typeAProcessedTurnByConversation.size).toBe(0);
+    });
+
+    it("invalidates an admitted batch lifetime permanently when its scheduler stops", async () => {
+        let batch!: TypeAAdmissionBatch;
+        let reached!: () => void;
+        let release!: () => void;
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(async () => ({ id: "c1", title: "Chat", turnCount: 1 })),
+                getTurns: jest.fn(async () => [{ conversationId: "c1", turnIndex: 1,
+                    user: { role: "user", content: "Remember I prefer concise answers." },
+                    assistant: { role: "assistant", content: "Understood." } }]),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            admitTypeACandidates: async (input) => {
+                batch = input;
+                reached();
+                await waiting;
+                return { status: "processed" };
+            },
+        });
+        const running = scheduler.runTypeAExtraction("c1");
+        await entered;
+        expect(batch.isCurrent?.()).toBe(true);
+        expect(batch.signal?.aborted).toBe(false);
+        scheduler.dispose();
+        expect(batch.isCurrent?.()).toBe(false);
+        expect(batch.signal?.aborted).toBe(true);
+        release();
+        await expect(running).resolves.toBeNull();
+        expect((scheduler as any).typeAProcessedTurnByConversation.size).toBe(0);
     });
 
     it("handles an immediately rejected scheduled baseline before the timer fires", async () => {

@@ -60,17 +60,25 @@ export function chatToolResultToAgentCapabilityResult(
     providerId: string,
     result: ChatToolResult<unknown>,
 ): AgentCapabilityResult {
+    const visibleRecords = chatSourcesToSourceRecords(
+        result.sources,
+        definition.name,
+        providerId,
+        definition.sourceBoundary,
+    );
+    // Preserve only explicitly host-only dependencies, never arbitrary legacy
+    // source metadata that could grant citation or visible-source eligibility.
+    const dependencyRecords = (result.sourceRecords ?? []).filter(record =>
+        record.metadata?.sourceDependency === true
+        && record.statusOnly === true && record.redacted === true
+        && record.citationEligible === false && record.sourceBoundary === "read-only-tool"
+    ).map(record => ({ ...record, capabilityName: definition.name, providerId }));
     return {
         status: result.ok ? "ok" : "unavailable",
         observation: result.content,
         inputSummary: result.inputSummary,
         sources: result.sources,
-        sourceRecords: chatSourcesToSourceRecords(
-            result.sources,
-            definition.name,
-            providerId,
-            definition.sourceBoundary,
-        ),
+        sourceRecords: [...visibleRecords, ...dependencyRecords],
         ...(result.error ? {
             error: result.error,
             unavailableReason: result.error,
@@ -285,6 +293,7 @@ export function createChatToolCapability<Input, Output>(
                 // statusMessage callbacks should not throw; ignore defensively.
             }
             const chatContext: ChatToolContext = {
+                taskSourceReadGuard: context.taskSourceReadGuard,
                 host: context.host,
                 signal: context.signal,
                 outerToolDeadlineAt: context.outerToolDeadlineAt,

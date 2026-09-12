@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "workItem": "B-135",
+  "tasks": ["T-11", "T-18", "T-21"],
+  "date": "2026-09-12",
+  "decision": {
+    "source": "Owner instruction",
+    "rule": "Reuse Linux evidence for platform-neutral behavior, use Obsidian CLI mobile simulator for affected mobile presentation, and require macOS or iOS real-device evidence only for behavior that depends on those platforms."
+  },
+  "platformAudit": {
+    "macosSpecificB135Behavior": [],
+    "iosSpecificB135Behavior": [],
+    "mobileSpecificWritingCss": [],
+    "existingIosTransportTouch": {
+      "path": "src/ai-services/obsidian-fetch.ts",
+      "scope": "Host-only request diagnostics and late rejection consumption on the existing Obsidian requestUrl transport.",
+      "userVisibleBehaviorChanged": false,
+      "evidence": "The final 276-suite gate includes obsidian-fetch and ai-ios-dashscope-transport coverage for iOS/non-iOS dispatch, retry, cancellation, serialized limits, main-Agent routing, and runtime attempt identity."
+    },
+    "excludedTrueDeviceConcerns": [
+      "iCloud file-provider synchronization",
+      "HEIC or iOS image decoding",
+      "native touch and soft-keyboard behavior",
+      "iOS Keychain",
+      "WKWebView-only lifecycle or storage behavior"
+    ],
+    "reasonExcluded": "B-135 did not change these platform-specific paths; their owning feature or release gate retains any separate device requirement."
+  },
+  "build": {
+    "sourceHeadBeforeDocumentationUpdate": "e2d29176f4968078b8c76f004a93f59da13ad1bd",
+    "pluginVersion": "2.9.2",
+    "mainJsSha256": "54cd8cd97b77dc38885557f965339e9594a56429bfd40610abc97a37c0cb8b37",
+    "manifestSha256": "f12e21b0cceb42e7392d21589564725372e95348288774bff8e64e6a704fec5d",
+    "stylesSha256": "c530221f6769b7613088d858489302e2020146b3f0d9f539459258b4a295decd",
+    "deployment": "deploy-current identity check and copy to the repo-local test vault passed"
+  },
+  "environment": {
+    "host": "Linux x86_64",
+    "obsidian": "1.14.1",
+    "installer": "1.11.7",
+    "vault": "test",
+    "mobileClass": true,
+    "phoneClass": true,
+    "viewport": {"width": 390, "height": 844, "deviceScaleFactor": 1}
+  },
+  "mobileSimulator": {
+    "settings": {
+      "settingsUnchanged": true,
+      "rows": [
+        {"name": "AI Memory Extraction", "enabled": true, "toggleWidth": 52, "toggleHeight": 30, "visible": true, "centerHitWithinToggle": true},
+        {"name": "Improve recall locally", "enabled": true, "toggleWidth": 52, "toggleHeight": 30, "visible": true, "centerHitWithinToggle": true}
+      ]
+    },
+    "recovery": {
+      "realIndexedDb": true,
+      "validSource": {"explanationVisible": true, "versionsCreated": 1, "submittedTextPreserved": true, "uncertainReferenceScopePreserved": true},
+      "missingSource": {"explanationVisible": true, "versionsCreated": 0},
+      "providerCalls": 0,
+      "learningCalls": 0,
+      "modalShell": {"left": 12, "top": 29.5, "right": 378, "bottom": 814.5, "width": 366, "height": 785, "withinViewport": true},
+      "horizontalOverflow": false,
+      "screenshot": {
+        "path": "2026-09-12-mobile-simulator-recovery.png",
+        "sha256": "bca9a7eba90e490f1608d71999bad4f421bdf0745fb660ac47d3e7f32f86aacb"
+      },
+      "cleanup": "isolated IndexedDB deleted"
+    }
+  },
+  "reusedEvidence": {
+    "T-11": "Final source/full gate, actual load/migrate/save/reload and scheduler/collector host matrix, non-empty Personal/style provider input, and Desktop setting/exit/Forget evidence cover shared behavior.",
+    "T-18": "Final source/full gate and Desktop preview/version/recovery/copy/edit/save/SaveReceipt/reload evidence cover shared behavior; the 390x844 recovery smoke covers the affected mobile modal presentation.",
+    "T-21": "The existing final lint/build/276-suite/docs/community/diff gate and cross-module review remain valid because this reassessment changes only documentation and evidence."
+  },
+  "probeDiagnostics": [
+    "Initial settings selectors used non-current labels; the exact current Setting names were then inventoried and used.",
+    "Initial hit testing measured off-screen rows; each exact row was scrolled into the simulator viewport before the final assertion.",
+    "The first two-case recovery run selected a closing prior modal; the probe was changed to wait for modal removal before the next isolated case.",
+    "CDP reported an offset for the inner content element, while the actual modal shell and screenshot were fully inside 390x844; the shell is the visibility authority."
+  ],
+  "finalState": {
+    "obsidianErrors": 0,
+    "pluginDataSha256": "f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc",
+    "realIosRunRequiredForB135": false,
+    "realIosClaimMade": false
+  }
+}

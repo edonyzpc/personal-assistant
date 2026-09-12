@@ -8,6 +8,7 @@ import type { ProcessImageOptions } from '../src/chat/image-processor';
 import type { ImageAsset, ImageVariantRecord } from '../src/chat/image-types';
 import { WritingSaveAction } from '../src/chat/writing-save-action';
 import { hashWritingText, type WritingVersion } from '../src/chat/writing-types';
+import { ChatImageRequestScope } from '../src/ai-services/image-request';
 jest.mock('../src/platform-dom', () => ({ ...jest.requireActual('../src/platform-dom'), getPlatformCrypto: () => jest.requireActual('node:crypto').webcrypto }));
 
 const bytes = (...values: number[]): ArrayBuffer => Uint8Array.from(values).buffer;
@@ -73,6 +74,146 @@ function setup(store = new MemoryChatHistoryStore()) {
     const service = new ImageAssetService(app, store, { processor });
     return { service, store, data, entries, listeners, vault, processor, app };
 }
+
+async function holdImageQueue(h: ReturnType<typeof setup>) {
+    const started = deferred<void>(), release = deferred<void>();
+    jest.spyOn(h.store, 'clearImageVariants').mockImplementationOnce(async () => {
+        started.resolve(); await release.promise;
+    });
+    const finished = h.service.clearCache();
+    await started.promise;
+    return { release: () => release.resolve(), finished };
+}
+
+describe('B-135 queued provider image verification', () => {
+    it('isolates a cancelled queued caller from a valid caller and retains a valid receipt after read cleanup', async () => {
+        const h = setup(), imported = await h.service.importFile(fileInput(), { acquisition: 'original_file' });
+        const held = await holdImageQueue(h), controller = new AbortController();
+        h.vault.readBinary.mockClear();
+        const cancelled = h.service.verify(imported.ref, 'provider', { signal: controller.signal }).catch(error => error);
+        const valid = h.service.verify(imported.ref, 'provider', { isCurrent: () => true });
+        controller.abort(); held.release(); await held.finished;
+        try {
+            expect(await cancelled).toMatchObject({ code: 'cancelled' });
+            const receipt = await valid;
+            expect(h.vault.readBinary).toHaveBeenCalledTimes(1);
+            expect(receipt.isCurrent()).toBe(true);
+            const readController = new AbortController();
+            const next = await h.service.verify(imported.ref, 'provider', { signal: readController.signal });
+            readController.abort();
+            expect(next.isCurrent()).toBe(true);
+        } finally { await h.service.dispose(); }
+    });
+
+    it('stops after an invalidated processor wait without another source read or cache write', async () => {
+        const h = setup(), imported = await h.service.importFile(fileInput(), { acquisition: 'original_file' });
+        const process = h.processor.process.getMockImplementation()!;
+        let current = true;
+        h.processor.process.mockImplementationOnce(async (input, options) => {
+            const result = await process(input, options);
+            current = false;
+            return result;
+        });
+        h.vault.readBinary.mockClear();
+        const put = jest.spyOn(h.store, 'putImageVariant');
+        try {
+            await expect(h.service.resolveVariant(imported.ref, 'provider', { isCurrent: () => current }))
+                .rejects.toMatchObject({ code: 'stale' });
+            expect(h.vault.readBinary).toHaveBeenCalledTimes(1);
+            expect(put).not.toHaveBeenCalled();
+            expect(await h.store.getImageAsset(imported.asset.id)).toEqual(imported.asset);
+            const valid = await h.service.resolveVariant(imported.ref, 'provider');
+            expect(valid.blob.size).toBeGreaterThan(0);
+            valid.release();
+        } finally { await h.service.dispose(); }
+    });
+
+    it.each([false, true])('does not mark an asset changed or finish recovery after the verifying read is invalidated: recovery=%s', async recovery => {
+        const h = setup(), imported = await h.service.importFile(fileInput(), { acquisition: 'original_file' });
+        const put = jest.spyOn(h.store, 'putImageAsset');
+        if (recovery) {
+            // Model a missed vault notification during the interrupted move;
+            // otherwise independent event maintenance repairs it before verify.
+            h.listeners.delete('rename');
+            put.mockRejectedValueOnce(new Error('registry unavailable'));
+            await expect(h.service.promoteToNote(imported.ref, {
+                sourcePath: imported.asset.originalPath, targetPath: 'saved.jpg', operationId: 'guarded_recovery',
+            })).rejects.toThrow('registry unavailable');
+        }
+        put.mockClear();
+        const settings = jest.spyOn(h.store, 'setImageSetting');
+        const read = h.vault.readBinary.getMockImplementation()!;
+        let current = true;
+        h.vault.readBinary.mockImplementationOnce(async file => {
+            await read(file);
+            current = false;
+            return bytes(99); // A late corrupt result must not permanently mark this asset changed.
+        });
+        try {
+            await expect(h.service.verify(imported.ref, 'provider', { isCurrent: () => current }))
+                .rejects.toMatchObject({ code: 'stale' });
+            expect(put).not.toHaveBeenCalled();
+            expect(settings).not.toHaveBeenCalled();
+            expect(await h.store.getImageAsset(imported.asset.id)).toEqual(imported.asset);
+            const valid = await h.service.verify(imported.ref, 'provider');
+            expect(valid.isCurrent()).toBe(true);
+            expect(valid.asset.originalPath).toBe(recovery ? 'saved.jpg' : imported.asset.originalPath);
+        } finally { await h.service.dispose(); }
+    });
+
+    it.each([['verify', 'abort'], ['verify', 'stale'], ['variant', 'abort'], ['variant', 'stale']] as const)
+    ('rejects %s %s while waiting in the real queue before readBinary', async (operation, change) => {
+        const h = setup(), imported = await h.service.importFile(fileInput(), { acquisition: 'original_file' });
+        const held = await holdImageQueue(h), controller = new AbortController();
+        let current = true;
+        h.vault.readBinary.mockClear();
+        const options = { signal: controller.signal, isCurrent: () => current };
+        const task = operation === 'verify' ? h.service.verify(imported.ref, 'provider', options)
+            : h.service.resolveVariant(imported.ref, 'provider', options);
+        const result = task.then(value => {
+            if ('release' in value) value.release();
+            return { value };
+        }, (error: unknown) => ({ error }));
+        try {
+            if (change === 'abort') controller.abort(); else current = false;
+            held.release(); await held.finished;
+            const settled = await result;
+            expect(h.vault.readBinary).not.toHaveBeenCalled();
+            expect(settled).toMatchObject({ error: { code: change === 'abort' ? 'cancelled' : 'stale' } });
+            expect(await h.store.getImageAsset(imported.asset.id)).toEqual(imported.asset);
+        } finally { held.release(); await held.finished; await h.service.dispose(); }
+    });
+
+    it.each(['prepare', 'verify_prepared', 'resolve', 'writing_materials'] as const)
+    ('passes the actual request snapshot and cancellation through %s to the queued reader', async operation => {
+        for (const change of ['abort', 'stale', 'input_changed'] as const) {
+            const h = setup(), imported = await h.service.importFile(fileInput(), { acquisition: 'original_file' });
+            const images = [{ ref: { ...imported.ref }, ordinal: 1, label: 'Selected source' }];
+            let current = true;
+            const scope = new ChatImageRequestScope({ prompt: 'Describe this image', service: h.service, isCurrent: () => current,
+                ...(operation === 'resolve' ? { history: [{ role: 'user', content: 'Earlier image', images }] } : { images }) });
+            if (operation === 'verify_prepared') await scope.prepare();
+            const held = await holdImageQueue(h), controller = new AbortController();
+            h.vault.readBinary.mockClear();
+            const task = operation === 'resolve' ? scope.resolve([imported.ref], controller.signal)
+                : operation === 'writing_materials' ? scope.verifyWritingMaterials([imported.ref], controller.signal)
+                    : scope.prepare(controller.signal);
+            const result = task.then(value => ({ value }), (error: unknown) => ({ error }));
+            try {
+                if (change === 'abort') controller.abort();
+                else if (change === 'stale') current = false;
+                else images[0].ref.contentHash = 'f'.repeat(64);
+                held.release(); await held.finished;
+                const settled = await result;
+                expect(h.vault.readBinary).not.toHaveBeenCalled();
+                if (change === 'abort') expect(settled).toMatchObject({ error: { name: 'AbortError' } });
+                else if (operation === 'resolve') expect(settled).toMatchObject({ value: [{ availability: 'unavailable' }] });
+                else expect(settled).toMatchObject({ error: { code: 'request_changed' } });
+                expect(await h.store.getImageAsset(imported.asset.id)).toEqual(imported.asset);
+            } finally { held.release(); await held.finished; scope.dispose(); await h.service.dispose(); }
+        }
+    });
+});
 
 describe('chat-only images become shared note attachments', () => {
     const jpeg = () => bytes(255, 216, 255, 192, 0, 8, 8, 0, 3, 0, 4, 1, 255, 217);

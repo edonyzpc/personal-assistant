@@ -106,6 +106,23 @@ function makeTypeAAdoption(
 }
 
 describe("MemoryGovernanceMigrationCoordinator", () => {
+    it('isolates changed legacy source without reimporting or blocking a preserving governance state', async () => {
+        const repository = new InMemoryMemoryGovernanceRepository();
+        const payload = makePayload();
+        await new MemoryGovernanceMigrationCoordinator({ repository, opaqueVaultKey: 'vault-a', payload, now: () => NOW }).run();
+        await repository.transact((draft) => { draft.migrationStates['vault-a'].phase = 'governed_preserving_legacy'; });
+        const before = await repository.initialize();
+        const changed = makePayload({ memoryGovernance: { records: [makeClaim('new-old-writer-claim')] } });
+        const options = { repository, opaqueVaultKey: 'vault-a', now: () => NOW, typeAAdoptions: [makeTypeAAdoption('must-not-adopt')] };
+        await expect(new MemoryGovernanceMigrationCoordinator({ ...options, payload: changed }).run()).resolves.toMatchObject({ ok: true, phase: 'governed_preserving_legacy', contextProjectionMode: 'governed', reconciliationRequired: 'legacy_source_changed' });
+        const after = await repository.initialize();
+        expect(after.claims).toEqual(before.claims);
+        expect(after.revisions).toEqual(before.revisions);
+        expect(after.rollbackPayloadEntries).toEqual(before.rollbackPayloadEntries);
+        expect(after.migrationStates['vault-a']).toEqual({ ...before.migrationStates['vault-a'], pendingLegacySourceHash: hashLegacyMemoryPayload(changed) });
+        await expect(new MemoryGovernanceMigrationCoordinator({ ...options, payload }).run()).resolves.toMatchObject({ ok: true });
+        expect((await repository.initialize()).migrationStates['vault-a']).toEqual(before.migrationStates['vault-a']);
+    });
     it("imports deterministic vault-local entities, verifies readback, and cuts over once", async () => {
         const repository = new InMemoryMemoryGovernanceRepository();
         const memoryQueueItem = makeQueueItem("queue-memory");

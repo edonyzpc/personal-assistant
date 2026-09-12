@@ -21,6 +21,7 @@ export type { ChatToolName, ChatToolResult, MemorySearchResult } from "./chat-ty
 
 export interface ChatToolContext {
     host: AiServiceHost;
+    taskSourceReadGuard?: import('./task-source-read-guard').TaskSourceReadGuard;
     signal?: AbortSignal;
     /** Host-only absolute boundary registered by the outer Tool dispatcher. */
     outerToolDeadlineAt?: number;

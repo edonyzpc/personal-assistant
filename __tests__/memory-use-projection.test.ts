@@ -183,7 +183,7 @@ describe("selectGovernedMemoryUse", () => {
             const result = selectGovernedMemoryUse(makeInput({
                 claims: [makeClaim({ lifecycle })],
             }));
-            expect(result).toEqual({ boundedContext: "", usedClaimIds: [] });
+            expect(result).toEqual({ boundedContext: "", usedClaimIds: [], usedVaultInsights: false });
         },
     );
 
@@ -243,10 +243,10 @@ describe("selectGovernedMemoryUse", () => {
     it("fails closed when Data Boundary rejects or throws", () => {
         expect(selectGovernedMemoryUse(makeInput({
             dataBoundaryAllowed: () => false,
-        }))).toEqual({ boundedContext: "", usedClaimIds: [] });
+        }))).toEqual({ boundedContext: "", usedClaimIds: [], usedVaultInsights: false });
         expect(selectGovernedMemoryUse(makeInput({
             dataBoundaryAllowed: () => { throw new Error("boundary unavailable"); },
-        }))).toEqual({ boundedContext: "", usedClaimIds: [] });
+        }))).toEqual({ boundedContext: "", usedClaimIds: [], usedVaultInsights: false });
     });
 
     it("excludes only an exact partition/source/rule suppression match", () => {
@@ -259,7 +259,7 @@ describe("selectGovernedMemoryUse", () => {
         expect(selectGovernedMemoryUse(makeInput({
             suppressionMarkers: [makeMarker()],
             claimSuppressionFingerprints,
-        }))).toEqual({ boundedContext: "", usedClaimIds: [] });
+        }))).toEqual({ boundedContext: "", usedClaimIds: [], usedVaultInsights: false });
 
         for (const marker of [
             makeMarker({ sourceFingerprintId: "different-source" }),
@@ -348,6 +348,7 @@ describe("selectGovernedMemoryUse", () => {
         }));
         expect(included.boundedContext).toContain('"kind":"vault_insights"');
         expect(included.boundedContext).toContain('"fileCount":3');
+        expect(included.usedVaultInsights).toBe(true);
 
         expect(selectGovernedMemoryUse(makeInput({
             claims: [],
@@ -361,6 +362,20 @@ describe("selectGovernedMemoryUse", () => {
             includeVaultInsights: true,
             vaultInsights: { ...vaultInsights, dataBoundaryFingerprint: "boundary-old" },
         })).boundedContext).toBe("");
+    });
+
+    it.each(['stale', 'malformed'])('reports omitted %s Insights while retaining the selected Personal claim', (reason) => {
+        const result = selectGovernedMemoryUse(makeInput({
+            includeVaultInsights: true,
+            vaultInsights: {
+                snapshot: reason === 'malformed' ? {} as VaultMetacognitionSnapshot : makeVaultSnapshot(),
+                dataBoundaryFingerprint: reason === 'stale' ? 'boundary-old' : 'boundary-current',
+                representativeSourceRefs: [],
+            },
+        }));
+        expect(result.usedClaimIds).toEqual(['claim-1']);
+        expect(result.usedVaultInsights).toBe(false);
+        expect(result.boundedContext).not.toContain('"kind":"vault_insights"');
     });
 
     it("orders deterministically, sanitizes tagged boundaries, and stays bounded", () => {
@@ -406,6 +421,7 @@ describe("readCompatibleMemoryContext", () => {
             readGovernedContext: jest.fn(() => ({
                 boundedContext: "governed context",
                 usedClaimIds: ["claim-1"],
+                usedVaultInsights: true,
             })),
         };
 
@@ -428,6 +444,7 @@ describe("readCompatibleMemoryContext", () => {
             readGovernedContext: jest.fn(() => ({
                 boundedContext: "governed context",
                 usedClaimIds: ["claim-1"],
+                usedVaultInsights: true,
             })),
         };
 
@@ -436,6 +453,7 @@ describe("readCompatibleMemoryContext", () => {
             governedContext: {
                 boundedContext: "governed context",
                 usedClaimIds: ["claim-1"],
+                usedVaultInsights: true,
             },
         });
         expect(port.getMode).toHaveBeenCalledTimes(1);

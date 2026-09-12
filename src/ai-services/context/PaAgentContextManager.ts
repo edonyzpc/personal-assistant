@@ -45,6 +45,10 @@ export interface PaAgentContextProjection extends PaAgentContextParts {
     outcome: PaAgentContextOutcome;
     historyBudgetChars: number;
     reducedToolMessageIds: string[];
+    /** Exact tool observations represented by this provider projection. Host-only. */
+    sourceToolMessages: Array<Extract<PaAgentMessage, { role: "toolResult" }>>;
+    /** The history projection and exact represented source messages. Host-only fields stay out of provider parts. */
+    history: import('./PaAgentContextProjector').PaAgentProjectedHistory;
 }
 
 export class PaAgentContextManager {
@@ -174,6 +178,8 @@ export class PaAgentContextManager {
             reducedToolMessageIds: finalToolResults.filter((message) =>
                 message.content.metadata?.compacted === true || message.content.metadata?.contextBudgetTruncated === true)
                 .map((message) => message.id),
+            sourceToolMessages: finalToolResults.filter(message => message.content.includeInNextPrompt),
+            history: projected.history,
             diagnostics: {
                 type: "context_projection",
                 historyBudgetChars: historyBudget,

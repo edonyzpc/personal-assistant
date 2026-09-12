@@ -159,6 +159,115 @@ describe("iOS DashScope chat transport", () => {
         Platform.isIosApp = false;
     });
 
+    it.each([
+        { ios: false, retry: false }, { ios: true, retry: false },
+        { ios: false, retry: true }, { ios: true, retry: true },
+    ])("observes each SDK dispatch including retries (iOS=$ios, retry=$retry)", async ({ ios, retry }) => {
+        Platform.isDesktop = !ios;
+        Platform.isMobile = ios;
+        Platform.isIosApp = ios;
+        const response = JSON.stringify({ id: "chatcmpl-diagnostic", object: "chat.completion", created: 1,
+            model: "deepseek-v4-pro", choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }] });
+        const nativeFetch = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(response, {
+            status: 200, headers: { "content-type": "application/json" },
+        }));
+        mockedRequestUrl.mockResolvedValue(responseFixture(response, "application/json"));
+        if (retry) {
+            const failure = JSON.stringify({ error: { message: "temporary fixture failure", type: "server_error" } });
+            const headers = { "content-type": "application/json", "retry-after-ms": "1" };
+            nativeFetch.mockResolvedValueOnce(new Response(failure, { status: 500, headers }));
+            mockedRequestUrl.mockResolvedValueOnce({ ...responseFixture(failure, "application/json"), status: 500, headers });
+        }
+        const diagnostic = jest.fn();
+        try {
+            const model = await new AIUtils(makeHost()).createChatModel(0, {
+                transport: "native", maxTokens: 321, onProviderRequestDiagnostic: diagnostic,
+            });
+            await model.invoke([new HumanMessage("PRIVATE fixture text")]);
+            const attempts = retry ? 2 : 1;
+            expect(diagnostic).toHaveBeenCalledTimes(attempts);
+            const bodies = ios
+                ? mockedRequestUrl.mock.calls.map(([request]) => (request as { body: string }).body)
+                : nativeFetch.mock.calls.map(([, init]) => init?.body);
+            expect(bodies).toHaveLength(attempts);
+            for (const body of bodies) {
+                expect(typeof body).toBe("string");
+                const sent = JSON.parse(body as string);
+                expect(diagnostic).toHaveBeenCalledWith({
+                    transport: ios ? "obsidian" : "native", bodyState: "json_object",
+                    maxTokens: sent.max_tokens ?? "absent", maxCompletionTokens: sent.max_completion_tokens ?? "absent",
+                });
+                expect(sent.max_tokens ?? sent.max_completion_tokens).toBe(321);
+            }
+            if (retry) expect(bodies[1]).toBe(bodies[0]);
+            expect(JSON.stringify(diagnostic.mock.calls)).not.toContain("PRIVATE");
+        } finally { nativeFetch.mockRestore(); }
+    });
+
+    it.each([false, true])("links physical attempts to the same runtime turn before projection (retry=%s)", async (retry) => {
+        Platform.isDesktop = false;
+        Platform.isMobile = true;
+        Platform.isIosApp = true;
+        const host = makeRuntimeHost();
+        host.settings.debug = true;
+        const requestId = "physical-diagnostic-writing";
+        const raw = JSON.stringify({ kind: "pa.writing", version: 1, requestId, body: "PRIVATE draft", explanation: "" });
+        if (retry) mockedRequestUrl.mockResolvedValueOnce({
+            ...responseFixture('{"error":{"message":"temporary failure"}}', "application/json"),
+            status: 500, headers: { "content-type": "application/json", "retry-after-ms": "1" },
+        });
+        mockedRequestUrl.mockResolvedValueOnce(responseFixture(sse(
+            completionChunk({ role: "assistant", content: raw }, null), completionChunk({}, "stop"),
+        ), "text/event-stream"));
+        const runtime = new PaAgentRuntime(host as never, new AIUtils(host as never), {
+            runtimePlatform: "mobile", providerResponseDelivery: "buffered", skillContextProvider: null,
+        });
+        try {
+            await runtime.streamTurn({ prompt: "Write a greeting", memoryMode: "skip-memory", writingRequest: { requestId } });
+            const logs = host.log.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+            const physical = logs.filter(([name]) => name === "PA Agent physical request");
+            const delivery = logs.find(([name]) => name === "PA Agent writing delivery");
+            expect(physical).toHaveLength(retry ? 2 : 1);
+            expect(delivery).toBeDefined();
+            expect(physical[0][1]).toMatchObject({ runId: delivery![1].runId, turnId: delivery![1].turnId,
+                stage: "answer", attemptId: `${delivery![1].runId}:http:1`, transport: "obsidian" });
+            expect(logs.indexOf(physical[0])).toBeLessThan(logs.indexOf(delivery!));
+            if (retry) {
+                expect(physical[1][1]).toMatchObject({ runId: delivery![1].runId, turnId: delivery![1].turnId,
+                    stage: "answer", attemptId: `${delivery![1].runId}:http:2` });
+                expect(logs.indexOf(physical[1])).toBeLessThan(logs.indexOf(delivery!));
+            }
+            expect(JSON.stringify(physical)).not.toContain("PRIVATE");
+            expect(mockedRequestUrl).toHaveBeenCalledTimes(retry ? 2 : 1);
+        } finally { runtime.dispose(); }
+    });
+
+    it("lets the main Agent clarify a notes request without a classifier or predicted compulsory search", async () => {
+        Platform.isDesktop = false;
+        Platform.isMobile = true;
+        Platform.isIosApp = true;
+        const host = makeRuntimeHost({ policyModelName: "policy-helper-only" });
+        const answer = "请先说明你想讨论的主题。";
+        mockedRequestUrl.mockResolvedValueOnce(responseFixture(sse(
+            completionChunk({ role: "assistant", content: answer }, null), completionChunk({}, "stop"),
+        ), "text/event-stream"));
+        const runtime = new PaAgentRuntime(host as never, new AIUtils(host as never), {
+            runtimePlatform: "mobile", providerResponseDelivery: "buffered", skillContextProvider: null,
+        });
+        const snapshots: string[] = [];
+        try {
+            await runtime.streamTurn({ prompt: "根据我的笔记给我建议", memoryMode: "use-memory",
+                onEvent: (event) => { if (event.kind === "answer-snapshot") snapshots.push(event.snapshot); },
+            });
+            expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
+            const sent = JSON.parse((mockedRequestUrl.mock.calls[0][0] as { body: string }).body);
+            expect(sent.model).toBe("deepseek-v4-pro");
+            expect(JSON.stringify(sent.messages)).not.toContain("You classify whether");
+            expect(host.memorySearch.searchHybrid).not.toHaveBeenCalled();
+            expect(snapshots.at(-1)).toBe(answer);
+        } finally { runtime.dispose(); }
+    });
+
     it("routes requested native ChatOpenAI calls through requestUrl only for iOS DashScope", async () => {
         Platform.isDesktop = false;
         Platform.isMobile = true;
@@ -733,6 +842,13 @@ describe("iOS DashScope chat transport", () => {
                 latestMarkdown: markdown,
                 searchResults,
             });
+            host.settings.debug = true;
+            // Scoped retrieval resolves real host identities before candidates
+            // reach reranking; the indexed fixture must also exist in the vault.
+            const memoryFile = { path: "notes/memory.md", extension: "md",
+                stat: { mtime: 1_000, ctime: 1_000, size: markdown.length } };
+            host.app.vault.getMarkdownFiles.mockReturnValue([memoryFile] as never);
+            host.app.vault.getAbstractFileByPath.mockReturnValue(memoryFile as never);
             const aiUtils = new AIUtils(host as never);
             const cleaned = aiUtils.cleanMarkdownContent(markdown);
             const contentHash = await aiUtils.hashContent(cleaned);
@@ -778,6 +894,18 @@ describe("iOS DashScope chat transport", () => {
                             id: "",
                             type: "function",
                             function: { name: "search_memory", arguments: '{"query":"memory"}' },
+                        }, {
+                            index: 1,
+                            id: "memory-source-scope",
+                            type: "function",
+                            function: {
+                                name: "declare_source_scope",
+                                arguments: JSON.stringify({
+                                    instructionQuote: "Search my notes for memory",
+                                    notes: "vault",
+                                    webAllowed: false,
+                                }),
+                            },
                         }],
                     }, null),
                     completionChunk({}, "tool_calls"),
@@ -833,6 +961,12 @@ describe("iOS DashScope chat transport", () => {
                 JSON.parse((request as { body: string }).body) as { stream: boolean }
             ));
             expect(requests.map((request) => request.stream)).toEqual([true, false, true]);
+            const physical = (host.log.mock.calls as unknown as Array<[string, Record<string, unknown>]>)
+                .filter(([name]) => name === "PA Agent physical request").map(([, evidence]) => evidence);
+            expect(physical.map((event) => event.stage)).toEqual(["answer", "rerank", "answer"]);
+            expect(new Set(physical.map((event) => event.runId)).size).toBe(1);
+            expect(new Set(physical.map((event) => event.attemptId)).size).toBe(3);
+            expect(physical[1].turnId).toBe(physical[0].turnId);
             runtime.dispose();
         } finally {
             jest.useRealTimers();

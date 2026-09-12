@@ -23,6 +23,8 @@ import {
     createEmptyDeviceMemoryGovernanceStateV1,
     normalizeDeviceMemoryGovernanceStateV1,
     validateDeviceMemoryGovernanceStateV1,
+    MEMORY_GOVERNANCE_SCHEMA_VERSION,
+    MEMORY_GOVERNANCE_INDEXED_DB_VERSION,
 } from "../src/pa/memory-governance-persistence";
 import { MemoryGovernanceCoordinator } from "../src/pa/memory-governance-coordinator";
 import { MAX_GOVERNED_MEMORY_CONTEXT_CHARS, selectGovernedMemoryUse } from "../src/pa/memory-use-projection";
@@ -94,7 +96,7 @@ function projectionOf(rankedCandidates: ReturnType<typeof styleCandidate>[], sha
 }
 
 // P0's original V1 observations remain in the dated evidence. These executable
-// checks now use the production V2 reader and must not pretend it is the old writer.
+// checks use the current production reader and must not pretend it is the old writer.
 describe("B-129 G-05a fixtures against the current production reader", () => {
     it("rejects legacy additive style payload instead of silently stripping it", async () => {
         const { state } = fixture();
@@ -104,9 +106,12 @@ describe("B-129 G-05a fixtures against the current production reader", () => {
     });
 
     it("rejects a future schema without modifying it", () => {
-        const next = { ...fixture().state, schemaVersion: 3 };
+        const next = { ...createEmptyDeviceMemoryGovernanceStateV1(),
+            schemaVersion: MEMORY_GOVERNANCE_SCHEMA_VERSION + 1 };
+        const before = JSON.parse(JSON.stringify(next));
         expect(validateDeviceMemoryGovernanceStateV1(next)).toEqual({ ok: false, reason: "unsupported_schema_version" });
         expect(() => new InMemoryMemoryGovernanceBackend(next)).toThrow("invalid_state");
+        expect(next).toEqual(before);
     });
 
     it("keeps the current IDB repository fail closed on VersionError without deletion", async () => {
@@ -124,7 +129,7 @@ describe("B-129 G-05a fixtures against the current production reader", () => {
         await expect(repository.initialize()).rejects.toMatchObject({ code: "database_open_failed" });
         await expect(repository.transact(() => { throw new Error("must not run"); }))
             .rejects.toMatchObject({ code: "database_open_failed" });
-        expect(open).toHaveBeenCalledWith("synthetic-b129", 2);
+        expect(open).toHaveBeenCalledWith("synthetic-b129", MEMORY_GOVERNANCE_INDEXED_DB_VERSION);
         expect(deleteDatabase).not.toHaveBeenCalled();
         await repository.dispose();
     });
@@ -205,8 +210,13 @@ describe("B-129 G-05a: proposed V2 field adapter and independent scope predicate
         restored.revisions[0].writingStyle!.scene.domain = "changed";
         expect(next.revisions[0].writingStyle!.scene.domain).toBe("travel");
         const ordinary = { ...state, revisions: state.revisions.map(({ writingStyle: _style, ...revision }) => revision) };
-        const legacy = normalizeDeviceMemoryGovernanceStateV1(ordinary)!;
-        expect(normalizePrototypeStateV2(legacy)!.revisions[0]).not.toHaveProperty("writingStyle");
+        expect(normalizePrototypeStateV2(ordinary)!.revisions[0]).not.toHaveProperty("writingStyle");
+        // The historical V1/V2 adapter cannot read today's normalized V3 state.
+        // Feed it the actual legacy fixture, never relabel a current state as legacy.
+        const current = normalizeDeviceMemoryGovernanceStateV1(ordinary)!;
+        expect(current.schemaVersion).toBe(MEMORY_GOVERNANCE_SCHEMA_VERSION);
+        expect(current.revisions[0]).not.toHaveProperty("writingStyle");
+        expect(normalizePrototypeStateV2(current)).toBeNull();
         expect(normalizePrototypeStateV2(state)).toBeNull();
     });
 

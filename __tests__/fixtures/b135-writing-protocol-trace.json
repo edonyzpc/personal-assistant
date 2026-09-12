@@ -1,0 +1,73 @@
+{
+  "description": "Synthetic-only Qwen protocol trace captured 2026-09-09; capability evidence, not current worktree App validation.",
+  "status": "complete",
+  "startedAt": 1788944319996,
+  "results": [
+    {
+      "mode": "native",
+      "provider": "qwen",
+      "model": "qwen3.8-max",
+      "thinking": true,
+      "maxTokens": 2048,
+      "chunks": 72,
+      "argumentChunks": 17,
+      "names": [
+        "present_writing"
+      ],
+      "finishes": [
+        "tool_calls"
+      ],
+      "elapsedMs": 6174,
+      "rawText": "",
+      "argumentDeltas": [
+        "{\"body\": ",
+        "\"第一行：“安静",
+        "且可信。”",
+        "\\n第二行：",
+        "C:\\\\notes\\\\d",
+        "raft.md；引",
+        "号 \\\"原样",
+        "\\\"；🙂\\n",
+        "\\n## 收尾",
+        "\\n保留  两个",
+        "空格。",
+        "\"",
+        ", \"contextHandle\": ",
+        "\"b13",
+        "5-probe",
+        "\"",
+        "}"
+      ],
+      "rawArguments": "{\"body\": \"第一行：“安静且可信。”\\n第二行：C:\\\\notes\\\\draft.md；引号 \\\"原样\\\"；🙂\\n\\n## 收尾\\n保留  两个空格。\", \"contextHandle\": \"b135-probe\"}",
+      "validJson": true,
+      "bodyExact": true,
+      "body": "第一行：“安静且可信。”\n第二行：C:\\notes\\draft.md；引号 \"原样\"；🙂\n\n## 收尾\n保留  两个空格。",
+      "expected": "第一行：“安静且可信。”\n第二行：C:\\notes\\draft.md；引号 \"原样\"；🙂\n\n## 收尾\n保留  两个空格。",
+      "canonicalBodyExact": true,
+      "toolCount": 1
+    },
+    {
+      "mode": "legacy",
+      "provider": "qwen",
+      "model": "qwen3.8-max",
+      "thinking": true,
+      "maxTokens": 2048,
+      "chunks": 291,
+      "argumentChunks": 0,
+      "names": [],
+      "finishes": [
+        "stop"
+      ],
+      "elapsedMs": 24238,
+      "rawText": "{\"kind\":\"pa.writing\",\"version\":1,\"requestId\":\"b135-probe\",\"body\":\"第一行：“安静且可信。”\\n第二行：C:\\\\notes\\\\draft.md；引号 \\\"原样\\\"；🙂\\n\\n## 收尾\\n保留  两个空格。\",\"explanation\":\"\"}",
+      "argumentDeltas": [],
+      "rawArguments": "",
+      "validJson": true,
+      "bodyExact": true,
+      "body": "第一行：“安静且可信。”\n第二行：C:\\notes\\draft.md；引号 \"原样\"；🙂\n\n## 收尾\n保留  两个空格。",
+      "expected": "第一行：“安静且可信。”\n第二行：C:\\notes\\draft.md；引号 \"原样\"；🙂\n\n## 收尾\n保留  两个空格。",
+      "canonicalBodyExact": null,
+      "toolCount": 0
+    }
+  ]
+}

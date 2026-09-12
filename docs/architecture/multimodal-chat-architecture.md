@@ -1,11 +1,11 @@
 # Multimodal Chat Architecture
 
 Document status: Current
-Updated: 2026-09-09
+Updated: 2026-09-12
 Work item: B-129
-Authority: 当前图片聊天、文案版本、图文保存及显式风格参考的技术契约。
-Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md)
-Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md) / [图片管理修订验证](../archive/2026/chat-image-management-validation.md)
+Authority: 当前图片聊天、作品输出、文案版本、图文保存及显式风格参考的技术契约。
+Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [B-129 Product Spec](../product/specs/pa-multimodal-chat-product-spec.md) / [B-135 Product Spec](../product/specs/pa-unified-task-execution-product-spec.md)
+Validation evidence: [首版限定验证与构建身份](../archive/2026/b129-multimodal-chat-validation.md) / [图片输入与保存体验](../archive/2026/chat-image-experience-validation.md) / [图片管理修订验证](../archive/2026/chat-image-management-validation.md) / [B-135统一Agent验证](../archive/2026/b135-unified-task-execution-validation.md)
 
 ## 图片管理与保存恢复
 
@@ -45,7 +45,7 @@ flowchart LR
   A[Chat 图片输入] --> B[ImageAssetService 原件登记]
   B --> C[ImageProcessor 本地处理副本]
   C --> D[图片请求与 B-128 上下文链路]
-  D --> E[完整文案协议与终态校验]
+  D --> E[宿主写作上下文与作品终态校验]
   E --> F[WritingVersion 固定正文与素材]
   F --> G[用户预览并保存]
   G --> H[SaveReceipt 笔记及正式附件]
@@ -60,7 +60,7 @@ flowchart LR
 | 原件、引用、同步说明与缓存 | [ImageAssetService](../../src/chat/image-assets.ts)、[image types](../../src/chat/image-types.ts) |
 | 格式与资源限制 | [processor](../../src/chat/image-processor.ts)、[format](../../src/chat/image-format.ts)、[policy](../../src/chat/image-policy.ts)；旧 macOS converter 无生产调用 |
 | 模型能力及最终图片请求 | [capability](../../src/ai-services/image-capability.ts)、[image request](../../src/ai-services/image-request.ts)、[runtime](../../src/ai-services/pa-agent-runtime.ts) |
-| 文案协议、版本与保存 | [output](../../src/ai-services/writing-output.ts)、[bridge](../../src/ai-services/pa-agent-stream-bridge.ts)、[versions](../../src/chat/writing-versions.ts)、[save action](../../src/chat/writing-save-action.ts) |
+| 文案协议、版本与保存 | [writing context](../../src/ai-services/writing-context-run.ts)、[native output](../../src/ai-services/native-writing-call.ts)、[output](../../src/ai-services/writing-output.ts)、[bridge](../../src/ai-services/pa-agent-stream-bridge.ts)、[versions](../../src/chat/writing-versions.ts)、[save action](../../src/chat/writing-save-action.ts) |
 | 来源隔离与风格 | [chat admission](../../src/pa/chat-memory-admission.ts)、[note provenance](../../src/chat/writing-note-provenance.ts)、[style service](../../src/chat/writing-style-service.ts)、[projection](../../src/pa/memory-use-projection.ts) |
 
 ## 原件与处理副本
@@ -130,7 +130,25 @@ B-128 投影、压缩、工具续轮、重试及 reserved final 共用来源和�
 不能代替图片。重看旧图必须重新解析原 hash；必需图片缺失或准备后失效时停止，
 不静默改成无图请求，也不把 base64 写进文字摘要或普通日志。
 
-普通问答保持文本。明确文案请求使用最终文本承载严格协议：
+普通问答保持文本。2026-09-12起，生产Chat对作品交付默认使用B-135宿主专用通道。
+模型先通过`get_writing_context`选择宿主允许的parent、scene、图片与风格上下文，
+宿主返回绑定当前run、会话、版本、材料和来源状态的handle；准备成功前不导出
+`present_writing`。用户的新话题、改选、来源变化或会话失效使旧handle失效。
+
+`present_writing`只接受精确handle、`body`及可选`explanation`。它是最终纯输出，
+不是普通可执行工具：不读取来源、不保存、不授予动作权限，必须是该响应唯一调用，
+不能和source/context/action或第二个作品混批。增量参数只生成可读preview且零写入；
+只有参数完整、provider明确以`tool_calls`结束、原始调用身份和handle一致、生成输入快照
+及来源仍有效、未取消或过期时，宿主才把provider正文逐字生成一个artifact和版本。
+交付后直接结束本次生成，不要求额外acknowledgement模型轮。
+
+Chat冻结最后一次物理生成请求的实际来源receipt，并在成版、版本重载和最终保存前按
+用途复验。版本持有正文/hash、parent、会话、关联图片、背景和style revision；预览不
+写笔记，复制/编辑/保存始终针对用户选中的确切版本，保存仍须明确确认并生成自己的
+`SaveReceipt`。模型不能指定可信来源、版本ID、保存路径或授权字段。
+
+以下`WritingOutputEnvelope`仅作为旧Chat/JSON recovery记录的兼容reader契约，不再是
+生产Chat默认输出：
 
 ```ts
 type WritingOutputEnvelope = {
@@ -142,10 +160,15 @@ type WritingOutputEnvelope = {
 };
 ```
 
-只接受本次 requestId、严格 schema、完整终态及 provider 明确 `stop` 的最终正文。
+旧reader只接受本次 requestId、严格 schema、完整终态及 provider 明确 `stop` 的最终正文。
 裸 JSON 与整个回复仅为单个完整 `json` 三反引号代码块走相同校验；原始总长度先
 受预算限制。多块、块外说明、截断、取消及完成原因未知进入人工选择/编辑恢复，
 不正则猜正文，不通过额外模型调用修补。工具中间轮和正常流 EOF 不等于完整文案。
+旧reader与native记录可并存，未知或不完整记录失败关闭且不删除持久数据。
+
+D15将DeepSeek明确正文单样例中弯引号转为ASCII直引号记录为模型质量限制；同案的
+provider正文到artifact仍逐字一致。保持native默认，不增加自动fallback、运行时双协议
+或DeepSeek特判，也不把传输保真解释为模型逐字遵循用户原文。
 
 host 绑定不可变 `WritingVersion` 的正文/hash、来源、parent、会话、关联图片、
 背景引用与风格 revision。模型不决定可信素材、保存目标或授权字段。编辑保留子版；

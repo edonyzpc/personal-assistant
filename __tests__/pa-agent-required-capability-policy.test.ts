@@ -12,6 +12,32 @@ import { chatToolResultToPaAgentToolExecutionResult } from "../src/ai-services/p
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 
 describe("PA Agent required capability HostPolicy", () => {
+    it('allows one native context schema correction without opening a new tool scope', async () => {
+        const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
+            availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: true });
+        const summary = createSummary({ status: 'tool_results_ready', toolResults: [
+            createToolResult('get_writing_context', { isError: true, outcome: 'schema_invalid' }),
+        ] });
+        const first = await policy.hostPolicy.afterTurn(summary);
+        expect(first).toMatchObject({ action: 'continue', reason: 'tool_results_ready',
+            runtimeInstruction: expect.stringContaining('correct the arguments once') });
+        expect(first).not.toHaveProperty('controlSnapshot');
+        expect(first).not.toHaveProperty('toolMode');
+        expect(await policy.hostPolicy.afterTurn(summary)).toMatchObject({
+            action: 'continue', toolMode: 'final_answer_only',
+        });
+    });
+
+    it.each(['legacy', 'policy_rejected', 'mixed-failure'])('does not reopen tools for %s', async mode => {
+        const policy = createRequiredCapabilityHostPolicy({ userInput: 'Write a card',
+            availableCapabilities: new Set(), classification: { items: [] }, allowWritingContextSchemaRepair: mode !== 'legacy' });
+        const results = [createToolResult('get_writing_context', { isError: true,
+            outcome: mode === 'policy_rejected' ? 'policy_rejected' : 'schema_invalid' })];
+        if (mode === 'mixed-failure') results.push(createToolResult('webSearch', { isError: true, outcome: 'policy_rejected' }));
+        expect(await policy.hostPolicy.afterTurn(createSummary({ status: 'tool_results_ready', toolResults: results })))
+            .toMatchObject({ action: 'continue', toolMode: 'final_answer_only' });
+    });
+
     it("classifies strong and weak deterministic capability signals", () => {
         expect(classifyRequiredCapabilitiesDeterministic("Search the web for the latest docs.").items).toEqual([
             expect.objectContaining({
@@ -1104,6 +1130,29 @@ describe("PA Agent required capability HostPolicy", () => {
             expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["search_memory"]);
             expect(decision.controlSnapshot!.diagnostics.map((diagnostic) => diagnostic.type)).toContain("answer_ready_decision");
         }
+    });
+
+    it.each(["absent", "allowed", "blocked"])("preserves only an already allowed scope control in Memory follow-up: %s", async state => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check notes, then narrow the source.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const decision = await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory", { metadata: { needsSnippetFollowup: true } })],
+            controlSnapshot: createAgentControlSnapshot({
+                allowedToolNames: new Set(["search_memory", "webSearch", "load_skill",
+                    ...(state === "absent" ? [] : ["declare_source_scope"])]),
+                blockedToolNames: new Set(state === "blocked" ? ["declare_source_scope"] : []),
+            }),
+        }));
+        expect(decision.action).toBe("continue");
+        if (decision.action !== "continue") throw new Error("Expected follow-up");
+        expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual([
+            "search_vault_snippets", ...(state === "allowed" ? ["declare_source_scope"] : []),
+        ]);
+        expect(decision.controlSnapshot!.budgetState.followUpRoundCount).toBe(1);
+        expect(decision.controlSnapshot!.blockedToolNames?.has("declare_source_scope")).toBe(state === "blocked");
     });
 
     it("opens notes follow-up tools only when Memory explicitly requests snippet follow-up", async () => {
