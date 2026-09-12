@@ -15,7 +15,7 @@ SDD: [Software Design Document](./sdd.md)
 - Next action: T-20已有同输入重复准备、Qwen四案、DeepSeek两案、请求序列/耗时与可得usage的完整审计，不新增模型运行；先取得D15对DeepSeek单样例引号质量差异的处置，再同步T-10/T-20/F-23。当前源码随该决定冻结后只执行一次T-21统一broad gate；T-11/T-18的受影响iOS等待可用设备环境，不扩展Desktop替代验证。
 - Blocker / decision needed: D15需要Owner判断DeepSeek native单样例将中文弯引号改为ASCII直引号是否作为模型质量差异接受并继续默认native；provider正文到artifact逐字一致，旧协议同案保留弯引号。旧Profile读取绕过及其它产品答复已完成，无需重问。受影响iOS仍是当前Linux主机外部环境门，不以Desktop替代。
 - Last verified behavior: 2026-09-12当前默认native/Qwen真实Desktop自然语言续写只提供一个宿主父版候选；模型用2次物理请求依次调用`get_writing_context`和`present_writing`，唯一子版及artifact均绑定正确父ID，保留“明早九点开会”、移除携带材料/提前到场并加入“请准时参加”，零恢复/动作/额外ack。实际版本弹窗列出父子两个AI draft；首探针误点历史入口后超时，但模型结果、两版及DOM选项已先完成并留证，隔离IDB和临时脚本随后清理，`data.json`仍为`f8cfd5b…2dcbc`且Obsidian零新错误，不为探针选择器重跑模型。
-- Task count: 22项中16项完成、5项部分实现/验证、1项待最终汇总。16/22只表示完整验收任务占比，不是代码完成度；剩余内部任务为D15后的T-10/T-20、最终T-21/T-22，T-11/T-18及阶段门还受iOS环境约束。
+- Task count: 22项中16项完成、6项部分实现/验证、0项未开始。16/22只表示完整验收任务占比，不是代码完成度；剩余内部任务为D15后的T-10/T-20、最终T-21/T-22，T-11/T-18及阶段门还受iOS环境约束。
 - Execution: Owner 2026-09-10明确答复“恢复”，继续已确认的全量实施目标；此前暂停与Git整理已完成。恢复起点`10dc44a`在统一交付点后仅追加发布流程规则，复用运行时证据仍按实际输入核对，不重开旧任务。本次代码提交为`02b5092`（Memory来源）、`aa16fc4`（Chat最终存储）及`fd3ceae`（历史native回放证据），随附SDD/Tracker证据；统一交付目标仍为`codex/b135-discussion-followup`。
 - Workspace: `/tmp/pa-b135-docs`，唯一开发交付分支为 `codex/b135-discussion-followup`。Owner 2026-09-10要求全部commit统一到此分支，并删除本地/远程`codex/b135-completion`；已从`4591434f7df1499b11f0143240d38b99165fc9bc`快进纳入实现提交`148d7e3`与证据提交`3ddf827`，原commit身份和历史保持不变。工作目录同步恢复为当前路径；远程同步与旧分支删除的最终核对见本次交付回执。此操作仅整理Git交付，不恢复暂停的Goal。main工作区master `8be89c4c`保持干净；package-lock与main一致，node_modules只链接复用已安装依赖，不复用旧测试结论。
 - Ownership correction: 撤销本次讨论上一轮误加到 B-106 的 P4/T-14/T-15 及状态降级；该旧包三个过程文件恢复原状。默认、迁移、habit、history、writing/image、Operations 的全部新增实现/修复/回归由本表承担。旧任务不新增待办、不重开、不承接 B-135 未决项。
@@ -595,7 +595,7 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | T-19 | B-135/REQ-11 / B-135/AC-11 | 旧 Chat/JSON recovery/版本/provenance/图片/receipt reader 与 reload/unmount/rollback | [x] | schema3隔离、source reopen及真实当前→旧2.9.2→当前矩阵通过：旧版失败关闭但普通保存/legacy Profile可用，v3业务store完整保留，升级后真实来源Queue可确认和投影。当前App重载后四版、media/style/receipt与Chat入口精确恢复，本次默认native可见版本/保存再验证当前reader；整体iOS出口继续由T-18/T-21承担 |
 | T-20 | B-135/REQ-12 / B-135/AC-12；B-135/REQ-01 / B-135/AC-01；B-135/REQ-02 / B-135/AC-02 | 固定案例真实模型质量/成本对照及重复取材分析 | [~] | 同输入重复准备前后、Qwen四案及DeepSeek两案已汇总实际序列、自然结束、耗时与可得usage；Qwen缺值为unknown，不推断净耗时或固定提速。F-20已有D14处置；T-20只待D15决定DeepSeek native单样例弯引号变直引号的质量边界，不新增模型运行 |
 | T-21 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-12 / B-135/AC-12 | 冻结输入、统一 broad gate 与跨模块 review、补齐未覆盖 provider/Desktop/iOS 门 | [~] | 已有273 suites/7432 tests自然全门PASS，之后窄改动有相关聚焦/build/lint与独立复核；最终全部AC、full-ui/iOS及全量review未完成。各证据输入边界见Work |
-| T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [ ] | 本次开发分支提交/推送已获授权；closeout/release未授权，不先删除Brief独有故障证据 |
+| T-22 | B-135/REQ-11 / B-135/AC-11；B-135/REQ-17 / B-135/AC-17 | 按实际实现更新 current contracts/Architecture，汇总全量 AC、剩余事项与处置建议 | [~] | Settings与PA Agent当前架构已同步默认学习、来源范围、同一Agent选工具及Operations语义提议；native默认的最终Product Spec/多模态Architecture措辞等待D15后一次同步。closeout/release未授权，不先删除Brief独有故障证据 |
 
 ## Confirmed Discussion To Delivery Mapping
 
@@ -623,6 +623,7 @@ D11 持久化降级验证映射：AC-10/11 → 使用当前旧格式 reader 打�
 | Personal/style/Memory 语义，AC-04/09/10 | T-10/T-11 | `npm test -- --runInBand __tests__/plugin-record-note.test.ts` 及 SDD 中 admission/Type A/context suites；混合消息样例 | 提取输入准入与两条持久化准入一致；任务要求不变长期风格，真事实不整体丢弃；退出/forget 有效 | persisted metadata/reader/治理门变化扩大旧新 reader 与上下文回归 |
 | 语义/范围/history，AC-01/02/03/04/08/13 | T-12–T-15 | runtime/control/prepare/projector/history/Operations 受影响 suites；真实模型固定案例；Desktop Chat/Operations smoke | 原句仍咨询；禁网/当前笔记/跨轮更正/选第二个成立；来源批次合法；未确认零写入 | prompt/model/provider/投影/工具状态变化重跑相关语义案例；不因纯 docs 重跑 runtime |
 | 输出/版本/保存，AC-05/06/07/08/10/11 | T-16–T-19 | writing-output/version/style、bridge/history、Chat/save 现有 suites；P0 live provider；Desktop/iOS 图文流 | Unicode/空白/hash/parent/material 精确；截断不成版，部分保存真实，旧记录可读且不串图 | native schema/serializer/persistence/image/save lifecycle 漂移使相应证据失效 |
+| 当前 Settings/Agent 契约，AC-01/02/13/17 | T-22：同步已交付默认、同一 Agent 选工具及 Operations 提议边界 | 定向比对当前源码、Product Spec/SDD 与两份 Architecture；`npm run docs:check`；`npm run test:docs -- --runInBand`；`git diff --check` | 不再声称学习默认关闭或存在独立任务 classifier/本地写入意图门；旧 B-106 不重开，D15 与 iOS 状态不被提前改写 | 当前源码、权威契约、文档 checker 或链接改变时重跑；native 默认最终措辞等待 D15 后单独同步 |
 | 综合质量/成本及所有 AC | T-20/T-21 | `npm run lint`；`npm run build`；`npm run test:all -- --runInBand`；AGENTS 社区 source scan；未覆盖 App/provider/device | 自然退出，全部 AC 有对应证据；真实模型结果与调用成本分别记录，不承诺固定提速比例 | 源码/tests/fixtures/config/deps/build/environment 任一相关输入改变；共享改动扩大 |
 
 UI/runtime 的阶段验证使用 `make deploy` 或符合复用条件的 current-build 部署，随后真实观察交互；iOS 按真实设备 skill。已被 enclosing gate 覆盖的命令不重复跑，缺少环境只记录未测，不能把阶段标 Done。全量目标中的 P0 和语义对照使用有界测试样例与现有模型配置，不额外发送真实私人笔记；涉及未决产品路径先等待该选择。
@@ -926,6 +927,12 @@ T-08/T-09 真实宿主默认学习收口（2026-09-12）：
 - 默认 habit collector 将一次真实 `view` 反馈写成3个本地聚合；独立关闭后返回 `disabled` 且聚合序列化内容不变，同时 extraction 仍开启。随后明确暂停 extraction，scheduler 立即为空、再调度模型增量为0；Memory 控制中心的 Personal reader 仍 `enabled`、style service 仍可用，临时关闭 Memory 主门时 prompt context 只剩 `memoryContextMode`，未投影治理正文。
 - 清理完成：首次诊断轮因 Obsidian 窗口 `hidden` 正确停在模型前，置前并缩短 timer 后确认产品路径；后续同 ID 停止是首个成功轮已持久化 processed cursor，并非产品故障。旧/新两个合成 cursor 最终均为 `null`，所有 `.b135-learning-*` 临时文件已删除，插件重载后 governance=`ready`、scheduler存在；`data.json` 前后 SHA-256 均为 `f8cfd5bdefb2d3f9213489984b4f463c3035258da48c509dd1f9b1de2732dcbc`，回执 JSON 自检 PASS。T-08/T-09 由此标 Done；P2 仍受 T-10/T-11、真实语义、可见交互与受影响 iOS 阶段门约束。
 - 当前文档输入的 `npm run docs:check` PASS（206 Markdown、1820 links，4项既有episodic advisory）；`npm run test:docs -- --runInBand` 2 suites/58 tests PASS，5.958 s，自然exit0；回执JSON解析、`git diff --check`通过。随后仅补写本验证结果与当前任务描述，checker/tests/fixtures/config/dependencies未变；最终复跑docs:check和diff，文档测试证据继续适用。
+
+T-22 当前契约同步首片（2026-09-12）：
+
+- `docs/architecture/settings-status.md`按已交付实现改为两项学习分别默认开启、无明确关闭证据的旧`false`迁移开启、明确关闭/暂停保留；停止新增提取与已有有效Personal使用继续分门治理，所有增量和受影响iOS门仍只归B-135。
+- `docs/architecture/pa-agent-architecture-plan.md`移除独立启动分类和本地write-intent门的过时描述，记录同一主Agent选工具、Host来源批次/物理输入校验、Operations原确认保护，以及`get_writing_context`/`present_writing`、版本和旧reader兼容边界。未把D15写成已决定，也未改最终默认推广契约。
+- 仅运行本Validation Plan规定的文档门：`npm run docs:check` PASS（206 Markdown、1840 links，4项既有episodic advisory）；`npm run test:docs -- --runInBand` 2 suites/58 tests PASS，5.896 s，自然exit0；`git diff --check` PASS。没有重复build、full Jest、provider或App/device验证；本片使T-22进入部分完成，最终同步等待D15及全量AC汇总。
 
 ## Closeout Readiness
 
