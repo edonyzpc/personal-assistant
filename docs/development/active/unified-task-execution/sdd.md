@@ -1,7 +1,7 @@
 # Unified Task Execution Software Design Document
 
 Document status: Approved
-Updated: 2026-09-10
+Updated: 2026-09-12
 Work item: B-135
 Authority: 本 track 的源码核实设计、接口、来源与交付生命周期、兼容性、迁移及验证映射；不代表运行时已实现或验证通过。
 Approval scope: Owner 全量实施目标批准已确认需求的兼容实现；D2/D3 于 2026-09-09 明确选择专用作品通道，兼容验证通过后切换；D5 同日确认语义提议及保留执行保护，D8 确认无明确用户关闭证据的旧 false 迁移为开启，D10 确认停止新提取与使用已有画像解耦。接口与迁移表示仍须通过工程验证；新产品偏差另行决定。
@@ -417,6 +417,21 @@ AbortSignal或run清理；不保留pixels/lease、不写入模型参数或持久
 选择，关闭新提取不撤销已有Personal，Forget同文重建也不能复用旧revision；无关claim
 新增或过期历史清理不撤销本次实际选中的来源。已提交写入的真实成功不追溯改成失败，
 调用异步put函数不代表已经提交。此回调不代替重载后恢复所需的持久来源重验。
+
+2026-09-12 D13恢复设计：同页面保有完整生成来源回调时仍直接使用它，回调失效不得
+转为未知来源恢复。重载或旧reader缺少回调时，现有`WritingRecoveryModal`明确显示
+旧来源记录不足，保存按钮承载确认；提交回调必须收到本次确认，不能仅因打开窗口
+而视为批准。宿主`prepareWritingRecoverySources`重验确实记录的background refs、
+本次完整图片快照及parent正文hash/会话归属，返回本进程同步guard交给已有最终事务准入。
+Chat传入同条助手消息已持久化的来源metadata：明确Memory用途仍受Memory主开关及专用
+路径排除，无类型旧路径/当前笔记/普通读取只按共享Data Boundary及真实正文核验；
+不通过status-only记录或路径同名猜用途，明确来源不能因recovery字段缺失而漏检。
+选父版正文不等于再次选用其全部风格或材料，不从parent继承额外来源检查。已知失效或
+重验失败不能被确认覆盖；异步等待期间的会话/来源变化仍拒绝成版。未记录的Personal/
+Insights身份继续是未知，不从正文或当前selector倒推，也不宣称恢复了完整生成凭据。
+恢复版本通过临时宿主参数保留既有缺省`referenceScope`，不把旧记录升级为来源均属于
+当前request的声明，后续编辑继续保留该不确定性。该相容切片不新增持久字段、库或来源代次，旧recovery格式保持可读；真正跨重载的完整
+生成来源身份仍须独立设计和验收。确认恢复不会调用provider、触发风格学习或改写AI来源。
 
 Vault Insights作为聚合来源，在分析开始前捕获全部合规Markdown身份，发布前重验，
 宿主仅保留临时来源凭据；普通停止调度不撤销已生成作品，新请求仍遵循原有注入门。
