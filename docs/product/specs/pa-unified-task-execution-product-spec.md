@@ -75,12 +75,12 @@ Authority: B-135 已确认产品边界的当前记录与目标验收索引；未
 
 2026-09-12已确认D13：重载旧作品的来源记录不足时，在现有恢复窗口明确说明并以“确认并恢复为 AI 草稿”承接人工选择；已确认撤销或失效仍拒绝。此确认不证明旧来源完整有效、不授予重新使用来源或风格学习权限，原有AI/局部编辑归属保留。该边界共同适用于AC-06与AC-11，工程验证仍由T-18跟踪。
 
-2026-09-12的D15仍待Owner决定：DeepSeek `deepseek-v4-pro`在同一明确正文样例中通过native输出时把中文弯引号改为ASCII直引号，旧协议保留弯引号；两条传输都把provider正文逐字交付为artifact。当前建议将它记录为单样例模型质量限制，保持native默认，不增加自动fallback或provider特判；若不接受，则恢复全局legacy默认并重新定义切换门。
+2026-09-12已确认D15：Owner接受将DeepSeek `deepseek-v4-pro`在同一明确正文样例中把中文弯引号改为ASCII直引号记录为单样例模型质量限制；旧协议保留弯引号，两条传输都把provider正文逐字交付为artifact。保持native默认，不增加自动fallback、运行时双协议或DeepSeek特判；保留原始失败证据，不把传输保真冒充模型逐字质量通过。
 
-已确认的模型语义、个性化边界、默认开启及 B-135 全量归属不重复询问。Owner 于 2026-09-09 选择专用作品通道及直接终局交付，兼容验证通过后切换；同日确认 Operations 语义提议及保留执行保护、无明确关闭证据的旧 false 迁移为开启，以及停止新提取与已有画像读取解耦。除D15外，本轮产品选择均已完成；答复及工程验证依赖集中在 [Tracker Decisions](../../development/active/unified-task-execution/tracker.md#decisions)。首请求发送限制的已支持边界及物理输入证据由Tracker记录；新的产品取舍仍不得用Approved标签替代真实答复。
+已确认的模型语义、个性化边界、默认开启及 B-135 全量归属不重复询问。Owner 于 2026-09-09 选择专用作品通道及直接终局交付，兼容验证通过后切换；同日确认 Operations 语义提议及保留执行保护、无明确关闭证据的旧 false 迁移为开启，以及停止新提取与已有画像读取解耦。D15确认后本轮产品选择均已完成；答复及工程验证依赖集中在 [Tracker Decisions](../../development/active/unified-task-execution/tracker.md#decisions)。首请求发送限制的已支持边界及物理输入证据由Tracker记录；新的产品取舍仍不得用Approved标签替代真实答复。
 
 ## Delivery Handoff
 
 - Active Package: [B-135](../../development/active/unified-task-execution/README.md)
 - Architecture contracts: [Multimodal Chat](../../architecture/multimodal-chat-architecture.md)、[Settings current status](../../architecture/settings-status.md)、[Write Action Framework](../../architecture/write-action-framework-sdd.md)
-- Release / rollout boundary: 实现与现有provider/Desktop证据已进入B-135开发分支；D15、最终统一gate及受影响iOS仍由Tracker跟踪。工作分支不是Beta源，master、Beta、tag和release仍各自需要独立授权。
+- Release / rollout boundary: 实现与现有provider/Desktop证据已进入B-135开发分支；最终统一gate及受影响iOS仍由Tracker跟踪。工作分支不是Beta源，master、Beta、tag和release仍各自需要独立授权。

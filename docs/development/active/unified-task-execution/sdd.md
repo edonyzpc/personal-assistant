@@ -254,6 +254,8 @@ JSON字符串，普通object对照返回正确对象。因此模型侧scene使�
 
 2026-09-12 D14：Owner确认F-20作为新旧协议共有的模型质量问题继续跟踪，与专用通道兼容性分开评估。明确边界的成功样例不覆盖原提示失败；其它schema、原始完成证据、来源、预览及App门仍须通过，不能据本决定直接启用默认native。
 
+2026-09-12 D15：Owner接受把DeepSeek明确正文单样例中的弯引号转直引号记录为模型质量限制，保持native默认，不增加自动fallback、运行时双协议或DeepSeek特判。两条协议的provider正文到artifact仍逐字一致；该事实不证明模型逐字遵循用户原文，原始失败样例继续作为质量基线保存。
+
 WritingContextRun提供projectTranscript及captureTranscriptValidity：按实际canonical
 工具结果完整JSON验证已发布receipt，先clone再异步验证父版，失效替换同时去掉正文、
 preview及metadata，保留独立消息和原记录。捕获同步闭包拒绝receipt替换、材料/style
@@ -310,7 +312,7 @@ present_writing，仍识别并拒绝伪造输出。get_writing_context与作品�
 资产/缓存或来源receipt；receipt继续按真实文件身份/revision/stat及边界验证，正常turn
 清理不应使已完成的有效读取失效。
 
-### 5. Native 作品和 Chat 终局（开发分支已切换，D15质量处置待决）
+### 5. Native 作品和 Chat 终局（开发分支默认，D15质量限制已处置）
 
 `present_writing` 使用现有 native tool-call 参数承载 `body`、可选
 `explanation` 和宿主已提供的 writing context handle。schema 不接受保存路径、权限、
@@ -352,8 +354,8 @@ terminal policy 使用原剩余 hard budget，随后再验来源和取消；cont
 缺少模型bindTools时在物理请求前拒绝。schema只允许body、可选explanation和精确
 handle，不注册普通可执行工具。Pagelet缺省不启用；普通来源/动作规则不得放宽，
 不能绕过宿主策略直接agent_end。旧reader组合与当前Qwen Desktop已验证，受影响iOS
-仍由T-18/T-21承担。D15只处置DeepSeek单样例引号质量差异：未决定前不增加自动
-双协议、fallback或provider特判，也不把传输保真冒充模型逐字质量通过。
+仍由T-18/T-21承担。D15已将DeepSeek单样例引号差异处置为模型质量限制；不增加
+自动双协议、fallback或provider特判，也不把传输保真冒充模型逐字质量通过。
 
 静态输出登记放在现有 CapabilityRegistry：`getWritingOutputSchema` 只返回固定
 present_writing 声明，动态 provider 不能注册同名执行能力；它不进入普通工具
@@ -764,7 +766,7 @@ source 使用 `npm test`，tooling 使用 `test:tooling`，artifact 先当前 pr
 | ID / scope | Finding and required closure | Boundary until closed |
 | --- | --- | --- |
 | D1/P0 来源表达 | 冻结是否保留 `declare_source_scope`、同批预检与用途投影；验证常规保留个性化、完整历史及真实关闭/排除 | 不能把旧整类 bootstrap 当默认/fallback；任意自然语言首发发送限制不虚报已解决，新 UI/调用或能力边界需用户选择 |
-| D2/D3 | 用户 2026-09-09 已选择 native 作品和 Chat final-only 纯输出主线；仍须通过 provider/preview/终态/旧reader 的 P0 | 验证通过前不切换默认或删除旧恢复，不以产品批准替代技术证据 |
+| D2/D3/D15 | 用户已选择native作品和Chat final-only纯输出主线；provider/preview/终态/旧reader与Desktop门通过后开发分支已切默认，DeepSeek单样例引号差异按D15作为质量限制 | 保留旧reader与原始质量失败；不增加自动fallback、双协议或provider特判，受影响iOS仍按阶段门验证 |
 | D4/P0 来源准入 | collector 可审阅输入、模型语义与两条候选持久化之间需可运行混合样例及 reader 对照 | 不全改ordinary、不丢独立真实事实、不让模型赋予长期授权 |
 | D5 | 用户 2026-09-09 已确认 Operations 的主 Agent 语义提议 | 保留真实 opt-in/core tools/确认与来源准入；T-15 同步验证 canExport/canExecute 和提议/执行路径，不扩大动作权限 |
 | D6/P0 完成与预算 | 原生 protocol、finish/EOF 修复、单一截止和软过渡分别离线对照，覆盖 incremental 与 buffered | 不加总超时、不重置fallback、不把text_delta当最终性证明 |

@@ -1,7 +1,7 @@
 # PA Multimodal Chat Product Spec
 
 Document status: Current
-Updated: 2026-09-09
+Updated: 2026-09-12
 Work item: B-129
 Decision: [DEC-030](../decisions/dec-030-multimodal-chat-image-copywriting.md)
 Authority: B-129 用户已确认的图片理解、个性化文案、显式保存与风格参考产品契约。
@@ -11,6 +11,13 @@ Authority: B-129 用户已确认的图片理解、个性化文案、显式保存
 构建绑定的测试、生产服务与真实 UI 证据见 [首版限定验证](../../archive/2026/b129-multimodal-chat-validation.md)，
 后续紧凑图片输入与保存表单的独有证据见 [图片体验验证](../../archive/2026/chat-image-experience-validation.md)。
 验收证据的覆盖范围不能扩大为所有模型、设备和交互均已验证，也不自行授予发布权限。
+
+2026-09-12 [B-135](../../development/active/unified-task-execution/README.md)只修订
+REQ-09的作品传输：生产Chat在完成兼容、来源、预览、结束和Desktop验证后默认使用
+宿主专用`present_writing`通道，旧JSON/recovery reader继续保留。Owner按D15接受
+DeepSeek单样例引号差异作为模型质量限制，不增加自动fallback、双协议或provider特判。
+B-129其余图片、版本、保存和风格边界不变；全部新增实现与剩余iOS验收只由B-135跟踪，
+不重开B-129。
 
 2026-09-08 图片管理修订已落实于当前源码，输入、迁出和兼容边界见
 [Architecture](../../architecture/multimodal-chat-architecture.md#图片管理与保存恢复)。

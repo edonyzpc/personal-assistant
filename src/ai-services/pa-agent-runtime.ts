@@ -185,7 +185,7 @@ export interface PaAgentRunOptions {
 }
 
 export interface PaAgentStreamOptions extends PaAgentRunOptions {
-    /** Host-only compatibility candidate. Default switching requires B-135 P0 evidence. */
+    /** Host-only writing output selection. Production Chat enables native after B-135 validation. */
     writingOutputProtocol?: "native";
     /** Internal projection value, resolved from the run receipt rather than model input. */
     writingContextHandle?: string;
@@ -878,7 +878,7 @@ export class PaAgentRuntime {
             throwIfAborted(signal ?? options.signal);
             assertRequestSourcesCurrent(signal);
         };
-        // Reject an irreducibly large current request before optional startup classifier calls.
+        // Reject an irreducibly large current request before optional context preparation.
         // This lower bound does not replace the complete, revalidated per-attempt guard below.
         const minimumRequestChars = measurePaAgentRequestChars({
             input: [options.prompt, writingContextHost ? "" : selectedWritingContext(options.writingContext), options.writingRequest ? (nativeWritingRequest ? (writingContextHost ? "" : nativeWritingOutputInstruction(options.writingRequest)) : writingOutputInstruction(options.writingRequest)) : ""].filter(Boolean).join("\n\n"),
