@@ -107,6 +107,8 @@
     "plugin.chat.writing.rawResponse": "Original response (not a confirmed writing version)",
     "plugin.chat.writing.selectBody": "Use selected text",
     "plugin.chat.writing.recoverVersion": "Keep as a writing version",
+    "plugin.chat.writing.incompleteRecoverySources": "The old source record is incomplete. Confirm to recover the selected text as an AI draft; this does not verify all old sources or enable style learning. Sources found to be unavailable still prevent recovery.",
+    "plugin.chat.writing.confirmRecovery": "Confirm and recover as an AI draft",
     "plugin.chat.writing.noSelection": "Select the intended text from the original response first.",
     "plugin.chat.writing.continueHint": "The next writing request will use the selected version and its associated images.",
     "plugin.chat.writing.unsupportedImages": "The current Chat model does not support images. Choose a model that supports images in settings; your draft is kept.",

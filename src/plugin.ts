@@ -80,10 +80,12 @@ import { ChatHistoryManager } from './chat/chat-history-manager';
 import { ImageAssetService } from './chat/image-assets';
 import { hasWritingNoteProvenance } from './chat/writing-note-provenance';
 import { WritingVersionService } from './chat/writing-versions';
+import { prepareWritingRecoverySources } from './chat/writing-recovery-sources';
 import { WritingSaveAction } from './chat/writing-save-action';
 import { WritingStyleService, WritingStyleUnavailableError, inferWritingScene } from './chat/writing-style-service';
 import { hashWritingText, type WritingScene } from './chat/writing-types';
-import type { ChatWritingStylePreparation, ChatWritingStyleResult } from './ai-services/chat-types';
+import type { ChatTurnMemoryMetadata, ChatWritingRecovery, ChatWritingStylePreparation, ChatWritingStyleResult } from './ai-services/chat-types';
+import type { MessageImage } from './chat/image-types';
 import { ImageProcessor } from './chat/image-processor';
 import { collectChatMemorySemanticSources, isChatMemoryRecordAdmissible, projectChatMemorySemanticText } from './pa/chat-memory-admission';
 import { CHAT_MEMORY_SEMANTIC_RULE, chatMemorySemanticSourceFingerprint,
@@ -7833,6 +7835,48 @@ export class PluginManager extends Plugin {
         return service.prepare(scene, budget);
     }
 
+    private async prepareWritingRecoverySources(recovery: ChatWritingRecovery, images: readonly MessageImage[],
+        conversationId: string, metadata?: ChatTurnMemoryMetadata) {
+        const manager = this.chatHistoryManager;
+        const versions = this.writingVersions;
+        const imageAssets = this.imageAssetService;
+        return prepareWritingRecoverySources({
+            versions,
+            isMemoryAllowed: () => this.settings.memoryEnabled === true,
+            captureLifetime: (id) => {
+                const sourceCurrent = manager?.captureSourceLifetime(id);
+                return () => !this.unloading && this.chatHistoryManager === manager
+                    && this.writingVersions === versions && sourceCurrent?.() === true;
+            },
+            verifyNote: async (ref, memory) => {
+                const isPathAllowed = (path: string) => memory
+                    ? this.settings.memoryEnabled === true && this.isMemoryProviderPathAllowed(path)
+                    : this.isDataBoundaryAllowedPath(path);
+                const source = await this.captureLatestMemorySource(ref.path, isPathAllowed, 'chat');
+                if (!source) throw new Error('Writing source unavailable');
+                // Generic PersistedSourceRef hashes have no uniform body/algorithm
+                // contract (some hash a path or a summary). Missing hash semantics
+                // remain part of the explicitly acknowledged historical gap;
+                // image and parent-body hashes have dedicated verifiers.
+                const file = this.app.vault.getAbstractFileByPath(source.path);
+                if (!(file instanceof TFile)) throw new Error('Writing source unavailable');
+                const ctime = file.stat.ctime;
+                return { isCurrent: () => !this.unloading
+                    && this.app.vault.getAbstractFileByPath(source.path) === file && file.path === source.path
+                    && file.stat.ctime === ctime && file.stat.mtime === source.mtime && file.stat.size === source.size
+                    && isPathAllowed(source.path)
+                    && this.getLatestMemoryContentBoundary(source.path, source.markdown, 'chat')?.allowed === true };
+            },
+            verifyImage: async (image) => {
+                if (!imageAssets || this.imageAssetService !== imageAssets) throw new Error('Writing image unavailable');
+                // verify reads the original bytes and applies provider-source
+                // boundaries locally; it does not transmit images to a provider.
+                const receipt = await imageAssets.verify(image.ref, 'provider');
+                return { isCurrent: () => this.imageAssetService === imageAssets && receipt.isCurrent() };
+            },
+        }, recovery, images, conversationId, metadata);
+    }
+
     private openQuickCaptureModal(): void {
         if (!this.settings.quickCapture.enabled) {
             new Notice(this.t("plugin.quickCapture.notice.disabled"), 3000);
@@ -7940,6 +7984,7 @@ export class PluginManager extends Plugin {
             writingSave: this.writingSave,
             rememberWritingStyle: (versionId, scene) => this.rememberWritingStyle(versionId, scene),
             readWritingStyleReferences: (revisionIds, signal) => this.getWritingStyleService()?.readReferences(revisionIds, signal) ?? Promise.resolve([]),
+            prepareWritingRecoverySources: (recovery, images, conversationId, metadata) => this.prepareWritingRecoverySources(recovery, images, conversationId, metadata),
             onWritingReferencesChanged: (listener) => {
                 let active = true;
                 const notify = () => { if (active) listener(); };

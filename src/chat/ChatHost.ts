@@ -13,6 +13,9 @@ import type { WritingSaveAction } from "./writing-save-action";
 import type { WritingScene } from "./writing-types";
 import type { WritingStyleReference, WritingStyleService } from './writing-style-service';
 import type { ChatWritingStylePreparation, ChatWritingStyleResult } from '../ai-services/chat-types';
+import type { ChatTurnMemoryMetadata, ChatWritingRecovery } from '../ai-services/chat-types';
+import type { MessageImage } from './image-types';
+import type { WritingRecoverySourceReceipt } from './writing-recovery-sources';
 
 export type AISetupFailureCode =
     | "invalid_configuration"
@@ -55,6 +58,8 @@ export interface ChatHost {
     readonly writingSave?: WritingSaveAction;
     rememberWritingStyle?(versionId: string, scene: WritingScene): Promise<void>;
     readWritingStyleReferences?(revisionIds: readonly string[], signal?: AbortSignal): Promise<WritingStyleReference[]>;
+    prepareWritingRecoverySources?(recovery: ChatWritingRecovery, images: readonly MessageImage[],
+        conversationId: string, metadata?: ChatTurnMemoryMetadata): Promise<WritingRecoverySourceReceipt>;
     onWritingReferencesChanged?(listener: () => void): () => void;
     prepareWritingStyle?(prompt: string, parentScene: WritingScene | undefined,
         budget: Parameters<ChatWritingStylePreparation>[0]): Promise<ChatWritingStyleResult>;

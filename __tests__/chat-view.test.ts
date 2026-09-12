@@ -8,6 +8,7 @@ import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/fo
 import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import { ChatHistoryManager } from '../src/chat/chat-history-manager';
+import type { ChatHost } from '../src/chat/ChatHost';
 import { MemoryChatHistoryStore } from '../src/chat/chat-history-store';
 import { WritingVersionService } from '../src/chat/writing-versions';
 import { WritingRecoveryModal, WritingSaveModal, WritingStyleModal, WritingVersionModal } from '../src/chat/writing-modal';
@@ -769,6 +770,7 @@ function createView(options: {
             operationsProactiveSaveSuggestionsEnabled: true,
         },
         chatHistoryManager: options.chatHistoryManager,
+        prepareWritingRecoverySources: jest.fn<NonNullable<ChatHost['prepareWritingRecoverySources']>>(async () => ({ isCurrent: () => true })),
         memoryStatus: {
             getMaintenancePlan: jest.fn(async (): Promise<MemoryMaintenancePlan> => ({
                 reason: 'ready',
@@ -1297,6 +1299,8 @@ describe('LLMView turn lifecycle', () => {
             buttons[0].click(); await buttons[1].click();
             for (let i = 0; i < 8; i++) await flushPromises();
             const recovered = await versions.list('guarded-recovery');
+            expect(allText(modalRoot)).not.toContain('The old source record is incomplete');
+            expect(plugin.prepareWritingRecoverySources).not.toHaveBeenCalled();
             expect(recovered).toHaveLength(sourceCurrent ? 1 : 0);
             if (sourceCurrent) expect(recovered[0].text).toBe('BODY');
             const saved = (await store.getTurns('guarded-recovery'))[0].assistant;
@@ -1310,8 +1314,117 @@ describe('LLMView turn lifecycle', () => {
         }
     });
 
+    it.each(['valid', 'edited', 'rejected', 'revoked_before_write', 'missing_host', 'closed_during_prepare'] as const)(
+        'requires explicit recovery confirmation after history reload and checks recorded sources: %s', async (outcome) => {
+            const store = new MemoryChatHistoryStore();
+            const manager = new ChatHistoryManager({ store, generateId: () => 'reloaded-recovery' });
+            const versions = new WritingVersionService(store);
+            const initial = createView({ chatHistoryManager: manager });
+            Object.assign(initial.plugin, { writingVersions: versions });
+            await initial.view.onOpen();
+            initial.view.prefillComposer('写一段文案');
+            getElementByClass(initial.containerEl, 'send-button-visible').click();
+            await flushPromises();
+            const call = streamCalls[0];
+            emitCanonical(call, canonicalEvent({ type: 'agent_start' }));
+            emitCanonical(call, canonicalEvent({ type: 'turn_start', metadata: { hostContext: {
+                sourceRecords: [{ kind: 'context-used', dedupKey: 'note:Source.md', path: 'Source.md', citationEligible: true }],
+            } } }));
+            call.options.onEvent?.({ version: 1, turnId: 'turn_1', seq: 10, timestamp: 1,
+                kind: 'writing-recovery', runId: 'run_1', requestId: call.options.writingRequest!.requestId,
+                messageId: 'old_answer', rawText: 'prefix BODY suffix', reason: 'invalid_output',
+                isSourceCurrent: () => true });
+            emitCanonical(call, canonicalEvent({ type: 'agent_end', status: 'completed_with_warning' }));
+            call.resolve();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            await initial.view.onClose();
+            const before = (await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery;
+            if (!before) throw new Error('Expected persisted recovery fixture');
+            expect(before).not.toHaveProperty('isSourceCurrent');
+            const restored = createView({ chatHistoryManager: manager });
+            Object.assign(restored.plugin, { writingVersions: versions });
+            let allowed = true;
+            let releasePreparation!: () => void;
+            let markPreparing!: () => void;
+            const preparing = new Promise<void>((resolve) => { markPreparing = resolve; });
+            const preparation = new Promise<void>((resolve) => { releasePreparation = resolve; });
+            restored.plugin.prepareWritingRecoverySources.mockImplementation(async () => {
+                if (outcome === 'rejected') throw new Error('Source no longer allowed');
+                if (outcome === 'closed_during_prepare') { markPreparing(); await preparation; }
+                return { isCurrent: () => allowed };
+            });
+            if (outcome === 'missing_host') Object.assign(restored.plugin, { prepareWritingRecoverySources: undefined });
+            if (outcome === 'revoked_before_write') {
+                const put = store.putWritingVersion.bind(store);
+                jest.spyOn(store, 'putWritingVersion').mockImplementation(async (version, assertSourceCurrent) => {
+                    allowed = false;
+                    return put(version, assertSourceCurrent);
+                });
+            }
+            await restored.view.onOpen();
+            for (let i = 0; i < 8; i++) await flushPromises();
+            const opened: WritingRecoveryModal[] = [];
+            const open = jest.spyOn(WritingRecoveryModal.prototype, 'open').mockImplementation(function (this: WritingRecoveryModal) { opened.push(this); });
+            try {
+                getElementByClass(restored.containerEl, 'pa-chat-writing-action').click();
+                const modal = opened[0];
+                const root = new MockElement('div');
+                modal.contentEl = root as unknown as HTMLElement;
+                modal.onOpen();
+                expect(allText(root)).toContain('The old source record is incomplete');
+                const areas = walkAll(root, (element) => element.tagName === 'textarea');
+                const buttons = walkAll(root, (element) => element.tagName === 'button');
+                expect(allText(buttons[1])).toBe('Confirm and recover as an AI draft');
+                expect(await versions.list('reloaded-recovery')).toEqual([]);
+                if (outcome !== 'missing_host') expect(restored.plugin.prepareWritingRecoverySources).not.toHaveBeenCalled();
+                Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+                buttons[0].click();
+                // The commit boundary itself rejects a caller that skipped the
+                // confirmation button, even after selecting a body.
+                const commit = (modal as unknown as { commit: (text: string, origin: 'ai_generated') => Promise<WritingVersion> }).commit;
+                await expect(commit('BODY', 'ai_generated')).rejects.toThrow('source confirmation');
+                expect(await versions.list('reloaded-recovery')).toEqual([]);
+                if (outcome === 'edited') areas[1].value = 'MY BODY';
+                const saved = buttons[1].click();
+                if (outcome === 'closed_during_prepare') {
+                    await preparing;
+                    const closing = restored.view.onClose();
+                    releasePreparation();
+                    await closing;
+                }
+                await saved;
+                for (let i = 0; i < 8; i++) await flushPromises();
+                const result = await versions.list('reloaded-recovery');
+                expect(result).toHaveLength(outcome === 'valid' || outcome === 'edited' ? 1 : 0);
+                if (outcome === 'valid' || outcome === 'edited') {
+                    expect(restored.plugin.prepareWritingRecoverySources).toHaveBeenCalledWith(before, [], 'reloaded-recovery',
+                        expect.objectContaining({ sourceRecords: expect.arrayContaining([
+                            expect.objectContaining({ path: 'Source.md', kind: 'context-used' }),
+                        ]) }));
+                    expect(result[0]).toMatchObject({ text: outcome === 'edited' ? 'MY BODY' : 'BODY',
+                        origin: outcome === 'edited' ? 'user_edited' : 'ai_generated',
+                        backgroundSourceRefs: [{ path: 'Source.md' }], styleRevisionIds: [] });
+                    expect(result[0].referenceScope).toBeUndefined();
+                    expect(result[0]).not.toHaveProperty('referenceScopeUnverified');
+                    const edited = await versions.edit(result[0].id, 'Later edit', 'edit-recovery');
+                    expect(edited.referenceScope).toBeUndefined();
+                }
+                expect((await store.getTurns('reloaded-recovery'))[0].assistant.writingRecovery).toEqual(before);
+                expect(streamCalls).toHaveLength(1);
+                modal.onClose();
+            } finally { open.mockRestore(); await restored.view.onClose(); }
+        });
+
     it.each(['artifact', 'recovery'] as const)('persists host resolved materials for writing %s with no composer images', async (kind) => {
         const store = new MemoryChatHistoryStore();
+        let markSaved!: () => void;
+        const saved = new Promise<void>((resolve) => { markSaved = resolve; });
+        const append = store.appendTurnAndUpdateConversation.bind(store);
+        jest.spyOn(store, 'appendTurnAndUpdateConversation').mockImplementation(async (...args) => {
+            const result = await append(...args);
+            markSaved();
+            return result;
+        });
         const manager = new ChatHistoryManager({ store, generateId: () => 'resolved-writing' });
         const versions = new WritingVersionService(store);
         const { view, plugin, containerEl } = createView({ chatHistoryManager: manager });
@@ -1331,6 +1444,7 @@ describe('LLMView turn lifecycle', () => {
         call.options.onEvent?.(kind === 'artifact' ? { ...shared, kind: 'writing-artifact', body: 'BODY', explanation: '' }
             : { ...shared, kind: 'writing-recovery', rawText: 'prefix BODY suffix', reason: 'invalid_output', writingContext: { scene: semanticScene } });
         call.resolve();
+        await saved;
         for (let i = 0; i < 8; i++) await flushPromises();
         const turns = await store.getTurns('resolved-writing');
         expect(turns[0].assistant.images).toEqual([material]);
@@ -1623,7 +1737,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it.each([false, true])('requires an explicit body selection and records actual edits: %s', async (edited) => {
-        const commit = jest.fn(async (_text: string, _origin: WritingVersion['origin']) => ({ id: 'recovered' } as WritingVersion));
+        const commit = jest.fn(async (_text: string, _origin: WritingVersion['origin'], _confirmed?: boolean) => ({ id: 'recovered' } as WritingVersion));
         const root = new MockElement('div');
         const modal = new WritingRecoveryModal({} as never, { requestId: 'request', rawText: 'prefix BODY suffix', reason: 'incomplete' },
             commit, { versions: {} as WritingVersionService });
@@ -1639,7 +1753,27 @@ describe('LLMView turn lifecycle', () => {
         if (edited) areas[1].value = 'MY BODY';
         buttons[1].click();
         await flushPromises();
-        expect(commit).toHaveBeenCalledWith(edited ? 'MY BODY' : 'BODY', edited ? 'user_edited' : 'ai_generated');
+        expect(commit).toHaveBeenCalledWith(edited ? 'MY BODY' : 'BODY', edited ? 'user_edited' : 'ai_generated', undefined);
+    });
+
+    it.each([false, true])('confirms incomplete source recovery without changing actual edit provenance: %s', async (edited) => {
+        const commit = jest.fn(async (_text: string, _origin: WritingVersion['origin'], _confirmed?: boolean) => ({ id: 'recovered' } as WritingVersion));
+        const root = new MockElement('div');
+        const modal = new WritingRecoveryModal({} as never, { requestId: 'request', rawText: 'prefix BODY suffix', reason: 'incomplete' },
+            commit, { versions: {} as WritingVersionService }, true);
+        modal.contentEl = root as unknown as HTMLElement;
+        modal.onOpen();
+        const areas = walkAll(root, (element) => element.tagName === 'textarea');
+        const buttons = walkAll(root, (element) => element.tagName === 'button');
+        await buttons[1].click();
+        expect(commit).not.toHaveBeenCalled();
+        Object.assign(areas[0], { selectionStart: 7, selectionEnd: 11 });
+        buttons[0].click();
+        if (edited) areas[1].value = 'MY BODY';
+        expect(commit).not.toHaveBeenCalled();
+        await buttons[1].click();
+        expect(commit).toHaveBeenCalledWith(edited ? 'MY BODY' : 'BODY', edited ? 'user_edited' : 'ai_generated', true);
+        modal.onClose();
     });
 
     it('prepares all version images by default and releases a preview that completes after close', async () => {

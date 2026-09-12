@@ -27,13 +27,17 @@ export class WritingRecoveryModal extends Modal {
     private closed = false;
     private busy = false;
     constructor(app: App, private readonly recovery: ChatWritingRecovery,
-        private readonly commit: (text: string, origin: WritingVersion['origin']) => Promise<WritingVersion>,
-        private readonly host: WritingModalHost) { super(app); }
+        private readonly commit: (text: string, origin: WritingVersion['origin'], confirmedIncompleteSources?: boolean) => Promise<WritingVersion>,
+        private readonly host: WritingModalHost,
+        private readonly requiresSourceConfirmation = false) { super(app); }
     onOpen(): void {
         const t = makePluginTranslator(getPluginUiLanguage());
         this.contentEl.addClass('pa-writing-modal');
         this.contentEl.createEl('h2', { text: t('plugin.chat.writing.recovery') });
         this.contentEl.createEl('p', { text: t('plugin.chat.writing.recoveryHint') });
+        if (this.requiresSourceConfirmation) {
+            this.contentEl.createEl('p', { text: t('plugin.chat.writing.incompleteRecoverySources') });
+        }
         const raw = this.contentEl.createEl('textarea', { cls: 'pa-writing-modal__body', attr: {
             readonly: '', rows: '10', 'aria-label': t('plugin.chat.writing.rawResponse'),
         } });
@@ -47,13 +51,15 @@ export class WritingRecoveryModal extends Modal {
             if (!selection.trim()) { status.setText(t('plugin.chat.writing.noSelection')); return; }
             selectedText = selection; editor.value = selection; status.setText('');
         };
-        const keep = this.contentEl.createEl('button', { text: t('plugin.chat.writing.recoverVersion'), attr: { type: 'button' } });
+        const keep = this.contentEl.createEl('button', { text: t(this.requiresSourceConfirmation
+            ? 'plugin.chat.writing.confirmRecovery' : 'plugin.chat.writing.recoverVersion'), attr: { type: 'button' } });
         keep.onclick = async () => {
             if (this.closed || this.busy) return;
             if (selectedText === undefined || !editor.value.trim()) { status.setText(t('plugin.chat.writing.noSelection')); return; }
             this.busy = true; keep.disabled = true;
             try {
-                const version = await this.commit(editor.value, editor.value === selectedText ? 'ai_generated' : 'user_edited');
+                const version = await this.commit(editor.value, editor.value === selectedText ? 'ai_generated' : 'user_edited',
+                    this.requiresSourceConfirmation ? true : undefined);
                 if (!this.closed) { new WritingVersionModal(this.app, this.host, version.id).open(); this.close(); }
             } catch { if (!this.closed) { status.setText(t('plugin.chat.writing.unavailable')); keep.disabled = false; } }
             finally { this.busy = false; }

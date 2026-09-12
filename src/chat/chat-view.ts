@@ -2202,19 +2202,32 @@ export class LLMView extends ItemView {
                 if (message.writingVersionId) { new WritingVersionModal(this.app, host, message.writingVersionId).open(); return; }
                 const recovery = message.writingRecovery;
                 if (!recovery) return;
-                new WritingRecoveryModal(this.app, recovery, async (text, origin) => {
+                const generationSourceCurrent = writingRecoverySources.get(message);
+                new WritingRecoveryModal(this.app, recovery, async (text, origin, confirmedIncompleteSources) => {
                     if (!isCurrentSession()) throw new Error('Writing view closed');
+                    if (!generationSourceCurrent && confirmedIncompleteSources !== true) {
+                        throw new Error('Writing recovery requires source confirmation');
+                    }
                     const entry = timelineEntries.find((entry) => entry.kind === 'history' && entry.assistant === message);
                     if (!entry || entry.kind !== 'history') throw new Error('Writing turn unavailable');
+                    const images = mergeWritingImages(message.images ?? entry.user.images ?? []);
                     let version: WritingVersion | undefined;
                     const persisted = await this.conversationPersistence.reviseFinalizedTurn(entry, async (context, isCurrent) => {
+                        // A failed generating receipt is never downgraded to an
+                        // incomplete record. Reload confirmation only covers
+                        // missing history; recorded sources still need checks.
+                        const sourceCurrent = generationSourceCurrent ?? (await this.host.prepareWritingRecoverySources?.(
+                            recovery, images, context.conversationId,
+                            readChatHistoryTurnMetadata(message, entry.memoryMetadata)))?.isCurrent;
+                        if (!sourceCurrent) throw new Error('Writing recovery verification unavailable');
                         version = await host.versions.create({ ...context, requestId: newWritingActionId(),
                             messageId: recovery.messageId ?? recovery.requestId, text, origin,
                             parentVersionId: recovery.parentVersionId,
                             scene: recovery.scene,
                             backgroundSourceRefs: recovery.backgroundSourceRefs,
-                            images: mergeWritingImages(message.images ?? entry.user.images ?? []),
-                        }, () => isCurrent() && writingRecoverySources.get(message)?.() !== false);
+                            referenceScopeUnverified: !generationSourceCurrent,
+                            images,
+                        }, () => isCurrentSession() && isCurrent() && sourceCurrent());
                         message.writingVersionId = version.id;
                     });
                     if (!persisted || !version) { delete message.writingVersionId; throw new Error('Writing persistence unavailable'); }
@@ -2224,7 +2237,7 @@ export class LLMView extends ItemView {
                     }
                     renderWritingActions(rendered, message);
                     return version;
-                }, host).open();
+                }, host, !generationSourceCurrent).open();
             };
         };
         const createMessageElement = (

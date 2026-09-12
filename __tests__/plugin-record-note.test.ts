@@ -3045,6 +3045,125 @@ describe('Memory governance plugin bootstrap', () => {
             return { ...harness, path, file, boundary, receipt };
         }
 
+        it.each(['note edit', 'path exclusion', 'Memory off', 'file removed'] as const)(
+            'keeps the real recovery note guard live after %s', async (change) => {
+                const { plugin, path, file, boundary } = await setupNoteBackedStyle();
+                plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+                const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                    requestId: 'old-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                    backgroundSourceRefs: [{ path }],
+                }, [], 'style-conversation', { hasMemoryContent: true, allowedMemorySourcePaths: [path] });
+                expect(recovered.isCurrent()).toBe(true);
+                if (change === 'note edit') file.stat.mtime += 1;
+                else if (change === 'path exclusion') boundary.allowed = false;
+                else if (change === 'Memory off') plugin.settings.memoryEnabled = false;
+                else plugin.app.vault.getAbstractFileByPath = jest.fn(() => null);
+                expect(recovered.isCurrent()).toBe(false);
+                expect(plugin.createChatModel).not.toHaveBeenCalled();
+            },
+        );
+
+        it('treats an untyped historical hash as incomplete metadata without guessing a hash algorithm', async () => {
+            const { plugin, path } = await setupNoteBackedStyle();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'old-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                backgroundSourceRefs: [{ path, contentHash: 'legacy-path-or-summary-hash' }],
+            }, [], 'style-conversation');
+            expect(recovered.isCurrent()).toBe(true);
+            plugin.getMemoryGraphTopologyEpoch.mockReturnValue('unrelated-note-event');
+            expect(recovered.isCurrent()).toBe(true);
+            expect(plugin.captureLatestMemorySource).toHaveBeenCalledWith(path, expect.any(Function), 'chat');
+            expect(plugin.createChatModel).not.toHaveBeenCalled();
+        });
+
+        it('rejects a recorded note that cannot be read rather than treating it as missing metadata', async () => {
+            const { plugin, path } = await setupNoteBackedStyle();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            plugin.captureLatestMemorySource = jest.fn(async () => null);
+            await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'old-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                backgroundSourceRefs: [{ path }],
+            }, [], 'style-conversation')).rejects.toThrow('Writing source unavailable');
+        });
+
+        it('rechecks captured body tags against changed policy while metadata remains stale', async () => {
+            const { plugin } = await setup();
+            const path = 'notes/old-source.md';
+            const markdown = '# Source\nA private detail. #secret';
+            const file = createTFileWithStat(path, { mtime: 100, size: markdown.length });
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            plugin.app.vault.getAbstractFileByPath = jest.fn((candidate: string) => candidate === path ? file : null);
+            plugin.app.vault.read = jest.fn(async () => markdown);
+            plugin.app.metadataCache = { getFileCache: jest.fn(() => ({ tags: [] })) };
+            plugin.settings.dataBoundary.excludedTags = [];
+            const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'old-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                backgroundSourceRefs: [{ path }],
+            }, [], 'style-conversation');
+            expect(recovered.isCurrent()).toBe(true);
+            expect(plugin.app.vault.read).toHaveBeenCalledWith(file);
+            plugin.settings.dataBoundary.excludedTags = ['secret'];
+            expect(plugin.isMemoryProviderPathAllowed(path)).toBe(true);
+            expect(recovered.isCurrent()).toBe(false);
+        });
+
+        it.each(['generic', 'current-note', 'read-only-tool', 'status-only'] as const)(
+            'keeps a %s recovery source available with Memory off and a Memory-only exclusion', async (kind) => {
+                const { plugin, path } = await setupNoteBackedStyle();
+                plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+                plugin.settings.memoryEnabled = false;
+                plugin.settings.vssCacheExcludePath = [path];
+                delete plugin.isMemoryProviderPathAllowed;
+                plugin.app.metadataCache = { getFileCache: jest.fn(() => ({ tags: [] })) };
+                const metadata = kind === 'generic' ? undefined : {
+                    hasMemoryContent: kind === 'status-only', allowedMemorySourcePaths: [path],
+                    sourceRecords: [{ kind: kind === 'status-only' ? 'memory-reference' : 'context-used', dedupKey: path, path,
+                        sourceBoundary: kind === 'status-only' ? 'memory' : kind, statusOnly: kind === 'status-only' }],
+                };
+                const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                    requestId: 'old-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                    backgroundSourceRefs: [{ path }],
+                }, [], 'style-conversation', metadata);
+                expect(recovered.isCurrent()).toBe(true);
+                expect(plugin.isMemoryProviderPathAllowed(path)).toBe(false);
+                plugin.settings.dataBoundary.excludedFolders = ['notes'];
+                expect(recovered.isCurrent()).toBe(false);
+            },
+        );
+
+        it.each(['Memory off', 'Memory path excluded'] as const)(
+            'rejects explicitly recorded Memory material when %s', async (change) => {
+                const { plugin, path } = await setupNoteBackedStyle();
+                plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+                delete plugin.isMemoryProviderPathAllowed;
+                plugin.app.metadataCache = { getFileCache: jest.fn(() => ({ tags: [] })) };
+                if (change === 'Memory off') plugin.settings.memoryEnabled = false;
+                else plugin.settings.vssCacheExcludePath = [path];
+                await expect(plugin.createChatHost().prepareWritingRecoverySources({
+                    requestId: 'old-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+                }, [], 'style-conversation', { hasMemoryContent: true, allowedMemorySourcePaths: [],
+                    sourceRecords: [{ kind: 'memory-reference', dedupKey: path, path, sourceBoundary: 'memory' }] }))
+                    .rejects.toThrow();
+            },
+        );
+
+        it('verifies recovery image bytes with the existing local provider boundary receipt', async () => {
+            const { plugin } = await setup();
+            plugin.chatHistoryManager = { captureSourceLifetime: () => () => true };
+            let current = true;
+            plugin.imageAssetService = { verify: jest.fn(async () => ({ isCurrent: () => current })), dispose: async () => undefined };
+            const image = { ref: { assetId: 'old-image', contentHash: 'a'.repeat(64) }, ordinal: 1, label: 'Old photo' };
+            const recovered = await plugin.createChatHost().prepareWritingRecoverySources({
+                requestId: 'old-recovery', rawText: 'Old AI draft', reason: 'invalid_output',
+            }, [image], 'style-conversation');
+            expect(plugin.imageAssetService.verify).toHaveBeenCalledWith(image.ref, 'provider');
+            expect(recovered.isCurrent()).toBe(true);
+            current = false;
+            expect(recovered.isCurrent()).toBe(false);
+            expect(plugin.createChatModel).not.toHaveBeenCalled();
+        });
+
         it('keeps a prepared note-backed style source valid after its model turn is cancelled', async () => {
             const { plugin, service, version, path, receipt } = await setupNoteBackedStyle();
             const controller = new AbortController();

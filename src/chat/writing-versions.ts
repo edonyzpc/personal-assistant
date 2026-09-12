@@ -52,6 +52,8 @@ export class WritingVersionService {
         /** Only a host editing UI supplies this; a model envelope has no origin field. */
         origin?: WritingVersion['origin'];
         referenceScope?: WritingVersion['referenceScope'];
+        /** A legacy recovery cannot establish which request supplied its references. Host-only. */
+        referenceScopeUnverified?: boolean;
     }, isCurrent: () => boolean = () => true): Promise<WritingVersion> {
         if (this.disposed) return Promise.reject(new Error('Writing versions closed'));
         const assertAdmission = () => {
@@ -66,7 +68,8 @@ export class WritingVersionService {
             turnIndex: input.turnIndex, text: input.text, explanation: input.explanation ?? '',
             origin: input.origin ?? 'ai_generated', associatedImages: input.images,
             backgroundSourceRefs: input.backgroundSourceRefs ?? [], styleRevisionIds: input.styleRevisionIds ?? [],
-            referenceScope: input.origin === 'user_edited' ? input.referenceScope : 'request',
+            referenceScope: input.referenceScopeUnverified ? undefined
+                : input.origin === 'user_edited' ? input.referenceScope : 'request',
             ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
             ...(input.scene ? { scene: input.scene } : {}),
         });
