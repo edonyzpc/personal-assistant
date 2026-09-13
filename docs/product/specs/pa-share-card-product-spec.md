@@ -1,7 +1,7 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-08-07
+Updated: 2026-09-13
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
@@ -24,6 +24,10 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 
 ## Problem And Product Outcome
 
+> [!note] Owner amendment 2026-09-13
+> 用户确认增加 PA 专属编辑器右键选区分享入口，复用 Chat 的 Share Card 渲染链。
+> 保留第三方 Export Image 的原菜单和功能，不修改其图片样式。
+
 - User problem: 用户想复用一段 PA 回复或洞察时，需要手工排版或截取带 UI chrome 的
   屏幕内容，难以得到安静、清晰且一致的分享图片。
 - Product outcome: 用户从当前内容自然地打开一张可预览、可分页、可复制或保存的
@@ -37,8 +41,9 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 
 - B-124/REQ-01: 四个入口使用同一 `ShareCardData` 契约。Chat 仅为已完成、非空的
   assistant 回复显示低优先级 action；Pagelet 仅提交当前 visible findings，Prepared
-  read-only Panel 不可分享；编辑器命令仅在 selection trim 后非空时可执行，但 payload
-  保留原始 selection 的空白、缩进与 Markdown；Pagelet Action Ring 的第四项 Share 在
+  read-only Panel 不可分享；编辑器命令和 PA 专属右键菜单项仅在 selection trim 后非空时
+  可执行/显示，payload 保留原始 selection 的空白、缩进与 Markdown。右键菜单明确标注
+  `PA`，与第三方图片导出菜单区分，并复用相同的 Share Card Modal；Pagelet Action Ring 的第四项 Share 在
   点击时优先采用当前 active Markdown editor 的非空 selection，否则采用当前 Markdown
   note。用户 Chat 消息、生成中内容、dismissed finding、隐藏缓存与空内容不进入卡片。
   `completed_with_warning` 只有在 warning 不代表 provider error、assistant idle timeout
@@ -125,7 +130,7 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 ```mermaid
 flowchart TD
   A{用户触发哪个入口?}
-  A -->|Chat / Pagelet / selection command| B[锁定主题、字体并准备内容与显式资源]
+  A -->|Chat / Pagelet / selection command or context menu| B[锁定主题、字体并准备内容与显式资源]
   A -->|Ring Share| A1[selection 优先，否则 current note]
   A1 --> B
   B --> C[离屏实测分页]
@@ -170,8 +175,11 @@ flowchart TD
   生成中空回复和 terminal error 不出现该 action，点击使用最新 `copyContent/sourcePath`。
 - B-124/AC-02: Pagelet 只导出当前 visible findings；dismissed/hidden finding、Prepared
   read-only content、diagnostics/action/source path 不进入 payload，空 payload 不执行分享。
-- B-124/AC-03: editor selection command 只在 trim 后非空时可执行，payload 保留原始
-  Markdown/空白且不自动暴露文件名。Ring Share 在同样的 nonblank selection 存在时优先
+- B-124/AC-03: editor selection command 只在 trim 后非空时可执行；同样条件下才显示
+  PA 右键分享项，空选区不显示。两者使用同一选区分享链，payload 保留原始 Markdown/空白，
+  相对资源以菜单所属文件解析，不自动暴露文件名。右键入口的卡片复用 Chat 的纸张、
+  字体、装饰、品牌和自适应分页规则，保留 selection 不显示 `PA Chat` 来源标签的差别；
+  不改动第三方菜单。Ring Share 在同样的 nonblank selection 存在时优先
   生成 `source:"selection"` payload；否则从 active Markdown note 生成 `source:"note"` payload，
   只剥离有效 YAML frontmatter 并显示 basename；invalid/frontmatter-like 开头原样保留，
   无 active Markdown 或空正文时不打开 Modal。

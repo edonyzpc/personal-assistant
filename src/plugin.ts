@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, type TAbstractFile, Component, Editor, ItemView, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, apiVersion, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, type TAbstractFile, Component, Editor, ItemView, MarkdownRenderer, MarkdownView, type Menu, Modal, Notice, Platform, Plugin, TFile, addIcon, apiVersion, debounce, getFrontMatterInfo, moment as obsidianMoment, normalizePath, parseYaml, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
@@ -1896,15 +1896,20 @@ export class PluginManager extends Plugin {
                 const selection = editor.getSelection();
                 if (selection.trim().length === 0) return false;
                 if (checking) return true;
-                const basePath = view.file?.path;
-                new ShareCardModal(this.app, {
-                    content: selection,
-                    source: 'selection',
-                    ...(basePath ? { resourceContext: { basePath } } : {}),
-                }).open();
+                this.openSelectionShareCard(selection, view.file?.path);
                 return true;
             },
         });
+
+        this.registerEvent(this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
+            const selection = editor.getSelection();
+            if (selection.trim().length === 0) return;
+            const basePath = info.file?.path;
+            menu.addItem((item) => item
+                .setTitle(this.t('plugin.menu.shareSelectionAsCard'))
+                .setIcon('image')
+                .onClick(() => this.openSelectionShareCard(selection, basePath)));
+        }));
 
         this.addCommand({
             id: "init-vss",
@@ -1942,6 +1947,14 @@ export class PluginManager extends Plugin {
         this.app.workspace.onLayoutReady(() => {
             void this.onLayoutReady();
         });
+    }
+
+    private openSelectionShareCard(selection: string, basePath?: string): void {
+        new ShareCardModal(this.app, {
+            content: selection,
+            source: 'selection',
+            ...(basePath ? { resourceContext: { basePath } } : {}),
+        }).open();
     }
 
     private async cleanupLegacyMobileDebugLog(): Promise<void> {

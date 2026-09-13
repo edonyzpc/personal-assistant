@@ -1,6 +1,6 @@
 # Share Card Architecture
 
-Updated: 2026-08-07
+Updated: 2026-09-13
 
 | Field | Value |
 | --- | --- |
@@ -69,8 +69,10 @@ flowchart LR
 - Chat 仅分享已完成且可分享的 assistant 回复；生成中、用户消息和中断型 partial
   output fail closed。
 - Pagelet 只投影当前可见 findings，不带隐藏 diagnostics、provider metadata 或路径。
-- editor selection 仅在 trim 后非空时可触发，但 payload 保留原始字符、缩进、空白和
-  Markdown。
+- editor selection 的命令和 PA 专属右键菜单共用选区分享入口，仅在 trim 后非空时可
+  触发/显示，但 payload 保留原始字符、缩进、空白和 Markdown。菜单从所属 editor/file
+  取得选区与资源解析路径，使用相同 `ShareCardModal`，不覆盖第三方图片导出菜单；
+  workspace 事件通过 plugin 的 `registerEvent` 管理卸载。
 - Action Ring 在点击时读取一次 current editor：非空 selection 优先；否则读取 current
   Markdown note。Note 只剥离 Obsidian 能识别且 YAML 有效的 leading frontmatter，并只显示
   basename；selection 不显示文件名或 Vault path。

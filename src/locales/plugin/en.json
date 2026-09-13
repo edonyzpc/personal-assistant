@@ -417,6 +417,7 @@
     "plugin.command.aiSummary": "AI Summary",
     "plugin.command.aiFeaturedImages": "AI Featured Images",
     "plugin.command.shareSelectionAsCard": "Share Selection as Card",
+    "plugin.menu.shareSelectionAsCard": "PA: Share Selection as Card",
     "plugin.command.prepareMemory": "Prepare Memory",
     "plugin.command.openChatSidebar": "Open Chat in Sidebar",
     "plugin.command.updateMemoryNow": "Update memory now",

@@ -417,6 +417,7 @@
     "plugin.command.aiSummary": "AI 摘要",
     "plugin.command.aiFeaturedImages": "AI 题图",
     "plugin.command.shareSelectionAsCard": "将所选内容分享为卡片",
+    "plugin.menu.shareSelectionAsCard": "PA：将所选内容分享为卡片",
     "plugin.command.prepareMemory": "准备 Memory",
     "plugin.command.openChatSidebar": "在侧边栏打开 Chat",
     "plugin.command.updateMemoryNow": "立即更新 Memory",

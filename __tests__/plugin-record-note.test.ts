@@ -814,6 +814,114 @@ describe('plugin startup view registration', () => {
                 resourceContext: { basePath: 'Notes/Source.md' },
             });
             expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
+
+            mockShareCardModalConstructor.mockClear();
+            mockShareCardModalOpen.mockClear();
+            const workspaceOn = plugin.app.workspace.on as jest.Mock;
+            const editorMenuRegistrationIndex = workspaceOn.mock.calls.findIndex(
+                ([event]) => event === 'editor-menu',
+            );
+            expect(editorMenuRegistrationIndex).toBeGreaterThanOrEqual(0);
+            const editorMenuRegistration = workspaceOn.mock.calls[editorMenuRegistrationIndex];
+            const editorMenuReference = (
+                workspaceOn.mock.results[editorMenuRegistrationIndex] as { value: unknown }
+            ).value;
+            expect(plugin.registerEvent.mock.calls.some(
+                ([registeredReference]: unknown[]) => registeredReference === editorMenuReference,
+            )).toBe(true);
+            const editorMenuCallback = editorMenuRegistration[1] as (
+                menu: { addItem: (builder: (item: {
+                    setTitle: (title: string) => unknown;
+                    setIcon: (icon: string) => unknown;
+                    onClick: (callback: () => void) => unknown;
+                }) => unknown) => void },
+                editor: { getSelection: () => string },
+                info: { file?: { path: string } },
+            ) => void;
+            const emptySelectionEditor = { getSelection: jest.fn(() => '') };
+            const emptySelectionMenu = { addItem: jest.fn() };
+            editorMenuCallback(
+                emptySelectionMenu,
+                emptySelectionEditor,
+                { file: { path: 'Notes/Empty.md' } },
+            );
+            expect(emptySelectionMenu.addItem).not.toHaveBeenCalled();
+            expect(mockShareCardModalConstructor).not.toHaveBeenCalled();
+            expect(mockShareCardModalOpen).not.toHaveBeenCalled();
+
+            const whitespaceSelectionEditor = { getSelection: jest.fn(() => '   \n\t  ') };
+            const whitespaceSelectionMenu = { addItem: jest.fn() };
+            editorMenuCallback(
+                whitespaceSelectionMenu,
+                whitespaceSelectionEditor,
+                { file: { path: 'Notes/Whitespace.md' } },
+            );
+            expect(whitespaceSelectionMenu.addItem).not.toHaveBeenCalled();
+            expect(mockShareCardModalConstructor).not.toHaveBeenCalled();
+            expect(mockShareCardModalOpen).not.toHaveBeenCalled();
+
+            type EditorMenuItem = {
+                setTitle: (title: string) => unknown;
+                setIcon: (icon: string) => unknown;
+                onClick: (callback: () => void) => unknown;
+            };
+            const menuItemBuilders: Array<(item: EditorMenuItem) => unknown> = [];
+            const selectionMenu = {
+                addItem: jest.fn((builder: (item: EditorMenuItem) => unknown) => {
+                    menuItemBuilders.push(builder);
+                }),
+            };
+            const selectionEditor = {
+                getSelection: jest.fn(() => '  > Keep Markdown\n\n  - spaced item  '),
+            };
+            const selectionInfo = { file: { path: 'Notes/Editor Menu.md' } };
+            editorMenuCallback(selectionMenu, selectionEditor, selectionInfo);
+            expect(selectionMenu.addItem).toHaveBeenCalledTimes(1);
+            expect(mockShareCardModalConstructor).not.toHaveBeenCalled();
+            expect(mockShareCardModalOpen).not.toHaveBeenCalled();
+
+            class TypedMockMenuItem {
+                setTitle = jest.fn<(title: string) => TypedMockMenuItem>(() => this);
+                setIcon = jest.fn<(icon: string) => TypedMockMenuItem>(() => this);
+                onClick = jest.fn<(callback: () => void) => TypedMockMenuItem>(() => this);
+            }
+            const typedMenuItem = new TypedMockMenuItem();
+            menuItemBuilders[menuItemBuilders.length - 1](typedMenuItem);
+            const menuTitle = typedMenuItem.setTitle.mock.calls[0]?.[0];
+            expect(['PA: Share Selection as Card', 'PA：将所选内容分享为卡片'])
+                .toContain(menuTitle);
+            expect(typedMenuItem.setIcon.mock.calls[0]?.[0]).toBe('image');
+
+            selectionEditor.getSelection.mockReturnValue('Changed after menu opened');
+            selectionInfo.file.path = 'Notes/Changed.md';
+            typedMenuItem.onClick.mock.calls[0]?.[0]();
+            expect(mockShareCardModalConstructor).toHaveBeenCalledWith(plugin.app, {
+                content: '  > Keep Markdown\n\n  - spaced item  ',
+                source: 'selection',
+                resourceContext: { basePath: 'Notes/Editor Menu.md' },
+            });
+            expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
+
+            mockShareCardModalConstructor.mockClear();
+            mockShareCardModalOpen.mockClear();
+            const noFileMenu = {
+                addItem: jest.fn((builder: (item: EditorMenuItem) => unknown) => {
+                    menuItemBuilders.push(builder);
+                }),
+            };
+            editorMenuCallback(
+                noFileMenu,
+                { getSelection: jest.fn(() => 'Selection without file') },
+                {} as { file?: { path: string } },
+            );
+            expect(noFileMenu.addItem).toHaveBeenCalledTimes(1);
+            menuItemBuilders[menuItemBuilders.length - 1](typedMenuItem);
+            typedMenuItem.onClick.mock.calls[typedMenuItem.onClick.mock.calls.length - 1]?.[0]();
+            expect(mockShareCardModalConstructor).toHaveBeenCalledWith(plugin.app, {
+                content: 'Selection without file',
+                source: 'selection',
+            });
+            expect(mockShareCardModalOpen).toHaveBeenCalledTimes(1);
             const detailViewFactory = registerView.mock.calls.find(
                 ([viewType]) => viewType === 'pa-pagelet-detail-view',
             )?.[1] as ((leaf: unknown) => PageletDetailView) | undefined;
