@@ -39,6 +39,67 @@ Use this file as the project README for coding agents. Keep changes aligned with
   findings instead of repeating the same exploration. Small single-path edits
   need no artificial agent split; preserve configured model routing.
 
+## GPT-6 And GLM Delivery
+
+- For this owner's GPT-6/GLM workflow, GPT-6 owns product discussion, design,
+  task decomposition, dispatch, and independent acceptance. GLM owns bounded
+  investigation, implementation, tests, self-review, and assigned validation
+  through a separately configured Codex CLI process after preflight passes.
+- GPT-6 reads `docs/development/workflows/gpt6-glm-delivery-workflow.md` when
+  planning, dispatching, continuing, or accepting this workflow. GLM reads its
+  assigned task and relevant contracts; it need not reload the full orchestration
+  or configuration guide unless a specific question requires that section.
+  Use the workflow's task template;
+  keep execution status in the owning Tracker, maintained by GPT-6. Carry
+  accepted corrections into a revised task before each new worker context;
+  identify the delivery tree, stop point, and actual app deployment target.
+- Both GPT-6 and GLM reuse already-read, unchanged instructions and verified
+  facts available in their current context. Read only changed, missing, or
+  contradicted sections; new workers still receive the applicable instructions.
+- Bound tool output before running commands. Compare large baselines in code
+  and return changed paths; extract target rules from generated/minified CSS.
+  Never dump whole inventories or minified lines into context. Keep full logs
+  locally and return relevant excerpts, counts, exit codes, and paths.
+- GLM cannot approve its own delivery, change authoritative scope or acceptance
+  criteria, silently replace a named technical choice, or weaken test gates.
+  GPT-6 checks actual diffs and evidence before marking a task done.
+- Verify the actual provider/model and available tools. Never describe another
+  model as GLM, assume desktop tools are inherited by a CLI worker, or silently
+  fall back to GPT-6 implementation. Existing specialist roles remain available
+  for their scoped work; they do not replace GLM delivery or GPT-6 acceptance.
+- Default clear low-risk tasks to one GLM writer and one continuous delivery
+  context; do not repeat GPT investigation or require separate understand/red
+  test handoffs merely because it is a pilot. Use explicit checkpoints for
+  ambiguity, high-risk behavior, or demonstrated delivery failures.
+- Assign focused and required broad checks/build/deploy to GLM where its tools,
+  permissions, and target are verified. GPT owns acceptance, not every command;
+  inspect real diffs and original evidence, and supplement only missing or
+  invalid checks. Preserve all required app/device and release gates.
+- For style-only acceptance, prepare the actual app state with the verified
+  Obsidian CLI, then observe and exercise affected visible actions. After one
+  state refresh and a repeated same-cause UI-tool error, switch the affected
+  step to an equivalent supported method. A changed menu/entry still requires
+  its own real interaction proof; CLI success cannot replace that evidence.
+- Reuse unchanged provider/tool preflight, check each task's actual dependencies,
+  and stop same-cause retries without new information. Quality and scope are
+  fixed gates; reduce GPT supervision, repeated context, and total delivery
+  cost/time. Three tasks are an observation window, not qualification; further
+  simplification needs repeated evidence for that task category.
+- Extra workflow cost studies and measurement-only inventories are opt-in.
+  Routine delivery retains required change protection and quality evidence,
+  without additional model calls or reports solely to measure the workflow.
+- Share workflow rules through Git; configure each device's GLM runtime and
+  credentials independently, following workflow section 7 and the repo catalog.
+  Multi-device reuse means each device can run the workflow; it adds no task
+  transfer protocol or extra Tracker requirements for narrow fixes. Verify
+  each device's tools and app targets locally; reuse unchanged local preflight.
+- After acceptance and safe delivery, clean this task's disposable runtime
+  resources and restore temporary app state. Preserve required evidence,
+  deliverables, uncommitted work, shared dependencies, and stable GLM config.
+  Record owned resources as created; never sweep other tasks or force-remove
+  a dirty worktree. GPT coordinates cleanup and reports retained items/reasons;
+  GLM must not delete review evidence before acceptance. Follow workflow section 6.
+
 ## Product North Star
 
 Before product design, UX, planning, SDD, Pagelet, Memory, Capture, Review,

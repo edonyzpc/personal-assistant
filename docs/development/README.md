@@ -7,6 +7,7 @@
 - [Documentation Workflow](./documentation-workflow.md) — 文档创建、更新、归档与删除规则。
 - [Templates](./templates/README.md) — Discovery、Decision、Product Spec、Governance Contract、Feature Home、Plan、SDD 与 Tracker 模板。
 - [Reusable Refactor Workflow](./workflows/refactor-workflow.md) — repo-scale refactor 的 phase loop。
+- [GPT-6 / GLM Delivery Workflow](./workflows/gpt6-glm-delivery-workflow.md) — GPT-6 规划与验收、GLM 通过 Codex 开发测试的派工、校准与升级流程。
 - [Pagelet SDD Guide](./workflows/pagelet-sdd-guide.md) — Pagelet feature 的设计与交付规范。
 - [PM Needs Analysis Framework](./workflows/pm-needs-analysis-framework.md) — 产品需求讨论的分阶段分析与决策框架。
 - [UI/UX Review Framework](./workflows/pa-ui-ux-review-framework.md) — 可复用 UI/UX 审计方法。
