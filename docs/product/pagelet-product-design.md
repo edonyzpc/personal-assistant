@@ -692,11 +692,11 @@ allowed by Data Boundary. The anchor is not an only-this-file source restriction
 Old command IDs, names and their existing alias routing remain; `open-panel`
 continues to open the Panel without starting an additional provider call.
 
-Retire the old Panel current/yesterday/last3/last7 presets, per-note include/exclude,
-and Review selected semantics together with their exclusive state. They currently
-do not constrain Deep Discover. This is an approved product adjustment, not proof
-that the old UI is already gone; implementation and verification are owned by the
-[B-136 Tracker](../development/active/bounded-code-cleanup/tracker.md).
+The old Panel current/yesterday/last3/last7 presets, per-note include/exclude,
+and Review selected semantics and their exclusive state are retired. Those
+controls did not constrain Deep Discover. The completed implementation and its
+validation boundaries are recorded in the
+[B-136 validation evidence](../archive/2026/b136-bounded-cleanup-validation.md).
 
 Global source exclusions, source inspection, ContextPager, Review Queue context,
 and other valid scope consumers remain. Future hand-selected or time-range Recap

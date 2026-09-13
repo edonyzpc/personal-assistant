@@ -1,11 +1,12 @@
 # Documentation Disposition Log
 
 Document status: Current
-Updated: 2026-09-12
+Updated: 2026-09-13
 Authority: 曾被当前文档入链/索引、带稳定身份，或无法证明内容连续移动的 tracked Markdown 紧凑吸收记录。
 
 | Date | Original path | Disposition | Current destination | Reason |
 | --- | --- | --- | --- | --- |
+| 2026-09-13 | `docs/development/active/bounded-code-cleanup/**` | deleted-after-absorption | [DEC-035](../product/decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md), [B-136 Product Spec](../product/specs/pa-bounded-code-cleanup-product-spec.md), [B-136 validation](./2026/b136-bounded-cleanup-validation.md) | 用户明确授权 closeout 和推送；6/6 AC 完成，代码 `76355b9c` 与配套文档 `b23c31f0` 已在 master。当前契约与测试吸收行为、保留理由及兼容边界，仅保留紧凑验证报告和内容受限的原始回执，不归档整个包；Feature Home/Plan/Tracker 历史可从 `b23c31f0` 恢复。没有新增未完成项转入 Backlog。 |
 | 2026-09-12 | `docs/development/active/unified-task-execution/**` | deleted-after-absorption | [DEC-034](../product/decisions/dec-034-unified-agent-task-execution.md), [B-135 Product Spec](../product/specs/pa-unified-task-execution-product-spec.md), [PA Agent Architecture](../architecture/pa-agent-architecture-plan.md), [B-135 validation](./2026/b135-unified-task-execution-validation.md) | 用户明确授权 closeout；22/22任务、17/17 AC 与适用门已完成，稳定行为进入当前契约和回归测试。归档报告与28份最终回执保留真实 provider、Desktop、迁移、恢复和移动呈现证据；14份过程探针及 Feature Home、Tracker、Plan、SDD 删除，完整过程可从 Git 提交 `6e23c2a49260c1d86e8e6f142678645e400c77ba` 恢复。没有未完成项转入 Backlog。 |
 | 2026-09-12 | `docs/development/discovery/pa-agent-unified-task-execution.md` | deleted-after-absorption | [DEC-034](../product/decisions/dec-034-unified-agent-task-execution.md), [B-135 Product Spec](../product/specs/pa-unified-task-execution-product-spec.md), [Original incident](./2026/b135-unified-task-execution-validation.md#original-incident) | 原故障、已选产品边界和取舍结果已吸收到当前 Decision、Product Spec 与紧凑历史验证；不再保留已完成 Discovery 的候选架构、待决状态和重复执行说明。 |
 | 2026-09-09 | `docs/development/active/chat-image-management/**` | deleted-after-absorption | [Product Spec](../product/specs/pa-multimodal-chat-product-spec.md), [Architecture](../architecture/multimodal-chat-architecture.md), [图片管理修订验证](./2026/chat-image-management-validation.md), [T-006](../backlog.md#触发型评估) | 用户明确授权 closeout；实际交付、拒绝新 HEIC、保存迁出/复用与恢复边界已吸收，Mac/iPhone 当前证据独立保留。旧 HEIC/未完成保存应用夹具仍 NOT TESTED 并写重启条件；删除 Feature Home/Tracker/SDD，不归档完整过程包。未提交的 Mac/iPhone 增量证据已压缩保留，不声称 Git 包含本轮完整 Tracker 历史。 |

@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 1,
+  "kind": "historical-b136-acceptance-evidence",
+  "date": "2026-09-13",
+  "runtimeCommit": "76355b9c",
+  "priorDocumentationCommit": "b23c31f0",
+  "sourceInputVerification": {
+    "count": 914,
+    "changedPaths": [],
+    "manifestSha256": "3e988b7526e498ee691e0993e4e47d05dd143e71751d12610f25f259c5d57470"
+  },
+  "workerNaturalExit": {
+    "p1-r2-exit.json": {
+      "exitCode": 0
+    },
+    "p2-r3-exit.json": {
+      "exitCode": 0
+    }
+  },
+  "gates": {
+    "p1/make-bin.log": {
+      "originalSha256": "3d38afa6c71fcd64a18057a3f00aff417877c712ecab3360b27eb6d7b1f60418",
+      "summary": [
+        "Test Suites: 271 passed, 271 total",
+        "Tests:       7535 passed, 7535 total",
+        "Time:        161.998 s",
+        "Ran all test suites."
+      ]
+    },
+    "p2/r3/make-bin.log": {
+      "originalSha256": "3616af6cdd864e735042f129744c51b223e9c9fcfab772496cb23d2915adaa91",
+      "summary": [
+        "Test Suites: 269 passed, 269 total",
+        "Tests:       7377 passed, 7377 total",
+        "Time:        130.401 s, estimated 160 s",
+        "Ran all test suites.",
+        "Jest did not exit one second after the test run has completed."
+      ]
+    },
+    "p2/r3/gpt-open-handle-check.log": {
+      "originalSha256": "e77a65055d76fe0371aa67ad9708faa97795e70717b9580e9c627ac5c87ca73d",
+      "summary": [
+        "Test Suites: 2 passed, 2 total",
+        "Tests:       91 passed, 91 total",
+        "Time:        1.605 s",
+        "Ran all test suites matching __tests__/pagelet-bubble-coordinator.test.ts|__tests__/pagelet-orchestrator.test.ts."
+      ]
+    },
+    "p2/integrated-prototype-test.log": {
+      "originalSha256": "cf27a2226c13f8f52a607e8f847a001a58915098a461c029c26e4063d27f9aec",
+      "summary": [
+        "Test Suites: 1 passed, 1 total",
+        "Tests:       22 passed, 22 total",
+        "Time:        0.739 s",
+        "Ran all test suites matching __tests__/share-card-light-print-probe.test.ts."
+      ]
+    },
+    "p2/final-docs-tests.log": {
+      "originalSha256": "0a38a882eed986bcd0e6fbd792991c1e4e6945090ae63f3173ae7b67519cd207",
+      "summary": [
+        "Test Suites: 2 passed, 2 total",
+        "Tests:       58 passed, 58 total",
+        "Time:        11.813 s, estimated 12 s",
+        "Ran all test suites within paths \"__tests__/check-docs-script.test.ts\", \"__tests__/pa-docs-lifecycle-skills.test.ts\"."
+      ]
+    }
+  },
+  "receipts": {
+    "p2/app/open-panel-isolated.json": {
+      "originalSha256": "1492d2a90194b72efc33159e0a325198875c962db7524cece085e4cc6ee159b7",
+      "result": {
+        "calls": 0,
+        "events": [],
+        "panel": true,
+        "controls": 0,
+        "visibility": "hidden"
+      }
+    },
+    "p2/app/excluded-note.json": {
+      "originalSha256": "15005a7fdb1ebce5bdb5917013c0109accc541b0bda87837ca3bc7fd7484e62c",
+      "result": {
+        "active": "pa-b136-excluded-smoke.md",
+        "calls": 0,
+        "events": [],
+        "text": "Recent Review🔕Hints: Off↗Expand to tab×CloseUsed 0 sources, 0 memories. 1 skipped.Skipped sourcespa-b136-excluded-smoke.md · privacy excludedRun Pagelet to review the current note.Review current noteShare as cardExpand to tab →"
+      }
+    },
+    "p2/app/nonmarkdown.json": {
+      "originalSha256": "29619a8d29280c75fe9947ec9976f2dbbb342f30b3a83adcbc492fb14279c150",
+      "result": {
+        "active": "pa-b136-nonmarkdown-smoke.png",
+        "calls": 0,
+        "text": "Recent Review🔕Hints: Off↗Expand to tab×CloseRun Pagelet to review the current note.Review current noteShare as cardExpand to tab →"
+      }
+    },
+    "p2/app/nonmarkdown-action.json": {
+      "originalSha256": "1e53a52eebe2d0ce2c9f0b761e5b44042ab3f72ba2f5456fa05c47d3c153c07c",
+      "result": {
+        "calls": 0,
+        "events": [],
+        "notice": []
+      }
+    },
+    "p2/app/verified-and-expand.json": {
+      "originalSha256": "8b10342f4c263e5bb539c6d5477ffce1bf55611ee95bfe69b2b0164cf836fbd2",
+      "result": {
+        "results": [
+          {
+            "status": "verified",
+            "anchor": "pa-inline-font-smoke-20260913.md"
+          }
+        ],
+        "events": [
+          {
+            "triggerReason": "explicit"
+          },
+          {
+            "triggerReason": "explicit"
+          }
+        ],
+        "leaves": [],
+        "reviewsFolder": ".pagelet"
+      }
+    },
+    "p2/app/save-result.json": {
+      "originalSha256": "6ea74787d65d1aab30d57ef73e5908a15331150d7aea6457dcc331957dccfd4c",
+      "result": {
+        "file": ".pagelet/pagelet-discovery-pa-inline-font-smoke-20260913-2026-09-13.md",
+        "bytes": 1499,
+        "sha256": "d04b4785e92b0128a01c3643beebf5c708edc61c043a9873baaf7718a394b143",
+        "checks": {
+          "pagelet": true,
+          "pa-inline-font-smoke-20260913": true,
+          "pa-share-menu-smoke-20260913": true,
+          "finding-1": true
+        },
+        "cancelBeforeConfirmWroteNothing": true
+      }
+    },
+    "p2/app/mobile-layout-focus.json": {
+      "originalSha256": "623db98574578512091179808d14dd16979ffb9ee21f04980f0a3bd9fd2beeb4",
+      "result": {
+        "width": 390,
+        "height": 844,
+        "mobile": true,
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 390,
+          "height": 844,
+          "scrollWidth": 390,
+          "clientWidth": 390
+        },
+        "focus": "Review current note",
+        "checkboxes": 0,
+        "oldScope": 0
+      }
+    },
+    "p2/app/final-runtime.json": {
+      "originalSha256": "429f6ccc8b14bfb31a4f9c8947b8098a230e268d7dead34b3b43f79722d217a2",
+      "result": {
+        "active": "pa-inline-font-smoke-20260913.md",
+        "leaf": "10f7a60b82f28876",
+        "view": "markdown",
+        "hasEditor": true,
+        "loaded": {
+          "schemaVersion": 1,
+          "pluginId": "personal-assistant",
+          "pluginVersion": "2.9.2",
+          "pluginArtifactPath": ".obsidian/plugins/personal-assistant/main.js",
+          "loadedPluginArtifactSha256": "fa13bae5bc4ee557b3c7a209efb12aff5d3108a81c0a0094dcdfd465118e8668",
+          "lexicalProfileRuntimeFingerprint": "char-phrase-v1:df9272f2ba852d8e",
+          "capturedAtPluginLoad": "2026-09-13T14:03:24.198Z",
+          "identitySource": "plugin-onload-cached-main-js",
+          "blocker": null
+        },
+        "background": true,
+        "contextPager": true,
+        "probe": false,
+        "mobile": false,
+        "dark": true
+      }
+    },
+    "p2/app/provider-and-restoration.json": {
+      "originalSha256": "8fcc6118a11f6e17f9df0bfa583b41d13f63b8e7d834d8577fa2dbf07bc3e92a",
+      "result": {
+        "provider": "qwen",
+        "model": "deepseek-v4-pro",
+        "shareCard": true,
+        "debugProbe": false
+      }
+    },
+    "p2/integrated-build-identity.json": {
+      "originalSha256": "94e01de88562020b86c70419f0700582c3a97dc3ab01cad1d38f9bcd18ca6e05",
+      "result": {
+        "mainSha256": "fa13bae5bc4ee557b3c7a209efb12aff5d3108a81c0a0094dcdfd465118e8668",
+        "cssSha256": "95bae6d65728e0801f9bda3cabe68612abc9c800b8c70665e700663c4d1a3536",
+        "blockers": [],
+        "identicalToAppVerified": true
+      }
+    },
+    "p2/app-fixture-cleanup.json": {
+      "originalSha256": "8316c707af52b7fe92c768d36e294cbf639b7f8f60f4d3dd073512182750031c",
+      "result": {
+        "removedExactOwnedFiles": [
+          ".pagelet/pa-b136-excluded-smoke.md",
+          "pa-b136-nonmarkdown-smoke.png",
+          "pa-b136-excluded-smoke.md",
+          ".pagelet/pagelet-discovery-pa-inline-font-smoke-20260913-2026-09-13.md"
+        ],
+        "preservedDirectory": ".pagelet"
+      }
+    }
+  },
+  "limits": [
+    "Host runDeepDiscover count is not a physical provider-call counter.",
+    "Mobile evidence is desktop mobile emulation, not an iOS device.",
+    "Raw gate summaries retain the full-run open-handle notice; processes exited naturally.",
+    "This evidence does not certify a release or server-side model identity."
+  ]
+}

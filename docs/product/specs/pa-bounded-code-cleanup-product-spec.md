@@ -1,10 +1,10 @@
 # PA Bounded Code Cleanup Product Spec
 
-Document status: Approved
+Document status: Current
 Updated: 2026-09-13
 Work item: B-136
 Decision: [DEC-035](../decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)
-Authority: 此次清理的产品边界与行为验收；批准依据为 Owner 已确认的取舍，不代表工程交付完成。
+Authority: 有界清理后的当前产品边界与行为验收；批准依据为 Owner 已确认的取舍，历史交付证据见文末。
 
 ## Problem And Product Outcome
 
@@ -59,11 +59,19 @@ provider 及其实际发送前的来源校验、成本预算、首次通知保�
 
 ## Open Decisions
 
-无待定的本次产品选择。技术候选不满足证据门时保留，并在 Tracker 记录原因；
+无待定的本次产品选择。技术候选不满足证据门时保留，并记录有效消费者与兼容理由；
 若必须改变产品、数据或兼容边界，作为新取舍单独提出，不能将技术推测记为批准。
 
-## Delivery Handoff
+## Retained Technical Boundaries
 
-- Active Package: [Bounded Cleanup](../../development/active/bounded-code-cleanup/README.md)
+- `deviceMemoryReviewQueueRepository` 有安全 smoke 脚本消费者，不能仅凭 `src` 只写不读删除。
+- SourceRecord 只复用完全相同的浅拷贝；context/history 的隐私裁剪差异仍须保留。
+- Type C 的内存分析/viewer、Type A/proposal、weekly 持久化兼容保留；不恢复无生产入口的 Type C 文件写入或旧 generic preload producer。
+- ScopeResolver、前台 PreloadBudget、共享 Quiet Recall/Scope Recap、来源准入及正常 findings 保存不随旧 Panel 控件退役。
+- 大类拆分、Statistics 历史整理、Weekly Review 兼容与未来 preload adapter 分别遵循 [Backlog](../../backlog.md) 的 B-105/B-110/B-116/B-122；Records 统一仍需独立产品决定。
+
+## Implementation And Evidence
+
+- Historical validation: [B-136 验证记录](../../archive/2026/b136-bounded-cleanup-validation.md)
 - Current Pagelet contract: [Pagelet Product Design](../pagelet-product-design.md#foreground-scope)
-- Release / rollout boundary: 本规范不授予实现、提交、推送或发布权限；执行状态只见 Tracker。
+- Release / rollout boundary: 本规范不授予新的实现、Git 或发布权限；完成清理不等于已发布新版本。

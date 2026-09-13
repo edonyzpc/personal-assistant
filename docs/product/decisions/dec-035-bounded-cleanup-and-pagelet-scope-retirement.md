@@ -56,6 +56,6 @@ Accepted 表示产品选择成立，不表示清理代码已完成或整份实�
 ## Traceability
 
 - Product Spec: [Bounded Cleanup](../specs/pa-bounded-code-cleanup-product-spec.md)
-- Delivery: [B-136 Feature Home](../../development/active/bounded-code-cleanup/README.md)
+- Historical validation: [B-136 验证记录](../../archive/2026/b136-bounded-cleanup-validation.md)
 - Supersedes: 仅修订 Pagelet Product Design 的旧 Panel 范围调整承诺；不整体替代 B-123 或 Scope Recap/Quiet Recall 契约。
 - Deferred architecture work: [B-105 / Backlog](../../backlog.md)
