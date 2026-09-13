@@ -2,7 +2,6 @@
 
 import { normalizePath } from "obsidian";
 
-import { pageletT, type PageletLocale } from "../locales/pagelet";
 import { detectNoteLanguage } from "../locales/pagelet/language-detect";
 import type { PageletSettings } from "../settings/pagelet";
 
@@ -13,69 +12,8 @@ import {
     type PageletReviewInput,
     type PageletSegment,
 } from "./pa-review-schemas";
-import {
-    classifyScopeExclusion,
-    DEFAULT_MAX_FILE_SIZE_BYTES,
-} from "./scope/ScopeResolver";
-import type { ExclusionReason } from "./scope/types";
 
 export type PageletReviewRange = "current" | "yesterday" | "last3" | "last7";
-
-export type PageletScopeCandidateReason = "active" | "modified" | "daily-note-date";
-
-export type PageletScopeSkippedReason =
-    | "outside-range"
-    | "review-output"
-    | "overflow"
-    | "unchecked"
-    | "missing-file"
-    | "empty-note"
-    | "hidden-folder"
-    | "excluded-folder"
-    | "excluded-frontmatter"
-    | "excluded-tag"
-    | "excluded-pattern";
-
-export interface PageletScopeFileLike {
-    path: string;
-    extension?: string;
-    stat?: {
-        mtime?: number;
-        ctime?: number;
-        size?: number;
-    };
-}
-
-export interface PageletScopeCandidate {
-    path: string;
-    reason: PageletScopeCandidateReason;
-    included: boolean;
-    locked?: boolean;
-    skippedReason?: PageletScopeSkippedReason;
-    modifiedAt: number;
-    createdAt: number;
-}
-
-export interface PageletScopePlan {
-    range: PageletReviewRange;
-    activePath: string;
-    rangeStartMs: number;
-    rangeEndMs: number;
-    candidates: PageletScopeCandidate[];
-    excludedReviewOutputCount?: number;
-    estimatedInputTokens?: number;
-}
-
-export interface PageletScopeSelection {
-    range: PageletReviewRange;
-    activePath?: string;
-    paths: string[];
-}
-
-export interface PageletScopeMetadataLike {
-    frontmatter?: Record<string, unknown>;
-    tags?: readonly ({ tag?: string } | string)[];
-}
 
 export interface PageletScopeSourceReference {
     sourceId: string;
@@ -93,175 +31,19 @@ export interface PageletScopeReviewBundle {
     detectedLanguage: PageletLanguageCode;
 }
 
-export interface BuildPageletScopePlanOptions {
-    files: readonly PageletScopeFileLike[];
-    activePath: string;
-    range: PageletReviewRange;
-    reviewsFolder: string;
-    excludedFolders?: readonly string[];
-    excludedTags?: readonly string[];
-    excludedPatterns?: readonly string[];
-    maxFileSizeBytes?: number;
-    now?: Date;
-    maxIncluded?: number;
-    reviewOutputCount?: number;
-    getMetadata?: (path: string) => PageletScopeMetadataLike | undefined;
-}
-
 export interface BuildPageletScopeReviewBundleOptions {
     entries: readonly {
         path: string;
         content: string;
     }[];
     primarySourcePath: string;
-    range: PageletReviewRange;
     settings: Pick<PageletSettings, "maxInputTokens" | "outputLanguage">;
     uiLanguage: PageletLanguageCode;
     targetSuggestionCount?: number;
 }
 
-export const PAGELET_SCOPE_DEFAULT_MAX_INCLUDED = 20;
 export const PAGELET_SEGMENT_TARGET_CHARS = 1800;
 export const PAGELET_APPROX_CHARS_PER_TOKEN = 4;
-
-const RANGE_DAYS: Record<PageletReviewRange, number> = {
-    current: 0,
-    yesterday: 1,
-    last3: 3,
-    last7: 7,
-};
-
-export function buildPageletScopePlan(options: BuildPageletScopePlanOptions): PageletScopePlan {
-    const now = options.now ?? new Date();
-    const activePath = normalizePath(options.activePath);
-    const maxIncluded = options.maxIncluded ?? PAGELET_SCOPE_DEFAULT_MAX_INCLUDED;
-    const { startMs, endMs } = resolveRangeWindow(options.range, now);
-    const reviewFolder = normalizeFolderPrefix(options.reviewsFolder);
-    const candidates: PageletScopeCandidate[] = [];
-    let visibleReviewOutputCount = 0;
-
-    for (const file of options.files) {
-        const path = normalizePath(file.path);
-        if (!isMarkdownPath(path, file.extension)) continue;
-        const modifiedAt = finiteNumber(file.stat?.mtime) ?? 0;
-        const createdAt = finiteNumber(file.stat?.ctime) ?? modifiedAt;
-        const reason = chooseCandidateReason(path, activePath, modifiedAt, startMs, endMs);
-        const runtimeExclusionReason = classifyScopeExclusion({
-            path,
-            extension: file.extension,
-            size: finiteNumber(file.stat?.size) ?? undefined,
-            reviewsFolder: reviewFolder,
-            excludedFolders: options.excludedFolders ?? [],
-            excludedTags: options.excludedTags ?? [],
-            excludedPatterns: options.excludedPatterns ?? [],
-            maxFileSizeBytes: options.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES,
-            metadata: options.getMetadata?.(path),
-        });
-        const skippedReason = scopeSkippedReasonForExclusion(runtimeExclusionReason);
-        if (skippedReason) {
-            if (skippedReason === "review-output") {
-                if (reason) visibleReviewOutputCount += 1;
-                continue;
-            }
-            if (skippedReason === "hidden-folder") continue;
-            if (!reason) continue;
-            candidates.push({
-                path,
-                reason,
-                included: false,
-                locked: true,
-                skippedReason,
-                modifiedAt,
-                createdAt,
-            });
-            continue;
-        }
-
-        if (!reason) continue;
-        candidates.push({
-            path,
-            reason,
-            included: true,
-            modifiedAt,
-            createdAt,
-        });
-    }
-
-    candidates.sort((left, right) => {
-        if (left.path === activePath) return -1;
-        if (right.path === activePath) return 1;
-        if (left.included !== right.included) return left.included ? -1 : 1;
-        return right.modifiedAt - left.modifiedAt || left.path.localeCompare(right.path);
-    });
-
-    let includedCount = 0;
-    for (const candidate of candidates) {
-        if (!candidate.included || candidate.locked) continue;
-        includedCount += 1;
-        if (includedCount > maxIncluded) {
-            candidate.included = false;
-            candidate.locked = true;
-            candidate.skippedReason = "overflow";
-        }
-    }
-
-    const excludedReviewOutputCount = Math.max(
-        options.reviewOutputCount ?? 0,
-        visibleReviewOutputCount,
-    );
-
-    let totalIncludedBytes = 0;
-    for (const file of options.files) {
-        const path = normalizePath(file.path);
-        const candidate = candidates.find((c) => c.path === path);
-        if (candidate?.included) {
-            totalIncludedBytes += finiteNumber(file.stat?.size) ?? 0;
-        }
-    }
-    const APPROX_BYTES_PER_TOKEN = 3;
-    const estimatedInputTokens = totalIncludedBytes > 0
-        ? Math.ceil(totalIncludedBytes / APPROX_BYTES_PER_TOKEN)
-        : undefined;
-
-    return {
-        range: options.range,
-        activePath,
-        rangeStartMs: startMs,
-        rangeEndMs: endMs,
-        candidates,
-        ...(excludedReviewOutputCount > 0 ? { excludedReviewOutputCount } : {}),
-        ...(estimatedInputTokens ? { estimatedInputTokens } : {}),
-    };
-}
-
-export function selectPageletScope(plan: PageletScopePlan): PageletScopeSelection {
-    return {
-        range: plan.range,
-        activePath: plan.activePath,
-        paths: plan.candidates
-            .filter((candidate) => candidate.included)
-            .map((candidate) => candidate.path),
-    };
-}
-
-export function applyPageletScopeToggle(
-    plan: PageletScopePlan,
-    path: string,
-    included: boolean,
-): PageletScopePlan {
-    const target = normalizePath(path);
-    return {
-        ...plan,
-        candidates: plan.candidates.map((candidate) => {
-            if (candidate.path !== target || candidate.locked) return candidate;
-            return {
-                ...candidate,
-                included,
-                skippedReason: included ? undefined : "unchecked",
-            };
-        }),
-    };
-}
 
 export function buildPageletScopeReviewBundle(
     options: BuildPageletScopeReviewBundleOptions,
@@ -325,7 +107,7 @@ export function buildPageletScopeReviewBundle(
     const primarySourcePath = normalizePath(options.primarySourcePath || nonEmptyEntries[0].path);
     const sourceLabel = sourcePaths.length === 1
         ? sourcePaths[0]
-        : `${rangeLabel(options.range, options.uiLanguage)} · ${sourcePaths.length} notes`;
+        : `Selected notes (${sourcePaths.length})`;
 
     return {
         input: {
@@ -348,99 +130,4 @@ export function buildPageletScopeReviewBundle(
         sourceLabel,
         detectedLanguage,
     };
-}
-
-export function rangeLabel(range: PageletReviewRange, locale: PageletLocale = "en"): string {
-    return pageletT(`pagelet.panel.scope.${range}`, locale);
-}
-
-export function skippedReasonLabel(reason: PageletScopeSkippedReason, locale: PageletLocale = "en"): string {
-    return pageletT(`pagelet.panel.scope.skipped.${reason}`, locale);
-}
-
-function scopeSkippedReasonForExclusion(
-    reason: ExclusionReason | null,
-): PageletScopeSkippedReason | null {
-    switch (reason) {
-        case null:
-            return null;
-        case "pagelet-output":
-            return "review-output";
-        case "empty":
-            return "empty-note";
-        case "too-large":
-            return "overflow";
-        case "pagelet-frontmatter":
-            return "excluded-frontmatter";
-        case "excluded-folder":
-        case "excluded-tag":
-        case "excluded-pattern":
-            return reason;
-        case "trash":
-        case "hidden-folder":
-        case "template":
-        case "plugin-generated":
-        case "non-markdown":
-            return "hidden-folder";
-    }
-}
-
-function chooseCandidateReason(
-    path: string,
-    activePath: string,
-    modifiedAt: number,
-    startMs: number,
-    endMs: number,
-): PageletScopeCandidateReason | null {
-    if (path === activePath) return "active";
-    if (startMs === endMs) return null;
-    const dailyDate = extractDailyDateMs(path);
-    if (dailyDate !== null && dailyDate >= startMs && dailyDate < endMs) {
-        return "daily-note-date";
-    }
-    if (modifiedAt >= startMs && modifiedAt < endMs) return "modified";
-    return null;
-}
-
-function resolveRangeWindow(range: PageletReviewRange, now: Date): { startMs: number; endMs: number } {
-    const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
-    const todayStart = new Date(y, m, d).getTime();
-    if (range === "current") return { startMs: todayStart, endMs: todayStart };
-    if (range === "yesterday") {
-        return { startMs: new Date(y, m, d - 1).getTime(), endMs: todayStart };
-    }
-    const days = RANGE_DAYS[range];
-    return {
-        startMs: new Date(y, m, d - (days - 1)).getTime(),
-        endMs: new Date(y, m, d + 1).getTime(),
-    };
-}
-
-function extractDailyDateMs(path: string): number | null {
-    const match = path.match(/(?:^|\/)(\d{4})-(\d{2})-(\d{2})(?:[^\d]|$)/);
-    if (!match) return null;
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-    const candidate = new Date(year, month - 1, day);
-    if (
-        candidate.getFullYear() !== year
-        || candidate.getMonth() !== month - 1
-        || candidate.getDate() !== day
-    ) {
-        return null;
-    }
-    return candidate.getTime();
-}
-
-function normalizeFolderPrefix(folder: string): string {
-    return normalizePath(folder || ".pagelet").replace(/^\/+|\/+$/g, "");
-}
-
-function isMarkdownPath(path: string, extension?: string): boolean {
-    return extension?.toLowerCase() === "md" || path.toLowerCase().endsWith(".md");
-}
-
-function finiteNumber(value: unknown): number | null {
-    return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

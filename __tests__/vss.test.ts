@@ -2979,10 +2979,13 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const files = ['one.md', 'two.md'].map((path, index) =>
             createTFile(path, { size: 20 + index, mtime: now + index + 10, ctime: now }, 'md', path)
         );
-        const { plugin, mockVault } = createPlugin({
+        const { plugin, mockAdapter, mockVault } = createPlugin({
             getVSSFiles: jest.fn(() => files),
         });
         mockVault.getAbstractFileByPath.mockImplementation((path) => files.find((file) => file.path === path) ?? null);
+        mockAdapter.read.mockImplementation(async () => {
+            throw new Error('hash failed');
+        });
         const vss = new VSS(plugin, 'cache');
         const index = new FakeVectorIndex();
         attachReadyIndex(vss, index);
@@ -2997,10 +3000,6 @@ describe('VSS SQLite/WASM lifecycle', () => {
             });
             await vss.handleFileOpen(file);
         }
-        (vss as any).computeFileHash = jest.fn(async () => { // eslint-disable-line @typescript-eslint/no-explicit-any
-            throw new Error('hash failed');
-        });
-
         const verifySummary = await vss.verifyPendingChanges({
             maxFiles: 1,
             maxBytes: 10_000,

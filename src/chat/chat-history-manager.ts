@@ -21,6 +21,7 @@ import { getPlatformCrypto } from "../platform-dom";
 import { cloneContextReductionReceipt } from "../pa/contracts/context-trace";
 import { cloneChatHostProvenance } from "../ai-services/chat-provenance";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
+import { cloneSourceRecord } from "../ai-services/source-store";
 import { cloneMessageImages } from "./image-types";
 
 const TITLE_MAX_LENGTH = 60;
@@ -494,13 +495,6 @@ function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTra
         })),
         usedMemoryRefs: trace.usedMemoryRefs.map((ref) => ({ ...ref })),
         droppedMemoryRefs: trace.droppedMemoryRefs.map((ref) => ({ ...ref })),
-    };
-}
-
-function cloneSourceRecord(record: SourceRecord): SourceRecord {
-    return {
-        ...record,
-        metadata: record.metadata ? { ...record.metadata } : undefined,
     };
 }
 

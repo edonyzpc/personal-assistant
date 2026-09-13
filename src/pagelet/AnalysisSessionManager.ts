@@ -12,17 +12,11 @@
 import { Notice, TFile, type App } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
-import { noteTitleFromPath } from "../pa/helpers";
 
-import type { PanelFinding, PanelLayoutType, PanelOpenExtra, PanelScopeState } from "./panel/types";
+import type { PanelFinding, PanelLayoutType, PanelOpenExtra } from "./panel/types";
 import type { PreloadFinding, PreloadResult } from "./preload/types";
 import { PreloadBudget } from "./preload/PreloadBudget";
-import {
-    applyPageletScopeToggle,
-    buildPageletScopePlan,
-    type PageletReviewRange,
-    type PageletScopePlan,
-} from "./scope";
+import type { PageletReviewRange } from "./scope";
 
 // ---------------------------------------------------------------------------
 // Host interface -- narrow subset the manager needs from the orchestrator
@@ -73,8 +67,6 @@ export class AnalysisSessionManager {
     private lastAnalysisFindings: PanelFinding[] = [];
     private lastAnalysisSourcePath: string | null = null;
     private lastUsedGovernedMemoryClaimIds: string[] = [];
-    private currentScopeRange: PageletReviewRange = "current";
-    private currentScopePlan: PageletScopePlan | null = null;
 
     // -- foreground run guard ---------------------------------------------------
     private foregroundRunInProgress = false;
@@ -94,14 +86,6 @@ export class AnalysisSessionManager {
 
     get isForegroundRunInProgress(): boolean {
         return this.foregroundRunInProgress;
-    }
-
-    get scopeRange(): PageletReviewRange {
-        return this.currentScopeRange;
-    }
-
-    set scopeRange(value: PageletReviewRange) {
-        this.currentScopeRange = value;
     }
 
     // ======================================================================
@@ -191,69 +175,12 @@ export class AnalysisSessionManager {
     }
 
     // ======================================================================
-    // Scope plan
-    // ======================================================================
-
-    ensureScopePlan(): PageletScopePlan | null {
-        const activePath = this.host.app.workspace.getActiveFile?.()?.path ?? null;
-        if (
-            this.currentScopePlan
-            && activePath === this.currentScopePlan.activePath
-            && this.currentScopePlan.range === this.currentScopeRange
-        ) {
-            return this.currentScopePlan;
-        }
-        this.currentScopePlan = this.buildScopePlan(this.currentScopeRange);
-        return this.currentScopePlan;
-    }
-
-    buildScopePlan(range: PageletReviewRange): PageletScopePlan | null {
-        const activeFile = this.host.app.workspace.getActiveFile?.();
-        if (!activeFile || !activeFile.path.endsWith(".md")) return null;
-        const s = this.host.settings.pagelet;
-        return buildPageletScopePlan({
-            files: this.host.app.vault.getMarkdownFiles(),
-            activePath: activeFile.path,
-            range,
-            reviewsFolder: s.reviewsFolder,
-            excludedFolders: s.excludedFolders,
-            excludedTags: s.excludedTags,
-            excludedPatterns: s.excludedPatterns,
-            getMetadata: (path) => {
-                const file = this.host.app.vault.getAbstractFileByPath(path);
-                if (!(file instanceof TFile) || file.extension !== "md") return undefined;
-                return this.host.app.metadataCache.getFileCache(file) ?? undefined;
-            },
-        });
-    }
-
-    invalidateScopePlan(): void {
-        this.currentScopePlan = null;
-    }
-
-    handleScopeRangeChange(range: PageletReviewRange): void {
-        this.currentScopeRange = range;
-        this.currentScopePlan = this.buildScopePlan(range);
-        this.clearAnalysisSession();
-    }
-
-    handleScopeCandidateToggle(path: string, included: boolean): void {
-        const plan = this.ensureScopePlan();
-        if (!plan) return;
-        this.currentScopePlan = applyPageletScopeToggle(plan, path, included);
-        this.clearAnalysisSession();
-    }
-
-    // ======================================================================
     // Panel helpers
     // ======================================================================
 
     panelExtraForLayout(layoutType: PanelLayoutType): PanelOpenExtra | undefined {
         if (layoutType !== "review") return undefined;
-        const plan = this.ensureScopePlan();
-        if (!plan) return undefined;
         return {
-            scope: this.toPanelScope(plan),
             usedGovernedMemoryClaimIds: [...this.lastUsedGovernedMemoryClaimIds],
         };
     }
@@ -347,23 +274,4 @@ export class AnalysisSessionManager {
         };
     }
 
-    private toPanelScope(plan: PageletScopePlan): PanelScopeState {
-        const candidates = plan.candidates.map((candidate) => ({
-            path: candidate.path,
-            title: noteTitleFromPath(candidate.path),
-            reason: candidate.reason,
-            included: candidate.included,
-            locked: candidate.locked,
-            skippedReason: candidate.skippedReason,
-        }));
-        return {
-            range: plan.range,
-            candidates,
-            includedCount: candidates.filter((candidate) => candidate.included).length,
-            skippedCount: candidates.filter((candidate) => !candidate.included).length,
-            excludedReviewOutputCount: plan.excludedReviewOutputCount,
-            estimatedInputTokens: plan.estimatedInputTokens,
-        };
-    }
 }
-

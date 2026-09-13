@@ -8,7 +8,7 @@
  * What this module owns:
  *  - The flat dictionary shape (`pagelet.<group>.<name>` keys).
  *  - Lookup with EN fallback when a key is missing in the requested locale.
- *  - The single source of truth for which UI / mascot / error strings
+ *  - The single source of truth for which UI / Pet / error strings
  *    exist (English source dictionary is the authoritative schema; ZH is
  *    asserted against it in __tests__/pa-locales-pagelet.test.ts so a
  *    missing translation is caught at CI, not at runtime).

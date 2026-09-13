@@ -230,7 +230,7 @@ export interface PageletReviewModelOptions {
     now?: () => number;
     /**
      * Locale used to render the user-facing `outcome.userMessage` string.
-     * Follows UI language per D014 + D017 (mascot / settings are UI lang,
+     * Follows UI language per D014 + D017 (Pet / settings are UI lang,
      * not note lang). Defaults to "en" so headless callers / tests get
      * stable copy without depending on a window global.
      */

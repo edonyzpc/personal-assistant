@@ -11,11 +11,6 @@
 import type { PageletReviewDiagnostics } from "../pa-review-model";
 import type { PageletSuggestion } from "../pa-review-schemas";
 import type {
-    PageletReviewRange,
-    PageletScopeCandidateReason,
-    PageletScopeSkippedReason,
-} from "../scope";
-import type {
     ConfirmedMemoryRecord,
     ContextPagerState,
     GraphDiscoveryRunResult,
@@ -79,9 +74,6 @@ export interface PanelCallbacks {
     onSourceClick: (sourceLink: string) => void;
     onSaveAsReviewNote: (findings: PanelFinding[]) => void | Promise<void>;
     onRunReview?: () => void | Promise<void>;
-    onRunSelectedReview?: () => void | Promise<void>;
-    onScopeRangeChange?: (range: PageletReviewRange) => void;
-    onScopeCandidateToggle?: (path: string, included: boolean) => void;
     onRelatedNoteClick?: (noteName: string, sourcePath?: string) => void;
     onResearchFinding?: (finding: PanelFinding) => void | Promise<void>;
     onToggleHints?: () => void;
@@ -94,24 +86,6 @@ export interface PanelViewOptions {
     app?: import("obsidian").App;
     callbacks: PanelCallbacks;
     getLocale?: () => import("../../locales/pagelet").PageletLocale;
-}
-
-export interface PanelScopeCandidate {
-    path: string;
-    title: string;
-    reason: PageletScopeCandidateReason;
-    included: boolean;
-    locked?: boolean;
-    skippedReason?: PageletScopeSkippedReason;
-}
-
-export interface PanelScopeState {
-    range: PageletReviewRange;
-    candidates: PanelScopeCandidate[];
-    includedCount: number;
-    skippedCount: number;
-    excludedReviewOutputCount?: number;
-    estimatedInputTokens?: number;
 }
 
 export interface PanelReviewQueueState {
@@ -195,11 +169,8 @@ export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
 export type PanelPatternDetectionState = PatternDetectionResult;
 
 export interface PanelOpenExtra {
-    /** Raw background cache is visible here only; it cannot be saved, shared, or expanded to Tab. */
-    preparedReadOnly?: boolean;
     connections?: NoteConnection[];
     markdown?: string;
-    scope?: PanelScopeState;
     sourcePath?: string;
     reviewQueue?: PanelReviewQueueState;
     contextPager?: ContextPagerState;

@@ -25,18 +25,13 @@ import type {
     DeliveryReceipt,
 } from "./attention";
 import type { BubbleView } from "./bubble/BubbleView";
-import { buildAgentInsightDeliveryContent, buildContextLimitedContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildProactiveRecallDeliveryContent, buildReadyEmptyContent, buildTerseEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
-import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";
+import { buildAgentInsightDeliveryContent, buildContextLimitedContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparingContent, buildReadyEmptyContent, buildTerseEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
 import { resolveBubbleExplanationState } from "./bubble/state-resolver";
 import type { PreloadFinding } from "./preload/types";
 import type { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetView } from "./pet/PetView";
 import type { PageletHost } from "./PageletHost";
-import {
-    type PatternDetectionResult,
-    type QuietRecallBubbleNudge,
-    type QuietRecallCandidate,
-} from "../pa";
+import type { PatternDetectionResult } from "../pa";
 
 // ---------------------------------------------------------------------------
 // Callbacks the coordinator fires back at the orchestrator
@@ -53,42 +48,23 @@ export interface BubbleCoordinatorCallbacks {
     onReviewCurrentNote(): void;
     /** Trigger note-connection discovery. */
     onDiscoverConnections(): void;
-    /** Open the exact local candidates behind the Discover-only Recall affordance. */
-    onQuietRecallDiscoverOnly(): void;
     /** Return a one-time onboarding bridge nudge, if pending. */
     getOnboardingNudge(): OnboardingNudge | null;
     /** Dismiss a one-time onboarding bridge nudge. */
     onOnboardingNudgeDismiss(nudge: OnboardingNudge): void;
-    /** Return the current local Quiet Recall Bubble nudge candidate, if one is pending. */
-    getQuietRecallNudge(): QuietRecallBubbleNudge | null;
-    /** Return the complete Quiet Recall candidate for delivery rendering, if available. */
-    getQuietRecallCandidate(): QuietRecallCandidate | null;
-    /** Open the existing Quiet Recall detail surface from the Bubble nudge. */
-    onQuietRecallView(candidate: QuietRecallBubbleNudge): void;
-    /** Link the current note and this Quiet Recall candidate. */
-    onQuietRecallLink(candidate: QuietRecallBubbleNudge): void;
-    /** Suppress this Quiet Recall nudge candidate for the local session. */
-    onQuietRecallDismiss(candidate: QuietRecallBubbleNudge): void;
-    /** Keep this Quiet Recall candidate for later through the existing Review Queue. */
-    onQuietRecallLater(candidate: QuietRecallBubbleNudge): void;
     getPatternDetectionNudge(): PatternDetectionResult | null;
     onPatternDetectionView(result: PatternDetectionResult): void;
     onPatternDetectionDismiss(result: PatternDetectionResult): void;
-    getPreparedRecapCandidate(): (DeliveryCandidate & { kind: "recap" }) | null;
     /** Return the latest verified Deep Discover insight, if one is pending. */
     getAgentInsightCandidate?(): (DeliveryCandidate & { kind: "review" }) | null;
     /** Return only explicitly admitted proactive tickets; raw payloads stay separate. */
     getAdmittedNudgeTickets(): readonly NudgeTicket[];
-    onPreparedRecapView(candidate: DeliveryCandidate & { kind: "recap" }): void;
-    onPreparedRecapLater(candidate: DeliveryCandidate & { kind: "recap" }): void;
     /** Open the verified free-form insight in the read-only Panel. */
     onAgentInsightView?(candidate: DeliveryCandidate & { kind: "review" }): void;
     /** Keep the insight in the in-memory cache without presenting it again now. */
     onAgentInsightLater?(candidate: DeliveryCandidate & { kind: "review" }): void;
     /** Commit one-shot presentation state only after Bubble.show succeeds. */
     onNudgePresented(ticket: NudgeTicket): void;
-    /** Return count of recall candidates that were evaluated but judged unconvincing by LLM. */
-    getUnconvincingRecallCount(): number;
     /** Device-local consumption gate for proactive Recall/Recap/Agent insight delivery. */
     isDeliverySeen?(receipt: DeliveryReceipt): boolean;
     /** Device-local, semantic/copy-version acknowledgement gate. */
@@ -105,8 +81,6 @@ type BubbleEntry = "pet" | "quick-review";
 /** Explicit ownership for a renderable proactive nudge ticket. */
 export enum NudgeOwner {
     AgentInsight = "agent-insight",
-    PreparedRecap = "prepared-recap",
-    QuietRecall = "quiet-recall",
     Pattern = "pattern",
     Onboarding = "onboarding",
 }
@@ -116,18 +90,6 @@ export type NudgeTicket =
         key: string;
         owner: NudgeOwner.AgentInsight;
         candidate: DeliveryCandidate & { kind: "review" };
-    }
-    | {
-        key: string;
-        owner: NudgeOwner.PreparedRecap;
-        candidate: DeliveryCandidate & { kind: "recap" };
-    }
-    | {
-        key: string;
-        owner: NudgeOwner.QuietRecall;
-        candidate: QuietRecallCandidate;
-        deliveryCandidate: DeliveryCandidate & { kind: "recall" };
-        nudge: QuietRecallBubbleNudge;
     }
     | {
         key: string;
@@ -306,7 +268,6 @@ export class BubbleCoordinator {
         );
         let presentation: BubblePresentation;
         const agentInsight = this.callbacks.getAgentInsightCandidate?.() ?? null;
-        const preparedRecap = this.callbacks.getPreparedRecapCandidate();
         if (agentInsight) {
             presentation = {
                 content: buildAgentInsightDeliveryContent(agentInsight, {
@@ -324,23 +285,6 @@ export class BubbleCoordinator {
                     && ticket.candidate.id === agentInsight.id
                 )) ?? null,
             };
-        } else if (preparedRecap) {
-            presentation = {
-                content: buildPreparedRecapDeliveryContent(preparedRecap, {
-                    onViewRecap: (candidate) => {
-                        bubbleView.close();
-                        this.callbacks.onPreparedRecapView(candidate);
-                    },
-                    onLater: (candidate) => {
-                        bubbleView.close();
-                        this.callbacks.onPreparedRecapLater(candidate);
-                    },
-                }, locale),
-                ticket: admittedTickets.find((ticket) => (
-                    ticket.owner === NudgeOwner.PreparedRecap
-                    && ticket.candidate.id === preparedRecap.id
-                )) ?? null,
-            };
         } else {
             presentation = this.buildRegularBubbleContent(
                 bubbleView,
@@ -352,8 +296,6 @@ export class BubbleCoordinator {
         }
         const { content, ticket, explanationAcknowledgement } = presentation;
         this.applyInlineHint(content, locale);
-        this.applyContextAction(content, bubbleView, locale);
-
         bubbleView.show(content, anchorEl, options);
         if (ticket && bubbleView.bubbleState === "visible") {
             this.recordNudgePresented(ticket);
@@ -369,19 +311,6 @@ export class BubbleCoordinator {
         admittedTickets: NudgeTicket[],
         entry: BubbleEntry,
     ): BubblePresentation {
-        // Deterministic compatibility fallback for Tier-3 payloads without a
-        // shared quality score: real delivery before the onboarding bridge.
-        const quietRecallContent = this.buildQuietRecallNudgeContent(bubbleView, locale);
-        if (quietRecallContent) {
-            const nudge = this.callbacks.getQuietRecallNudge();
-            return {
-                content: quietRecallContent,
-                ticket: admittedTickets.find((ticket) => (
-                    ticket.owner === NudgeOwner.QuietRecall
-                    && ticket.nudge.candidateId === nudge?.candidateId
-                )) ?? null,
-            };
-        }
         const patternContent = this.buildPatternNudgeContent(callbacks, locale);
         if (patternContent) {
             const pattern = this.callbacks.getPatternDetectionNudge();
@@ -423,62 +352,6 @@ export class BubbleCoordinator {
                 this.callbacks.onOnboardingNudgeDismiss(nudge);
             },
         }, locale);
-    }
-
-    private eligibleQuietRecallNudge(): {
-        candidate: QuietRecallCandidate;
-        deliveryCandidate: DeliveryCandidate & { kind: "recall" };
-        nudge: QuietRecallBubbleNudge;
-    } | null {
-        const candidate = this.callbacks.getQuietRecallCandidate();
-        const nudge = this.callbacks.getQuietRecallNudge();
-        const deliveryCandidate = candidate
-            ? quietRecallCandidateToDeliveryCandidate(
-                candidate,
-                getPageletUiLanguage(),
-                nudge?.currentPath,
-            )
-            : null;
-        if (
-            !candidate
-            || !deliveryCandidate
-            || !nudge
-            || !this.host.settings.pagelet.enabled
-            || !this.host.settings.quietRecall.enabled
-            || this.host.settings.quietRecall.quietRecallMode !== "on"
-            || this.proactiveHints.quietHoursActive
-            || this.deliveryIsSeen(deliveryCandidate)
-        ) return null;
-        return { candidate, deliveryCandidate, nudge };
-    }
-
-    private buildQuietRecallNudgeContent(
-        bubbleView: BubbleView,
-        locale: ReturnType<typeof getPageletUiLanguage>,
-    ): BubbleContent | null {
-        const eligible = this.eligibleQuietRecallNudge();
-        if (!eligible) return null;
-        const content = buildProactiveRecallDeliveryContent(eligible.deliveryCandidate, {
-            onView: () => {
-                bubbleView.close();
-                this.callbacks.onQuietRecallView(eligible.nudge);
-            },
-            onLater: () => {
-                this.callbacks.onQuietRecallLater(eligible.nudge);
-            },
-            onDismiss: () => {
-                bubbleView.close();
-                this.callbacks.onQuietRecallDismiss(eligible.nudge);
-            },
-        }, locale);
-        if (eligible.nudge.onboardingExplanation) {
-            content.inlineHint = {
-                text: content.inlineHint?.text
-                    ?? pageletT("pagelet.onboarding.quietRecall", locale),
-                icon: "info",
-            };
-        }
-        return content;
     }
 
     private buildPatternNudgeContent(
@@ -588,8 +461,7 @@ export class BubbleCoordinator {
         const admittedTickets = this.sortNudgeTickets(
             this.collectAdmittedNudgeTickets().filter((ticket) => this.ticketRuntimeEnabled(ticket)),
         );
-        const presentation = (this.callbacks.getAgentInsightCandidate?.() ?? null)
-            || this.callbacks.getPreparedRecapCandidate()
+        const presentation = this.callbacks.getAgentInsightCandidate?.()
             ? null
             : this.buildRegularBubbleContent(
                 bubbleView,
@@ -675,29 +547,6 @@ export class BubbleCoordinator {
         return {
             text: pageletT("pagelet.bubble.inlineHint.preparing", locale),
             icon: "info",
-        };
-    }
-
-    private applyContextAction(
-        content: BubbleContent,
-        bubbleView: BubbleView,
-        locale: ReturnType<typeof getPageletUiLanguage>,
-    ): void {
-        const unconvincingCount = this.callbacks.getUnconvincingRecallCount();
-        if (unconvincingCount <= 0) return;
-        content.contextAction = {
-            label: pageletT(
-                unconvincingCount === 1
-                    ? "pagelet.bubble.contextAction.relatedNote"
-                    : "pagelet.bubble.contextAction.relatedNotes",
-                locale,
-                { count: unconvincingCount },
-            ),
-            action: "discover",
-            callback: () => {
-                bubbleView.close();
-                this.callbacks.onQuietRecallDiscoverOnly();
-            },
         };
     }
 
@@ -822,12 +671,10 @@ export class BubbleCoordinator {
         if (this.pendingNudgeTicket?.key === ticket.key) this.pendingNudgeTicket = null;
         this.activeNudgeTicket = ticket;
         this.presentedNudgeKeys.add(ticket.key);
-        if (this.usesSharedCooldown(ticket.owner)) {
-            // Admission ownership lives outside the old global pending bit, so
-            // presentation must advance the clock even if a generic toggle
-            // cleared that bit after this ticket was admitted.
-            this.proactiveHints.recordHintPresented();
-        }
+        // Admission ownership lives outside the old global pending bit, so
+        // presentation must advance the clock even if a generic toggle
+        // cleared that bit after this ticket was admitted.
+        this.proactiveHints.recordHintPresented();
         this.callbacks.onNudgePresented(ticket);
     }
 
@@ -897,17 +744,10 @@ export class BubbleCoordinator {
 
     private currentNudgeTickets(): NudgeTicket[] {
         const admitted = this.collectAdmittedNudgeTickets();
-        const shared = admitted.filter((ticket) => (
-            this.usesSharedCooldown(ticket.owner)
-            && this.ticketRuntimeEnabled(ticket)
-        ));
+        const shared = admitted.filter((ticket) => this.ticketRuntimeEnabled(ticket));
         const sharedDelay = this.sharedPresentationDelay(shared);
         return this.sortNudgeTickets(admitted.filter((ticket) => {
-            if (!this.ticketRuntimeEnabled(ticket)) return false;
-            if (!this.usesSharedCooldown(ticket.owner)) {
-                return !this.proactiveHints.quietHoursActive;
-            }
-            return sharedDelay === 0;
+            return this.ticketRuntimeEnabled(ticket) && sharedDelay === 0;
         }));
     }
 
@@ -917,22 +757,10 @@ export class BubbleCoordinator {
             if (seen.has(ticket.key) || this.presentedNudgeKeys.has(ticket.key)) return false;
             seen.add(ticket.key);
             if (
-                (ticket.owner === NudgeOwner.AgentInsight
-                    || ticket.owner === NudgeOwner.PreparedRecap
-                    || ticket.owner === NudgeOwner.QuietRecall)
-                && this.deliveryIsSeen(
-                    ticket.owner === NudgeOwner.AgentInsight
-                        ? ticket.candidate
-                        : ticket.owner === NudgeOwner.PreparedRecap
-                        ? ticket.candidate
-                        : ticket.deliveryCandidate,
-                )
+                ticket.owner === NudgeOwner.AgentInsight
+                && this.deliveryIsSeen(ticket.candidate)
             ) {
                 return false;
-            }
-            if (ticket.owner === NudgeOwner.QuietRecall) {
-                return ticket.candidate.id === ticket.nudge.candidateId
-                    && ticket.deliveryCandidate.id === ticket.candidate.id;
             }
             if (ticket.owner === NudgeOwner.Pattern) return ticket.result.totalCount > 0;
             return true;
@@ -944,10 +772,8 @@ export class BubbleCoordinator {
         // cross-type quality score. This is not a fixed product priority.
         const compatibilityOrder: Record<NudgeOwner, number> = {
             [NudgeOwner.AgentInsight]: 0,
-            [NudgeOwner.PreparedRecap]: 1,
-            [NudgeOwner.QuietRecall]: 2,
-            [NudgeOwner.Pattern]: 3,
-            [NudgeOwner.Onboarding]: 4,
+            [NudgeOwner.Pattern]: 1,
+            [NudgeOwner.Onboarding]: 2,
         };
         return [...tickets].sort(
             (left, right) => compatibilityOrder[left.owner] - compatibilityOrder[right.owner],
@@ -960,11 +786,6 @@ export class BubbleCoordinator {
         switch (ticket.owner) {
             case NudgeOwner.AgentInsight:
                 return true;
-            case NudgeOwner.PreparedRecap:
-                return this.host.settings.pagelet.scopeRecapHighValueHints !== false;
-            case NudgeOwner.QuietRecall:
-                return this.host.settings.quietRecall.enabled
-                    && this.host.settings.quietRecall.quietRecallMode === "on";
             case NudgeOwner.Pattern:
             case NudgeOwner.Onboarding:
                 return this.host.settings.pagelet.proactiveHints && this.proactiveHints.enabled;
@@ -998,7 +819,6 @@ export class BubbleCoordinator {
         if (tickets.length === 0) return null;
         const enabled = tickets.some((ticket) => (
             ticket.owner === NudgeOwner.AgentInsight
-            || ticket.owner === NudgeOwner.PreparedRecap
         ))
             || (this.host.settings.pagelet.proactiveHints && this.proactiveHints.enabled);
         return this.proactiveHints.delayUntilEligibleMs({ enabled });
@@ -1022,40 +842,6 @@ export class BubbleCoordinator {
                         this.callbacks.onAgentInsightLater?.(candidate);
                     },
                 }, locale);
-            case NudgeOwner.PreparedRecap:
-                return buildPreparedRecapDeliveryContent(ticket.candidate, {
-                    onViewRecap: (candidate) => {
-                        bubbleView.close();
-                        this.callbacks.onPreparedRecapView(candidate);
-                    },
-                    onLater: (candidate) => {
-                        bubbleView.close();
-                        this.callbacks.onPreparedRecapLater(candidate);
-                    },
-                }, locale);
-            case NudgeOwner.QuietRecall: {
-                const content = buildProactiveRecallDeliveryContent(ticket.deliveryCandidate, {
-                    onView: () => {
-                        bubbleView.close();
-                        this.callbacks.onQuietRecallView(ticket.nudge);
-                    },
-                    onLater: () => {
-                        this.callbacks.onQuietRecallLater(ticket.nudge);
-                    },
-                    onDismiss: () => {
-                        bubbleView.close();
-                        this.callbacks.onQuietRecallDismiss(ticket.nudge);
-                    },
-                }, locale);
-                if (ticket.nudge.onboardingExplanation) {
-                    content.inlineHint = {
-                        text: content.inlineHint?.text
-                            ?? pageletT("pagelet.onboarding.quietRecall", locale),
-                        icon: "info",
-                    };
-                }
-                return content;
-            }
             case NudgeOwner.Pattern:
                 return buildPatternDetectionNudgeContent({
                     pageletEnabled: true,
@@ -1087,19 +873,13 @@ export class BubbleCoordinator {
         }
     }
 
-    private usesSharedCooldown(owner: NudgeOwner): boolean {
-        return owner !== NudgeOwner.QuietRecall;
-    }
-
     private scheduleDeferredSharedWake(): void {
         if (!this.nudgeSurfaceAvailable(this.lastPetView)) {
             this.clearNudgeWakeTimer();
             return;
         }
-        const deferred = this.collectAdmittedNudgeTickets().filter((ticket) => (
-            this.usesSharedCooldown(ticket.owner)
-            && this.ticketRuntimeEnabled(ticket)
-        ));
+        const deferred = this.collectAdmittedNudgeTickets()
+            .filter((ticket) => this.ticketRuntimeEnabled(ticket));
         if (deferred.length === 0) {
             this.clearNudgeWakeTimer();
             return;

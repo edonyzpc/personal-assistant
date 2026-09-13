@@ -6,6 +6,7 @@ import { cloneChatHostProvenance, type ChatHostProvenance } from "../ai-services
 import { cloneWritingVersion, hashWritingText, writingSceneSchema, type WritingVersion } from "./writing-types";
 import { cloneGenerationInputSnapshot } from "../ai-services/generation-input-snapshot";
 import { cloneSaveReceipt, assertSaveReceiptUpdate, type SaveReceipt } from "./save-receipt-types";
+import { cloneSourceRecord } from "../ai-services/source-store";
 import { hasForbiddenPersistedTextFields, validateSourceRefPathShape, type PersistedSourceRef } from '../pa/contracts/source-ref';
 import { cloneImageAsset, cloneImageRef, cloneImageVariant, cloneMessageImages, imageTurnOwnerId, validateImagePath,
     type ImageAsset, type ImageAssetOwner, type ImageRef, type ImageVariantRecord,
@@ -1131,13 +1132,6 @@ function cloneContextUsedItem(item: ChatContextUsedItem): ChatContextUsedItem {
         copy.sources = item.sources.map((source) => ({ ...source }));
     }
     return copy;
-}
-
-function cloneSourceRecord(record: SourceRecord): SourceRecord {
-    return {
-        ...record,
-        metadata: record.metadata ? { ...record.metadata } : undefined,
-    };
 }
 
 function cloneRuntimeWarning(warning: ChatRuntimeWarning): ChatRuntimeWarning {

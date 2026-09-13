@@ -26,8 +26,6 @@ import type {
     PanelFinding,
     PanelLayoutType,
     PanelOpenExtra,
-    PanelScopeCandidate,
-    PanelScopeState,
     PanelViewOptions,
 } from "./types";
 
@@ -50,7 +48,6 @@ import {
 import { appendIconButtonLabel, clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
 import type { SuggestionCardRenderer } from "../ui";
 import type { PageletSuggestion } from "../pa-review-schemas";
-import type { PageletReviewRange } from "../scope";
 
 interface PanelDraftItem {
     id: string;
@@ -83,13 +80,6 @@ function elementIsWithin(element: Element, container: Element): boolean {
     }
     return false;
 }
-
-const PANEL_SCOPE_RANGES: readonly PageletReviewRange[] = [
-    "current",
-    "yesterday",
-    "last3",
-    "last7",
-];
 
 function suggestionKey(finding: PanelFinding): string | null {
     const suggestion = finding.suggestion;
@@ -162,12 +152,10 @@ export class PanelView {
     private titleEl: HTMLHeadingElement | null = null;
     private saveBtnEl: HTMLButtonElement | null = null;
     private shareBtnEl: HTMLButtonElement | null = null;
-    private headerExpandBtnEl: HTMLButtonElement | null = null;
-    private footerExpandBtnEl: HTMLButtonElement | null = null;
     private containerEl: HTMLElement | null = null;
     private _isOpen = false;
     private currentLayout: PanelLayoutType | null = null;
-    private primaryButtonMode: "save" | "run" | "run-selected" = "save";
+    private primaryButtonMode: "save" | "run" = "save";
 
     get currentLayoutType(): PanelLayoutType | null {
         return this.currentLayout;
@@ -185,7 +173,6 @@ export class PanelView {
         ) && (this.reviewRunPending || Boolean(this.reviewRunError));
         if (
             !this.currentLayout
-            || this.currentExtra?.preparedReadOnly
             || reviewContentReplaced
         ) {
             return [];
@@ -310,9 +297,7 @@ export class PanelView {
         this.updatePrimaryButtonState(
             layoutType,
             layoutType === "summary" || this.canSaveCurrentContent(visibleFindings),
-            extra?.scope,
         );
-        this.updatePreparedReadOnlyControls(Boolean(extra?.preparedReadOnly));
         this.titleEl.textContent =
             pageletT(LAYOUT_TITLE_KEYS[layoutType], this.getLocale()) || layoutType;
 
@@ -350,9 +335,6 @@ export class PanelView {
         this.updateShareCardControl();
         const renderOptions = this.buildRenderOptions();
 
-        if (layoutType === "review" && this.currentExtra?.scope) {
-            body.appendChild(this.renderScopeControls(this.currentExtra.scope));
-        }
         if (this.currentExtra?.contextPager) {
             body.appendChild(this.renderContextPagerSection(this.currentExtra.contextPager));
         }
@@ -499,8 +481,6 @@ export class PanelView {
         this.titleEl = null;
         this.saveBtnEl = null;
         this.shareBtnEl = null;
-        this.headerExpandBtnEl = null;
-        this.footerExpandBtnEl = null;
         this.containerEl = null;
         this._isOpen = false;
         this.currentLayout = null;
@@ -580,7 +560,6 @@ export class PanelView {
         this.updatePrimaryButtonState(
             this.currentLayout ?? "review",
             this.canSaveCurrentContent(),
-            this.currentExtra?.scope,
         );
         this.renderCurrentLayout();
     }
@@ -593,7 +572,6 @@ export class PanelView {
         this.updatePrimaryButtonState(
             this.currentLayout ?? "review",
             this.canSaveCurrentContent(),
-            this.currentExtra?.scope,
         );
         this.renderCurrentLayout();
     }
@@ -622,100 +600,6 @@ export class PanelView {
             return this.draftItems.some((item) => item.text.trim().length > 0);
         }
         return visibleFindings.length > 0;
-    }
-
-    private renderScopeControls(scope: PanelScopeState): HTMLElement {
-        const section = createHtmlElement("section");
-        section.className = "pa-pagelet-panel-scope";
-        section.setAttribute("aria-label", pageletT("pagelet.panel.scope.title", this.getLocale()));
-
-        const header = createHtmlElement("div");
-        header.className = "pa-pagelet-panel-scope-header";
-        const title = createHtmlElement("div");
-        title.className = "pa-pagelet-panel-scope-title";
-        title.textContent = pageletT("pagelet.panel.scope.title", this.getLocale());
-        header.appendChild(title);
-        const count = createHtmlElement("div");
-        count.className = "pa-pagelet-panel-scope-count";
-        count.textContent = pageletT("pagelet.panel.action.reviewSelected", this.getLocale(), {
-            count: scope.includedCount,
-        });
-        header.appendChild(count);
-        section.appendChild(header);
-
-        const ranges = createHtmlElement("div");
-        ranges.className = "pa-pagelet-panel-scope-ranges";
-        for (const range of PANEL_SCOPE_RANGES) {
-            const btn = createHtmlElement("button");
-            btn.className = "pa-pagelet-panel-scope-range-btn";
-            btn.setAttribute("type", "button");
-            btn.setAttribute("aria-pressed", String(scope.range === range));
-            btn.setAttribute("data-active", String(scope.range === range));
-            btn.textContent = pageletT(`pagelet.panel.scope.${range}`, this.getLocale());
-            btn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                this.options.callbacks.onScopeRangeChange?.(range);
-            });
-            ranges.appendChild(btn);
-        }
-        section.appendChild(ranges);
-
-        const details = createHtmlElement("details");
-        details.className = "pa-pagelet-panel-scope-details";
-        const detailsSummary = createHtmlElement("summary");
-        detailsSummary.textContent = pageletT("pagelet.panel.scope.detailsSummary", this.getLocale(), {
-            count: scope.candidates.length,
-            tokens: scope.estimatedInputTokens ?? 0,
-        });
-        details.appendChild(detailsSummary);
-
-        const summary = createHtmlElement("div");
-        summary.className = "pa-pagelet-panel-scope-summary";
-        if (scope.estimatedInputTokens) {
-            summary.appendChild(this.renderScopeChip(
-                pageletT("pagelet.panel.scope.tokenEstimateShort", this.getLocale(), {
-                    tokens: scope.estimatedInputTokens,
-                }),
-            ));
-        }
-        if (scope.excludedReviewOutputCount) {
-            summary.appendChild(this.renderScopeChip(
-                pageletT("pagelet.panel.scope.summary.review-output", this.getLocale(), {
-                    count: scope.excludedReviewOutputCount,
-                }),
-            ));
-        }
-        if (summary.children.length > 0) {
-            details.appendChild(summary);
-        }
-
-        const included = scope.candidates.filter((candidate) => candidate.included);
-        const skipped = scope.candidates.filter((candidate) => !candidate.included);
-        details.appendChild(this.renderScopeCandidateGroup(
-            pageletT("pagelet.panel.scope.included", this.getLocale()),
-            included,
-        ));
-        if (skipped.length > 0) {
-            details.appendChild(this.renderScopeCandidateGroup(
-                pageletT("pagelet.panel.scope.skipped", this.getLocale()),
-                skipped,
-            ));
-        }
-        if (scope.candidates.length === 0) {
-            const empty = createHtmlElement("div");
-            empty.className = "pa-pagelet-panel-scope-empty";
-            empty.textContent = pageletT("pagelet.panel.scope.empty", this.getLocale());
-            details.appendChild(empty);
-        }
-        section.appendChild(details);
-        return section;
-    }
-
-    private renderScopeChip(text: string): HTMLElement {
-        const chip = createHtmlElement("span");
-        chip.className = "pa-pagelet-panel-scope-chip";
-        chip.textContent = text;
-        return chip;
     }
 
     private renderContextPagerSection(contextPager: NonNullable<PanelOpenExtra["contextPager"]>): HTMLElement {
@@ -929,58 +813,6 @@ export class PanelView {
         return section;
     }
 
-    private renderScopeCandidateGroup(label: string, candidates: PanelScopeCandidate[]): HTMLElement {
-        const group = createHtmlElement("div");
-        group.className = "pa-pagelet-panel-scope-group";
-        const heading = createHtmlElement("div");
-        heading.className = "pa-pagelet-panel-scope-group-label";
-        heading.textContent = label;
-        group.appendChild(heading);
-
-        const list = createHtmlElement("div");
-        list.className = "pa-pagelet-panel-scope-list";
-        for (const candidate of candidates) {
-            list.appendChild(this.renderScopeCandidate(candidate));
-        }
-        group.appendChild(list);
-        return group;
-    }
-
-    private renderScopeCandidate(candidate: PanelScopeCandidate): HTMLElement {
-        const row = createHtmlElement("label");
-        row.className = "pa-pagelet-panel-scope-row";
-        row.setAttribute("data-included", String(candidate.included));
-        if (candidate.locked) row.setAttribute("data-locked", "true");
-
-        const checkbox = createHtmlElement("input");
-        checkbox.className = "pa-pagelet-panel-scope-checkbox";
-        checkbox.setAttribute("type", "checkbox");
-        checkbox.checked = candidate.included;
-        checkbox.disabled = Boolean(candidate.locked);
-        checkbox.addEventListener("change", (e) => {
-            e.stopPropagation();
-            this.options.callbacks.onScopeCandidateToggle?.(candidate.path, checkbox.checked);
-        });
-        row.appendChild(checkbox);
-
-        const text = createHtmlElement("span");
-        text.className = "pa-pagelet-panel-scope-row-text";
-        const title = createHtmlElement("span");
-        title.className = "pa-pagelet-panel-scope-row-title";
-        title.textContent = candidate.title;
-        text.appendChild(title);
-        const meta = createHtmlElement("span");
-        meta.className = "pa-pagelet-panel-scope-row-meta";
-        const reasonKey = candidate.included
-            ? `pagelet.panel.scope.reason.${candidate.reason}`
-            : `pagelet.panel.scope.skipped.${candidate.skippedReason ?? "unchecked"}`;
-        meta.textContent = pageletT(reasonKey, this.getLocale());
-        text.appendChild(meta);
-        row.appendChild(text);
-
-        return row;
-    }
-
     private renderDraftSection(): HTMLElement {
         const section = createHtmlElement("section");
         section.className = "pa-pagelet-panel-draft";
@@ -1010,11 +842,10 @@ export class PanelView {
             textarea.value = item.text;
             textarea.addEventListener("input", () => {
                 item.text = textarea.value;
-                this.updatePrimaryButtonState(
-                    this.currentLayout ?? "review",
-                    this.canSaveCurrentContent(),
-                    this.currentExtra?.scope,
-                );
+                    this.updatePrimaryButtonState(
+                        this.currentLayout ?? "review",
+                        this.canSaveCurrentContent(),
+                    );
             });
             block.appendChild(textarea);
 
@@ -1025,11 +856,10 @@ export class PanelView {
             remove.addEventListener("click", (e) => {
                 e.stopPropagation();
                 this.draftItems = this.draftItems.filter((candidate) => candidate.id !== item.id);
-                this.updatePrimaryButtonState(
-                    this.currentLayout ?? "review",
-                    this.canSaveCurrentContent(),
-                    this.currentExtra?.scope,
-                );
+                    this.updatePrimaryButtonState(
+                        this.currentLayout ?? "review",
+                        this.canSaveCurrentContent(),
+                    );
                 this.renderCurrentLayout();
             });
             block.appendChild(remove);
@@ -1134,10 +964,8 @@ export class PanelView {
         appendIconButtonLabel(expandBtn, "↗", expandLabel);
         expandBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (this.currentExtra?.preparedReadOnly) return;
             this.options.callbacks.onExpandToTab();
         });
-        this.headerExpandBtnEl = expandBtn;
         actions.appendChild(expandBtn);
 
         // Close button
@@ -1185,7 +1013,7 @@ export class PanelView {
         shareBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             const onShareAsCard = this.options.callbacks.onShareAsCard;
-            if (!onShareAsCard || this.currentExtra?.preparedReadOnly) return;
+            if (!onShareAsCard) return;
             const findings = this.currentShareCardFindings;
             if (findings.length === 0) return;
             onShareAsCard({
@@ -1201,10 +1029,8 @@ export class PanelView {
             pageletT("pagelet.panel.expandToTab", this.getLocale());
         expandTabBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (this.currentExtra?.preparedReadOnly) return;
             this.options.callbacks.onExpandToTab();
         });
-        this.footerExpandBtnEl = expandTabBtn;
         footer.appendChild(expandTabBtn);
         root.appendChild(footer);
 
@@ -1212,20 +1038,15 @@ export class PanelView {
     }
 
     private async handlePrimaryButtonClick(saveBtn: HTMLButtonElement): Promise<void> {
-        if (this.currentExtra?.preparedReadOnly) return;
-        if (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected") {
-            const run = this.primaryButtonMode === "run-selected"
-                ? this.options.callbacks.onRunSelectedReview
-                : this.options.callbacks.onRunReview;
+        if (this.primaryButtonMode === "run") {
+            const run = this.options.callbacks.onRunReview;
             if (!run) return;
             this.reviewRunPending = true;
             this.reviewRunError = null;
             saveBtn.disabled = true;
             saveBtn.setAttribute("aria-busy", "true");
             const previousLabel = saveBtn.textContent ?? "";
-            const progressLabel = this.primaryButtonMode === "run-selected"
-                ? pageletT("pagelet.panel.status.thinking", this.getLocale())
-                : pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
+            const progressLabel = pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
             saveBtn.textContent = progressLabel;
             this.renderReviewProgress(progressLabel);
             this.scheduleSlowReviewNotice();
@@ -1235,10 +1056,7 @@ export class PanelView {
                 this.clearSlowReviewTimer();
                 const shouldRestoreLayout = this.reviewRunPending;
                 this.reviewRunPending = false;
-                if (
-                    this.saveBtnEl === saveBtn
-                    && (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected")
-                ) {
+                if (this.saveBtnEl === saveBtn && this.primaryButtonMode === "run") {
                     saveBtn.disabled = false;
                     saveBtn.removeAttribute("aria-busy");
                     saveBtn.textContent = previousLabel;
@@ -1334,7 +1152,7 @@ export class PanelView {
         detail.textContent = error.detail;
         card.appendChild(detail);
 
-        if (this.saveBtnEl && (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected")) {
+        if (this.saveBtnEl && this.primaryButtonMode === "run") {
             const retry = createHtmlElement("button");
             retry.className = "pa-pagelet-panel-error-retry";
             retry.setAttribute("type", "button");
@@ -1379,32 +1197,12 @@ export class PanelView {
     private updatePrimaryButtonState(
         layoutType: PanelLayoutType,
         saveEnabled: boolean,
-        scope?: PanelScopeState,
     ): void {
         if (!this.saveBtnEl) return;
-        const canRunSelected = !saveEnabled
-            && layoutType === "review"
-            && Boolean(scope)
-            && Boolean(this.options.callbacks.onRunSelectedReview);
-        const canRunReview = !canRunSelected
-            && !saveEnabled
+        const canRunReview = !saveEnabled
             && layoutType === "review"
             && Boolean(this.options.callbacks.onRunReview);
-        this.primaryButtonMode = canRunSelected ? "run-selected" : canRunReview ? "run" : "save";
-
-        if (canRunSelected) {
-            const count = scope?.includedCount ?? 0;
-            this.saveBtnEl.disabled = count === 0;
-            this.saveBtnEl.removeAttribute("aria-busy");
-            this.saveBtnEl.setAttribute("aria-disabled", String(count === 0));
-            this.saveBtnEl.textContent = pageletT("pagelet.panel.action.reviewSelected", this.getLocale(), {
-                count,
-            });
-            this.saveBtnEl.setAttribute("title", pageletT("pagelet.panel.action.reviewSelectedDescription", this.getLocale(), {
-                count,
-            }));
-            return;
-        }
+        this.primaryButtonMode = canRunReview ? "run" : "save";
 
         if (canRunReview) {
             this.saveBtnEl.disabled = false;
@@ -1420,33 +1218,6 @@ export class PanelView {
         this.saveBtnEl.setAttribute("aria-disabled", String(!saveEnabled));
         this.saveBtnEl.textContent = pageletT("pagelet.panel.save", this.getLocale());
         this.saveBtnEl.removeAttribute("title");
-    }
-
-    private updatePreparedReadOnlyControls(preparedReadOnly: boolean): void {
-        const setHidden = (button: HTMLButtonElement | null): void => {
-            if (!button) return;
-            button.disabled = preparedReadOnly;
-            if (preparedReadOnly) {
-                button.setAttribute("hidden", "");
-                button.setAttribute("aria-hidden", "true");
-            } else {
-                button.removeAttribute("hidden");
-                button.removeAttribute("aria-hidden");
-            }
-        };
-        setHidden(this.headerExpandBtnEl);
-        setHidden(this.footerExpandBtnEl);
-        if (this.saveBtnEl) {
-            if (preparedReadOnly) this.saveBtnEl.disabled = true;
-            if (preparedReadOnly) {
-                this.saveBtnEl.setAttribute("hidden", "");
-                this.saveBtnEl.setAttribute("aria-hidden", "true");
-            } else {
-                this.saveBtnEl.removeAttribute("hidden");
-                this.saveBtnEl.removeAttribute("aria-hidden");
-            }
-        }
-        this.updateShareCardControl();
     }
 
     private updateShareCardControl(): void {

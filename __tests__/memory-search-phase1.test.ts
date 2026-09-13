@@ -201,6 +201,39 @@ describe("Memory search readiness cancellation", () => {
 });
 
 describe("Phase 1 reranker invocation", () => {
+    type PreparedTestReranker = {
+        invoke: (...args: unknown[]) => Promise<unknown>;
+        dispose: () => void;
+    };
+
+    async function rerankWithPrepared(
+        tool: unknown,
+        query: string,
+        candidates: MemoryCandidate[],
+        selectedModel: unknown,
+        signal?: AbortSignal,
+        absoluteDeadlineMs?: number,
+        providerRequestOptions?: unknown,
+    ): Promise<unknown> {
+        const prepare = (tool as {
+            prepareReranker: (...prepareArgs: unknown[]) => Promise<PreparedTestReranker>;
+        }).prepareReranker.bind(tool);
+        const prepared = await prepare(selectedModel, signal, absoluteDeadlineMs, providerRequestOptions);
+        if (!prepared) {
+            return {
+                kind: "fail_open",
+                reason: "model_unavailable",
+                modelCalled: false,
+                candidates,
+            };
+        }
+        try {
+            return await prepared.invoke(query, candidates);
+        } finally {
+            prepared.dispose();
+        }
+    }
+
     it("rewrites and reranks when AbortSignal.any is unavailable", async () => {
         const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any");
         Object.defineProperty(AbortSignal, "any", { configurable: true, value: undefined });
@@ -233,16 +266,15 @@ describe("Phase 1 reranker invocation", () => {
                     invocation: ReturnType<typeof createStandardMemorySearchInvocation>,
                 ): Promise<{ keywords: string | null }>;
             }).rewriteQueryWithTimeout("find the useful evidence in my notes", "policy-model", parent.signal, invocation);
-            const reranked = await (tool as unknown as {
-                rerankCandidates(
-                    query: string,
-                    candidates: MemoryCandidate[],
-                    selectedModel: { kind: "chat"; modelName: string },
-                    signal: AbortSignal,
-                    deadline: undefined,
-                    invocation: ReturnType<typeof createStandardMemorySearchInvocation>,
-                ): Promise<unknown>;
-            }).rerankCandidates("useful", [candidate], { kind: "chat", modelName: "chat-model" }, parent.signal, undefined, invocation);
+            const reranked = await rerankWithPrepared(
+                tool,
+                "useful",
+                [candidate],
+                { kind: "chat", modelName: "chat-model" },
+                parent.signal,
+                undefined,
+                invocation,
+            );
 
             expect(rewritten.keywords).toBe("useful evidence");
             expect(reranked).toMatchObject({ kind: "valid", verdict: "relevant" });
@@ -294,13 +326,12 @@ describe("Phase 1 reranker invocation", () => {
         ) => llm);
         const tool = new MemorySearchTool({} as never, { createChatModel } as never);
 
-        const outcome = await (tool as unknown as {
-            rerankCandidates(
-                query: string,
-                candidates: MemoryCandidate[],
-                selectedModel: { kind: "chat"; modelName: string },
-            ): Promise<unknown>;
-        }).rerankCandidates("one", [candidate], { kind: "chat", modelName: "chat-model" });
+        const outcome = await rerankWithPrepared(
+            tool,
+            "one",
+            [candidate],
+            { kind: "chat", modelName: "chat-model" },
+        );
 
         expect(createChatModel).toHaveBeenCalledTimes(1);
         expect(createChatModel).toHaveBeenCalledWith(0, expect.objectContaining({ modelName: "chat-model" }));
@@ -337,13 +368,12 @@ describe("Phase 1 reranker invocation", () => {
         });
         const tool = new MemorySearchTool({} as never, { createChatModel } as never);
 
-        const outcome = await (tool as unknown as {
-            rerankCandidates(
-                query: string,
-                candidates: MemoryCandidate[],
-                selectedModel: { kind: "policy"; modelName: string },
-            ): Promise<unknown>;
-        }).rerankCandidates("one", [candidate], { kind: "policy", modelName: "policy-model" });
+        const outcome = await rerankWithPrepared(
+            tool,
+            "one",
+            [candidate],
+            { kind: "policy", modelName: "policy-model" },
+        );
 
         expect(createChatModel).toHaveBeenCalledTimes(1);
         expect(createChatModel).toHaveBeenCalledWith(0, expect.objectContaining({ modelName: "policy-model" }));
@@ -370,15 +400,8 @@ describe("Phase 1 reranker invocation", () => {
         const tool = new MemorySearchTool({} as never, { createChatModel } as never);
         const parent = new AbortController();
 
-        const pending = (tool as unknown as {
-            rerankCandidates(
-                query: string,
-                candidates: MemoryCandidate[],
-                selectedModel: { kind: "policy"; modelName: string },
-                signal: AbortSignal,
-                absoluteDeadlineMs: number,
-            ): Promise<unknown>;
-        }).rerankCandidates(
+        const pending = rerankWithPrepared(
+            tool,
             "one",
             [candidate],
             { kind: "policy", modelName: "policy-model" },
@@ -410,15 +433,8 @@ describe("Phase 1 reranker invocation", () => {
         const tool = new MemorySearchTool({} as never, { createChatModel } as never);
         const parent = new AbortController();
 
-        const pending = (tool as unknown as {
-            rerankCandidates(
-                query: string,
-                candidates: MemoryCandidate[],
-                selectedModel: { kind: "chat"; modelName: string },
-                signal: AbortSignal,
-                absoluteDeadlineMs: number,
-            ): Promise<unknown>;
-        }).rerankCandidates(
+        const pending = rerankWithPrepared(
+            tool,
             "one",
             [candidate],
             { kind: "chat", modelName: "chat-model" },
@@ -445,15 +461,8 @@ describe("Phase 1 reranker invocation", () => {
             ) => new Promise<never>(() => undefined));
             const tool = new MemorySearchTool({} as never, { createChatModel } as never);
 
-            const pending = (tool as unknown as {
-                rerankCandidates(
-                    query: string,
-                    candidates: MemoryCandidate[],
-                    selectedModel: { kind: "policy"; modelName: string },
-                    signal: AbortSignal,
-                    absoluteDeadlineMs: number,
-                ): Promise<unknown>;
-            }).rerankCandidates(
+            const pending = rerankWithPrepared(
+                tool,
                 "one",
                 [candidate],
                 { kind: "policy", modelName: "policy-model" },
@@ -496,15 +505,8 @@ describe("Phase 1 reranker invocation", () => {
             const createChatModel = jest.fn(async () => RunnableLambda.from(invoke));
             const tool = new MemorySearchTool({} as never, { createChatModel } as never);
 
-            const pending = (tool as unknown as {
-                rerankCandidates(
-                    query: string,
-                    candidates: MemoryCandidate[],
-                    selectedModel: { kind: "chat"; modelName: string },
-                    signal: AbortSignal,
-                    absoluteDeadlineMs: number,
-                ): Promise<unknown>;
-            }).rerankCandidates(
+            const pending = rerankWithPrepared(
+                tool,
                 "one",
                 [candidate],
                 { kind: "chat", modelName: "chat-model" },

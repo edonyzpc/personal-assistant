@@ -2490,12 +2490,6 @@ body.is-mobile .pa-chat-setup-advanced-link {
 		transform: none;
 	}
 
-	.pa-pagelet-anim-blink,
-	.pa-pagelet-anim-pulse-1,
-	.pa-pagelet-anim-pulse-2,
-	.pa-pagelet-anim-pulse-3 {
-		animation: none;
-	}
 }
 
 .llm-view.is-narrow .llm-chat-container {
@@ -5055,161 +5049,12 @@ body > .tooltip {
 .pa-pagelet-panel-share-btn:focus-visible,
 .pa-pagelet-panel-expand-btn:focus-visible,
 .pa-pagelet-panel-timeline-action-btn:focus-visible,
-.pa-pagelet-panel-scope-range-btn:focus-visible,
-.pa-pagelet-panel-scope-checkbox:focus-visible,
 .pa-pagelet-panel-context-pager-summary:focus-visible,
 .pa-pagelet-panel-review-queue-action:focus-visible,
 .pa-pagelet-tab-review-queue-filter:focus-visible,
 .pa-pagelet-panel-draft-remove:focus-visible,
 .pa-pagelet-panel-draft-textarea:focus-visible {
 	outline: 2px solid var(--interactive-accent,#7c9eff);
-	outline-offset: 2px;
-}
-
-.pa-pagelet-panel-scope {
-	margin: 16px 20px 0;
-	padding: 12px;
-	border: 1px solid var(--background-modifier-border,#3a3a3a);
-	border-radius: 8px;
-	background: var(--background-secondary,#252525);
-}
-
-.pa-pagelet-panel-scope-header,
-.pa-pagelet-panel-scope-summary {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	flex-wrap: wrap;
-}
-
-.pa-pagelet-panel-scope-title {
-	font-size: var(--font-ui-medium);
-	font-weight: 600;
-	color: var(--text-normal,#dcddde);
-}
-
-.pa-pagelet-panel-scope-count,
-.pa-pagelet-panel-scope-chip {
-	font-size: var(--font-ui-smaller);
-	color: var(--text-muted,#999);
-}
-
-.pa-pagelet-panel-scope-ranges {
-	display: grid;
-	grid-template-columns: repeat(2,minmax(0,1fr));
-	gap: 6px;
-	margin-top: 10px;
-}
-
-.pa-pagelet-panel-scope-range-btn {
-	min-height: 30px;
-	padding: 5px 8px;
-	border-radius: 6px;
-	border: 1px solid var(--background-modifier-border,#3a3a3a);
-	background: transparent;
-	color: var(--text-muted,#999);
-	font-size: var(--font-ui-smaller);
-	font-family: inherit;
-	cursor: pointer;
-}
-
-.pa-pagelet-panel-scope-range-btn[data-active=true] {
-	border-color: var(--interactive-accent,#7c9eff);
-	background: var(--interactive-accent,#7c9eff);
-	color: var(--text-on-accent,#fff);
-}
-
-.pa-pagelet-panel-scope-summary {
-	justify-content: flex-start;
-	margin-top: 10px;
-}
-
-.pa-pagelet-panel-scope-chip {
-	padding: 2px 6px;
-	border-radius: 4px;
-	background: var(--background-secondary-alt,#232323);
-	border: 1px solid var(--background-modifier-border,#3a3a3a);
-}
-
-.pa-pagelet-panel-scope-group {
-	margin-top: 12px;
-}
-
-.pa-pagelet-panel-scope-group-label {
-	margin-bottom: 6px;
-	font-size: calc(var(--font-text-size, 16px) * 0.625);
-	text-transform: uppercase;
-	letter-spacing: .04em;
-	color: var(--text-faint,#666);
-}
-
-.pa-pagelet-panel-scope-list {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-.pa-pagelet-panel-scope-row {
-	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-	min-width: 0;
-	padding: 6px;
-	border-radius: 6px;
-	background: var(--background-primary,#222);
-	cursor: pointer;
-}
-
-.pa-pagelet-panel-scope-row[data-locked=true] {
-	cursor: default;
-	opacity: .72;
-}
-
-.pa-pagelet-panel-scope-checkbox {
-	flex: 0 0 auto;
-	margin-top: 2px;
-}
-
-.pa-pagelet-panel-scope-row-text {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	min-width: 0;
-}
-
-.pa-pagelet-panel-scope-row-title {
-	font-size: var(--font-ui-smaller);
-	color: var(--text-normal,#dcddde);
-	overflow-wrap: anywhere;
-}
-
-.pa-pagelet-panel-scope-row-meta,
-.pa-pagelet-panel-scope-empty {
-	font-size: calc(var(--font-text-size, 16px) * 0.6875);
-	color: var(--text-faint,#666);
-}
-
-.pa-pagelet-panel-scope-details { margin-top: 6px; }
-.pa-pagelet-panel-scope-details > summary {
-	color: var(--text-muted);
-	font-size: var(--font-ui-small);
-	cursor: pointer;
-	list-style: none;
-}
-.pa-pagelet-panel-scope-details > summary::-webkit-details-marker { display: none; }
-.pa-pagelet-panel-scope-details > summary::before {
-	content: "\25B6";
-	display: inline-block;
-	margin-right: 4px;
-	font-size: 0.7em;
-	transition: transform 0.15s ease;
-}
-.pa-pagelet-panel-scope-details[open] > summary::before {
-	transform: rotate(90deg);
-}
-.pa-pagelet-panel-scope-details > summary:focus-visible {
-	outline: 2px solid var(--interactive-accent);
 	outline-offset: 2px;
 }
 
@@ -5869,7 +5714,6 @@ body.is-mobile .pa-pagelet-panel-timeline-action-btn {
 	font-size: var(--font-ui-small);
 }
 
-body.is-mobile .pa-pagelet-panel-scope-range-btn,
 body.is-mobile .pa-pagelet-suggestion-card__btn,
 body.is-mobile .pa-pagelet-suggestion-card__related-button,
 body.is-mobile .pa-pagelet-panel-draft-remove {
@@ -7455,112 +7299,7 @@ body.is-mobile .pa-pagelet-tab-nav-item {
 	padding: 10px 14px;
 }
 
-/* ──────────────────────────────────────────────────────────────────────
- * Pagelet (Review Assistant) — mascot a11y / reduced-motion baseline.
- *
- * The mascot DOM renderer (`src/pagelet/ui/mascot/dom-renderer.ts`) emits
- * two classes the rest of the Pagelet styles assume exist:
- *
- *  - `.pa-pagelet-mascot--reduce-motion` — applied when the user has
- *    `prefers-reduced-motion: reduce` set. Disables every animation /
- *    transition under the mascot root so the SVG paths render statically.
- *  - `.pa-pagelet-mascot__live` — visually-hidden aria-live region used to
- *    announce state transitions to screen readers. Must be in the DOM
- *    (assistive tech polls it) but invisible to sighted users.
- *
- * Why a global selector for reduce-motion (rather than a per-class opt-out):
- *  - Future B5 animation work may add new `animation`/`transition` rules
- *    inside the mascot root. The wildcard `* { animation: none }` form
- *    guarantees they are caught without each new style having to opt in.
- *
- * Why the long-form visually-hidden recipe (instead of `display: none`):
- *  - `display: none` removes the element from the AT tree, so AT never
- *    sees the announcement. The clip + clip-path pattern is the WCAG-
- *    recommended way to hide content visually but keep it announceable.
- * ────────────────────────────────────────────────────────────────────── */
-.pa-pagelet-mascot__live {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	padding: 0;
-	margin: -1px;
-	overflow: hidden;
-	clip: rect(0 0 0 0);
-	clip-path: inset(50%);
-	white-space: nowrap;
-	border: 0;
-}
-
-/* ──────────────────────────────────────────────────────────────────────
- * Pagelet (Review Assistant) — mascot visual tokens + animations.
- *
- * The mascot's pure markup builder (`src/pagelet/ui/mascot/markup.ts`) sets
- *   - `stroke="var(--pa-pagelet-color-<state>)"` on each path/circle, and
- *   - `class="pa-pagelet-anim-<blink|pulse-1|pulse-2|pulse-3>"` on the
- *     animated path/circle.
- *
- * The DOM renderer also sets the `--pa-pagelet-mascot-stroke` custom
- * property on the root so callers can theme the whole mascot without
- * touching state-specific tokens.
- *
- * Values mirror `docs/archive/assets/pagelet-visual-spec.html` §① (4-state matrix) and §②
- * (animation table). The spec uses `--pagelet-*` token names; we follow
- * the codebase's BEM-style `pa-pagelet-*` prefix instead (D013 / SDD §6.2 M1).
- *
- * Reduce-motion is honored by the global selector defined above
- * (`.pa-pagelet-mascot--reduce-motion *`) — no per-keyframe opt-out needed.
- * ────────────────────────────────────────────────────────────────────── */
-.pa-pagelet-mascot {
-	--pa-pagelet-color-neutral: #e8e8e8;
-	--pa-pagelet-color-thinking: #7c9eff;
-	--pa-pagelet-color-done: #5dd39e;
-	--pa-pagelet-color-error: #ff6b6b;
-}
-
-.theme-dark .pa-pagelet-mascot {
-	--pa-pagelet-color-neutral: #888888;
-	--pa-pagelet-color-thinking: #8fa8ff;
-	--pa-pagelet-color-done: #4ade80;
-	--pa-pagelet-color-error: #f87171;
-}
-
-@keyframes pa-pagelet-mascot-blink {
-	0%, 95%, 100% { transform: scaleY(1); }
-	97% { transform: scaleY(0.1); }
-}
-
-@keyframes pa-pagelet-mascot-pulse {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.4; }
-}
-
-.pa-pagelet-anim-blink {
-	animation: pa-pagelet-mascot-blink 4s infinite;
-	transform-origin: center;
-	transform-box: fill-box;
-}
-
-.pa-pagelet-anim-pulse-1 {
-	animation: pa-pagelet-mascot-pulse 1.4s infinite;
-}
-
-.pa-pagelet-anim-pulse-2 {
-	animation: pa-pagelet-mascot-pulse 1.4s infinite;
-	animation-delay: 0.2s;
-}
-
-.pa-pagelet-anim-pulse-3 {
-	animation: pa-pagelet-mascot-pulse 1.4s infinite;
-	animation-delay: 0.4s;
-}
-
 @media (prefers-reduced-motion: reduce) {
-	.pa-pagelet-anim-blink,
-	.pa-pagelet-anim-pulse-1,
-	.pa-pagelet-anim-pulse-2,
-	.pa-pagelet-anim-pulse-3 {
-		animation: none;
-	}
 	/* F-04: Pet idle/nudge blink groups */
 	.pa-pagelet-pet[data-state=idle] .pa-pagelet-pet-blink-group,
 	.pa-pagelet-pet[data-state=nudge] .pa-pagelet-pet-blink-group {
@@ -7606,13 +7345,6 @@ body.is-mobile .pa-pagelet-tab-nav-item {
 	.pa-pagelet-bubble-actions--rich .pa-pagelet-bubble-btn:hover {
 		transform: none;
 	}
-}
-
-.pa-pagelet-mascot--reduce-motion *,
-.pa-pagelet-mascot--reduce-motion *::before,
-.pa-pagelet-mascot--reduce-motion *::after {
-	animation: none;
-	transition: none;
 }
 
 .pa-write-action-modal__section-body--multiline {

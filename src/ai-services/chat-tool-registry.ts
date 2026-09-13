@@ -15,7 +15,6 @@
 
 import type {
     ChatToolDefinition,
-    ChatToolInputSchema,
     ChatToolRegistryDefinition,
     ChatToolResult,
     InspectObsidianNoteOutput,
@@ -261,17 +260,6 @@ export function buildPrepareRepairInfo(raw: unknown, prepared: unknown): Prepare
         originalKeys,
         originalInputSummary: summarizeRawInput(raw),
         reason: "alias mapping or normalization applied",
-    };
-}
-
-export function cloneInputSchema(schema: ChatToolInputSchema): ChatToolInputSchema {
-    return {
-        ...schema,
-        properties: Object.fromEntries(Object.entries(schema.properties).map(([name, property]) => [
-            name,
-            { ...property, enum: property.enum ? [...property.enum] : undefined },
-        ])),
-        required: schema.required ? [...schema.required] : undefined,
     };
 }
 

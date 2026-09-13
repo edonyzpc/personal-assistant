@@ -71,7 +71,7 @@ export function detectNoteLanguage(text: unknown): PageletDetectedLanguage {
 }
 
 /**
- * UI language for mascot / settings / commands copy (D017 + D014).
+ * UI language for Pet / settings / commands copy (D017 + D014).
  *
  * Strategy:
  *  - Prefer Obsidian's i18n hook (`window.i18next.language` / `moment.locale()`)

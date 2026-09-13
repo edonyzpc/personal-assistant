@@ -102,8 +102,6 @@ import {
     PageletReviewModel,
     PageletCostTracker,
     PageletRateLimiter,
-    LocalStoragePreloadBudgetStorage,
-    LocalStorageChangeDetectorStorage,
     ScopeResolver,
     buildPageletScopeReviewBundle,
     createPaReviewRuntime,
@@ -179,7 +177,7 @@ import {
     registerPageletDetailIcon,
     type PageletDetailPayload,
 } from './pagelet/tab';
-import type { AnalyzeCallContext, AnalyzeCallback, PreloadConfig } from './pagelet/preload/types';
+import type { AnalyzeCallback } from './pagelet/preload/types';
 import type {
     DiscoveryResult,
     PanelMemoryActionPolicy,
@@ -189,7 +187,7 @@ import type {
     PanelMemoryUseStatus,
 } from './pagelet/panel/types';
 import type { MemoryRecordActionResult } from './pagelet/tab/sections/types';
-import { buildDiscoveryPrompt, buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
+import { buildDiscoveryPrompt, parseStructuredResponse } from './pagelet/llm';
 import { buildDiscoveryResultFromFindings } from './pagelet/DiscoveryAnalyzer';
 import { buildPageletRelatedNotesQuery } from './pagelet/related-notes-query';
 import {
@@ -894,7 +892,6 @@ const DEEP_DISCOVER_CALL_LIMITS = Object.freeze({ hourly: 12, daily: 36 });
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 const PAGELET_DEEP_DISCOVER_USAGE_STORAGE_KEY_PREFIX = "pa-pagelet-deep-discover-usage";
-const PAGELET_CHANGE_WATERMARK_STORAGE_KEY_PREFIX = "pa-pagelet-preload-changes";
 const PAGELET_ATTENTION_STORAGE_KEY_PREFIX = "pa-pagelet-attention";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
 const PAGELET_DISCOVERY_MAX_RELATED_NOTES = 6;
@@ -905,13 +902,6 @@ function normalizeDeepDiscoverUsageCount(value: unknown): number {
         ? value
         : 0;
 }
-const PAGELET_BACKGROUND_STANDARD_LIMITS = Object.freeze({
-    inputTokens: 4_000,
-    outputTokens: 1_000,
-    hourly: 2,
-    daily: 20,
-    rangeMs: 7 * 24 * 60 * 60 * 1000,
-});
 const MEMORY_FORGET_RETRY_INITIAL_MS = 1_000;
 const MEMORY_FORGET_RETRY_MAX_MS = 60_000;
 const MEMORY_PROFILE_PROJECTION_RETRY_INITIAL_MS = 1_000;
@@ -1441,7 +1431,6 @@ export class PluginManager extends Plugin {
         blocker: "loaded_plugin_artifact_unavailable" | null;
     }> | null = null;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
-    private isVssCached: boolean = false;
     private backlinkMapCache: { map: Map<string, string[]>; builtAt: number } | null = null;
     private static readonly BACKLINK_MAP_TTL_MS = 30_000;
     private token: string = "";
@@ -2855,14 +2844,6 @@ export class PluginManager extends Plugin {
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
             registerEvent: (ref) => this.registerEvent(ref),
             saveSettings: () => this.saveSettings(),
-            createPreloadBudgetStorage: () => new LocalStoragePreloadBudgetStorage(
-                () => this.pageletVaultStorageScope() ? getPlatformLocalStorage() : undefined,
-                this.pageletRateLimitStorageKey("background-review"),
-            ),
-            createPreloadChangeDetectorStorage: () => new LocalStorageChangeDetectorStorage(
-                () => this.pageletVaultStorageScope() ? getPlatformLocalStorage() : undefined,
-                this.pageletChangeWatermarkStorageKey(),
-            ),
             createPageletAttentionStorage: () => this.createPageletAttentionStorage(),
             runDeepDiscover: (input) => this.runPageletDeepDiscover(input),
             acknowledgeDeepDiscoverResult: (result, acceptedCandidates) => {
@@ -2913,120 +2894,6 @@ export class PluginManager extends Plugin {
                     : { status: "unavailable" };
             },
             openQuickCapture: () => this.openQuickCaptureModal(),
-            createPreloadAnalyzeCallback: (): AnalyzeCallback => {
-                return async (files, config, callContext) => {
-                    const emptyResult = () => ({
-                        findings: [],
-                        analyzedFiles: [],
-                        analyzedAt: Date.now(),
-                        tokenCost: { input: 0, output: 0 },
-                        usedGovernedMemoryClaimIds: [],
-                    });
-                    if (!this.isStandardBackgroundPreloadRequest(config, callContext)) {
-                        return emptyResult();
-                    }
-                    const reserveBackgroundProviderCall = (): boolean | PageletProviderCallReservation => (
-                        callContext?.reserveProviderCall() ?? false
-                    );
-                    const noteContents = await this.readPageletNoteContents(
-                        files,
-                        config.tokenBudget.input,
-                    );
-                    if (
-                        noteContents.length === 0
-                        || !this.isStandardBackgroundPreloadRequest(config, callContext, noteContents)
-                    ) return emptyResult();
-                    const admittedProvider = this.settings.aiProvider;
-                    const admittedModel = this.settings.chatModelName;
-                    // Generic preload is changed-only. Semantic results can
-                    // introduce recent-but-unchanged notes, so enrichment is
-                    // intentionally disabled in this background lane.
-                    const enrichedContents = noteContents;
-                    const sourceSnapshots = this.capturePageletSourceSnapshots(enrichedContents);
-                    if (!sourceSnapshots) {
-                        return emptyResult();
-                    }
-                    const expectedProviderPolicyIdentity = this.getScopeRecapAuthorizationContextId();
-                    const requestIsCurrent = () => (
-                        this.isStandardBackgroundPreloadRequest(
-                            config,
-                            callContext,
-                            enrichedContents,
-                        )
-                        && expectedProviderPolicyIdentity === this.getScopeRecapAuthorizationContextId()
-                        && this.pageletSourceSnapshotsAreCurrent(sourceSnapshots)
-                    );
-                    const preloadLanguage = resolveOutputLanguage(
-                        this.settings.pagelet.outputLanguage,
-                        enrichedContents.map((n) => n.content).join("\n"),
-                    );
-                    const prompt = buildPreloadPrompt(enrichedContents, config.tokenBudget, preloadLanguage);
-                    const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
-                    const inputTokens = estimateTokens(fullPrompt);
-                    if (inputTokens > PAGELET_BACKGROUND_STANDARD_LIMITS.inputTokens) {
-                        return emptyResult();
-                    }
-                    const model = await this.createChatModel(0.3, {
-                        maxTokens: prompt.maxOutputTokens,
-                    });
-                    if (!model) {
-                        throw new Error("No AI model configured");
-                    }
-                    if (!requestIsCurrent()) {
-                        return emptyResult();
-                    }
-                    let result: unknown;
-                    try {
-                        result = await this.getPageletProviderCallAdmission().executeStandardCall(
-                            () => model.invoke(fullPrompt),
-                            {
-                                revalidate: requestIsCurrent,
-                                reserve: reserveBackgroundProviderCall,
-                            },
-                        );
-                    } catch (error) {
-                        if (
-                            error instanceof Error
-                            && error.message.includes("pagelet_provider_call_stale")
-                        ) return emptyResult();
-                        throw error;
-                    }
-                    const text = coerceModelResultToString(result);
-                    const parsed = parseStructuredResponse(text);
-                    const outputTokens = estimateTokens(text);
-                    this.pageletCostTracker.record({
-                        inputTokens,
-                        outputTokens,
-                        provider: admittedProvider,
-                        model: admittedModel,
-                        feature: "background-review",
-                        attemptKind: "single",
-                    });
-                    if (!requestIsCurrent()) {
-                        throw new Error("Pagelet preload request became stale");
-                    }
-                    const allowedSourcePaths = new Map(noteContents.map((entry) => (
-                        [normalizePath(entry.path), entry.path]
-                    )));
-                    return {
-                        findings: parsed.findings.flatMap((finding) => {
-                            const sourceFile = allowedSourcePaths.get(normalizePath(finding.sourceFile));
-                            if (!sourceFile) return [];
-                            return [{
-                                text: finding.text,
-                                sourceFile,
-                                sourceTitle: finding.sourceTitle
-                                    || sourceFile.split("/").pop()?.replace(/\.md$/, "")
-                                    || sourceFile,
-                            }];
-                        }),
-                        analyzedFiles: noteContents.map((entry) => entry.path),
-                        analyzedAt: Date.now(),
-                        tokenCost: { input: inputTokens, output: outputTokens },
-                        usedGovernedMemoryClaimIds: [],
-                    };
-                };
-            },
             createForegroundAnalyzeCallback: (): AnalyzeCallback => {
                 return async (files, config) => {
                     const noteContents = await this.readPageletNoteContents(
@@ -3046,7 +2913,6 @@ export class PluginManager extends Plugin {
                     const bundle = buildPageletScopeReviewBundle({
                         entries: noteContents,
                         primarySourcePath,
-                        range: config.range ?? "current",
                         settings: this.getPageletSettingsWithDataBoundary(),
                         uiLanguage: this.getPageletLocale(),
                     });
@@ -3573,7 +3439,6 @@ export class PluginManager extends Plugin {
             : "";
         const result = scanMaintenanceReview(notes, {
             inboxFolders: quickCaptureInboxFolder ? [quickCaptureInboxFolder] : [],
-            weeklyScanEnabled: this.settings.maintenanceReview.weeklyScanEnabled,
             scopePaths: options.scopePaths,
             maxProposalsPerCategory: options.maxProposalsPerCategory,
         });
@@ -5337,24 +5202,6 @@ export class PluginManager extends Plugin {
             result.discoverCandidates ?? result.candidates,
             result.sourcePaths,
         );
-    }
-
-    private acquireQuietRecallRoundAdmission(): Promise<boolean> {
-        const tail = this.quietRecallRoundAdmissionTail ?? Promise.resolve();
-        const admission = tail.then(() => {
-            const now = Date.now();
-            if (
-                this._lastRecallLlmEvalAt > 0
-                && now - this._lastRecallLlmEvalAt < PluginManager.RECALL_LLM_COOLDOWN_MS
-            ) return false;
-            this._lastRecallLlmEvalAt = now;
-            return true;
-        });
-        this.quietRecallRoundAdmissionTail = admission.then(
-            () => undefined,
-            () => undefined,
-        );
-        return admission;
     }
 
     private async evaluateQuietRecallProviderAttempt(
@@ -9221,13 +9068,6 @@ export class PluginManager extends Plugin {
         ].join(":");
     }
 
-    private pageletChangeWatermarkStorageKey(): string {
-        return [
-            PAGELET_CHANGE_WATERMARK_STORAGE_KEY_PREFIX,
-            this.pageletVaultStorageScope() ?? "unavailable",
-        ].join(":");
-    }
-
     private createPageletAttentionStorage(): import("./pagelet/attention").PageletAttentionStorage | undefined {
         const vaultStorageScope = this.pageletVaultStorageScope();
         if (!vaultStorageScope) return undefined;
@@ -9313,16 +9153,6 @@ export class PluginManager extends Plugin {
             this.log("Pagelet runtime initialized");
         }
         return this.pageletRuntime;
-    }
-
-    private isStandardBackgroundPreloadRequest(
-        _config: PreloadConfig,
-        _callContext: AnalyzeCallContext | undefined,
-        _sources?: readonly { path: string; mtime: number; size: number }[],
-    ): boolean {
-        // This rollback-only pipeline is retired. The new background preference
-        // admits automatic Deep Discover only; it never revives legacy preload.
-        return false;
     }
 
     private async readPageletNoteContents(
@@ -12849,20 +12679,6 @@ export class PluginManager extends Plugin {
             this.settings.statisticsVaultId || "default-vault",
             manifest?.id ?? "personal-assistant",
         );
-    }
-
-    private async cacheVectors() {
-        if (this.vss) {
-            try {
-                await this.vss.rebuildLocalIndex({ silent: true });
-                this.isVssCached = true;
-                await this.updateMemoryStatusBar();
-            } catch (error) {
-                this.isVssCached = false;
-                this.log("Failed to rebuild local VSS index", error);
-                new Notice(this.t("plugin.notice.memoryPrepareFailed"), 7000);
-            }
-        }
     }
 
     onMemoryStatusChanged(listener: () => void | Promise<void>): () => void {

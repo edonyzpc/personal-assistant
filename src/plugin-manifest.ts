@@ -21,7 +21,6 @@ export class PluginsUpdater implements ObsidianManifest {
     private commandPlugin: PluginManager;
     private log: (...msg: unknown[]) => void;
     private totalPlugins: number;
-    private checkedPlugins: number;
     // json object of obsidian community plugins,
     // and source is in https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json
     private communityPlugins: CommunityPlugin[] | null = null;
@@ -40,7 +39,6 @@ export class PluginsUpdater implements ObsidianManifest {
             });
         }
         this.totalPlugins = 0;
-        this.checkedPlugins = 0;
 
         this.progressBar = new ProgressBar(plugin, "plugin-updating", this.totalPlugins);
     }
@@ -247,7 +245,6 @@ export class PluginsUpdater implements ObsidianManifest {
                     updatedPlugins.push(plugin.id);
                     // update notice display
                     this.progressBar.stepin(plugin.id, `update ${plugin.id} to ${tag}`, this.totalPlugins);
-                    this.checkedPlugins++;
                 } else {
                     this.log(`skip reloading plugin[${plugin.id}] because update did not write required files`);
                 }

@@ -3,7 +3,7 @@
 /**
  * Pagelet — SuggestionCard module barrel.
  *
- * As with the mascot module, internal DOM-host plumbing is exposed
+ * Internal DOM-host plumbing is exposed
  * here for the test spec but deliberately NOT re-exported from the
  * top-level pagelet barrel.
  */

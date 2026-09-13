@@ -117,25 +117,11 @@ export {
 
 export {
     PAGELET_APPROX_CHARS_PER_TOKEN,
-    PAGELET_SCOPE_DEFAULT_MAX_INCLUDED,
     PAGELET_SEGMENT_TARGET_CHARS,
-    applyPageletScopeToggle,
-    buildPageletScopePlan,
     buildPageletScopeReviewBundle,
-    rangeLabel,
-    selectPageletScope,
-    skippedReasonLabel,
-    type BuildPageletScopePlanOptions,
     type BuildPageletScopeReviewBundleOptions,
     type PageletReviewRange,
-    type PageletScopeCandidate,
-    type PageletScopeCandidateReason,
-    type PageletScopeFileLike,
-    type PageletScopeMetadataLike,
-    type PageletScopePlan,
     type PageletScopeReviewBundle,
-    type PageletScopeSelection,
-    type PageletScopeSkippedReason,
     type PageletScopeSourceReference,
 } from "./scope";
 
@@ -196,23 +182,16 @@ export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDi
 export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCard, BubbleCallbacks, BubbleQuickAccessCallbacks, BubbleStateCallbacks, BubbleViewOptions, BubbleExplanationState, DeliveryCandidate, DeliveryCandidateKind, DeliveryCandidateRoute, DeliveryCandidateSourceRef, DeliveryCandidateStaleStatus, InlineContextHint } from "./bubble";
 
 export {
-    PreloadEngine,
-    PreloadCache,
     PreloadBudget,
     InMemoryPreloadBudgetStorage,
     LocalStoragePreloadBudgetStorage,
 } from "./preload";
-export type { PreloadFinding, PreloadResult, PreloadCacheEntry, PreloadConfig, PreloadErrorCategory, PreloadEvent, AnalyzeCallback } from "./preload";
+export type { PreloadFinding, PreloadResult, PreloadConfig, AnalyzeCallback } from "./preload";
 
 export {
     ScopeResolver,
-    ChangeDetector,
-    InMemoryChangeDetectorStorage,
-    LocalStorageChangeDetectorStorage,
 } from "./scope/index";
 export type {
-    ChangeDetectorState,
-    ChangeDetectorStorage,
     ScopeCandidate,
     ExclusionReason,
     ScopeResult,

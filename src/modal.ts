@@ -33,8 +33,6 @@ export class PluginControlModal extends SuggestModal<Plugin> {
     getSuggestions(query: string): Plugin[] {
         'use strict'
         if (!this.obsidianPlugins) return [];
-        const disabledPlugins: Plugin[] = [];
-        const enabledPlugins: Plugin[] = [];
         const plugins: Plugin[] = [];
         for (const key of Object.keys(this.obsidianPlugins.manifests)) {
             const pluginObject: Plugin = {
@@ -46,10 +44,8 @@ export class PluginControlModal extends SuggestModal<Plugin> {
             // find disabled plugins
             if (!this.obsidianPlugins.enabledPlugins.has(this.obsidianPlugins.manifests[key].id)) {
                 pluginObject.enabled = false;
-                disabledPlugins.push(pluginObject);
             } else {
                 pluginObject.enabled = true;
-                enabledPlugins.push(pluginObject);
             }
             plugins.push(pluginObject);
         }

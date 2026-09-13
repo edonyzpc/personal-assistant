@@ -225,7 +225,7 @@ export const PageletReviewInputSchema = z
         segments: z.array(PageletSegmentSchema).min(1),
         /** Semantic Memory matches from the wider vault, used only as related-note evidence. */
         relatedNotes: z.array(PageletRelatedNoteSchema).max(8).optional(),
-        /** UI-language settings hint for tie-breaking in mascot copy. */
+        /** UI-language settings hint for tie-breaking in Pet copy. */
         uiLanguage: z.enum(PAGELET_LANGUAGE_CODES).optional(),
         /** Settings override; when set, language detection is bypassed. */
         outputLanguageOverride: z.enum(PAGELET_LANGUAGE_CODES).optional(),

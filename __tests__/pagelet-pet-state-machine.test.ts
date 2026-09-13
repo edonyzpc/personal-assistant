@@ -16,6 +16,28 @@ afterEach(() => {
     jest.useRealTimers();
 });
 
+type TestRootPointerGesture = {
+    source: "pointer";
+    pointerId: number;
+    startX: number;
+    startY: number;
+    valid: boolean;
+    openedActionRing: boolean;
+};
+
+function startPointerHold(view: PetView): void {
+    (view as unknown as {
+        startRootHold(gesture: TestRootPointerGesture): void;
+    }).startRootHold({
+        source: "pointer",
+        pointerId: 1,
+        startX: 10,
+        startY: 20,
+        valid: true,
+        openedActionRing: false,
+    });
+}
+
 function escapeRegex(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -599,7 +621,6 @@ describe("PetView task kind", () => {
     it("marks hold triggered from the hold path without calling the bubble callback", () => {
         jest.useFakeTimers();
         type PetViewCaptureInternals = {
-            startQuickCaptureHold: () => void;
             _quickCaptureHoldTriggered: boolean;
         };
         const onToggleBubble = jest.fn();
@@ -610,7 +631,7 @@ describe("PetView task kind", () => {
         });
         const internals = view as unknown as PetViewCaptureInternals;
 
-        internals.startQuickCaptureHold();
+        startPointerHold(view);
         jest.advanceTimersByTime(520);
 
         expect(internals._quickCaptureHoldTriggered).toBe(true);
@@ -634,12 +655,11 @@ describe("PetView task kind", () => {
             const root = new HoldMenuFakeElement();
             const internals = view as unknown as {
                 _rootEl: HTMLElement | null;
-                startQuickCaptureHold: () => void;
             };
             internals._rootEl = root as unknown as HTMLElement;
 
             for (let index = 0; index < callbacks.length; index += 1) {
-                internals.startQuickCaptureHold();
+                startPointerHold(view);
                 jest.advanceTimersByTime(520);
                 const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
                 expect(menu?.children.map((item) => item.getAttribute("aria-label"))).toEqual([
@@ -679,7 +699,6 @@ describe("PetView task kind", () => {
             const root = new HoldMenuFakeElement();
             const internals = view as unknown as {
                 _rootEl: HTMLElement | null;
-                startQuickCaptureHold: () => void;
             };
             internals._rootEl = root as unknown as HTMLElement;
 
@@ -688,7 +707,7 @@ describe("PetView task kind", () => {
                 onToggleBubble.mockClear();
                 allCallbacks.forEach((cb) => cb.mockClear());
 
-                internals.startQuickCaptureHold();
+                startPointerHold(view);
                 jest.advanceTimersByTime(520);
                 const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
                 const btn = menu?.children[index];
@@ -724,11 +743,10 @@ describe("PetView task kind", () => {
             const root = new HoldMenuFakeElement();
             const internals = view as unknown as {
                 _rootEl: HTMLElement | null;
-                startQuickCaptureHold: () => void;
             };
             internals._rootEl = root as unknown as HTMLElement;
 
-            internals.startQuickCaptureHold();
+            startPointerHold(view);
             jest.advanceTimersByTime(520);
             const menu = root.children.find((child) => child.className === "pa-pagelet-action-ring");
             const btn = menu?.children[0];
@@ -756,11 +774,10 @@ describe("PetView task kind", () => {
             const root = new HoldMenuFakeElement();
             const internals = view as unknown as {
                 _rootEl: HTMLElement | null;
-                startQuickCaptureHold: () => void;
             };
             internals._rootEl = root as unknown as HTMLElement;
 
-            internals.startQuickCaptureHold();
+            startPointerHold(view);
             jest.advanceTimersByTime(520);
             const btn = root.children
                 .find((c) => c.className === "pa-pagelet-action-ring")
@@ -787,11 +804,10 @@ describe("PetView task kind", () => {
             const root = new HoldMenuFakeElement();
             const internals = view as unknown as {
                 _rootEl: HTMLElement | null;
-                startQuickCaptureHold: () => void;
             };
             internals._rootEl = root as unknown as HTMLElement;
 
-            internals.startQuickCaptureHold();
+            startPointerHold(view);
             jest.advanceTimersByTime(520);
             const btn = root.children
                 .find((c) => c.className === "pa-pagelet-action-ring")
@@ -822,11 +838,10 @@ describe("PetView task kind", () => {
             const root = new HoldMenuFakeElement();
             const internals = view as unknown as {
                 _rootEl: HTMLElement | null;
-                startQuickCaptureHold: () => void;
             };
             internals._rootEl = root as unknown as HTMLElement;
 
-            internals.startQuickCaptureHold();
+            startPointerHold(view);
             jest.advanceTimersByTime(520);
             const btn = root.children
                 .find((c) => c.className === "pa-pagelet-action-ring")
@@ -855,11 +870,10 @@ describe("PetView task kind", () => {
             const internals = view as unknown as {
                 _rootEl: HTMLElement | null;
                 _quickCaptureHoldTriggered: boolean;
-                startQuickCaptureHold: () => void;
             };
             internals._rootEl = firstRoot as unknown as HTMLElement;
 
-            internals.startQuickCaptureHold();
+            startPointerHold(view);
             jest.advanceTimersByTime(519);
             view.unmount();
 
@@ -870,7 +884,7 @@ describe("PetView task kind", () => {
             expect(internals._quickCaptureHoldTriggered).toBe(false);
             expect(jest.getTimerCount()).toBe(0);
 
-            internals.startQuickCaptureHold();
+            startPointerHold(view);
             jest.advanceTimersByTime(520);
             expect(nextRoot.children).toHaveLength(1);
             // The unmounted legacy seam has no pointerup. Both the active
@@ -1149,7 +1163,6 @@ describe("PetView touch suppression", () => {
     it("cancels an in-progress hold when the platform cancels the touch", () => {
         jest.useFakeTimers();
         type PetViewHoldInternals = {
-            startQuickCaptureHold: () => void;
             _handleTouchcancel: () => void;
             _quickCaptureHoldTriggered: boolean;
         };
@@ -1161,7 +1174,7 @@ describe("PetView touch suppression", () => {
         });
         const internals = view as unknown as PetViewHoldInternals;
 
-        internals.startQuickCaptureHold();
+        startPointerHold(view);
         internals._handleTouchcancel();
         jest.advanceTimersByTime(520);
 
@@ -1354,11 +1367,11 @@ describe("PetView mobile positioning styles", () => {
     it("preserves existing Pagelet motion while disabling the hold-menu entrance for reduced motion", () => {
         const css = readFileSync("src/custom.pcss", "utf8");
         const pageletMotionStart = css.indexOf("body.is-mobile .pa-pagelet-tab-body");
-        const pageletMascotStart = css.indexOf("Pagelet (Review Assistant) — mascot", pageletMotionStart);
+        const combinedReducedMotionStart = css.indexOf("@media (prefers-reduced-motion: reduce)", pageletMotionStart);
         expect(pageletMotionStart).toBeGreaterThan(-1);
-        expect(pageletMascotStart).toBeGreaterThan(pageletMotionStart);
+        expect(combinedReducedMotionStart).toBeGreaterThan(pageletMotionStart);
 
-        const pageletMotionCss = css.slice(pageletMotionStart, pageletMascotStart);
+        const pageletMotionCss = css.slice(pageletMotionStart, combinedReducedMotionStart);
 
         expect(pageletMotionCss).not.toContain("prefers-reduced-motion");
         expect(pageletMotionCss).not.toContain("transition-duration: .01s!important");

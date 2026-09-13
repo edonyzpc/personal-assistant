@@ -394,33 +394,6 @@ describe("AnalysisSessionManager", () => {
         });
     });
 
-    describe("handleScopeRangeChange", () => {
-        it("updates scope range and clears analysis session", async () => {
-            const { manager } = makeManager({
-                createForegroundAnalyzeCallback: () => async () => ({
-                    findings: [{ text: "finding", sourceFile: "notes/current.md", sourceTitle: "current" }],
-                    analyzedFiles: ["notes/current.md"],
-                    analyzedAt: Date.now(),
-                    tokenCost: { input: 1, output: 1 },
-                }),
-            });
-
-            // Run an analysis to populate session
-            await manager.analyzeFiles(
-                [{ path: "notes/current.md" } as any],
-                { range: "current", expectedActivePath: "notes/current.md" },
-                () => false,
-            );
-            expect(manager.currentAnalysisFindings()).toHaveLength(1);
-
-            // Change scope range
-            manager.handleScopeRangeChange("last7");
-
-            expect(manager.scopeRange).toBe("last7");
-            expect(manager.currentAnalysisFindings()).toEqual([]);
-        });
-    });
-
     describe("complete lifecycle", () => {
         it("begin -> analyze -> finish produces expected state transitions", async () => {
             const finding: PreloadFinding = {
@@ -517,16 +490,4 @@ describe("AnalysisSessionManager", () => {
         });
     });
 
-    describe("scope accessors", () => {
-        it("defaults to 'current' scope range", () => {
-            const { manager } = makeManager();
-            expect(manager.scopeRange).toBe("current");
-        });
-
-        it("allows setting scope range directly", () => {
-            const { manager } = makeManager();
-            manager.scopeRange = "last3";
-            expect(manager.scopeRange).toBe("last3");
-        });
-    });
 });

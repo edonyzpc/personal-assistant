@@ -67,7 +67,6 @@ export interface ReviewNoteSaveCallbacks {
 
 export class ReviewNoteSaveFlow {
     private saveInProgress = false;
-    private pendingReviewNote: GeneratedReviewNote | null = null;
 
     constructor(
         private readonly host: ReviewNoteSaveHost,
@@ -80,18 +79,6 @@ export class ReviewNoteSaveFlow {
 
     get isSaveInProgress(): boolean {
         return this.saveInProgress;
-    }
-
-    get pending(): GeneratedReviewNote | null {
-        return this.pendingReviewNote;
-    }
-
-    setPending(note: GeneratedReviewNote | null): void {
-        this.pendingReviewNote = note;
-    }
-
-    clearPending(): void {
-        this.pendingReviewNote = null;
     }
 
     // ======================================================================
@@ -108,31 +95,7 @@ export class ReviewNoteSaveFlow {
         }
         this.saveInProgress = true;
 
-        // If we have a pre-generated review note, write it directly.
-        if (currentPanelLayout === "summary" && this.pendingReviewNote) {
-            this.callbacks.petTransition("analysis-start");
-            try {
-                const result = await this.host.writeReviewNote(this.pendingReviewNote);
-                this.callbacks.petTransition("analysis-done");
-                if (result.success) {
-                    this.pendingReviewNote = null;
-                    this.callbacks.closePanel();
-                    new Notice(this.t("pagelet.reviewNote.created", { path: result.filePath ?? "" }), 5000);
-                } else {
-                    new Notice(this.t("pagelet.reviewNote.createFailed", { error: result.error ?? "" }), 5000);
-                    this.callbacks.petFlashError();
-                }
-            } catch (error) {
-                this.callbacks.petTransition("analysis-done");
-                this.callbacks.petFlashError();
-                this.host.log("Save pending review note failed", error);
-            } finally {
-                this.saveInProgress = false;
-            }
-            return;
-        }
-
-        // Fallback: build layout-specific review note from findings
+        // Build the layout-specific review note from current findings.
         if (findings.length === 0) {
             new Notice(this.t("pagelet.notice.noFindingsToSave"), 3000);
             this.saveInProgress = false;

@@ -26,8 +26,6 @@ export class BatchPluginControlModal extends Modal {
             return;
         }
 
-        const disabledPlugins: Plugin[] = [];
-        const enabledPlugins: Plugin[] = [];
         const plugins: Plugin[] = [];
         const desiredPluginStates = new Map<string, { plugin: Plugin, enabled: boolean }>();
         const toggles: ToggleComponent[] = [];
@@ -41,10 +39,8 @@ export class BatchPluginControlModal extends Modal {
             // find disabled plugins
             if (!this.obsidianPlugins.enabledPlugins.has(this.obsidianPlugins.manifests[key].id)) {
                 pluginObject.enabled = false;
-                disabledPlugins.push(pluginObject);
             } else {
                 pluginObject.enabled = true;
-                enabledPlugins.push(pluginObject);
             }
             plugins.push(pluginObject);
         }

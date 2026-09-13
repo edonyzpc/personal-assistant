@@ -3,7 +3,6 @@
 import { requestUrl } from 'obsidian';
 import { strFromU8, unzipSync } from 'fflate';
 
-export const TEST_TOKEN = "personal-assistant";
 
 export const icons: Record<string, string> = {
     PA_CHAT_SUBAGENT: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5.25V3.5"/><path d="M9.75 3.5h4.5"/><rect x="6.25" y="6.25" width="11.5" height="7.5" rx="2.25"/><path d="M9.5 9.75h.01"/><path d="M14.5 9.75h.01"/><path d="M9 17.75c.85-1.2 1.85-1.8 3-1.8s2.15.6 3 1.8"/><path d="M4.25 19.5c.45-1.9 1.58-3.23 3.4-4"/><path d="M19.75 19.5c-.45-1.9-1.58-3.23-3.4-4"/></svg>`,

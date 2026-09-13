@@ -3,9 +3,6 @@ import { RunnableLambda } from "@langchain/core/runnables";
 import { Platform } from "obsidian";
 
 jest.mock("obsidian");
-jest.mock("../src/ai-services/append-tool-provider", () => ({
-    AppendToolProvider: class { },
-}));
 
 import { MemorySearchTool } from "../src/ai-services/pa-agent-runtime";
 import {
@@ -680,10 +677,6 @@ describe("MemorySearchTool searchVss contract", () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (tool as any).rewriteQueryWithTimeout = jest.fn(() => rewriteDeferred);
 
-        // Stub rerankCandidates to no-op (avoid touching createChatModel for rerank too).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (tool as any).rerankCandidates = jest.fn(async (_q: string, c: unknown[]) => c);
-
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const searchPromise = (tool as any).searchVss("longer query phrase", undefined) as Promise<unknown>;
         // Microtask flush so searchVss reaches the searchHybrid call.
@@ -732,9 +725,6 @@ describe("MemorySearchTool searchVss contract", () => {
             keywords: "Memory refresh",
             temporal: "recent_7d",
         } satisfies RewrittenQuery));
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (tool as any).rerankCandidates = jest.fn(async (_q: string, c: unknown[]) => c);
-
         try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (tool as any).searchVss("what changed in Memory refresh last week", undefined);

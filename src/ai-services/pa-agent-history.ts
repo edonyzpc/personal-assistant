@@ -9,6 +9,7 @@ import type {
     TurnEndStatus,
 } from "./chat-types";
 import { PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION } from "./chat-types";
+import { cloneSourceRecord } from "./source-store";
 import { cloneContextReductionReceipt, createContextPagerStateFromChatContextUsed } from "../pa";
 import { cloneMessageImages } from "../chat/image-types";
 
@@ -208,13 +209,6 @@ function cloneContextUsedItem(item: ChatContextUsedItem): ChatContextUsedItem {
     return {
         ...item,
         sources: item.sources ? item.sources.map((source) => ({ ...source })) : undefined,
-    };
-}
-
-function cloneSourceRecord(record: SourceRecord): SourceRecord {
-    return {
-        ...record,
-        metadata: record.metadata ? { ...record.metadata } : undefined,
     };
 }
 

@@ -106,7 +106,7 @@ export interface SuggestionCardRendererOptions {
 
 /**
  * Translator narrowed to `(key, fallback) → string`. We do not use the
- * full `pageletT` signature here for the same reason as the mascot:
+ * full `pageletT` signature here for the same reason:
  * none of the labels interpolate params, and narrowing the seam keeps
  * tests trivial.
  */

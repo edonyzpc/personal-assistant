@@ -4263,11 +4263,6 @@ export class VSS {
         return embeddings;
     }
 
-    private async computeFileHash(file: TFile): Promise<{ hash: string | null; tooLarge: boolean }> {
-        const snapshot = await this.readFileContentSnapshot(file);
-        return { hash: snapshot.contentHash, tooLarge: snapshot.tooLarge };
-    }
-
     private async readFileContentSnapshot(
         file: TFile,
         abortSignal?: AbortSignal,

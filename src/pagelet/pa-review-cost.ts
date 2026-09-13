@@ -340,7 +340,7 @@ export function computeCost(
 
 /**
  * A single recorded LLM-call cost entry. B2 will render the most recent one
- * inside the SuggestionCard footer; the running total feeds the mascot
+ * inside the SuggestionCard footer; the running total feeds the Pet
  * tooltip.
  */
 export interface PageletCostEntry {

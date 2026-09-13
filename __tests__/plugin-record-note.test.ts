@@ -7516,22 +7516,6 @@ describe('Pagelet Review first-use and retired preload admission', () => {
         tokenBudget: { input: 8_000, output: 2_000 },
         range: 'current' as const,
     };
-    const preloadConfig = {
-        enabled: true,
-        intervalMinutes: 30,
-        perHourCap: 2,
-        perDayCap: 20,
-        tokenBudget: { input: 4_000, output: 1_000 },
-        range: 'last7' as const,
-    };
-    const backgroundEnvelope = {
-        kind: 'generic-changed-only' as const,
-        rangeDays: 7 as const,
-        allowWrite: false as const,
-        wholeVault: false as const,
-        excludedScopeOverride: false as const,
-    };
-
     it('wires foreground Review generation through the shared first-use seam', async () => {
         mockNoticeMessages.length = 0;
         const harness = createAnalyzeHarness();
@@ -7673,7 +7657,7 @@ describe('Pagelet Review first-use and retired preload admission', () => {
             expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
             if (choice === 'adjust') {
                 expect(mockNoticeMessages).toContain(
-                    'Review stopped safely. Adjust the selected notes in the Review panel, then run it again.',
+                    'Review stopped safely. Adjust the current note or source settings, then run it again.',
                 );
             }
         },
@@ -7850,225 +7834,6 @@ describe('Pagelet Review first-use and retired preload admission', () => {
         expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
     });
 
-    it.each([true, false])('keeps retired preload at zero calls when background discovery is %s', async (enabled) => {
-        mockNoticeMessages.length = 0;
-        const harness = createAnalyzeHarness();
-        harness.plugin.settings.pagelet.backgroundDiscoveryEnabled = enabled;
-        const reserveProviderCall = jest.fn(() => true);
-        const host = harness.plugin.createPageletHost();
-
-        await host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
-            reserveProviderCall,
-            remainingProviderCalls: () => ({ hourly: 1, daily: 1 }),
-            backgroundEnvelope,
-        });
-
-        expect(harness.findPageletRelatedNotes).not.toHaveBeenCalled();
-        expect(reserveProviderCall).not.toHaveBeenCalled();
-        expect(harness.plugin.createChatModel).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages).toEqual([]);
-    });
-
-    it.each([
-        ['hard no-ai tag', '# Current\n\n#no-ai\nNew private detail.', []],
-        ['configured excluded tag', '# Current\n\n#private\nNew private detail.', ['private']],
-    ])('fails closed on a latest-body %s while MetadataCache still allows it', async (
-        _label,
-        content,
-        excludedTags,
-    ) => {
-        mockNoticeMessages.length = 0;
-        const harness = createAnalyzeHarness();
-        harness.setCurrentContent(content);
-        harness.plugin.settings.dataBoundary = {
-            excludedFolders: [],
-            excludedTags,
-            generatedNotePolicy: 'exclude-generated',
-        };
-        const reserveProviderCall = jest.fn(() => true);
-        const host = harness.plugin.createPageletHost();
-
-        const result = await host.createPreloadAnalyzeCallback()(
-            [harness.currentFile],
-            preloadConfig,
-            {
-                reserveProviderCall,
-                remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
-                backgroundEnvelope,
-            },
-        );
-
-        expect(result).toMatchObject({ findings: [], analyzedFiles: [] });
-        expect(reserveProviderCall).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages).toEqual([]);
-        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
-    });
-
-    it('rejects retired preload before quota reservation or source revalidation can begin', async () => {
-        mockNoticeMessages.length = 0;
-        const harness = createAnalyzeHarness();
-        let usedSlots = 0;
-        const commit = jest.fn();
-        const rollback = jest.fn(async () => { usedSlots -= 1; });
-        const reserveProviderCall = jest.fn(() => {
-            usedSlots += 1;
-            harness.currentFile.stat.mtime += 1;
-            return { commit, rollback };
-        });
-        const host = harness.plugin.createPageletHost();
-
-        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
-            reserveProviderCall,
-            remainingProviderCalls: () => ({ hourly: 2 - usedSlots, daily: 20 - usedSlots }),
-            backgroundEnvelope,
-        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
-
-        expect(usedSlots).toBe(0);
-        expect(reserveProviderCall).not.toHaveBeenCalled();
-        expect(rollback).not.toHaveBeenCalled();
-        expect(commit).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages).toEqual([]);
-        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
-    });
-
-    it('does not add a recent but unchanged related note to generic preload', async () => {
-        const harness = createAnalyzeHarness();
-        const unchanged = harness.addSourceFile('notes/unchanged-related.md', 'UNCHANGED_SENTINEL');
-        harness.findPageletRelatedNotes.mockResolvedValue([{
-            path: unchanged.path,
-            content: 'UNCHANGED_SENTINEL',
-            mtime: unchanged.stat.mtime,
-            size: unchanged.stat.size,
-        }]);
-        const host = harness.plugin.createPageletHost();
-
-        await host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
-            reserveProviderCall: () => true,
-            remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
-            backgroundEnvelope,
-        });
-
-        expect(harness.findPageletRelatedNotes).not.toHaveBeenCalled();
-        const invokedPrompt = (harness.invoke.mock.calls as unknown as unknown[][])[0]?.[0];
-        expect(String(invokedPrompt)).not.toContain('UNCHANGED_SENTINEL');
-        expect(harness.plugin.pageletCostTracker.record).not.toHaveBeenCalledWith(
-            expect.objectContaining({ attemptKind: 'semantic-retrieval' }),
-        );
-    });
-
-    it('publishes no retired preload findings, including provider output with excluded sources', async () => {
-        const harness = createAnalyzeHarness();
-        harness.invoke.mockResolvedValueOnce({
-            content: JSON.stringify({
-                findings: [{
-                    text: 'Supported by the current note.',
-                    sourceFile: harness.currentFile.path,
-                    sourceTitle: 'Current',
-                }, {
-                    text: 'Hallucinated private source.',
-                    sourceFile: 'private/excluded.md',
-                    sourceTitle: 'Excluded',
-                }],
-            }),
-        });
-        const host = harness.plugin.createPageletHost();
-
-        const result = await host.createPreloadAnalyzeCallback()(
-            [harness.currentFile],
-            preloadConfig,
-            {
-                reserveProviderCall: () => true,
-                remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
-                backgroundEnvelope,
-            },
-        );
-
-        expect(result).toMatchObject({ findings: [], analyzedFiles: [] });
-        expect(harness.plugin.createChatModel).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-    });
-
-    it('keeps preload capability-off during setup at zero notice and zero provider call', async () => {
-        mockNoticeMessages.length = 0;
-        const harness = createAnalyzeHarness();
-        harness.plugin.createChatModel.mockImplementation(async () => {
-            harness.plugin.settings.pagelet.preloadEnabled = false;
-            return {
-                invoke: harness.invoke,
-                withStructuredOutput: () => ({ invoke: harness.structuredInvoke }),
-            };
-        });
-        const reserveProviderCall = jest.fn(() => true);
-        const host = harness.plugin.createPageletHost();
-
-        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
-            reserveProviderCall,
-            remainingProviderCalls: () => ({ hourly: 1, daily: 1 }),
-            backgroundEnvelope,
-        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
-
-        expect(reserveProviderCall).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages).toEqual([]);
-        expect(harness.plugin.settings.pagelet.pageletProviderFirstUseNotified).toBe(false);
-    });
-
-    it.each([
-        ['missing engine proof', undefined],
-        ['whole-vault override', { ...backgroundEnvelope, wholeVault: true as const }],
-    ])('fails closed for preload %s before budget reservation', async (_label, envelope) => {
-        mockNoticeMessages.length = 0;
-        const harness = createAnalyzeHarness();
-        const reserveProviderCall = jest.fn(() => true);
-        const host = harness.plugin.createPageletHost();
-
-        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
-            reserveProviderCall,
-            remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
-            ...(envelope ? { backgroundEnvelope: envelope } : {}),
-        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
-
-        expect(reserveProviderCall).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages).toEqual([]);
-    });
-
-    it('fails closed when persisted preload caps exceed the 2/hour standard envelope', async () => {
-        const harness = createAnalyzeHarness();
-        harness.plugin.settings.pagelet.preloadPerHourCap = 3;
-        const reserveProviderCall = jest.fn(() => true);
-        const host = harness.plugin.createPageletHost();
-
-        await expect(host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
-            reserveProviderCall,
-            remainingProviderCalls: () => ({ hourly: 2, daily: 20 }),
-            backgroundEnvelope,
-        })).resolves.toMatchObject({ analyzedFiles: [], findings: [] });
-
-        expect(reserveProviderCall).not.toHaveBeenCalled();
-        expect(harness.invoke).not.toHaveBeenCalled();
-    });
-
-    it('retains the foreground first-use notice while a later retired preload attempt does nothing', async () => {
-        mockNoticeMessages.length = 0;
-        const harness = createAnalyzeHarness();
-        const host = harness.plugin.createPageletHost();
-
-        await host.createForegroundAnalyzeCallback()([harness.currentFile], config);
-        await host.createPreloadAnalyzeCallback()([harness.currentFile], preloadConfig, {
-            reserveProviderCall: () => true,
-            remainingProviderCalls: () => ({ hourly: 1, daily: 1 }),
-            backgroundEnvelope,
-        });
-
-        expect(harness.structuredInvoke).toHaveBeenCalledTimes(1);
-        expect(harness.invoke).not.toHaveBeenCalled();
-        expect(mockNoticeMessages.filter((message) => message.includes('allowed note excerpts'))).toHaveLength(1);
-        expect(harness.plugin.saveSettings).toHaveBeenCalledTimes(1);
-    });
 });
 
 describe('Retrieval optimization policy snapshot lifecycle', () => {
@@ -8439,7 +8204,7 @@ describe('Pagelet production rate-limit storage', () => {
         expect(admitStandardCall).not.toHaveBeenCalled();
     });
 
-    it('isolates persisted quotas and watermarks for different same-name vaults', () => {
+    it('isolates persisted quotas for different same-name vaults', () => {
         const first = createRateLimitHarness();
         const second = createRateLimitHarness();
         first.app.vault.adapter.getBasePath.mockReturnValue('/vaults/one/shared-name');
@@ -8451,8 +8216,6 @@ describe('Pagelet production rate-limit storage', () => {
             .not.toBe(second.pageletRateLimitStorageKey('scope-recap'));
         expect(first.pageletRateLimitStorageKey('background-review'))
             .not.toBe(second.pageletRateLimitStorageKey('background-review'));
-        expect(first.pageletChangeWatermarkStorageKey())
-            .not.toBe(second.pageletChangeWatermarkStorageKey());
     });
 
     describe('attention host storage integration', () => {
@@ -9784,24 +9547,6 @@ describe('Quiet Recall DEC-020 production adapter', () => {
         plugin.syncPageletRuntime();
         expect(coordinatorB.clear).toHaveBeenCalledTimes(1);
         expect(plugin.quietRecallEvaluationCoordinatorInstance).toBeNull();
-    });
-
-    it('admits only one concurrent Quiet Recall round into the session cooldown', async () => {
-        jest.useFakeTimers();
-        jest.setSystemTime(new Date('2026-07-18T12:00:00.000Z'));
-        const { plugin } = createRuntimeHarness();
-
-        const admissions = await Promise.all([
-            plugin.acquireQuietRecallRoundAdmission(),
-            plugin.acquireQuietRecallRoundAdmission(),
-        ]);
-
-        expect(admissions.filter(Boolean)).toHaveLength(1);
-        expect(admissions.filter((admitted: boolean) => !admitted)).toHaveLength(1);
-        expect(plugin._lastRecallLlmEvalAt).toBe(Date.now());
-
-        jest.advanceTimersByTime(60_001);
-        await expect(plugin.acquireQuietRecallRoundAdmission()).resolves.toBe(true);
     });
 
     it('holds a concurrent first-round claim until commit, then applies cooldown', async () => {

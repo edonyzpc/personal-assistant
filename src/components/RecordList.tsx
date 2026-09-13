@@ -7,14 +7,11 @@ import {
   Vault,
   getFrontMatterInfo,
 } from "obsidian";
-import type { PluginManager } from "plugin";
 import { isPluginEnabled } from "../obsidian-internals";
 
 type Props = {
   app: App;
-  plugin: PluginManager;
   fileNames: string[];
-  container: HTMLElement;
 };
 
 enum EmbedType {

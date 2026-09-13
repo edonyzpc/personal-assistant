@@ -915,33 +915,6 @@ export class MemorySearchTool {
         }
     }
 
-    private async rerankCandidates(
-        query: string,
-        candidates: MemoryCandidate[],
-        selectedModel: SelectedRerankModel,
-        signal?: AbortSignal,
-        absoluteDeadlineMs?: number,
-        providerRequestOptions?: MemorySearchProviderRequestOptions,
-    ): Promise<RerankOutcome> {
-        throwIfAborted(signal);
-        if (candidates.length === 0) {
-            return createDeterministicEmptyOutcome();
-        }
-
-        const prepared = await this.prepareReranker(
-            selectedModel,
-            signal,
-            absoluteDeadlineMs,
-            providerRequestOptions,
-        );
-        if (!prepared) return createFailOpenOutcome(candidates, "model_unavailable", false);
-        try {
-            return await prepared.invoke(query, candidates);
-        } finally {
-            prepared.dispose();
-        }
-    }
-
     private async prepareReranker(
         selectedModel: SelectedRerankModel,
         signal?: AbortSignal,

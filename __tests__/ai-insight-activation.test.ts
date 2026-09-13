@@ -1,9 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
-jest.mock("../src/ai-services/append-tool-provider", () => ({
-    AppendToolProvider: class { },
-}));
-
 import { TypeAUserProfileExtractor } from "../src/ai-services/memory-extraction/type-a-extractor";
 import type { PersistedTurn } from "../src/chat/chat-history-store";
 

@@ -7,7 +7,7 @@
  * actually reads. Everything else stays behind the plugin boundary.
  *
  * Extracted from orchestrator.ts so it can be imported independently
- * by sub-modules (BubbleCoordinator, BackgroundPreparationCoordinator, etc.)
+ * by sub-modules without pulling in the full orchestrator.
  * without pulling in the full orchestrator.
  */
 
@@ -25,8 +25,6 @@ import type {
 
 import type { PetCorner } from "./pet/types";
 import type { AnalyzeCallback } from "./preload/types";
-import type { PreloadBudgetStorage } from "./preload/PreloadBudget";
-import type { ChangeDetectorStorage } from "./scope/ChangeDetector";
 import type { PageletAttentionStorage } from "./attention";
 import type { GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
@@ -107,10 +105,6 @@ export interface PageletHost {
                 end: string;
             };
             backgroundDiscoveryEnabled: boolean;
-            preloadInterval: number;
-            preloadPerHourCap: number;
-            preloadPerDayCap: number;
-            preloadTokenBudget: { input: number; output: number };
             scopeRecapPreparationEnabled: boolean;
             scopeRecapBackgroundAuthorization: "pending" | "authorized-v1" | "declined-v1";
             scopeRecapAuthorizationContextId: string | null;
@@ -162,18 +156,6 @@ export interface PageletHost {
      * Delegates to `Plugin.registerEvent`.
      */
     registerEvent(ref: EventRef): void;
-
-    /**
-     * Factory for the LLM callback used by PreloadEngine.
-     * The host MUST enforce `allowWrite=false` on the returned callback.
-     */
-    createPreloadAnalyzeCallback(): AnalyzeCallback;
-
-    /** Per-vault persistent call-count storage for generic background preparation. */
-    createPreloadBudgetStorage?(): PreloadBudgetStorage;
-
-    /** Per-vault content-free watermarks for the changed-only background lane. */
-    createPreloadChangeDetectorStorage?(): ChangeDetectorStorage;
 
     /** Device-local, per-vault storage for content-free delivery seen/ack state. */
     createPageletAttentionStorage?(): PageletAttentionStorage | undefined;

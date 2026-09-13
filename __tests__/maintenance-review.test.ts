@@ -43,7 +43,6 @@ describe("Maintenance Review preview scanner", () => {
         ], {
             now: fixedNow,
             scopePaths: ["Inbox/Untitled.md"],
-            weeklyScanEnabled: true,
         });
 
         expect(result.generatedAt).toBe("2026-06-28T12:00:00.000Z");

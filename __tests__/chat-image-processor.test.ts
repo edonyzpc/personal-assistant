@@ -4,8 +4,6 @@ import { getPlatformDocument } from '../src/platform-dom';
 import { inspectImage } from '../src/chat/image-format';
 
 jest.mock('../src/platform-dom', () => ({ getPlatformDocument: jest.fn() }));
-jest.mock('../src/chat/image-macos-converter', () => ({ convertMacOsHeicToPng: jest.fn() }));
-import { convertMacOsHeicToPng } from '../src/chat/image-macos-converter';
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 async function until(check: () => boolean): Promise<void> {
     for (let i = 0; i < 100 && !check(); i++) await tick();
@@ -111,7 +109,6 @@ describe('production local ImageProcessor', () => {
             .rejects.toMatchObject({ code: 'heic-unsupported' });
         expect(dom.create).not.toHaveBeenCalled();
         expect(dom.encode).not.toHaveBeenCalled();
-        expect(convertMacOsHeicToPng).not.toHaveBeenCalled();
         expect(source).toEqual(original);
     });
     it('accepts delivered JPEG bytes even if the source path retains a HEIC extension', async () => {
@@ -119,7 +116,6 @@ describe('production local ImageProcessor', () => {
         await expect(processor.process(jpeg(), { purpose: 'preview', originalPath: 'pa-images/photo.heic' }))
             .resolves.toMatchObject({ sourceMime: 'image/jpeg', mime: 'image/jpeg' });
         expect(dom.encode).toHaveBeenCalledTimes(1);
-        expect(convertMacOsHeicToPng).not.toHaveBeenCalled();
     });
     it('serializes jobs and cancels a queued job without starting a second decoder', async () => {
         const dom = browserHarness({ holdEncode: true }); const first = processor.process(jpeg(), { purpose: 'provider' });

@@ -42,7 +42,6 @@ export class ThemeUpdater implements ObsidianManifest {
     private communityThemes: CommunityTheme[] | null;
     private TagName = 'tag_name';
     private totalThemes: number;
-    private checkedThemes: number;
     private progressBar: ProgressBar;
     private versionRegex = /^\d+(\.\d+)*$/;
 
@@ -112,7 +111,6 @@ export class ThemeUpdater implements ObsidianManifest {
         this.log = (...msg: unknown[]) => plugin.log(...msg);
         this.communityThemes = null;
         this.totalThemes = 0;
-        this.checkedThemes = 0;
         this.items = [];
 
         this.progressBar = new ProgressBar(plugin, "theme-updating", this.totalThemes);
@@ -433,7 +431,6 @@ export class ThemeUpdater implements ObsidianManifest {
                     updatedThemes.push(theme.id);
                     // update notice display
                     this.progressBar.stepin(theme.id, `update ${theme.id} to ${tag}`, this.totalThemes);
-                    this.checkedThemes++;
                 } else {
                     this.log(`skip reloading theme[${theme.id}] because update did not write required files`);
                 }

@@ -3504,64 +3504,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(buttons[0]?.querySelector(".pa-sr-only")?.textContent).toBe("Hints: On");
     });
 
-    it("keeps prepared cache strictly read-only and Panel-only", async () => {
-        const expandToTab = jest.fn();
-        const saveAsReviewNote = jest.fn(async () => undefined);
-        const shareAsCard = jest.fn();
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const panel = new PanelView({
-            callbacks: {
-                onClose: () => undefined,
-                onExpandToTab: expandToTab,
-                onSaveAsReviewNote: saveAsReviewNote,
-                onSourceClick: () => undefined,
-                onShareAsCard: shareAsCard,
-            },
-            getLocale: () => "en",
-        });
-        const finding = {
-            title: "prepared",
-            description: "Cached background finding.",
-            sourceFile: "notes/prepared.md",
-        };
-
-        panel.mount(container as unknown as HTMLElement);
-        panel.open("review", [finding], { preparedReadOnly: true });
-
-        const saveButton = container.querySelector(".pa-pagelet-panel-save-btn");
-        const headerExpand = container.querySelector(".pa-pagelet-panel-header-expand-btn");
-        const footerExpand = container.querySelector(".pa-pagelet-panel-expand-btn");
-        const shareButton = container.querySelector(".pa-pagelet-panel-share-btn");
-        for (const button of [saveButton, shareButton, headerExpand, footerExpand]) {
-            expect(button?.getAttribute("hidden")).toBe("");
-            expect(button?.getAttribute("aria-hidden")).toBe("true");
-            expect(button?.disabled).toBe(true);
-            await button?.click();
-        }
-        expect(saveAsReviewNote).not.toHaveBeenCalled();
-        expect(shareAsCard).not.toHaveBeenCalled();
-        expect(expandToTab).not.toHaveBeenCalled();
-
-        panel.open("review", [finding]);
-
-        for (const button of [saveButton, shareButton, headerExpand, footerExpand]) {
-            expect(button?.getAttribute("hidden")).toBeNull();
-            expect(button?.getAttribute("aria-hidden")).toBeNull();
-            expect(button?.disabled).toBe(false);
-            await button?.click();
-        }
-        expect(saveAsReviewNote).toHaveBeenCalledTimes(1);
-        expect(shareAsCard).toHaveBeenCalledWith({
-            findings: [finding],
-        });
-        expect(expandToTab).toHaveBeenCalledTimes(2);
-    });
-
-    it("wires review scope controls to Review selected and candidate callbacks", async () => {
-        const runSelected = jest.fn(async () => undefined);
-        const rangeChange = jest.fn();
-        const toggleCandidate = jest.fn();
+    it("does not render retired time presets, note checkboxes, or Review selected", async () => {
         const container = new FakeElement("div");
         container.isConnected = true;
         const panel = new PanelView({
@@ -3572,51 +3515,24 @@ describe("Pagelet panel and tab view regressions", () => {
                 onSaveAsReviewNote: async () => undefined,
                 onSourceClick: () => undefined,
                 onRunReview: async () => undefined,
-                onRunSelectedReview: runSelected,
-                onScopeRangeChange: rangeChange,
-                onScopeCandidateToggle: toggleCandidate,
             },
             getLocale: () => "en",
         });
 
         panel.mount(container as unknown as HTMLElement);
-        panel.open("review", [], {
-            scope: {
-                range: "last3",
-                candidates: [
-                    {
-                        path: "active.md",
-                        title: "active",
-                        reason: "active",
-                        included: true,
-                    },
-                    {
-                        path: "recent.md",
-                        title: "recent",
-                        reason: "modified",
-                        included: true,
-                    },
-                ],
-                includedCount: 2,
-                skippedCount: 0,
-                estimatedInputTokens: 120,
-            },
-        });
+        panel.open("review", []);
 
-        expect(container.textContent).toContain("Review selected (2)");
-        await container.querySelector(".pa-pagelet-panel-save-btn")?.click();
-        expect(runSelected).toHaveBeenCalledTimes(1);
-
-        await container.querySelectorAll(".pa-pagelet-panel-scope-range-btn")[1]?.click();
-        expect(rangeChange).toHaveBeenCalledWith("yesterday");
-
-        await container.querySelector(".pa-pagelet-panel-scope-checkbox")?.click();
-        expect(toggleCandidate).toHaveBeenCalledWith("active.md", false);
+        expect(container.querySelector(".pa-pagelet-panel-scope")).toBeNull();
+        expect(container.querySelector(".pa-pagelet-panel-scope-range-btn")).toBeNull();
+        expect(container.querySelector(".pa-pagelet-panel-scope-checkbox")).toBeNull();
+        expect(container.textContent).not.toContain("Review selected");
+        expect(container.querySelector(".pa-pagelet-panel-save-btn")?.textContent)
+            .toContain("Review current note");
     });
 
-    it("keeps a failed selected review visible and retryable in the panel", async () => {
+    it("keeps a failed current review visible and retryable in the panel", async () => {
         const panelRef: { current: PanelView | null } = { current: null };
-        const runSelected = jest.fn(async () => {
+        const runReview = jest.fn(async () => {
             panelRef.current?.showReviewError("Pagelet review timed out. Try again, or shorten the note before retrying.");
         });
         const container = new FakeElement("div");
@@ -3628,33 +3544,20 @@ describe("Pagelet panel and tab view regressions", () => {
                 onExpandToTab: () => undefined,
                 onSaveAsReviewNote: async () => undefined,
                 onSourceClick: () => undefined,
-                onRunSelectedReview: runSelected,
+                onRunReview: runReview,
             },
             getLocale: () => "en",
         });
         panelRef.current = panel;
 
         panel.mount(container as unknown as HTMLElement);
-        panel.open("review", [], {
-            scope: {
-                range: "current",
-                candidates: [{
-                    path: "active.md",
-                    title: "active",
-                    reason: "active",
-                    included: true,
-                }],
-                includedCount: 1,
-                skippedCount: 0,
-                estimatedInputTokens: 80,
-            },
-        });
+        panel.open("review", []);
 
         await container.querySelector(".pa-pagelet-panel-save-btn")?.click();
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(runSelected).toHaveBeenCalledTimes(1);
+        expect(runReview).toHaveBeenCalledTimes(1);
         expect(container.textContent).toContain("Review did not finish");
         expect(container.textContent).toContain("Pagelet review timed out");
         expect(container.textContent).toContain("Retry");
@@ -3663,45 +3566,32 @@ describe("Pagelet panel and tab view regressions", () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(runSelected).toHaveBeenCalledTimes(2);
+        expect(runReview).toHaveBeenCalledTimes(2);
     });
 
-    it("updates selected review progress copy after a long provider wait", async () => {
+    it("updates current review progress copy after a long provider wait", async () => {
         jest.useFakeTimers();
         try {
-            const runSelected = jest.fn(async () => new Promise<void>(() => undefined));
+            const runReview = jest.fn(async () => new Promise<void>(() => undefined));
             const container = new FakeElement("div");
             container.isConnected = true;
             const panel = new PanelView({
                 app: {} as never,
                 callbacks: {
                     onClose: () => undefined,
-                    onExpandToTab: () => undefined,
-                    onSaveAsReviewNote: async () => undefined,
-                    onSourceClick: () => undefined,
-                    onRunSelectedReview: runSelected,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onRunReview: runReview,
                 },
                 getLocale: () => "en",
             });
 
             panel.mount(container as unknown as HTMLElement);
-            panel.open("review", [], {
-                scope: {
-                    range: "current",
-                    candidates: [{
-                        path: "active.md",
-                        title: "active",
-                        reason: "active",
-                        included: true,
-                    }],
-                    includedCount: 1,
-                    skippedCount: 0,
-                    estimatedInputTokens: 80,
-                },
-            });
+            panel.open("review", []);
 
             await container.querySelector(".pa-pagelet-panel-save-btn")?.click();
-            expect(container.textContent).toContain("Reviewing selected notes");
+            expect(container.textContent).toContain("Reviewing current note");
 
             jest.advanceTimersByTime(30_000);
             await Promise.resolve();
@@ -4185,7 +4075,6 @@ describe("Pagelet panel and tab view regressions", () => {
             ],
         }], {
             sourcePath: "notes/current.md",
-            preparedReadOnly: true,
         });
 
         const status = container.querySelector(".pa-pagelet-panel-action-status");
@@ -4235,21 +4124,21 @@ describe("Pagelet panel and tab view regressions", () => {
         panel.open("discover", [finding("Review before confirming.", [
             { label: "Confirm", primary: true },
             { label: "Cancel" },
-        ])], { preparedReadOnly: true });
+        ])]);
 
         const pendingButtons = container.querySelectorAll(".pa-pagelet-panel-timeline-action-btn");
         pendingButtons[1]?.focus();
         panel.open("discover", [finding("Review before confirming.", [
             { label: "Confirm", primary: true },
             { label: "Cancel" },
-        ])], { preparedReadOnly: true });
+        ])]);
         expect((globalRecord.document as FakeDocument).activeElement?.textContent).toBe("Cancel");
 
         const refreshedConfirm = container.querySelectorAll(".pa-pagelet-panel-timeline-action-btn")[0];
         refreshedConfirm?.focus();
         panel.open("discover", [finding("Applying the confirmed change…", [
             { label: "Confirm", busy: true },
-        ], true)], { preparedReadOnly: true });
+        ], true)]);
 
         const busyStatus = container.querySelector(".pa-pagelet-panel-action-status");
         expect(busyStatus?.getAttribute("tabindex")).toBe("-1");
@@ -4257,7 +4146,7 @@ describe("Pagelet panel and tab view regressions", () => {
 
         panel.open("discover", [finding("The related-note link was added.", [
             { label: "Undo", primary: true },
-        ])], { preparedReadOnly: true });
+        ])]);
         const undo = container.querySelector(".pa-pagelet-panel-timeline-action-btn");
         expect(undo?.textContent).toBe("Undo");
         expect((globalRecord.document as FakeDocument).activeElement).toBe(undo);

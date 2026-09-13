@@ -62,7 +62,6 @@ export interface MemoryExtractionSchedulerOptions {
     now?: () => Date;
     typeAIntervalTurns?: number;
     typeCRefreshIntervalMs?: number;
-    typeCWritePath?: string | null;
     includeVaultInsightsInPrompt?: boolean;
     createModelForExtraction?: CreateModelForExtraction;
     shouldHandleVaultEvent?: (file: TFile) => boolean;
@@ -92,7 +91,6 @@ export interface VaultInsightsSnapshotContext {
 const DEFAULT_TYPE_A_INTERVAL_TURNS = 8;
 const DEFAULT_TYPE_C_REFRESH_INTERVAL_MS = 24 * 60 * 60_000;
 const DEFAULT_TYPE_C_VAULT_EVENT_DELAY_MS = 5 * 60_000;
-export const VAULT_INSIGHTS_PATH = "PA-Memory/vault-insights.md";
 
 export class MemoryExtractionScheduler {
     private readonly app: App;
@@ -101,7 +99,6 @@ export class MemoryExtractionScheduler {
     private readonly now: () => Date;
     private readonly typeAIntervalTurns: number;
     private readonly typeCRefreshIntervalMs: number;
-    private readonly typeCWritePath: string | null;
     private includeVaultInsightsInPrompt: boolean;
     private readonly profileGovernancePort: ProfileGovernancePort;
     private readonly typeAExtractor = new TypeAUserProfileExtractor();
@@ -137,9 +134,6 @@ export class MemoryExtractionScheduler {
         this.now = options.now ?? (() => new Date());
         this.typeAIntervalTurns = Math.max(1, options.typeAIntervalTurns ?? DEFAULT_TYPE_A_INTERVAL_TURNS);
         this.typeCRefreshIntervalMs = Math.max(60_000, options.typeCRefreshIntervalMs ?? DEFAULT_TYPE_C_REFRESH_INTERVAL_MS);
-        this.typeCWritePath = options.typeCWritePath === undefined || options.typeCWritePath === null
-            ? null
-            : normalizePath(options.typeCWritePath);
         this.includeVaultInsightsInPrompt = options.includeVaultInsightsInPrompt ?? false;
         this.profileGovernancePort = options.profileGovernancePort
             ?? new SerializedProfileGovernancePort(
@@ -290,7 +284,6 @@ export class MemoryExtractionScheduler {
             return;
         }
         if (!file.path.endsWith(".md")) return;
-        if (this.typeCWritePath && normalizePath(file.path) === this.typeCWritePath) return;
         if (!this.shouldHandleVaultEvent(file)) return;
         this.vaultInsightsSourceIdentity = {};
     }
@@ -300,7 +293,6 @@ export class MemoryExtractionScheduler {
         if (!this.includeVaultInsightsInPrompt) return;
         if (!(file instanceof TFile)) return;
         if (!file.path.endsWith(".md")) return;
-        if (this.typeCWritePath && normalizePath(file.path) === this.typeCWritePath) return;
         if (!this.shouldHandleVaultEvent(file)) return;
         this.invalidateVaultInsightsSource(file);
         this.scheduleTypeCRefresh(reason, DEFAULT_TYPE_C_VAULT_EVENT_DELAY_MS);
@@ -543,14 +535,6 @@ export class MemoryExtractionScheduler {
             this.scheduleTypeCRefresh("data-boundary-changed");
             return null;
         }
-        if (this.typeCWritePath) {
-            await writeVaultInsightsIfChanged(this.app, this.typeCWritePath, markdown);
-            if (this.disposed || !this.includeVaultInsightsInPrompt) return null;
-            if (this.getDataBoundaryFingerprint() !== dataBoundaryFingerprint) {
-                this.scheduleTypeCRefresh("data-boundary-changed");
-                return null;
-            }
-        }
         if (source && !source.isSourceCurrent()) return null;
         this.vaultSnapshot = snapshot;
         this.vaultSnapshotDataBoundaryFingerprint = dataBoundaryFingerprint;
@@ -662,29 +646,6 @@ function collectRepresentativeVaultInsightPaths(snapshot: VaultMetacognitionSnap
         if (paths.size >= 20) break;
     }
     return [...paths];
-}
-
-async function writeVaultInsightsIfChanged(app: App, path: string, markdown: string): Promise<void> {
-    const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-    if (folder && !(await app.vault.adapter.exists(folder))) {
-        await createFolderRecursive(app, folder);
-    }
-    if (await app.vault.adapter.exists(path)) {
-        const existing = await app.vault.adapter.read(path).catch(() => null);
-        if (existing === markdown) return;
-    }
-    await app.vault.adapter.write(path, markdown);
-}
-
-async function createFolderRecursive(app: App, folder: string): Promise<void> {
-    const parts = normalizePath(folder).split("/").filter(Boolean);
-    let current = "";
-    for (const part of parts) {
-        current = current ? `${current}/${part}` : part;
-        if (!(await app.vault.adapter.exists(current))) {
-            await app.vault.adapter.mkdir(current);
-        }
-    }
 }
 
 function summarizeVaultInsightsForPrompt(markdown: string): string {

@@ -288,7 +288,7 @@ describe("BuiltinWebSearchProvider", () => {
         }
     });
 
-    it("truncates long source titles and snippets through SourceStore normalization", async () => {
+    it("truncates long source titles and snippets through source normalization", async () => {
         const provider = createProvider({
             request: async () => ({
                 status: 200,

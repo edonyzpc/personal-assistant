@@ -139,9 +139,7 @@ export class RecordPreview extends ItemView {
         this.componentRoot.render(
             createElement(RecordList, {
                 app: this.app,
-                plugin: this.plugin,
                 fileNames: this.files.slice(0, limits),
-                container: this.containerEl,
             })
         );
     }

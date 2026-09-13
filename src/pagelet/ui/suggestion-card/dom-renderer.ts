@@ -3,7 +3,7 @@
 /**
  * Pagelet — SuggestionCard DOM renderer.
  *
- * Same architecture as `mascot/dom-renderer.ts`:
+ * The renderer uses a narrow DOM-host abstraction:
  *  - Pure markup builder upstream (`markup.ts`).
  *  - This file mounts the descriptor into real DOM and wires the
  *    click callbacks. State changes go through `update(nextProps)`,
@@ -32,7 +32,7 @@ import type {
 import { getPlatformDocument } from "../../../platform-dom";
 
 // ---------------------------------------------------------------------------
-// DOM host abstraction (mirrors mascot)
+// DOM host abstraction
 // ---------------------------------------------------------------------------
 
 export interface SuggestionCardDomNode {

@@ -7,7 +7,7 @@
  *
  * Rule: a Pagelet review may only fire when the currently active leaf
  * is a Markdown view. Canvas / Excalidraw / Kanban / PDF / DB Folder /
- * etc. all have to opt out — the cost-gate and the mascot would both
+ * etc. all have to opt out — the cost-gate and the Pet would both
  * be nonsensical there, and Templater-style write hooks could
  * misinterpret a write into `.pagelet/` if a non-markdown leaf is the
  * active context.
@@ -18,7 +18,7 @@
  * `MarkdownView.getViewType()` contract.
  *
  * Why a tiny module (not just a `=== "markdown"` check at the call site):
- *  - The check is invoked from three places (mount mascot, fire review,
+ *  - The check is invoked from three places (mount Pet, fire review,
  *    register debouncer). Having a named helper lets every caller agree
  *    on "what counts as a markdown view" instead of duplicating the
  *    string literal.

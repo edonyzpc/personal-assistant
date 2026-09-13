@@ -1,7 +1,5 @@
 import type {
-    SourceDisplayChip,
     SourceRecord,
-    SourceRecordKind,
 } from "./chat-types";
 
 export interface SourceRecordInput extends Omit<SourceRecord, "dedupKey"> {
@@ -12,51 +10,6 @@ const MAX_SOURCE_TITLE_CHARS = 160;
 const MAX_SOURCE_SNIPPET_CHARS = 500;
 const SECRET_QUERY_PARAM = /(?:api[_-]?key|token|secret|signature|authorization|access[_-]?token|refresh[_-]?token)/i;
 const HTML_TAG_PATTERN = /<[^>]*>/g;
-
-export class SourceStore {
-    private readonly records: SourceRecord[] = [];
-
-    constructor(records: readonly SourceRecordInput[] = []) {
-        records.forEach((record) => this.add(record));
-    }
-
-    add(input: SourceRecordInput): SourceRecord | null {
-        const normalized = normalizeSourceRecord(input);
-        if (!normalized) return null;
-        this.records.push(normalized);
-        return normalized;
-    }
-
-    all(): SourceRecord[] {
-        return this.records.map(cloneSourceRecord);
-    }
-
-    query(kind: SourceRecordKind): SourceRecord[] {
-        return this.records.filter((record) => record.kind === kind).map(cloneSourceRecord);
-    }
-
-    getCitations(): SourceRecord[] {
-        return this.records
-            .filter((record) => record.kind === "memory-reference" || record.kind === "web-source")
-            .filter((record) => record.citationEligible !== false)
-            .map(cloneSourceRecord);
-    }
-
-    getDisplayChips(): SourceDisplayChip[] {
-        const grouped = new Map<string, SourceRecord[]>();
-        for (const record of this.records) {
-            if (record.metadata?.sourceDependency === true) continue;
-            grouped.set(record.dedupKey, [...(grouped.get(record.dedupKey) ?? []), record]);
-        }
-        return [...grouped.entries()].map(([dedupKey, records]) => ({
-            dedupKey,
-            label: getChipLabel(records[0]),
-            kinds: [...new Set(records.map((record) => record.kind))],
-            citationEligible: records.some((record) => record.citationEligible === true),
-            records: records.map(cloneSourceRecord),
-        }));
-    }
-}
 
 export function normalizeSourceRecord(input: SourceRecordInput): SourceRecord | null {
     const title = normalizeSourceText(input.title, MAX_SOURCE_TITLE_CHARS);
@@ -121,12 +74,7 @@ function normalizeSourceText(value: string | undefined, maxChars: number): strin
     return `${plainText.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
-function getChipLabel(record: SourceRecord | undefined): string {
-    if (!record) return "Source";
-    return record.title ?? record.path ?? record.url ?? record.capabilityName ?? record.kind;
-}
-
-function cloneSourceRecord(record: SourceRecord): SourceRecord {
+export function cloneSourceRecord(record: SourceRecord): SourceRecord {
     return {
         ...record,
         metadata: record.metadata ? { ...record.metadata } : undefined,

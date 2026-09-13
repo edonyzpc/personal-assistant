@@ -31,7 +31,7 @@ import {
 
 describe("pageletT lookup", () => {
     it("returns the locale-specific string when the key exists", () => {
-        expect(pageletT("pagelet.mascot.idle", "en")).toBe("Pagelet is watching.");
+        expect(pageletT("pagelet.pet.idle", "en")).toBe("Pagelet is watching.");
         // Use a key whose ZH translation differs from EN — picking the brand
         // string also guards the 拾页 brand decision in D001.
         expect(pageletT("pagelet.settings.section.title", "zh")).toBe("拾页");
@@ -139,8 +139,8 @@ describe("makePageletTranslator", () => {
     it("binds the locale once for ergonomic repeat lookups", () => {
         const tEn = makePageletTranslator("en");
         const tZh = makePageletTranslator("zh");
-        expect(tEn("pagelet.mascot.idle")).toBe("Pagelet is watching.");
-        expect(tZh("pagelet.mascot.idle")).toBe("拾页在静静看着。");
+        expect(tEn("pagelet.pet.idle")).toBe("Pagelet is watching.");
+        expect(tZh("pagelet.pet.idle")).toBe("拾页在静静看着。");
     });
 
     it("forwards params + fallback to the underlying translator", () => {

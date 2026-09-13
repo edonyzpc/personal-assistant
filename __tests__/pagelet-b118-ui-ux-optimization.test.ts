@@ -163,11 +163,12 @@ describe("F-03 No Modal Authorization", () => {
 describe("F-04 Reduced Motion", () => {
     it("disables every animated Pet child required by Slice D", () => {
         const css = readFileSync("src/custom.pcss", "utf8");
-        const mascotSectionStart = css.indexOf("Pagelet (Review Assistant) — mascot visual tokens");
+        const pageletMobileStart = css.indexOf("body.is-mobile .pa-pagelet-tab-body");
+        const reducedMotionStart = css.indexOf("@media (prefers-reduced-motion: reduce)", pageletMobileStart);
         const reducedMotionCss = getCssBlock(
             css,
             "@media (prefers-reduced-motion: reduce)",
-            mascotSectionStart,
+            reducedMotionStart,
         );
 
         expect(reducedMotionCss).toMatch(

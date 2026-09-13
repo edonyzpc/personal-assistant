@@ -43,7 +43,7 @@ export type {
 } from "./profile-governance-port";
 export { TypeCVaultMetacognitionAnalyzer } from "./type-c-analyzer";
 export type { VaultMetacognitionSnapshot } from "./type-c-analyzer";
-export { MemoryExtractionScheduler, VAULT_INSIGHTS_PATH } from "./extraction-scheduler";
+export { MemoryExtractionScheduler } from "./extraction-scheduler";
 export type {
     AdmitTypeACandidates,
     MemoryExtractionPromptContext,

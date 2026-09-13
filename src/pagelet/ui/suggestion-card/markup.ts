@@ -5,7 +5,7 @@
  *
  * Spec source: `docs/archive/review-assistant-sdd.md` §10.2 + `docs/archive/assets/pagelet-visual-spec.html` §③.
  *
- * Same testing rationale as `mascot/markup.ts`: keep all data shaping
+ * Keep all data shaping
  * in a pure builder so unit tests don't need jsdom, and the DOM
  * renderer becomes a thin "apply this descriptor" layer.
  *
@@ -353,7 +353,7 @@ function buildCostMarkup(
 
 /**
  * Wrap a translator so a "key returned literally" miss falls through
- * to the caller-supplied EN default. Mirrors the mascot's same trick.
+ * to the caller-supplied EN default.
  *
  * Why this exists: `pageletT(key, locale, undefined, fallback)`
  * returns the fallback only when NO entry is found anywhere. But the

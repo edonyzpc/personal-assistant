@@ -44,7 +44,6 @@ export interface MaintenanceReviewScanOptions {
     unsortedFolders?: readonly string[];
     scopePaths?: readonly string[];
     maxProposalsPerCategory?: number;
-    weeklyScanEnabled?: boolean;
 }
 
 export interface MaintenanceProposalPreview {

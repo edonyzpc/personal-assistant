@@ -1230,18 +1230,6 @@ export class PetView implements PetRenderer {
         });
     }
 
-    /** Legacy private seam retained for focused tests; real input uses pointer/touch metadata. */
-    private startQuickCaptureHold(): void {
-        this.startRootHold({
-            source: "pointer",
-            pointerId: -1,
-            startX: 0,
-            startY: 0,
-            valid: true,
-            openedActionRing: false,
-        });
-    }
-
     private finishPointerGesture(): void {
         this.clearQuickCaptureHoldTimer();
         this.clearRootGestureDocumentGuard();

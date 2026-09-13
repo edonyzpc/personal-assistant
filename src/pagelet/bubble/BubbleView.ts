@@ -18,7 +18,7 @@
  *   Full-width bottom sheet, no tail, slides up from bottom.
  *
  * Why raw DOM instead of a framework:
- *   Same rationale as mascot/dom-renderer.ts — the Bubble is a small
+ *   The Bubble is a small
  *   component (~20 nodes) and the project already uses raw DOM for
  *   all pagelet UI.
  */

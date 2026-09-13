@@ -65,18 +65,6 @@ function makeFinding(overrides: Partial<PanelFinding> = {}): PanelFinding {
     };
 }
 
-function makePendingNote(overrides: Partial<GeneratedReviewNote> = {}): GeneratedReviewNote {
-    return {
-        markdown: "---\npagelet: true\n---\n# Review\nSummary content.",
-        fileName: "pagelet-weekly-review-2026-06-16.md",
-        targetFolder: ".pagelet",
-        targetPath: ".pagelet/pagelet-weekly-review-2026-06-16.md",
-        sources: ["[[note-1]]", "[[note-2]]"],
-        tokenCost: { input: 500, output: 200 },
-        ...overrides,
-    };
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -133,43 +121,6 @@ describe("ReviewNoteSaveFlow", () => {
             expect(callbacks.petFlashError).toHaveBeenCalledTimes(1);
             expect(host.log).toHaveBeenCalled();
             expect(flow.isSaveInProgress).toBe(false);
-        });
-    });
-
-    describe("saveFindingsAsReviewNote — summary layout with pending note", () => {
-        it("writes the pre-generated pending note directly", async () => {
-            const writeReviewNote = jest.fn<(note: GeneratedReviewNote) => Promise<WriteResult>>(
-                async () => ({ success: true, filePath: ".pagelet/weekly.md" }),
-            );
-            const host = makeHost({ writeReviewNote });
-            const callbacks = makeCallbacks();
-            const flow = new ReviewNoteSaveFlow(host, callbacks);
-            const pending = makePendingNote();
-            flow.setPending(pending);
-
-            await flow.saveFindingsAsReviewNote([], "summary");
-
-            expect(writeReviewNote).toHaveBeenCalledTimes(1);
-            expect(writeReviewNote).toHaveBeenCalledWith(pending);
-            expect(callbacks.closePanel).toHaveBeenCalledTimes(1);
-            // Pending note should be cleared after successful write
-            expect(flow.pending).toBeNull();
-        });
-
-        it("does not clear pending note on write failure", async () => {
-            const writeReviewNote = jest.fn<(note: GeneratedReviewNote) => Promise<WriteResult>>(
-                async () => ({ success: false, error: "permission denied" }),
-            );
-            const host = makeHost({ writeReviewNote });
-            const callbacks = makeCallbacks();
-            const flow = new ReviewNoteSaveFlow(host, callbacks);
-            const pending = makePendingNote();
-            flow.setPending(pending);
-
-            await flow.saveFindingsAsReviewNote([], "summary");
-
-            expect(flow.pending).not.toBeNull();
-            expect(callbacks.petFlashError).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -311,35 +262,6 @@ describe("ReviewNoteSaveFlow", () => {
             await flow.saveFindingsAsReviewNote([finding], "review");
 
             expect(writeReviewNote).toHaveBeenCalledTimes(1);
-        });
-    });
-
-    describe("pending note management", () => {
-        it("setPending and clearPending work correctly", () => {
-            const host = makeHost();
-            const callbacks = makeCallbacks();
-            const flow = new ReviewNoteSaveFlow(host, callbacks);
-
-            expect(flow.pending).toBeNull();
-
-            const note = makePendingNote();
-            flow.setPending(note);
-            expect(flow.pending).toBe(note);
-
-            flow.clearPending();
-            expect(flow.pending).toBeNull();
-        });
-
-        it("setPending(null) clears the pending note", () => {
-            const host = makeHost();
-            const callbacks = makeCallbacks();
-            const flow = new ReviewNoteSaveFlow(host, callbacks);
-
-            flow.setPending(makePendingNote());
-            expect(flow.pending).not.toBeNull();
-
-            flow.setPending(null);
-            expect(flow.pending).toBeNull();
         });
     });
 

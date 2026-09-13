@@ -15,7 +15,7 @@ import {
 } from './featured-image-options';
 import type { PluginManager } from '../plugin'
 import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from '../settings';
-import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
+import { isPluginEnabled } from '../obsidian-internals';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from '../platform-dom';
 
@@ -295,19 +295,6 @@ export class AIService {
     }
 
     /**
-     * 生成标签建议
-     */
-    async generateTags(editor: Editor, view: MarkdownView, app: App): Promise<string[]> {
-        const markdown = editor.getValue();
-        const { content } = this.aiUtils.getDocumentContent(markdown);
-        const tags = Object.keys(getVaultTags(app));
-
-        const prompt = this.getTagsPrompt(content, tags);
-        const result = await this.callLLM(content, prompt);
-        return JSON.parse(result);
-    }
-
-    /**
      * 生成特色图片
      */
     async generateFeaturedImage(editor: Editor, view: MarkdownView, runOptions: FeaturedImageRunOptions): Promise<void> {
@@ -526,21 +513,6 @@ export class AIService {
   "summary": "...",
   "keywords": ["...", "..."]
 }`;
-    }
-
-    /**
-     * 获取标签生成的提示词
-     */
-    private getTagsPrompt(content: string, tags: string[]): string {
-        return `你是一个专业编辑，擅长文字总结、概括等工作。
-**你的任务是：**
-对给出的文字内容进行分析和总结，在给出的标签列表中找到3个最能表达文字内容的标签
-
-**要求：**
-- 给出的标签内容如果能在给定的列表中找到，则要求输出内容跟列表一致
-- 如果最能体现文字内容的关键词不在给定的列表中，可以自己增加标签内容，标签的格式必须是：'''#关键词'''
-- 输出结果的格式为：
-["#关键词1", "#关键词2", "#关键词3", ...]`;
     }
 
     /**

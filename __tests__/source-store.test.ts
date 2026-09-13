@@ -1,67 +1,13 @@
 import { describe, expect, it } from "@jest/globals";
 
 import {
+    cloneSourceRecord,
     createSourceDedupKey,
+    normalizeSourceRecord,
     sanitizeWebSourceUrl,
-    SourceStore,
 } from "../src/ai-services/source-store";
 
-describe("SourceStore", () => {
-    it("keeps host-only dependencies for lifetime checks without creating chips or citations", () => {
-        const store = new SourceStore([
-            { kind: "context-used", path: "hidden.md", statusOnly: true, redacted: true,
-                citationEligible: false, metadata: { sourceDependency: true } },
-            { kind: "context-used", path: "visible-status.md", statusOnly: true },
-        ]);
-        expect(store.all()).toHaveLength(2);
-        expect(store.getDisplayChips().map(chip => chip.label)).toEqual(["visible-status.md"]);
-        expect(store.getCitations()).toEqual([]);
-    });
-    it("keeps web sources out of Memory references", () => {
-        const store = new SourceStore([{
-            kind: "web-source",
-            url: "https://example.com/search?q=pa",
-            title: "Example result",
-            providerId: "builtin-web",
-            capabilityName: "webSearch",
-        }]);
-
-        expect(store.query("memory-reference")).toEqual([]);
-        expect(store.getCitations()).toEqual([expect.objectContaining({
-            kind: "web-source",
-            url: "https://example.com/search?q=pa",
-        })]);
-    });
-
-    it("folds chips across buckets when records share a path dedup key", () => {
-        const dedupKey = createSourceDedupKey("notes/project.md");
-        const store = new SourceStore([
-            {
-                kind: "memory-reference",
-                path: "notes/project.md",
-                title: "Project",
-                dedupKey,
-            },
-            {
-                kind: "context-used",
-                path: "notes/project.md",
-                capabilityName: "get_current_note_context",
-                dedupKey,
-            },
-        ]);
-
-        expect(store.getDisplayChips()).toEqual([{
-            dedupKey,
-            label: "Project",
-            kinds: ["memory-reference", "context-used"],
-            citationEligible: true,
-            records: [
-                expect.objectContaining({ kind: "memory-reference" }),
-                expect.objectContaining({ kind: "context-used" }),
-            ],
-        }]);
-    });
-
+describe("source record normalization", () => {
     it("sanitizes web URLs and rejects non-web schemes", () => {
         expect(sanitizeWebSourceUrl("javascript:alert(1)")).toBeNull();
         expect(sanitizeWebSourceUrl("file:///private/vault.md")).toBeNull();
@@ -70,17 +16,64 @@ describe("SourceStore", () => {
         );
     });
 
-    it("strips HTML and truncates source text", () => {
-        const store = new SourceStore([{
+    it("rejects web sources without a usable URL", () => {
+        expect(normalizeSourceRecord({
             kind: "web-source",
-            url: "https://example.com/article",
+            url: "javascript:alert(1)",
+            title: "Unsafe",
+        })).toBeNull();
+    });
+
+    it("strips HTML, truncates source text, and marks redacted URLs", () => {
+        const record = normalizeSourceRecord({
+            kind: "web-source",
+            url: "https://user:pass@example.com/path?token=SECRET&q=ok#frag",
             title: "<b>Title</b>",
             snippet: `<p>${"x".repeat(700)}</p>`,
-        }]);
+        });
 
-        const [record] = store.query("web-source");
-        expect(record.title).toBe("Title");
-        expect(record.snippet?.length).toBeLessThanOrEqual(500);
-        expect(record.snippet?.endsWith("...")).toBe(true);
+        expect(record).toMatchObject({
+            title: "Title",
+            url: "https://example.com/path?token=REDACTED&q=ok",
+            redacted: true,
+            citationEligible: true,
+        });
+        expect(record?.snippet?.length).toBeLessThanOrEqual(500);
+        expect(record?.snippet?.endsWith("...")).toBe(true);
+        expect(record?.dedupKey).toBe(createSourceDedupKey("https://example.com/path?token=REDACTED&q=ok"));
+    });
+
+    it("preserves caller-provided eligibility, status, dedup key, and metadata", () => {
+        const metadata = { sourceDependency: true };
+        const record = normalizeSourceRecord({
+            kind: "context-used",
+            path: "notes/project.md",
+            title: "Project",
+            dedupKey: "source:fixed",
+            citationEligible: false,
+            statusOnly: true,
+            metadata,
+        });
+
+        expect(record).toMatchObject({
+            dedupKey: "source:fixed",
+            citationEligible: false,
+            statusOnly: true,
+            metadata,
+            redacted: false,
+        });
+    });
+
+    it("clones source metadata without sharing the nested object", () => {
+        const metadata = { sourceDependency: true };
+        const record = cloneSourceRecord({
+            kind: "context-used",
+            dedupKey: "source:fixed",
+            path: "notes/project.md",
+            metadata,
+        });
+
+        expect(record.metadata).toEqual(metadata);
+        expect(record.metadata).not.toBe(metadata);
     });
 });

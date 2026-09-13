@@ -1,10 +1,9 @@
 /* Copyright 2023 edonyzpc */
-import { App, Editor, MarkdownView, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian';
+import { Editor, MarkdownView, getFrontMatterInfo, type App, type FrontMatterInfo } from 'obsidian';
 import { EditorView } from '@codemirror/view';
 import { AIService } from './ai-services/service';
 import type { FeaturedImageRunOptions } from './ai-services/featured-image-options';
 import { PluginManager } from './plugin'
-import { getVaultTags } from './obsidian-internals';
 
 export class AssistantHelper {
     private editor: Editor
@@ -33,48 +32,6 @@ export class AssistantHelper {
 
     async generate() {
         await this.aiService.generateSummary(this.editor, this.markdownView);
-    }
-}
-
-export class AssistantRobot {
-    private editor: Editor;
-    private view: MarkdownView;
-    private query: string = ''
-    private selected: string = ''
-    private plugin: PluginManager
-    private fontmatterInfo: FrontMatterInfo
-    private tags: string[]
-    private aiService: AIService;
-
-    constructor(
-        plugin: PluginManager,
-        editor: Editor,
-        view: MarkdownView,
-        app: App,
-        selected: string
-    ) {
-        this.plugin = plugin
-        this.editor = editor
-        const markdown = this.editor.getValue()
-        this.fontmatterInfo = getFrontMatterInfo(markdown);
-        this.query = markdown.slice(this.fontmatterInfo.contentStart);
-        this.view = view;
-        this.selected = selected
-        this.tags = Object.keys(getVaultTags(app));
-        this.aiService = new AIService(plugin);
-    }
-
-    async assitantTags() {
-        const tags = await this.aiService.generateTags(this.editor, this.view, this.plugin.app);
-
-        if (this.view.file) {
-            await this.plugin.app.fileManager.processFrontMatter(this.view.file, (frontmatter) => {
-                const oldTags = frontmatter["tags"] || [];
-                frontmatter["tags"] = oldTags.concat(tags);
-            });
-        }
-
-        return tags.join(" ");
     }
 }
 
