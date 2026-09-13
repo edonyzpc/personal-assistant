@@ -879,12 +879,12 @@ Voice: warm, specific, careful, research-assistant-like. No exaggeration.
 
 ```
 src/
+├── custom.pcss                # Pet keyframes and state-driven styles, built into styles.css
 ├── pagelet/
 │   ├── pet/
 │   │   ├── PetView.ts          # Pet DOM element lifecycle, mounting rules
 │   │   ├── PetStateMachine.ts  # 4-state machine, transitions
-│   │   ├── PetSvg.ts           # SVG rendering, state-driven appearance
-│   │   └── PetAnimations.css   # Keyframes, state-driven animations
+│   │   └── PetSvg.ts           # SVG rendering, state-driven appearance
 │   ├── bubble/
 │   │   ├── BubbleView.ts       # Bubble DOM, positioning, close/reopen
 │   │   └── BubbleContent.ts    # Content rendering for 4 scenarios
@@ -893,15 +893,15 @@ src/
 │   │   └── PanelLayouts.ts     # Scenario-adaptive layouts (timeline, discovery, etc.)
 │   ├── tab/
 │   │   └── TabView.ts          # Full tab workspace
-│   ├── preload/              # Internal compatibility name; user-facing copy says background preparation.
-│   │   ├── PreloadEngine.ts  # Timer + change detection + AI dispatch
-│   │   ├── PreloadCache.ts   # In-memory cache per vault
-│   │   └── PreloadBudget.ts  # Rate limiting (per-hour, per-day)
+│   ├── preload/
+│   │   └── PreloadBudget.ts  # Retained foreground analysis budget
+│   ├── agent/
+│   │   ├── pagelet-deep-discover-controller.ts # Current discovery admission/run/cache
+│   │   └── pagelet-deep-discover-scheduler.ts  # Explicit and automatic scheduling
 │   ├── output/
 │   │   ├── ReviewNoteGenerator.ts  # AI → complete note generation
 │   ├── scope/
-│   │   ├── ScopeResolver.ts    # Auto-scope + exclusion rules
-│   │   └── ChangeDetector.ts   # mtime comparison for background preparation
+│   │   └── ScopeResolver.ts    # Shared source eligibility and exclusion rules
 │   ├── hints/
 │   │   └── ProactiveHints.ts   # Hint scheduling, cooldown, quiet hours
 │   ├── commands.ts             # Command palette registrations

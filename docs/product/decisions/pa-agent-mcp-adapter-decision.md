@@ -63,7 +63,7 @@ All request/response summaries and source fields pass through one redactor befor
 - source title
 - source snippet
 
-The redactor must remove credentials, fragments, known secret query params, and auth-like header/body fields. Web source URLs must still pass `SourceStore` URL sanitization before becoming `SourceRecord.kind === "web-source"`.
+The redactor must remove credentials, fragments, known secret query params, and auth-like header/body fields. Web source URLs must still pass `sanitizeWebSourceUrl` through `normalizeSourceRecord` before becoming `SourceRecord.kind === "web-source"`.
 
 ## Abort Contract
 

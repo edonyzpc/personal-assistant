@@ -1,7 +1,7 @@
 # Multimodal Chat Architecture
 
 Document status: Current
-Updated: 2026-09-12
+Updated: 2026-09-13
 Work item: B-129
 Authority: 当前图片聊天、作品输出、文案版本、图文保存及显式风格参考的技术契约。
 Product contract: [DEC-030](../product/decisions/dec-030-multimodal-chat-image-copywriting.md) / [B-129 Product Spec](../product/specs/pa-multimodal-chat-product-spec.md) / [B-135 Product Spec](../product/specs/pa-unified-task-execution-product-spec.md)
@@ -58,7 +58,7 @@ flowchart LR
 | --- | --- |
 | 草稿、历史与 UI 接线 | [ChatView](../../src/chat/chat-view.ts)、[composer](../../src/chat/composer-draft.ts)、[history store](../../src/chat/chat-history-store.ts) |
 | 原件、引用、同步说明与缓存 | [ImageAssetService](../../src/chat/image-assets.ts)、[image types](../../src/chat/image-types.ts) |
-| 格式与资源限制 | [processor](../../src/chat/image-processor.ts)、[format](../../src/chat/image-format.ts)、[policy](../../src/chat/image-policy.ts)；旧 macOS converter 无生产调用 |
+| 格式与资源限制 | [processor](../../src/chat/image-processor.ts)、[format](../../src/chat/image-format.ts)、[policy](../../src/chat/image-policy.ts)；HEIC/HEIF 拒绝及既有缓存兼容边界见下文 |
 | 模型能力及最终图片请求 | [capability](../../src/ai-services/image-capability.ts)、[image request](../../src/ai-services/image-request.ts)、[runtime](../../src/ai-services/pa-agent-runtime.ts) |
 | 文案协议、版本与保存 | [writing context](../../src/ai-services/writing-context-run.ts)、[native output](../../src/ai-services/native-writing-call.ts)、[output](../../src/ai-services/writing-output.ts)、[bridge](../../src/ai-services/pa-agent-stream-bridge.ts)、[versions](../../src/chat/writing-versions.ts)、[save action](../../src/chat/writing-save-action.ts) |
 | 来源隔离与风格 | [chat admission](../../src/pa/chat-memory-admission.ts)、[note provenance](../../src/chat/writing-note-provenance.ts)、[style service](../../src/chat/writing-style-service.ts)、[projection](../../src/pa/memory-use-projection.ts) |

@@ -64,8 +64,9 @@ Use the real Obsidian window where practical:
 
 - Open Pagelet from the visible pet/ribbon or command path.
 - Verify `open-panel` remains distinct from `review-current`.
-- Toggle `Current`, `Yesterday`, `Last 3 days`, and `Last 7 days`; inspect selected and skipped rows.
-- Run `Review selected` only against test-vault fixture notes.
+- Verify the retired Current/Yesterday/Last 3 days/Last 7 days presets, per-note checkboxes, selected counts and `Review selected` action are absent, including narrow/mobile layouts (DEC-035).
+- Exercise the current explicit Deep Discover action only against test-vault fixture notes: the active Markdown note is the anchor and other allowed notes may be evidence. Existing aliases, including Quick review, retain their current Deep Discover routes; only open-panel is the zero-provider-call opening contract.
+- Verify ContextPager/source details remain honest for allowed, excluded and non-Markdown active files; removing range controls must not remove global source exclusions or mislabel excluded notes as used.
 - Verify loading/progress, result cards, related notes, source actions, `Research`, `Add to draft`, `Dismiss`, and `Remove` when present.
 - Edit the draft textarea and verify `Expand to tab`.
 - Exercise `Stop`, retry, cancel, close/reopen, keyboard/focus, narrow layout, and affected error states.

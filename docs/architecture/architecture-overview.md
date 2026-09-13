@@ -661,26 +661,17 @@ sequenceDiagram
     participant LLM as 🧠 LLM
     participant Vault as 📂 Vault
 
-    Note over Pet: 后台 PreloadEngine<br/>定时分析
-
-    Pet->>LLM: 后台分析最近笔记
-    LLM-->>Pet: 返回发现
-    Pet->>Pet: idle → working → nudge
-
     U->>Pet: 点击 Pet
-    Pet->>Bub: 显示 Bubble (快捷摘要)
-    Bub-->>U: 3 条发现 + 操作按钮
-
-    U->>Bub: 点击 "Review Recent"
-    Bub->>Pan: Bubble 关闭, Panel 展开
-
-    Pan->>Pan: 显示 Review Timeline<br/>Scope Controls
-    U->>Pan: 调整范围 (yesterday/3d/7d)
-    Pan->>LLM: 前台分析选定文件
-    LLM-->>Pan: 返回建议
+    Pet->>Bub: 按当前交付状态显示 Bubble 或操作菜单
+    U->>Pet: 显式 Discover / 兼容命令
+    Pet->>LLM: 以活动 Markdown 为 anchor<br/>经现有来源准入执行 Deep Discover
+    Note over LLM: 允许边界内的跨笔记证据
+    LLM-->>Pan: 展示来源支持的发现
 
     U->>Pan: 点击 "Save as Review Note"
-    Pan->>Vault: 写入 .pagelet/ 目录
+    Pan->>U: 预览并确认
+    U->>Pan: 确认保存
+    Pan->>Vault: 按现有写入边界创建审阅笔记
 
     U->>Pan: 点击 "Expand to Tab"
     Pan->>Tab: Panel 关闭, Tab 打开
@@ -696,31 +687,15 @@ sequenceDiagram
 | `discover` | 知识发现 | 径向连接图 (SVG 线条) + 关联列表 |
 | `summary` | 周期性总结 | Obsidian MarkdownRenderer 预览 |
 
-### 6.6 Preload Engine 架构
+### 6.6 当前发现调度与保留边界
 
-```
-定时循环 (默认 30 min)
-  │
-  ├── 自适应间隔
-  │   ├── 用户活跃 → 间隔减半
-  │   └── 闲置 >30 min → 间隔加倍
-  │
-  ├── 断路器
-  │   ├── 连续错误 → 指数退避 (最大 8x)
-  │   └── 连续 2 次成功 → 重置
-  │
-  ├── 速率限制 (PreloadBudget)
-  │   ├── 每小时上限 (默认 2 次)
-  │   └── 每天上限 (默认 20 次)
-  │
-  ├── 范围解析 (ScopeResolver)
-  │   ├── 最近 7 天修改的文件
-  │   ├── 排除: 隐藏目录、模板、太大、pagelet 输出、#no-ai 标签
-  │   └── 上限 20 文件/周期
-  │
-  └── 变更检测 (ChangeDetector)
-      └── 只分析上次分析后有变更的文件
-```
+`PageletDeepDiscoverScheduler` 合并 note open/leave/edit-idle 触发，并为显式运行
+保留独立调度路径。`PageletDeepDiscoverController` 继续拥有来源快照、准入、运行与
+缓存；预算与取消规则见对应源码，不在这里复制数值。
+
+DEC-035 删除无生产入口的旧 `PreloadEngine`、`PreloadCache`、`ChangeDetector`
+及专用接线。共享 `ScopeResolver`、前台 `PreloadBudget`、Quiet Recall/Scope Recap
+服务和 provider admission 不随旧控件删除。
 
 ### 6.7 Write Action Framework v1
 
@@ -1036,7 +1011,7 @@ summary.
 | Pagelet 编排 | `src/pagelet/orchestrator.ts` |
 | Pagelet Pet | `src/pagelet/pet/PetView.ts` + `PetStateMachine.ts` |
 | Pagelet 评审模型 | `src/pagelet/pa-review-model.ts` |
-| 后台预加载 | `src/pagelet/preload/PreloadEngine.ts` |
+| 当前发现调度 | `src/pagelet/agent/pagelet-deep-discover-scheduler.ts` → `pagelet-deep-discover-controller.ts` |
 | 设置定义 | `src/settings.ts` + `src/settings/pagelet/index.ts` |
 | 平台抽象 | `src/platform-dom.ts` |
 | 国际化 | `src/locales/` |

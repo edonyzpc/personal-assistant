@@ -43,6 +43,7 @@
 
 ## Shared Product Infrastructure
 
+- [Bounded Code Cleanup](./specs/pa-bounded-code-cleanup-product-spec.md) — 有界清理、旧 Pagelet 范围控件退役及保留能力边界。
 - [Unified Agent Task Execution](./specs/pa-unified-task-execution-product-spec.md)
 
 - [Simple Settings](./specs/pa-simple-settings-product-spec.md)

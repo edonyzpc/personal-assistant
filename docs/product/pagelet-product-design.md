@@ -5,6 +5,14 @@
 > through [DEC-027](./decisions/dec-027-bounded-retrieval-recovery.md),
 > the [B-108 owning Scope Recap spec](./specs/pa-scope-recap-theme-summary-product-spec.md),
 > and the [B-121 Attention-Aware Delivery spec](./specs/pagelet-attention-aware-delivery-product-spec.md).
+> [DEC-035](./decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md) and the
+> [B-136 cleanup spec](./specs/pa-bounded-code-cleanup-product-spec.md) narrowly supersede
+> the old Panel scope-selection promise and its unreachable generic preparation
+> chain; they do not retire global source boundaries. The current command section
+> below governs legacy aliases: Quick review/review/recall/recap invoke explicit
+> active-note Deep Discover. Earlier Bubble-hotkey scenarios are historical for
+> those aliases. `Open prepared review` is a zero-call compatibility entry with
+> honest empty feedback; no generic raw-preload producer or Prepared Panel remains.
 > Archive discussions are provenance only, never the current baseline.
 
 ## Status
@@ -15,11 +23,11 @@
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
 | Status | Core beta and B-108/DEC-017/DEC-018/DEC-019/DEC-020 runtime shipped through BRAT `2.9.0-beta.2`; prior deploy/desktop/iPhone BRAT smoke and user-operated long-press/Review/Discover/Scope Recap evidence remain provenance. B-118 DEC-023/DEC-024 actual-call admission, Review/preload classification, Quiet Recall pure-semantic retrieval、live-source/Saved Insight and owner-aware nudge boundaries pass full automated、adversarial review and deployment-identity gates. B-121 three-action Ring evidence covers automated、review、local/iCloud deployment、desktop and iPhone portrait gates；its physical landscape waiver remains historical only. B-121 core runtime is included in BRAT `2.9.0-beta.5`. The 2026-08-06 DEC-025/DEC-026 amendment adds Share as the fourth Ring action；the 2026-08-07 owner amendment accepts the current `master` compact layout fallback. B-124 is closed, with current behavior in DEC-026, its Product Spec, Architecture, tests and the smoke checklist. DEC-027/B-125 defines the current implemented 0–2 insight and single-recovery contract；its validation and per-flag rollout dispositions are closed in [B-125 compact evidence](../archive/2026/b-125-retrieval-optimization-closeout.md). |
-| Last revised | 2026-08-30 |
+| Last revised | 2026-09-13 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
 | Write boundary | Current B-108 delivery is read-only; existing user-confirmed review-note creation uses the **Write Action Framework**; there is no current standalone Periodic Summary save contract |
-| Background preparation engine | Optional timed polling with rate-limited generic background review preparation (D032); disabled by default and enabled explicitly by the user |
+| Background preparation engine | Current automatic Deep Discover uses note-trigger scheduling and source admission. DEC-035 retires the unreachable generic timer/change-detector/preload chain; persisted settings remain compatible. |
 | Prepared Scope Recap | A distinct product behavior from generic review preload; default on after provider setup when the capability is enabled and sources are allowed, bounded to high-intent scope, and persistently disableable. The first actual Pagelet provider call uses one shared non-blocking notice; high-risk runs still block before any call ([DEC-017](./decisions/dec-017-default-background-recap-preparation.md), [DEC-023](./decisions/dec-023-shared-pagelet-provider-first-use.md)) |
 | Historical reference | [review-assistant-product-design.md](../archive/review-assistant-product-design.md) |
 | Current decisions | D001-D041 as reconciled in this document, with DEC-017 through DEC-027 and the owning Scope Recap/Quiet Recall/B-121/B-124/B-125 contracts taking precedence for their scopes |
@@ -525,7 +533,13 @@ completion and has no current success criterion or command contract here.
 
 ---
 
-## Background Preparation Engine — [NEW MAJOR SECTION — replaces historical design "no background analysis"]
+## Generic Background Preparation — Historical Constraints
+
+The timer/change-detector/cache implementation described in this section is
+retired by DEC-035. These D032–D036 constraints explain the prior design; they do
+not claim a currently running producer or an available raw Prepared Panel. Current
+automatic discovery follows the note-trigger scheduler described under
+“Background preparation Scope”. Shared service and permission contracts remain.
 
 ### Design Principle
 
@@ -672,26 +686,30 @@ Decisions D018-D023 are **preserved** for the foreground pool. Background prepar
 
 ### Foreground Scope
 
-For user-triggered analysis (Scenario 1-3), Pagelet auto-scopes to the **current note** by default. The user can expand scope via the Panel:
+**2026-09-13 owner-approved amendment — DEC-035**: current explicit Deep Discover
+starts from the active Markdown note as its anchor and may explore other notes
+allowed by Data Boundary. The anchor is not an only-this-file source restriction.
+Old command IDs, names and their existing alias routing remain; `open-panel`
+continues to open the Panel without starting an additional provider call.
 
-- Current note (default for click/hotkey).
-- Yesterday.
-- Last 3 days.
-- Last 7 days.
+Retire the old Panel current/yesterday/last3/last7 presets, per-note include/exclude,
+and Review selected semantics together with their exclusive state. They currently
+do not constrain Deep Discover. This is an approved product adjustment, not proof
+that the old UI is already gone; implementation and verification are owned by the
+[B-136 Tracker](../development/active/bounded-code-cleanup/tracker.md).
 
-Custom range/date-picker scope is future work.
-
-**[CHANGED from historical design]**: historical design required manual scope
-selection before every run. Current Pagelet defaults to the current note for
-quick interactions; broader time-range Recap requires separate authority.
+Global source exclusions, source inspection, ContextPager, Review Queue context,
+and other valid scope consumers remain. Future hand-selected or time-range Recap
+requires separate authority; this amendment does not retire every Scope Recap or
+Quiet Recall contract.
 
 ### Background preparation Scope
 
-For background review preparation, scope is determined by change detection:
-
-- Recent notes in the 7-day scope that changed since the last background preparation cycle.
-- Subject to the same exclusion rules as foreground (`.trash`, hidden folders, excluded tags, `#no-ai`, `#no-review`).
-- Background preparation does NOT read the entire vault — only changed notes.
+Current automatic Deep Discover uses the existing note-trigger scheduler and
+controller with source-boundary admission. The old generic recent-seven-day
+`PreloadEngine`/`ChangeDetector` producer is retired under DEC-035; its settings
+compatibility does not imply that this timer still runs. Shared Quiet Recall,
+Scope Recap, ScopeResolver and foreground budget contracts remain intact.
 
 ### Future Time-range Recap Scope
 
@@ -1029,18 +1047,23 @@ Top-level Pagelet settings group inside PA settings:
 > **Not a setting:** Pet state (resting, idle, working, nudge) is system-driven. Users do not manually cycle states. See the "State transitions are automatic" note in Pet Design.
 
 **Background preparation** — [NEW]
-- Enable generic background review preparation: `on` / `off` (default: `off`). This remains an explicit opt-in for non-Recap review preparation and does not authorize work outside the DEC-023 changed-only/recent-7-day/4K/2-hour/20-day/read-only envelope.
-- Prepare Scope Recap in background: `on` / `off` (default: `on` after provider setup when the capability is enabled and sources are allowed). The first actual Pagelet provider call shows one shared non-blocking notice and continues; broad/sensitive/costly/whole-vault or excluded-override runs still require blocking confirmation. It pre-computes source-backed Recap items so they are ready instantly; an explicit user opt-out persists across reloads and upgrades. The UI must not label both controls simply as `preload`.
-- Polling interval: `5 min` / `15 min` / `30 min` / `1 hour` / `2 hours` / `4 hours` (default: `30 min`).
-- Generic background preparation actual-provider-call cap per rolling hour (default 2; configuration cannot exceed the unattended standard envelope).
-- Generic background preparation actual-provider-call cap per local day (default 20; configuration cannot exceed the unattended standard envelope).
+- Current Settings exposes background discovery and Deep Discover usage through
+  the existing scheduler/controller. Their admission, cancellation and cost
+  boundaries are unchanged by DEC-035.
+- The old generic preparation timer, cache and selected-range controls are
+  retired. Remaining legacy settings are read for compatibility; they do not
+  provide a current generic polling/preparation feature.
+- Shared Quiet Recall/Scope Recap services and the separate high-risk provider
+  confirmation contract remain; retiring old UI is not permission to broaden
+  sources, send excluded notes or bypass confirmation.
 
 **Storage** — [PRESERVED]
 - Review notes folder (default `.pagelet/`; configurable in advanced).
 
 **Reviews** — [PRESERVED, simplified]
-- Current review scope controls apply to implemented review flows. Future
-  time-range Recap presets require separate authority; there is no current
+- DEC-035 retires the old Panel range/include controls. Explicit Deep Discover
+  starts from the active Markdown anchor; allowed cross-note evidence remains.
+  Future time-range Recap presets require separate authority; there is no current
   Periodic Summary default.
 - Excluded folders.
 - Excluded tags.
@@ -1131,20 +1154,17 @@ Trust requirements:
 - Background review preparation uses `runKind="background"` with `allowWrite=false` — it can NEVER trigger write operations. **[NEW]**
 - No hidden note reads before user action — **revised**: background preparation is transparent via the Pet state (`working` state visible when background preparation runs). **[CHANGED]**
 - No sending skipped note bodies to the model. **[PRESERVED]**
-- Clear included/skipped details (visible in Panel). **[PRESERVED]**
+- Honest used/skipped source and boundary details through ContextPager and source
+  views; the retired Panel range selector is not a source-permission control. **[PRESERVED]**
 - Source-backed suggestions. **[PRESERVED]**
 - Preview before write. **[PRESERVED]**
 - User-confirmed note creation. **[PRESERVED]**
 - No telemetry or analytics are collected by the plugin. Any future metrics must remain content-free. **[UPDATED]**
 
-Per-run scope indicator (for foreground analysis):
-
-- Selected time range.
-- Candidate count.
-- Included count.
-- Skipped count.
-- Whether related old notes may be searched.
-- Whether WebSearch has not yet been triggered.
+Foreground source explanation follows the actual active-note run and its
+source-backed result. Do not show selected ranges or selected/included/skipped
+counts from the retired scope controls. ContextPager and current source views
+retain their own truthful source and boundary explanations.
 
 Background preparation transparency:
 
@@ -1166,16 +1186,13 @@ Background preparation transparency:
 
 New Pagelet commands (command palette, registered with `Pagelet:` prefix per D029):
 
-- `Pagelet: Quick review` — opens the normal Bubble without triggering a
-  provider call. Only valid DeliveryCandidates appear there; raw generic
-  prepared findings remain available through the explicit Prepared Panel command.
-  When the Pet/Bubble anchor is unavailable, the command falls back to Panel.
-- `Pagelet: Open prepared review` — explicitly opens cached generic background
-  findings in the Prepared Panel with zero additional provider calls; empty cache
-  stays closed, reports that no prepared suggestions are available, and preserves
-  any existing Bubble、Panel、layout and pending state. The Panel
-  is read-only and cannot save, expand to Tab, or become current analysis.
-- `Pagelet: Discover connections` — current beta runs current-note analysis and opens the discovery Panel layout; dedicated cross-note discovery is future work.
+- `Pagelet: Quick review` — preserved alias for the current explicit Deep Discover
+  route, using the active Markdown anchor and existing admission/cache behavior.
+- `Pagelet: Open prepared review` — preserved zero-call compatibility entry.
+  The retired generic producer has no current cache to open; the entry reports
+  that no prepared suggestions are available without replacing the current view.
+- `Pagelet: Discover connections` — uses the same explicit Deep Discover route;
+  allowed cross-note evidence is part of the current behavior.
 - `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
 - `Pagelet: Show background preparation status` — shows background preparation engine diagnostics.
 - `Pagelet: Move Pet to corner` — switches Pet corner position.
@@ -1183,7 +1200,7 @@ New Pagelet commands (command palette, registered with `Pagelet:` prefix per D02
 
 Preserved historical design commands:
 
-- `Pagelet: Review current note` — preserved, runs current note analysis and opens Bubble or Panel with results.
+- `Pagelet: Review current note` — preserved alias for the current explicit Deep Discover route.
 - `Pagelet: Open Pagelet` — preserved, opens Panel without triggering analysis; the empty panel offers `Review current note` as the explicit provider-backed action.
 
 ---
@@ -1357,10 +1374,10 @@ Pagelet considered successful if:
 | --- | --- | --- |
 | Mascot (4 states) | Pet (4 states, refined) | States refined (resting/idle/working/nudge); visual style preserved |
 | Mascot click -> Panel | Pet short click -> Bubble or Action Ring; Bubble -> Panel | State-resolved delivery/command split replaces direct panel open |
-| Manual scope selection | Auto-scope (current note default) | Panel still allows manual scope adjustment |
+| Manual scope selection | Active-note-anchored Deep Discover | DEC-035 retires the old Panel time presets; permitted cross-note exploration remains |
 | Four fixed suggestion categories | AI-organized dynamic layout | Structured output schema may evolve |
 | Draft collection flow | Historical Periodic Summary design retired | No independent current contract; future time-range Recap needs separate authority |
-| Included/skipped note adjustment | Preserved in Panel | Simplified; auto-scope removes most manual adjustment |
+| Included/skipped note adjustment | Old per-run selection retired by DEC-035 | Global exclusions and source/context inspection remain; implementation evidence belongs to B-136 |
 | Reminders (local activity threshold) | Generic proactive hints (AI-driven, opt-in) | Replaces rule-based reminders with AI-driven signals; OFF by default. DEC-018 separately governs the high-value Scope Recap exception. |
 | No background analysis | Background preparation engine | Performance optimization; configurable; can be disabled |
 

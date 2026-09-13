@@ -1,6 +1,6 @@
 # PA Agent Current Architecture
 
-Updated: 2026-09-12
+Updated: 2026-09-13
 
 Status: Current runtime contract. The pre-v2 migration plan is archived at [pa-agent-architecture-plan-pre-v2-closeout.md](../archive/pa-agent-architecture-plan-pre-v2-closeout.md).
 
@@ -32,7 +32,7 @@ flowchart TD
   Loop["PaAgentLoop\ncanonical state machine"]
   Model["Tool-capable model stream"]
   Dispatcher["ToolExecutionDispatcher"]
-  Sources["SourceStore / Context Used"]
+  Sources["Source records / Context Used"]
   Memory["MemorySearchTool\nHost-only candidates + projector"]
   Recovery["ChatMemoryRecoveryCoordinator\nrun-scoped one-shot recovery"]
   TaskScope["TaskSourceRun\nhost-bound source scope"]
@@ -66,7 +66,7 @@ flowchart TD
 | `CapabilityRegistry` | Registers providers/capabilities, prepares and validates input, applies policy, executes capabilities, and emits opt-in content-free usage events. |
 | `PolicyEngine` | Enforces platform, run kind, permission, confirmation, recoverability, and capability-kind boundaries before export/execution. |
 | `PaAgentContextManager` | Runs projection, hygiene, compaction, and budget delegates before model calls. |
-| `SourceStore` | Keeps source records and source-boundary metadata separate from answer text. |
+| `SourceRecord` and source projection | Keep source records and source-boundary metadata separate from answer text; normalization and copying use the shared source helpers, not a separate store instance. |
 | `MemorySearchTool` | Owns direct/graph candidate collection, selected-model reranking, live-source checks, final allocation, and the allowlisted Memory observation. |
 | `ChatMemoryRecoveryCoordinator` | Owns one run-scoped hidden relaxed attempt, its token/deadlines/frozen plan, exact-repeat suppression, and the cumulative ≤8-document replacement observation. |
 | `TaskSourceRun` | Binds one user request to the Host-allowed note/Web scope and revalidates the material used by every physical provider request. |

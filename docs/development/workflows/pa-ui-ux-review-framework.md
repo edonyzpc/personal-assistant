@@ -172,7 +172,7 @@ Derived from the PA North Star ("随手记下，需要时自然浮现"), design 
 
 | # | Surface | Type | Layer | Key Files |
 | --- | --- | --- | --- | --- |
-| S1 | Pet | Pagelet L1 | Always visible | `pagelet/pet/PetView.ts`, `PetAnimations.css` |
+| S1 | Pet | Pagelet L1 | Always visible | `pagelet/pet/PetView.ts`, `custom.pcss` |
 | S2 | Bubble | Pagelet L2 | On-demand overlay | `pagelet/bubble/BubbleView.ts`, `BubbleContent.ts` |
 | S3 | Panel | Pagelet L3 | Side panel | `pagelet/panel/PanelView.ts`, `PanelLayouts.ts` |
 | S4 | Tab | Pagelet L4 | Workspace leaf | `pagelet/tab/TabView.ts` |

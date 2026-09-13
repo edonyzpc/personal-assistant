@@ -1,13 +1,14 @@
 # Product Decision Index
 
 Document status: Current
-Updated: 2026-09-12
+Updated: 2026-09-13
 Authority: 需要完整 rationale 的 repo-local PA Decision Record 索引。
 
 [Active Decision Register](../active-decisions.md) 提供跨 feature 摘要；本目录保存重要决定的 Context、Options、Decision、Consequences 与 Revisit trigger。新建记录使用 [Decision template](../../development/templates/decision.md)。
 
 | ID | Decision | Status | Scope | Record |
 | --- | --- | --- | --- | --- |
+| DEC-035 | Bounded cleanup and Pagelet scope retirement | Accepted | 删除旧 Panel 范围控件；保留当前 Deep Discover、旧命令、来源边界及已确认外围功能；其余清理保持有效行为 | [Record](./dec-035-bounded-cleanup-and-pagelet-scope-retirement.md) |
 | DEC-034 | Unified Agent task execution | Accepted | B-135 已交付的主 Agent 语义、个性化取材、来源准入、作品交付、恢复与兼容边界；历史验证已归档 | [Record](./dec-034-unified-agent-task-execution.md) |
 | DEC-033 | Simple settings and unified defaults | Accepted | B-106 必要机制内置；2026-09-09 修订的长期提取与本地习惯学习默认开启、独立退出和旧值迁移已由 B-135 交付；废弃规则仍只限明确撤销项 | [Record](./dec-033-simple-settings-and-unified-defaults.md) |
 | DEC-001 | PA Agent builtin MCP-style WebSearch adapter | Accepted | PA Agent network-read capability | [Record](./pa-agent-mcp-adapter-decision.md) |

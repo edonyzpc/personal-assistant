@@ -20,7 +20,8 @@ The automated suite already covers:
 - Cost estimation / rate limits / structured-output behavior
   (`pa-review-cost.test.ts`, `pa-review-model.test.ts`)
 - Component-level Pagelet panel foundations (`pagelet-suggestion-card.test.ts`,
-  `pagelet-mascot*.test.ts`, `pagelet-compat-focus-command.test.ts`)
+  `pagelet-pet-state-machine.test.ts`, `pagelet-action-ring.test.ts`,
+  `pagelet-compat-focus-command.test.ts`)
 - Command-palette entries (`pagelet-commands.test.ts`)
 - Panel, bubble, pet, and background-preparation orchestration
   (`pagelet-orchestrator.test.ts`, `pagelet-compat-*.test.ts`)
@@ -922,13 +923,17 @@ shows what blocks tag vs what merely needs follow-up:
 ## Pagelet panel smoke
 
 - [ ] Panel header shows the source note path and current status.
-- [ ] Scope shows range controls: Current, Yesterday, Last 3 days, Last 7 days.
-- [ ] Switching ranges updates included/skipped note rows without calling the AI provider.
-- [ ] Unchecking an included note removes it from the next run.
-- [ ] `.pagelet/` review output notes are excluded and summarized without
-      listing individual generated review-note paths.
-- [ ] Hidden/system folder paths do not appear in normal scope rows.
-- [ ] Mascot state changes: idle → reviewing → saved/done (or error on failure).
+- [ ] `Pagelet: Open Pagelet` opens the Panel without a new provider call.
+- [ ] No Current/Yesterday/Last 3 days/Last 7 days presets, per-note checkboxes,
+      selected counts, `Review selected` action or empty scope-control area remain
+      on desktop or mobile (DEC-035).
+- [ ] The explicit Deep Discover action uses the active Markdown note as anchor;
+      another allowed note can appear as evidence. Old command aliases retain
+      their current routes; `Quick review` must not be assumed to be a zero-call action.
+- [ ] ContextPager/source details preserve global source exclusions: excluded
+      notes are not reported as used, and non-Markdown active files do not become
+      review sources. Generated output and hidden/system sources remain excluded.
+- [ ] Current Pet state changes during work and settles after success/error.
 - [ ] SuggestionCards render with source, rationale, proposed action, Accept,
       Dismiss, and cost footer when cost diagnostics are available.
 - [ ] Click Accept on one suggestion → it appears in the Draft list.
@@ -1036,9 +1041,9 @@ cost total in the Pagelet panel. It does not ship a status-bar cost indicator.
 - [ ] Modify the SOURCE note (add a sentence and save) → no Pagelet review
       auto-runs unless the user explicitly invokes Pagelet again
 
-## Pagelet panel / mascot a11y
+## Pagelet panel / Pet a11y
 
-- [ ] Enable OS-level Reduce motion and re-open Pagelet → mascot animations
+- [ ] Enable OS-level Reduce motion and re-open Pagelet → Pet animations
       are stopped; CSS `prefers-reduced-motion` short-circuit is honored
 - [ ] Enable a screen reader (VoiceOver on macOS / NVDA on Windows)
 - [ ] Trigger Pagelet → confirm → screen reader announces "Pagelet review

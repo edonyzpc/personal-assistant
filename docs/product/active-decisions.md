@@ -1,7 +1,7 @@
 # Active Decision Register
 
 Document status: Current
-Updated: 2026-09-12
+Updated: 2026-09-13
 Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘要。
 
 本文件与 [Decision index](./decisions/README.md) 是仓库内权威。Chat、Issue、Claude/Codex Memory 或其他外部工具只能提供输入；若外部记录与本文件、Accepted Decision 或当前 Product Spec 冲突，必须先在仓库内完成 Decision/Spec 校准。
@@ -18,6 +18,7 @@ Authority: PA 跨 feature 的当前产品、架构和延期决策 repo-local 摘
 
 | ID | Decision | Boundary / rationale | Current evidence | Revisit trigger |
 | --- | --- | --- | --- | --- |
+| DEC-035 | 有界清理与 Pagelet 旧范围控件退役 | 仅删除旧每次运行范围选择，保留活动笔记 anchor 的跨笔记 Deep Discover、旧命令路由、全局来源/上下文控制；Statistics、Share Card 字体、管理与 Records 入口保留 | [Decision](./decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md), [Product Spec](./specs/pa-bounded-code-cleanup-product-spec.md) | 实际需求要求手选范围，或候选清理发现有效消费者/兼容责任 |
 | DEC-034 | 主 Agent 语义决策、个性化取材边界与默认学习 | 主 Agent 统一理解咨询、取材、创作与 Operations 提议；宿主逐次重验物理发送来源，作品由专用通道交付并保留 legacy reader、恢复和降级边界。旧 track 不重开 | [Decision](./decisions/dec-034-unified-agent-task-execution.md), [Product Spec](./specs/pa-unified-task-execution-product-spec.md), [B-135 validation](../archive/2026/b135-unified-task-execution-validation.md) | 来源、权限、默认迁移或可靠交付不能满足已确认边界 |
 | DEC-033 | 设置面向普通用户，必要机制内置，废弃开关不再参与运行 | 2026-09-09 修订为长期提取与本地习惯学习分别默认开启、独立关闭/暂停和首次透明说明；不伪造用户确认，迁移不得复活真实停用。默认与旧值迁移已由 B-135 交付；清理仍仅限明确撤销项 | [Decision](./decisions/dec-033-simple-settings-and-unified-defaults.md), [Product Spec](./specs/pa-simple-settings-product-spec.md), [B-135 validation](../archive/2026/b135-unified-task-execution-validation.md) | 默认策略造成异常成本、功能缺失或权限扩大 |
 | DEC-032 | Context 可靠性和长会话连续性分别验收，长期 Memory 保持独立 | 完整原文与可逆表示优先，超限时采用有来源的结构化会话/工具摘要；不引入工具归档或执行恢复 | [Decision](./decisions/dec-032-context-reliability-and-conversation-continuity.md), [Product Spec](./specs/pa-context-management-product-spec.md) | 摘要遗漏重要语义或递归漂移，或存在独立重启续跑需求 |
