@@ -33,6 +33,7 @@
 ## Share And Reuse
 
 - [Share Card](./specs/pa-share-card-product-spec.md)
+- [Share Card Print Styles](./specs/pa-share-card-print-styles-product-spec.md)
 
 ## Pagelet Delivery
 

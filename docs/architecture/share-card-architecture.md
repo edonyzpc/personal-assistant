@@ -1,13 +1,13 @@
 # Share Card Architecture
 
-Updated: 2026-09-13
+Updated: 2026-09-14
 
 | Field | Value |
 | --- | --- |
 | Document type | Current architecture contract |
-| Work item | B-124 |
-| Product authority | [DEC-026](../product/decisions/dec-026-local-share-card.md) and [PA Share Card Product Spec](../product/specs/pa-share-card-product-spec.md) |
-| Validation evidence | [Pagelet and Share Card smoke checklist](../development/validation/pagelet-smoke-checklist.md) |
+| Work item | B-124, B-137 |
+| Product authority | [DEC-026](../product/decisions/dec-026-local-share-card.md), [DEC-036](../product/decisions/dec-036-share-card-print-styles.md), [PA Share Card Product Spec](../product/specs/pa-share-card-product-spec.md), and [PA Share Card Print Styles Product Spec](../product/specs/pa-share-card-print-styles-product-spec.md) |
+| Validation evidence | [Print-style tests](../../__tests__/share-card-print-style.test.ts), [Modal tests](../../__tests__/share-card-modal.test.ts), and [Pagelet and Share Card smoke checklist](../development/validation/pagelet-smoke-checklist.md) |
 
 > [!note] Owner amendment 2026-08-07
 > 用户选择方案 A，并明确以当前 `master` 实现作为最终行为基线：短单页内容从
@@ -133,6 +133,14 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
 - 内容区在留白内垂直居中；多页显示稳定页码。Preview 只按 viewport 缩放外观，固定尺寸
   capture DOM 不受 preview scale 影响。
 - 卡片与全部后代冻结 animation/transition，确保 preview 与 PNG 使用同一静态视觉状态。
+- 每次 Modal 提供 `original / light-print / xerox` 三档本地 appearance，默认 original 且不
+  持久化。Light-print 对标题使用已验证轻效果，对普通正文使用更收敛轻效果；Xerox 对
+  标题使用 `scale 4/1` 和 `-3/-3px` 原始强度，正文仍使用收敛轻效果。代码、视觉资源、
+  placeholder、footer、品牌、来源、页码、装饰和纸纹不进入文字滤镜。
+- 生产 renderer 在 final card clone 内用 `createElementNS` 建立 card-local 确定性 SVG defs，
+  连续 Text siblings 合为 inline run，并在保护元素边界停止递归。Prepared Markdown prototype
+  保持无样式，可跨三档复用；fit、preview 和 exporter 都使用同一 `printStyle` appearance。
+  每张卡片清理时 defs/wrappers 一并离开，宿主 theme class 与 CSS variables 始终只读。
 
 该视觉是 current implementation contract，不是可配置模板。比例、字体、品牌或主题体系
 变化属于产品边界变更，需要先更新产品权威。
