@@ -6,6 +6,9 @@ export type ShareCardSource = "chat" | "pagelet" | "selection" | "note";
 /** The visual theme is locked when the Share Card modal opens. */
 export type ShareCardTheme = "light" | "dark";
 
+/** The one-shot print texture selected by the currently open Share Card Modal. */
+export type ShareCardPrintStyle = "original" | "light-print" | "xerox";
+
 /** Resolution-only context; values are never rendered into the card. */
 export interface ShareCardResourceContext {
     basePath?: string;

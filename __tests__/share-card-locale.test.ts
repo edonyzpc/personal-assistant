@@ -15,6 +15,14 @@ describe("Share Card locale copy", () => {
             .toBe("有 2 项视觉内容无法加载，已显示为占位提示。");
         expect(pluginT("plugin.shareCard.resourcePlaceholder", "zh", { label: "示意图" }))
             .toBe("视觉内容无法加载：示意图");
+        expect(pluginT("plugin.shareCard.printStyle", "en")).toBe("Print style");
+        expect(pluginT("plugin.shareCard.printStyle.original", "en")).toBe("Original");
+        expect(pluginT("plugin.shareCard.printStyle.light-print", "en")).toBe("Light print");
+        expect(pluginT("plugin.shareCard.printStyle.xerox", "en")).toBe("Xerox");
+        expect(pluginT("plugin.shareCard.printStyle", "zh")).toBe("印刷效果");
+        expect(pluginT("plugin.shareCard.printStyle.original", "zh")).toBe("原纸");
+        expect(pluginT("plugin.shareCard.printStyle.light-print", "zh")).toBe("轻印");
+        expect(pluginT("plugin.shareCard.printStyle.xerox", "zh")).toBe("复印");
         expect(diffPluginLocaleAgainstEn("zh")).toEqual({ missing: [], orphan: [] });
     });
 
@@ -23,7 +31,9 @@ describe("Share Card locale copy", () => {
 
         expect(css).toMatch(/\.pa-share-card\s*\{[\s\S]*?width:\s*540px;[\s\S]*?height:\s*720px;/);
         expect(css).toMatch(/body\.is-mobile\s+\.pa-share-card-actions button\s*\{[\s\S]*?min-height:\s*44px;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-share-card-print-style-option\s*\{[\s\S]*?min-height:\s*44px;/);
         expect(css).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*?\.pa-share-card-actions button\s*\{[\s\S]*?min-height:\s*44px;/);
+        expect(css).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*?\.pa-share-card-print-style-option\s*\{[\s\S]*?min-height:\s*44px;/);
         expect(css).not.toMatch(/\.pa-share-card-body img,[\s\S]{0,400}?display:\s*none\s*!important/);
         expect(css).toMatch(/\.pa-share-card-body \.pa-share-card-resource-placeholder\s*\{/);
         expect(css).toMatch(/\.pa-share-card-static,[\s\S]*?animation:\s*none\s*!important/);

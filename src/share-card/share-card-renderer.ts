@@ -12,11 +12,13 @@ import {
 import {
     attachShareCardRenderPlan,
     type CardPage,
+    type ShareCardPrintStyle,
     type ShareCardRenderPlan,
     type ShareCardRenderPlanSegment,
     type ShareCardTheme,
     stripInlineCode,
 } from "./share-card-types";
+import { applyShareCardPrintStyle } from "./share-card-print-style";
 import {
     createShareCardLogo,
     createShareCardOrnament,
@@ -175,6 +177,7 @@ const MAX_PROTOTYPE_CACHE_ENTRIES = 32;
 
 export interface ShareCardRenderOptions {
     theme: ShareCardTheme;
+    printStyle?: ShareCardPrintStyle;
     sourceLabel?: string;
     sourcePath?: string;
     host?: HTMLElement;
@@ -358,6 +361,12 @@ export class ShareCardRenderer {
             throw new ShareCardUnsafeResourceError();
         }
         const cardEl = this.createCardElement(page, options, bodyEl);
+        try {
+            applyShareCardPrintStyle(cardEl, bodyEl, options.printStyle ?? "original");
+        } catch (error) {
+            if (ownsHost) host.remove();
+            throw error;
+        }
         const handleController = new AbortController();
         let cleaned = false;
         const handle: ShareCardRenderHandle = {

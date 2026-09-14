@@ -153,6 +153,282 @@ describe("ShareCardModal", () => {
         modal.onClose();
     });
 
+    it("shows a non-persistent print-style selector that starts at original", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const exporter = createExporter();
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: () => exporter,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+
+        const group = document.body.querySelector(".pa-share-card-print-style-group")!;
+        const label = group.querySelector(".pa-share-card-print-style-label")!;
+        const buttons = group.querySelectorAll("button");
+        expect(label.textContent).toBe("Print style");
+        expect(buttons.map((button) => button.textContent)).toEqual([
+            "Original",
+            "Light print",
+            "Xerox",
+        ]);
+        expect(buttons.map((button) => button.getAttribute("aria-pressed"))).toEqual([
+            "true",
+            "false",
+            "false",
+        ]);
+        expect(renderer.renderPage).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ printStyle: "original" }),
+        );
+        const modalData = (modal as unknown as { data: ShareCardData }).data;
+        expect(JSON.stringify(modalData)).not.toContain("printStyle");
+
+        modal.onClose();
+        modal.onOpen();
+        await flushShareCardTasks();
+        const reopenedGroup = document.body.querySelector(".pa-share-card-print-style-group")!;
+        expect(reopenedGroup.querySelectorAll("button")
+            .map((button) => button.getAttribute("aria-pressed"))).toEqual([
+            "true",
+            "false",
+            "false",
+        ]);
+        modal.onClose();
+    });
+
+    it("commits one print style to preview and exporter without rerunning preparation", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const originalExporter = createExporter();
+        const lightExporter = createExporter();
+        const xeroxExporter = createExporter();
+        const createExporterForStyle = jest.fn(
+            (_app: App, _ownerDocument: Document, _renderer: ShareCardRenderer, appearance: {
+                printStyle?: string;
+            }) => {
+                if (appearance.printStyle === "light-print") return lightExporter;
+                if (appearance.printStyle === "xerox") return xeroxExporter;
+                return originalExporter;
+            },
+        );
+        const localizeResources = jest.fn(async () => ({
+            markdown: "one",
+            report: {
+                complete: true,
+                resolvedCount: 0,
+                placeholderCount: 0,
+                failedCount: 0,
+                uniqueResourceCount: 0,
+                totalResolvedBytes: 0,
+                resources: [],
+            },
+        })) as unknown as NonNullable<ShareCardModalDependencies["localizeResources"]>;
+        const prepareMarkdown = jest.fn(() => ({ markdown: "one", blocks: ["one"] }));
+        const modal = createModal(document, {
+            localizeResources,
+            prepareMarkdown,
+            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: createExporterForStyle,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        const buttons = document.body
+            .querySelector(".pa-share-card-print-style-group")!
+            .querySelectorAll("button");
+
+        buttons[1]!.click();
+        await flushShareCardTasks();
+        buttons[2]!.click();
+        await flushShareCardTasks();
+
+        expect(localizeResources).toHaveBeenCalledTimes(1);
+        expect(prepareMarkdown).toHaveBeenCalledTimes(1);
+        expect(renderer.renderPage).toHaveBeenCalledTimes(3);
+        expect(renderer.renderPage.mock.calls.map(([, options]) => options.printStyle))
+            .toEqual(["original", "light-print", "xerox"]);
+        expect(createExporterForStyle.mock.calls.map(([, , , appearance]) => appearance.printStyle))
+            .toEqual(["original", "light-print", "xerox"]);
+        expect(buttons.map((button) => button.getAttribute("aria-pressed"))).toEqual([
+            "false",
+            "false",
+            "true",
+        ]);
+
+        document.body.querySelector(".pa-share-card-actions")!.children[0]!.click();
+        await flushShareCardTasks();
+        expect(originalExporter.copyCurrentPage).not.toHaveBeenCalled();
+        expect(lightExporter.copyCurrentPage).not.toHaveBeenCalled();
+        expect(xeroxExporter.copyCurrentPage).toHaveBeenCalledTimes(1);
+        document.body.querySelector(".pa-share-card-actions")!.children[1]!.click();
+        await flushShareCardTasks();
+        expect(xeroxExporter.savePages).toHaveBeenCalledTimes(1);
+        modal.onClose();
+    });
+
+    it("keeps the previous coherent style when a print-style preview fails", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const originalExporter = createExporter();
+        const lightExporter = createExporter();
+        const createExporterForStyle = jest.fn(
+            (_app: App, _ownerDocument: Document, _renderer: ShareCardRenderer, appearance: {
+                printStyle?: string;
+            }) => appearance.printStyle === "light-print" ? lightExporter : originalExporter,
+        );
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: createExporterForStyle,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        renderer.renderPage.mockRejectedValueOnce(new Error("style render failed"));
+        const buttons = document.body
+            .querySelector(".pa-share-card-print-style-group")!
+            .querySelectorAll("button");
+
+        buttons[1]!.click();
+        await flushShareCardTasks();
+
+        expect(renderer.renderPage.mock.calls.map(([, options]) => options.printStyle))
+            .toEqual(["original", "light-print"]);
+        expect(buttons.map((button) => button.getAttribute("aria-pressed"))).toEqual([
+            "true",
+            "false",
+            "false",
+        ]);
+        expect(document.body.querySelector(".pa-share-card-preview-scale")!
+            .querySelectorAll(".pa-share-card")).toHaveLength(1);
+
+        document.body.querySelector(".pa-share-card-actions")!.children[0]!.click();
+        await flushShareCardTasks();
+        expect(originalExporter.copyCurrentPage).toHaveBeenCalledTimes(1);
+        expect(lightExporter.copyCurrentPage).not.toHaveBeenCalled();
+        modal.onClose();
+    });
+
+    it("passes the live Modal abort signal to replacement print-style exporters", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        let preparationSignal: AbortSignal | undefined;
+        let replacementSignal: AbortSignal | undefined;
+        const localizeResources = jest.fn(async (
+            _app: App,
+            _markdown: string,
+            context: ShareCardResourceContext,
+        ) => {
+            preparationSignal = context.signal;
+            return {
+                markdown: "one",
+                report: {
+                    complete: true,
+                    resolvedCount: 0,
+                    placeholderCount: 0,
+                    failedCount: 0,
+                    uniqueResourceCount: 0,
+                    totalResolvedBytes: 0,
+                    resources: [],
+                },
+            } satisfies LocalizedShareCardResources;
+        });
+        const createExporterForStyle = jest.fn((
+            _app: App,
+            _ownerDocument: Document,
+            _renderer: ShareCardRenderer,
+            appearance: { printStyle?: string },
+            signal?: AbortSignal,
+        ) => {
+            if (appearance.printStyle === "light-print") replacementSignal = signal;
+            return createExporter();
+        });
+        const modal = createModal(document, {
+            localizeResources: localizeResources as unknown as NonNullable<
+                ShareCardModalDependencies["localizeResources"]
+            >,
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: createExporterForStyle,
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        const buttons = document.body
+            .querySelector(".pa-share-card-print-style-group")!
+            .querySelectorAll("button");
+
+        buttons[1]!.click();
+        await flushShareCardTasks();
+
+        expect(replacementSignal).toBe(preparationSignal);
+        expect(replacementSignal?.aborted).toBe(false);
+        modal.onClose();
+
+        expect(replacementSignal?.aborted).toBe(true);
+    });
+
+    it("discards and cleans a stale print-style render after close", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        await flushShareCardTasks();
+        let finishRender!: (handle: unknown) => void;
+        renderer.renderPage.mockImplementationOnce(async (page: CardPage, options: {
+            host?: HTMLElement;
+        }) => {
+            const card = document.createElement("div");
+            card.classList.add("pa-share-card");
+            (options.host as unknown as ShareCardTestElement).appendChild(card);
+            const cleanup = jest.fn(() => card.remove());
+            await new Promise((resolve) => {
+                finishRender = resolve;
+            });
+            return {
+                cardEl: asElement(card),
+                bodyEl: asElement(document.createElement("div")),
+                signal: new AbortController().signal,
+                sanitizationIssues: [],
+                usedPlainTextFallback: false,
+                fits: () => true,
+                cleanup,
+            };
+        });
+        const buttons = document.body
+            .querySelector(".pa-share-card-print-style-group")!
+            .querySelectorAll("button");
+
+        buttons[1]!.click();
+        await Promise.resolve();
+        expect(buttons.every((button) => button.disabled)).toBe(true);
+
+        modal.onClose();
+        finishRender(null);
+        await flushShareCardTasks();
+        const pendingCall = renderer.renderPage.mock.calls[1];
+        expect(pendingCall?.[1].printStyle).toBe("light-print");
+        const pendingHandle = await (renderer.renderPage.mock.results[1]!.value as Promise<{
+            cleanup: jest.Mock;
+        }>);
+        expect(pendingHandle.cleanup).toHaveBeenCalledTimes(1);
+        expect(document.body.querySelectorAll(".pa-share-card-print-style-group")).toHaveLength(0);
+    });
+
     it.each([
         ["uses the configured attachment folder", "Attachments", "Attachments"],
         ["uses the configured Vault root", "/", "/"],
