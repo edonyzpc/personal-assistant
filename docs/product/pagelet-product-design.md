@@ -504,6 +504,15 @@ opens Bubble with a terse, non-teaching empty result.
 4. This production path does not use the retired single-shot provider flow and
    does not write a review note.
 
+Pagelet does not use a static model-name list to admit Deep Discover. If an
+explicit run cannot complete without tool calls, Pagelet queries the configured
+DashScope model through the model catalog on the same origin. A catalog
+response that explicitly lacks
+`function-calling` can explain that failure; a missing or failed catalog
+response does not prove the model is
+unsupported or block discovery. A verified source-backed insight remains the
+delivery requirement.
+
 If the current Deep Discover provider path is unavailable or fails, the run is
 quiet or reports failure through its existing control path；production does not
 route back to the retired single-shot `Local related clue` implementation.
