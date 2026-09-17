@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.10.0-beta.9](https://github.com/edonyzpc/personal-assistant/compare/2.10.0-beta.8...2.10.0-beta.9) (2026-09-17)
+
+### Fix
+- settings: preserve continuous text editing
+- share-card: render xerox effects in exported images
+- share-card: keep actions visible and add preview zoom
+
+### Docs
+- share-card: define visible xerox image behavior
+
 ## [2.9.2](https://github.com/edonyzpc/personal-assistant/compare/2.9.1...2.9.2) (2026-08-09)
 
 ### Fix
