@@ -9,6 +9,7 @@ import {
     type ShareCardRenderOptions,
 } from "./share-card-renderer";
 import { getShareCardLocalFonts } from "./share-card-font";
+import { prepareShareCardPrintStyleForCapture } from "./share-card-print-style";
 
 export const SHARE_CARD_FOLDER = "PA-Cards";
 
@@ -188,17 +189,22 @@ function assertSelfContainedCssUrls(cssValue: string): void {
 /** Bind the audited SnapDOM capture contract behind an injectable test seam. */
 export function createSnapdomShareCardCapture(snapdomLike: SnapdomLike): ShareCardCapture {
     return async (element) => {
-        assertShareCardElementIsSelfContained(element);
-        const options = await getShareCardSnapdomOptions();
-        const result = await snapdomLike(element, options);
-        const blob = await result.toBlob({ type: "png" });
-        if (blob.type !== "image/png") {
-            throw new Error(`Share Card capture returned ${blob.type || "an unknown MIME type"}.`);
+        const restorePrintFilters = prepareShareCardPrintStyleForCapture(element);
+        try {
+            assertShareCardElementIsSelfContained(element);
+            const options = await getShareCardSnapdomOptions();
+            const result = await snapdomLike(element, options);
+            const blob = await result.toBlob({ type: "png" });
+            if (blob.type !== "image/png") {
+                throw new Error(`Share Card capture returned ${blob.type || "an unknown MIME type"}.`);
+            }
+            if (blob.size < 1) {
+                throw new Error("Share Card capture returned an empty PNG blob.");
+            }
+            return blob;
+        } finally {
+            restorePrintFilters();
         }
-        if (blob.size < 1) {
-            throw new Error("Share Card capture returned an empty PNG blob.");
-        }
-        return blob;
     };
 }
 

@@ -2,6 +2,7 @@ import { MarkdownRenderer, type App } from "obsidian";
 import {
     applyShareCardPrintStyle,
     SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
+    SHARE_CARD_BODY_XEROX_PARAMETERS,
     SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS,
 } from "../src/share-card/share-card-print-style";
 import { assertShareCardElementIsSelfContained } from "../src/share-card/share-card-export";
@@ -393,7 +394,7 @@ describe("Share Card print styles", () => {
         })).toBe(true);
     });
 
-    it("uses the exact Xerox heading chain and shared body-light parameters", () => {
+    it("keeps the approved Xerox heading displacement and adds a quiet registration ghost", () => {
         const { body, card } = createPrintFixture();
         const report = applyShareCardPrintStyle(asElement(card), asElement(body), "xerox");
         const definitions = card.querySelectorAll(".pa-share-card-print-defs");
@@ -415,6 +416,8 @@ describe("Share Card print styles", () => {
             "feDisplacementMap",
             "feComposite",
             "feOffset",
+            "feComponentTransfer",
+            "feComposite",
         ]);
         expect(headingFilter.children.map((child) => attributes(child))).toEqual([
             expect.objectContaining({
@@ -452,11 +455,69 @@ describe("Share Card print styles", () => {
                 operator: "atop",
                 result: "offsetBase",
             }),
-            expect.objectContaining({ in: "offsetBase", dx: "-3", dy: "-3" }),
+            expect.objectContaining({
+                in: "offsetBase", dx: "-3", dy: "-3", result: "shiftedInk",
+            }),
+            expect.objectContaining({
+                in: "SourceGraphic", result: "registrationGhost",
+            }),
+            expect.objectContaining({
+                in: "shiftedInk", in2: "registrationGhost", operator: "over",
+            }),
         ]);
-        expect(bodyFilter.children[1]!.getAttribute("scale")).toBe("0.6");
-        expect(bodyFilter.children[3]!.getAttribute("scale")).toBe("0.2");
+        expect(attributes(headingFilter.children[7]!.children[0]!)).toEqual({
+            type: "linear", slope: "0.28",
+        });
+        expect(bodyFilter.children[1]!.getAttribute("scale")).toBe("1");
+        expect(bodyFilter.children[3]!.getAttribute("scale")).toBe("0.35");
         expect(report.filterIds).toHaveLength(2);
+    });
+
+    it("makes a body-only Xerox card visibly distinct while preserving its text", () => {
+        const original = createPrintFixture();
+        const light = createPrintFixture();
+        const xerox = createPrintFixture();
+        for (const fixture of [original, light, xerox]) {
+            for (const heading of fixture.body.querySelectorAll("h1, h2")) heading.remove();
+        }
+        const beforeText = collectText(xerox.body);
+        applyShareCardPrintStyle(asElement(original.card), asElement(original.body), "original");
+        applyShareCardPrintStyle(asElement(light.card), asElement(light.body), "light-print");
+        const report = applyShareCardPrintStyle(asElement(xerox.card), asElement(xerox.body), "xerox");
+
+        expect(report.headingRunCount).toBe(0);
+        expect(report.bodyRunCount).toBeGreaterThan(0);
+        expect(collectText(xerox.body)).toBe(beforeText);
+        expect(original.card.querySelectorAll(".pa-share-card-print-defs")).toHaveLength(0);
+        const lightFilter = filterElement(light.card.querySelectorAll(".pa-share-card-print-defs")[0]!);
+        const xeroxFilter = filterElement(xerox.card.querySelectorAll(".pa-share-card-print-defs")[0]!);
+        expect(childTags(lightFilter)).toEqual([
+            "feTurbulence", "feDisplacementMap", "feTurbulence", "feDisplacementMap",
+        ]);
+        expect(childTags(xeroxFilter)).toEqual([
+            "feTurbulence", "feDisplacementMap", "feTurbulence", "feDisplacementMap",
+            "feOffset", "feComponentTransfer", "feComposite",
+        ]);
+        expect(attributes(xeroxFilter)).toEqual(expect.objectContaining({
+            ...SHARE_CARD_BODY_XEROX_PARAMETERS.filterBounds,
+        }));
+        expect(attributes(xeroxFilter.children[1]!)).toEqual(expect.objectContaining({
+            scale: String(SHARE_CARD_BODY_XEROX_PARAMETERS.lowScale),
+        }));
+        expect(attributes(xeroxFilter.children[3]!)).toEqual(expect.objectContaining({
+            scale: String(SHARE_CARD_BODY_XEROX_PARAMETERS.highScale),
+        }));
+        expect(attributes(xeroxFilter.children[4]!)).toEqual(expect.objectContaining({
+            dx: String(SHARE_CARD_BODY_XEROX_PARAMETERS.echoDx),
+            dy: String(SHARE_CARD_BODY_XEROX_PARAMETERS.echoDy),
+        }));
+        expect(attributes(xeroxFilter.children[5]!.children[0]!)).toEqual({
+            type: "linear", slope: String(SHARE_CARD_BODY_XEROX_PARAMETERS.echoOpacity),
+        });
+        expect(attributes(xeroxFilter.children[6]!)).toEqual({
+            in: "grained", in2: "faintEcho", operator: "over",
+        });
+        expect(attributes(xeroxFilter.children[1]!)).not.toEqual(attributes(lightFilter.children[1]!));
     });
 
     it("allocates unique card-local filters for concurrent cards", () => {

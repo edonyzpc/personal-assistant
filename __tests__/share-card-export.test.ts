@@ -24,6 +24,62 @@ import {
 } from "./helpers/share-card-dom";
 
 describe("Share Card export", () => {
+    it("uses self-contained SVG print filters for PNG capture and restores fragment references", async () => {
+        const document = new ShareCardTestDocument();
+        const card = document.createElement("div");
+        const wrapper = document.createElement("span");
+        wrapper.classList.add("pa-share-card-print-text");
+        wrapper.style.setProperty("filter", "url(#pa-share-card-print-body-21)");
+        const setFilter = wrapper.style.setProperty;
+        Object.assign(wrapper.style, {
+            getPropertyValue: (property: string) => wrapper.style.values.get(property) ?? "",
+            setProperty: (property: string, value: string) => {
+                setFilter(property, value);
+                wrapper.setAttribute("style", `${property}: ${value}`);
+            },
+        });
+        card.appendChild(wrapper);
+        const definition = document.createElement("svg");
+        definition.classList.add("pa-share-card-print-defs");
+        Object.defineProperty(definition, "namespaceURI", {
+            value: "http://www.w3.org/2000/svg",
+        });
+        const filter = document.createElement("filter");
+        filter.setAttribute("id", "pa-share-card-print-body-21");
+        Object.defineProperty(filter, "outerHTML", {
+            value: '<filter id="pa-share-card-print-body-21"><feDisplacementMap scale="1"/></filter>',
+        });
+        definition.appendChild(filter);
+        card.appendChild(definition);
+        const pngBlob = new Blob(["png"], { type: "image/png" });
+        const snapdomLike = jest.fn(async () => {
+            const reference = wrapper.style.values.get("filter") ?? "";
+            const match = /^url\("data:image\/svg\+xml,([^#]+)#pa-share-card-print-body-21"\)$/u
+                .exec(reference);
+            expect(match).not.toBeNull();
+            expect(decodeURIComponent(match![1]!)).toContain(
+                '<filter id="pa-share-card-print-body-21"><feDisplacementMap scale="1"/></filter>',
+            );
+            return { toBlob: async () => pngBlob };
+        }) as unknown as SnapdomLike;
+
+        await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card)))
+            .resolves.toBe(pngBlob);
+        expect(wrapper.style.values.get("filter")).toBe("url(#pa-share-card-print-body-21)");
+
+        const failedSnapdom = jest.fn(async () => { throw new Error("capture failed"); }) as
+            unknown as SnapdomLike;
+        await expect(createSnapdomShareCardCapture(failedSnapdom)(asElement(card)))
+            .rejects.toThrow("capture failed");
+        expect(wrapper.style.values.get("filter")).toBe("url(#pa-share-card-print-body-21)");
+
+        definition.remove();
+        await expect(createSnapdomShareCardCapture(snapdomLike)(asElement(card)))
+            .rejects.toThrow("print filter reference cannot be captured");
+        expect(snapdomLike).toHaveBeenCalledTimes(1);
+        expect(wrapper.style.values.get("filter")).toBe("url(#pa-share-card-print-body-21)");
+    });
+
     it("captures through SnapDOM with the audited fixed options", async () => {
         const document = new ShareCardTestDocument();
         const element = asElement(document.createElement("div"));

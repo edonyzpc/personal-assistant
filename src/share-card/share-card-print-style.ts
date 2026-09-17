@@ -29,6 +29,21 @@ export const SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS = {
     filterBounds: { x: "-5%", y: "-15%", width: "110%", height: "130%" },
 } as const;
 
+/** Xerox needs a visible trace even when the shared card has no H1-H3. */
+export const SHARE_CARD_BODY_XEROX_PARAMETERS = {
+    lowFrequency: "0.01 0.02",
+    lowOctaves: 2,
+    lowScale: 1,
+    highFrequency: "0.6",
+    highOctaves: 2,
+    highScale: 0.35,
+    echoDx: 0.8,
+    echoDy: 0.6,
+    echoOpacity: 0.18,
+    seed: 0,
+    filterBounds: { x: "-8%", y: "-18%", width: "116%", height: "136%" },
+} as const;
+
 export interface ShareCardPrintStyleReport {
     headingRunCount: number;
     bodyRunCount: number;
@@ -118,12 +133,11 @@ function createElement(
     return element as SVGElement;
 }
 
-function appendLightFilterDefinition(
+function appendFilterDefinition(
     cardEl: HTMLElement,
     filterId: string,
-    parameters: typeof SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS
-        | typeof SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
-): void {
+    filterBounds: Readonly<Record<"x" | "y" | "width" | "height", string>>,
+): SVGElement {
     const svg = createElement(cardEl.ownerDocument, "svg", {
         "aria-hidden": "true",
         "focusable": "false",
@@ -141,8 +155,21 @@ function appendLightFilterDefinition(
         id: filterId,
         "color-interpolation-filters": "sRGB",
         filterUnits: "objectBoundingBox",
-        ...parameters.filterBounds,
+        ...filterBounds,
     });
+    defs.appendChild(filter);
+    svg.appendChild(defs);
+    cardEl.appendChild(svg);
+    return filter;
+}
+
+function appendLightFilterDefinition(
+    cardEl: HTMLElement,
+    filterId: string,
+    parameters: typeof SHARE_CARD_HEADING_LIGHT_PRINT_PARAMETERS
+        | typeof SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
+): void {
+    const filter = appendFilterDefinition(cardEl, filterId, parameters.filterBounds);
     appendTurbulence(
         filter,
         "lowNoise",
@@ -171,29 +198,10 @@ function appendLightFilterDefinition(
         "grained",
         parameters.highScale,
     );
-    defs.appendChild(filter);
-    svg.appendChild(defs);
-    cardEl.appendChild(svg);
 }
 
 function appendXeroxFilterDefinition(cardEl: HTMLElement, filterId: string): void {
-    const svg = createElement(cardEl.ownerDocument, "svg", {
-        "aria-hidden": "true",
-        "focusable": "false",
-        "height": "0",
-        "width": "0",
-    });
-    svg.classList.add("pa-share-card-print-defs");
-    svg.style.setProperty("position", "absolute");
-    svg.style.setProperty("width", "0");
-    svg.style.setProperty("height", "0");
-    svg.style.setProperty("pointer-events", "none");
-
-    const defs = createElement(cardEl.ownerDocument, "defs", {});
-    const filter = createElement(cardEl.ownerDocument, "filter", {
-        id: filterId,
-        "color-interpolation-filters": "sRGB",
-        filterUnits: "objectBoundingBox",
+    const filter = appendFilterDefinition(cardEl, filterId, {
         x: "-10%",
         y: "-25%",
         width: "120%",
@@ -221,11 +229,111 @@ function appendXeroxFilterDefinition(cardEl: HTMLElement, filterId: string): voi
         in: "offsetBase",
         dx: "-3",
         dy: "-3",
+        result: "shiftedInk",
     });
     filter.appendChild(offset);
-    defs.appendChild(filter);
-    svg.appendChild(defs);
-    cardEl.appendChild(svg);
+    const ghost = createElement(cardEl.ownerDocument, "feComponentTransfer", {
+        in: "SourceGraphic",
+        result: "registrationGhost",
+    });
+    ghost.appendChild(createElement(cardEl.ownerDocument, "feFuncA", {
+        type: "linear",
+        slope: "0.28",
+    }));
+    filter.appendChild(ghost);
+    filter.appendChild(createElement(cardEl.ownerDocument, "feComposite", {
+        in: "shiftedInk",
+        in2: "registrationGhost",
+        operator: "over",
+    }));
+}
+
+function appendXeroxBodyFilterDefinition(cardEl: HTMLElement, filterId: string): void {
+    const parameters = SHARE_CARD_BODY_XEROX_PARAMETERS;
+    const filter = appendFilterDefinition(cardEl, filterId, parameters.filterBounds);
+    appendTurbulence(filter, "lowNoise", parameters.lowFrequency, parameters.lowOctaves, parameters.seed);
+    appendDisplacement(filter, "SourceGraphic", "lowNoise", "warped", parameters.lowScale);
+    appendTurbulence(filter, "highNoise", parameters.highFrequency, parameters.highOctaves, parameters.seed);
+    appendDisplacement(filter, "warped", "highNoise", "grained", parameters.highScale);
+
+    const echo = createElement(cardEl.ownerDocument, "feOffset", {
+        in: "grained",
+        dx: String(parameters.echoDx),
+        dy: String(parameters.echoDy),
+        result: "echo",
+    });
+    filter.appendChild(echo);
+    const faintEcho = createElement(cardEl.ownerDocument, "feComponentTransfer", {
+        in: "echo",
+        result: "faintEcho",
+    });
+    faintEcho.appendChild(createElement(cardEl.ownerDocument, "feFuncA", {
+        type: "linear",
+        slope: String(parameters.echoOpacity),
+    }));
+    filter.appendChild(faintEcho);
+    filter.appendChild(createElement(cardEl.ownerDocument, "feComposite", {
+        in: "grained",
+        in2: "faintEcho",
+        operator: "over",
+    }));
+}
+
+/**
+ * SnapDOM puts the card into an SVG foreignObject before rasterizing it. In that
+ * image document, a CSS filter URL cannot resolve the card's fragment defs.
+ * Repoint only the capture card's text runs to copies of those same local SVG
+ * filters, then restore the preview reference after PNG conversion.
+ */
+export function prepareShareCardPrintStyleForCapture(cardEl: HTMLElement): () => void {
+    const wrappers = Array.from(
+        cardEl.querySelectorAll<HTMLElement>(".pa-share-card-print-text"),
+    );
+    if (wrappers.length === 0) return () => undefined;
+
+    const filterUrls = new Map<string, string>();
+    for (const definition of Array.from(cardEl.querySelectorAll(".pa-share-card-print-defs"))) {
+        if (definition.parentElement !== cardEl || definition.namespaceURI !== SVG_NAMESPACE) {
+            continue;
+        }
+        const filter = definition.querySelector("filter");
+        const filterId = filter?.getAttribute("id") ?? "";
+        const filterMarkup = filter?.outerHTML;
+        if (!/^pa-share-card-print-(?:heading|body)-\d+$/u.test(filterId)
+            || !filterMarkup) {
+            throw new Error("Share Card print filter definition is incomplete.");
+        }
+        const svg = `<svg xmlns="${SVG_NAMESPACE}"><defs>${filterMarkup}</defs></svg>`;
+        filterUrls.set(
+            filterId,
+            `url("data:image/svg+xml,${encodeURIComponent(svg)}#${filterId}")`,
+        );
+    }
+
+    const originalFilters = wrappers.map((wrapper) => wrapper.style.getPropertyValue("filter"));
+    const captureFilters = originalFilters.map((reference) => {
+        const match = /^url\(["']?#([^"'()]+)["']?\)$/u.exec(reference.trim());
+        const captureFilter = match ? filterUrls.get(match[1]!) : undefined;
+        if (!captureFilter) {
+            throw new Error("Share Card print filter reference cannot be captured.");
+        }
+        return captureFilter;
+    });
+
+    const restore = (): void => {
+        wrappers.forEach((wrapper, index) => {
+            wrapper.style.setProperty("filter", originalFilters[index]!);
+        });
+    };
+    try {
+        wrappers.forEach((wrapper, index) => {
+            wrapper.style.setProperty("filter", captureFilters[index]!);
+        });
+    } catch (error) {
+        restore();
+        throw error;
+    }
+    return restore;
 }
 
 /**
@@ -308,11 +416,15 @@ export function applyShareCardPrintStyle(
         filterIds.push(headingFilterId);
     }
     if (bodyRunCount > 0) {
-        appendLightFilterDefinition(
-            cardEl,
-            bodyFilterId,
-            SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
-        );
+        if (printStyle === "xerox") {
+            appendXeroxBodyFilterDefinition(cardEl, bodyFilterId);
+        } else {
+            appendLightFilterDefinition(
+                cardEl,
+                bodyFilterId,
+                SHARE_CARD_BODY_LIGHT_PRINT_PARAMETERS,
+            );
+        }
         filterIds.push(bodyFilterId);
     }
     return { headingRunCount, bodyRunCount, filterIds };
