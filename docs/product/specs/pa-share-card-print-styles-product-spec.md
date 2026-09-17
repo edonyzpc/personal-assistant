@@ -1,10 +1,10 @@
 # PA Share Card Print Styles Product Spec
 
 Document status: Approved
-Updated: 2026-09-14
+Updated: 2026-09-17
 Work item: B-137
 Decision: [DEC-036 — Share Card 本次导出印刷样式](../decisions/dec-036-share-card-print-styles.md)
-Authority: 用户于 2026-09-13 明确确认三档样式、正文作用范围、默认与不记忆行为，以及复印标题强度；本文是 B-137 的当前产品行为与验收权威。
+Authority: 用户于 2026-09-13 明确确认三档样式、正文作用范围、默认与不记忆行为，以及复印标题强度；2026-09-17 要求增强复印图片与原纸的可见差异。本文是 B-137 的当前产品行为与验收权威。
 
 ## Problem And Product Outcome
 
@@ -17,10 +17,10 @@ Authority: 用户于 2026-09-13 明确确认三档样式、正文作用范围、
 ### In Scope
 
 - B-137/REQ-01: Modal 提供本地化的 `原纸 / 轻印 / 复印` 三档选择。每个新 Modal 均以 `原纸` 开始，选择只存活于该 Modal，不写入设置、历史或跨设备状态。
-- B-137/REQ-02: `原纸` 保持当前生产卡片像素和排版；`轻印` 对 H1–H3 普通文字使用已验证的轻效果，并对其他普通正文使用更收敛的轻效果；`复印` 对 H1–H3 使用用户提供的原始 `scale 4/1` 与 `-3/-3px` 套印偏移，普通正文仍使用收敛轻效果。
+- B-137/REQ-02: `原纸` 保持当前生产卡片像素和排版；`轻印` 对 H1–H3 普通文字使用已验证的轻效果，并对其他普通正文使用更收敛的轻效果；`复印` 对 H1–H3 保留用户提供的原始 `scale 4/1` 与 `-3/-3px` 套印偏移，再显示淡的原位套印残影。复印普通正文使用区别于轻印、仍弱于标题的轻度起伏和淡复影；即使没有 H1–H3，预览和 PNG 也应与原纸有可见差异，同时保持 14px 正文可读。
 - B-137/REQ-03: `code`、`pre`、`kbd`、`samp`、图片、picture、SVG、canvas、视觉占位/视觉块、品牌、来源、页码、装饰和纸张纹理不受文字滤镜影响。强调、链接、列表、引用和表格中的普通文字仍按所在标题/正文档位处理。
 - B-137/REQ-04: 样式切换即时更新当前预览；分页、批次字号、当前页 Copy 和整批 Save 使用同一已提交样式。快速切换、失败、close/reopen 或并发 Modal 不产生样式串用、stale preview 或错误导出。
-- B-137/REQ-05: 效果完全由卡片内确定性 SVG filter 和现有本地字体实现；不新增网络、外部字体、runtime style element、HTML 注入、设置或 provider 调用。滤镜 ID 对每张卡片唯一且引用可解析，card cleanup 一并移除定义。
+- B-137/REQ-05: 效果完全由卡片内确定性 SVG filter 和现有本地字体实现；不新增网络、外部字体、runtime style element、HTML 注入、设置或 provider 调用。滤镜 ID 对每张卡片唯一且引用可解析，card cleanup 一并移除定义。导出时可将同一卡片的滤镜定义编码成本地 `data:image/svg+xml` 引用，以通过 SnapDOM 的 `foreignObject` 栅格化；PNG 完成或失败后恢复原引用，解析失败不得静默输出原纸效果。
 - B-137/REQ-06: 选择器在中英文、light/dark Obsidian、桌面和窄屏/移动布局中可发现、可聚焦、可点击，状态可由辅助技术识别；不改变宿主主题或 Obsidian chrome。
 
 ### Non-goals
@@ -43,10 +43,10 @@ Authority: 用户于 2026-09-13 明确确认三档样式、正文作用范围、
 ## Acceptance Criteria
 
 - B-137/AC-01: 四个入口打开的每个新 Modal 均显示三档本地化选择，只有原纸初始选中；选择、关闭、重开和插件 reload 后仍不产生持久字段。
-- B-137/AC-02: 中英文短内容的三档预览与 PNG 对比证明：原纸与变更前基线一致；轻印标题和普通正文产生确定性变化；复印标题比轻印有明显更强位移/毛边且正文保持轻档。
+- B-137/AC-02: 中英文短内容的三档预览与 PNG 对比证明：原纸与变更前基线一致；轻印标题和普通正文产生确定性变化；复印标题比轻印有明显更强位移/毛边，正文保持比标题收敛但可见的起伏与淡复影；无标题纯正文卡片仍能区分复印和原纸。
 - B-137/AC-03: inline/fenced code、图片、SVG/canvas、视觉占位、品牌、来源、页码和选定区域外的像素差异为 0；强调/链接/列表/引用的普通文字仍有预期变化，无文字丢失、重排或裁切。
 - B-137/AC-04: 单页、13+ 页长内容与 14px 候选均 fit、非空、顺序/末句完整；切换后 preview、Copy 和 Save 的 style/font/page contract 一致，重复导出相同 PNG。
-- B-137/AC-05: 两个不同样式 Modal 并存时 filter ID 与结果不串用；close/unload 后无 SVG defs、wrapper、离屏 host、listener 或 operation state 泄漏；宿主 theme class、背景变量和网络 hooks 不变。
+- B-137/AC-05: 两个不同样式 Modal 并存时 filter ID 与结果不串用；导出中的本地 SVG 引用可解析并在成功/失败后恢复；close/unload 后无 SVG defs、wrapper、离屏 host、listener 或 operation state 泄漏；宿主 theme class、背景变量和网络 hooks 不变。
 - B-137/AC-06: focused Share Card tests、TypeScript、lint/build/full Jest、DOM/community source scan 与 whitespace 通过；当前构建部署到 `test/` 后，真实 Obsidian 可见入口、三档点击、Escape/reopen、Save image、dark/light 和 mobile emulation 不出现阻塞或新增插件错误。真实 iOS 不在本轮验收范围，不冒充已验证。
 
 ## Open Decisions
@@ -55,6 +55,6 @@ Authority: 用户于 2026-09-13 明确确认三档样式、正文作用范围、
 
 ## Delivery State
 
-- B-137 已完成实现、focused/full automated gates、生产 PNG 对比及 Obsidian desktop/mobile、light/dark 可见验收。
+- 2026-09-14 的 B-137 基线曾报告 focused/full automated gates、PNG 对比及 Obsidian desktop/mobile、light/dark 可见验收。2026-09-17 重新以生产 SnapDOM 选项对照 `原纸` 与 `复印` 的纯正文 PNG，发现两者像素相同；此前的图片差异结论不能作为本次印刷效果的证明。本次增强需以修复后的 PNG 差异和应用验收单独判断。
 - Current architecture: [Share Card Architecture](../../architecture/share-card-architecture.md)
 - Commit、push、beta/stable packaging 与 release 仍分别遵循仓库授权边界。

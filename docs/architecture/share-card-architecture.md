@@ -1,6 +1,6 @@
 # Share Card Architecture
 
-Updated: 2026-09-14
+Updated: 2026-09-17
 
 | Field | Value |
 | --- | --- |
@@ -135,12 +135,17 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
 - 卡片与全部后代冻结 animation/transition，确保 preview 与 PNG 使用同一静态视觉状态。
 - 每次 Modal 提供 `original / light-print / xerox` 三档本地 appearance，默认 original 且不
   持久化。Light-print 对标题使用已验证轻效果，对普通正文使用更收敛轻效果；Xerox 对
-  标题使用 `scale 4/1` 和 `-3/-3px` 原始强度，正文仍使用收敛轻效果。代码、视觉资源、
+  标题保留 `scale 4/1` 和 `-3/-3px` 原始强度，并叠加淡原位残影；正文使用独立的轻度
+  起伏与淡复影，让无标题卡片也能区分，同时保留小字号可读性。代码、视觉资源、
   placeholder、footer、品牌、来源、页码、装饰和纸纹不进入文字滤镜。
 - 生产 renderer 在 final card clone 内用 `createElementNS` 建立 card-local 确定性 SVG defs，
   连续 Text siblings 合为 inline run，并在保护元素边界停止递归。Prepared Markdown prototype
   保持无样式，可跨三档复用；fit、preview 和 exporter 都使用同一 `printStyle` appearance。
   每张卡片清理时 defs/wrappers 一并离开，宿主 theme class 与 CSS variables 始终只读。
+- SnapDOM 的 SVG `foreignObject` 图片不解析内部 HTML 的 `url(#id)` 滤镜。进入 SnapDOM
+  前只把该 export card 的文字 wrapper 引用切为从同张卡片 defs 序列化的本地 SVG data URI；
+  完成或失败后恢复片段引用。预览继续使用 card-local defs。转换找不到匹配定义时
+  fail closed，避免 PNG 悄悄退回原纸外观；这不改变固定 SnapDOM 版本和 capture options。
 
 该视觉是 current implementation contract，不是可配置模板。比例、字体、品牌或主题体系
 变化属于产品边界变更，需要先更新产品权威。
