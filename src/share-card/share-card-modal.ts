@@ -42,6 +42,7 @@ import {
 
 let shareCardModalId = 0;
 const openShareCardModals = new Set<ShareCardModal>();
+const MIN_PREVIEW_SCALE = 0.45;
 
 function t(key: string, params?: Readonly<Record<string, string | number>>): string {
     return pluginT(key, getPluginUiLanguage(), params);
@@ -75,6 +76,10 @@ export class ShareCardModal extends Modal {
     private statusEl: HTMLElement | null = null;
     private viewportEl: HTMLElement | null = null;
     private previewScaleEl: HTMLElement | null = null;
+    private zoomEl: HTMLElement | null = null;
+    private zoomViewportEl: HTMLElement | null = null;
+    private zoomCloseButton: HTMLButtonElement | null = null;
+    private zoomOpen = false;
     private navEl: HTMLElement | null = null;
     private previousButton: HTMLButtonElement | null = null;
     private nextButton: HTMLButtonElement | null = null;
@@ -96,6 +101,17 @@ export class ShareCardModal extends Modal {
     private busy = false;
     private operationToken = 0;
     private readonly handleResize = (): void => this.updatePreviewScale();
+    private readonly handleZoomKeydown = (event: KeyboardEvent): void => {
+        if (!this.zoomOpen) return;
+        if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            this.closeZoom();
+        } else if (event.key === "Tab") {
+            event.preventDefault();
+            this.zoomCloseButton?.focus();
+        }
+    };
 
     constructor(
         app: App,
@@ -159,10 +175,26 @@ export class ShareCardModal extends Modal {
         this.previewScaleEl = ownerDocument.createElement("div");
         this.previewScaleEl.classList.add("pa-share-card-preview-scale");
         this.viewportEl.appendChild(this.previewScaleEl);
+        this.viewportEl.setAttribute("role", "button");
+        this.viewportEl.setAttribute("tabindex", "0");
+        this.viewportEl.setAttribute("aria-label", t("plugin.shareCard.enlargePreview"));
+        this.viewportEl.addEventListener("click", (event) => {
+            event.preventDefault();
+            this.openZoom();
+        });
+        this.viewportEl.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            this.openZoom();
+        });
         this.contentEl.appendChild(this.viewportEl);
 
-        this.createNavigation(ownerDocument);
-        this.createActions(ownerDocument, titleId);
+        const controlsEl = ownerDocument.createElement("div");
+        controlsEl.classList.add("pa-share-card-controls");
+        this.contentEl.appendChild(controlsEl);
+        this.createNavigation(ownerDocument, controlsEl);
+        this.createActions(ownerDocument, titleId, controlsEl);
+        this.createZoom(ownerDocument);
         this.ownerWindow?.addEventListener("resize", this.handleResize);
 
         const token = this.nextToken();
@@ -195,6 +227,11 @@ export class ShareCardModal extends Modal {
             usedPlainTextFallback: false,
         };
         this.pageCompleteness.clear();
+        this.closeZoom(false);
+        this.zoomEl?.remove();
+        this.zoomEl = null;
+        this.zoomViewportEl = null;
+        this.zoomCloseButton = null;
         this.ownerWindow?.removeEventListener("resize", this.handleResize);
         this.ownerWindow = null;
         this.previewRender?.cleanup();
@@ -343,7 +380,7 @@ export class ShareCardModal extends Modal {
         await this.renderPreview();
     }
 
-    private createNavigation(ownerDocument: Document): void {
+    private createNavigation(ownerDocument: Document, controlsEl: HTMLElement): void {
         const navEl = ownerDocument.createElement("div");
         navEl.classList.add("pa-share-card-nav");
         navEl.hidden = true;
@@ -376,7 +413,7 @@ export class ShareCardModal extends Modal {
         this.previousButton = previousButton;
         this.nextButton = nextButton;
         this.pageIndicatorEl = pageIndicatorEl;
-        this.contentEl.appendChild(navEl);
+        controlsEl.appendChild(navEl);
     }
 
     private createPrintStyleControls(ownerDocument: Document): void {
@@ -445,7 +482,7 @@ export class ShareCardModal extends Modal {
         );
     }
 
-    private createActions(ownerDocument: Document, titleId: string): void {
+    private createActions(ownerDocument: Document, titleId: string, controlsEl: HTMLElement): void {
         const folderRow = ownerDocument.createElement("div");
         folderRow.classList.add("pa-share-card-folder-row");
         const folderLabel = ownerDocument.createElement("label");
@@ -462,7 +499,7 @@ export class ShareCardModal extends Modal {
         folderInput.spellcheck = false;
         folderRow.appendChild(folderInput);
         this.folderInputEl = folderInput;
-        this.contentEl.appendChild(folderRow);
+        controlsEl.appendChild(folderRow);
         attachFolderSuggest(this.app, folderInput);
 
         const actionsEl = ownerDocument.createElement("div");
@@ -489,7 +526,72 @@ export class ShareCardModal extends Modal {
 
         this.copyButton = copyButton;
         this.saveButton = saveButton;
-        this.contentEl.appendChild(actionsEl);
+        controlsEl.appendChild(actionsEl);
+    }
+
+    private createZoom(ownerDocument: Document): void {
+        const zoomEl = ownerDocument.createElement("div");
+        zoomEl.classList.add("pa-share-card-zoom");
+        zoomEl.hidden = true;
+        zoomEl.setAttribute("role", "dialog");
+        zoomEl.setAttribute("aria-modal", "true");
+        zoomEl.setAttribute("aria-label", t("plugin.shareCard.zoomedPreview"));
+
+        const backdrop = ownerDocument.createElement("div");
+        backdrop.classList.add("pa-share-card-zoom-backdrop");
+        backdrop.setAttribute("aria-hidden", "true");
+        backdrop.addEventListener("click", () => this.closeZoom());
+        zoomEl.appendChild(backdrop);
+
+        const panel = ownerDocument.createElement("div");
+        panel.classList.add("pa-share-card-zoom-panel");
+        const closeButton = ownerDocument.createElement("button");
+        closeButton.type = "button";
+        closeButton.classList.add("pa-share-card-zoom-close");
+        closeButton.setAttribute("aria-label", t("plugin.shareCard.closePreview"));
+        setIcon(closeButton, "x");
+        closeButton.addEventListener("click", () => this.closeZoom());
+        panel.appendChild(closeButton);
+
+        const zoomViewport = ownerDocument.createElement("div");
+        zoomViewport.classList.add("pa-share-card-zoom-viewport");
+        zoomViewport.addEventListener("click", (event) => event.preventDefault());
+        panel.appendChild(zoomViewport);
+        zoomEl.appendChild(panel);
+        this.modalEl.appendChild(zoomEl);
+
+        this.zoomEl = zoomEl;
+        this.zoomViewportEl = zoomViewport;
+        this.zoomCloseButton = closeButton;
+    }
+
+    private openZoom(): void {
+        const host = this.previewScaleEl;
+        const zoom = this.zoomEl;
+        const zoomViewport = this.zoomViewportEl;
+        if (!this.previewRender || !host || !zoom || !zoomViewport || this.zoomOpen) return;
+        this.zoomOpen = true;
+        zoom.hidden = false;
+        zoomViewport.appendChild(host);
+        this.updatePreviewScale();
+        this.ownerWindow?.addEventListener("keydown", this.handleZoomKeydown, true);
+        this.zoomCloseButton?.focus();
+        this.contentEl.setAttribute("aria-hidden", "true");
+        this.contentEl.setAttribute("inert", "");
+    }
+
+    private closeZoom(restoreFocus = true): void {
+        if (!this.zoomOpen) return;
+        this.zoomOpen = false;
+        this.ownerWindow?.removeEventListener("keydown", this.handleZoomKeydown, true);
+        if (this.zoomEl) this.zoomEl.hidden = true;
+        this.contentEl.removeAttribute("aria-hidden");
+        this.contentEl.removeAttribute("inert");
+        if (this.viewportEl && this.previewScaleEl) {
+            this.viewportEl.appendChild(this.previewScaleEl);
+            this.updatePreviewScale();
+            if (restoreFocus) this.viewportEl.focus();
+        }
     }
 
     private async navigate(delta: -1 | 1): Promise<void> {
@@ -734,7 +836,18 @@ export class ShareCardModal extends Modal {
             (this.ownerWindow?.innerWidth ?? CARD_WIDTH) - 48,
         ));
         const availableWidth = viewport.clientWidth || fallbackWidth;
-        const scale = Math.min(1, availableWidth / CARD_WIDTH);
+        const availableHeight = Math.max(1, viewport.clientHeight);
+        const scale = this.zoomOpen
+            ? 1
+            : Math.min(
+                1,
+                availableWidth / CARD_WIDTH,
+                Math.max(MIN_PREVIEW_SCALE, availableHeight / CARD_HEIGHT),
+            );
+        viewport.classList.toggle(
+            "is-scrollable",
+            !this.zoomOpen && CARD_HEIGHT * scale > availableHeight,
+        );
         scaleEl.style.setProperty("--pa-share-card-preview-scale", String(scale));
         scaleEl.style.width = `${CARD_WIDTH * scale}px`;
         scaleEl.style.height = `${CARD_HEIGHT * scale}px`;
@@ -786,6 +899,7 @@ export class ShareCardModal extends Modal {
         this.statusEl.textContent = message;
         if (tone) this.statusEl.dataset.tone = tone;
         else delete this.statusEl.dataset.tone;
+        if (this.previewRender) this.updatePreviewScale();
     }
 
     private nextToken(): number {

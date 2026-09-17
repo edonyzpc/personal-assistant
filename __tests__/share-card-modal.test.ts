@@ -78,6 +78,7 @@ describe("ShareCardModal", () => {
 
         const status = document.body.querySelector(".pa-share-card-status")!;
         const viewport = document.body.querySelector(".pa-share-card-preview-viewport")!;
+        viewport.clientHeight = 720;
         const actions = document.body.querySelector(".pa-share-card-actions")!;
         const title = document.body.querySelector("h2")!;
         const folderLabel = document.body.querySelector(".pa-share-card-folder-label")!;
@@ -151,6 +152,60 @@ describe("ShareCardModal", () => {
             expect.objectContaining({ host: asElement(scale) }),
         );
         modal.onClose();
+    });
+
+    it("fits preview height and opens the same card at full size for inspection", async () => {
+        const document = new ShareCardTestDocument();
+        const renderer = createRenderer(document, []);
+        const modal = createModal(document, {
+            prepareMarkdown: () => ({ markdown: "one", blocks: ["one"] }),
+            paginate: async () => [{ content: "one", pageIndex: 0, totalPages: 1 }],
+            createRenderer: () => renderer,
+            createExporter: () => createExporter(),
+        });
+
+        modal.onOpen();
+        const viewport = document.body.querySelector(".pa-share-card-preview-viewport")!;
+        viewport.clientHeight = 360;
+        await flushShareCardTasks();
+
+        const scale = document.body.querySelector(".pa-share-card-preview-scale")!;
+        const zoom = document.body.querySelector(".pa-share-card-zoom")!;
+        const zoomViewport = document.body.querySelector(".pa-share-card-zoom-viewport")!;
+        const close = document.body.querySelector(".pa-share-card-zoom-close")!;
+        expect(scale.style.values.get("--pa-share-card-preview-scale")).toBe("0.5");
+        expect(scale.style.height).toBe("360px");
+        expect(viewport.getAttribute("aria-label")).toBe("Enlarge card preview");
+
+        viewport.click();
+        expect(zoom.hidden).toBe(false);
+        expect(scale.parentElement).toBe(zoomViewport);
+        expect(scale.style.values.get("--pa-share-card-preview-scale")).toBe("1");
+        expect(scale.style.height).toBe("720px");
+        expect(document.activeElement).toBe(close);
+        expect(document.listenerCount("keydown")).toBe(1);
+
+        expect(document.dispatchWindowKeydown("Escape")).toEqual({ prevented: true, stopped: true });
+        expect(zoom.hidden).toBe(true);
+        expect(scale.parentElement).toBe(viewport);
+        expect(scale.style.values.get("--pa-share-card-preview-scale")).toBe("0.5");
+        expect(document.activeElement).toBe(viewport);
+        expect(document.listenerCount("keydown")).toBe(0);
+
+        viewport.clientHeight = 150;
+        document.dispatchWindowResize();
+        expect(scale.style.values.get("--pa-share-card-preview-scale")).toBe("0.45");
+        expect(viewport.classList.contains("is-scrollable")).toBe(true);
+
+        viewport.click();
+        document.body.querySelector(".pa-share-card-zoom-backdrop")!.click();
+        expect(zoom.hidden).toBe(true);
+        expect(viewport.keydown("Enter")).toBe(true);
+        expect(zoom.hidden).toBe(false);
+        close.click();
+        expect(zoom.hidden).toBe(true);
+        modal.onClose();
+        expect(document.body.querySelector(".pa-share-card-zoom")).toBeNull();
     });
 
     it("shows a non-persistent print-style selector that starts at original", async () => {

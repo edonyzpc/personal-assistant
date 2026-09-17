@@ -2,8 +2,8 @@
 
 Decision ID: DEC-026
 Status: Accepted
-Updated: 2026-08-07
-Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则
+Updated: 2026-09-17
+Authority: 用户于 2026-08-04 授权审查、设计、开发与测试，于 2026-08-05 明确选择内容/媒体方案 C（完整渲染保真）及 capture runtime 方案 A（SnapDOM 窄例外），于 2026-08-06 修订 Action Ring 入口、来源优先级、品牌、字体、标签、布局与分页字号，并于 2026-08-07 明确以当前 `master` 行为作为最终规则；2026-09-17 确认预览与操作的可见性边界及点击放大查看
 Work item: B-124
 
 > [!note] Owner decision 2026-08-05
@@ -26,6 +26,11 @@ Work item: B-124
 > 且同一 batch 的 preview、copy 与 save 始终使用同一字号。保存目录在每次 Modal 内
 > 可选、不持久化，默认使用有效的 Vault attachment folder，否则回退 `PA-Cards`；
 > Desktop/iPad Ring 优先内向弧，标签空间不足时整组降级为紧凑横排或竖排。
+
+> [!note] Owner amendment 2026-09-17
+> 常见窗口中，Share Card Modal 应同时呈现完整卡片缩略图、保存路径和主要操作，
+> 不要求先滚动发现按钮。极小窗口优先保证操作可见，预览可以滚动；点击预览可只读
+> 放大查看细节。此变更只影响 Modal 展示，不改变固定卡片、分页或 PNG 导出尺寸。
 
 ## Context
 
@@ -68,8 +73,9 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
    其余正文原样进入卡片，并显示 `file.basename`（不含目录与 `.md`）。无 active Markdown
    note 或剥离后正文为空时不打开 Modal，只给出可恢复的本地化提示。
 2. v1 使用固定 `540×720` CSS card 和 2× raster density，输出 `1080×1440` PNG。卡片
-   在打开时锁定当前 light/dark 主题；预览可按可用宽度缩放，但导出必须来自独立、
-   未缩放的固定尺寸 DOM。品牌区固定为 PA 图形 logo + `Personal Assistant`，不加入营销
+   在打开时锁定当前 light/dark 主题；预览按可用宽度和高度缩放，常见窗口中与路径、
+   主要操作同屏，极小窗口优先保留操作可见。点击预览只读放大当前页以查看细节；
+   导出仍必须来自独立、未缩放的固定尺寸 DOM。品牌区固定为 PA 图形 logo + `Personal Assistant`，不加入营销
    CTA。Chat/Pagelet 保留稳定产品来源文案；Ring note 显示 basename，Ring selection
    不显示文件名或路径。卡片非代码文字以 Source Han Serif 为主字体；字体只能从插件随包本地
    字节生成的 `data:` URL 加载，不允许外部 font URL、font CDN 或字体网络请求。字体未
@@ -144,5 +150,5 @@ PA 的 Chat 回复与 Pagelet 洞察已经可以复制或保存回 Vault，但�
 - Product Spec: [B-124 Share Card Product Spec](../specs/pa-share-card-product-spec.md)
 - Current Architecture: [Share Card Architecture](../../architecture/share-card-architecture.md)
 - Validation evidence: [Pagelet and Share Card smoke checklist](../../development/validation/pagelet-smoke-checklist.md)
-- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05；Action Ring/source/visual/font/layout/pagination amendment approved 2026-08-06；current `master` behavior selected as final authority 2026-08-07
+- Source request: User request 2026-08-04；content/media option C and capture runtime option A selected 2026-08-05；Action Ring/source/visual/font/layout/pagination amendment approved 2026-08-06；current `master` behavior selected as final authority 2026-08-07；Modal visibility and inspect-only zoom confirmed 2026-09-17
 - Supersedes / superseded by: supersedes the design assumptions in the removed original implementation draft; none otherwise

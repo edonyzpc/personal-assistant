@@ -1,7 +1,7 @@
 # PA Share Card Product Spec
 
 Document status: Approved
-Updated: 2026-09-13
+Updated: 2026-09-17
 Work item: B-124
 Decision: [DEC-026 — Share Card 采用本地、显式导出的完整渲染卡片](../decisions/dec-026-local-share-card.md)
 Authority: Share Card 的入口、可分享内容、视觉、分页、导出、失败、数据与兼容性边界。
@@ -27,6 +27,11 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 > [!note] Owner amendment 2026-09-13
 > 用户确认增加 PA 专属编辑器右键选区分享入口，复用 Chat 的 Share Card 渲染链。
 > 保留第三方 Export Image 的原菜单和功能，不修改其图片样式。
+
+> [!note] Owner amendment 2026-09-17
+> 常见窗口打开 Modal 后，完整卡片缩略图、保存路径与主要操作同屏可见；极小窗口
+> 优先让操作可见，预览可滚动。点击预览可只读放大看当前页细节，不改变导出卡片
+> 的尺寸、内容、分页或印刷样式。
 
 - User problem: 用户想复用一段 PA 回复或洞察时，需要手工排版或截取带 UI chrome 的
   屏幕内容，难以得到安静、清晰且一致的分享图片。
@@ -58,8 +63,10 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
 - B-124/REQ-03: v1 卡片固定为 `540×720` CSS px、DPR 2 PNG（`1080×1440`），提供
   neutral paper light 与 warm dark 两个由 Modal 打开时当前主题选定的样式，并保持可见
   纸张纤维纹理。每页有一致内容区、细 divider、PA 图形 logo + `Personal Assistant`
-  品牌和必要页码；预览响应 modal/viewport，
-  导出尺寸不受预览缩放影响。非代码文字以 Source Han Serif 为主字体，并只能从随插件提供的
+  品牌和必要页码；预览同时响应 modal/viewport 的宽度和高度，常见窗口应与保存路径、
+  主要操作同屏，极小窗口优先保证操作可见并允许预览滚动。点击预览可放大当前页
+  查看细节，关闭后返回原状态；放大仅影响检查视图，导出尺寸不受预览缩放影响。
+  非代码文字以 Source Han Serif 为主字体，并只能从随插件提供的
   本地字体字节生成的 `data:` URL 加载；不得引用外部字体 URL/CDN 或发起字体网络请求。
   固定子集未覆盖的 Unicode 字符使用同字号的设备本地 serif glyph fallback；这不允许
   外部字体发现或请求，也不替代主字体加载。主字体加载/就绪失败必须显示可重试错误，
@@ -93,7 +100,8 @@ Authority: Share Card 的入口、可分享内容、视觉、分页、导出、�
   删除已经成功创建的本轮文件。
 - B-124/REQ-08: preview loading、render fallback、pagination/export failure 与 busy state
   都有可读状态。前后页按钮与保存目录输入具备本地化 accessible name，按钮保留
-  disabled state 和页码；action 在导出期间 exactly once，关闭 Modal 后不得继续写 UI。
+  disabled state 和页码；放大预览具备可访问名称、键盘进入和关闭路径，关闭后焦点
+  返回预览；action 在导出期间 exactly once，关闭 Modal 后不得继续写 UI。
 - B-124/REQ-09: Share Card 从调用方已经持有的内容开始，只能解析该内容明确引用的
   远程或 Vault 资源；不调用 AI provider、不上传、不扫描无关 Vault、不使用未批准的
   CORS proxy，也不新增设置/ledger。capture 精确锁定 `@zumer/snapdom@2.23.2`，使用
@@ -185,7 +193,9 @@ flowchart TD
   无 active Markdown 或空正文时不打开 Modal。
 - B-124/AC-04: light/dark 预览和 PNG 均显示图形 logo 与 `Personal Assistant`；Source Han
   Serif 只由本地 data URL 提供，font network request 为 0。窄桌面/
-  移动 viewport 可完整查看预览与 44px actions，导出 blob 为 `1080×1440`。覆盖
+  移动 viewport 可完整查看预览与 44px actions；常见窗口无需滚动即可发现保存路径和
+  主要操作，极小窗口仍优先保证操作可见。点击预览放大后可查看当前页细节，退出后
+  回到原缩略图；导出 blob 为 `1080×1440`。覆盖
   `16/15/14px` 的多页 fixture 证明只在页数减少时缩小；短单页 fixture 覆盖
   `18/20/22px` 最大可容纳选择、候选失败回退，以及 preview/copy/save 整批一致。
 - B-124/AC-05: 覆盖中英文、列表、引用、代码块、长段落与 50+ 行内容的测试证明顺序

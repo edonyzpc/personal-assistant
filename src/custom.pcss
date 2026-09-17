@@ -7646,9 +7646,10 @@ body.is-mobile .pa-quick-capture-modal__input {
 	max-height: 62vh;
 }
 
-/* Share Card: responsive preview around a fixed 540 x 720 capture surface. */
+/* Share Card: fit the preview in the modal; keep capture at 540 x 720. */
 .pa-share-card-modal-shell {
 	box-sizing: border-box;
+	position: relative;
 	width: min(648px, calc(100vw - 24px));
 	max-width: calc(100vw - 24px);
 	max-height: calc(100vh - 24px);
@@ -7667,6 +7668,7 @@ body.is-mobile .pa-quick-capture-modal__input {
 	flex-direction: column;
 	gap: 12px;
 	max-width: 100%;
+	height: calc(100vh - 72px);
 	max-height: calc(100vh - 72px);
 	overflow-x: hidden;
 	overflow-y: auto;
@@ -7675,6 +7677,7 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 @supports (height: 100dvh) {
 	.pa-share-card-modal {
+		height: calc(100dvh - 72px);
 		max-height: calc(100dvh - 72px);
 	}
 }
@@ -7757,8 +7760,8 @@ body.is-mobile .pa-quick-capture-modal__input {
 .pa-share-card-preview-viewport {
 	box-sizing: border-box;
 	display: flex;
-	flex: 0 0 auto;
-	align-items: flex-start;
+	flex: 1 1 0;
+	align-items: center;
 	justify-content: center;
 	width: 100%;
 	max-width: 540px;
@@ -7767,6 +7770,18 @@ body.is-mobile .pa-quick-capture-modal__input {
 	overflow: hidden;
 	border-radius: 16px;
 	background: color-mix(in srgb, var(--background-secondary) 72%, transparent);
+	cursor: zoom-in;
+}
+
+.pa-share-card-preview-viewport:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
+.pa-share-card-preview-viewport.is-scrollable {
+	align-items: flex-start;
+	justify-content: flex-start;
+	overflow: auto;
 }
 
 .pa-share-card-preview-scale {
@@ -8180,6 +8195,18 @@ body.is-mobile .pa-quick-capture-modal__input {
 	min-height: 36px;
 }
 
+.pa-share-card-controls {
+	position: sticky;
+	bottom: 0;
+	z-index: 1;
+	display: flex;
+	flex: 0 0 auto;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 4px;
+	background: var(--background-primary);
+}
+
 .pa-share-card-nav button {
 	box-sizing: border-box;
 	display: inline-flex;
@@ -8220,7 +8247,7 @@ body.is-mobile .pa-quick-capture-modal__input {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 10px;
+	margin-bottom: 0;
 	font-size: var(--font-ui-small);
 	color: var(--text-muted);
 }
@@ -8296,9 +8323,68 @@ body.is-mobile .pa-quick-capture-modal__input {
 
 .pa-share-card-nav button:focus-visible,
 .pa-share-card-actions button:focus-visible,
-.pa-share-card-print-style-option:focus-visible {
+.pa-share-card-print-style-option:focus-visible,
+.pa-share-card-zoom-close:focus-visible {
 	outline: 2px solid var(--interactive-accent);
 	outline-offset: 2px;
+}
+
+.pa-share-card-zoom[hidden] {
+	display: none !important;
+}
+
+.pa-share-card-zoom {
+	position: absolute;
+	inset: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 12px;
+}
+
+.pa-share-card-zoom-backdrop {
+	position: absolute;
+	inset: 0;
+	background: rgba(20, 18, 17, .82);
+}
+
+.pa-share-card-zoom-panel {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	max-width: 100%;
+	max-height: 100%;
+	padding: 8px;
+	border-radius: 18px;
+	background: var(--background-primary);
+	box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+}
+
+.pa-share-card-zoom-close {
+	align-self: flex-end;
+	box-sizing: border-box;
+	width: 36px;
+	min-width: 36px;
+	height: 36px;
+	min-height: 36px;
+	margin: 0 0 4px;
+	padding: 8px;
+}
+
+.pa-share-card-zoom-viewport {
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	max-width: 100%;
+	max-height: 100%;
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+
+.pa-share-card-zoom-viewport .pa-share-card-preview-scale {
+	margin: auto;
 }
 
 body.is-mobile .pa-share-card-modal-shell {
@@ -8322,6 +8408,13 @@ body.is-mobile .pa-share-card-nav {
 }
 
 body.is-mobile .pa-share-card-nav button {
+	width: 44px;
+	min-width: 44px;
+	height: 44px;
+	min-height: 44px;
+}
+
+body.is-mobile .pa-share-card-zoom-close {
 	width: 44px;
 	min-width: 44px;
 	height: 44px;

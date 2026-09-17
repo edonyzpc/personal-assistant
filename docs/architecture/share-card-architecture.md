@@ -130,8 +130,10 @@ data URL，必须在测量前就绪。SnapDOM 的 document-wide font discovery �
   细 divider、枝叶角饰、图形 logo 与 `Personal Assistant` 品牌文字。
 - 内嵌的纸纤维 raster data URI 在卡面重复铺设：Light 使用 multiply，Dark 使用 screen；
   不读取外部纹理、字体或品牌资源。
-- 内容区在留白内垂直居中；多页显示稳定页码。Preview 只按 viewport 缩放外观，固定尺寸
-  capture DOM 不受 preview scale 影响。
+- 内容区在留白内垂直居中；多页显示稳定页码。Modal 的缩略图按可用宽高缩放，
+  为路径与操作保留空间；极小窗口中操作优先可见。点击预览将同一张已渲染卡片移入
+  只读放大层，以原 CSS 尺寸检查并允许滚动，关闭后回到缩略图与原焦点。固定尺寸
+  capture DOM 不受 preview/zoom scale 影响。
 - 卡片与全部后代冻结 animation/transition，确保 preview 与 PNG 使用同一静态视觉状态。
 - 每次 Modal 提供 `original / light-print / xerox` 三档本地 appearance，默认 original 且不
   持久化。Light-print 对标题使用已验证轻效果，对普通正文使用更收敛轻效果；Xerox 对

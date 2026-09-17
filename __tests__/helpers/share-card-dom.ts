@@ -12,6 +12,13 @@ export class ShareCardTestClassList {
     contains(value: string): boolean {
         return this.values.has(value);
     }
+
+    toggle(value: string, force?: boolean): boolean {
+        const enabled = force ?? !this.values.has(value);
+        if (enabled) this.values.add(value);
+        else this.values.delete(value);
+        return enabled;
+    }
 }
 
 export class ShareCardTestElement {
@@ -19,7 +26,7 @@ export class ShareCardTestElement {
     readonly children: ShareCardTestElement[] = [];
     readonly attributes = new Map<string, string>();
     readonly dataset: Record<string, string> = {};
-    readonly listeners = new Map<string, Array<() => void>>();
+    readonly listeners = new Map<string, Array<(event?: unknown) => void>>();
     readonly style = {
         width: "",
         height: "",
@@ -126,7 +133,7 @@ export class ShareCardTestElement {
         this.attributes.delete(name);
     }
 
-    addEventListener(type: string, listener: () => void): void {
+    addEventListener(type: string, listener: (event?: unknown) => void): void {
         const listeners = this.listeners.get(type) ?? [];
         listeners.push(listener);
         this.listeners.set(type, listeners);
@@ -141,7 +148,19 @@ export class ShareCardTestElement {
 
     click(): void {
         if (this.disabled) return;
-        for (const listener of this.listeners.get("click") ?? []) listener();
+        const event = { preventDefault: () => undefined };
+        for (const listener of this.listeners.get("click") ?? []) listener(event);
+    }
+
+    keydown(key: string): boolean {
+        let prevented = false;
+        const event = { key, preventDefault: () => { prevented = true; } };
+        for (const listener of this.listeners.get("keydown") ?? []) listener(event);
+        return prevented;
+    }
+
+    focus(): void {
+        this.ownerDocument.activeElement = this;
     }
 
     querySelector(selector: string): ShareCardTestElement | null {
@@ -170,15 +189,17 @@ export class ShareCardTestElement {
 export class ShareCardTestDocument {
     readonly documentElement: ShareCardTestElement;
     readonly body: ShareCardTestElement;
+    activeElement: ShareCardTestElement | null = null;
     readonly defaultView: {
         innerWidth: number;
+        innerHeight: number;
         navigator: { clipboard?: { write(items: unknown[]): Promise<void> } };
         ClipboardItem?: new (items: Record<string, Blob | PromiseLike<Blob>>) => ClipboardItem;
         requestAnimationFrame(callback: FrameRequestCallback): number;
         addEventListener(type: string, listener: () => void): void;
         removeEventListener(type: string, listener: () => void): void;
     };
-    private readonly windowListeners = new Map<string, Array<() => void>>();
+    private readonly windowListeners = new Map<string, Array<(event?: unknown) => void>>();
 
     constructor() {
         this.documentElement = new ShareCardTestElement("html", this);
@@ -187,6 +208,7 @@ export class ShareCardTestDocument {
         this.documentElement.appendChild(this.body);
         this.defaultView = {
             innerWidth: 700,
+            innerHeight: 850,
             navigator: {},
             requestAnimationFrame: (callback) => {
                 callback(0);
@@ -212,6 +234,21 @@ export class ShareCardTestDocument {
 
     listenerCount(type: string): number {
         return this.windowListeners.get(type)?.length ?? 0;
+    }
+
+    dispatchWindowKeydown(key: string): { prevented: boolean; stopped: boolean } {
+        const result = { prevented: false, stopped: false };
+        const event = {
+            key,
+            preventDefault: () => { result.prevented = true; },
+            stopImmediatePropagation: () => { result.stopped = true; },
+        };
+        for (const listener of this.windowListeners.get("keydown") ?? []) listener(event);
+        return result;
+    }
+
+    dispatchWindowResize(): void {
+        for (const listener of this.windowListeners.get("resize") ?? []) listener();
     }
 }
 
