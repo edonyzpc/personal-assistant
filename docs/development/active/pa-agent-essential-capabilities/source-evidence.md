@@ -1,12 +1,11 @@
 # PA Agent 基础能力优化方案
 
 Document status: Current
-Delivery status: Needs Decision
 Updated: 2026-09-14
 Work item: B-140
-Authority: 本主题在产品决定前的问题、源码证据、优化建议与待决策项；不是已交付能力或已批准的实施契约。
+Authority: 本主题的原始问题、源码证据与方案依据；当前产品合同已接续至 [DEC-036](../../../product/decisions/dec-036-pa-agent-essential-capabilities.md) 和 [Product Spec](../../../product/specs/pa-agent-essential-capabilities-product-spec.md)，执行状态见 [Tracker](./tracker.md)。
 
-开发任务安排：[GPT-6 / GLM 任务设计](./pa-agent-essential-capabilities/task-design.md)。该文档细化 worker 模式、依赖、允许文件、负例、验证、GPT 验收与清理；实际执行状态在进入 Active 后只记录于 owning Tracker。
+开发任务安排：[GPT-6 / GLM 任务设计](./task-cards.md)。该文档细化 worker 模式、依赖、允许文件、负例、验证、GPT 验收与清理；实际执行状态在进入 Active 后只记录于 owning Tracker。
 
 ## Problem And User Outcome
 
@@ -20,7 +19,7 @@ Authority: 本主题在产品决定前的问题、源码证据、优化建议与
 | 检视并修正长期理解 | “你记住了我什么”；“这点理解错了”；“以后别用这条” | 能查看具体理解及来源，明确执行记住、纠正、暂停、恢复或忘记，并说明真实生效范围 |
 | 洞察与再次使用 | “最近反复在想什么”；“之前保留了哪些相关想法”；“把这个发现留着” | 在笔记和既有洞察中查证、比较、解释；用户选择后才留下可再次找到的资产 |
 
-产品标准来自 [North Star](../../product/pa-product-north-star.md)：随手记下，需要时自然浮现。必要性按能否形成上述用户结果判断，不按工具数量、MCP 数量或生成内容多少判断。
+产品标准来自 [North Star](../../../product/pa-product-north-star.md)：随手记下，需要时自然浮现。必要性按能否形成上述用户结果判断，不按工具数量、MCP 数量或生成内容多少判断。
 
 ## Evidence
 
@@ -28,18 +27,18 @@ Authority: 本主题在产品决定前的问题、源码证据、优化建议与
 
 | Item | Grade | Source | Implication |
 | --- | --- | --- | --- |
-| Chat 注册多种本地只读工具，但实际暴露受初始语义集合、Operations eligibility 与后续控制策略影响 | Confirmed | [PA Agent runtime](../../../src/ai-services/pa-agent-runtime.ts)，`coreCapabilities`、`operationsActionsEligible`、`OPERATIONS_SUPPORT_TOOL_NAMES`；[控制策略](../../../src/ai-services/pa-agent-control-policy.ts)；[后续能力策略](../../../src/ai-services/pa-agent-required-capability-policy.ts) | “源码有工具”不等于模型当轮能用；只补正文工具仍可能留下能力不可达 |
-| Chat 的 `inspect_obsidian_note` 默认返回结构；宿主内部读过文件不等于正文已返回模型；Pagelet anchor 包装另外允许有界正文 | Confirmed | [工具工厂](../../../src/ai-services/chat-tool-factories.ts)，`createInspectObsidianNoteTool`；[Pagelet anchor](../../../src/pagelet/agent/anchor-note-tool.ts) | Chat 缺少通用的按路径正文读取能力；不能把结构结果视为已读全文 |
-| `get_current_note_context` 仅面向当前笔记；全文有界，无 editor 时可能只有元数据 | Confirmed | [工具工厂](../../../src/ai-services/chat-tool-factories.ts)，`createCurrentNoteContextTool` | 不能代替任意候选笔记读取，也需要明确实际返回了什么 |
-| 元数据搜索是相关性匹配；最近笔记只有创建/修改排序与数量；片段搜索取每篇首次字面匹配，可能命中 YAML，扫描有界且不能续页 | Confirmed | [工具工厂](../../../src/ai-services/chat-tool-factories.ts)，`createSearchVaultMetadataTool`、`createListRecentNotesTool`、`createSearchVaultSnippetsTool`；[执行辅助](../../../src/ai-services/chat-tool-execution-helpers.ts)，`findSnippetMatch` | 缺少精确筛选、完整枚举和持续读取；日期回顾不能把语义 top-k 或最近若干篇当作“全部” |
-| Memory 已有统一查询视图，以及纠正、暂停/恢复、范围、忘记、撤销等治理入口 | Confirmed | [Memory read model](../../../src/pa/memory-control-center.ts)；[治理协调器](../../../src/pa/memory-governance-coordinator.ts)；[Plugin](../../../src/plugin.ts)，`getMemoryControlCenterSnapshot`、`runMemoryControlCenterAction` | 优先增加 Agent 适配；不要新建平行 Memory 数据库或直接暴露存储 CRUD |
-| 现有运行上下文有 Memory 使用记录与来源信息，但不等于可以证明某条信息导致了模型的某句话 | Confirmed | [PA Agent runtime](../../../src/ai-services/pa-agent-runtime.ts)，`governedMemoryTrace` / `contextUsed`；[上下文投影](../../../src/ai-services/context/PaAgentContextProjector.ts) | 可解释实际入模背景；不能承诺模型内部因果归因 |
-| Type-C 有笔记库统计/主题/链接等快照及独立状态；部分 knowledge gap 来自未解析链接推导 | Confirmed | [提取调度器](../../../src/ai-services/memory-extraction/extraction-scheduler.ts)，`getVaultInsightsSnapshot`、`getVaultInsightsStatus`；[Type-C 分析器](../../../src/ai-services/memory-extraction/type-c-analyzer.ts) | 可复用已有线索；结构指标不能被称为已证明的知识缺口或语义矛盾 |
-| Saved Insight 有来源、范围、状态与独立存储；保存不等于形成长期行为约束 | Confirmed | [Saved Insight store](../../../src/pa/saved-insight-store.ts)；[Saved Insight Spec](../../product/specs/pa-saved-insight-ledger-product-spec.md) | Agent 需要查询和显式保存接口；不能把所有洞察自动变为 Memory |
+| Chat 注册多种本地只读工具，但实际暴露受初始语义集合、Operations eligibility 与后续控制策略影响 | Confirmed | [PA Agent runtime](../../../../src/ai-services/pa-agent-runtime.ts)，`coreCapabilities`、`operationsActionsEligible`、`OPERATIONS_SUPPORT_TOOL_NAMES`；[控制策略](../../../../src/ai-services/pa-agent-control-policy.ts)；[后续能力策略](../../../../src/ai-services/pa-agent-required-capability-policy.ts) | “源码有工具”不等于模型当轮能用；只补正文工具仍可能留下能力不可达 |
+| Chat 的 `inspect_obsidian_note` 默认返回结构；宿主内部读过文件不等于正文已返回模型；Pagelet anchor 包装另外允许有界正文 | Confirmed | [工具工厂](../../../../src/ai-services/chat-tool-factories.ts)，`createInspectObsidianNoteTool`；[Pagelet anchor](../../../../src/pagelet/agent/anchor-note-tool.ts) | Chat 缺少通用的按路径正文读取能力；不能把结构结果视为已读全文 |
+| `get_current_note_context` 仅面向当前笔记；全文有界，无 editor 时可能只有元数据 | Confirmed | [工具工厂](../../../../src/ai-services/chat-tool-factories.ts)，`createCurrentNoteContextTool` | 不能代替任意候选笔记读取，也需要明确实际返回了什么 |
+| 元数据搜索是相关性匹配；最近笔记只有创建/修改排序与数量；片段搜索取每篇首次字面匹配，可能命中 YAML，扫描有界且不能续页 | Confirmed | [工具工厂](../../../../src/ai-services/chat-tool-factories.ts)，`createSearchVaultMetadataTool`、`createListRecentNotesTool`、`createSearchVaultSnippetsTool`；[执行辅助](../../../../src/ai-services/chat-tool-execution-helpers.ts)，`findSnippetMatch` | 缺少精确筛选、完整枚举和持续读取；日期回顾不能把语义 top-k 或最近若干篇当作“全部” |
+| Memory 已有统一查询视图，以及纠正、暂停/恢复、范围、忘记、撤销等治理入口 | Confirmed | [Memory read model](../../../../src/pa/memory-control-center.ts)；[治理协调器](../../../../src/pa/memory-governance-coordinator.ts)；[Plugin](../../../../src/plugin.ts)，`getMemoryControlCenterSnapshot`、`runMemoryControlCenterAction` | 优先增加 Agent 适配；不要新建平行 Memory 数据库或直接暴露存储 CRUD |
+| 现有运行上下文有 Memory 使用记录与来源信息，但不等于可以证明某条信息导致了模型的某句话 | Confirmed | [PA Agent runtime](../../../../src/ai-services/pa-agent-runtime.ts)，`governedMemoryTrace` / `contextUsed`；[上下文投影](../../../../src/ai-services/context/PaAgentContextProjector.ts) | 可解释实际入模背景；不能承诺模型内部因果归因 |
+| Type-C 有笔记库统计/主题/链接等快照及独立状态；部分 knowledge gap 来自未解析链接推导 | Confirmed | [提取调度器](../../../../src/ai-services/memory-extraction/extraction-scheduler.ts)，`getVaultInsightsSnapshot`、`getVaultInsightsStatus`；[Type-C 分析器](../../../../src/ai-services/memory-extraction/type-c-analyzer.ts) | 可复用已有线索；结构指标不能被称为已证明的知识缺口或语义矛盾 |
+| Saved Insight 有来源、范围、状态与独立存储；保存不等于形成长期行为约束 | Confirmed | [Saved Insight store](../../../../src/pa/saved-insight-store.ts)；[Saved Insight Spec](../../../product/specs/pa-saved-insight-ledger-product-spec.md) | Agent 需要查询和显式保存接口；不能把所有洞察自动变为 Memory |
 | 问题很可能同时包含工具缺失与暴露不完整，而不只是模型规划失误 | Inference | 上述源码 + 用户报告“看到日期、作者、别名、标签，但没看到内容” | 实施时分别验收工具可达、输出语义和真实任务结果，不用推测替代那次调用证据 |
-| 笔记读取/列表/结构工具已部分使用官方 Vault / MetadataCache；`buildNoteStructureSummary` 仍无条件调用自定义 `parseMarkdownStructure` 并合并部分缓存字段 | Confirmed | [执行辅助](../../../src/ai-services/chat-tool-execution-helpers.ts)，`readVaultFile`、`getMarkdownFiles`、`buildNoteStructureSummary` | 在既有 SDK 路径上增强；结构读取应先复用官方缓存，只为缺失语义做有界补充 |
-| 现有 Operations 用 `Vault.create` / `Vault.process` 提交，并在 process 回调检查 expectedBefore；YAML 编解码已使用 Obsidian 的 `parseYaml` / `stringifyYaml` | Confirmed | [Operations controller](../../../src/ai-services/operations/operations-intent-controller.ts)，`executeCreate` / `executeExisting`；[transform](../../../src/ai-services/operations/vault-transform.ts) | 这些已经是 SDK 复用；不能机械更换 API 破坏已审阅内容、原子变化检查和 Undo |
-| 仓库锁定 `obsidian` 类型包 1.12.3，manifest 最低 App 为 1.11.4；公开声明中 `read` / `cachedRead` 返回整篇字符串，`prepareSimpleSearch` 接受空格分词查询 | Confirmed | [依赖](../../../package.json)、[lockfile](../../../package-lock.json)、[manifest](../../../manifest.json)；本机安装包 `obsidian.d.ts` 的 Vault / MetadataCache / CachedMetadata / search 声明 | 类型可用不证明最低 App 可用；输出分段和精确查询属于必要组合，不能声称 SDK 提供按行磁盘读取或完整分页查询引擎 |
+| 笔记读取/列表/结构工具已部分使用官方 Vault / MetadataCache；`buildNoteStructureSummary` 仍无条件调用自定义 `parseMarkdownStructure` 并合并部分缓存字段 | Confirmed | [执行辅助](../../../../src/ai-services/chat-tool-execution-helpers.ts)，`readVaultFile`、`getMarkdownFiles`、`buildNoteStructureSummary` | 在既有 SDK 路径上增强；结构读取应先复用官方缓存，只为缺失语义做有界补充 |
+| 现有 Operations 用 `Vault.create` / `Vault.process` 提交，并在 process 回调检查 expectedBefore；YAML 编解码已使用 Obsidian 的 `parseYaml` / `stringifyYaml` | Confirmed | [Operations controller](../../../../src/ai-services/operations/operations-intent-controller.ts)，`executeCreate` / `executeExisting`；[transform](../../../../src/ai-services/operations/vault-transform.ts) | 这些已经是 SDK 复用；不能机械更换 API 破坏已审阅内容、原子变化检查和 Undo |
+| 仓库锁定 `obsidian` 类型包 1.12.3，manifest 最低 App 为 1.11.4；公开声明中 `read` / `cachedRead` 返回整篇字符串，`prepareSimpleSearch` 接受空格分词查询 | Confirmed | [依赖](../../../../package.json)、[lockfile](../../../../package-lock.json)、[manifest](../../../../manifest.json)；本机安装包 `obsidian.d.ts` 的 Vault / MetadataCache / CachedMetadata / search 声明 | 类型可用不证明最低 App 可用；输出分段和精确查询属于必要组合，不能声称 SDK 提供按行磁盘读取或完整分页查询引擎 |
 
 现有能力还包括条件可用的 WebSearch、内置 Skills、图片解析、写作产出、Canvas 摘要和四个笔记写工具。本项保留已有契约，不因“非本次新增重点”而删掉它们。现有 WebSearch 的 MCP 接入不等于已支持通用用户自定义 MCP；扩展 MCP 不是补齐本地基础能力的前提。
 
@@ -53,7 +52,7 @@ Authority: 本主题在产品决定前的问题、源码证据、优化建议与
 | 2026-09-14 | 用户要求按项目规范和 GPT + GLM 流程细化开发任务 | 在完整方案上形成 15 项任务设计，明确一个 GLM writer、风险检查点、阶段 gate 与 GPT 独立验收；沿用仓库当前 B-140 编号 | 任务设计不代替运行时授权或 D1 决定 |
 | 2026-09-14 | 用户明确补充技术选型原则 | PA 自身能力封装为领域工具；其它工具尽可能复用 Obsidian 官方 API/SDK，优先薄封装或必要组合；该原则属于后续设计/派工的明确约束 | 具体公共 API、最低版本、组合缺口与例外理由须经源码/官方声明核对，不能静默改为自建底层实现 |
 
-这些方向将窄范围替代 [DEC-034 D5](../../product/decisions/dec-034-unified-agent-task-execution.md) 中 Operations 的 vault 启用门。逐次写入确认、目标变化检查、取消、Undo 与来源权限继续按现有契约处理；去掉总开关不等于自动批准某次笔记写入。
+这些方向将窄范围替代 [DEC-034 D5](../../../product/decisions/dec-034-unified-agent-task-execution.md) 中 Operations 的 vault 启用门。逐次写入确认、目标变化检查、取消、Undo 与来源权限继续按现有契约处理；去掉总开关不等于自动批准某次笔记写入。
 
 ## Options
 
@@ -141,7 +140,7 @@ Authority: 本主题在产品决定前的问题、源码证据、优化建议与
 
 “管理 Memory”至少分清四件事：笔记的检索准备状态、关于用户的长期理解、Vault Insights 派生观察、Saved Insight 知识资产。它们不是一张表，也不应该被一个无约束 CRUD 工具统一修改。
 
-治理行为沿用 [Memory Control Center Spec](../../product/specs/pa-memory-control-center-product-spec.md) 与 [DEC-034](../../product/decisions/dec-034-unified-agent-task-execution.md)：
+治理行为沿用 [Memory Control Center Spec](../../../product/specs/pa-memory-control-center-product-spec.md) 与 [DEC-034](../../../product/decisions/dec-034-unified-agent-task-execution.md)：
 
 - 用户明确的纠正具有用户权威；未变化的旧证据不能立即把它覆盖回旧推断。
 - 关闭新提取不等于停止使用已有理解；明确暂停某条则停止其后续使用。主开关、有效 opt-out、来源撤销和范围限制继续生效。未准备笔记索引不应成为治理既有理解的先决条件。
@@ -163,7 +162,7 @@ Authority: 本主题在产品决定前的问题、源码证据、优化建议与
 
 保存的 PA 洞察必须关联有效来源；用户自己的无来源想法允许保存但标明 user-authored。Saved Insight 仍为弱影响资产，保存不自动升级成画像、任务约束或用户偏好。推广到 Memory 或写入笔记继续走已有明确选择和相应动作路径，不由本项开放无条件 `promote`。
 
-既有后台提取、Type-C、Pagelet 调度、去重与恢复按当前已交付实现运行。本项不启动 [B-119](../../backlog.md) 延期的完整洞察增强层，也不自动启动 B-120 独立写作趋势产品；按需回答“最近关注什么”不等于新增后台报告、提醒或一个新面板。
+既有后台提取、Type-C、Pagelet 调度、去重与恢复按当前已交付实现运行。本项不启动 [B-119](../../../backlog.md) 延期的完整洞察增强层，也不自动启动 B-120 独立写作趋势产品；按需回答“最近关注什么”不等于新增后台报告、提醒或一个新面板。
 
 ### D. 可选扩展与本项非目标
 
@@ -195,14 +194,14 @@ flowchart TD
 2. **保留真实约束**：保留文件范围、Data Boundary、撤销/遗忘、实际 provider 可用性、取消、deadline、工具/上下文预算及逐次写入确认。`declare_source_scope` 是边界表达能力，不是模型为自己扩大权限的手段。
 3. **描述观察而非指挥步骤**：工具说明明确“能回答什么、返回什么、是否完整、是否修改状态”。例如现有 `prepareCurrentNoteContextArguments` 通过 `shouldUseFullCurrentNoteContext` 按关键词覆盖模型 mode 的逻辑，应迁为模型可理解的说明；合法参数归一化与校验保留。删除与用户方向冲突的宿主规划分支时逐个判断职责，不能把 provenance 或结果安全校验当作冗余策略一起删掉。
 4. **真实证据随结果走**：最小公共信息包括来源身份、结果类型、实际范围、完整性/续读信息、可用状态；具体字段按工具需要提供，不引入一个要求所有模块重写的统一结果框架。来源变动、预算终止、无匹配和没有权限是不同结果。
-5. **两个入口共享基础**：Chat 按用户任务组合能力；Pagelet Discover 固定启动时的活动 Markdown anchor，并在允许范围查阅其它笔记。切换编辑器不得改变该 anchor。遵守 [DEC-035](../../product/decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)，不恢复已经退役的日期/范围选择面板。
+5. **两个入口共享基础**：Chat 按用户任务组合能力；Pagelet Discover 固定启动时的活动 Markdown anchor，并在允许范围查阅其它笔记。切换编辑器不得改变该 anchor。遵守 [DEC-035](../../../product/decisions/dec-035-bounded-cleanup-and-pagelet-scope-retirement.md)，不恢复已经退役的日期/范围选择面板。
 6. **Pagelet 不因发现而改变用户数据**：Discover 能读取、推理和提交现有洞察产物；没有新发现时可安静结束。Memory 管理、保存、笔记写入只在用户选择对应动作后走相应入口，不在后台发现循环自动获得这些修改权限。
 7. **上下文连续性**：新的笔记正文、治理查询和洞察结果都需接入现有来源追踪、压缩、恢复与每次物理 provider dispatch 的重新校验，包括 SDK 重试。工具读取合法不等于以后一直可以发送。
 8. **产品呈现**：回答解释“看了哪些笔记、依据是什么、还有哪些未覆盖、操作是否已生效”。技术工具名只用于内部描述/诊断；Settings 仍是完整管理入口，不把 Chat 变成第二个管理中心。
 
 ## 实施顺序与影响面建议
 
-阶段依赖、15 项任务卡、具体源代码/测试范围和 GPT / GLM 验收分工见 [开发任务设计](./pa-agent-essential-capabilities/task-design.md)。范围确认后由单一 Tracker 接续实际执行与证据，不在本方案复制任务状态。三条主线及各阶段必需验证均属于完整范围。
+阶段依赖、15 项任务卡、具体源代码/测试范围和 GPT / GLM 验收分工见 [开发任务设计](./task-cards.md)。范围确认后由单一 Tracker 接续实际执行与证据，不在本方案复制任务状态。三条主线及各阶段必需验证均属于完整范围。
 
 兼容和回滚原则：旧 `operationsAgentEnabled` 不再控制新版本能力开放；旧配置读取与降级策略应在 SDD 按现有序列化方式落实，不随手重写其他偏好。旧工具消息保留可识别投影，历史资料不能绕过当下来源边界。复用现有 Memory / Ledger 存储，避免一次性不可逆数据迁移；若确需字段升级，在设计中列明旧版本读取行为。回滚代码不应悄悄撤销用户已经完成的纠正、暂停或忘记。
 
@@ -237,7 +236,7 @@ flowchart TD
 
 ### D1：用户说“某天记了什么”时的默认日期口径
 
-- **Decision authority**：用户；已在本会话提问，尚未回答。
+- **Decision authority**：用户于 2026-09-14 接续开发时已明确选择：由主 Agent 根据上下文选择、说明口径，不确定时再问。见 DEC-036；以下推荐/替代保留原讨论依据，不作为当前默认。
 - **推荐**：优先明确的笔记记录日期，缺失时回退文件创建时间，结果说明口径。
 - **替代**：统一按创建时间；或由主 Agent 根据上下文选择，无把握时再问。
 - **关键区别**：记录日期符合日记/摘录习惯，但当前没有可以当作全库统一标准的已确认字段；创建时间容易实现，但复制、导入、同步可能改变其含义。让模型判断更灵活，但需避免不同轮次默默换口径。

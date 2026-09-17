@@ -1,20 +1,22 @@
 # B-140 — GPT-6 / GLM 开发任务设计
 
-Document status: Draft
+接续说明（2026-09-14）：用户已授权在指定 B-140 分支推进开发，D1 已选择主 Agent 按上下文判断、说明口径，不确定时再问。当前合同见 [Product Spec](../../../product/specs/pa-agent-essential-capabilities-product-spec.md)，执行与本机目标见 [Tracker](./tracker.md)。下文记录此前任务设计时的规划前提，未开始/待决定措辞不覆盖接续状态。
+
+Document status: Current
 Updated: 2026-09-14
 Work item: B-140
 Authority: 基础能力优化方案的交付分解、worker 任务草案与验收安排；不记录实施完成状态，不授予运行时或 Git/release 权限。
-Proposal: [PA Agent 基础能力优化方案](../pa-agent-essential-capabilities.md)
+Proposal: [PA Agent 基础能力优化方案](./source-evidence.md)
 Workflow: [GPT-6 / GLM 开发交付流程](../../workflows/gpt6-glm-delivery-workflow.md)
 Task template: [GLM Worker Task](../../templates/glm-worker-task.md)
 
 ## 本轮范围与文档接续
 
-用户于 2026-09-14 要求按项目规范、特别是 GPT + GLM 工作流细化开发任务，并明确通用工具尽可能复用 Obsidian 官方 API/SDK。本轮交付任务设计，不启动 worker、修改 runtime、部署或提交代码。沿用仓库当前 B-140 编号；补充官方 API 优先约束后，共 13 项 REQ、14 项 AC，15 项任务编号保持不变。
+用户于 2026-09-14 要求按项目规范、特别是 GPT + GLM 工作流细化开发任务，随后授权在 B-140 分支推进开发。沿用完整 13 项 REQ、14 项 AC 与 15 项任务编号，通用工具优先 Obsidian public API。
 
-日期默认口径 D1 尚未回答；本文件可把不依赖默认口径的查询、读取与治理工作设计完整，不把待定选择写成已获批准的行为。当前仍属 Discovery 规划材料。进入实施前，由 T-01 将稳定行为接续为 Accepted Decision / Approved Product Spec，并建立 Feature Home、单一 Tracker、Plan 与必要的 Approved SDD。不能为了创建 Active Package 给未定选择补写批准。
+日期 D1 已由用户选择主 Agent 上下文判断，详见 DEC-036/Product Spec。接口在 SDD 按切片核对；只有已核对设计和预检允许的任务才能派给 worker。
 
-接续时把本文件的顺序/风险内容移入 Plan，任务卡、实际派发修订、验证与验收记录移入 Tracker；原文件在信息吸收后按文档流程处理，不长期保留第二份任务状态。当前不新增与 Tracker 竞争的状态台账。
+本文件只保存详细派工与验收边界，Plan 保存阶段安排，实际派发修订和执行证据唯一记录于 Tracker。后续 closeout 时按信息吸收规则处理，不保留第二份任务状态。
 
 ## 工作分配
 
@@ -162,7 +164,7 @@ D1 影响 T-01 的默认日期语义、T-06 对模型的日期说明、T-07 的�
 
 ### T-08 — GLM 接入 Memory 状态、理解与使用依据
 
-- **模式 / 依赖**：`deliver`；P1 接口/来源消费链已验收。
+- **模式 / 依赖**：`reproduce → implement`；P1 接口/来源消费链已验收。只读管理观察仍涉及权限、跨重开证据与物理重试，依SDD固定负例后连续实施。
 - **目标 / 对应**：`get_memory_status`、`query_memories`、`get_memory_usage` 或 SDD 核定的等价只读入口；B-140/REQ-04、B-140/REQ-05、B-140/REQ-07；B-140/AC-05、B-140/AC-06、B-140/AC-08。
 - **必要读集 / 允许编辑**：`AiServiceHost.ts`、`src/plugin.ts` 的 Control Center snapshot / host adapter、`src/pa/memory-control-center.ts` / `memory-governance-view.ts`、runtime/context 中现有 `contextUsed` 消费点，以及 SDD 列明的新领域工具适配和 V-M/V-R 测试。只读不足才做最小 service 查询补充，不写底层记录。
 - **设计与负例**：使用真实 ID、authority、范围/效力/时间和来源；未知/未准备/暂停/禁用分别表达；无使用记录时说明未知，不推断模型因果；查询不能触发 Memory 重建、重新学习、恢复暂停或把被关闭内容作为个性化入模。
@@ -171,6 +173,8 @@ D1 影响 T-01 的默认日期语义、T-06 对模型的日期说明、T-07 的�
 - **停止点**：只读功能与 focused 证据待验收；不提前接通治理动作或改变设置。
 
 ### T-09 — GLM 接入治理并补可靠“明确记住”
+
+- **用户已定交互（2026-09-16）**：明确指令直接保存，仅歧义或风险时确认；不增加例行二次确认。保留 Forget、笔记写入与已有风险审查规则；自动提取证据不能冒充明确用户动作。
 
 - **模式 / 依赖**：`reproduce → implement`；T-08 与 T-01 的 admission / 确认 / 忘记设计已验收。
 - **目标 / 对应**：现有纠正、暂停/恢复、范围、忘记/重试、可用撤销；补明确记住的领域入口；B-140/REQ-04、B-140/REQ-06、B-140/REQ-07；B-140/AC-05、B-140/AC-07、B-140/AC-08。
@@ -254,7 +258,7 @@ D1 影响 T-01 的默认日期语义、T-06 对模型的日期说明、T-07 的�
 
 ### 实际 App 目标和验证分工
 
-- 当前计划接收仓库是 `/mnt/code/personal-assistant`，常规测试插件目标是其 `test/.obsidian/plugins/personal-assistant/`；实际 Obsidian 已打开的 vault、窗口和工具本轮未核验，由 T-02/每次部署前核对。不得把 worker worktree 内同名 `test/` 当作当前 App 已加载目标。
+- 接收树、分支和实际 App 目标以 [Tracker](./tracker.md) 与当次派工为准，标准测试插件目标为接收树的 `test/.obsidian/plugins/personal-assistant/`。T-02/每次部署前核对实际 Obsidian 已打开的 vault、窗口和工具；不得把 worker worktree 内同名 `test/` 当作当前 App 已加载目标。
 - GLM 先在 worker tree 完成获派 source 检查；GPT 审查并协调准确源码接收。阶段完整 gate/部署在任务指定的实际树运行，GLM 的 sandbox/工具是否允许操作该树须先证实；没有权限时由已具备能力的执行者补验，不能绕过权限或谎报部署成功。
 - GLM 可在已验证 CLI 能力下准备合成笔记/Memory/洞察状态并执行 probe；GPT 负责独立可见交互验收，或审查实际具备该能力的执行者提交的原始证据。桌面工具不会自动出现在 GLM CLI 中。
 - 每阶段合成记录、笔记路径、临时设置和需要恢复的视图先登记；不拿用户真实 Memory 做忘记/纠正测试。真实配置的 PA provider 只接收该阶段必要测试内容；不读取或记录密钥。

@@ -13,6 +13,8 @@
 
 ## Capture、Recall 与 Context
 
+- [PA Agent Essential Capabilities](./specs/pa-agent-essential-capabilities-product-spec.md)
+
 - [Quick Capture and Micronote](./specs/pa-quick-capture-micronote-product-spec.md)
 - [Quiet Recall and Insight Timing](./specs/pa-quiet-recall-insight-timing-product-spec.md)
 - [Context Pager](./specs/pa-context-pager-product-spec.md)
