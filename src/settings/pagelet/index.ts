@@ -1092,6 +1092,7 @@ export interface PageletToggleHandle {
 }
 
 export interface PageletTextHandle {
+    inputEl?: { addEventListener(type: "blur", listener: () => void): void };
     setPlaceholder(value: string): PageletTextHandle;
     setValue(value: string): PageletTextHandle;
     onChange(cb: (value: string) => void | Promise<void>): PageletTextHandle;
@@ -1366,15 +1367,29 @@ function renderPageletSaveLocation(
     const reviewsFolderErrorEl = parentEl.createEl("div", {
         cls: "pa-pagelet-settings-error",
     });
+    let updatingReviewsFolderText = false;
+    const setVisibleReviewsFolder = (value: string) => {
+        if (!reviewsFolderTextHandle) return;
+        updatingReviewsFolderText = true;
+        try {
+            reviewsFolderTextHandle.setValue(value);
+        } finally {
+            updatingReviewsFolderText = false;
+        }
+    };
     factory.create(parentEl)
         .setName(t("pagelet.settings.reviewsFolder.name"))
         .setDesc(t("pagelet.settings.reviewsFolder.desc"))
         .addText((text) => {
             reviewsFolderTextHandle = text;
+            text.inputEl?.addEventListener("blur", () => {
+                setVisibleReviewsFolder(lastValidReviewsFolder);
+            });
             text
                 .setPlaceholder(PAGELET_DEFAULTS.reviewsFolder)
                 .setValue(settings.reviewsFolder)
                 .onChange(async (value) => {
+                    if (updatingReviewsFolderText) return;
                     const result = normalizeReviewsFolder(value, { configDir });
                     if (result.error) {
                         // Fail-closed: keep the previously valid folder so the
@@ -1384,17 +1399,13 @@ function renderPageletSaveLocation(
                         // their edit was not accepted.
                         reviewsFolderErrorEl.textContent = t(REVIEWS_FOLDER_ERROR_I18N_KEY[result.error]);
                         settings.reviewsFolder = lastValidReviewsFolder;
-                        reviewsFolderTextHandle?.setValue(lastValidReviewsFolder);
+                        setVisibleReviewsFolder(lastValidReviewsFolder);
                         return;
                     }
                     reviewsFolderErrorEl.textContent = "";
                     lastValidReviewsFolder = result.value;
-                    // If we trimmed leading/trailing slashes, reflect the
-                    // normalised form in the visible input so the user sees
-                    // what was stored.
-                    if (value !== result.value) {
-                        reviewsFolderTextHandle?.setValue(result.value);
-                    }
+                    // Keep the raw edit until blur so a trailing slash can
+                    // become the separator of the next folder segment.
                     await saveOnChange(() => { settings.reviewsFolder = result.value; });
                 });
         });

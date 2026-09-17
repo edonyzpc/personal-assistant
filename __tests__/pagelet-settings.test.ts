@@ -85,6 +85,7 @@ interface StubSetting {
     textValue?: string;
     textPlaceholder?: string;
     textOnChange?: (value: string) => unknown;
+    textInput?: StubNode;
     dropdownValue?: string;
     dropdownOptions: Array<{ value: string; text: string }>;
     dropdownOnChange?: (value: string) => unknown;
@@ -125,7 +126,9 @@ function makeStubFactory(options: { notifyToggleChanges?: boolean } = {}): { fac
                     return builder;
                 },
                 addText(cb) {
+                    row.textInput = makeStubNode("input");
                     cb({
+                        inputEl: row.textInput,
                         setPlaceholder(value) {
                             row.textPlaceholder = value;
                             return this;
@@ -1525,6 +1528,26 @@ describe("renderPageletSection", () => {
 
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
         expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a nested reviews folder editable until blur while saving only normalized paths", async () => {
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host, save } = makeHost({ reviewsFolder: "notes" });
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        const folder = rows.find((row) => row.name === "Reviews folder")!;
+
+        for (const value of ["notes/", "notes/r", "notes/reviews/"]) {
+            folder.textValue = value;
+            await folder.textOnChange!(value);
+            expect(folder.textValue).toBe(value);
+        }
+
+        expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
+        expect(save).toHaveBeenCalledTimes(3);
+        folder.textInput?.dispatch("blur");
+        expect(folder.textValue).toBe("notes/reviews");
+        expect(save).toHaveBeenCalledTimes(3);
     });
 
     it("fails closed on a forbidden reviewsFolder edit — surfaces error + reverts visible input", async () => {

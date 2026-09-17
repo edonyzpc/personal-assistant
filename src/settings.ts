@@ -1018,7 +1018,7 @@ export class SettingTab extends PluginSettingTab {
     private featureOptionsModal: Modal | null = null;
     private pageletSaveLocationContainer: HTMLElement | null = null;
     private pageletSourceExclusionsContainer: HTMLElement | null = null;
-    private memoryModelTextControl: { setValue(value: string): unknown } | null = null;
+    private memoryModelTextControl: { inputEl: HTMLInputElement; setValue(value: string): unknown } | null = null;
     private apiTokenSecretModal: (Modal & { closeSafely(): void }) | null = null;
     private memoryControlCenterGeneration = 0;
     // Replayed deep links may resolve absence only after the current snapshot renders.
@@ -1602,12 +1602,13 @@ export class SettingTab extends PluginSettingTab {
         if (!patch || invocationEpoch === null) return;
         this.pendingAIProviderConfigurationPatch = null;
         this.pendingAIProviderConfigurationEpoch = null;
-        void this.submitAIProviderConfiguration(patch, invocationEpoch);
+        void this.submitAIProviderConfiguration(patch, invocationEpoch, false);
     }
 
     private async submitAIProviderConfiguration(
         patch: AIProviderConfigurationPatch,
         invocationEpoch: number,
+        rebuildProviderFields = true,
     ): Promise<AISetupResult> {
         let result: AISetupResult;
         try {
@@ -1616,16 +1617,20 @@ export class SettingTab extends PluginSettingTab {
             this.log("Failed to persist AI provider changes", error);
             result = { ok: false, code: "settings_save_failed" };
         }
-        this.settleAIProviderConfiguration(invocationEpoch, result);
+        this.settleAIProviderConfiguration(invocationEpoch, result, rebuildProviderFields);
         return result;
     }
 
-    private settleAIProviderConfiguration(invocationEpoch: number, result: AISetupResult): void {
+    private settleAIProviderConfiguration(
+        invocationEpoch: number,
+        result: AISetupResult,
+        rebuildProviderFields: boolean,
+    ): void {
         if (this.latestAIProviderConfigurationEpoch !== invocationEpoch) return;
         if (result.ok) {
             this.latestAIProviderConfigurationDraft = null;
             this.latestAIProviderConfigurationEpoch = null;
-            if (this.settingsVisible) this.refreshAIProviderConfigurationControls();
+            if (this.settingsVisible) this.refreshAIProviderConfigurationControls(rebuildProviderFields);
             this.updateSettingsSaveFeedback();
             return;
         }
@@ -1636,17 +1641,21 @@ export class SettingTab extends PluginSettingTab {
         new Notice(this.t("plugin.settings.ai.provider.saveFailed"), 5000);
     }
 
-    private refreshAIProviderConfigurationControls(): void {
+    private refreshAIProviderConfigurationControls(rebuildProviderFields: boolean): void {
         const settings = this.getEffectiveAIProviderConfiguration();
         this.aiProviderPresetDropdown?.setValue(
             settings.aiProvider ? deriveDisplayPreset(settings) : "",
         );
-        this.rebuildProviderConfig();
+        // Text saves only change values within the existing controls. Rebuilding
+        // here detaches the active input after the debounce and drops focus.
+        if (rebuildProviderFields) this.rebuildProviderConfig();
         this.rebuildQwenOptions();
         // The embedding model is the only provider-dependent value inside the
         // Advanced Memory section. Preserve the rest of that section so an
         // in-flight confirmation keeps its live control and callback.
-        this.memoryModelTextControl?.setValue(settings.embeddingModelName);
+        if (this.memoryModelTextControl?.inputEl.value !== settings.embeddingModelName) {
+            this.memoryModelTextControl?.setValue(settings.embeddingModelName);
+        }
         this.rebuildFeaturedImage();
     }
 

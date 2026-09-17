@@ -227,6 +227,7 @@ jest.mock('obsidian', () => ({
                 type: 'text',
                 value: '',
                 addClass: jest.fn(),
+                addEventListener: jest.fn(),
                 dispatchEvent: jest.fn(),
                 focus: jest.fn(),
                 select: jest.fn(),
@@ -1412,6 +1413,38 @@ describe('Phase 1 refactor invariants', () => {
 
         expect(rebuildSpy).toHaveBeenCalledTimes(1);
         expect(displaySpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the Chat Model Name input mounted while typed values are saved', async () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const chatModel = records.find((record) => record.name === 'Chat Model Name')?.texts[0];
+        const input = chatModel?.inputEl;
+        const providerDebounce = (tab as unknown as {
+            debouncedAIProviderSaveRunner: { run(): unknown };
+        }).debouncedAIProviderSaveRunner;
+        expect(input).toBeDefined();
+
+        chatModel?.onChange?.('a');
+        providerDebounce.run();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(plugin.settings.chatModelName).toBe('a');
+        expect(records.filter((record) => record.name === 'Chat Model Name')).toHaveLength(1);
+        expect(chatModel?.inputEl).toBe(input);
+
+        chatModel?.onChange?.('ab');
+        providerDebounce.run();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(plugin.settings.chatModelName).toBe('ab');
+        expect(records.filter((record) => record.name === 'Chat Model Name')).toHaveLength(1);
     });
 
     it('opening Memory maintenance details preserves provider and sibling containers without persistence', () => {
